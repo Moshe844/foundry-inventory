@@ -819,6 +819,12 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Answer where this stock is held and recalculate the preview before approving.');
     const unresolved=requirements.find(step=>['rows','empty'].includes(step.code));
     if(unresolved)throw new ValidationError(unresolved.error);
+    if(plan.transformations.dataset!=='suppliers'&&!result.rows[0].apply_checkpoint?.cataloguePrepared){
+      const pending=(await client.query(`SELECT DISTINCT parsed::jsonb->>'name' AS name,parsed::jsonb->>'code' AS code,parsed::jsonb->>'trackingMode' AS "trackingMode",parsed::jsonb->'variants' AS variants FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='VALID' AND parsed::jsonb->>'existingSkuId' IS NULL`,[ctx.workspaceId,id])).rows;
+      const count=new Set(pending.map(row=>productKey({...row,variants:row.variants||[]}))).size;
+      const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+      await entitlements.assertMeterCapacity(client,scope,'products',count);
+    }
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
       await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);

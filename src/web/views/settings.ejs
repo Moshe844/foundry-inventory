@@ -1,6 +1,6 @@
 <% const isOwner=currentUser.role==='owner',section=locals.settingsSection||'general';const sections=locals.searchableSettingsSections||[]; %>
 <header class="rm-head"><h1>Settings</h1><p>Manage your business, team and StockChief preferences.</p></header>
-<div class="sc-settings-layout"><nav class="sc-settings-nav" aria-label="Settings sections"><% for(const [id,label] of sections){ %><a href="<%= id==='connections'?'/settings/connections':id==='billing'?'/billing':'/settings?section='+id %>" <%- section===id?'aria-current="page"':'' %>><%= label %></a><% } %></nav>
+<div class="sc-settings-layout"><%- include('settings/navigation',{section,sections}) %>
 <div class="sc-settings-content" data-settings-section="<%= section %>" data-settings-hashes="<%= JSON.stringify(locals.settingsSectionHashes||{}) %>">
 <% if(section==='general'){ %><section class="rm-panel">
       <div class="rm-panel__head">

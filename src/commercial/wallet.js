@@ -1,7 +1,7 @@
 'use strict';
 const {newId}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
-const CATEGORIES=new Set(['ai_work_credits','connected_operations']);
+const CATEGORIES=new Set(['ai_work_credits','connected_operations','emails_sent']);
 const CATEGORY_FOR=Object.freeze({intelligent_operations:'ai_work_credits',document_pages:'ai_work_credits',processing_units:'ai_work_credits',
  business_communications:'connected_operations',external_events:'connected_operations',shipments_managed:'connected_operations',
  automatic_actions:'connected_operations',accounting_syncs:'connected_operations',api_events:'connected_operations'});
@@ -21,7 +21,7 @@ async function lock(database,scope,category){await database.query('SELECT pg_adv
 async function balances(database,scope,category,bounds,at=new Date()){
  const totals=(await database.query(`SELECT COALESCE(SUM(a.units) FILTER(WHERE e.status='COMMITTED'),0) AS used,
  COALESCE(SUM(a.units) FILTER(WHERE e.status='RESERVED'),0) AS reserved FROM commercial_usage_allocations a
- JOIN commercial_usage_events e ON e.id=a.event_id WHERE e.account_id=$1 AND e.meter=$2 AND a.grant_id IS NULL
+ JOIN commercial_usage_events e ON e.id=a.event_id WHERE e.account_id=$1 AND e.meter=$2 AND a.grant_id IS NULL AND a.rollover_id IS NULL
  AND e.occurred_at>=$3 AND e.occurred_at<$4`,[scope.accountId,category,bounds.start,bounds.end])).rows[0];
  const grants=(await database.query(`SELECT g.*,GREATEST(0,g.units-g.revoked_units-g.dispute_hold_units-COALESCE((SELECT SUM(a.units)
  FROM commercial_usage_allocations a JOIN commercial_usage_events e ON e.id=a.event_id
@@ -32,6 +32,7 @@ async function balances(database,scope,category,bounds,at=new Date()){
  purchasedRemaining:grants.reduce((sum,g)=>sum+Number(g.remaining),0)};
 }
 async function allocate(client,event,state){let remaining=Number(event.units);
+ const carry=Math.min(remaining,state.rollover?.remaining||0);if(carry>0){await client.query('INSERT INTO commercial_usage_allocations(id,event_id,rollover_id,units) VALUES($1,$2,$3,$4)',[newId('alloc'),event.id,state.rollover.id,carry]);remaining-=carry;}
  const included=Math.min(remaining,state.includedRemaining);if(included>0){await client.query(
  'INSERT INTO commercial_usage_allocations(id,event_id,units) VALUES($1,$2,$3)',[newId('alloc'),event.id,included]);remaining-=included;}
  for(const grant of state.grants||[]){const units=Math.min(remaining,Number(grant.remaining));if(units<=0)continue;

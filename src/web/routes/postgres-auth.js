@@ -23,7 +23,7 @@ function selfServiceSelection(plans,requested){return requested
   : null;}
 function pendingSelection(account,sessionSelection={}){return {
   planId:account?.pending_commercial_plan_id||sessionSelection.planId||'',
-  interval:'monthly',
+  interval:(account?.pending_billing_interval||sessionSelection.interval||'monthly').toLowerCase(),
   promoCode:account?.pending_promo_code||sessionSelection.promoCode||'',
 };}
 
@@ -90,7 +90,7 @@ function createPostgresAuthRouter(database,options={}) {
       sourcePath:'/pricing'});
     return res.render('auth/register', { title:'Create your account',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,form:{},appName:res.locals.appName,origin:res.locals.origin,
-      selectedPlan:selected?.id||'',selectedInterval:'monthly',
+      selectedPlan:selected?.id||'',selectedInterval:req.query.interval==='annual'?'annual':'monthly',
       selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans,
       paidSignup:config.commercial.requirePaidWorkspace,checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable() });
     } catch(error) { return next(error); }
@@ -99,7 +99,7 @@ function createPostgresAuthRouter(database,options={}) {
     try {
       matchingPasswords(req.body);
       const paidRequired=config.commercial.requirePaidWorkspace;
-      if(paidRequired)require('../../commercial/launch-interval').assertMonthly(req.body.interval);
+      if(paidRequired)require('../../commercial/launch-interval').assertInterval(req.body.interval);
       const requestedPlanId=String(req.body.planId||'').trim();
       if(paidRequired&&requestedPlanId)await commercial.getSelfServicePlan(database,requestedPlanId);
       if(paidRequired&&String(req.body.promoCode||'').trim()&&!requestedPlanId)
@@ -110,7 +110,7 @@ function createPostgresAuthRouter(database,options={}) {
       await sessionCall(req,'regenerate');
       req.session.accountId=created.accountId||created.id;
       if(created.workspaceId)req.session.workspaceId=created.workspaceId;
-      req.session.commercialSelection={planId:requestedPlanId,interval:'monthly',
+      req.session.commercialSelection={planId:requestedPlanId,interval:req.body.interval==='annual'?'annual':'monthly',
         promoCode:String(req.body.promoCode||'').trim().toUpperCase()};
       if(paidRequired)await accountLifecycle.requestVerification(database,created.id,{origin:config.connections.publicOrigin||res.locals.origin});
       req.session.flash=[{ type:'success',message:paidRequired?'Check your email to verify the account.':'Your first inventory is ready. Add your records or explore first.' }];
@@ -123,7 +123,7 @@ function createPostgresAuthRouter(database,options={}) {
         const selected=selfServiceSelection(plans,String(req.body.planId||'').trim());return res.status(error.status).render('auth/register', {
         title:'Create your account',csrfToken:res.locals.csrfToken,
         flash:[{ type:'error',message:error.message }],form:req.body,appName:res.locals.appName,origin:res.locals.origin,
-        selectedPlan:selected?.id||'',selectedInterval:'monthly',
+        selectedPlan:selected?.id||'',selectedInterval:req.body.interval==='annual'?'annual':'monthly',
         selectedPromo:String(req.body.promoCode||'').trim().toUpperCase(),plans,
         paidSignup:config.commercial.requirePaidWorkspace,checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable(),
       });}
@@ -165,9 +165,8 @@ function createPostgresAuthRouter(database,options={}) {
     req.session.flash=(req.session.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     res.locals.flash=(res.locals.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     const account=await auth.getAccount(database,verified.accountId);
-    const selection=pendingSelection(account,req.session.commercialSelection);const plans=await commercial.listPlans(database);await sessionCall(req,'save');
-    return res.render('auth/verified',{title:'Email verified',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
-      origin:res.locals.origin,selection,lastSelection:null,plans,checkoutOpen:await checkoutAvailable()});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+    await sessionCall(req,'save');
+    return res.redirect(303,account.plan==='commercial_pending'?'/complete-signup':'/');}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.get('/invite',async(req,res,next)=>{try{const invitation=await accountLifecycle.inspectInvitation(database,req.query.token||'');

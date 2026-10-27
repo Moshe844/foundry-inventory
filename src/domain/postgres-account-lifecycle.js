@@ -92,7 +92,8 @@ async function acceptInvitation(database,token,input={}){return database.transac
   const membership=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2',
     [invitation.workspace_id,account.id])).rows[0];
   if(!membership){const scope=await entitlements.ownerScopeForWorkspace(client,invitation.workspace_id);
-    await entitlements.assertMeterCapacity(client,scope,'members',1);}
+    const known=(await client.query('SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND u.account_id=$2 LIMIT 1',[scope.accountId,account.id])).rows.length>0;
+    await entitlements.assertMeterCapacity(client,scope,'members',known?0:1);}
   await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,$4,$5,now())
     ON CONFLICT(workspace_id,account_id) DO NOTHING`,[newId('usr'),invitation.workspace_id,account.id,
     input.name||invitation.name||account.name,invitation.role]);

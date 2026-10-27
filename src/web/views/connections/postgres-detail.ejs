@@ -1,5 +1,6 @@
 <%
   const accounting=connection.accounting||null;
+  const displayStatus=helpers.connectionPresentation.status(connection);
   const providerName=provider?.name||connection.display_name||connection.provider_type;
   const needsAuthorization=connection.setup_status==='REAUTHORIZATION_REQUIRED'||connection.status==='disconnected';
   const connected=connection.status==='connected'&&!connection.paused_at&&!needsAuthorization;
@@ -18,12 +19,12 @@
     <p class="page-sub"><%= providerName %><%= connection.provider_account_name?' · '+connection.provider_account_name:'' %> · <%= connection.provides.length?connection.provides.join(', '):'no business events proven yet' %></p>
   </div>
   <div class="form-actions"><% if(isMailbox){ %><a class="btn btn--primary" href="/mail">Open Mail</a><% } %>
-    <span class="badge <%= connection.publicStatus==='Connected'?'badge--ok':connection.publicStatus==='Needs attention'?'badge--warn':'badge--muted' %>"><%= connection.publicStatus %></span></div>
+    <span class="badge <%= displayStatus==='Connected'?'badge--ok':displayStatus==='Error'?'badge--warn':'badge--muted' %>"><%= displayStatus %></span></div>
 </header>
 
-<% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(displayStatus==='Error'){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %></p></div></div><% } %>
 <% if(connection.provider_type==='woocommerce'&&currentUser.role==='owner'){ %><details class="card" id="reauthorize-woocommerce"><summary>Update WooCommerce authorization</summary><div class="card-body"><%- include('woocommerce-connect',{provider,postgresMode:true,csrfToken}) %></div></details><% } %>
-<% if(isMailbox&&connected){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
+<% if(isMailbox){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
 <% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>
 <section class="card section" id="connection-issues" aria-label="Connection issues">
   <div class="card-head"><h2>What needs attention</h2><span class="badge badge--warn"><%= connectionIssues.total %> open</span></div>

@@ -9,7 +9,7 @@ const release=require('./release');
 const addons=require('./addons');
 const { newId } = require('../lib/util');
 const { ValidationError,NotFoundError } = require('../domain/errors');
-const {assertMonthly}=require('./launch-interval');
+const {assertInterval}=require('./launch-interval');
 
 function normalizePlan(plan) {
   if (!plan) return plan;
@@ -63,9 +63,17 @@ async function validatePromotion(database,codeInput,planId,options={}){
 
 async function beginCheckout(database, account, input, options = {}) {
   await release.assertSubscriptionCheckoutOpen(database,options);
-  const plan=await getSelfServicePlan(database,input.planId);const interval=assertMonthly(input.interval);
+  const plan=await getSelfServicePlan(database,input.planId);const interval=assertInterval(input.interval);
   const priceId=interval==='ANNUAL'?plan.stripe_annual_price_id:plan.stripe_monthly_price_id;
-  if(!priceId)throw new ValidationError('Checkout for this plan is not configured yet. Contact StockChief support.');
+  if(!priceId)throw new ValidationError('This billing option is not configured yet. Choose another billing interval; no payment was taken.');
+  const billingProvider=options.provider||stripe;
+  if(typeof billingProvider.retrievePrice==='function'){
+    const price=await billingProvider.retrievePrice(priceId,options.providerOptions||{});
+    if(price.id!==priceId||price.active!==true||String(price.currency).toUpperCase()!==plan.currency||price.type!=='recurring'||
+      Number(price.unit_amount)!==Number(interval==='ANNUAL'?plan.annual_amount_minor:plan.monthly_amount_minor)||
+      price.recurring?.interval!==(interval==='ANNUAL'?'year':'month')||Number(price.recurring?.interval_count||1)!==1)
+      throw new ValidationError('The billing price differs from the selected plan. No checkout was created.');
+  }else if(!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('The billing price could not be verified. No payment was taken.');
   const current=await entitlements.subscriptionFor(database,account.id);
   if(current?.refunded_at&&(await database.query("SELECT 1 FROM commercial_subscription_refund_retention WHERE account_id=$1 AND status<>'PURGED' LIMIT 1",[account.id])).rows.length)throw new ValidationError('Your refunded inventories are read-only during their retention period. Export your records before the displayed deletion date. A new subscription can start after deletion finishes; no card has been charged.');
   const attemptId=newId('checkout');const promoCode=String(input.promoCode||'').trim().toUpperCase();let promotion=null;
@@ -114,7 +122,7 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
   if(!current?.stripe_subscription_id||!current.stripe_customer_id)throw new ValidationError(
     'This account does not have a Stripe subscription to change.');
   const target=await getSelfServicePlan(database,input.planId);const currentPlan=await getPlan(database,current.plan_id);
-  const interval=assertMonthly(input.interval);const priceId=planPriceId(target,interval);
+  const interval=assertInterval(input.interval);const priceId=planPriceId(target,interval);
   if(!priceId)throw new ValidationError('That plan and billing interval are not configured for checkout.');
   if(target.id===current.plan_id&&interval===current.billing_interval)throw new ValidationError('That plan is already active.');
   const providerSubscription=await provider.retrieveSubscription(current.stripe_subscription_id,options.providerOptions||{});
@@ -181,9 +189,10 @@ async function setSubscriptionCancellation(database,accountId,cancelAtPeriodEnd,
     throw new ValidationError('Stripe cancellation response does not match this billing account.');
   // This response updates only the cancellation flag, never commercial access.
   // Plan, status and period entitlement changes require a signed webhook.
-  return (await database.query(`UPDATE account_subscriptions SET cancel_at_period_end=$2,updated_at=now()
+  const result=(await database.query(`UPDATE account_subscriptions SET cancel_at_period_end=$2,updated_at=now()
     WHERE account_id=$1 AND stripe_subscription_id=$3 RETURNING *`,
     [accountId,updated.cancel_at_period_end?1:0,current.stripe_subscription_id])).rows[0];
+  if(updated.cancel_at_period_end){await require('../operations/postgres-job-queue').enqueue(database,{kind:'commercial.capacity-reconcile',idempotencyKey:'capacity-cancel:'+current.stripe_subscription_id+':'+String(current.current_period_end),payload:{accountId},maxAttempts:12});try{await require('./capacity-addons').cancelAll(database,accountId,options);}catch{/* The durable job retries without charging or losing the confirmed cancellation. */}}return result;
 }
 
 function statusFromStripe(subscription) {
@@ -261,6 +270,7 @@ async function upsertSubscription(client, data, options={}) {
     (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,provider_reference,resource_excess)
     VALUES($1,$2,$3,$4,$5,'APPLIED',now(),$6,'{}'::jsonb)`,[newId('subchange'),saved.account_id,saved.id,
     existing.plan_id,saved.plan_id,data.id]);}
+  if(saved.cancel_at_period_end||saved.status==='CANCELLED'||saved.refunded_at)await require('../operations/postgres-job-queue').enqueue({query:client.query.bind(client),transaction:f=>f(client)},{kind:'commercial.capacity-reconcile',idempotencyKey:'capacity-stop:'+newId('cancel'),payload:{accountId:saved.account_id},maxAttempts:12});
   return saved;
 }
 
@@ -274,13 +284,14 @@ async function handleBillingEvent(database,event) {
     else await client.query(`INSERT INTO commercial_billing_events(provider_event_id,event_type,status,payload)
       VALUES($1,$2,'RECEIVED',$3::jsonb)`,[event.id,event.type,JSON.stringify(event)]);
       const object=event.data?.object || {};let subscription=null;
+      const capacityHandled=await require('./capacity-addons').receive(client,event);
       const addonHandled=object.metadata?.stockchief_purchase_id&&
         ['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed',
          'payment_intent.succeeded','payment_intent.payment_failed'].includes(event.type)
         ?await addons.receivePayment(client,event):false;
       if(['refund.created','refund.updated','refund.failed','charge.succeeded','charge.updated','charge.dispute.created','charge.dispute.updated','charge.dispute.closed'].includes(event.type))
         await require('./stripe-financials').handle(client,event);
-      if(addonHandled){} else if(event.type==='checkout.session.completed'){
+      if(capacityHandled||addonHandled){} else if(event.type==='checkout.session.completed'){
         const attempt=(await client.query(`SELECT * FROM commercial_checkout_attempts WHERE stripe_checkout_session_id=$1 FOR UPDATE`,[object.id])).rows[0];
         if(attempt&&(object.metadata?.stockchief_account_id!==attempt.account_id||object.metadata?.stockchief_plan_id!==attempt.plan_id||attempt.paid_subscription_id&&attempt.paid_subscription_id!==(typeof object.subscription==='string'?object.subscription:object.subscription?.id)))throw new ValidationError('This paid checkout does not match its saved account, plan or subscription.');
         if(attempt&&object.payment_status==='paid'&&Number(object.amount_total)>0)await client.query(`UPDATE commercial_checkout_attempts SET status='COMPLETED',paid_at=coalesce(paid_at,to_timestamp($2)),paid_provider_event_id=coalesce(paid_provider_event_id,$3),paid_subscription_id=coalesce(paid_subscription_id,$4),

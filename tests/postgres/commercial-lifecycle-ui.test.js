@@ -45,11 +45,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   };
   const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-lifecycle-secret',
     commercialOptions:{billingProvider,loadInvoices:false,publicOrigin:'request',testMode:true}});
-  await assert.rejects(()=>commercial.beginCheckout(database,{id:business.accountId,email:'lifecycle@example.test'},
-    {planId:'pro',interval:'annual',origin:'https://stockchief.example.test'},
-    {provider:billingProvider,testMode:true}),/Annual billing is not available/);
-  await assert.rejects(()=>commercial.subscriptionChangeQuote(database,business.accountId,
-    {planId:'pro',interval:'annual'},{provider:billingProvider,testMode:true}),/Annual billing is not available/);
+  const annual=await commercial.subscriptionChangeQuote(database,business.accountId,{planId:'pro',interval:'annual'},{provider:billingProvider,testMode:true});assert.equal(annual.priceId,'price_pro_annual');assert.equal(annual.interval,'ANNUAL');
   const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
   const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;

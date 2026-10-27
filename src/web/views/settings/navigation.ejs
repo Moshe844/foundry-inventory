@@ -1,0 +1,1 @@
+<nav class="sc-settings-nav" aria-label="Settings sections"><% for(const [id,label] of sections){ %><a href="<%= id==='connections'?'/settings/connections':id==='billing'?'/billing':'/settings?section='+id %>" <%- section===id?'aria-current="page"':'' %>><%= label %></a><% } %></nav>

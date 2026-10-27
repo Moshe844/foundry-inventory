@@ -83,6 +83,7 @@ async function createAddonCheckout(input,options={}){return call('/checkout/sess
  'payment_intent_data[metadata][stockchief_purchase_id]':input.purchaseId,
  'payment_intent_data[metadata][stockchief_account_id]':input.accountId,
  'payment_intent_data[setup_future_usage]':'off_session'}});}
+async function createCapacityCheckout(input,options={}){return call('/checkout/sessions',{...options,idempotencyKey:'stockchief-capacity:'+input.orderId,values:{mode:'subscription',customer:input.customerId,success_url:input.successUrl,cancel_url:input.cancelUrl,'line_items[0][price]':input.priceId,'line_items[0][quantity]':input.quantity,'metadata[stockchief_capacity_order_id]':input.orderId,'metadata[stockchief_account_id]':input.accountId,'subscription_data[metadata][stockchief_capacity_order_id]':input.orderId,'subscription_data[metadata][stockchief_account_id]':input.accountId,payment_method_collection:'always'}});}
 async function createTopupPayment(input,options={}){return call('/payment_intents',{...options,
  idempotencyKey:`stockchief-topup:${input.purchaseId}`,values:{amount:input.amountMinor,currency:input.currency.toLowerCase(),
  customer:input.customerId,payment_method:input.paymentMethodId,off_session:'true',confirm:'true',
@@ -206,7 +207,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
 }
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
-  createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
+  createCapacityCheckout,createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
   scheduleDowngrade,
   cancelImmediately,setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form,apiVersion:API_VERSION} };

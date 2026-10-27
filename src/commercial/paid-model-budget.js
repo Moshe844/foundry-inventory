@@ -10,7 +10,7 @@ function effectiveLimit(budget,grant){return round(Number(budget.budget_minor)*
 function validateEconomics(pack,{requireActiveModel=true}={}){
  if(pack.category!=='ai_work_credits'||Number(pack.version)<2)return;
  const budget=Number(pack.provider_cost_budget_minor),perCredit=Number(pack.conservative_cost_per_credit_minor);
- const share=process.env.STOCKCHIEF_AI_PACK_MAX_PROVIDER_COST_SHARE===undefined?DEFAULT_MAX_REVENUE_SHARE:
+ const share=process.env.STOCKCHIEF_AI_PACK_MAX_PROVIDER_COST_SHARE===undefined?Number(pack.max_provider_cost_share??DEFAULT_MAX_REVENUE_SHARE):
   Number(process.env.STOCKCHIEF_AI_PACK_MAX_PROVIDER_COST_SHARE);
  if(!Number.isFinite(share)||share<=0||share>=1)throw new ValidationError('Invalid AI pack provider-cost share configuration.');
  if(!Number.isFinite(budget)||!Number.isFinite(perCredit)||budget<=0||perCredit<=0||
@@ -29,6 +29,10 @@ function validateEconomics(pack,{requireActiveModel=true}={}){
 async function assertSafePack(database,pack){
  validateEconomics(pack);
  if(pack.category!=='ai_work_credits'||Number(pack.version)<2)return;
+ if(Number(pack.version)>=3){for(const [key,ceiling]of Object.entries(pack.approved_model_rate_ceiling||{}).filter(([key])=>key.startsWith('openai/'))){
+  const [provider,model,version]=key.split('/'),rows=(await database.query(`SELECT DISTINCT ON(operation) operation,pricing_basis,cost_per_unit_minor FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now()) ORDER BY operation,effective_from DESC`,[provider,model,version])).rows;
+  for(const op of ['model_input','cache_write_1h','model_output']){const row=rows.find(r=>r.operation===op);if(!row||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT'].includes(row.pricing_basis)||Number(row.cost_per_unit_minor)>Number(ceiling[op])+1e-12)throw new ValidationError('This AI pack has no verified funding for its native model.');}
+ }if(!Object.keys(pack.approved_model_rate_ceiling).some(key=>key.startsWith('openai/')))throw new ValidationError('This AI pack has no native model pricing evidence.');}
  for(const tier of ['fast','standard']){
   const model=config.ai.tier(tier).model;const key=`anthropic/${model}/${MODEL_VERSION}`;
   const rows=(await database.query(`SELECT DISTINCT ON (operation) operation,pricing_basis,cost_per_unit_minor FROM commercial_cost_rates

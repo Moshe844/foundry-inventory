@@ -60,8 +60,9 @@ function createCommercialAccounting(database){return {
   try{
    held.cost=await cost.reserveNative(database,scope,provider,call,'ask',key,
     `${scope.workspaceId}:${call.fundingKey}`,{goalId:call.goalId,actorId:call.ctx.actorId,subscription:entitlement.subscription});
+   held.fundingKey=held.cost.fundingUsageKey||held.fundingKey;
    held.day=await daily.begin(database,scope.accountId);return held;
-  }catch(error){if(held.cost)await cost.release(database,scope,key);throw error;}
+  }catch(error){if(held.cost){await cost.release(database,scope,key);await entitlements.reverseUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:held.fundingKey,reason:'Provider call did not start.'});}throw error;}
  },
  async complete(held,receipt){
   // The original wrapper settles after receiving this same response. Its full
@@ -87,6 +88,6 @@ function createCommercialAccounting(database){return {
    operation:'unknown_model_outcome',unit:'request',quantity:1,idempotencyKey:`${held.key}:unknown`,detail:{reason,nativeSdk:true}});
   await cost.settle(database,held.scope,held.key,{failed:true});
  },
- async release(held){if(!held.existing)await cost.release(database,held.scope,held.key);}
+ async release(held){if(!held.existing){await cost.release(database,held.scope,held.key);await entitlements.reverseUsage(database,held.scope,{meter:'ai_work_credits',idempotencyKey:held.fundingKey,reason:'Provider call did not start.'});}}
 };}
 module.exports={createCommercialAccounting};

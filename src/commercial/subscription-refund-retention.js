@@ -21,6 +21,7 @@ async function cancel(db,job,options={}){
  if(!row||row.refund_status!=='succeeded'||row.status==='REVIEW')return {skipped:'refund_not_confirmed'};
  if(row.status==='PURGED')return {replayed:true};
  const current=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[row.account_id])).rows[0];if(current?.stripe_subscription_id!==row.stripe_subscription_id)return {skipped:'subscription_replaced'};
+ await require('./capacity-addons').cancelAll(db,row.account_id,options);
  const provider=options.provider||require('./stripe-billing'),before=await provider.retrieveSubscription(row.stripe_subscription_id,options.providerOptions||{});
  if(before.id!==row.stripe_subscription_id||id(before.customer)!==current.stripe_customer_id)throw new ValidationError('The provider subscription does not match this refunded account.');
  const result=before.status==='canceled'?before:await provider.cancelImmediately({subscriptionId:row.stripe_subscription_id,refundId:row.refund_id},options.providerOptions||{});

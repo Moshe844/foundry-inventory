@@ -1,0 +1,9 @@
+'use strict';
+const entitlements=require('./entitlements');
+async function applies(db,scope){return (await db.query(`SELECT CASE WHEN s.plan_version_id IS NOT NULL AND v.plan_id=s.plan_id THEN EXISTS(SELECT 1 FROM jsonb_array_elements(v.meters) m WHERE m->>'meter'='emails_sent') ELSE EXISTS(SELECT 1 FROM commercial_plan_meters m WHERE m.plan_id=s.plan_id AND m.meter='emails_sent') END enabled FROM account_subscriptions s LEFT JOIN commercial_plan_versions v ON v.id=s.plan_version_id WHERE s.account_id=$1`,[scope.accountId])).rows[0]?.enabled===true;}
+async function begin(db,workspaceId,key){if(!workspaceId)return null;const scope=await entitlements.ownerScopeForWorkspace(db,workspaceId);if(!await applies(db,scope))return null;const input={meter:'emails_sent',units:1,idempotencyKey:key,retryReversed:true,detail:{operation:'business_email'}};await entitlements.reserveUsage(db,scope,input);return {scope,input};}
+async function complete(db,held){if(held)await entitlements.commitUsage(db,held.scope,held.input);}
+async function completeRecorded(db,workspaceId,key){if(!workspaceId)return;const scope=await entitlements.ownerScopeForWorkspace(db,workspaceId),exists=(await db.query("SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='emails_sent' AND idempotency_key=$3 AND status IN ('RESERVED','COMMITTED')",[scope.accountId,workspaceId,key])).rows.length;if(exists)await complete(db,{scope,input:{meter:'emails_sent',idempotencyKey:key}});}
+async function failed(db,held,error){if(held&&require('../operations/postgres-provider-effects').definiteFailure(error))await entitlements.reverseUsage(db,held.scope,{...held.input,reason:'The provider definitely rejected this message.'});}
+const systemMessageTypes=new Set(['scheduled_report','email_alert_test','needs_you_alert','operational_alert']);
+module.exports={applies,begin,complete,completeRecorded,failed,systemMessageTypes};

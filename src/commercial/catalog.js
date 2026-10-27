@@ -71,8 +71,13 @@ const CAPABILITIES = Object.freeze([
 ]);
 
 const METERS = Object.freeze([
+  ['products','Products','STRUCTURAL',true,true],
+  ['scheduled_reports','Scheduled reports','STRUCTURAL',true,false],
+  ['sales_channels','Sales channels','STRUCTURAL',true,true],
+  ['shipping_accounts','Shipping accounts','STRUCTURAL',true,true],
+  ['emails_sent','Emails sent','USAGE',true,false],
   ['ai_work_credits','AI Work Credits','USAGE',true,false],
-  ['connected_operations','Connected Operations','USAGE',true,false],
+  ['connected_operations','Connected Operations','USAGE',false,false],
   ['workspaces','Inventories','STRUCTURAL',true,true],
   ['members','People','STRUCTURAL',true,true],
   ['locations','Locations','STRUCTURAL',true,true],

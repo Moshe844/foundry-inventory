@@ -87,6 +87,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
  const normalWorkspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',normalAccountCap/100)*100;
  const bounds=entitlements.periodBounds(subscription);
  const transaction=async client=>{
+  const fundedCredits=await require('./ai-credit-policy').ensureFunding(client,scope,fundingUsageKey,bound.maximumMinor,idempotencyKey);
+  const fundingReference=fundedCredits?.fundingKey||fundingUsageKey;
   let accountCap=normalAccountCap,workspaceCap=normalWorkspaceCap,temporaryCostApproval=null,temporaryGoalApproval=null;
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
@@ -127,7 +129,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     WHERE a.event_id=e.id AND a.grant_id IS NOT NULL) AS grant_ids
     FROM commercial_usage_events e WHERE e.account_id=$1 AND e.workspace_id=$2
       AND e.meter='ai_work_credits' AND e.idempotency_key=$3 AND e.status IN ('RESERVED','COMMITTED')`,
-   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows[0];
+   [scope.accountId,scope.workspaceId,fundingReference])).rows[0];
   const grantIds=fundedRequest?.grant_ids||[];
   if(grantIds.length)await client.query('SELECT id FROM commercial_usage_grants WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[grantIds]);
   const usage=(await client.query(`SELECT a.grant_id,a.units,k.version AS pack_version,b.budget_minor,b.cost_model_key,
@@ -141,8 +143,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     LEFT JOIN commercial_model_grant_budgets b ON b.grant_id=g.id
     WHERE e.account_id=$1 AND e.workspace_id=$2 AND e.meter='ai_work_credits'
       AND e.idempotency_key=$3 AND e.status IN ('RESERVED','COMMITTED') ORDER BY a.grant_id NULLS FIRST`,
-   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows;
-  if(fundingUsageKey!==idempotencyKey&&!fundedRequest)
+   [scope.accountId,scope.workspaceId,fundingReference])).rows;
+  if(fundingReference!==idempotencyKey&&!fundedRequest)
    throw new ValidationError('This internal model call has no funded Ask request. No provider call was made.');
   const totalUnits=usage.reduce((sum,row)=>sum+Number(row.units),0);
   if(creditsOnly()&&(!fundedRequest||totalUnits<=0))throw new ValidationError('Reserve available AI credits before starting this model request.');
@@ -220,7 +222,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    SELECT held.* FROM held CROSS JOIN (SELECT count(*) FROM allocated) saved`,
    [newId('modelhold'),scope.accountId,scope.workspaceId,idempotencyKey,bounds.start.toISOString(),bounds.end.toISOString(),
     bound.provider,bound.model,operation,bound.maximumMinor,
-    JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
+    JSON.stringify({...(fundedCredits?{fundingUsageEventId:fundedCredits.eventId,costBoundedCredits:fundedCredits.credits}:{}),inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,...(certificationFundingWorkspaceId?{certificationFundingWorkspaceId}:{}),accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
       ...(temporaryGoalApproval?{temporaryGoalApproval:{approvalReference:temporaryGoalApproval.approvalReference,
@@ -231,7 +233,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
       funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null,
     JSON.stringify(sources.map(source=>({id:newId('modelallocation'),source:source.source,
       grant_id:source.grantId,maximum_minor:source.maximumMinor})))])).rows[0];
- return {...hold,outputTokenLimit:bound.outputTokens};};
+ return {...hold,fundingUsageKey:fundingReference,outputTokenLimit:bound.outputTokens};};
  return typeof database.transaction==='function'?database.transaction(transaction,{isolation:'SERIALIZABLE',retrySafe:true}):transaction(database);
 }
 async function release(database,scope,idempotencyKey){await database.query(`UPDATE commercial_model_cost_holds SET status='RELEASED',settled_at=now()

@@ -80,7 +80,7 @@ async function connect(database,ctx,input={}){
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,`connection_credentials:${id}`,ctx.actorId,now,isTestKey(provider,apiKey)?'TEST':'LIVE']);
     }else{
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
-      await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
+      await require('../commercial/connection-capacity').assertActivation(client,commercialScope,provider,1);
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
          credential_ref,setup_status,authorized_by_user_id,created_at,updated_at)

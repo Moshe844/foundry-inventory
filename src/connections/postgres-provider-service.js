@@ -105,7 +105,7 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     // A callback has consumed its temporary consent reservation. Re-admit the
     // actual target atomically; another connection may have taken the slot.
     const delta=await require('../commercial/connection-capacity').activationDelta(client,target.workspace_id,target.id);
-    await entitlements.assertMeterCapacity(client,scope,'connections',delta);
+    await require('../commercial/connection-capacity').assertActivation(client,scope,target.provider_type,delta);
     if(target._pending)await intents.insert(client,target);
     await credentials.put(client,target.workspace_id,target.id,'provider',result.credentials,result.expiresAt||null);
     const currentConfig=parseJson(target.config);

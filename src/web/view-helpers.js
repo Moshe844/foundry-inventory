@@ -201,6 +201,7 @@ function columnLabel(key) {
 
 module.exports = {
   connectionCards:require('./presentation/connections').cards,
+  connectionPresentation:require('./presentation/connections'),
   paymentSummary:require('./presentation/payment-summary').present,
   importSourceFormats: require('../imports/source-formats'),
   orderStatus:require('../sales/order-status').label,

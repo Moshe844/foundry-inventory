@@ -57,7 +57,7 @@ async function pending(database,workspaceId,actorId){
    const askedAt=state.history.findLast(m=>m.role==='assistant'&&m.phase==='clarification'&&m.text===state.input.question)?.at||null;
    const sourceId=row.goal_id+':question:'+state.input.id;
    items.set(sourceId,{kind:'clarification',requiredPermissions:[permissions.VIEW],importance:'Important',priority:85,
-    sourceId,title:'Answer StockChief’s question',happened:state.input.question,
+    sourceId,title:state.input.question,happened:state.input.question,
     why:'Your request is waiting for information or a business choice.',
     recommendation:'Answer the question to continue the same request.',question:{goalId:row.goal_id,id:state.input.id,text:state.input.question},
     href:'/needs-you/questions/'+encodeURIComponent(row.goal_id),actionLabel:'Answer question',

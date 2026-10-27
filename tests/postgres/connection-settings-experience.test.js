@@ -26,6 +26,7 @@ test('Connections, Settings and related pages use their real controls without co
    assert.equal(new URL(page.url()).pathname,'/settings/connections');assert.equal(await count(),before,type+' close must not create a record');
    assert.equal((await require('../../src/connections/postgres-service').list(db,ctx.workspaceId)).filter(c=>!['shippo'].includes(c.provider_type)).length,0);
   }
+  assert.equal(await page.locator('[data-integration-card=gmail] [role=switch]').count(),1);assert(await page.locator('[data-integration-card=gmail] [role=switch]').isDisabled());
   const rows=(await db.query('SELECT connector_id,expires_at,created_at FROM connection_authorization_states WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert(rows.length>=9);assert(rows.every(r=>r.connector_id===null));
  });
  await t.test('three desktop columns, single phone column, Sola modal and labelled history',async()=>{
@@ -39,15 +40,23 @@ test('Connections, Settings and related pages use their real controls without co
   const intent=require('../../src/connections/authorization-intent'),service=require('../../src/connections/postgres-provider-service');
   for(const type of ['gmail','microsoft365']){
    const id=await service.finishAuthorization(db,intent.draft(ctx.workspaceId,ctx.actorId,type,{name:names[type]}),ctx.actorId,{accountId:type+'-fixture@example.test',accountName:type+'-fixture@example.test',credentials:{accessToken:'isolated-fixture'},capabilities:['mail:read']});
-   await page.goto(base+'/settings/connections');const row=page.locator('[data-connected-id="'+id+'"]'),toggle=row.getByRole('switch');assert.equal(await toggle.getAttribute('aria-checked'),'false');assert.match(await row.innerText(),/No reply preparation recorded yet/);assert(await toggle.isEnabled(),await row.innerText());
-   await Promise.all([page.waitForNavigation(),toggle.click()]);assert.equal(new URL(page.url()).pathname,'/settings/connections');assert.equal(await page.locator('[data-connected-id="'+id+'"] [role=switch]').getAttribute('aria-checked'),'true');
+   await page.goto(base+'/settings/connections');const row=page.locator('[data-integration-card="'+type+'"]'),toggle=row.getByRole('switch');assert.equal(await toggle.getAttribute('aria-checked'),'false');assert.match(await row.innerText(),/No reply preparation recorded yet/);assert(await toggle.isEnabled(),await row.innerText());
+   await Promise.all([page.waitForNavigation(),toggle.click()]);assert.equal(new URL(page.url()).pathname,'/settings/connections');assert.equal(await page.locator('[data-integration-card="'+type+'"] [role=switch]').getAttribute('aria-checked'),'true');
    assert.equal((await db.query('SELECT config::jsonb->>\'replyPreparationEnabled\' enabled FROM workspace_connectors WHERE id=$1',[id])).rows[0].enabled,'true');
-   await Promise.all([page.waitForNavigation(),page.locator('[data-connected-id="'+id+'"] [role=switch]').click()]);assert.equal(await page.locator('[data-connected-id="'+id+'"] [role=switch]').getAttribute('aria-checked'),'false');
+   await Promise.all([page.waitForNavigation(),page.locator('[data-integration-card="'+type+'"] [role=switch]').click()]);assert.equal(await page.locator('[data-integration-card="'+type+'"] [role=switch]').getAttribute('aria-checked'),'false');
   }
   assert.equal((await db.query('SELECT count(*)::int n FROM connection_email_messages WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
  });
+ await t.test('Square health and Fix actions agree in rows, cards and detail; descriptions remain complete',async()=>{
+  const intent=require('../../src/connections/authorization-intent'),service=require('../../src/connections/postgres-provider-service'),id=await service.finishAuthorization(db,intent.draft(ctx.workspaceId,ctx.actorId,'square',{name:'Square'}),ctx.actorId,{accountId:'isolated-square',accountName:'Sandbox merchant',credentials:{accessToken:'isolated-fixture'},capabilities:['items:read']});
+  await db.query("UPDATE workspace_connectors SET setup_status='REAUTHORIZATION_REQUIRED',last_error='Expired authorization fixture' WHERE id=$1",[id]);
+  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});await page.goto(base+'/settings/connections');const row=page.locator('[data-connected-id="'+id+'"]'),card=page.locator('[data-integration-card=square]');assert.equal(await row.locator('.badge').innerText(),'Error');assert.equal(await card.locator('.badge').first().innerText(),'Error');assert(await row.getByRole('link',{name:'Fix Square',exact:true}).isVisible());assert(await card.getByRole('link',{name:'Fix Square',exact:true}).isVisible());assert.match(await row.locator('[data-connection-error]').innerText(),/Sign in again/);assert(await page.locator('.sc-provider-description').evaluateAll(es=>es.every(e=>getComputedStyle(e).whiteSpace!=='nowrap'&&!e.textContent.endsWith('…'))));}
+  await page.goto(base+'/settings/connections/'+id);assert.equal(await page.locator('.page-head .badge').innerText(),'Error');
+  await db.query("UPDATE workspace_connectors SET status='disconnected' WHERE id=$1",[id]);
+ });
  await t.test('Settings renders one section, and Save enables only after a real change',async()=>{
   for(const section of ['general','team','notifications','ai','data','advanced']){await page.goto(base+'/settings?section='+section);assert.equal(await page.locator('main h1').innerText(),'Settings');assert.equal(await page.locator('[data-settings-section]').getAttribute('data-settings-section'),section);assert((await page.locator('.sc-settings-content').boundingBox()).width<=720);assert((await page.getByRole('button',{name:'Save',exact:true}).count())<=1);assert.doesNotMatch(await page.locator('main').innerText(),/Developer test accounts|Sample and test data|Live operating feed|taught by talking/);}
+  await page.goto(base+'/billing');assert.equal(await page.locator('[data-settings-section]').getAttribute('data-settings-section'),'billing');assert.equal(await page.locator('.sc-settings-nav a[aria-current=page]').innerText(),'Plan & billing');assert((await page.locator('.sc-settings-content').boundingBox()).width<=720);
   await page.goto(base+'/settings?section=general');const save=page.getByRole('button',{name:'Save',exact:true});assert(await save.isDisabled());const name=page.getByLabel('Inventory name',{exact:true}),initial=await name.inputValue();await name.fill(initial+' updated');assert(await save.isEnabled());await name.fill(initial);assert(await save.isDisabled());
   await page.goto(base+'/settings?section=ai');assert(await page.getByLabel('Answer style').isVisible());await page.getByLabel('Answer style').fill('Concise');assert(await page.getByRole('button',{name:'Save',exact:true}).isEnabled());
  });
@@ -64,9 +73,9 @@ test('Connections, Settings and related pages use their real controls without co
   }
   const origin='/orders?q=keep-this-filter';await page.goto(base+origin);await page.evaluate(()=>{const a=document.createElement('a');a.href='/profile';a.textContent='Open profile for routing verification';document.querySelector('main').append(a);});await page.getByRole('link',{name:'Open profile for routing verification',exact:true}).click();await page.waitForURL('**/settings?section=advanced#account');assert.equal(await page.locator('a[data-return-to]').getAttribute('href'),origin);await page.locator('a[data-return-to]').click();await page.waitForURL(base+origin);
  });
- await t.test('Orders, Buy, Home, Stock, reports and hero use the requested presentation',async()=>{
+ await t.test('Orders, Buy, Home, Stock, reports and hero use the requested presentation',async sub=>{
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,created_at,updated_at) VALUES('stock-pill-test',$1,$2,$3,2,8,now(),now())`,[ctx.workspaceId,f.item.skuIds[0],f.location.id]);
-  await page.goto(base+'/inventory/table');assert.equal(await page.locator('td.sc-stock-selection').count(),1);assert.equal(await page.locator('td .badge').filter({hasText:/^Low$/}).count(),1);
+  await sub.test('a product exactly at its reorder point is Low',async()=>{await page.goto(base+'/inventory/table');assert.equal(await page.locator('td.sc-stock-selection').count(),1);assert.equal(await page.locator('td .badge').filter({hasText:/^Low$/}).count(),1);});
   for(const [url,title]of [['/orders','Orders'],['/purchasing/orders','Purchase orders']]){await page.goto(base+url);assert.equal(await page.locator('main h1').innerText(),title);assert.equal(await page.locator('.sc-section-tabs').count(),1);assert.equal(await page.locator('main a').filter({hasText:/^Picking and packing$/}).count(),0);assert.doesNotMatch(await page.locator('main').innerText(),/Each of these is a story/);}
   await page.goto(base+'/');assert.equal(await page.locator('[data-home-section=suggestions]').count(),0);assert.equal(await page.locator('[data-home-section=activity]').count(),0);
   await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/reports');assert.equal(await page.locator('.report-datasets').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),3);

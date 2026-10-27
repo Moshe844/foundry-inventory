@@ -492,6 +492,7 @@ async function systemEmail(job,database,options={}){
   const recordAttempt=attempt=>require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
     unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${attempt}`,detail:{messageType:job.payload?.messageType}});
   const accepted=async result=>{
+    if(job.workspaceId&&require('../commercial/email-allowance').systemMessageTypes.has(job.payload?.messageType))await require('../commercial/email-allowance').completeRecorded(database,job.workspaceId,'system-email:'+job.id);
     if(job.payload?.messageType==='scheduled_report')await require('../reports/postgres-scheduling').recordEmailAcceptance(database,job.workspaceId,job.id);
     if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
       provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
@@ -515,11 +516,12 @@ async function systemEmail(job,database,options={}){
     throw Object.assign(new Error('Email acceptance is uncertain and the retry window expired. Reconcile before resending.'),
       {code:'email_delivery_uncertain',retryable:false});
   }
+  const emailAllowance=require('../commercial/email-allowance'),held=emailAllowance.systemMessageTypes.has(job.payload?.messageType)?await emailAllowance.begin(database,job.workspaceId,'system-email:'+job.id):null;
   let result;try{result=await sender(message,{...options.emailOptions,idempotencyKey:`stockchief-email:${job.id}`});
     if(!result.externalId)throw Object.assign(new Error('Email provider did not return an acceptance identity.'),{retryable:true});
     await database.query('UPDATE commercial_email_deliveries SET provider_id=$2,accepted_at=now(),accepted_attempt=$3 WHERE job_id=$1',
       [job.id,result.externalId,job.attemptCount||1]);
-  }finally{
+  }catch(error){await emailAllowance.failed(database,held,error);throw error;}finally{
     await recordAttempt(job.attemptCount||1);}
   return accepted(result);
 }
@@ -619,6 +621,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
+  'commercial.capacity-reconcile':external(async(job,database)=>{const sub=await require('../commercial/entitlements').subscriptionFor(database,job.payload.accountId);if(!sub?.cancel_at_period_end&&!sub?.refunded_at&&sub?.status!=='CANCELLED')return {skipped:'base_subscription_renewing'};return require('../commercial/capacity-addons').cancelAll(database,job.payload.accountId,options.commercialOptions||{});}),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
   'commercial.subscription-refund-cancel':external((job,database)=>require('../commercial/subscription-refund-retention').cancel(database,job,options.commercialOptions||{})),

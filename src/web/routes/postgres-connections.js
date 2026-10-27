@@ -38,7 +38,11 @@ function createPostgresConnectionsRouter(database,options={}){
   const registry=options.providers||defaultProviders;
   const callbackProviders=new Set((registry.catalog?registry.catalog():[]).map((provider)=>provider.type));
   async function connectionAllowed(req,res,providerType){
-    const type=String(providerType||'').toLowerCase();const capability={gmail:'connection.email',microsoft365:'connection.email',
+    const type=String(providerType||'').toLowerCase();
+    if(!require('../presentation/connections').availableForCustomer(registry.get(type)?.metadata?.()||{},process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV)){
+      oauthReturnPage(res,{connected:false,providerName:registry.get(type)?.metadata?.()?.name||'Connection',workspaceId:req.ctx.workspaceId,requestOrigin:`${req.protocol}://${req.get('host')}`,popup:req.query.popup==='1',message:'This test application cannot connect to a live business. Use the live application.'});return false;
+    }
+    const capability={gmail:'connection.email',microsoft365:'connection.email',
       shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',bigcommerce:'connection.commerce',
       quickbooks:'connection.accounting',xero:'connection.accounting',stripe:'payments.customer'}[type];
     if(!capability)return true;
@@ -54,7 +58,8 @@ function createPostgresConnectionsRouter(database,options={}){
   async function renderConnections(req,res,apiToken=null){
     const inventorySetup=req.query.setup==='inventory';
     const providerContext=await require('../../connections/launch-policy').resolveWorkspaceContext(database,req.ctx);
-    const providerCatalog=inventorySetup?registry.inventorySources(providerContext,{oauthOnly:true}):registry.catalog(providerContext,{oauthOnly:true});
+    const connectionRuntime=process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV;
+    const providerCatalog=(inventorySetup?registry.inventorySources(providerContext,{oauthOnly:true}):registry.catalog(providerContext,{oauthOnly:true})).filter(p=>require('../presentation/connections').availableForCustomer(p,connectionRuntime));
     const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options);
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+30*60000};
@@ -67,11 +72,11 @@ function createPostgresConnectionsRouter(database,options={}){
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
       entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),entitlements.meterState(database,commercialScope(req),'connections'),
     ]);
-    const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status==='connected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
+    const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status!=='disconnected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
     const developerAccounts=req.query.section==='developers'&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length);
     return res.page('connections/index',{connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken?'developers':'connections',
-      title:inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
-      postgresMode:true,inventorySetup,connections:inventorySetup?connectionRows.filter(c=>providerCatalog.some(p=>p.type===c.provider_type)):connectionRows,
+      connectionRuntime,title:inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
+      postgresMode:true,inventorySetup,connections:connectionRows.filter(c=>require('../presentation/connections').availableForCustomer(registry.get(c.provider_type)?.metadata?.()||{},connectionRuntime)&&(!inventorySetup||providerCatalog.some(p=>p.type===c.provider_type))),
       providerCatalog,
       apiToken,apiClients:clients,
       // Preserve existing merchant account details, but do not advertise new
@@ -198,6 +203,7 @@ function createPostgresConnectionsRouter(database,options={}){
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
     if(!await connectionAllowed(req,res,'stripe'))return;
     const current=await paymentConnect.describe(database,req.ctx.workspaceId);
+    if((process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV)==='production'&&!current.liveMode)return oauthReturnPage(res,{connected:false,providerName:'Stripe',requestOrigin:`${req.protocol}://${req.get('host')}`,popup:req.query.popup==='1',message:'Live Stripe authorization is not configured. Your existing records remain available.'});
     if(!current.connected&&!require('../../payments/connect-availability').qualified(options))
       return res.status(403).send('New Stripe connections are not enabled on this installation. Existing payment records remain available.');
     const launch=req.session.connectionLaunch;

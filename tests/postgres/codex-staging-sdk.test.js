@@ -13,7 +13,13 @@ for(const mode of ['original','inherited','commercial'])test('actual Staging SDK
  if(commercial){
   process.env.STOCKCHIEF_CODEX_CUSTOMER_ACCESS='1';process.env.STOCKCHIEF_CODEX_PILOT='0';delete process.env.STOCKCHIEF_CODEX_PILOT_EMAILS;delete process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES;
   await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_SDK_SUBSCRIPTION')`,['sub_'+randomUUID(),owner.accountId]);
- }else Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
+ }else{
+  // Legacy pilot access still needs real allocated credits. Model the saved
+  // subscription of an existing customer rather than an unfunded dev account.
+  await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source)
+   VALUES($1,$2,'growth','launch-candidate-2026-10:growth','COMP','CUSTOM','OFFLINE_LEGACY_SUBSCRIPTION')`,['sub_'+randomUUID(),owner.accountId]);
+  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
+ }
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
  if(!commercial)await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=500000,
   approval_reference='OFFLINE FAKE PROVIDER ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
@@ -76,14 +82,17 @@ for(const mode of ['original','inherited','commercial'])test('actual Staging SDK
   assert.equal(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES,undefined);assert.equal(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS,undefined);
   t.diagnostic(JSON.stringify({actualCodexSDK:true,actualAgentBrowser:true,syntheticProvider:true,freshSubscriptionAccount:true,manualIdentityConfiguration:false,approvalDelivered:true,canonicalReceiptCount:1,verifiedPostgresUnits:3,settledRequests:3,paidProviderCalls:0}));return;
  }
- // Produce a real older SDK journal using the unchanged, previously certified
- // image and a fake provider. Its missing profile field is the exact legacy
- // persistence shape. The new image must resume it without changing its base.
+ // Reject an obsolete runtime image before any provider call. Generate a real
+ // current SDK journal, then remove only the optional profile metadata to test
+ // the historical persistence shape without bypassing source-integrity checks.
  const legacy=await pilot.start(db,ctx,'Help identify which warehouse a private report should describe.');
  const legacyImage=process.env.STOCKCHIEF_OFFLINE_LEGACY_CODEX_IMAGE||'sha256:e07529d8e4052730eb42398b482a7b624f554f5164575eb0eb35ecdf4117cc1e';
  let legacyCalls=0;
- const oldQuestion=await pilot.run(db,ctx,legacy.goalId,{...options,image:legacyImage,fetchImpl:async(_url,init)=>{
-  legacyCalls++;const body=JSON.parse(init.body);assert(JSON.stringify(body).includes('### Writing PR descriptions'));
+ const obsolete=await pilot.run(db,ctx,legacy.goalId,{...options,image:legacyImage,fetchImpl:async()=>{throw Error('OBSOLETE_IMAGE_MUST_NOT_CALL_PROVIDER');}});
+ assert.equal(obsolete.status,'BLOCKED');assert.equal(legacyCalls,0);
+ await pilot.resume(db,ctx,legacy.goalId);
+ const oldQuestion=await pilot.run(db,ctx,legacy.goalId,{...options,fetchImpl:async(_url,init)=>{
+  legacyCalls++;const body=JSON.parse(init.body);assert(JSON.stringify(body).includes(require('../../scripts/environment-agent-demo/codex-operator-instructions').trim().split('\n')[0]));
   return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'needs_user',question:'Which warehouse should the report describe?',missingInformation:['warehouse'],claims:[]}));
  }});
  assert.equal(oldQuestion.status,'WAITING_USER',JSON.stringify({failure:oldQuestion.checkpoint.harness?.failure,calls:legacyCalls,answer:oldQuestion.answer}));
@@ -92,7 +101,7 @@ for(const mode of ['original','inherited','commercial'])test('actual Staging SDK
  const legacyResumed=await pilot.run(db,ctx,legacy.goalId,{...options,fetchImpl:async(_url,init)=>{
   const body=JSON.parse(init.body);
   if(body.text?.format?.name==='native_answer_scope_fit_v2'){const input=JSON.parse(body.input[0].content);assert(input.clarifications.includes(location));assert(input.proposedAnswer.includes(location));assert(input.proposedAnswer.includes('Testing'));return reviewResponse(body);}
-  legacyCalls++;assert(JSON.stringify(body).includes('### Writing PR descriptions'),'An existing thread keeps its previously recorded base instructions');
+  legacyCalls++;assert(JSON.stringify(body).includes(require('../../scripts/environment-agent-demo/codex-operator-instructions').trim().split('\n')[0]),'A journal missing profile metadata keeps its previously recorded base instructions');
   const current=await store.get(db,ctx,legacy.goalId),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='authorized_environment');
   return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'The report for '+location+' belongs to Testing.',claims:[{evidenceId:entry.id,path:'/business/name',value:'Testing'}]}));
  }});

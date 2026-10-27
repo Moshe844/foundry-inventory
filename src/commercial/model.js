@@ -29,8 +29,9 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
   const internal=options.chargeCustomer===false;
   if(internal&&(!options.fundingKey||!['ask','instruction'].includes(operation)))
     throw new ValidationError('An internal model call needs its original funded request.');
-  if(!internal){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units),idempotencyKey,
-    detail:{operation,model:provider.model,provisional:true}});
+  const creditPolicy=await require('./ai-credit-policy').policy(database,scope);
+  if(!internal){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units)*creditPolicy.scale,idempotencyKey,
+    detail:{operation,model:provider.model,provisional:true,creditPolicy}});
     if(!reserved.created)throw new ValidationError('This model operation is already recorded or in progress.');}
   let response;let modelAttemptDay=null;let providerStarted=false;let costHold=null;let usageRecorded=false;
   try{costHold=await require('./model-cost-budget').reserve(database,scope,provider,request,policy,operation,
@@ -50,7 +51,7 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},
       idempotencyKey,{operation});usageRecorded=true;
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
-    if(!internal)await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey});return response;
+    if(!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`)await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey});return response;
   }catch(error){error.modelStarted=providerStarted;if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
     if(!usageRecorded&&(error.usage||response?.usage))await operations.modelUsage(database,scope,
       error.usage||response.usage,idempotencyKey,{operation,failed:true});
@@ -58,6 +59,6 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
       operation:'unknown_model_outcome',unit:'request',quantity:1,idempotencyKey,detail:{operation,errorCode:error.code}});
     if(costHold){if(providerStarted)await require('./model-cost-budget').settle(database,scope,idempotencyKey,{failed:true});
       else await require('./model-cost-budget').release(database,scope,idempotencyKey);}
-    if(!internal)await usage.reverseUsage(database,scope,{meter:'ai_work_credits',idempotencyKey,reason:error.message});throw error;}
+    if(!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`)await usage.reverseUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey,reason:error.message});throw error;}
  }};}
 module.exports={POLICIES,wrap};

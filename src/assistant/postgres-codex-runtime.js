@@ -183,8 +183,10 @@ async function run(database,ctx,id,options={}){
    require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image}),
    entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
    database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")]);
-  const units=Number(policy.rows[0].units);
-  await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,retryReversed:true,detail:{operation:'ask',runtime:'codex-sdk-staging'}});
+  const creditPolicy=await require('../commercial/ai-credit-policy').policy(database,scope);
+  const priorCredit=(await database.query("SELECT units,detail FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits' AND idempotency_key=$3",[scope.accountId,ctx.workspaceId,`${ctx.workspaceId}:${fundingKey}`])).rows[0];
+  const units=Number(priorCredit?.units??Number(policy.rows[0].units)*creditPolicy.scale);
+  await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,retryReversed:true,detail:{operation:'ask',runtime:'codex-sdk-staging',creditPolicy:priorCredit?priorCredit.detail?.creditPolicy:creditPolicy}});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
   let result;

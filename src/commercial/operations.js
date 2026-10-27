@@ -25,6 +25,7 @@ async function modelUsage(database,scope,usage,key,detail={}){
 async function begin(database,workspaceId,input){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
  if(!input.key||typeof input.key!=='string')throw new ValidationError('An operation needs its stable usage key.');
  input={...input,key:`${workspaceId}:${input.key}`};
+ if(!input.category&&['outbound_email','reply_email'].includes(input.operation)&&await require('./email-allowance').applies(database,scope))input.category='emails_sent';
  await entitlements.assertCapability(database,scope,input.capability);
  const reservation=await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:input.category||'connected_operations',
   units:input.units||1,idempotencyKey:input.key,retryReversed:input.retryReversed===true,detail:{operation:input.operation}});

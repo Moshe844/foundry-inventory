@@ -38,9 +38,9 @@
 <div class="page-head">
   <div>
     <h1>Purchasing</h1>
-    <p><a href="/supplier-returns">Supplier returns and credits</a></p>
+
     <p class="page-sub">
-      Purchase orders, supplier deliveries and decisions awaiting approval. Ordering advice is shown only when StockChief has evidence for it.
+      Purchase orders, incoming deliveries and decisions awaiting approval.
     </p>
   </div>
   <div class="page-actions">
@@ -279,7 +279,7 @@
         StockChief does not have enough history for these yet, so it cannot say whether they need
         ordering — and it will not guess. Each one says what it is waiting for.
       <% } else if (locals.postgresQuickEntry) { %>
-        No verified order recommendation is recorded here yet. This page does not infer safety from an empty plan.
+        No ordering recommendation is ready yet.
         <a href="/planning">Review measured stock needs</a> or tell StockChief what you want purchased.
       <% } else { %>
         Everything was checked against how fast it sells and what is already on the way. Nothing is below its reorder point.

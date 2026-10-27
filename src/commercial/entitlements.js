@@ -168,10 +168,14 @@ async function meterState(database, scope, meter, options = {}) {
   const {start,end} = periodBounds(subscription,options.now ? new Date(options.now) : new Date());
   const liveQueries={
     workspaces:`SELECT COUNT(*) AS used FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL`,
-    members:`SELECT COUNT(*) AS used FROM users member JOIN workspaces workspace ON workspace.id=member.workspace_id
+    members:`SELECT COUNT(DISTINCT COALESCE(member.account_id,member.id)) AS used FROM users member JOIN workspaces workspace ON workspace.id=member.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     locations:`SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1`,
+    products:`SELECT COUNT(*) AS used FROM items item JOIN workspaces workspace ON workspace.id=item.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND item.is_active=1`,
+    scheduled_reports:`SELECT COUNT(*) AS used FROM stockchief_runtime.report_templates report JOIN workspaces workspace ON workspace.id=report.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND report.deleted_at IS NULL AND report.schedule_frequency<>'none'`,
+    sales_channels:require('./connection-capacity').countQuery('sales_channels'),
+    shipping_accounts:require('./connection-capacity').countQuery('shipping_accounts'),
     connections:`SELECT COUNT(*) AS used FROM workspace_connectors connector JOIN workspaces workspace ON workspace.id=connector.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL
         AND ${require('./connection-capacity').predicate}`,
@@ -183,12 +187,13 @@ async function meterState(database, scope, meter, options = {}) {
       COALESCE(SUM(units) FILTER(WHERE status='RESERVED'),0) AS reserved
       FROM commercial_usage_events WHERE account_id=$1 AND meter=$2 AND occurred_at>=$3 AND occurred_at<$4`,
     [scope.accountId,meter,start.toISOString(),end.toISOString()])).rows[0];used=Number(usage.used);reserved=Number(usage.reserved);}
-  const included = override?.limit_units === null || override?.limit_units === undefined
+  let included = override?.limit_units === null || override?.limit_units === undefined
     ? (policy.included_units === null || policy.included_units === undefined ? null : Number(policy.included_units))
     : Number(override.limit_units);
-  const structural=new Set(['workspaces','members','locations','connections']);
+  const structural=new Set(['workspaces','members','locations','connections','products','scheduled_reports','sales_channels','shipping_accounts']);
   let hardLimit = override&&structural.has(meter)?Number(override.limit_units):
     policy.hard_limit === null || policy.hard_limit === undefined ? null : Number(policy.hard_limit);
+  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(o.units),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND p.meter=$2 AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
   const overageMode=policy.overage_mode||'PAUSE';
   if(!structural.has(meter)&&hardLimit===null&&included!==null&&['PAUSE','PURCHASE'].includes(overageMode))hardLimit=included;
   const overageUnits = included === null ? 0 : Math.max(0,used-included);
@@ -196,11 +201,15 @@ async function meterState(database, scope, meter, options = {}) {
   const capacityUsed=used+reserved;
   if(wallet.CATEGORIES.has(meter)){
     const balances=await wallet.balances(database,scope,meter,{start,end},options.now?new Date(options.now):new Date());
+    if(included===null)return {meter,label:definition.label,definition,used,reserved,capacityUsed,included:null,hardLimit:null,
+      includedUsed:balances.includedUsed,includedReserved:balances.includedReserved,includedRemaining:Number.MAX_SAFE_INTEGER,
+      purchasedRemaining:balances.purchasedRemaining,grants:balances.grants,remaining:null,overageUnits:0,overageAmountMinor:0,periodStart:start,periodEnd:end};
+    const rollover=await require('./rollover').balance(database,scope,meter,{start,end},policy,policy.included_units==null?null:Number(policy.included_units));
     const allowance=included??0;
     const includedRemaining=Math.max(0,allowance-balances.includedUsed-balances.includedReserved);
-    return {meter,label:definition.label,definition,used,reserved,capacityUsed,included:allowance,hardLimit:allowance+balances.purchasedRemaining,
+    return {meter,label:definition.label,definition,used,reserved,capacityUsed,included:allowance,hardLimit:allowance+balances.purchasedRemaining+(rollover?.remaining||0),rollover,
       includedUsed:balances.includedUsed,includedReserved:balances.includedReserved,includedRemaining,
-      purchasedRemaining:balances.purchasedRemaining,grants:balances.grants,remaining:includedRemaining+balances.purchasedRemaining,
+      purchasedRemaining:balances.purchasedRemaining,grants:balances.grants,remaining:includedRemaining+balances.purchasedRemaining+(rollover?.remaining||0),
       overageUnits:0,overageAmountMinor:0,overageMode:'PURCHASE',warningThresholds:[80,95,100],periodStart:start,periodEnd:end};
   }
   return {meter,label:policy.label || definition.label,definition,used,reserved,capacityUsed,included,hardLimit,

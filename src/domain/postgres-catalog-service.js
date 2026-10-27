@@ -48,6 +48,8 @@ async function createItemInTransaction(client, ctx, input) {
         [ctx.workspaceId, baseCode]);
       if (clash.rows.length) throw new ValidationError(`Another item already uses the code ${baseCode}.`, { field: 'baseCode' });
     }
+    const commercialScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
+    await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',1);
     const at = nowIso();
     const itemId = newId('item');
     await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,
@@ -107,6 +109,8 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
   if(normalized.some(i=>['lot','serial'].includes(i.trackingMode)))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['catalog:'+ctx.workspaceId]);
+  const commercialScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
+  await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',normalized.length);
   const candidates=normalized.flatMap(input=>input.variants.map(v=>trimOrNull(v.code)||[codeSlug(input.name),...(v.options||[]).map(p=>codeSlug(p.value))].filter(Boolean).join('-')||'SKU'));
   const existing=new Set((await client.query('SELECT lower(code) AS code FROM skus WHERE workspace_id=$1 AND lower(code)=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(c=>c.toLowerCase()))]])).rows.map(r=>r.code));
   const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
@@ -384,6 +388,10 @@ async function addVariant(database,ctx,itemId,input){
 
 async function setItemActive(database, ctx, itemId, active) {
   return database.transaction(async(client)=>{
+    if(active){
+      const prior=(await client.query('SELECT is_active FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,itemId])).rows[0];
+      if(prior&&!Number(prior.is_active)){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);await entitlements.assertMeterCapacity(client,scope,'products',1);}
+    }
     if(!active){
       const stock=await client.query(`SELECT COALESCE(SUM(balance.on_hand),0) AS total FROM balances balance
         JOIN skus sku ON sku.id=balance.sku_id WHERE balance.workspace_id=$1 AND sku.item_id=$2`,

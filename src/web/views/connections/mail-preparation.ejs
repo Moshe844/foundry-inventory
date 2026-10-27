@@ -1,14 +1,14 @@
-<section class="card" id="reply-preparation-<%= encodeURIComponent(connection.id) %>" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
+<section class="card" <% if(connection){ %>id="reply-preparation-<%= encodeURIComponent(connection.id) %>" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation"<% }else{ %>data-mail-preparation-unconnected<% } %>>
   <div class="card-head"><h3>Let StockChief handle</h3></div>
   <div class="card-body grid">
     <p><strong data-mail-preparation-state><%= mailPreparation.label %></strong></p>
     <p>For new emails from known customers and suppliers, StockChief reads the message and relevant records, then prepares a reply. Review, edit, send or discard it in Mail. Preparation uses your plan’s AI credits.</p>
-    <% if(currentUser.role==='owner'&&mailPreparation.connected){ %>
+    <% if(currentUser.role==='owner'&&connection){ %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="enabled" value="<%= mailPreparation.enabled?'0':'1' %>">
       <input type="hidden" name="returnTo" value="<%= locals.mailPreparationReturn||'' %>">
-      <button class="sc-mail-toggle" type="submit" role="switch" aria-checked="<%= mailPreparation.enabled?'true':'false' %>" <%= !mailPreparation.available&&!mailPreparation.enabled?'disabled':'' %> aria-label="Let StockChief handle replies for <%= connection.provider_account_name||connection.display_name %>"><span aria-hidden="true"></span><b data-mail-preparation-toggle-label><%= mailPreparation.enabled?'On':'Off' %></b></button>
-    </form><% } %>
+      <button class="sc-mail-toggle" type="submit" role="switch" aria-checked="<%= mailPreparation.enabled?'true':'false' %>" <%= (!mailPreparation.available||!mailPreparation.connected)&&!mailPreparation.enabled?'disabled':'' %> aria-label="Let StockChief handle replies for <%= connection.provider_account_name||connection.display_name %>"><span aria-hidden="true"></span><b data-mail-preparation-toggle-label><%= mailPreparation.enabled?'On':'Off' %></b></button>
+    </form><% }else if(!connection){ %><button class="sc-mail-toggle" type="button" role="switch" aria-checked="false" aria-label="Let StockChief handle replies for <%= mailProviderName %>" disabled><span aria-hidden="true"></span><b>Off</b></button><% } %>
     <p class="hint">Existing emails stay as they are. Open one and choose Prepare from verified records when needed. Sending always needs separate approval. Separate supplier-document instructions keep their own approval rules.</p>
     <div aria-live="polite" data-mail-preparation-log>
     <% if(!mailPreparation.entries.length){ %><p>No reply preparation recorded yet.</p><% } %>

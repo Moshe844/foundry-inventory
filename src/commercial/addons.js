@@ -6,21 +6,23 @@ const release=require('./release');
 const stripe=require('./stripe-billing');
 const paidBudget=require('./paid-model-budget');
 const entitlements=require('../entitlements/postgres-service');
-async function packs(database){const rows=(await database.query("SELECT * FROM commercial_usage_packs WHERE status<>'RETIRED' ORDER BY category,units")).rows;
- return Promise.all(rows.map(async pack=>{let funded=false;try{await paidBudget.assertSafePack(database,pack);funded=true;}catch{return {...pack,purchasable:false};}
+async function packs(database,scope=null){const rows=(await database.query("SELECT * FROM commercial_usage_packs WHERE status<>'RETIRED' ORDER BY category,units")).rows;
+ const creditPolicy=scope?await require('./ai-credit-policy').policy(database,scope):null;
+ return Promise.all(rows.map(async pack=>{if(creditPolicy&&pack.category==='ai_work_credits'&&Number(pack.version)>=3&&creditPolicy.scale!==Number(pack.credit_unit_scale||1))return {...pack,purchasable:false,termsReviewRequired:true};let funded=false;try{await paidBudget.assertSafePack(database,pack);funded=true;}catch{return {...pack,purchasable:false};}
   return {...pack,purchasable:funded&&pack.status==='APPROVED'&&Boolean(pack.stripe_price_id)};}));}
 async function topups(database,scope){await wallet.assertScope(database,scope);return (await database.query(
  'SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2',[scope.accountId,scope.workspaceId])).rows;}
 async function packFor(database,id,options){const pack=(await database.query('SELECT * FROM commercial_usage_packs WHERE id=$1',[id])).rows[0];
  if(!pack||pack.status!=='APPROVED'&&!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('This usage pack is provisional and cannot be purchased.');
  if(!pack.stripe_price_id)throw new ValidationError('The usage pack has no configured Stripe price.');
- await paidBudget.assertSafePack(database,pack);return pack;}
+ await paidBudget.assertSafePack(database,pack);if(options.scope&&pack.category==='ai_work_credits'&&Number(pack.version)>=3&&(await require('./ai-credit-policy').policy(database,options.scope)).scale!==Number(pack.credit_unit_scale||1))throw new ValidationError('Review and accept the updated plan terms before buying this AI pack.');return pack;}
 async function beginPurchase(database,scope,input,options={}){
- await release.assertCheckoutOpen(database,options);await wallet.assertScope(database,scope);
+ await release.assertSubscriptionCheckoutOpen(database,options);await wallet.assertScope(database,scope);
  if(!scope.workspaceId)throw new ValidationError('Choose the inventory receiving this usage pack.');
  const subscription=await entitlements.subscriptionFor(database,scope.accountId);
  if(!subscription?.stripe_customer_id||!entitlements.operationalAccess(subscription).canOperate)throw new ValidationError('An operational subscription is required to purchase additional usage.');
- const pack=await packFor(database,input.packId,options);
+ const pack=await packFor(database,input.packId,{...options,scope});
+ if(pack.category==='ai_work_credits'&&Number(pack.version)>=3&&(await require('./ai-credit-policy').policy(database,scope)).scale!==Number(pack.credit_unit_scale||1))throw new ValidationError('This pack uses the updated plan credit definition. Review and accept the updated plan terms before buying it.');
  const billingProvider=options.provider||stripe;
  if(typeof billingProvider.retrievePrice==='function'){
   const remote=await billingProvider.retrievePrice(pack.stripe_price_id,options.providerOptions||{});
@@ -36,11 +38,11 @@ async function beginPurchase(database,scope,input,options={}){
    [scope.accountId,input.idempotencyKey])).rows[0];
   if(prior){if(prior.pack_id!==pack.id||prior.workspace_id!==scope.workspaceId)throw new ValidationError('That purchase key was already used for another pack.');return prior;}
   return (await client.query(`INSERT INTO commercial_usage_purchases(id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key,
-   provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'MANUAL',$9,$10,$11,$12,$13,$14::jsonb) RETURNING *`,[newId('purchase'),scope.accountId,scope.workspaceId,pack.id,pack.category,
+   provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling,max_provider_cost_share,credit_unit_scale)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'MANUAL',$9,$10,$11,$12,$13,$14::jsonb,$15,$16) RETURNING *`,[newId('purchase'),scope.accountId,scope.workspaceId,pack.id,pack.category,
    pack.units,pack.amount_minor,pack.currency,input.idempotencyKey,pack.provider_cost_budget_minor,
    pack.conservative_cost_per_credit_minor,pack.cost_model_key,pack.cost_budget_source,
-   JSON.stringify(pack.approved_model_rate_ceiling)])).rows[0];
+   JSON.stringify(pack.approved_model_rate_ceiling),pack.max_provider_cost_share,pack.credit_unit_scale||1])).rows[0];
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(['PAID','REFUNDED','REVIEW','EXPIRED'].includes(purchase.status))return {purchase,url:`${input.origin}/billing`};
  const session=await billingProvider.createAddonCheckout({purchaseId:purchase.id,accountId:scope.accountId,
@@ -53,7 +55,7 @@ async function saveTopup(database,scope,input,options={}){
  await wallet.assertScope(database,scope);if(!wallet.CATEGORIES.has(input.category)||!scope.workspaceId)throw new ValidationError('Choose an inventory and usage category.');
  const enabled=input.enabled===true;let pack=null;let paymentMethodId=null;
  const cap=Number(input.monthlyCapMinor||0);if(!Number.isSafeInteger(cap)||cap<0)throw new ValidationError('Enter a valid monthly spending cap.');
- if(enabled){await release.assertCheckoutOpen(database,options);pack=await packFor(database,input.packId,options);
+ if(enabled){await release.assertCheckoutOpen(database,options);pack=await packFor(database,input.packId,{...options,scope});
   if(pack.category!==input.category||cap<Number(pack.amount_minor)||input.explicitConsent!==true)throw new ValidationError('Explicit consent and a cap covering at least one selected pack are required.');
   const subscription=await entitlements.subscriptionFor(database,scope.accountId);const provider=options.provider||stripe;
   if(!subscription?.stripe_subscription_id||!entitlements.operationalAccess(subscription).canOperate)
@@ -79,7 +81,7 @@ async function runTopup(database,scope,category,options={}){
   const settings=(await client.query('SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2 AND category=$3 FOR UPDATE',
    [scope.accountId,scope.workspaceId,category])).rows[0];if(!settings?.enabled)return null;
   const state=await entitlements.meterState(client,scope,category);if(state.included<=0||state.remaining>=state.included*.1)return null;
-  const pack=await packFor(client,settings.pack_id,options);
+  const pack=await packFor(client,settings.pack_id,{...options,scope});
   const spending=(await client.query(`SELECT COALESCE(SUM(amount_minor),0) AS spent,
   COUNT(*) FILTER(WHERE status IN ('CREATED','OPEN','REVIEW','FAILED')) AS pending FROM commercial_usage_purchases
    WHERE account_id=$1 AND workspace_id=$2 AND category=$3 AND kind='AUTO' AND created_at>=date_trunc('month',now())`,
@@ -88,11 +90,11 @@ async function runTopup(database,scope,category,options={}){
   const sub=await entitlements.subscriptionFor(client,scope.accountId);if(!entitlements.operationalAccess(sub).canOperate)return null;
   const id=newId('topup');const purchase=(await client.query(`INSERT INTO commercial_usage_purchases
    (id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key,
-    provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'AUTO',$1,$9,$10,$11,$12,$13::jsonb) RETURNING *`,[id,scope.accountId,scope.workspaceId,pack.id,category,
+    provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling,max_provider_cost_share,credit_unit_scale)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'AUTO',$1,$9,$10,$11,$12,$13::jsonb,$14,$15) RETURNING *`,[id,scope.accountId,scope.workspaceId,pack.id,category,
    pack.units,pack.amount_minor,pack.currency,pack.provider_cost_budget_minor,
    pack.conservative_cost_per_credit_minor,pack.cost_model_key,pack.cost_budget_source,
-   JSON.stringify(pack.approved_model_rate_ceiling)])).rows[0];return {purchase,settings,sub};
+   JSON.stringify(pack.approved_model_rate_ceiling),pack.max_provider_cost_share,pack.credit_unit_scale||1])).rows[0];return {purchase,settings,sub};
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(!created)return {triggered:false};
  try{const intent=await (options.provider||stripe).createTopupPayment({purchaseId:created.purchase.id,accountId:scope.accountId,

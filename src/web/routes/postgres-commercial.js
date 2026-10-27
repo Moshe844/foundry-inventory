@@ -61,7 +61,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
+    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:(await addons.packs(database)).filter(p=>Number(p.version)===3),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled'});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
@@ -97,11 +97,16 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       WHERE change.account_id=$1 AND change.status='PENDING' ORDER BY change.created_at DESC`,[scope.accountId])).rows;
     let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
       invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
-    return res.page('commercial/billing',{title:'Plan & Usage',nav:'settings',room:true,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
+    return res.page('commercial/billing',{title:'Plan & billing',nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
-      packs:await addons.packs(database),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
+      capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
+      packs:await addons.packs(database,scope),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
-      checkoutOpen:await release.isOpen(database)});}));
+      checkoutOpen:await release.isSubscriptionCheckoutOpen(database),usageCheckoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
+  router.get('/billing/terms',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>res.page('commercial/plan-terms',{title:'Review plan terms',nav:'settings',room:true,terms:await require('../../commercial/plan-terms').review(database,req.account.id)})));
+  router.post('/billing/terms',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{await require('../../commercial/plan-terms').accept(database,req.account.id,req.body);req.flash('success','Updated allowances accepted. Subscription price, billing dates, existing usage and records are unchanged.');res.redirect(303,'/billing');}));
+  router.post('/billing/capacity',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{const result=await require('../../commercial/capacity-addons').begin(database,commercialScope(req),{productId:req.body.productId,quantity:req.body.quantity,idempotencyKey:req.body.purchaseKey,origin:options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)},{provider,providerOptions:options.providerOptions,testMode:options.testMode});res.redirect(303,result.url);}));
+  router.post('/billing/capacity/:id/cancel',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{await require('../../commercial/capacity-addons').cancel(database,req.account.id,req.params.id,{provider,providerOptions:options.providerOptions});req.flash('success','This add-on will stop at its next renewal. Existing records stay in place.');res.redirect(303,'/billing');}));
   router.post('/billing/buy-more',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const result=await addons.beginPurchase(database,commercialScope(req),{packId:req.body.packId,idempotencyKey:req.body.purchaseKey,
       origin:options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)},
@@ -125,10 +130,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.post('/billing/checkout',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const origin=options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin);
-    require('../../commercial/launch-interval').assertMonthly(req.body.interval);
+    const interval=require('../../commercial/launch-interval').assertInterval(req.body.interval).toLowerCase();
     if(current?.stripe_customer_id&&current?.stripe_subscription_id&&!current.refunded_at)return res.redirect(303,
-      `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=monthly`);
-    req.session.checkoutSelection={planId:req.body.planId,interval:'monthly'};await saveSession(req);
+      `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=${interval}`);
+    req.session.checkoutSelection={planId:req.body.planId,interval};await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
       promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
     await commercial.track(database,{eventName:'billing_checkout_started',accountId:req.account.id,planId:req.body.planId,

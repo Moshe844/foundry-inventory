@@ -70,8 +70,10 @@ async function syncInvoice(db,job,options={}){
  const invoice=await provider.retrieveInvoice(job.payload.invoiceId,api);
  const subscription=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[job.payload.accountId])).rows[0];
  const id=value=>typeof value==='string'?value:value?.id;
+ const invoiceSubscription=id(invoice.subscription||invoice.parent?.subscription_details?.subscription);
+ const capacity=(await db.query('SELECT id FROM commercial_capacity_orders WHERE account_id=$1 AND stripe_customer_id=$2 AND stripe_subscription_id=$3',[job.payload.accountId,id(invoice.customer),invoiceSubscription])).rows[0];
  if(invoice.id!==job.payload.invoiceId||id(invoice.customer)!==subscription?.stripe_customer_id||
-   id(invoice.subscription||invoice.parent?.subscription_details?.subscription)!==subscription?.stripe_subscription_id)
+   invoiceSubscription!==subscription?.stripe_subscription_id&&!capacity)
   throw Error('Stripe invoice reconciliation ownership mismatch');
  const payments=await provider.listInvoicePayments(invoice.id,api);const intents=[];let cash=0;let complete=invoice.status==='paid';
  for(const payment of payments){if(payment.status!=='paid')continue;
