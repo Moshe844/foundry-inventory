@@ -40,8 +40,12 @@ async function startCluster() {
   await new Promise((resolve, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', resolve); });
   const port = socket.address().port;
   await new Promise((resolve) => socket.close(resolve));
+  // The fixture uses TCP only. Distribution defaults can point Unix sockets
+  // at a system directory that an unprivileged CI runner cannot write.
+  const options = `-h 127.0.0.1 -p ${port}`
+    + (process.platform === 'win32' ? '' : ' -c unix_socket_directories=');
   run('pg_ctl', ['-D', data, '-l', path.join(directory, 'postgres.log'), '-w', '-t', '30',
-    '-o', `-h 127.0.0.1 -p ${port}`, 'start']);
+    '-o', options, 'start']);
   let stopped = false;
   return { directory, connectionString: `postgresql://stockchief_fixture:${password}@127.0.0.1:${port}/postgres?sslmode=disable`,
     stop: () => {
@@ -51,6 +55,9 @@ async function startCluster() {
       cleanup();
     } };
   } catch (error) {
+    const log = path.join(directory, 'postgres.log');
+    if (fs.existsSync(log)) error.message += '\nFixture PostgreSQL: '
+      + fs.readFileSync(log, 'utf8').split('\n').slice(-12).join('\n');
     if (fs.existsSync(path.join(data, 'postmaster.pid'))) run('pg_ctl', ['-D', data, '-m', 'fast', '-w', '-t', '180', 'stop']);
     cleanup();
     throw error;
