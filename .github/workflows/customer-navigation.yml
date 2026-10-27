@@ -30,6 +30,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: |
           mkdir -p output/customer-navigation-ci
+          set -euo pipefail
           npm run test:customer-navigation 2>&1 | tee output/customer-navigation-ci/test.log
       - uses: actions/upload-artifact@v4
         if: always()
