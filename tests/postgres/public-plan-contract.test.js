@@ -4,6 +4,10 @@ test('Published plan allowances govern the actual canonical services',{timeout:2
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
  const ent=require('../../src/commercial/entitlements'),scope={accountId:f.owner.accountId,workspaceId:ctx.workspaceId};
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES('public-plan',$1,'starter','COMP','MONTHLY','ISOLATED_TEST')",[scope.accountId]);
+ await t.test('a terms review without saved comparable terms stays read-only and cannot change the plan',async()=>{
+  const service=require('../../src/commercial/plan-terms'),review=await service.review(db,scope.accountId);assert.equal(review.canAccept,false);assert.match(review.reason,/saved terms/);
+  await assert.rejects(()=>service.accept(db,scope.accountId,{confirm:'1'}),/saved terms/);assert.equal((await ent.subscriptionFor(db,scope.accountId)).plan_version_id,null);
+ });
  await t.test('reference limits are real and annual is exactly ten monthly payments',async()=>{
   for(const [id,credits,emails,users,locations,products]of [['starter',3000,1000,3,2,5000],['growth',10000,10000,10,10,50000],['pro',25000,50000,25,null,250000]]){
    await db.query('UPDATE account_subscriptions SET plan_id=$2 WHERE account_id=$1',[scope.accountId,id]);
@@ -64,6 +68,8 @@ test('Published plan allowances govern the actual canonical services',{timeout:2
   await reports.save(db,ctx,actor,{dataset:'stock',title:'Replacement',columns:['sku','on_hand']},{schedule:{frequency:'daily',hour:8}});
  });
  await t.test('only unused included AI credits carry for one month and carry is consumed first',async()=>{
+  const auth=require('../../src/domain/postgres-auth-service'),{randomUUID}=require('node:crypto'),fresh=await auth.createBusiness(db,{name:'Rollover owner',businessName:'Chronological rollover fixture',email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()}),scope={accountId:fresh.accountId,workspaceId:fresh.workspaceId};
+  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source,current_period_start,current_period_end) VALUES($1,$2,'starter','monthly-offer-2026-10-27:starter','COMP','MONTHLY','ISOLATED_ROLLOVER','2026-08-01','2026-09-01')",[randomUUID(),scope.accountId]);
   await db.query("UPDATE account_subscriptions SET current_period_start='2026-08-01',current_period_end='2026-09-01' WHERE account_id=$1",[scope.accountId]);
   assert.equal((await ent.meterState(db,scope,'ai_work_credits',{now:'2026-08-15T12:00:00Z'})).rollover.units,0);
   await ent.reserveUsage(db,scope,{meter:'ai_work_credits',units:300,idempotencyKey:'august-included',occurredAt:'2026-08-15T12:00:00Z'});await ent.commitUsage(db,scope,{meter:'ai_work_credits',idempotencyKey:'august-included'});

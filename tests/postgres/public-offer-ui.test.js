@@ -22,5 +22,8 @@ test('Pricing, annual signup and billing show the same real plan contract',{time
   await page.goto(base+'/verify-email?token='+encodeURIComponent(token));await page.getByRole('button',{name:'Verify and continue',exact:true}).click();await page.waitForURL(base+'/complete-signup');assert.equal(await page.locator('[name=interval]').inputValue(),'annual');assert.equal(await page.getByLabel('Plan',{exact:true}).inputValue(),'starter');
   await Promise.all([page.waitForURL('https://billing.example.test/checkout'),page.getByRole('button',{name:'Continue to secure checkout',exact:true}).click()]);assert.equal(submitted.priceId,'price_offer_annual_fixture');assert.equal(submitted.trialDays,0);assert.equal((await db.query('SELECT count(*)::int n FROM workspaces WHERE owner_account_id=$1',[account.id])).rows[0].n,0);
  });
+ await t.test('billing terms without an active subscription show a recovery page instead of an error',async()=>{
+  await context.clearCookies();await page.goto(base+'/login');await page.getByLabel('Work email',{exact:true}).fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);const response=await page.goto(base+'/billing/terms');assert.equal(response.status(),200);assert.match(await page.locator('main').innerText(),/Choose a subscription/);assert(await page.getByRole('link',{name:'Compare plans',exact:true}).isVisible());assert.equal(await page.locator('form[action="/billing/terms"]').count(),0);
+ });
  assert.deepEqual(errors,[]);t.diagnostic(JSON.stringify({actualBrowser:true,actualPostgreSQL:true,simulatedBilling:true,emailsSent:0,paidCalls:0,newWorkspaceWithoutPayment:false}));
 });
