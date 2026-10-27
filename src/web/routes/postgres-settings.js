@@ -108,7 +108,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,workspace:req.workspace,
+  return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,workspace:req.workspace,
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -146,10 +146,10 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     return res.redirect(303,'/onboarding');
   }));
   router.get('/operating-instructions/:id',requireAuth,asyncRoute(async(req,res)=>{const proposal=await operatingInstructions.get(
-    database,req.ctx.workspaceId,req.params.id);const fromAsk=req.query.from==='ask';const nativeGoal=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);return res.page('settings/postgres-operating-instruction',{
+    database,req.ctx.workspaceId,req.params.id);const fromAsk=req.query.from==='ask';const nativeGoal=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);const notificationLog=proposal.resolvedChanges.some(c=>c.notificationChannel==='email')?(await database.query(`SELECT d.status,d.last_error,d.created_at,d.communication_kind,d.communication_id,coalesce(s.status,c.status) AS message_status,coalesce(s.sent_at,c.sent_at) AS sent_at FROM stockchief_runtime.stock_threshold_deliveries d JOIN stockchief_runtime.stock_threshold_rules r ON r.workspace_id=d.workspace_id AND r.id=d.rule_id LEFT JOIN supplier_communications s ON s.workspace_id=d.workspace_id AND s.id=d.communication_id AND d.communication_kind='supplier' LEFT JOIN customer_communications c ON c.workspace_id=d.workspace_id AND c.id=d.communication_id AND d.communication_kind='customer' WHERE d.workspace_id=$1 AND r.notification_settings->>'approvalId'=$2 ORDER BY d.created_at DESC LIMIT 30`,[req.ctx.workspaceId,proposal.id])).rows:[];return res.page('settings/postgres-operating-instruction',{
       title:'Review standing instruction',nav:'settings',room:true,
       backTo:fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
-      fromAsk,proposal,nativeGoal,editProposal:req.query.edit==='1',descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
+      fromAsk,proposal,nativeGoal,notificationLog,editProposal:req.query.edit==='1',descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);
     if(native){req.flash('success','Continue this instruction in Ask so its original goal and approvals stay together.');return res.redirect(303,'/ask?goal='+encodeURIComponent(native.id)+'#focused-goal');}

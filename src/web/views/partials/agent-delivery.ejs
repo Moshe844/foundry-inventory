@@ -2,13 +2,13 @@
   <div class="rm-agent__delivery" data-delivery-id="<%= delivery.id %>">
     <% for(const work of delivery.workProducts){ %>
       <article class="rm-agent__work" aria-label="<%= work.title %>">
-        <div class="rm-agent__work-header"><h3><%= work.title %></h3><span class="rm-agent__saved">Saved in this conversation</span></div>
+        <div class="rm-agent__work-header"><h3><%= work.title %></h3><span class="rm-agent__saved"></span></div>
         <div class="rm-agent__work-content rm-agent__answer"><%- renderAgentAnswer(work.content) %></div>
-        <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/goals/<%= encodeURIComponent(goal.id) %>/work/<%= work.id %>" download>Save a copy</a>
+        <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/goals/<%= encodeURIComponent(goal.id) %>/work/<%= work.id %>" download>Download</a>
       </article>
     <% } %>
     <% if(delivery.workProducts.length){ %>
-      <button type="button" class="rm-btn rm-btn--ghost rm-btn--sm" data-work-continuation data-source-goal="<%= goal.id %>" data-delivery-id="<%= delivery.id %>">Continue with this work</button>
+      <button type="button" class="rm-btn rm-btn--ghost rm-btn--sm" data-work-continuation data-source-goal="<%= goal.id %>" data-delivery-id="<%= delivery.id %>">Use this result</button>
     <% } %>
     <% if(delivery.nextActions.length){ %>
       <div class="rm-agent__next"><p><strong>What would you like to do next?</strong></p><div class="rm-agent__next-actions">

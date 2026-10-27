@@ -328,14 +328,19 @@ function createPostgresAskRouter(database,options={}){
       labels:history.labels,renderAgentAnswer:require('../public/agent-answer').render});
   }));
   router.get('/ask',asyncRoute(async(req,res)=>{
+    if(typeof req.query.fresh==='string'&&req.query.fresh.length<=80&&req.session.postgresAskPanelToken!==req.query.fresh){
+      req.session.postgresAskStartedAt=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;req.session.postgresAskConversationId=newId('chat');req.session.postgresAskPanelToken=req.query.fresh;req.session.postgresAskNavigationGoal=null;delete req.session.askSubmission;
+    }
     const remembered=req.session.postgresAskPageContext;
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
       ?remembered.path:req.query.from;
     if(typeof req.query.chat==='string'){const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,req.query.chat);req.session.postgresAskConversationId=req.query.chat;req.session.postgresAskStartedAt=new Date(new Date(owned.created_at).getTime()-1).toISOString();}
+    if(!req.session.postgresAskConversationId)req.session.postgresAskConversationId=newId('chat');
+    req.session.postgresAskChatBoundaries||={};req.session.postgresAskChatBoundaries[req.session.postgresAskConversationId]={workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,startedAt:req.session.postgresAskStartedAt||null};for(const key of Object.keys(req.session.postgresAskChatBoundaries).slice(0,-100))delete req.session.postgresAskChatBoundaries[key];
     const startedAt=req.session.postgresAskStartedAt||null;
     const [sourcePage,interactions,nameRows,pilotView]=await Promise.all([
       require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,requestedPath),
-      assistant.listInteractions(database,req.ctx.workspaceId,100,{actorId:req.ctx.actorId,startedAt}),
+      assistant.listInteractions(database,req.ctx.workspaceId,500,{actorId:req.ctx.actorId,startedAt,conversationId:req.session.postgresAskConversationId||null}),
       database.query(`SELECT name FROM suppliers WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
         UNION SELECT name FROM customers WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
         UNION SELECT name FROM items WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
@@ -413,8 +418,8 @@ function createPostgresAskRouter(database,options={}){
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
-      prefill:String(req.query.q||'').slice(0,2000),
-      conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
+      autoSend:req.query.send==='1',prefill:String(req.query.q||'').slice(0,2000),
+      conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,currentChatId:req.session.postgresAskConversationId,
       aiConfigured:Boolean(options.provider||config.ai.configured||nativeServiceSelected||options.agentInspection&&activeGoal?.checkpoint.runtime==='codex-staging'),usageKey:newId('askusage'),
       sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
       continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
@@ -434,6 +439,8 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask');
   }));
   async function runAsk(req){
+    if(req.body.chatId){const id=String(req.body.chatId),saved=req.session.postgresAskChatBoundaries?.[id];let boundary;if(saved?.workspaceId===req.ctx.workspaceId&&saved.actorId===req.ctx.actorId)boundary=saved.startedAt;else {const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,id);boundary=new Date(new Date(owned.created_at).getTime()-1).toISOString();}req.session.postgresAskConversationId=id;req.session.postgresAskStartedAt=boundary;}
+
     if(!req.session.postgresAskConversationId)req.session.postgresAskConversationId=newId('chat');
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
     const files=(req.files||[]).filter((entry)=>entry.field==='file'&&entry.size>0);
@@ -449,6 +456,7 @@ function createPostgresAskRouter(database,options={}){
         usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }
+    if(require('../../assistant/direct-business-reads').standalone(req.body.message)){req.body.continueGoalId='';req.body.continueInteractionId='';}
     if(req.body.continueGoalId){
       const id=String(req.body.continueGoalId),existing=await goalStore.get(database,req.ctx,id);
       if(existing?.checkpoint.runtime!=='codex-staging')throw new ValidationError('That agent question is no longer available.');
@@ -473,7 +481,7 @@ function createPostgresAskRouter(database,options={}){
       background:goalStore.enabled(req.ctx),
       usageKey:String(req.body.usageKey||newId('askusage')),
       page,conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null,
-      continueInteractionId:String(req.body.continueInteractionId||'')});
+      newRequest:require('../../assistant/direct-business-reads').standalone(req.body.message),continueInteractionId:String(req.body.continueInteractionId||'')});
     req.session.postgresAskNavigationGoal=result.goalId||null;
     return result;
   }
@@ -490,7 +498,8 @@ function createPostgresAskRouter(database,options={}){
   router.post('/ask',asyncRoute(async(req,res)=>{
     const result=await submitAsk(req);
     if(!result)return res.redirect(303,'/ask#submission-problem');
-    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
+    if(req.get('accept')?.includes('application/json'))return res.json({destination:result.navigation?.href||(result.goalId?'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'&goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'#latest'),navigation:Boolean(result.navigation),interactionId:result.interactionId||null});
+    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'&goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'#latest'));
   }));
   router.post('/ask/email/continue',asyncRoute(async(req,res)=>{
     await assistant.continueEmail(database,req.ctx,req.body,{provider:options.provider,
@@ -520,7 +529,8 @@ function createPostgresAskRouter(database,options={}){
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
     const result=await submitAsk(req);
     if(!result)return res.redirect(303,'/ask#submission-problem');
-    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
+    if(req.get('accept')?.includes('application/json'))return res.json({destination:result.navigation?.href||(result.goalId?'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'&goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'#latest'),navigation:Boolean(result.navigation),interactionId:result.interactionId||null});
+    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'&goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask?chat='+encodeURIComponent(req.session.postgresAskConversationId)+'#latest'));
   }));
   router.post('/ask/leave-the-rest',asyncRoute(async(req,res)=>{
     delete req.session.assistantQueue;

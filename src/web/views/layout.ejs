@@ -102,6 +102,7 @@
   </main>
 </div>
 <% if(workspace&&nav!=='ask'){ %><dialog class="sc-ask-panel" data-ask-panel aria-label="Ask StockChief"><header><strong>Ask StockChief</strong><button type="button" class="btn btn--ghost" data-close-ask>Close</button></header><iframe title="Ask StockChief conversation" data-embedded-ask="true"></iframe></dialog><% } %>
+<script src="/ask-request-kind.js?v=<%= assetVersion %>" defer></script>
 <script src="/product-shell.js?v=<%= assetVersion %>" defer></script>
 <script src="/table-overflow.js?v=<%= assetVersion %>" defer></script>
 <script src="/local-time.js?v=<%= assetVersion %>" defer></script>

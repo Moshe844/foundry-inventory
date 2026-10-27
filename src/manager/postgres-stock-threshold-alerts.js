@@ -5,7 +5,8 @@ const {newId,nowIso}=require('../lib/util');
 /** Evaluate approved stock-alert rules against their exact recorded stock measure.
  * This runs in the PostgreSQL worker, independently of Ask and even while
  * autonomous purchasing is paused. One crossing creates one owner alert. */
-async function evaluate(database,{workspaceId=null}={}){
+async function evaluate(database,options={}){if(typeof database.transaction==='function')return database.transaction(client=>evaluateInTransaction(client,options),{isolation:'SERIALIZABLE',retrySafe:true});return evaluateInTransaction(database,options);}
+async function evaluateInTransaction(database,{workspaceId=null}={}){
   const result=await database.query(`SELECT r.*,s.code,i.id AS item_id,i.name AS item_name,
       l.name AS location_name
     FROM stockchief_runtime.stock_threshold_rules r
@@ -47,6 +48,7 @@ async function evaluate(database,{workspaceId=null}={}){
     const comparison=comparator==='below'?'below':'at or below';
     const fingerprint=`stock-threshold:${rule.id}`;const at=nowIso();
     if(triggered&&rule.armed){
+      const claimed=(await database.query('UPDATE stockchief_runtime.stock_threshold_rules SET armed=FALSE,crossing_version=crossing_version+1,updated_at=$2 WHERE id=$1 AND armed=TRUE RETURNING crossing_version',[rule.id,at])).rows[0];if(!claimed)continue;rule.crossing_version=claimed.crossing_version;
       const place=rule.location_name?` at ${rule.location_name}`:'';
       const title=`${rule.item_name}${place} reached ${observed} ${label}`;
       await database.query(`INSERT INTO attention_items
@@ -68,8 +70,7 @@ async function evaluate(database,{workspaceId=null}={}){
         JSON.stringify([{fact:metric,value:observed},{fact:'on_hand',value:onHand},
           {fact:'committed',value:committed},{fact:'threshold',value:threshold}]),
         JSON.stringify({metric,comparator,observed,onHand,committed,threshold}),at]);
-      await database.query(`UPDATE stockchief_runtime.stock_threshold_rules SET armed=FALSE,updated_at=$2
-        WHERE id=$1 AND armed=TRUE`,[rule.id,at]);alerted+=1;
+      await require('./stock-rule-notifications').record(database,rule,{product:rule.item_name,sku:rule.code,quantity:observed,threshold,location:rule.location_name||'Whole business',measure:label});alerted+=1;
     }else if(!triggered&&!rule.armed){
       await database.query(`UPDATE stockchief_runtime.stock_threshold_rules SET armed=TRUE,updated_at=$2
         WHERE id=$1 AND armed=FALSE`,[rule.id,at]);
@@ -85,7 +86,7 @@ async function evaluate(database,{workspaceId=null}={}){
       last_evaluated_at=$3,last_evaluation=$4::jsonb WHERE workspace_id=$1 AND id=$2`,
     [rule.workspace_id,rule.id,at,JSON.stringify({version:1,metric,comparator,observed,onHand,committed,threshold,conditionMet:triggered})]);
   }
-  return {checked:result.rows.length,alerted,rearmed};
+  const notifications=await require('./stock-rule-notifications').drain(database,{workspaceId});return {checked:result.rows.length,alerted,rearmed,notifications};
 }
 
 module.exports={evaluate};

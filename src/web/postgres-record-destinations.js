@@ -60,8 +60,8 @@ async function resolve(database,ctx,kind,reference){
   const query=String(reference||'').trim();if(!query)return {missing:true};
   const source=`(${contract.sql}) AS candidate`;
   const exact=(await database.query(`SELECT * FROM ${source}
-    WHERE lower(id)=lower($2) OR lower(title)=lower($2) ORDER BY title LIMIT 9`,
-  [ctx.workspaceId,query])).rows;
+    WHERE lower(id)=lower($2) OR lower(title)=lower($2) OR lower(regexp_replace(title,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($3) ORDER BY title LIMIT 9`,
+  [ctx.workspaceId,query,require('../domain/postgres-search-service').compactReference(query)])).rows;
   const found=exact.length?exact:(await database.query(`SELECT * FROM ${source}
     WHERE strpos(lower(title),lower($2))>0 ORDER BY title LIMIT 9`,
   [ctx.workspaceId,query])).rows;

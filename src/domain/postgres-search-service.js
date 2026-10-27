@@ -3,7 +3,7 @@
 const TYPE_LABEL={item:'Product',sku:'Product',variant:'Variant',serial:'Unit',lot:'Batch',location:'Location',
   supplier:'Supplier',purchase_order:'Purchase order',customer:'Customer',sales_order:'Sales order'};
 
-async function search(database,workspaceId,rawTerm,{limit=25}={}){
+async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}){
   const term=String(rawTerm||'').trim().slice(0,200),short=compactReference(term);if(!term)return {term,results:[],total:0};
   const result=await database.query(`WITH matches AS (
     SELECT CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
@@ -53,10 +53,11 @@ async function search(database,workspaceId,rawTerm,{limit=25}={}){
       '/sales/orders/'||sales.id,CASE WHEN lower(sales.order_number)=lower($2) THEN 125 ELSE 65 END
     FROM sales_orders sales JOIN customers customer ON customer.id=sales.customer_id
     WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR lower(regexp_replace(sales.order_number,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($4) OR customer.name ILIKE '%'||$2||'%')
-  ) SELECT * FROM matches ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short]);
+  ), ranked AS (SELECT matches.*,row_number() OVER (PARTITION BY type ORDER BY score DESC,title,id) AS group_position FROM matches) SELECT * FROM ranked WHERE ($5::int IS NULL OR group_position<=$5) ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short,groupLimit==null?null:Math.min(100,Math.max(1,Number(groupLimit)||8))]);
   if(result.rows.length<limit&&term.length>=4){const prefix=term.toLowerCase().slice(0,2),near=(await database.query(`SELECT s.id,'sku' AS type,i.name AS title,'Product · '||s.code AS subtitle,'' AS meta,'/inventory/'||i.id||'#sku-'||s.id AS href,s.code FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (i.name ILIKE $2||'%' OR i.name ILIKE '% '||$2||'%' OR s.code ILIKE $2||'%') ORDER BY abs(length(i.name)-length($3)),i.name,s.id LIMIT 300`,[workspaceId,prefix,term])).rows;const known=new Set(result.rows.map(r=>r.id));for(const r of near){const distance=Math.min(editDistance(term.toLowerCase(),r.title.toLowerCase()),editDistance(term.toLowerCase(),r.code.toLowerCase()),...r.title.toLowerCase().split(/\s+/).map(word=>editDistance(term.toLowerCase(),word)));if(distance<=Math.min(2,Math.floor(term.length/4))&&!known.has(r.id)){result.rows.push({...r,score:40-distance});known.add(r.id);}}result.rows.sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title));result.rows=result.rows.slice(0,limit);}
   const results=result.rows.map((row)=>({...row,typeLabel:TYPE_LABEL[row.type]||row.type,score:Number(row.score)}));
-  return {term,results,total:results.length};
+  const exact=results.filter(row=>['sku','variant'].includes(row.type)&&row.score===120);
+  return {term,results:exact.length?exact:results,total:exact.length||results.length,exactSku:exact.length===1};
 }
 
 function compactReference(value){const m=/^([a-z]+)[- ]*([0-9]+)$/i.exec(value);return m?m[1]+'-'+m[2].replace(/^0+(?=\d)/,''):value;}

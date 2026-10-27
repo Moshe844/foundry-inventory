@@ -26,6 +26,7 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   notificationThreshold:{type:'integer'},
   notificationMetric:{type:'string',enum:['','on_hand','available_to_fulfill'],description:'For stock_alert, physical stock means on_hand; stock after customer commitments means available_to_fulfill. The exact requested measure is required.'},
   notificationComparator:{type:'string',enum:['','below','at_or_below'],description:'For stock_alert, below is strictly less than the threshold; at_or_below includes equality. Preserve the requested comparison.'},
+  notificationChannel:{type:'string',enum:['','needs_you','email']},notificationRecipient:{type:'string'},notificationRecipientKind:{type:'string',enum:['','supplier','customer']},notificationMailbox:{type:'string'},notificationSubject:{type:'string',maxLength:200},notificationBody:{type:'string',maxLength:6000},
   capabilityName:{type:'string',enum:['',...capabilityDefinitions.NAMES]}}};
 const SCHEMA={type:'object',additionalProperties:false,required:['understood','summary','changes','clarifyingQuestion','unsupportedReason'],
   properties:{understood:{type:'boolean'},summary:{type:'string'},changes:{type:'array',minItems:0,maxItems:12,items:CHANGE_SCHEMA},
@@ -51,7 +52,7 @@ The listed effects are hypothetical post-approval effects, NOT currently active 
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
 notification channel or timing. A requested prohibition is satisfied only if no proposed effect violates it.
 Replenishment recommendations do not notify the owner. If the owner requested a stock warning or alert,
-the effects need a separate Needs You stock_alert; a reorder point alone is not equivalent.
+the effects need a separate stock_alert with the requested delivery channel; a reorder point alone is not equivalent. Explicit recurring email must retain its approved contact, sender and message. Needs You alone does not satisfy an email request.
 The effects are authoritative descriptions of the business engines, not suggestions. Do not infer an
 additional effect from the owner's intent. The resolvedEntities mapping is verified by this workspace's
 database: a supplied SKU code and its product display name identify the SAME record, not different targets.
@@ -66,7 +67,7 @@ Preparing a rule for approval is the normal workflow: extract its intended chang
 An omitted location means the rule applies across this inventory; do not ask which location unless the owner explicitly refers to one ambiguously. Set clarifyingQuestion only when a required fact is missing or the requested effect is semantically ambiguous, not to seek an optional narrower scope.
 Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority. If the owner names a location, retain that location as the rule's scope. If one instruction requests both a reorder target and a Needs You warning, return separate replenishment and stock_alert changes; neither effect implies the other.
 If the owner only states a minimum stock level without saying whether it should trigger replenishment, notify the owner, or block outgoing stock, ask which outcome they want. Do not silently choose one effect from the number alone.
-Use stock_alert for an owner's request to be notified in Needs You at a SKU threshold. It needs a SKU, notificationThreshold, notificationMetric and notificationComparator. Physical units in the warehouse are on_hand; units available to fulfill after customer commitments are available_to_fulfill. "Below" means strictly below; "at or below", "or less", and "reaches" mean at_or_below. Never substitute one metric or comparator for another. It neither sends external email nor orders goods. A replenishment rule alone does not notify.
+Use stock_alert for an owner's request to be notified in Needs You at a SKU threshold. It needs a SKU, notificationThreshold, notificationMetric and notificationComparator. Physical units in the warehouse are on_hand; units available to fulfill after customer commitments are available_to_fulfill. "Below" means strictly below; "at or below", "or less", and "reaches" mean at_or_below. Never substitute one metric or comparator for another. By default it warns in Needs You. For an explicit recurring email request, use notificationChannel=email and notificationRecipient (an exact contact/email, or supplier to resolve the SKU’s saved supplier); preserve a named sender in notificationMailbox. The approved rule sends one notification per threshold crossing and rearms only after stock recovers. notificationSubject and notificationBody can contain {{product}}, {{sku}}, {{quantity}}, {{threshold}}, {{location}}, {{measure}}; omit them for a factual stock notice. Never invent a purchase, promise, order quantity, delivery date or recipient. Owner approval freezes the recipient, mailbox and message template. The notification creates no purchase or stock movement. A replenishment rule alone does not notify.
 Use supplier_terms for lead time, units per purchase unit, MOQ or order multiple for one real supplier and SKU.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity is required.
 Use purchase_authority only when the owner explicitly permits automatic purchasing without approval; supplier, maximumValue
@@ -128,6 +129,7 @@ function cleanChange(raw={}){return {domain:DOMAINS.includes(raw.domain)?raw.dom
   guardReleaseCondition:String(raw.guardReleaseCondition||''),notificationThreshold:Number(raw.notificationThreshold),
   notificationMetric:String(raw.notificationMetric||'on_hand'),
   notificationComparator:String(raw.notificationComparator||'at_or_below'),
+  notificationChannel:raw.notificationChannel==='email'?'email':'needs_you',notificationRecipient:String(raw.notificationRecipient||'').trim(),notificationRecipientKind:String(raw.notificationRecipientKind||''),notificationMailbox:String(raw.notificationMailbox||'').trim(),notificationSubject:String(raw.notificationSubject||'').trim(),notificationBody:String(raw.notificationBody||'').trim(),
   capabilityName:capabilityDefinitions.NAMES.includes(raw.capabilityName)?raw.capabilityName:''};}
 
 async function resolveChange(database,workspaceId,raw){const change=cleanChange(raw);const questions=[];
@@ -161,6 +163,7 @@ async function resolveChange(database,workspaceId,raw){const change=cleanChange(
   if(change.operation==='set'&&change.domain==='stock_alert'&&
     !['below','at_or_below'].includes(change.notificationComparator))
     questions.push('Should this warning fire strictly below the number, or at or below it?');
+  if(change.operation==='set'&&change.domain==='stock_alert'&&change.notificationChannel==='email'&&change.skuId){const prepared=await require('./stock-rule-notifications').prepare(database,workspaceId,change);questions.push(...prepared.questions);change.notification=prepared.notification;}
   if(change.operation==='set'&&change.domain==='supplier_terms'&&[change.leadTimeDays,change.unitsPerPurchaseUnit,
     change.minimumOrderQuantity,change.orderMultiple].every((value)=>number(value,{positive:true})===null))
     questions.push('State the supplier lead time, pack size, minimum order or order multiple.');
@@ -188,7 +191,7 @@ function describe(change){if(change.domain==='replenishment')return `${change.di
     number(change.safetyStock)!==null?`safety stock ${change.safetyStock}`:null].filter(Boolean).join(', ')}`;
   if(change.domain==='stock_alert')return change.operation==='remove'
     ?`Stop the stock alert for ${change.displayName}.`
-    :`Notify you in Needs You when ${change.displayName}${change.locationName?` at ${change.locationName}`:''} is ${change.notificationComparator==='below'?'below':'at or below'} ${change.notificationThreshold} ${change.notificationMetric==='available_to_fulfill'?'available to fulfill after customer commitments':'physically on hand'}. No order or email is sent.`;
+    :change.notificationChannel==='email'?`Email ${change.notification?.recipientName||change.notificationRecipient||'the selected contact'}${change.notification?.recipientEmail?' <'+change.notification.recipientEmail+'>':''} from ${change.notification?.mailboxName||'the selected mailbox'} when ${change.displayName}${change.locationName?' at '+change.locationName:''} is ${change.notificationComparator==='below'?'below':'at or below'} ${change.notificationThreshold} ${change.notificationMetric==='available_to_fulfill'?'available to fulfill':'physically on hand'}. Send once per crossing; rearm after recovery. Subject: ${change.notification?.subject||''}. Message: ${change.notification?.body||''}. No purchase or stock change.`:`Notify you in Needs You when ${change.displayName}${change.locationName?` at ${change.locationName}`:''} is ${change.notificationComparator==='below'?'below':'at or below'} ${change.notificationThreshold} ${change.notificationMetric==='available_to_fulfill'?'available to fulfill after customer commitments':'physically on hand'}. No order or email is sent.`;
   if(change.domain==='supplier_terms')return `${change.supplierName} terms for ${change.displayName}: ${change.operation==='remove'?'remove the relationship':[
     number(change.leadTimeDays,{positive:true})!==null?`${change.leadTimeDays}-day lead time`:null,
     number(change.unitsPerPurchaseUnit,{positive:true})!==null?`${change.unitsPerPurchaseUnit} units per purchase unit`:null,
@@ -361,17 +364,17 @@ async function applyChange(client,ctx,change){const at=nowIso();
         AND status IN ('OPEN','ACKNOWLEDGED')`,[ctx.workspaceId,`stock-threshold:${id}`,
       'The owner changed this stock alert level.',at]);
       await client.query(`UPDATE stockchief_runtime.stock_threshold_rules
-        SET threshold=$2,metric=$3,comparator=$4,armed=TRUE,is_active=TRUE,
+        SET threshold=$2,metric=$3,comparator=$4,armed=TRUE,is_active=TRUE,notification_settings=$8::jsonb,
           stated_as=$5,approved_by_user_id=$6,updated_at=$7
         WHERE id=$1`,[id,change.notificationThreshold,change.notificationMetric,
-        change.notificationComparator,change.statedAs,ctx.actorId,at]);
+        change.notificationComparator,change.statedAs,ctx.actorId,at,change.notification?JSON.stringify({...change.notification,approvalId:change.sourceProposalId}):null]);
     }
     else await client.query(`INSERT INTO stockchief_runtime.stock_threshold_rules
       (id,workspace_id,sku_id,location_id,threshold,metric,comparator,armed,is_active,
-       stated_as,approved_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,$8,$9,$10,$10)`,[id,ctx.workspaceId,change.skuId,
+       stated_as,approved_by_user_id,created_at,updated_at,notification_settings)
+      VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,$8,$9,$10,$10,$11::jsonb)`,[id,ctx.workspaceId,change.skuId,
       change.locationId||null,change.notificationThreshold,change.notificationMetric,
-      change.notificationComparator,change.statedAs,ctx.actorId,at]);
+      change.notificationComparator,change.statedAs,ctx.actorId,at,change.notification?JSON.stringify({...change.notification,approvalId:change.sourceProposalId}):null]);
     return {kind:'stock_threshold_rule',id,skuId:change.skuId,threshold:change.notificationThreshold};
   }
   if(change.domain==='replenishment'){
@@ -455,9 +458,7 @@ async function approve(database,ctx,id,expectedHash){const approved=await databa
       'instruction_policy_contract_changed');
   for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority','capability_authority'].includes(change.domain))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
-  const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs}));
-  if(proposal.resolvedChanges.some((change)=>change.domain==='stock_alert'))
-    await require('./postgres-stock-threshold-alerts').evaluate(client,{workspaceId:ctx.workspaceId});
+  const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs,sourceProposalId:id}));
   const keys=new Set(proposal.resolvedChanges.map(target).filter(Boolean));const prior=(await client.query(`SELECT * FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status='APPROVED' AND id<>$2 FOR UPDATE`,[ctx.workspaceId,id])).rows;
   for(const row of prior){if(parse(row.resolved_changes,[]).some((change)=>keys.has(target(change))))
@@ -465,7 +466,9 @@ async function approve(database,ctx,id,expectedHash){const approved=await databa
       [ctx.workspaceId,row.id,nowIso()]);}
   const at=nowIso();const changed=(await client.query(`UPDATE operating_instruction_proposals SET status='APPROVED',
     applied_records=$3,approved_by_user_id=$4,approved_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
-  [ctx.workspaceId,id,JSON.stringify(applied),ctx.actorId,at])).rows[0];return {...hydrate(changed),replayed:false};
+  [ctx.workspaceId,id,JSON.stringify(applied),ctx.actorId,at])).rows[0];  if(proposal.resolvedChanges.some((change)=>change.domain==='stock_alert'))
+    await require('./postgres-stock-threshold-alerts').evaluate(client,{workspaceId:ctx.workspaceId});
+return {...hydrate(changed),replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   const memory=require('../assistant/postgres-business-memory');
   for(const change of approved.resolvedChanges||[]){const key=target(change);if(!key)continue;

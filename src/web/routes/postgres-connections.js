@@ -238,6 +238,8 @@ function createPostgresConnectionsRouter(database,options={}){
       req.flash('warn','That connection link expired. Choose Connect again to start a fresh authorization.');
       return res.redirect(303,'/settings/connections');
     }
+    const provider=registry.get(req.params.provider)?.metadata?.(),prerequisite=provider?.authorizationPrerequisite;
+    if(prerequisite&&req.query.providerSetupReady!=='1')return res.page('connections/provider-prerequisite',{layout:false,provider,prerequisite,launchPath:req.path,ticket:req.query.ticket});
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{providerType:req.params.provider,
       popup:req.query.popup==='1'?'1':''},requestOrigin,{providers:registry,

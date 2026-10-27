@@ -195,7 +195,7 @@ async function lookupRecords(database,ctx,request,options={}) {
     const warningOffset=Number(request.offset??0);if(!Number.isSafeInteger(warningOffset)||warningOffset<0||warningOffset>1000000)throw new ValidationError('Choose a valid saved-rule page offset.');
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
       database.query(`WITH scoped AS (SELECT r.id,r.is_active,s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
-        r.comparator,r.armed,r.updated_at,r.last_evaluated_at,r.last_evaluation,a.id AS warning_id,a.status AS warning_status,
+        r.comparator,r.armed,r.notification_settings,(SELECT jsonb_build_object('status',d.status,'messageStatus',coalesce(sm.status,cm.status),'sentAt',coalesce(sm.sent_at,cm.sent_at),'error',d.last_error,'href',CASE WHEN d.communication_id IS NOT NULL THEN '/messages/'||d.communication_kind||'/'||d.communication_id END) FROM stockchief_runtime.stock_threshold_deliveries d LEFT JOIN supplier_communications sm ON sm.workspace_id=d.workspace_id AND sm.id=d.communication_id AND d.communication_kind='supplier' LEFT JOIN customer_communications cm ON cm.workspace_id=d.workspace_id AND cm.id=d.communication_id AND d.communication_kind='customer' WHERE d.workspace_id=r.workspace_id AND d.rule_id=r.id ORDER BY d.crossing_version DESC LIMIT 1) AS notification_delivery,r.updated_at,r.last_evaluated_at,r.last_evaluation,a.id AS warning_id,a.status AS warning_status,
         a.title AS warning_title,a.metrics AS warning_metrics,a.last_evaluated_at AS warning_evaluated_at,
         row_number() OVER (PARTITION BY r.is_active ORDER BY r.updated_at DESC,r.id) AS state_position
         FROM stockchief_runtime.stock_threshold_rules r
@@ -242,7 +242,7 @@ async function lookupRecords(database,ctx,request,options={}) {
         currentWarning:row.warning_id?{id:row.warning_id,status:row.warning_status,title:row.warning_title,
           metrics:typeof row.warning_metrics==='string'?JSON.parse(row.warning_metrics):row.warning_metrics,
           lastEvaluatedAt:row.warning_evaluated_at}:null,
-        externalEmail:false,automaticPurchase:false,
+        externalEmail:row.notification_settings?.channel==='email',notification:row.notification_settings?{channel:row.notification_settings.channel,recipient:row.notification_settings.recipientEmail,mailbox:row.notification_settings.mailboxName,lastDelivery:row.notification_delivery}:null,automaticPurchase:false,
         updatedAt:row.updated_at});
     const enabledWarnings=alerts.rows.filter(row=>row.id&&row.is_active).map(warningRow),inactiveStockWarnings=alerts.rows.filter(row=>row.id&&!row.is_active).map(warningRow),counts=alerts.rows[0];
     const warningHasMore=warningOffset+100<Math.max(counts.enabled_count,counts.disabled_count);
@@ -1234,7 +1234,7 @@ function matchTerms(value){
 
 async function resolveOne(database,table,workspaceId,search,columns) {
   if(!search)return {missing:true};
-  const allowed={skus:{select:`s.id,s.code,i.name,s.variant_label,i.tracking_mode`,from:'skus s JOIN items i ON i.id=s.item_id',
+  const allowed={skus:{select:`s.id,i.id AS item_id,s.code,i.name,s.variant_label,i.tracking_mode`,from:'skus s JOIN items i ON i.id=s.item_id',
     scope:`s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,search:`CONCAT_WS(' ',s.code,i.name,COALESCE(s.variant_label,''))`,
     exact:`(lower(s.code)=lower($2) OR lower(i.name)=lower($2))`},
   locations:{select:'id,name,kind',from:'locations',scope:`workspace_id=$1 AND is_active=1`,search:'name',
@@ -1808,7 +1808,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 }
 
 async function storeInteraction(database,ctx,message,intent,result,id=newId('pgask')) {
-  const storedIntent={...intent,...(result.carryForward||{}),...(ctx.goalId?{parentGoalId:ctx.goalId}:{}),presentation:{columns:result.columns || [],
+  const storedIntent={...intent,...(result.carryForward||{}),...(ctx.conversationId?{chatId:ctx.conversationId}:{}),...(ctx.goalId?{parentGoalId:ctx.goalId}:{}),presentation:{columns:result.columns || [],
     columnLabels:result.columnLabels||{},choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
     researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null}};
@@ -1871,9 +1871,9 @@ async function askCapabilities(database,ctx,message,options={}){
   const provider=fundedAskProvider(database,ctx,rawProvider,`${usageKey}:capability`,
     require('../commercial/model').wrap,strongVerifier);
   const history=(await database.query(`SELECT id,message,answer,status,intent FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
-    ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
-  const latest=history.at(-1);let pending=['CLARIFY','PREPARED'].includes(latest?.status)
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz) AND ($4::text IS NULL OR intent->>'chatId'=$4)
+    ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null,options.conversationId||null])).rows.reverse();
+  const latest=history.at(-1);let pending=!options.newRequest&&['CLARIFY','PREPARED'].includes(latest?.status)
     &&latest.intent?.controlPlane?.capability
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
       question:latest.answer,originalMessage:latest.intent.controlPlane.originalMessage||latest.message,
@@ -1940,17 +1940,18 @@ async function prepareInstruction(database,ctx,message,options={}){
     proposal:{id:proposal.id,summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}?from=ask`}};
 }
 
-async function listInteractions(database,workspaceId,limit=20,{actorId=null,startedAt=null}={}) {
+async function listInteractions(database,workspaceId,limit=20,{actorId=null,startedAt=null,conversationId=null}={}) {
   const result=await database.query(`SELECT i.*,parent.id AS parent_goal_id
     FROM stockchief_runtime.assistant_interactions i
-    LEFT JOIN LATERAL (SELECT g.id FROM stockchief_runtime.assistant_goals g
+    LEFT JOIN LATERAL (SELECT g.id,g.checkpoint->>'chatId' AS chat_id FROM stockchief_runtime.assistant_goals g
       WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
         AND (g.id=i.intent->>'parentGoalId' OR g.id=i.intent->>'batchId'
           OR left(i.intent->>'batchId',length(g.id)+1)=g.id||':')
       ORDER BY g.created_at DESC,g.id DESC LIMIT 1) parent ON true
     WHERE i.workspace_id=$1 AND ($3::text IS NULL OR i.actor_user_id=$3)
       AND ($4::timestamptz IS NULL OR i.created_at > $4::timestamptz)
-    ORDER BY i.created_at DESC,i.id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit)),actorId,startedAt]);
+      AND ($5::text IS NULL OR i.intent->>'chatId'=$5 OR parent.chat_id=$5 OR i.intent->>'chatId' IS NULL AND parent.chat_id IS NULL)
+    ORDER BY i.created_at DESC,i.id DESC LIMIT $2`,[workspaceId,Math.min(500,Math.max(1,limit)),actorId,startedAt,conversationId]);
   return result.rows.map((row)=>({...row,intent:row.intent || {},evidence:row.evidence || []})).sort((left,right)=>{
     const byTime=new Date(left.created_at)-new Date(right.created_at);if(byTime)return byTime;
     if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);
@@ -2165,6 +2166,9 @@ async function cancelProposal(database,ctx,id) {
 }
 
 async function ask(database,ctx,message,options={}){
+  ctx={...ctx,conversationId:options.conversationId||null};
+  const direct=await require('./direct-business-reads').run({lookup,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
+  if(direct){direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};return recordCapabilityOutcome(database,ctx,message,direct);}
   if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx)){
     // Preserve the existing zero-model page command. This is only a shortcut:
     // unknown destinations and compound requests still reach the native agent.

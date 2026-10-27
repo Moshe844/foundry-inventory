@@ -92,7 +92,7 @@
         .some(field=>!field.closest('[hidden]')&&(field.value||'').trim());
        const key=`stockchief-navigation:${goal.id}:${goal.navigation.id}`;
        if(goal.navigation.automatic&&goal.navigation.state==='PENDING'&&!hasDraft&&!sessionStorage.getItem(key)){
-        sessionStorage.setItem(key,'1');navigation.elements.automatic.value='1';navigation.submit();return;
+        sessionStorage.setItem(key,'1');navigation.elements.automatic.value='1';if(window.frameElement?.dataset.embeddedAsk==='true')navigation.target='_top';navigation.submit();return;
        }
       }
      }
@@ -114,13 +114,13 @@
        for(const work of saved.workProducts){
         const card=document.createElement('article'),header=document.createElement('div'),title=document.createElement('h3'),stamp=document.createElement('span'),content=document.createElement('div'),save=document.createElement('a');
         card.className='rm-agent__work';card.setAttribute('aria-label',work.title);header.className='rm-agent__work-header';title.textContent=work.title;
-        stamp.className='rm-agent__saved';stamp.textContent='Saved in this conversation';header.append(title,stamp);
+        stamp.className='rm-agent__saved';stamp.textContent='';header.append(title,stamp);
         content.className='rm-agent__work-content rm-agent__answer';
         if(window.StockChiefAnswer)content.innerHTML=window.StockChiefAnswer.render(work.content);else content.textContent=work.content;
-        save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Save a copy';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
+        save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Download';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
         card.append(header,content,save);root.append(card);
        }
-       if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Continue with this work';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
+       if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Use this result';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
        if(saved.nextActions.length){
         const next=document.createElement('div'),heading=document.createElement('p'),buttons=document.createElement('div'),note=document.createElement('p');
         next.className='rm-agent__next';heading.textContent='What would you like to do next?';buttons.className='rm-agent__next-actions';
@@ -163,7 +163,8 @@
      }
      const timeline=panel.querySelector('[data-goal-timeline]');
      if(timeline){timeline.replaceChildren();for(const row of rows){const li=document.createElement('li');li.textContent=row.label;timeline.append(li);}}
-     if(['COMPLETED','BLOCKED','CANCELLED'].includes(status)){
+     const stopControl=panel.querySelector('form[action$="/cancel"]');if(stopControl)stopControl.hidden=!['READY','RUNNING'].includes(status);
+     if(['COMPLETED','BLOCKED','CANCELLED','WAITING_USER'].includes(status)){
       panel.dataset.active='false';hint.textContent='';if(changed&&panel.dataset.goalLatest==='true'){
        const input=document.querySelector('#tell-foundry textarea[name=message]'),active=document.activeElement;
        // Fragment navigation focuses a non-interactive answer marker. Treat

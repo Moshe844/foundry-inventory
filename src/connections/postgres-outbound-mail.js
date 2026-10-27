@@ -122,7 +122,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',
     provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
-    payload:{communicationId:message.id,communicationKind,connectorId:connection.id},priority:10,maxAttempts:12});
+    payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
   return {communicationId:message.id,communicationKind,status:message.status,effectId:queued.effect.id,
     queued:queued.effect.status==='PENDING'};
 }
@@ -154,6 +154,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!message)throw Object.assign(new ValidationError('That queued message is no longer pending.'),{code:'email_outbox_not_pending'});
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
+      if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       return {message,connection};
     },{isolation:'SERIALIZABLE',retrySafe:true});
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send messages.'),{code:'email_send_unavailable'});

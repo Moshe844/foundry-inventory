@@ -39,21 +39,12 @@
 
     const render = (records) => {
       const term=input.value.trim();
-      const results=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}});
-      if(term){const ask={type:'ask',title:'Ask StockChief: '+term,subtitle:'Open this question in Ask',href:'/ask?'+new URLSearchParams({q:term,from:location.pathname+location.search})};results.push(ask);results.push({title:'See all results',subtitle:'Search every matching record',href:'/search?'+new URLSearchParams({q:term})});}
-      if (!results.length) {
-        panel.innerHTML = '<div class="search-empty">No matches yet.</div>';
-        panel.hidden = false; input.setAttribute('aria-expanded','true');
-        return;
-      }
-      panel.innerHTML = results
-        .map(
-          (r) =>
-            `<a class="search-hit" role="option" ${r.type==='ask'?'data-ask-panel':''} aria-selected="false" href="${escapeHtml(r.href)}" data-dest="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong>` +
-            `<span class="sub"> ${escapeHtml(r.subtitle)}</span></span>` +
-            `<span class="meta">${escapeHtml(r.meta || '')}</span></a>`
-        )
-        .join('');
+      const recordsHere=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}}),groups=new Map();
+      for(const r of recordsHere){const label=r.type==='page'?'Pages':r.typeLabel||'Records';if(!groups.has(label))groups.set(label,[]);if(groups.get(label).length<8)groups.get(label).push(r);}
+      const hit=r=>`<a class="search-hit" role="option" aria-selected="false" href="${escapeHtml(r.href)}" data-dest="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong><span class="sub">${escapeHtml(r.subtitle||'')}</span></span><span class="meta">${escapeHtml(r.meta||'')}</span></a>`;
+      const askHref='/ask?'+new URLSearchParams({q:term,send:'1',from:location.pathname+location.search});
+      panel.innerHTML='<div class="search-body">'+[...groups].map(([name,rows])=>'<div role="group" aria-label="'+escapeHtml(name)+'"><p class="search-group-heading">'+escapeHtml(name)+'</p>'+rows.map(hit).join('')+'</div>').join('')+'</div>'+ (term?`<div class="search-footer"><a class="search-hit" role="option" data-ask-panel data-ask-submit aria-selected="false" href="${escapeHtml(askHref)}" data-dest="${escapeHtml(askHref)}"><span><strong>Ask StockChief: ${escapeHtml(term)}</strong></span></a><a class="search-hit" role="option" aria-selected="false" href="/search?q=${encodeURIComponent(term)}" data-dest="/search?q=${encodeURIComponent(term)}"><strong>See all results</strong></a></div>`:'');
+      if(!groups.size&&!term)panel.innerHTML='<div class="search-empty">No matches yet.</div>';
       panel.hidden = false; input.setAttribute('aria-expanded','true');
       activeIndex = -1;
     };
@@ -70,7 +61,7 @@
     input.addEventListener('keydown', (event) => {
       const hits = [...panel.querySelectorAll('.search-hit')];
       if (event.key === 'Escape') return close();
-      if(event.key==='Enter'&&!hits.length&&input.value.trim()){event.preventDefault();location.assign('/ask?'+new URLSearchParams({q:input.value.trim(),from:location.pathname+location.search}));return;}
+      if(event.key==='Enter'&&!hits.length&&input.value.trim()){event.preventDefault();clearTimeout(timer);const term=input.value.trim();fetch('/api/search?q='+encodeURIComponent(term)).then(r=>r.json()).then(data=>{render(data.results||[]);panel.querySelector('.search-hit')?.click();}).catch(()=>{render([]);panel.querySelector('.search-hit')?.click();});return;}
       if (!hits.length) return undefined;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -88,7 +79,7 @@
     });
 
     document.addEventListener('click', (event) => {
-      if (!panel.contains(event.target) && event.target !== input) close();
+      if(event.target.closest('.search-hit')||!panel.contains(event.target)&&event.target!==input)close();
     });
 
     document.addEventListener('keydown', (event) => {
@@ -994,7 +985,8 @@
         });
       }
 
-      form.addEventListener('submit', () => {
+      form.addEventListener('submit', (event) => {
+        if(event.defaultPrevented)return;
         const pending = form.parentElement.querySelector('[data-ask-pending]');
         if (pending) pending.hidden = false;
 

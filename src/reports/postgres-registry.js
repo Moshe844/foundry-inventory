@@ -123,14 +123,14 @@ const datasets=Object.freeze({
       status:'text',currency:'text',lead_time_days:'number',product_links:'number',active_product_links:'number',created_on:'date'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
-      o.order_date,o.expected_date,COALESCE(lines.units,0)::bigint AS ordered_units,
+      o.order_date,o.expected_date,(COALESCE(lines.units,0)-COALESCE(lines.received,0))::bigint AS outstanding_units,CASE WHEN o.status NOT IN ('DRAFT','CANCELLED') AND COALESCE(lines.units,0)>COALESCE(lines.received,0) THEN 'yes' ELSE 'no' END AS is_open,COALESCE(lines.units,0)::bigint AS ordered_units,
       COALESCE(lines.received,0)::bigint AS received_units
       FROM purchase_orders o JOIN suppliers s ON s.id=o.supplier_id AND s.workspace_id=o.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_units) AS units,SUM(quantity_received_units) AS received
         FROM purchase_order_lines WHERE workspace_id=o.workspace_id AND purchase_order_id=o.id) lines ON TRUE
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/purchasing/orders/${row.record_id}`,
     fields:{po_number:'text',supplier:'text',status:'text',order_date:'date',expected_date:'date',
-      ordered_units:'number',received_units:'number'}},
+      ordered_units:'number',received_units:'number',outstanding_units:'number',is_open:'text'}},
   purchase_order_lines:{label:'Supplier purchase order lines by product',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,v.name AS supplier,o.status,
       o.order_date,o.expected_date,i.name AS product,s.code AS sku,
