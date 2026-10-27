@@ -71,7 +71,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Terms',heading:'Terms of service',kind:'terms',supportEmail:config.supportEmail})));
   const support=require('../../operations/postgres-support');
   const supportData=async req=>({supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
-    supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0]});
+    supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0],supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId})});
   router.get('/contact',asyncRoute(async(req,res)=>renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...await supportData(req)})));
   router.get('/support',asyncRoute(async(req,res,next)=>{if(req.account)return next();return renderPublic(req,res,'public/contact',{title:'StockChief support',nav:'contact',...await supportData(req)});}));
   router.post('/support/requests',asyncRoute(async(req,res)=>{

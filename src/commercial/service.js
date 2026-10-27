@@ -45,7 +45,7 @@ async function getPlan(database, planId) {
 async function getSelfServicePlan(database,planId,options={}){
   const plan=normalizePlan((await database.query(`SELECT * FROM commercial_plans
     WHERE id=$1 AND status='ACTIVE' AND is_public=1 AND sales_only=0`,[planId])).rows[0]);
-  if(!plan)throw new ValidationError('That plan is not available for self-service signup. Contact StockChief directly for a custom plan.');
+  if(!plan)throw new ValidationError('That plan is not available for self-service signup. Email support@stockchiefhq.com about a Custom plan.');
   if(options.requireApproved!==false&&plan.packaging_status!=='APPROVED'&&!release.stagingTestCheckout())throw new ValidationError(
     'Checkout is not open for this plan until its feature and pricing review is approved.');
   return plan;

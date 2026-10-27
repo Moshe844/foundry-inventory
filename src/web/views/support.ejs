@@ -1,6 +1,7 @@
 <div class="page-head">
   <div><p class="eyebrow">StockChief</p><h1>Help and support</h1><p class="lede">Start with the task you were trying to complete. StockChief keeps the business evidence and audit history needed to investigate it.</p></div>
 </div>
+<% if(locals.supportAccess){const a=supportAccess.agreement; %><section class="card card-body"><h2><%= supportAccess.chat?'Priority support conversations':supportAccess.priority?'Priority email support':'Email support' %></h2><p>Open a request below and continue the conversation here. You can also reply to support@stockchiefhq.com.</p><% if(a){ %><h3><%= a.status==='ACTIVE'?'Your agreed services':'Service agreement for your review' %></h3><p style="white-space:pre-wrap"><%= a.service_text %></p><% if(a.manager_name){ %><p>Account manager: <%= a.manager_name %> · <%= a.manager_email %></p><% } %><% if(a.response_hours){ %><p>First-response target: <%= a.response_hours %> elapsed hours after a new request.</p><% } %><% if(a.status==='PREPARED'&&a.owner_account_id===account.id){ %><form method="post" action="/support/agreement/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= a.revision %>"><label><input type="checkbox" name="confirmed" value="yes" required> I accept these exact service terms.</label><button class="btn" type="submit">Accept service agreement</button></form><% } %><% } %></section><% } %>
 
 <section class="card card-body stack">
   <h2>Get help</h2>

@@ -9,7 +9,7 @@ const purposeRoutes={
 };
 // Handshakes and diagnostic/data endpoints are not customer pages. Their
 // permissions, payloads and failure states have separate integration tests.
-const nonPage=/^\/(?:api(?:\/|$)|healthz$|readyz$|webhooks(?:\/|$)|commercial-admin(?:\/|$)|commercial\/events$|verify-email(?:\/|$)|reset-password$|invite$|complete-signup(?:\/|$)|billing\/portal$|events\/schema$|transfers\/availability$|pricing\/purchase-costs\/new$|upgrade$|billing\/(?:checkout\/complete|change)$|settings\/connections\/woocommerce\/return$|settings\/export$|settings\/connections\/payments\/(?:launch|return|state)$)/;
+const nonPage=/^\/auth\/company\/callback$|^\/(?:api(?:\/|$)|healthz$|readyz$|webhooks(?:\/|$)|commercial-admin(?:\/|$)|commercial\/events$|verify-email(?:\/|$)|reset-password$|invite$|complete-signup(?:\/|$)|billing\/portal$|events\/schema$|transfers\/availability$|pricing\/purchase-costs\/new$|upgrade$|billing\/(?:checkout\/complete|change)$|settings\/connections\/woocommerce\/return$|settings\/export$|settings\/connections\/payments\/(?:launch|return|state)$)/;
 const publicAuth=new Set(['/login','/register','/signup','/forgot-password']);
 function routes(app){const found=new Set();function visit(stack){for(const layer of stack||[]){if(layer.route?.methods?.get)for(const p of [].concat(layer.route.path))if(typeof p==='string'&&!p.includes(':')&&!p.includes('*')&&!p.includes('(')&&!nonPage.test(p)&&!publicAuth.has(p))found.add(p);if(layer.handle?.stack)visit(layer.handle.stack);}}visit(app._router?.stack);return [...found];}
 function normalized(url,origin){const u=new URL(url,origin);u.hash='';u.pathname=u.pathname.replace(/\/$/,'')||'/';u.searchParams.sort();return u.pathname+u.search;}

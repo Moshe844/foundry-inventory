@@ -4,6 +4,7 @@ const { ValidationError } = require('../domain/errors');
 
 const CAPABILITIES = Object.freeze([
   ['identity.core','Identity and account security','foundation','SELLABLE',false],
+  ['identity.sso','Company single sign-on','foundation','CONDITIONAL',false],
   ['workspace.core','Workspaces and team access','foundation','SELLABLE',false],
   ['inventory.core','Products, SKUs and inventory ledger','inventory','SELLABLE',false],
   ['inventory.multi_location','Multi-location inventory','inventory','SELLABLE',false],
@@ -39,7 +40,7 @@ const CAPABILITIES = Object.freeze([
   ['connections.custom_api','Custom API and event feeds','connections','SELLABLE',true],
   ['imports.spreadsheet','Spreadsheet import with preview','migration','SELLABLE',false],
   ['documents.extraction','Document and page extraction','migration','DISABLED',true],
-  ['migration.assisted','Assisted system migration','migration','DISABLED',true],
+  ['migration.assisted','Assisted system migration','migration','CONDITIONAL',true],
   ['planning.basic','Demand and stockout planning','planning','SELLABLE',true],
   ['planning.transfer_before_buy','Transfer-before-buy optimization','planning','SELLABLE',true],
   ['automation.transfers','Automatic transfers within authority','automation','SELLABLE',true],
@@ -47,7 +48,8 @@ const CAPABILITIES = Object.freeze([
   ['authority.advanced','Advanced authority policies','automation','SELLABLE',true],
   ['adaptive_optimization','Adaptive optimization','planning','DISABLED',true],
   ['operations.alerts','Operational alerts and Needs You','operations','SELLABLE',true],
-  ['support.priority','Priority support','support','DISABLED',false],
+  ['support.priority','Priority support','support','SELLABLE',false],
+  ['support.chat','Support conversations in StockChief','support','SELLABLE',false],
   ['warehouse.advanced','Warehouse waves, bins and scans','inventory','SELLABLE',false],
   ['accounting.post_connected','Approved external accounting posting','accounting','CONDITIONAL',true],
   ['integrations.custom','Custom integrations','connections','CONDITIONAL',true],

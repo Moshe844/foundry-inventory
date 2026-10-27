@@ -20,6 +20,11 @@ const features=[
  ['automation.purchasing','Automatic purchasing within limits you approve.','pro'],
  ['warehouse.advanced','Warehouse picking and scan verification.','pro'],
  ['api.public','Business API access with an audit trail.','pro'],
+ ['support.priority','Priority email support.','growth'],
+ ['support.chat','Priority support conversations inside StockChief.','pro'],
+ ['migration.assisted','Onboarding, import and migration help requests.','pro'],
+ ['identity.sso','Company single sign-on with your identity provider.','enterprise'],
+ ['connections.custom_api','Custom APIs and data feeds for your business.','enterprise'],
 ];
 const rank={starter:0,growth:1,pro:2,enterprise:3};
 function enabled(plan,key){return (plan.entitlements||[]).some(e=>catalog.canonicalCapability(e.capability)===key&&Number(e.enabled)===1)&&catalog.capability(key)?.readiness!=='DISABLED';}
@@ -27,7 +32,7 @@ function describe(plan){const meters=new Map((plan.meters||[]).map(m=>[m.meter,m
  name:plan.id==='enterprise'?'Custom':plan.public_name,
  features:features.filter(([key,,tier])=>rank[tier]<=rank[plan.id]&&enabled(plan,key)).map(([capability,text])=>({capability,text})),
  allowances:['ai_work_credits','emails_sent','members','workspaces','locations','products','scheduled_reports','sales_channels','shipping_accounts'].map(key=>({meter:key,label:meters.get(key)?.label||catalog.meter(key)?.label,units:meters.get(key)?.included_units??null})),
- approximateQuestions:Math.floor(Number(meters.get('ai_work_credits')?.included_units||0)/Number(meters.get('ai_work_credits')?.credit_unit_scale||1)),
+ approximateWorkSteps:Math.floor(Number(meters.get('ai_work_credits')?.included_units||0)/Number(meters.get('ai_work_credits')?.credit_unit_scale||1)),
  };}
 function purchasableAddons(packs){return packs.filter(p=>p.purchasable===true&&p.status==='APPROVED');}
 module.exports={describe,features,enabled,purchasableAddons};

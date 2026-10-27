@@ -31,24 +31,28 @@ function loadUser(database,{readonly=false}={}) {
       if (!req.session?.accountId) return next();
 
       const account = await auth.getAccount(database, req.session.accountId);
-      if (!account) {
+      if (!account || !await require('../domain/postgres-business-sso').validateSession(database,account?.id,req.session.sso)) {
         return req.session.destroy((error) => error ? next(error) : next());
       }
       req.account = account;
       res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
       const accountFormatting=require('./presentation/formatting').forTimeZone(account.time_zone||'UTC');res.locals.helpers={...res.locals.helpers,shortDate:accountFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,accountFormatting.timeZone),dateTime:accountFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};
-      const memberships = await auth.listWorkspacesForAccount(database, account.id,{includeMetrics:req.method==='GET'&&req.path==='/inventories'});
+      let memberships = await auth.listWorkspacesForAccount(database, account.id,{includeMetrics:req.method==='GET'&&req.path==='/inventories'});
+      if(req.session.sso)memberships=memberships.filter(w=>w.owner_account_id===req.session.sso.ownerAccountId);
       res.locals.workspaces = memberships.map((row) => workspaceSummary(row, account.id));
       if (!memberships.length) return next();
 
       let workspaceId = req.session.workspaceId;
+      if(req.session.sso&&!memberships.some(w=>w.id===workspaceId))workspaceId=memberships[0]?.id;
       let resolved = await auth.resolveForAccount(database, account.id, workspaceId);
       if (!resolved) {
-        workspaceId = await auth.defaultWorkspaceFor(database, account.id);
+        workspaceId = req.session.sso?memberships[0]?.id:await auth.defaultWorkspaceFor(database, account.id);
         resolved = await auth.resolveForAccount(database, account.id, workspaceId);
         if (resolved) req.session.workspaceId = workspaceId;
       }
       if (!resolved) return next();
+      if(req.session.sso&&resolved.workspace.owner_account_id!==req.session.sso.ownerAccountId)
+        return req.session.destroy(error=>error?next(error):next());
       // Merely reading an older tab must not overwrite the inventory explicitly
       // selected in another session. Creation and the switch form persist that
       // preference; sign-in uses it through defaultWorkspaceFor.

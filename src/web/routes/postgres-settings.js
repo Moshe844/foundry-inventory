@@ -232,6 +232,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Help and support',nav:null,supportEmail:require('../../operations/postgres-support').SUPPORT_EMAIL,
     supportRequestKey:newId('supportform'),supportContactEmail:req.account.email,
     supportRequests:await require('../../operations/postgres-support').list(database,req.account.id),supportSourcePath:String(req.query.from||'').split('?')[0],
+    supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account.id,workspaceId:req.ctx.workspaceId}),
   })));
   router.get('/foundry',requireAuth,(req,res)=>res.redirect(302,'/what-you-told-me'));
   router.get('/settings/export',requireOwner,asyncRoute(async(req,res)=>{

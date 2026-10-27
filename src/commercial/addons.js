@@ -55,7 +55,7 @@ async function saveTopup(database,scope,input,options={}){
  await wallet.assertScope(database,scope);if(!wallet.CATEGORIES.has(input.category)||!scope.workspaceId)throw new ValidationError('Choose an inventory and usage category.');
  const enabled=input.enabled===true;let pack=null;let paymentMethodId=null;
  const cap=Number(input.monthlyCapMinor||0);if(!Number.isSafeInteger(cap)||cap<0)throw new ValidationError('Enter a valid monthly spending cap.');
- if(enabled){await release.assertCheckoutOpen(database,options);pack=await packFor(database,input.packId,{...options,scope});
+ if(enabled){await release.assertSubscriptionCheckoutOpen(database,options);pack=await packFor(database,input.packId,{...options,scope});
   if(pack.category!==input.category||cap<Number(pack.amount_minor)||input.explicitConsent!==true)throw new ValidationError('Explicit consent and a cap covering at least one selected pack are required.');
   const subscription=await entitlements.subscriptionFor(database,scope.accountId);const provider=options.provider||stripe;
   if(!subscription?.stripe_subscription_id||!entitlements.operationalAccess(subscription).canOperate)
@@ -76,7 +76,7 @@ async function saveTopup(database,scope,input,options={}){
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function runTopup(database,scope,category,options={}){
- await release.assertCheckoutOpen(database,options);await wallet.assertScope(database,scope);
+ await release.assertSubscriptionCheckoutOpen(database,options);await wallet.assertScope(database,scope);
  const created=await database.transaction(async(client)=>{await wallet.lock(client,scope,category);
   const settings=(await client.query('SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2 AND category=$3 FOR UPDATE',
    [scope.accountId,scope.workspaceId,category])).rows[0];if(!settings?.enabled)return null;

@@ -50,7 +50,7 @@ const { requireOperationalSubscription } = require('./web/commercial-middleware'
 
 function createPostgresApp({database,resourceDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
-  commercialOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
+  commercialOptions=null,ssoOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
@@ -147,6 +147,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
+  app.use(require('./web/routes/postgres-company-sign-in').scopeProtection(database));
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account
@@ -171,6 +172,8 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     catch(error){return next(error);}
   });
   app.use(postgresPageRenderer);
+  app.use(require('./web/routes/postgres-company-sign-in').createCompanySignInRouter(database,{...ssoOptions,publicOrigin:connectionPublicOrigin||(env==='test'?'request':config.connections.publicOrigin)}));
+  app.use(require('./web/routes/postgres-support-conversations').createSupportConversationsRouter(database));
   app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,
     ...(commercialOptions||{})}));
   app.use(createPostgresAuthRouter(database,commercialOptions||{}));

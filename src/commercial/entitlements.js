@@ -334,7 +334,7 @@ async function commitUsageWithClient(client,scope,input){
         overageMode:state.overageMode});}}
   if(wallet.CATEGORIES.has(input.meter)&&state.included>0&&state.remaining<state.included*.1&&scope.workspaceId){
     const release=(await client.query('SELECT checkout_enabled FROM commercial_release_control WHERE singleton=true')).rows[0];
-    if(release?.checkout_enabled&&config.commercial.checkoutEnabled){const durable={query:client.query.bind(client),transaction:(operation)=>operation(client)};
+    if(release?.checkout_enabled&&config.commercial.checkoutEnabled||require('./release').stagingTestCheckout()){const durable={query:client.query.bind(client),transaction:(operation)=>operation(client)};
       await require('../operations/postgres-job-queue').enqueue(durable,{workspaceId:scope.workspaceId,kind:'commercial.auto-top-up',
         idempotencyKey:`topup-check:${scope.accountId}:${scope.workspaceId}:${input.meter}:${Math.floor(Date.now()/60000)}`,
         payload:{accountId:scope.accountId,category:input.meter},maxAttempts:3});}}

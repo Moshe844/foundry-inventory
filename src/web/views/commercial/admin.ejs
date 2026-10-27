@@ -1,4 +1,5 @@
 <p><a class="btn" href="/commercial-admin/accounts">Developer test-account removal</a></p>
+<p><a class="btn" href="/commercial-admin/support">Support desk and service agreements</a></p>
 <div class="rm-head"><div><span class="rm-eyebrow">INTERNAL</span><h1>Commercial control</h1><p>Prices, Stripe IDs, public visibility, trials, allowances and grace periods update without a code deployment.</p></div></div>
 <section class="notice notice--warn" id="critical-cost-warnings" role="alert"><strong>Commercial release is locked independently of plan settings.</strong> Missing cost rates are unknown, never $0. No margin is trustworthy until all production cost sources are covered.
 <% if(criticalWarnings.length){ %><h2>CRITICAL · <%= criticalWarnings.length %> unresolved commercial warnings</h2><ul><% criticalWarnings.forEach(function(warning){ %><li><strong><%= warning.code %></strong> · <%= warning.account_id||'Platform' %> · <%= JSON.stringify(warning.detail) %></li><% }); %></ul><% }else{ %><p>No recorded unresolved warnings. This alone does not certify complete instrumentation.</p><% } %></section>
