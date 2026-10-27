@@ -27,7 +27,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - name: Install browser with bounded package downloads
+        timeout-minutes: 8
+        run: |
+          # Avoid an unresponsive runner-image mirror holding the test gate.
+          # Packages retain Ubuntu signature verification and HTTPS transport.
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          npx playwright install --with-deps chromium
       - run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
