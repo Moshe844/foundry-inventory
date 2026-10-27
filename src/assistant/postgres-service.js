@@ -278,15 +278,21 @@ async function lookupRecords(database,ctx,request,options={}) {
         currentWarning:'The independently persisted Needs You warning. Its status is separate from the rule\'s next-notification flag.'}}};
   }
   if(request.view==='inventory_positions'){
-    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
-      COALESCE(s.variant_label,'') AS variant,l.name AS location,b.on_hand,b.updated_at
+    const observed=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,l.name AS location,b.on_hand,b.updated_at,
+      count(*) OVER() AS position_count,sum(b.on_hand) OVER() AS total_on_hand
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       WHERE b.workspace_id=$1 AND i.is_active=1 AND s.is_active=1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
-      ORDER BY i.name,s.code,l.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      ORDER BY i.name,s.code,l.name LIMIT 100`,[ctx.workspaceId,search])).rows;
+    // Window aggregates and bounded rows share one database snapshot and the
+    // exact same tenant, active-product and search predicates. A complete
+    // total does not imply that a truncated location table is complete.
+    const summary={positionCount:Number(observed[0]?.position_count||0),onHand:Number(observed[0]?.total_on_hand||0)};
+    const rows=observed.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,location:row.location,
         onHand:Number(row.on_hand),updatedAt:row.updated_at},`/inventory/${row.item_id}`));
     const question=String(options.question||'').toLocaleLowerCase();
@@ -296,9 +302,9 @@ async function lookupRecords(database,ctx,request,options={}) {
       &&String(row.location).length>=5&&question.includes(String(row.location).toLocaleLowerCase())):[];
     const answer=named.length===1
       ?`${named[0].sku} at ${named[0].location} has ${named[0].onHand} physically on hand. This is not uncommitted availability.`
-      :rows.length?`${rows.length}${rows.length===100?'+':''} recorded product-location positions matched. These are on-hand quantities, not uncommitted availability.`:
+      :rows.length?`${summary.positionCount} recorded product-location positions matched, with ${summary.onHand} physical stock units in total.${summary.positionCount>rows.length?` Showing the first ${rows.length} positions.`:''} These are on-hand quantities, not uncommitted availability.`:
         'No product-location stock position matched that request.';
-    return {answer,rows,
+    return {answer,rows,summary,coverage:{complete:summary.positionCount<=rows.length,totalRows:summary.positionCount,shownRows:rows.length,limit:100},
       columns:['product','sku','variant','location','onHand','updatedAt']};
   }
   if(request.view==='inventory_movements'){
