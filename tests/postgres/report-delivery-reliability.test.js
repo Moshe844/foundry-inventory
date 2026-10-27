@@ -1,0 +1,48 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+test('routine report delivery is not starved by a continuing maintenance batch',{timeout:90000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ await require('../helpers/postgres-model-fixture').fundWorkspace(db,ctx.workspaceId);
+ const reports=require('../../src/reports/postgres-service'),controls=require('../../src/reports/postgres-delivery-controls'),jobs=require('../../src/operations/postgres-job-queue');
+ const actor={role:'owner',permissions:[],email:f.email},report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Unfamiliar report',columns:['sku','on_hand'],sort:'sku'});
+ const queued=await controls.change(db,ctx,actor,report.id,{action:'send_now',requestKey:'one-approved-send'});
+ await jobs.enqueue(db,{workspaceId:ctx.workspaceId,kind:'system.reconcile-business',idempotencyKey:'maintenance-batch',payload:{},priority:79});
+ let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);let sends=0;
+ const handlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async()=>{sends++;return {provider:'resend',externalId:'unfamiliar-acceptance'};}});
+ const maintenance=Object.assign(async()=>{entered();await gate;return {checked:true};},{externalEffect:true,...(handlers['system.reconcile-business'].workerLane?{workerLane:handlers['system.reconcile-business'].workerLane}:{})});
+ const runtime=require('../../src/operations/postgres-worker').start(db,{intervalMs:10,handlers:{'system.reconcile-business':maintenance,'report.generate-delivery':handlers['report.generate-delivery'],'system.email-send':handlers['system.email-send']},onError:e=>{throw e;}});
+ f.cleanup(async()=>{release();await runtime.stop();});await started;
+ const end=Date.now()+3500;let current;do{current=(await db.query('SELECT status FROM stockchief_runtime.report_deliveries WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,queued.deliveryId])).rows[0];if(current.status==='SENT')break;await wait(25);}while(Date.now()<end);
+ assert.equal(current.status,'SENT','An ongoing maintenance batch must not occupy routine delivery');assert.equal(sends,1);
+ assert.equal((await db.query("SELECT status FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND idempotency_key='maintenance-batch'",[ctx.workspaceId])).rows[0].status,'RUNNING');
+ release();await runtime.stop();
+ assert.equal((await reports.load(db,ctx,actor,report.id)).last_delivered_at!==null,true);
+ const replay=await controls.change(db,ctx,actor,report.id,{action:'send_now',requestKey:'one-approved-send'});assert.equal(replay.replayed,true);assert.equal(replay.deliveryId,queued.deliveryId);assert.equal(sends,1);
+});
+test('Ask waits for report email acceptance, never equates generation or an unproved SENT flag with delivery',{timeout:90000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ await require('../helpers/postgres-model-fixture').fundWorkspace(db,ctx.workspaceId);
+ const reports=require('../../src/reports/postgres-service'),controls=require('../../src/reports/postgres-delivery-controls'),jobs=require('../../src/operations/postgres-job-queue'),plans=require('../../src/assistant/postgres-capability-plans');
+ const actor={role:'owner',permissions:[],email:f.email},report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Receipt proof',columns:['sku','on_hand'],sort:'sku'});
+ const queued=await controls.change(db,ctx,actor,report.id,{action:'send_now',requestKey:'receipt-checked'}),result={reportId:report.id,...queued};
+ const proposalId='fixture-approved-report';await db.query(`INSERT INTO stockchief_runtime.assistant_action_proposals(id,workspace_id,actor_user_id,action_type,payload,summary,source_message,status,idempotency_key,result,executed_at)
+ VALUES($1,$2,$3,'report.template.send_now','{}','One approved report','Send once','EXECUTED','fixture-report-approval',$4::jsonb,now())`,[proposalId,ctx.workspaceId,ctx.actorId,JSON.stringify(result)]);
+ const harness={calls:{report:{state:'DONE',result:{outcomes:[{result:{proposal:{id:proposalId}}}]}}}},goal={id:'fixture-report-goal',original_request:'Send the approved report once'},catalogue={list:()=>[{name:'report.template.send_now'}]},receipts=require('../../scripts/environment-agent-demo/receipts');
+ const pending=await receipts.collect(db,ctx,goal,harness,catalogue);assert.equal(pending.dependencyState,'WAITING_EVENT');assert.equal(pending.operations[0].externalVerification.scope,'current_report_email_acceptance');assert.equal(pending.operations[0].externalVerification.state,'WAITING_EVENT');
+ assert.equal((await plans.externalState(db,ctx.workspaceId,result)).state,'WAITING_EVENT');
+ assert.equal((await plans.externalState(db,'foreign-inventory',result)).reason,'report_delivery_missing');
+ assert.equal((await plans.externalState(db,ctx.workspaceId,{...result,reportId:'different-report'})).reason,'report_delivery_missing');
+ await db.query("UPDATE stockchief_runtime.report_deliveries SET status='SENT',provider_message_id='unproved',completed_at=now() WHERE id=$1",[queued.deliveryId]);
+ assert.equal((await plans.externalState(db,ctx.workspaceId,result)).state,'WAITING_EVENT','A SENT label without provider acceptance is not evidence');
+ await db.query("UPDATE stockchief_runtime.report_deliveries SET status='PENDING',provider_message_id=NULL,completed_at=NULL WHERE id=$1",[queued.deliveryId]);
+ let sends=0;const handlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async()=>{sends++;return {provider:'resend',externalId:'independent-provider-receipt'};}});
+ await jobs.processOne(db,{'report.generate-delivery':handlers['report.generate-delivery']},{owner:'receipt-generator'});
+ assert.equal((await plans.externalState(db,ctx.workspaceId,result)).state,'WAITING_EVENT','A completed generation job has not sent the report');
+ const delivery=(await jobs.processOne(db,{'system.email-send':handlers['system.email-send']},{owner:'receipt-sender'}));assert.equal(delivery.status,'COMPLETED');
+ assert.equal((await plans.externalState(db,ctx.workspaceId,result)).state,'DONE');assert.equal(sends,1);assert((await reports.load(db,ctx,actor,report.id)).last_delivered_at);
+ const accepted=await receipts.collect(db,ctx,goal,harness,catalogue);assert.equal(accepted.dependencyState,'READY');assert.equal(accepted.operations[0].externalVerification.state,'DONE');assert.equal(accepted.operations[0].result.status,'PENDING','Retain the original queue receipt while reporting its fresh verified completion');
+ await jobs.processOne(db,{'system.email-send':handlers['system.email-send']},{owner:'replayed-sender'});assert.equal(sends,1);
+ await db.query("UPDATE stockchief_runtime.report_deliveries SET status='FAILED',error_message='Provider rejected the recipient' WHERE id=$1",[queued.deliveryId]);
+ assert.equal((await plans.externalState(db,ctx.workspaceId,result)).reason,'report_delivery_failed');
+});

@@ -532,7 +532,9 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       ?require('../assistant/postgres-codex-pilot').run(database,ctx,job.payload.goalId,options.codexPilot||{})
       :require('../assistant/postgres-goal-controller').run(database,ctx,job.payload.goalId,{provider:options.aiProvider});
   }),
-  'system.reconcile-business':(job,client)=>reconciliation.job(job,scopedDatabase(client)),
+  // Paged consistency checks can continuously enqueue their next batch.
+  // Keep their bounded lane separate from routine mail and provider delivery.
+  'system.reconcile-business':Object.assign((job,client)=>reconciliation.job(job,scopedDatabase(client)),{workerLane:'maintenance'}),
   'assistant.resume-mission':external((job,database)=>require('../assistant/postgres-service').resumeMission(database,
     {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId,
     {provider:options.aiProvider})),

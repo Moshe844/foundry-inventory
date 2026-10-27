@@ -167,6 +167,24 @@ async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
 }
 
 async function externalState(database,workspaceId,result={},options={}){
+  if(result.reportId&&result.deliveryId){
+    const row=(await database.query(`SELECT d.status,d.provider_message_id,d.completed_at,d.error_message,
+      e.provider_id,e.accepted_at,j.status AS email_status,j.last_error AS email_error,
+      generation.status AS generation_status,generation.last_error AS generation_error
+      FROM stockchief_runtime.report_deliveries d
+      LEFT JOIN commercial_email_deliveries e ON e.job_id=d.email_job_id
+      LEFT JOIN stockchief_runtime.jobs j ON j.workspace_id=d.workspace_id AND j.id=d.email_job_id
+      LEFT JOIN stockchief_runtime.jobs generation ON generation.workspace_id=d.workspace_id
+        AND generation.kind='report.generate-delivery' AND generation.payload->>'deliveryId'=d.id
+      WHERE d.workspace_id=$1 AND d.template_id=$2 AND d.id=$3`,
+    [workspaceId,result.reportId,result.deliveryId])).rows[0];
+    if(!row)return {state:'BLOCKED',reason:'report_delivery_missing'};
+    if(row.status==='SENT'&&row.provider_message_id&&row.completed_at&&row.provider_id===row.provider_message_id&&row.accepted_at)
+      return {state:'DONE'};
+    if(['FAILED','CANCELLED'].includes(row.status)||['DEAD','CANCELLED'].includes(row.email_status)||['DEAD','CANCELLED'].includes(row.generation_status))
+      return {state:'BLOCKED',reason:'report_delivery_failed',detail:{status:row.status,error:row.error_message||row.email_error||row.generation_error}};
+    return {state:'WAITING_EVENT',condition:{kind:'report_delivery',id:result.deliveryId,reportId:result.reportId,status:row.status}};
+  }
   if(result.synchronizationHolds?.length)return {state:'BLOCKED',reason:'channel_synchronization_held',detail:result.synchronizationHolds};
   if(result.effectIds?.length){
     const pending=[];
