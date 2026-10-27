@@ -20,6 +20,7 @@
       <%- locals.chatComposer?'data-chat-composer':'' %> enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form<% if (locals.homeHandoff) { %> data-home-ask-handoff<% } %>>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if(locals.currentChatId){ %><input type="hidden" name="chatId" value="<%= locals.currentChatId %>"><% } %>
+  <% if(locals.currentChatContext){ %><input type="hidden" name="chatContext" value="<%= locals.currentChatContext %>"><% } %>
   <% if (locals.sourcePath || (locals.homeHandoff && locals.currentPath)) { %><input type="hidden" name="sourcePath" value="<%= locals.sourcePath || locals.currentPath %>"><% } %>
   <% if (locals.usageKey) { %><input type="hidden" name="usageKey" value="<%= locals.usageKey %>"><% } %>
   <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>

@@ -184,7 +184,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresSearchRouter(database));
   app.use(createPostgresPlanningRouter(database));
   app.use(createPostgresRepairsRouter(database));
-  app.use(createPostgresAskRouter(database,{provider:aiProvider,agentInspection}));
+  app.use(createPostgresAskRouter(database,{provider:aiProvider,agentInspection,conversationSecret:sessionSecret}));
   app.use(createPostgresReportsRouter(database));
   app.use(createPostgresConnectionsRouter(database,{providers:connectionProviders || undefined,
     draftProviderConfigured:Boolean(aiProvider),

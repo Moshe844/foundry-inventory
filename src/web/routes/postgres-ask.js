@@ -419,7 +419,7 @@ function createPostgresAskRouter(database,options={}){
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
       autoSend:req.query.send==='1',prefill:String(req.query.q||'').slice(0,2000),
-      conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,currentChatId:req.session.postgresAskConversationId,
+      conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,currentChatId:req.session.postgresAskConversationId,currentChatContext:require('../../assistant/ask-chat-context').issue(options.conversationSecret,{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,sessionId:req.sessionID,chatId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null}),
       aiConfigured:Boolean(options.provider||config.ai.configured||nativeServiceSelected||options.agentInspection&&activeGoal?.checkpoint.runtime==='codex-staging'),usageKey:newId('askusage'),
       sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
       continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
@@ -439,7 +439,7 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask');
   }));
   async function runAsk(req){
-    if(req.body.chatId){const id=String(req.body.chatId),saved=req.session.postgresAskChatBoundaries?.[id];let boundary;if(saved?.workspaceId===req.ctx.workspaceId&&saved.actorId===req.ctx.actorId)boundary=saved.startedAt;else {const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,id);boundary=new Date(new Date(owned.created_at).getTime()-1).toISOString();}req.session.postgresAskConversationId=id;req.session.postgresAskStartedAt=boundary;}
+    if(req.body.chatId){const id=String(req.body.chatId),saved=req.session.postgresAskChatBoundaries?.[id];let boundary;if(req.body.chatContext){boundary=require('../../assistant/ask-chat-context').verify(options.conversationSecret,req.body.chatContext,{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,sessionId:req.sessionID,chatId:id}).startedAt;}else if(saved?.workspaceId===req.ctx.workspaceId&&saved.actorId===req.ctx.actorId)boundary=saved.startedAt;else {const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,id);boundary=new Date(new Date(owned.created_at).getTime()-1).toISOString();}req.session.postgresAskConversationId=id;req.session.postgresAskStartedAt=boundary;}
 
     if(!req.session.postgresAskConversationId)req.session.postgresAskConversationId=newId('chat');
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');

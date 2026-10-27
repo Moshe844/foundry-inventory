@@ -13,7 +13,13 @@
   const bulk=document.querySelector('[data-bulk-toolbar]');
   if(bulk){const update=()=>{bulk.hidden=!document.querySelector('[data-product-selection]:checked');};document.addEventListener('change',event=>{if(event.target.matches('[data-product-selection],[data-select-all-products]'))update();});update();}
   for(const table of document.querySelectorAll('main table:not([data-preserve-grid])')){const header=table.tHead;if(!header||header.rows.length!==1)continue;const labels=Array.from(header.rows[0].cells).map(cell=>cell.textContent.trim());const rows=Array.from(table.tBodies).flatMap(body=>Array.from(body.rows));if(!labels.length||!rows.length||rows.some(row=>row.cells.length!==labels.length||Array.from(row.cells).some(cell=>cell.colSpan!==1)))continue;table.classList.add('sc-mobile-table');table.setAttribute('role','table');for(const row of rows){row.setAttribute('role','row');Array.from(row.cells).forEach((cell,index)=>{cell.dataset.cellLabel=labels[index];cell.setAttribute('role','cell');});}}
-  const composer=document.getElementById('tell-foundry');if(composer){const input=composer.querySelector('[name=message]');if(input){requestAnimationFrame(()=>input.focus({preventScroll:true}));}}
+  const composer=document.getElementById('tell-foundry');if(composer){const input=composer.querySelector('[name=message]');if(input){
+    const focusInput=()=>{const active=document.activeElement;if(input.disabled||document.querySelector('dialog[open]')||active!==input&&active?.matches('input,textarea,select,button,a[href],[contenteditable="true"]')&&!active.closest('#tell-foundry'))return;input.focus({preventScroll:true});};
+    requestAnimationFrame(focusInput);window.addEventListener('pageshow',()=>requestAnimationFrame(focusInput));
+    // Some browsers focus the response's fragment after deferred scripts ran.
+    // Restore the composer on that event, preserving deliberately chosen fields.
+    document.addEventListener('focusin',event=>{const target=event.target;if(target?.id&&'#'+target.id===location.hash&&target.closest('[data-chat-scroll]')&&!target.matches('input,textarea,select,button,a[href],[contenteditable="true"]'))requestAnimationFrame(focusInput);});
+  }}
   const chat=document.querySelector('[data-chat-scroll]');
   if(chat){
     let follow=true;
@@ -32,16 +38,17 @@
     document.addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link||link.hasAttribute('download')||event.defaultPrevented||event.ctrlKey||event.metaKey||event.shiftKey)return;if(parentNavigation(link.href))event.preventDefault();});
     document.addEventListener('submit',event=>{const form=event.target;if(!form.matches('form[data-goal-navigation]'))return;event.preventDefault();form.target='_top';HTMLFormElement.prototype.submit.call(form);});
   }
+  if(window.frameElement?.dataset.embeddedAsk==='true'&&location.pathname==='/ask')window.parent.postMessage({type:'stockchief:ask-ready',fresh:new URL(location.href).searchParams.get('fresh')},location.origin);
   const panel=document.querySelector('dialog[data-ask-panel]');
   if(panel){
-    const frame=panel.querySelector('iframe');let previousFocus,pendingQuestion=null;frame.addEventListener('load',()=>{if(!pendingQuestion)return;const message=pendingQuestion;pendingQuestion=null;frame.contentWindow.postMessage({type:'stockchief:ask-submit',message},location.origin);});
+    const frame=panel.querySelector('iframe');let previousFocus,pendingQuestion=null;window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==frame.contentWindow||event.data?.type!=='stockchief:ask-ready'||!pendingQuestion||event.data.fresh!==pendingQuestion.fresh)return;const message=pendingQuestion.message;pendingQuestion=null;frame.contentWindow.postMessage({type:'stockchief:ask-submit',message},location.origin);});
     window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==frame.contentWindow||event.data?.type!=='stockchief:ask-navigate')return;const url=new URL(event.data.href,location.origin);if(url.origin!==location.origin)return;panel.close();frame.removeAttribute('src');location.assign(url.pathname+url.search+url.hash);});
     document.addEventListener('click',event=>{
       const link=event.target.closest('a[data-ask-panel][href]');if(!link||event.defaultPrevented||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button!==0)return;
       const url=new URL(link.href,location.href);
       if(url.origin!==location.origin||url.pathname!=='/ask'||location.pathname==='/ask')return;
       event.preventDefault();previousFocus=link.hasAttribute('data-ask-submit')?document.querySelector('[data-search]'):link;if(!url.searchParams.has('goal')&&!url.searchParams.has('chat'))url.searchParams.set('fresh',crypto.randomUUID());url.searchParams.set('panel','1');url.searchParams.set('from',location.pathname+location.search);
-      pendingQuestion=link.hasAttribute('data-ask-submit')?url.searchParams.get('q'):null;url.searchParams.delete('send');frame.src=url.pathname+url.search+url.hash;panel.showModal();panel.querySelector('button').focus();
+      pendingQuestion=link.hasAttribute('data-ask-submit')?{message:url.searchParams.get('q'),fresh:url.searchParams.get('fresh')}:null;url.searchParams.delete('send');frame.src=url.pathname+url.search+url.hash;panel.showModal();panel.querySelector('button').focus();
     });
     function close(){pendingQuestion=null;panel.close();frame.removeAttribute('src');previousFocus?.focus({preventScroll:true});}
     panel.querySelector('[data-close-ask]').addEventListener('click',close);
