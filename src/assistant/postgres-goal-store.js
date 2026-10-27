@@ -6,6 +6,8 @@ function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
  String(process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES||'').split(',').map(x=>x.trim()).includes(ctx.workspaceId);}
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
+async function conversation(db,ctx,id){return (await db.query(`SELECT id,coalesce(checkpoint->>'chatId',id) AS chat_id FROM ${TABLE}
+ WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
  COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
@@ -108,11 +110,11 @@ async function recent(db,ctx,startedAt=null,focusedGoalId=null,chatId=null){
  // chat still receives delivery, approval, clarification and uncertainty state.
  return (await db.query(`WITH visible_ids AS (
   (SELECT id FROM ${TABLE}
-   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND ($5::text IS NULL OR checkpoint->>'chatId'=$5)
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND ($5::text IS NULL OR coalesce(checkpoint->>'chatId',id)=$5)
    ORDER BY created_at DESC,id DESC LIMIT CASE WHEN $5::text IS NULL THEN 12 ELSE 500 END)
   UNION
   SELECT id FROM ${TABLE}
-   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND id=$4 AND ($5::text IS NULL OR checkpoint->>'chatId'=$5)
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND id=$4 AND ($5::text IS NULL OR coalesce(checkpoint->>'chatId',id)=$5)
  ) SELECT goal.id,goal.workspace_id,goal.actor_user_id,goal.request_key,goal.original_request,
  goal.status,goal.answer,goal.turns,goal.tool_calls,goal.recoveries,goal.budget_minor,
  goal.run_token,goal.lease_until,goal.expires_at,goal.created_at,goal.updated_at,
@@ -125,4 +127,4 @@ async function recent(db,ctx,startedAt=null,focusedGoalId=null,chatId=null){
  WHERE goal.workspace_id=$1 AND goal.actor_user_id=$2
  ORDER BY goal.created_at,goal.id`,[ctx.workspaceId,ctx.actorId,startedAt,focus,chatId])).rows;
 }
-module.exports={enabled,get,progress,create,claim,save,cancel,reply,enqueue,latest,recent};
+module.exports={enabled,get,conversation,progress,create,claim,save,cancel,reply,enqueue,latest,recent};

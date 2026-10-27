@@ -335,6 +335,13 @@ function createPostgresAskRouter(database,options={}){
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
       ?remembered.path:req.query.from;
     if(typeof req.query.chat==='string'){const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,req.query.chat);req.session.postgresAskConversationId=req.query.chat;req.session.postgresAskStartedAt=new Date(new Date(owned.created_at).getTime()-1).toISOString();}
+    else if(req.query.chat===undefined&&req.query.fresh===undefined&&typeof req.query.goal==='string'&&req.query.goal.length<=160){
+      // A saved-request link explicitly selects that owned conversation.
+      // Reading it never resumes work, approves a proposal or starts a goal.
+      const selected=await goalStore.conversation(database,req.ctx,req.query.goal);
+      if(selected){const chatId=selected.chat_id,owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,chatId);
+        req.session.postgresAskConversationId=chatId;req.session.postgresAskStartedAt=new Date(new Date(owned.created_at).getTime()-1).toISOString();}
+    }
     if(!req.session.postgresAskConversationId)req.session.postgresAskConversationId=newId('chat');
     req.session.postgresAskChatBoundaries||={};req.session.postgresAskChatBoundaries[req.session.postgresAskConversationId]={workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,startedAt:req.session.postgresAskStartedAt||null};for(const key of Object.keys(req.session.postgresAskChatBoundaries).slice(0,-100))delete req.session.postgresAskChatBoundaries[key];
     const startedAt=req.session.postgresAskStartedAt||null;
