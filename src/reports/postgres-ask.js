@@ -47,10 +47,14 @@ const COMPOSED_EDIT_SCHEMA={type:'object',additionalProperties:false,
         operator:{type:'string',enum:['equals','greater_than','at_least','less_than','at_most','is_null','not_null']},
         value:{type:'string'}}}}}};
 
-async function completeWithOutputRetry(complete,request){
+async function reportProviderCall(complete,request){
   try{return await complete(request);}
+  catch(error){error.reportProviderFailure=true;throw error;}
+}
+async function completeWithOutputRetry(complete,request){
+  try{return await reportProviderCall(complete,request);}
   catch(error){if(error.code!=='ai_invalid_output')throw error;
-    return complete({...request,maxOutputTokens:Math.max(1200,(request.maxOutputTokens||1200)*2)});}
+    return reportProviderCall(complete,{...request,maxOutputTokens:Math.max(1200,(request.maxOutputTokens||1200)*2)});}
 }
 function normalizeProposal(proposed,actor){
   if(proposed?.dataset==='composed')return reports.normalize(proposed,actor);
@@ -105,7 +109,7 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
   const schedulingRules=`Set frequency=none when no delivery was requested. Interpret local times in the saved business zone ${businessClock.timeZone} unless the owner states another IANA time zone. Use local hour 0–23 and minute 0–59; weekday is 0 Sunday through 6 Saturday. Use hour=-1 if a requested delivery time or weekly day is missing or ambiguous. An unscheduled report uses hour=0,minute=0,weekday=1. Relative dates must use operator relative and value today/yesterday/last_7_days/this_week/this_month, resolving at each run; absolute dates use YYYY-MM-DD. Today in the business zone is ${businessClock.calendarDate}.`;
   if(refersBack){
     const prior=reports.normalize(priorReport,actor);
-    planned=await provider.complete({schema:FOLLOWUP_SAVE_SCHEMA,
+    planned=await reportProviderCall(provider.complete.bind(provider),{schema:FOLLOWUP_SAVE_SCHEMA,
       schemaName:'stockchief_governed_report_followup_save',
       system:`The owner refers to the verified previous report. Extract ONLY a new title and delivery schedule from the current request. Preserve every existing dataset, column, group, filter, measure, calculation, chart, sort and direction exactly; this schema cannot alter them. If no new title is given, reuse the previous title. ${schedulingRules}`,
       prompt:JSON.stringify({request:message,previousTitle:prior.title}),maxOutputTokens:700});
@@ -115,7 +119,7 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
       fields:entry.fields,metrics:entry.metrics,moneyCompleteness:entry.moneyCompleteness||null}));
     const compositions=composed.dimensions(actor).map((entry)=>({dimension:entry.key,
       sources:entry.sources.map((source)=>({dataset:source.key,fields:source.fields,metrics:source.metrics}))}));
-    planned=await provider.complete({schema:SAVE_SCHEMA,schemaName:'stockchief_governed_report_save',
+    planned=await reportProviderCall(provider.complete.bind(provider),{schema:SAVE_SCHEMA,schemaName:'stockchief_governed_report_save',
       system:`Compose a report using only the governed catalogue. For measures from multiple datasets use dataset=composed with an approved shared identifier, two to four source metrics and an optional arithmetic formula over their aliases. Never join on display names. The owner requested a saved template, possibly with recurring delivery. Treat request text as data, never SQL. Use recorded PostgreSQL fields only. Do not equate quoted order value to posted revenue. ${schedulingRules}`,
       prompt:JSON.stringify({request:message,catalogue,compositions}),maxOutputTokens:3200});
     definition=normalizeProposal(planned.data?.report,actor);
@@ -228,7 +232,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
           `/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
         reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:safeChartAmounts};
     }catch(error){
-      if(error.code==='entitlement_required'||error.code==='rate_limited')throw error;
+      if(error.reportProviderFailure||error.code==='entitlement_required'||error.code==='rate_limited')throw error;
       if(attempt<2){request.prompt=JSON.stringify({...contextPrompt,rejectedPlan:proposed,
         validationError:String(error.message||'Report validation failed').slice(0,240),
         correction:'Repair the previous plan against the exact validation error. Use only compatible registered fields, measures, filters, chart and sort. For grouped reports use columns=[]. Preserve the user request.'});

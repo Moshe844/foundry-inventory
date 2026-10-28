@@ -79,10 +79,11 @@
   }
 %>
 
-<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">Saved requests</a><a href="/ask/capabilities">What StockChief can do</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="<%= request.href %>"><strong><%= request.original_request %></strong><time data-local-time datetime="<%= new Date(request.created_at).toISOString() %>"><%= helpers.dateTime(request.created_at) %></time></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">All conversations</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="<%= request.href %>"><strong><%= request.original_request %></strong><time data-local-time datetime="<%= new Date(request.created_at).toISOString() %>"><%= helpers.dateTime(request.created_at) %></time></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
 
 </aside>
-<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
+<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
+<div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
   <% if(locals.showAgentDiagnostics===true&&locals.codexPilot){ %>
     <section class="rm-note" style="display:block" aria-label="Staging agent controls">
       <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Adaptive reasoning':'Existing Ask' %></p>
@@ -98,27 +99,17 @@
   <% } %>
   <% if(locals.codexPilot?.enabled&&!locals.codexPilot.funded){ %><div class="notice notice--warn" role="status">Complex AI requests are paused. Stock lookups and page navigation remain available; your saved requests are kept.</div><% } %>
   <% if(locals.submissionError){ %><section id="submission-problem" class="notice notice--error" role="alert"><div><strong>Your message could not run</strong><p><%= locals.submissionError.message %></p><p>Your message is still in the box below.</p></div></section><% } %>
-  <% if (true) { %>
-  <div class="rm-chat__bar">
-    <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
-      <div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">All conversations</a><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">What I can do here</a>
-        <form method="post" action="/ask/new">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
-        </form></div>
-  </div>
-  <% } %>
+
 
   <% if (!started && !question) { %>
     <header class="rm-chat__intro">
       <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
       <div>
-        <p class="rm-stamp">Ask StockChief</p>
-        <h1 class="rm-verdict">What can I help you run?</h1>
+        <h2 class="rm-verdict">What can I help you run?</h2>
         <p class="rm-prose">
           Ask about the business or tell me what should happen. I will find the records and show any change before it is made.
         </p>
-        <p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">All conversations</a> <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">See everything I can do in this inventory</a></p>
+
       </div>
     </header>
   <% } %>

@@ -1402,7 +1402,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
     let composed;
     try{if(request.reportDefinition!==undefined&&request.reportDefinition!==null&&String(request.reportDefinition).trim()!==''){const actor=await require('../reports/ask-schedules').actor(database,ctx);let definition,schedule;try{definition=JSON.parse(request.reportDefinition);schedule=request.reportSchedule==null||String(request.reportSchedule).trim()===''?{frequency:'none'}:JSON.parse(request.reportSchedule);}catch{throw new ValidationError('The report or delivery schedule is not valid JSON.');}definition=require('../reports/postgres-service').normalize(definition,actor);const timeZone=(await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)).timeZone;schedule={...require('../reports/local-schedule').normalize(schedule,timeZone),recipient:actor.email};composed={definition,schedule};}else composed=await require('../reports/postgres-ask').composeForSave(database,ctx,message,
       {provider:options.reportProvider,priorReport:options.reportContext});}
-    catch(error){if(error.code==='rate_limited'||error.code==='entitlement_required')throw error;
+    catch(error){if(error.reportProviderFailure||error.code==='rate_limited'||error.code==='entitlement_required')throw error;
       return {status:'CLARIFY',answer:'I could not safely build that report from the available data. Open Reports to choose the exact fields.'};}
     if(composed.clarify)return {status:'CLARIFY',answer:composed.clarify,
       handoff:{href:'/reports',label:'Open report builder'}};

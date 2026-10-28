@@ -42,7 +42,7 @@ test('one-slot native preflight counts the exact request and enforces 30 cents b
  assert.equal((await call()).status,200);assert.equal(generations,1);assert.equal(begins,1);
  count=boundary+1;assert.equal((await call()).status,400);assert.equal(transport.lastBlock().code,'CODEX_REQUEST_COST_CEILING');
  assert.equal(generations,1);assert.equal(begins,1);assert.equal(counters,2);
- assert.equal((await call()).status,403);assert.equal(counters,2);assert.equal(generations,1);
+ assert.equal((await call()).status,403);assert.equal(counters,2);assert.equal(generations,1);assert.equal(transport.lastBlock().code,'CODEX_REQUEST_COST_CEILING','SDK retries must retain the first stop reason');
  assert.throws(()=>journal.begin('task','codex'));assert.throws(()=>policy.issue(options),/NOT_CERTIFIED/);
  budget.stop();assert.throws(()=>policy.assert(permit,{budget}),/NOT_CERTIFIED/);
 });

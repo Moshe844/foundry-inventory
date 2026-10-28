@@ -101,7 +101,7 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
  // without receiving another registered route/command in its tool contracts.
  const inspection=await require('../../scripts/environment-agent-demo/inspection').createInspectionServer({cluster,database:db,ctx});cleanup.push(()=>inspection.close());
  const browser=await require('playwright').chromium.launch();cleanup.push(()=>browser.close());const tab=await browser.newPage({viewport:{width:1200,height:900}});
- await tab.goto(inspection.origin+'/ask');await tab.getByRole('link',{name:'Saved requests',exact:true}).click();await tab.locator('#history-status').selectOption('BLOCKED');await tab.getByRole('button',{name:'Filter',exact:true}).click();
+ await tab.goto(inspection.origin+'/ask');await tab.getByRole('link',{name:'All conversations',exact:true}).click();await tab.locator('#history-status').selectOption('BLOCKED');await tab.getByRole('button',{name:'Filter',exact:true}).click();
  assert.equal(await tab.locator('tbody tr').count(),20);await tab.getByRole('link',{name:'Older requests →',exact:true}).click();assert.equal(await tab.locator('tbody tr').count(),20);
  await tab.goto(inspection.origin+'/ask/history?goal='+ids[0]);await tab.getByRole('heading',{name:'Recorded outcomes',exact:true}).waitFor();assert.equal(await tab.getByRole('link',{name:'Create historical shelf',exact:true}).count(),1);
  const folder=require('node:path').resolve('data/native-request-history');require('node:fs').mkdirSync(folder,{recursive:true});await tab.screenshot({path:folder+'/recorded-effects-read-only.png',fullPage:true});

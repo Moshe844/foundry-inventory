@@ -1029,8 +1029,9 @@
             + '<p class="rm-turn__said rm-chat-thinking"><span class="rm-thinking__dots" aria-hidden="true"><i></i><i></i><i></i></span>'
             + '<span data-thinking-text>Reading your records…</span></p>';
 
-          form.parentElement.insertBefore(you, form);
-          form.parentElement.insertBefore(foundry, form);
+          const log = form.parentElement.querySelector('[data-chat-scroll]');
+          if (log) log.append(you, foundry);
+          else { form.parentElement.insertBefore(you, form); form.parentElement.insertBefore(foundry, form); }
           if (pending) pending.hidden = true;
           // What was just said is what is on screen while the answer is computed.
           const history = form.parentElement.querySelector('.rm-history');

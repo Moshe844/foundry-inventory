@@ -41,7 +41,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      (async()=>{const at=Date.now();try{return await grant.authorize();}finally{timings.authorizationMs=Date.now()-at;}})(),
      (async()=>{if(!grant.livePermit)return;const at=Date.now();try{
       await require('./codex-live-permit').assertFresh(grant.livePermit,{budget,task:grant.task});
-      if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
+      if(grant.lastBlock)throw Object.assign(new Error(grant.lastBlock.message),grant.lastBlock,{previousBlock:true});
      }finally{timings.sourceIntegrityMs=Date.now()-at;}})()]);
     for(const check of gateChecks)if(check.status==='rejected')throw check.reason;
     const admissionAccess=gateChecks[0].value; // fresh for this exact HTTP boundary
@@ -218,11 +218,11 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    const uncertainDetail={...callDetail,latencyMs:Date.now()-start,timings,
     transport:{...transport,providerResponseId:parser?.responseId||null},...(protocol?{protocol}:{}),
     ...(receipt?{usage:receipt.raw}:{}),accounting:receipt?'provider usage retained; local settlement requires reconciliation':'full reservation retained; provider usage unverified',upstreamAttempted:attempted,usageSettled:settled};
-   const finalGate=['EMPTY_MODEL_FINAL','FINAL_REQUEST_EXHAUSTED'].includes(reason);
+   const finalGate=!error.previousBlock&&['EMPTY_MODEL_FINAL','FINAL_REQUEST_EXHAUSTED'].includes(reason);
    const message=reason==='EMPTY_MODEL_FINAL'?require('./finalization').EMPTY_MESSAGE:
     reason==='FINAL_REQUEST_EXHAUSTED'?'StockChief already used the final request allowance. No additional provider call was made.':
     'StockChief model budget or authority gate stopped this request.';
-   if(grant)grant.lastBlock={code:reason,limitKind,upstreamAttempted:attempted,usageSettled:settled,message};
+   if(grant&&!grant.lastBlock)grant.lastBlock={code:reason,limitKind,upstreamAttempted:attempted,usageSettled:settled,message};
    if(id&&!settled){
     if(attempted){await budget.unknown(id,reason,uncertainDetail);if(held)await commercial.unknown(held,reason).catch(()=>budget.stop());}
     else {if(held)await commercial.release(held).catch(()=>budget.stop());await budget.settle(id,0,{reason,upstreamAttempted:false});}
@@ -230,7 +230,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    audit({kind:'model_call_blocked',id,reason,limitKind,...(attempted?{timings,transport:uncertainDetail.transport}:{}),
     reasonDetail:error.code==='rate_limited'?String(error.message).slice(0,240):null,
     transportCode:error.cause?.code||null,upstreamAttempted:attempted,usageSettled:settled});
-   const contextGate=reason==='CONTEXT_BUDGET_EXHAUSTED'||error.limitKind==='operation_cost';
+   const contextGate=!error.previousBlock&&(reason==='CONTEXT_BUDGET_EXHAUSTED'||error.limitKind==='operation_cost');
    if(!res.headersSent)res.writeHead(contextGate||finalGate?400:403,{'content-type':'application/json'});
    res.end(JSON.stringify({error:{type:contextGate||finalGate?'invalid_request_error':'permission_error',
     code:finalGate?reason:contextGate?'STOCKCHIEF_CONTEXT_COST_LIMIT':'STOCKCHIEF_GATE_STOPPED',

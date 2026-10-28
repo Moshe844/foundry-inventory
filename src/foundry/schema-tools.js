@@ -36,6 +36,49 @@ function toWireSchema(schema) {
   return out;
 }
 
+// OpenAI strict output schemas require every property to be present. Optional
+// domain fields use null on that transport only; required fields stay required.
+function allowsNull(schema) {
+  return schema?.type === 'null' || Array.isArray(schema?.type) && schema.type.includes('null')
+    || schema?.anyOf?.some(allowsNull) || schema?.oneOf?.some(allowsNull);
+}
+function toStrictWireSchema(schema) {
+  const out = toWireSchema(schema);
+  function visit(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    for (const field of Object.values(node.properties || {})) visit(field);
+    for (const field of Object.values(node.$defs || node.definitions || {})) visit(field);
+    for (const key of ['items', 'anyOf', 'oneOf', 'allOf']) visit(node[key]);
+    if (!node.properties) return;
+    const required = new Set(node.required || []);
+    for (const [name, field] of Object.entries(node.properties)) {
+      if (!required.has(name) && !allowsNull(field)) node.properties[name] = { anyOf: [field, { type: 'null' }] };
+    }
+    node.required = Object.keys(node.properties);
+    node.additionalProperties = false;
+  }
+  visit(out);
+  return out;
+}
+function fromStrictWireValue(value, schema) {
+  if (schema?.anyOf || schema?.oneOf) {
+    const branches = schema.anyOf || schema.oneOf;
+    const shape = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+    const matching = branches.filter(branch => branch.type === shape || Array.isArray(branch.type) && branch.type.includes(shape));
+    if (matching.length === 1) schema = matching[0];
+  }
+  if (Array.isArray(value)) return value.map(entry => fromStrictWireValue(entry, schema?.items));
+  if (!value || typeof value !== 'object' || !schema?.properties) return value;
+  const required = new Set(schema.required || []), out = {};
+  for (const [name, entry] of Object.entries(value)) {
+    const field = schema.properties[name];
+    if (field && entry === null && !required.has(name) && !allowsNull(field)) continue;
+    out[name] = fromStrictWireValue(entry, field);
+  }
+  return out;
+}
+
 /**
  * Brings a response back inside the size limits the model was never shown.
  *
@@ -80,4 +123,4 @@ function slugify(value, fallback = 'option') {
   return slug || fallback;
 }
 
-module.exports = { toWireSchema, clampToSchema, slugify, GRAMMAR_UNSUPPORTED };
+module.exports = { toWireSchema, toStrictWireSchema, fromStrictWireValue, clampToSchema, slugify, GRAMMAR_UNSUPPORTED };
