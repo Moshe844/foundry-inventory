@@ -132,6 +132,17 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
           itemId:product.itemId,skuId:product.skuIds[0]},
         {accountKey:'COST_OF_GOODS_SOLD',creditMinor:80,customerId:buyer.id,
           itemId:product.itemId,skuId:product.skuIds[0]}]});
+    await database.query(`INSERT INTO catalogue_item_facts
+      (workspace_id,item_id,category,facts,created_at,updated_at)
+      VALUES($1,$2,'Hardware','{}',now(),now())`,[ctx.workspaceId,product.itemId]);
+    const recordedCategoryMonth=await reports.run(database,ctx,actor,{dataset:'posted_sales_activity',
+      groups:['category','posting_date','currency'],dateGrain:'month',aggregate:'sum',
+      measure:'revenue_minor',filters:[{field:'posting_date',operator:'after',value:'2026-10-01'},
+        {field:'posting_date',operator:'before',value:'2026-10-31'}],sort:'category'});
+    assert.equal(recordedCategoryMonth.rows.length,1);
+    assert.equal(recordedCategoryMonth.rows[0].category,'Hardware');
+    assert.equal(recordedCategoryMonth.rows[0].posting_date,'2026-10-01');
+    assert.equal(recordedCategoryMonth.rows[0].total,'1300');
     const builderPage=await owner.get('/reports/builder');
     assert.equal(builderPage.status,200);
     assert.match(builderPage.text,/Describe the report you want/);

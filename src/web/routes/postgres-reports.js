@@ -25,12 +25,12 @@ function source(body){
   const dataset=registry.get(body.dataset);
   const rawColumns=Array.isArray(body.columns)?body.columns:body.columns?[body.columns]:[];
   const filters=[];
-  for(const row of Object.values(body.filters||{}))if(row&&row.field&&(row.value||row.operator==='is_null'))filters.push(row);
+  for(const row of Object.values(body.filters||{}))if(row&&row.field&&(row.value||['is_null','is_empty','not_empty'].includes(row.operator)))filters.push(row);
   const groups=Array.isArray(body.groups)?body.groups.filter(Boolean):body.groups?[body.groups]:body.group?[body.group]:[];
   return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,columnLabels:body.columnLabels||{},
     groups,dateGrain:body.dateGrain,aggregate:body.aggregate,measure:body.measure,
     summary:body.summary==='on'||body.summary===true,
-    filters,sort:body.sort,direction:body.direction,chart:body.chart,layout:body.layout};
+    filters,sort:body.sort,direction:body.direction,topN:body.topN,chart:body.chart,layout:body.layout};
 }
 function previewSchedule(body,defaultZone){return require('../../reports/local-schedule').normalize(body,defaultZone);}
 async function actorFor(database,ctx){

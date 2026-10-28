@@ -6,7 +6,7 @@ const permissions=require('../actions/permissions');
 const {ValidationError}=require('../domain/errors');
 const {newId}=require('../lib/util');
 
-const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null','relative']);
+const OPERATORS=new Set(['equals','is_not','contains','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']);
 const AGGREGATES=new Set(['count','count_distinct','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',count_distinct:'distinct_count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
@@ -26,10 +26,11 @@ function queryContract(key,actor){
   filters:{type:'array',maxItems:12,items:{type:'object',additionalProperties:false,required:['field','operator'],properties:{
    field,operator:{enum:[...OPERATORS]},value:{type:['string','number','boolean']}}}},
   sort:{type:'string',enum:[...fields,...Object.values(AGGREGATE_COLUMN)]},direction:{enum:['asc','desc']},
+  topN:{type:'integer',minimum:1,maximum:1000},
   chart:{enum:['table','bar','line']},layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
  }},filterValues:dataset.filterValues||{},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
   'Text equality is case-sensitive. Use the exact registered filterValues codes where supplied; other values are rejected rather than reported as an empty population.',
-  'Absolute date filters use YYYY-MM-DD; operator relative accepts today, yesterday, last_7_days, this_week in the business time zone and resolves on each run. contains requires text; after/before require dates; numeric comparisons require numeric or date fields.',
+  'Absolute date filters use YYYY-MM-DD; relative periods resolve in the business time zone on each run. Contains requires text; date and numeric comparisons use registered fields; empty also recognizes an empty text value.',
   'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.'],
   fields:dataset.fields,metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{}};
 }
@@ -80,20 +81,20 @@ function normalize(spec,actor){
   if(filters.length>12)invalid('Use at most twelve filters.');
   const cleanFilters=filters.map((filter)=>{
     const field=safeText(filter.field,60),operator=safeText(filter.operator,30),value=safeText(filter.value);
-    if(!Object.hasOwn(dataset.fields,field)||!OPERATORS.has(operator)||(!value&&operator!=='is_null'))
+    if(!Object.hasOwn(dataset.fields,field)||!OPERATORS.has(operator)||(!value&&!['is_null','is_empty','not_empty'].includes(operator)))
       invalid('Choose valid report filters.');
     const choices=dataset.filterValues?.[field];
     if(operator==='equals'&&choices&&!choices.includes(value))
       invalid(`Use an exact ${field} value: ${choices.join(', ')}.`);
     const type=dataset.fields[field];
-    if(['at_least','at_most'].includes(operator)&&!['number','money_minor','date'].includes(type))
+    if(['at_least','at_most','greater_than','less_than'].includes(operator)&&!['number','money_minor','date'].includes(type))
       invalid('This field cannot be compared numerically.');
     if(['after','before'].includes(operator)&&type!=='date')invalid('This field is not a date.');
     if(operator==='contains'&&type!=='text')invalid('Only text fields support contains.');
     if(operator==='relative'&&(type!=='date'||!require('./relative-dates').normalize(value)))invalid('Choose a supported relative period for a date field.');
-    if(operator!=='is_null'&&operator!=='relative'&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
+    if(!['is_null','is_empty','not_empty','relative'].includes(operator)&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
       invalid('Use dates in YYYY-MM-DD format.');
-    if(operator!=='is_null'&&['number','money_minor'].includes(type)&&!Number.isFinite(Number(value)))
+    if(!['is_null','is_empty','not_empty'].includes(operator)&&['number','money_minor'].includes(type)&&!Number.isFinite(Number(value)))
       invalid('Use a valid numeric filter.');
     return {field,operator,value:operator==='relative'?require('./relative-dates').normalize(value):value};
   });
@@ -130,6 +131,9 @@ function normalize(spec,actor){
   const allowedSort=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate]]:Object.keys(dataset.fields));
   if(!allowedSort.has(sort))invalid('Choose a registered field to sort.');
   const direction=spec.direction==='asc'?'asc':'desc';
+  const topN=spec.topN==null||spec.topN===''?null:Number(spec.topN);
+  if(topN!==null&&(!Number.isSafeInteger(topN)||topN<1||topN>1000))
+    invalid('Choose a top or bottom count between 1 and 1,000.');
   const chart=['table','bar','line'].includes(spec.chart)?spec.chart:'table';
   if(chart!=='table'&&!groups.length)invalid('Choose a grouping before drawing a chart.');
   if(chart==='line'&&(groups.length!==1||dataset.fields[groups[0]]!=='date'||sort!==groups[0]
@@ -137,7 +141,7 @@ function normalize(spec,actor){
   const title=safeText(spec.title,100)||dataset.label;
   const layout=['chart_first','table_first','dashboard'].includes(spec.layout)?spec.layout:'chart_first';
   return {dataset:datasetKey,columns:aggregated?[]:columns,columnLabels,groups,summary:summary&&!groups.length,dateGrain,aggregate,
-    measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,chart,layout,title};
+    measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,topN,chart,layout,title};
 }
 async function assertWritableCapabilities(database,ctx,spec,actor){
   const config=normalize(spec,actor);
@@ -159,8 +163,13 @@ function comparableGroupAmounts(config,dataset,rows,hasMore,currencyFilter){
 function condition(filter,index){
   const field=quote(filter.field),value=`$${index}`;
   if(filter.operator==='is_null')return `${field} IS NULL`;
+  if(filter.operator==='is_empty')return filter.type==='text'?`(${field} IS NULL OR ${field}='')`:`${field} IS NULL`;
+  if(filter.operator==='not_empty')return filter.type==='text'?`(${field} IS NOT NULL AND ${field}<>'')`:`${field} IS NOT NULL`;
   if(filter.operator==='equals')return `${field}=${value}`;
+  if(filter.operator==='is_not')return `${field}<>${value}`;
   if(filter.operator==='contains')return `${field} ILIKE ${value} ESCAPE '!'`;
+  if(filter.operator==='greater_than')return `${field}>${value}`;
+  if(filter.operator==='less_than')return `${field}<${value}`;
   if(filter.operator==='at_least'||filter.operator==='after')return `${field}>=${value}`;
   return `${field}<=${value}`;
 }
@@ -172,8 +181,8 @@ function filterParameter(filter){
 function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
   config=require('./relative-dates').resolve(config,dateContext);
   const dataset=registry.get(config.dataset);const values=[workspaceId];
-  const clauses=config.filters.map((filter)=>{if(filter.operator!=='is_null')values.push(filterParameter(filter));
-    return condition(filter,values.length);});
+  const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
+    return condition({...filter,type:dataset.fields[filter.field]},values.length);});
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   let select,group='';
   if(config.groups.length||config.summary){
@@ -224,11 +233,14 @@ async function run(database,ctx,actor,spec,options={}){
   if(!Number.isSafeInteger(suppliedOffset)||suppliedOffset<0||suppliedOffset>1000000)
     invalid('That report page is unavailable. Narrow the filters before browsing further.');
   const offset=suppliedOffset;
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit,offset,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
+  const pageSize=limit-1;
+  const allowed=config.topN===null?pageSize:Math.max(0,Math.min(pageSize,config.topN-offset));
+  const queryLimit=allowed+((config.topN===null||offset+allowed<config.topN)?1:0);
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const fetched=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
-  const hasMore=fetched.length===limit;
-  const rows=hasMore?fetched.slice(0,-1):fetched;
+  const hasMore=fetched.length>allowed;
+  const rows=fetched.slice(0,allowed);
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length||config.summary);
@@ -257,7 +269,7 @@ async function run(database,ctx,actor,spec,options={}){
   })));
   const columnTypes=Object.fromEntries(columns.map(column=>[column,monetaryColumn(column)?'money_minor':grouped&&column===columns.at(-1)?'number':dataset.fields[column]||'text']));const output={config,columns,columnLabels,columnTypes,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
-  hasMore,offset,pageSize:limit-1,extent:{rowKind:grouped?'groups':'records',returnedRows:rows.length,
+  hasMore,offset,pageSize,extent:{rowKind:grouped?'groups':'records',returnedRows:rows.length,
     totalRows:offset===0&&!hasMore?rows.length:null,complete:offset===0&&!hasMore},asOf:new Date().toISOString(),
   provenance:{dataset:config.dataset,workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped,
     currency:currencyFilter}};
@@ -277,8 +289,8 @@ async function countAtMost(database,ctx,actor,spec,maximum){
     await entitlements.assertCapability(database,scope,dataset.commercialCapability,{allowReadOnly:true});}
   if(config.summary)return 1;
   const values=[ctx.workspaceId];
-  const clauses=config.filters.map((filter)=>{if(filter.operator!=='is_null')values.push(filterParameter(filter));
-    return condition(filter,values.length);});
+  const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
+    return condition({...filter,type:dataset.fields[filter.field]},values.length);});
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   const groups=config.groups.map((field)=>config.dateGrain!=='exact'&&dataset.fields[field]==='date'
     ?`date_trunc('${config.dateGrain}',${quote(field)}::timestamp)::date`:quote(field));
@@ -288,7 +300,7 @@ async function countAtMost(database,ctx,actor,spec,maximum){
     LIMIT $${values.length}) bounded`;
   const row=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000})).rows[0];
-  return Number(row.count);
+  return Math.min(Number(row.count),config.topN??Number.POSITIVE_INFINITY);
 }
 function drilldownSpec(spec,values,actor,sourceAlias=null){
   if(spec?.dataset==='composed')return composed.drilldownSpec(spec,values,actor,sourceAlias);
@@ -317,8 +329,10 @@ function drilldownSpec(spec,values,actor,sourceAlias=null){
   });
   if(config.filters.length+groupFilters.length>12)
     invalid('This report has too many filters for a safe drill-down.');
-  return normalize({...config,title:`${config.title} - source records`,groups:[],summary:false,
-    aggregate:'count',measure:'',dateGrain:'exact',columns,
+  const suffix=' - source records';
+  const sourceTitle=config.title.slice(0,100-suffix.length).trimEnd()+suffix;
+  return normalize({...config,title:sourceTitle,groups:[],summary:false,
+    aggregate:'count',measure:'',dateGrain:'exact',columns,topN:null,
     filters:[...config.filters,...groupFilters],sort:config.groups[0]||columns[0],chart:'table'},actor);
 }
 async function save(database,ctx,actor,spec,{id=null,schedule=null,expectedRevision=null}={}){

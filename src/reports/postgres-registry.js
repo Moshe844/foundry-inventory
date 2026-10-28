@@ -8,8 +8,20 @@ const permissions=require('../actions/permissions');
 const datasets=Object.freeze({
   profit_activity:{label:'Recorded sales, product cost and operating expenses',permission:permissions.VIEW_ACCOUNTING,commercialCapability:'accounting.reports',source:`SELECT e.id AS record_id,e.posting_date,l.currency,SUM(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,SUM(CASE WHEN a.account_type='COGS' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS cogs_minor,SUM(CASE WHEN a.account_type='EXPENSE' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS expenses_minor,SUM(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor WHEN a.account_type IN ('COGS','EXPENSE') THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS net_profit_minor FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id WHERE e.workspace_id=$1 AND e.status='POSTED' AND a.account_type IN ('INCOME','COGS','EXPENSE') GROUP BY e.id,e.posting_date,l.currency`,recordHref:r=>'/accounting/entries/'+r.record_id,fields:{posting_date:'date',currency:'text',revenue_minor:'money_minor',cogs_minor:'money_minor',expenses_minor:'money_minor',net_profit_minor:'money_minor'}},
   tax_activity:{label:'Recorded sales tax collected and recoverable',permission:permissions.VIEW_ACCOUNTING,commercialCapability:'accounting.reports',source:`SELECT e.id AS record_id,e.posting_date,l.currency,a.name AS tax_account,COALESCE(c.name,s.name,'') AS counterparty,(l.credit_minor-l.debit_minor)::bigint AS net_tax_minor FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id LEFT JOIN suppliers s ON s.id=l.supplier_id AND s.workspace_id=l.workspace_id WHERE e.workspace_id=$1 AND e.status='POSTED' AND a.subtype='TAX'`,recordHref:r=>'/accounting/entries/'+r.record_id,fields:{posting_date:'date',currency:'text',tax_account:'text',counterparty:'text',net_tax_minor:'money_minor'}},
+  expenses:{label:'Recorded operating expenses',permission:permissions.VIEW_ACCOUNTING,commercialCapability:'accounting.reports',
+    source:`SELECT e.id AS record_id,e.posting_date,a.name AS category,e.description,l.currency,
+      (l.debit_minor-l.credit_minor)::bigint AS amount_minor,
+      COALESCE(c.name,s.name,'') AS counterparty
+      FROM accounting_journal_entries e
+      JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id
+      JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
+      LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id
+      LEFT JOIN suppliers s ON s.id=l.supplier_id AND s.workspace_id=l.workspace_id
+      WHERE e.workspace_id=$1 AND e.status='POSTED' AND a.account_type='EXPENSE'`,
+    recordHref:r=>'/accounting/entries/'+r.record_id,
+    fields:{posting_date:'date',category:'text',description:'text',counterparty:'text',currency:'text',amount_minor:'money_minor'}},
   catalogue:{label:'Product and SKU catalogue, including inactive records and current saved selling prices',permission:permissions.VIEW,
-    source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,
+    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
       i.unit_label AS unit,i.tracking_mode AS tracking,
       CASE WHEN i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
@@ -19,20 +31,22 @@ const datasets=Object.freeze({
       CASE WHEN p.amount_minor IS NOT NULL THEN 'yes' ELSE 'no' END AS selling_price_recorded,
       to_char(i.created_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS created_on
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
       LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_prices
         WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) p ON true
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     moneyCompleteness:{selling_price_minor:{field:'selling_price_recorded',value:'yes'}},
-    enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+    enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',category:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
-    source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
+    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,l.name AS location,
       b.on_hand::bigint AS on_hand,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
+      LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
       JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    fields:{product:'text',sku:'text',location:'text',on_hand:'number',as_of:'date'}},
+    fields:{product:'text',category:'text',sku:'text',location:'text',on_hand:'number',as_of:'date'}},
   stock_recency:{label:'Stock positions and recorded sales recency',permission:permissions.VIEW_SALES,
     source:`WITH recorded_sales AS (
       SELECT jl.workspace_id,jl.sku_id,MAX(e.posting_date) AS last_sold_on
@@ -364,7 +378,8 @@ const datasets=Object.freeze({
     // remain visible instead of being silently attributed to a product.
     source:`SELECT e.id AS record_id,e.entry_number::text AS entry_number,e.posting_date,
       e.source_type,COALESCE(s.code,'Unattributed') AS sku,
-      COALESCE(i.name,'Unattributed') AS product,COALESCE(c.name,'Unattributed') AS customer,
+      COALESCE(i.name,'Unattributed') AS product,COALESCE(f.category,'Uncategorized') AS category,
+      COALESCE(c.name,'Unattributed') AS customer,
       l.currency,
       SUM(CASE WHEN a.system_key IN ('SALES_REVENUE','SALES_RETURNS')
         THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,
@@ -379,14 +394,15 @@ const datasets=Object.freeze({
       JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
       LEFT JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
       LEFT JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
       LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id
       WHERE e.workspace_id=$1 AND e.status='POSTED'
         AND a.system_key IN ('SALES_REVENUE','SALES_RETURNS','COST_OF_GOODS_SOLD')
-      GROUP BY e.id,e.entry_number,e.posting_date,e.source_type,s.code,i.name,c.name,l.currency`,
+      GROUP BY e.id,e.entry_number,e.posting_date,e.source_type,s.code,i.name,f.category,c.name,l.currency`,
     recordHref:(row)=>`/accounting/entries/${row.record_id}`,
     metrics:{gross_margin_percent:{label:'Gross margin %',kind:'ratio',numerator:'gross_profit_minor',
       denominator:'revenue_minor',currencySensitive:true}},
-    fields:{entry_number:'text',posting_date:'date',source_type:'text',sku:'text',product:'text',
+    fields:{entry_number:'text',posting_date:'date',source_type:'text',sku:'text',product:'text',category:'text',
       customer:'text',currency:'text',revenue_minor:'money_minor',cogs_minor:'money_minor',
       gross_profit_minor:'money_minor'}},
   imports:{label:'Import history',permission:permissions.VIEW,
