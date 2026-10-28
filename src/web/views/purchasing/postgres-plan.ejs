@@ -7,7 +7,7 @@
     <div class="rm-ledger"><% orders.forEach(function(order){ %><a class="rm-ledger__row" href="/purchasing/orders/<%= order.id %>">
       <span class="rm-ledger__k"><%= order.po_number %><small><%= order.supplier_name %> · <%= order.line_count %> line<%= order.line_count===1?'':'s' %></small></span>
       <span class="rm-ledger__v"><%= order.status.replaceAll('_',' ') %></span>
-      <span class="rm-ledger__n"><%= order.units_outstanding %> units outstanding<% if(order.balance_minor){ %> · <%= helpers.money(order.balance_minor,order.currency) %> owed<% } %></span>
+      <span class="rm-ledger__n"><%= helpers.unitCount(order.units_outstanding,'unit') %> outstanding<% if(order.balance_minor){ %> · <%= helpers.money(order.balance_minor,order.currency) %> owed<% } %></span>
     </a><% }) %></div>
   <% } %>
 </section>

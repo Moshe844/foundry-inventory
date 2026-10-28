@@ -41,7 +41,7 @@
   <%- include('../components/maintenance-progress',{maintenanceProgress}) %>
   <div class="form-actions"><form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Check the operation now</button></form>
     <% if(!state.paused){ %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Pause automatic work</button></form><% } %></div>
-  <% if(!recent.length){ %><p class="muted">No transfer or replenishment decisions have been prepared yet.</p><% } else { %><div class="list-rows"><% recent.forEach(function(item){ %><div class="list-row"><div><strong><%= item.recommendedAction.displayName %></strong><p><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= item.recommendedAction.quantity %> units · <%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></p></div><a class="btn btn--sm" href="/autopilot/work/<%= item.id %>">Open</a></div><% }) %></div><% } %>
+  <% if(!recent.length){ %><p class="muted">No transfer or replenishment decisions have been prepared yet.</p><% } else { %><div class="list-rows"><% recent.forEach(function(item){ %><div class="list-row"><div><strong><%= item.recommendedAction.displayName %></strong><p><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= helpers.unitCount(item.recommendedAction.quantity,'unit') %> · <%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></p></div><a class="btn btn--sm" href="/autopilot/work/<%= item.id %>">Open</a></div><% }) %></div><% } %>
 </div></section>
 
 </div>

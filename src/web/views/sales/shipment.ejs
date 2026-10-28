@@ -210,7 +210,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="handover" value="COLLECTED">
         <div class="card-body">
-          <p class="lede">Confirm only after the customer physically collects these <%= s.units %> units.</p>
+          <p class="lede">Confirm only after the customer physically collects these <%= helpers.unitCount(s.units,'unit') %>.</p>
           <p class="hint">This removes them from stock, records the sale and product cost, and updates what the customer owes. There is no carrier step.</p>
         </div>
         <div class="card-foot">

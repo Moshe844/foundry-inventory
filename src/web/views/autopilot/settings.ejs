@@ -117,7 +117,7 @@
           <div class="notice notice--success routine-current">
             <strong>Currently approved:</strong>
             <% if (routine.transfer.enabled) { %>
-              transfers of no more than <strong><%= routine.transfer.maximumQuantity %> units at a time</strong><%= routine.purchasing.enabled ? '; ' : '.' %>
+              transfers of no more than <strong><%= helpers.unitCount(routine.transfer.maximumQuantity,'unit') %> at a time</strong><%= routine.purchasing.enabled ? '; ' : '.' %>
             <% } %>
             <% if (routine.purchasing.enabled) { %>
               purchase orders of no more than <strong>$<%= Number(routine.purchasing.maximumValue).toLocaleString('en-US') %></strong>

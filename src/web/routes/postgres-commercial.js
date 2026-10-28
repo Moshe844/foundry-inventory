@@ -61,7 +61,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:(await addons.packs(database)).filter(p=>Number(p.version)===3),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
+    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled'});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
@@ -90,7 +90,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     await require('../../commercial/provider-costs').ingest(database,statement,req.account.id);
     req.flash('success','Provider invoice cost recorded with its evidence and allocation. Coverage warnings remain until independently verified.');
     return res.redirect(303,'/commercial-admin');}));
-  router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
+  router.get('/billing',requireAccount,requireBillingOwner,(req,res)=>res.redirect(301,'/settings/billing'+(req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')));
+  router.get('/settings/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     const pendingChanges=(await database.query(`SELECT change.*,plan.public_name AS target_plan_name
       FROM commercial_subscription_changes change JOIN commercial_plans plan ON plan.id=change.to_plan_id
@@ -100,7 +101,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     return res.page('commercial/billing',{title:'Plan & billing',nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
-      packs:await addons.packs(database,scope),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
+      packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
       checkoutOpen:await release.isSubscriptionCheckoutOpen(database),usageCheckoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
   router.get('/billing/terms',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>res.page('commercial/plan-terms',{title:'Review plan terms',nav:'settings',room:true,terms:await require('../../commercial/plan-terms').review(database,req.account.id)})));

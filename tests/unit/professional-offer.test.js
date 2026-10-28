@@ -1,0 +1,20 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('plan comparison derives additions and real prices from enabled catalogue capabilities',()=>{
+ const offer=require('../../src/commercial/public-offer'),plan=(id,price,keys,display_order)=>({id,public_name:id,monthly_amount_minor:price,annual_amount_minor:price*11,display_order,entitlements:keys.map(capability=>({capability,enabled:1})),meters:[]});
+ const plans=[plan('starter',17321,['inventory.core'],1),plan('growth',38147,['inventory.core','communications.email_ingestion'],2),plan('pro',61753,['inventory.core','communications.email_ingestion','support.chat'],3)];
+ const result=offer.comparison(plans);assert.equal(result.length,3);assert.equal(result[1].monthly_amount_minor,38147);assert.equal(result[1].annual_amount_minor,419617);assert.deepEqual(result[1].incrementalFeatures.map(f=>f.capability),['communications.email_ingestion']);assert.equal(result[1].includesPlan,'starter');assert.deepEqual(result[2].incrementalFeatures.map(f=>f.capability),['support.chat']);assert.equal(result[0].incrementalFeatures.length,1);
+ plans[1].entitlements[0].enabled=0;assert.equal(offer.comparison(plans)[1].includesPlan,null,'A plan cannot promise inherited capabilities it disables');plans[1].entitlements[0].enabled=1;plans[1].entitlements[1].enabled=0;assert.equal(offer.comparison(plans)[1].incrementalFeatures.length,0,'A disabled capability must not become a promise on its card');
+});
+test('customer pack lists show the current approved catalogue without changing legacy purchase records',()=>{
+ const rows=[{id:'old',category:'ai_work_credits',version:2,status:'PROVISIONAL',units:2500,amount_minor:23900},{id:'current',category:'ai_work_credits',version:3,status:'APPROVED',units:2500,amount_minor:7900,purchasable:false,termsReviewRequired:true},{id:'future',category:'ai_work_credits',version:4,status:'PROVISIONAL',units:2500,amount_minor:11111},{id:'mail',category:'emails_sent',version:3,status:'APPROVED',units:10000,amount_minor:1500}];
+ const before=JSON.stringify(rows),result=require('../../src/commercial/addons').currentPacks(rows);assert.deepEqual(result.map(r=>r.id),['current','mail']);assert.equal(result[0].amount_minor,7900);assert.equal(result[0].termsReviewRequired,true);assert.equal(JSON.stringify(rows),before);
+});
+test('shared customer formatting fixes grammar and internal copy without altering protected product names',()=>{
+ const h=require('../../src/web/view-helpers');assert.equal(h.unitCount(1,'units'),'1 unit');assert.equal(h.unitCount(0,'units'),'0 units');assert.equal(h.unitCount(1,'knives'),'1 knife');assert.equal(h.unitCount(2,'kg'),'2 kg');assert.equal(h.displayName('MOshe'),'Moshe');assert.equal(h.displayName('éLISE'),'Élise');assert.equal(h.customerCopy('Business-calendar posting for journal 62'),'Accounting date correction');assert(!h.customerCopy('Delivery reference: reportdelivery_abcdefghijklmnopqrstuv').includes('reportdelivery_'));assert.equal(h.figures('1 units received. One 1 units box',['One 1 units box']),'1 unit received. One 1 units box');
+});
+test('urgency tags depend on real deadlines, not severity or the mockup date',()=>{
+ const h=require('../../src/web/view-helpers');assert.equal(h.deadlineTag({importance:'Important'},'2027-03-19'),null);assert.equal(h.deadlineTag({dueDate:'2027-03-18'},'2027-03-19'),'Overdue');assert.equal(h.deadlineTag({dueDate:'2027-03-19'},'2027-03-19'),'Due today');assert.equal(h.deadlineTag({dueDate:'2027-03-20'},'2027-03-19'),null);
+});
+
+test('export sheet names stay valid and unique without changing their rows',()=>{const name=require('../../src/operations/postgres-export').sheetName,used=new Set();const labels=['A very long worksheet name that needs shortening','A very long worksheet name that needs shortening','a very long worksheet name that needs shortening','[Orders]/Returns:*?',''];const names=labels.map(x=>name(x,used));assert.equal(new Set(names.map(x=>x.toLowerCase())).size,labels.length);for(const x of names){assert(x.length<=31);assert(!/[\\/:*?\[\]]/.test(x));}assert.equal(names[3],'Orders  Returns');});

@@ -68,7 +68,7 @@
     <span class="rm-decision__arrow" aria-hidden="true">→</span>
     <span class="rm-decision__txt">
       Ready for your approval.
-      <small><%= order.orderedUnits %> units from <%= order.supplierName %> for <%= helpers.money(Math.round(order.subtotal * 100), order.currency) %>. Nothing has been sent yet.</small>
+      <small><%= helpers.unitCount(order.orderedUnits,'unit') %> from <%= order.supplierName %> for <%= helpers.money(Math.round(order.subtotal * 100), order.currency) %>. Nothing has been sent yet.</small>
     </span>
     <span class="rm-decision__go">
       <form method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy>
@@ -155,16 +155,16 @@
     <span class="rm-decision__arrow" aria-hidden="true">→</span>
     <span class="rm-decision__txt">
       <% if (isLate) { %>
-        <%= order.outstandingUnits %> units should have arrived by <%= helpers.shortDate(order.expectedDate) %>.
+        <%= helpers.unitCount(order.outstandingUnits,'unit') %> should have arrived by <%= helpers.shortDate(order.expectedDate) %>.
         <small>Nothing is booked in until you say it arrived. If it has, one click does it; if it is late, <%= order.supplierName %> has not said why.</small>
       <% } else if (order.expectedDate && locals.expectedInFuture) { %>
-        <%= order.outstandingUnits %> units are expected <%= helpers.shortDate(order.expectedDate) %>.
+        <%= helpers.unitCount(order.outstandingUnits,'unit') %> are expected <%= helpers.shortDate(order.expectedDate) %>.
         <small>Nothing is booked in until you say it arrived. If it turns up early, report it and StockChief fills in what it already knows.</small>
       <% } else if (order.expectedDate) { %>
-        <%= order.outstandingUnits %> units are due <%= helpers.shortDate(order.expectedDate) %>.
+        <%= helpers.unitCount(order.outstandingUnits,'unit') %> are due <%= helpers.shortDate(order.expectedDate) %>.
         <small>When the boxes turn up, book them in here. Stock changes only for what you count.</small>
       <% } else { %>
-        <%= order.outstandingUnits %> units are still to come; nobody has said when.
+        <%= helpers.unitCount(order.outstandingUnits,'unit') %> are still to come; nobody has said when.
         <small>When the boxes turn up, book them in here. Stock changes only for what you count.</small>
       <% } %>
     </span>
@@ -224,7 +224,7 @@
       <% }) %>
     </tbody>
     <tfoot><tr>
-      <td colspan="4" class="num"><strong><%= order.orderedUnits %> units</strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
+      <td colspan="4" class="num"><strong><%= helpers.unitCount(order.orderedUnits,'unit') %></strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
       <td class="num"><strong><%= helpers.money(Math.round((order.subtotal || 0) * 100), order.currency) %></strong></td>
     </tr></tfoot>
   </table>
@@ -234,10 +234,10 @@
 <div class="rm-ledger" style="margin-bottom:24px">
   <div class="rm-ledger__row">
     <span class="rm-ledger__k">Goods</span>
-    <span class="rm-ledger__v">Ordered <%= order.orderedUnits %> units</span>
+    <span class="rm-ledger__v">Ordered <%= helpers.unitCount(order.orderedUnits,'unit') %></span>
     <span class="rm-ledger__n">
-      Received <%= order.receivedUnits %> units ·
-      Still expected <%= order.outstandingUnits %> units
+      Received <%= helpers.unitCount(order.receivedUnits,'unit') %> ·
+      Still expected <%= helpers.unitCount(order.outstandingUnits,'unit') %>
     </span>
   </div>
   <div class="rm-ledger__row">

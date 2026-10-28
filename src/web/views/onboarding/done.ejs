@@ -39,7 +39,7 @@
         <span>
           <strong><%= entry.source %></strong> — <%= entry.itemsCreated %> product<%= entry.itemsCreated === 1 ? '' : 's' %> created<%
           %><% if (entry.skusCreated > entry.itemsCreated) { %> (<%= entry.skusCreated %> versions)<% } %>,
-          <%= entry.unitsEstablished %> units established<% if (entry.rowsSkipped) { %>, <%= entry.rowsSkipped %> row<%= entry.rowsSkipped === 1 ? '' : 's' %> skipped<% } %>
+          <%= helpers.unitCount(entry.unitsEstablished,'unit') %> established<% if (entry.rowsSkipped) { %>, <%= entry.rowsSkipped %> row<%= entry.rowsSkipped === 1 ? '' : 's' %> skipped<% } %>
         </span>
       </li>
     <% }) %>

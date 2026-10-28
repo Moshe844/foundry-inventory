@@ -1,4 +1,4 @@
-<header class="sc-sidebar" id="app-sidebar" aria-label="StockChief navigation">
+<header class="sc-sidebar" id="app-sidebar" aria-label="StockChief navigation"><div class="sc-sidebar-inner">
   <button type="button" class="btn btn--ghost sc-sidebar-close" data-sidebar-close>Close menu</button>
   <a class="sc-brand" href="/" aria-label="StockChief"><span class="sc-brand-mark"><%- helpers.icon('inventory',{size:20}) %></span>StockChief</a>
   <% if(workspace){ %>
@@ -16,5 +16,5 @@
     <% for(const item of navigation.footer){ %><a href="<%= item.href %>" <%- currentHref.startsWith(item.href)?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
   </nav>
   <% }else{ %><nav class="sc-primary" aria-label="Primary navigation"><a href="/inventories">Your inventories</a><a href="/inventories/new">New inventory</a></nav><% } %>
-  <% const person=currentUser||account; if(person){ %><div class="sc-person"><span><%= person.name %></span><form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm" type="submit">Sign out</button></form></div><% } %>
-</header>
+  <% const person=currentUser||account; if(person){ %><div class="sc-person"><span><%= helpers.displayName(person.name) %></span><form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm" type="submit">Sign out</button></form></div><% } %>
+</div></header>

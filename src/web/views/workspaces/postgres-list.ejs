@@ -7,7 +7,7 @@
     <a class="rm-btn" href="/inventories/new">Create inventory</a></div><% } %>
   <div class="rm-stack"><% inventories.forEach(function(inventory){ %>
     <div class="rm-row"><span><strong><%= inventory.name %></strong>
-      <small><%= inventory.itemCount %> products · <%= inventory.locationCount %> locations · <%= inventory.unitsOnHand %> units</small></span>
+      <small><%= inventory.itemCount %> products · <%= inventory.locationCount %> locations · <%= helpers.unitCount(inventory.unitsOnHand,'unit') %></small></span>
       <% if(inventory.workspaceId===currentWorkspaceId){ %><span class="rm-badge">Open now</span><% }else{ %>
         <form method="post" action="/inventories/switch"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="workspaceId" value="<%= inventory.workspaceId %>"><input type="hidden" name="next" value="/">

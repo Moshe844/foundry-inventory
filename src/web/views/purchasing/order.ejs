@@ -80,7 +80,7 @@
       <div class="supplier-order-track">
         <h3>Products</h3>
         <p class="supplier-order-track__status"><%= order.outstandingUnits === 0 ? 'Everything received' : order.receivedUnits > 0 ? 'Partially received' : 'Waiting for delivery' %></p>
-        <dl class="money-plain-list"><div><dt>Ordered</dt><dd><%= order.orderedUnits %> units</dd></div><div><dt>Received</dt><dd><%= order.receivedUnits %> units</dd></div><div><dt>Still expected</dt><dd><%= order.outstandingUnits %> units</dd></div></dl>
+        <dl class="money-plain-list"><div><dt>Ordered</dt><dd><%= helpers.unitCount(order.orderedUnits,'unit') %></dd></div><div><dt>Received</dt><dd><%= helpers.unitCount(order.receivedUnits,'unit') %></dd></div><div><dt>Still expected</dt><dd><%= helpers.unitCount(order.outstandingUnits,'unit') %></dd></div></dl>
       </div>
       <div class="supplier-order-track">
         <h3>Supplier money</h3>
@@ -104,7 +104,7 @@
       </div>
     <% } %>
 
-    <div class="supplier-autonomy-next"><strong>What StockChief does next</strong><p><% if (order.outstandingUnits > 0) { %>Keeps watching for shipment and delivery evidence for the remaining <%= order.outstandingUnits %> units. <% } %><% if (!supplierBills.length) { %>Keeps watching for the supplier invoice. <% } else if (billSummary.owedMinor > 0) { %>Keeps the <%= helpers.money(billSummary.owedMinor, order.currency) %> balance open and updates it when payment evidence is recorded. <% } %>Any price, quantity, SKU, duplicate, or authority exception goes to Needs You instead of being guessed.</p></div>
+    <div class="supplier-autonomy-next"><strong>What StockChief does next</strong><p><% if (order.outstandingUnits > 0) { %>Keeps watching for shipment and delivery evidence for the remaining <%= helpers.unitCount(order.outstandingUnits,'unit') %>. <% } %><% if (!supplierBills.length) { %>Keeps watching for the supplier invoice. <% } else if (billSummary.owedMinor > 0) { %>Keeps the <%= helpers.money(billSummary.owedMinor, order.currency) %> balance open and updates it when payment evidence is recorded. <% } %>Any price, quantity, SKU, duplicate, or authority exception goes to Needs You instead of being guessed.</p></div>
   </div>
 </section>
 

@@ -43,7 +43,7 @@
       <div class="card-head"><h2>What this affects</h2></div>
       <div class="card-body">
         <dl class="kv">
-          <dt>Existing stock</dt><dd>Untouched — <%= helpers.qty(totals.unitsOnHand) %> units stay where they are</dd>
+          <dt>Existing stock</dt><dd>Untouched — <%= helpers.unitCount(helpers.qty(totals.unitsOnHand),'unit') %> stay where they are</dd>
           <dt><%= helpers.plural(2, term('item')) %></dt><dd><%= totals.itemCount %> unchanged</dd>
           <dt>Migration</dt><dd>Not required</dd>
           <dt>Reversible</dt><dd>Yes — configuration can be changed again</dd>

@@ -48,7 +48,7 @@
 
 
 
-<h1>Orders</h1>
+<h1>Orders</h1><% const section=locals.pageSection;if(section?.id==='orders'){ %><nav class="sc-section-tabs" aria-label="Orders navigation"><% for(const tab of section.tabs){ %><a href="<%= tab.href %>" <%- tab.href==='/orders'?'aria-current="page"':'' %>><%= tab.label %></a><% } %></nav><% } %>
 <p class="rm-sub">
   <% if (view === 'stuck') { %><%= counts.stuck %> order<%= counts.stuck === 1 ? ' needs' : 's need' %> you.
   <% } else if (view === 'ready') { %><%= counts.ready %> order<%= counts.ready === 1 ? ' is' : 's are' %> ready to pick.
@@ -91,7 +91,7 @@
           </small>
         </span>
         <span class="rm-told__m <%= order.next && order.next.rank >= 80 ? 'is-paused' : '' %>">
-          <%= order.totals.ordered %> units
+          <%= helpers.unitCount(order.totals.ordered,'unit') %>
           <% if (order.pricing && order.pricing.totalMinor) { %>· <%= money(order.pricing.totalMinor, order.currency) %><% } %>
           <% if (order.needed_by) { %>· by <%= helpers.shortDate(order.needed_by) %><% } %>
           <% if (order.next && order.next.action) { %><a href="<%= stepHref(order) %>"><%= order.next.action %></a><% } %>
@@ -109,7 +109,7 @@
       <div class="rm-told__row">
         <span class="rm-told__t <%= owed ? '' : 'rm-quiet' %>">
           <a class="rm-u" href="/orders/<%= order.id %>"><%= order.customer.name %></a> · <%= order.order_number %>
-          <small><%= order.totals.fulfilled || order.totals.ordered %> units<% if (order.pricing && order.pricing.totalMinor) { %> · <%= money(order.pricing.totalMinor, order.currency) %><% } %></small>
+          <small><%= helpers.unitCount(order.totals.fulfilled || order.totals.ordered,'unit') %><% if (order.pricing && order.pricing.totalMinor) { %> · <%= money(order.pricing.totalMinor, order.currency) %><% } %></small>
         </span>
         <span class="rm-told__m <%= order.status === 'CANCELLED' ? 'is-paused' : owed ? 'is-warn' : 'is-ok' %>">
           <% if (order.status === 'CANCELLED') { %><%= helpers.orderStatus(order.status,order.fulfilled||order.fulfilledUnits||order.totals?.fulfilled||0,order.delivery_method) %><% } else if (order.next) { %><%= String(order.next.text).replace(/^Gone/, 'Delivered') %><% } else { %><%= order.fulfilmentLabel || 'Delivered' %><% } %>

@@ -35,4 +35,5 @@ function describe(plan){const meters=new Map((plan.meters||[]).map(m=>[m.meter,m
  approximateWorkSteps:Math.floor(Number(meters.get('ai_work_credits')?.included_units||0)/Number(meters.get('ai_work_credits')?.credit_unit_scale||1)),
  };}
 function purchasableAddons(packs){return packs.filter(p=>p.purchasable===true&&p.status==='APPROVED');}
-module.exports={describe,features,enabled,purchasableAddons};
+function comparison(plans){let previous=null;return plans.slice().sort((a,b)=>Number(a.display_order||0)-Number(b.display_order||0)).map(raw=>{const plan=describe(raw),current=new Set(plan.features.map(f=>f.capability)),inherits=previous&&previous.features.every(f=>current.has(f.capability)),inherited=new Set(inherits?previous.features.map(f=>f.capability):[]),result={...plan,includesPlan:inherits?previous.name:null,incrementalFeatures:plan.features.filter(f=>!inherited.has(f.capability))};previous=plan;return result;});}
+module.exports={describe,comparison,features,enabled,purchasableAddons};

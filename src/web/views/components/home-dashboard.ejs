@@ -1,6 +1,6 @@
 <%
  const needs=locals.homeDecisions||home.needsYou||[],suggestions=locals.homeSuggestions||[];
- const firstName=(currentUser?.name||'').trim().split(/\s+/)[0];
+ const firstName=helpers.displayName((currentUser?.name||'').trim().split(/\s+/)[0]);
  const paused=home.status.paused||home.status.suspended;
  const activity=locals.completedWork||home.did?.actions||[];
 %>
@@ -10,7 +10,7 @@
   <% if(locals.maintenanceProgress){ %><%- include('maintenance-progress',{maintenanceProgress}) %><% } %>
   <% if(paused){ %><div class="notice notice--warn"><p><%= home.status.suspendedReason||home.status.pausedReason||'Automatic work is paused.' %></p><% if(canOperate){ %><form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="btn" type="submit">Resume automatic work</button></form><% } %></div><% } %>
   <section class="sc-home-block" data-home-section="needs" id="needs-you" aria-labelledby="home-needs-title"><header><h2 id="home-needs-title">Needs you <span class="badge"><%= Number(home.needsYouTotal||0) %></span></h2><a href="/needs-you">View all</a></header>
-    <% if(needs.length){ %><div class="sc-decision-list"><% for(const decision of needs){ %><article class="sc-decision"><span class="badge <%= decision.importance==='Urgent'?'badge--danger':'badge--warn' %>"><%= decision.importance||'Needs attention' %></span><h3><%= decision.title %></h3><p><%= decision.why||decision.because||decision.happened %></p><a class="btn" href="<%= decision.href %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div><% }else{ %><p class="sc-home__quiet"><%= suggestions.length?'Your prepared changes are ready for review below.':'No known decisions are waiting for you.' %></p><% } %>
+    <% if(needs.length){ %><div class="sc-decision-list"><% for(const decision of needs){ %><article class="sc-decision"><% const deadline=helpers.deadlineTag(decision,helpers.businessDay(new Date(),account.timeZone||'UTC'));if(deadline){ %><span class="sc-due-tag"><%= deadline %></span><% } %><h3><%= decision.title %></h3><p><%= decision.why||decision.because||decision.happened %></p><a class="btn" href="<%= decision.href %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div><% }else{ %><p class="sc-home__quiet"><%= suggestions.length?'Your prepared changes are ready for review below.':'No known decisions are waiting for you.' %></p><% } %>
   </section>
   <% if(suggestions.length){ %><section class="sc-home-block" data-home-section="suggestions" id="suggestions" aria-labelledby="home-suggestions-title"><header><h2 id="home-suggestions-title">Suggested actions</h2></header>
     <% if(suggestions.length){ %><div class="sc-suggestion-grid"><% for(const suggestion of suggestions.slice(0,6)){ %><%- include('home-suggestion',{suggestion}) %><% } %></div><% }else{ %><p class="sc-home__quiet">No prepared suggestions yet.</p><% } %>

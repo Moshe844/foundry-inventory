@@ -2,7 +2,8 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in · StockChief</title>
 <link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>">
-<link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"></head>
+<link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
+</head>
 <body class="commercial-auth"><main class="auth-split"><section class="auth-form">
 <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
 <div class="auth-form__body"><span class="pub-eyebrow">WELCOME BACK</span><h1>Sign in to your operation.</h1>

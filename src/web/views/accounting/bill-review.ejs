@@ -8,8 +8,8 @@
     <div class="notice notice--warning"><div><strong>The current evidence needs review.</strong><ul>
       <% match.differences.forEach(function(difference) { var line = bill.lines.find(function(candidate) { return candidate.id === difference.lineId; }); %>
         <li><strong><%= line ? line.description : 'Invoice match' %>:</strong>
-        <% if (difference.kind === 'quantity_above_ordered') { %>This invoice plus previously approved invoices bills <%= difference.previouslyBilled + difference.billed %> units against <%= difference.ordered %> ordered.
-        <% } else if (difference.kind === 'invoice_ahead_of_receipt') { %>This invoice plus previously approved invoices bills <%= difference.previouslyBilled + difference.billed %> units; <%= difference.received %> have arrived. Any approved unreceived quantity is accounted for in transit, not as physically available stock.
+        <% if (difference.kind === 'quantity_above_ordered') { %>This invoice plus previously approved invoices bills <%= helpers.unitCount(difference.previouslyBilled + difference.billed,'unit') %> against <%= difference.ordered %> ordered.
+        <% } else if (difference.kind === 'invoice_ahead_of_receipt') { %>This invoice plus previously approved invoices bills <%= helpers.unitCount(difference.previouslyBilled + difference.billed,'unit') %>; <%= difference.received %> have arrived. Any approved unreceived quantity is accounted for in transit, not as physically available stock.
         <% } else if (difference.kind === 'price_outside_tolerance') { %>Billed unit cost <%= helpers.money(difference.billedUnitCostMinor, bill.currency) %> differs from PO unit cost <%= helpers.money(difference.orderedUnitCostMinor, bill.currency) %>, outside the <%= difference.tolerancePercent %>% supplier tolerance.
         <% } else if (difference.kind === 'po_supplier_mismatch') { %>The purchase order is missing from this workspace or belongs to a different supplier. Correct the source association through Purchasing; changing amounts here cannot bypass this check.
         <% } else { %>This product does not have a valid line match to this purchase order.

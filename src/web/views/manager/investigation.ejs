@@ -94,7 +94,7 @@
               <p>StockChief has never recorded a sale, transfer, receipt or adjustment for this product at this location, so the recorded 0 is not a measurement — it is the absence of one. Your count is the opening quantity, and receiving it is what puts it on the ledger.</p>
             <% } else if (!investigation.hypotheses.length) { %>
               <strong>No recorded event explains the difference yet.</strong>
-              <p>StockChief checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= differenceSize ?? 'missing' %> units. It will not invent a cause.</p>
+              <p>StockChief checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= helpers.unitCount(differenceSize ?? 'missing','unit') %>. It will not invent a cause.</p>
             <% } else { %>
               <strong>StockChief found evidence worth reviewing.</strong>
               <% investigation.hypotheses.forEach(function (hypothesis) { %>

@@ -30,6 +30,10 @@ const { unitCount, unitLabel } = require('../lib/units');
 function plural(count, one, many) {
   return Number(count) === 1 ? one : many || unitLabel(count, one);
 }
+function displayName(value){return String(value||'').trim().split(/\s+/u).map(word=>{const letters=Array.from(word.toLocaleLowerCase());return letters.length?letters[0].toLocaleUpperCase()+letters.slice(1).join(''):'';}).join(' ');}
+function customerCopy(value){return String(value??'').replace(/^Business-calendar posting for journal \d+$/i,'Accounting date correction').replace(/\b(?:reportdelivery|supportmessage|support|pgprop|goal|rjob)_[a-z0-9]{12,}\b/gi,'saved record').replace(/(?<![\w.-])1(?:\.0+)?\s+units\b/g,'1 unit');}
+function businessDay(value,timeZone='UTC'){if(typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value))return value;return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));}
+function deadlineTag(entry,today){const due=entry?.dueDate||entry?.due_date||entry?.dueAt||entry?.deadlineAt;if(!due)return null;const date=String(due).slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^\d{4}-\d{2}-\d{2}$/.test(String(today)))return null;return date<today?'Overdue':date===today?'Due today':null;}
 
 /**
  * Calendar dates (lot expiry, received-on) are stored as UTC midnight and mean
@@ -173,7 +177,7 @@ const COLUMN_LABELS = {
 const thousands = new Intl.NumberFormat('en-US');
 function figures(text, protectedNames = []) {
   if (text === null || text === undefined) return '';
-  const format = (part) => part.replace(/(?<![\w.,#/-])(\d{4,})(?![\w.,/-])/g, (run) => {
+  const format = (part) => customerCopy(part).replace(/(?<![\w.,#/-])(\d{4,})(?![\w.,/-])/g, (run) => {
     if (run.length === 4 && Number(run) >= 1900 && Number(run) <= 2099) return run;
     return thousands.format(Number(run));
   });
@@ -200,6 +204,10 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  businessDay,
+  displayName,
+  customerCopy,
+  deadlineTag,
   connectionCards:require('./presentation/connections').cards,
   connectionPresentation:require('./presentation/connections'),
   paymentSummary:require('./presentation/payment-summary').present,

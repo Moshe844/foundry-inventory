@@ -16,7 +16,7 @@
    */
   var hour = null;
   var greeting = 'Hello';
-  var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
+  var firstName = currentUser && currentUser.name ? helpers.displayName(currentUser.name.split(/\s+/)[0]) : '';
   var needsCount = home.needsYou.length;
   var coverageErrors = home.coverageErrors || [];
   var handlingCount = home.handling.length;
@@ -207,9 +207,7 @@
             read, so it appears only when it raises the stakes. %>
         <article class="inbox-item <%= entry.importance === 'Urgent' ? 'inbox-item--urgent' : entry.importance === 'Important' ? 'inbox-item--important' : '' %>">
           <div>
-            <% if (entry.importance === 'Urgent' || entry.importance === 'Important') { %>
-              <span class="badge <%= entry.importance === 'Urgent' ? 'badge--danger' : 'badge--warn' %>"><%= entry.importance %></span>
-            <% } %>
+            <% const deadline=helpers.deadlineTag(entry,locals.today||new Date().toISOString().slice(0,10)); if(deadline){ %><span class="sc-due-tag"><%= deadline %></span><% } %>
             <h3 class="inbox-item__title"><%= entry.title %></h3>
             <% if (entry.because) { %><p class="inbox-item__because"><%= entry.because %></p><% } %>
           </div>

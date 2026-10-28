@@ -192,4 +192,5 @@ async function receiveDispute(client,event){
  if(grant)await reconcileAdjustments(client,purchase,grant);
  return true;
 }
-module.exports={packs,topups,beginPurchase,saveTopup,runTopup,receivePayment,receiveRefund,receiveDispute};
+function currentPacks(rows){const versions=new Map();for(const row of rows)if(row.status==='APPROVED')versions.set(row.category,Math.max(versions.get(row.category)||0,Number(row.version)));return rows.filter(row=>row.status==='APPROVED'&&Number(row.version)===versions.get(row.category));}
+module.exports={currentPacks,packs,topups,beginPurchase,saveTopup,runTopup,receivePayment,receiveRefund,receiveDispute};

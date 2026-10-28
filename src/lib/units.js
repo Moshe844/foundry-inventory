@@ -26,7 +26,10 @@ function unitCount(quantity, label) {
 
 function unitLabel(quantity, label) {
   const word = String(label || 'unit').trim() || 'unit';
-  if (Number(quantity) === 1) return word;
+  if (Number(quantity) === 1) {
+    const singular={units:'unit',pieces:'piece',pairs:'pair',packs:'pack',rolls:'roll',pallets:'pallet',cartons:'carton',bottles:'bottle',shirts:'shirt',chairs:'chair',knives:'knife',boxes:'box',cases:'case'}[word.toLowerCase()];
+    return singular ? (word[0]===word[0].toUpperCase()?singular[0].toUpperCase()+singular.slice(1):singular) : word;
+  }
   if (INVARIANT.has(word.toLowerCase())) return word;
   if (ALREADY_PLURAL.test(word)) return word;
   // A supplied regular plural (shirts, bolts, spoons) is already a unit label.

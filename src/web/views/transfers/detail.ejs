@@ -18,7 +18,7 @@
 %>
 <p class="rm-stamp"><a href="/transfers">Transfers</a> / <%= transfer.transfer_number %></p>
 <div class="rm-titleline"><div><h1 class="rm-figure"><%= transfer.source_name %> → <%= transfer.destination_name %></h1>
-  <p class="rm-sub"><%= transfer.transfer_number %> · <%= transfer.totals.requested %> units requested<%= transfer.expected_arrival_date ? ' · expected ' + transfer.expected_arrival_date : '' %></p></div></div>
+  <p class="rm-sub"><%= transfer.transfer_number %> · <%= helpers.unitCount(transfer.totals.requested,'unit') %> requested<%= transfer.expected_arrival_date ? ' · expected ' + transfer.expected_arrival_date : '' %></p></div></div>
 
 <section class="rm-stages" aria-label="Transfer progress">
   <% stages.forEach(function(stage, index) { %>
@@ -48,7 +48,7 @@
       <% transfer.lines.filter(function(line) { return line.in_transit_quantity > 0; }).forEach(function(line) { %>
         <div class="rm-transfer-receipt">
           <strong><%= line.item_name %><%= line.variant_label ? ' / ' + line.variant_label : '' %></strong>
-          <span><%= line.in_transit_quantity %> units in transit to <%= transfer.destination_name %></span>
+          <span><%= helpers.unitCount(line.in_transit_quantity,'unit') %> in transit to <%= transfer.destination_name %></span>
           <% if (line.tracking_mode === 'serial') { %>
             <p class="rm-note">Choose the outcome for each serial unit. StockChief never assumes a serial identity.</p>
             <form method="post" action="/transfers/<%= transfer.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= receiptToken %>:<%= line.id %>"><input type="hidden" name="lineId" value="<%= line.id %>">

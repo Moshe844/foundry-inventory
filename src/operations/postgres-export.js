@@ -1,6 +1,7 @@
 'use strict';
 const XLSX=require('xlsx'),sourceDetails=require('../domain/postgres-catalog-facts');
 const tables=require('./postgres-export-tables');
+function sheetName(label,used){const clean=String(label).replace(/[\\/:*?\[\]]/g,' ').trim()||'Records';let number=1;while(true){const suffix=number===1?'':' '+number;let name='';for(const char of clean){if((name+char).length>31-suffix.length)break;name+=char;}name+=suffix;if(![...used].some(existing=>existing.toLowerCase()===name.toLowerCase())){used.add(name);return name;}number++;}}
 async function workbook(database,workspaceId,{itemIds=null}={}){
  const source=await database.transaction(async client=>{
   const workspace=(await client.query('SELECT name FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
@@ -22,13 +23,13 @@ async function workbook(database,workspaceId,{itemIds=null}={}){
   }else for(const [name,table]of tables){const rows=table==='catalog_source_facts'?await sourceDetails.exportRows(client,workspaceId):(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1`,[workspaceId])).rows;sheets.push({name,rows});}
   return {name:workspace?.name||'StockChief inventory',sheets};
  },{isolation:'REPEATABLE READ',readOnly:true});
- const book=XLSX.utils.book_new(),summary=[['StockChief inventory export'],['Inventory',source.name],['Exported at (UTC)',new Date().toISOString()],['Money','Amounts ending in minor are exact minor currency units. Keep each record’s currency.'],['Dates','Timestamps are UTC instants; calendar dates retain their original dates.'],['Data','All rows from one consistent snapshot; no 100/200-row display limits.'],[],['Sheet','Records']];
+ const usedNames=new Set(['Read me']),book=XLSX.utils.book_new(),summary=[['StockChief inventory export'],['Inventory',source.name],['Exported at (UTC)',new Date().toISOString()],['Money','Amounts ending in minor are exact minor currency units. Keep each record’s currency.'],['Dates','Timestamps are UTC instants; calendar dates retain their original dates.'],['Data','All rows from one consistent snapshot; no 100/200-row display limits.'],[],['Sheet','Records']];
  for(const sheet of source.sheets){summary.push([sheet.name,sheet.rows.length]);for(let offset=0,part=1;offset<Math.max(1,sheet.rows.length);offset+=100000,part++){
    const rows=sheet.rows.slice(offset,offset+100000).map(r=>Object.fromEntries(Object.entries(r).map(([k,v])=>[k,v instanceof Date?v.toISOString():v&&typeof v==='object'?JSON.stringify(v):v])));
-   XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(rows),sheet.name+(part>1?' '+part:''));
+   XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(rows),sheetName(sheet.name+(part>1?' '+part:''),usedNames));
   }}
  XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(summary),'Read me');
  book.SheetNames=['Read me',...book.SheetNames.filter(n=>n!=='Read me')];
  return {name:source.name,buffer:XLSX.write(book,{type:'buffer',bookType:'xlsx',compression:true}),counts:Object.fromEntries(source.sheets.map(s=>[s.name,s.rows.length]))};
 }
-module.exports={workbook,tables};
+module.exports={sheetName,workbook,tables};

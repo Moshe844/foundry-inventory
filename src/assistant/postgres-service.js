@@ -374,7 +374,7 @@ async function lookupRecords(database,ctx,request,options={}) {
         c.total_cost_minor AS cost_minor,c.sku_id IS NOT NULL AS has_cost_record
       FROM physical p FULL OUTER JOIN costed c ON c.sku_id=p.sku_id AND c.location_id=p.location_id
     ) `;
-    const rows=(await database.query(positions+`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+    const rows=request.summaryOnly?[]:(await database.query(positions+`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
       l.name AS location,p.costed_units AS quantity_units,p.cost_minor AS total_cost_minor,
       p.has_cost_record,b.updated_at,p.physical_units AS on_hand,
       GREATEST(p.physical_units-p.costed_units,0) AS missing_cost_units
@@ -408,8 +408,7 @@ async function lookupRecords(database,ctx,request,options={}) {
     const totals={physicalUnits:exact(summary.physical_units),costedUnits:exact(summary.costed_units),
       inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:exact(summary.missing_cost_units),complete:true};
     totals.inventoryBookCost=pricing.formatMinor(totals.inventoryBookCostMinor,currency);
-    return {answer:rows.length?`Showing inventory cost coverage for ${rows.length} product-location positions, including positions without a cost record. The totals cover every matching position. Missing cost is not zero cost or a current supplier quote.`:
-      'No recorded inventory-cost position matched that request. Complete matching physical-stock and cost totals are supplied separately.',totals,
+    return {answer:totals.inventoryBookCost+' at recorded cost. '+(totals.missingCostUnits?require('../lib/units').unitCount(totals.missingCostUnits,'unit')+' still need actual cost, so this value is incomplete. ':'')+(Number(summary.positions)?'This total covers every matching stock position.':'There are no recorded stock positions.'),totals,
       coverage:{scope:search?'All positions matching the literal name or code filter':'All inventory positions in this business',
         totalPositions:exact(summary.positions),costPositions:exact(summary.cost_positions),returnedPositions:rows.length,
         returnedCostPositions:rows.filter(row=>row.hasCostRecord).length,detailComplete:rows.length===exact(summary.positions)},rows,

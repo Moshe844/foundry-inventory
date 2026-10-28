@@ -115,7 +115,7 @@
       <% }) %>
     </tbody>
     <tfoot><tr>
-      <td colspan="5" class="num"><strong><%= order.totals.ordered %> units</strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
+      <td colspan="5" class="num"><strong><%= helpers.unitCount(order.totals.ordered,'unit') %></strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
       <td class="num"><strong><%= helpers.money(order.pricing && order.pricing.subtotalMinor != null ? order.pricing.subtotalMinor : (order.lines || []).reduce(function (s, l) { return s + (l.lineTotalMinor || 0); }, 0), order.currency) %></strong></td>
     </tr></tfoot>
   </table>

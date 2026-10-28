@@ -48,7 +48,7 @@
           <div class="learning-evidence">
             <% if (change.evidence.samples) { %><p><strong><%= change.evidence.samples %></strong> measured outcomes support this.</p><% } %>
             <% if (change.evidence.meanDays) { %><p>Observed average: <strong><%= change.evidence.meanDays %> days</strong>.</p><% } %>
-            <% if (change.evidence.meanBiasUnits) { %><p>Average forecast bias: <strong><%= change.evidence.meanBiasUnits %> units</strong>.</p><% } %>
+            <% if (change.evidence.meanBiasUnits) { %><p>Average forecast bias: <strong><%= helpers.unitCount(change.evidence.meanBiasUnits,'unit') %></strong>.</p><% } %>
             <p><%= change.expectedImpact.description || 'StockChief will measure the result after rollout.' %></p>
             <p class="t-xs t-muted">The evidence, rule version, approval and previous value are retained for audit and rollback.</p>
           </div>
@@ -130,7 +130,7 @@
                     <span class="badge badge--<%= option.feasible ? 'ok' : 'muted' %>">
                       <%= option.feasible ? (option.id === row.adaptivePlan.chosen.id ? 'Selected' : 'Possible') : 'Cannot safely use' %>
                     </span>
-                    <% if (option.quantityUnits) { %><p><%= option.quantityUnits %> units</p><% } %>
+                    <% if (option.quantityUnits) { %><p><%= helpers.unitCount(option.quantityUnits,'unit') %></p><% } %>
                     <% if (['BUY','BUY_ALTERNATE','EXPEDITE','TRANSFER_AND_BUY','TRANSFER'].includes(option.type)
                         && option.totalCostMinor !== null && option.totalCostMinor !== undefined) { %>
                       <p class="t-muted"><%= new Intl.NumberFormat('en-US', { style: 'currency',
@@ -382,7 +382,7 @@
     <% if (accuracy.comparable) { %>
       <div class="accounting-equation">
         <p><span>Forecasts scored</span><strong><%= accuracy.comparable %></strong></p>
-        <p><span>Out by, on average</span><strong><%= accuracy.meanAbsoluteError %> units</strong></p>
+        <p><span>Out by, on average</span><strong><%= helpers.unitCount(accuracy.meanAbsoluteError,'unit') %></strong></p>
         <p><span>Leaning</span><strong>
           <%= accuracy.bias === null ? '—' : accuracy.bias > 0 ? 'high by ' + accuracy.bias
             : accuracy.bias < 0 ? 'low by ' + Math.abs(accuracy.bias) : 'neither way' %>

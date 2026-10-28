@@ -1,7 +1,7 @@
 <div class="rm-head"><a class="rm-head__back" href="/inventory/<%= item.id %>">← <%= item.name %></a><div class="rm-title"><div><p class="rm-stamp">Existing stock · no new receipt</p><h1>Record actual stock cost</h1></div></div></div>
 <p class="rm-sub">This is the cost you actually paid for units already on hand, used to value inventory and calculate profit when they sell. It is separate from today's purchasing price.</p>
 <div class="card"><div class="card-body"><div class="table-scroll"><table class="table"><thead><tr><th>Product</th><th>Location</th><th>On hand</th><th>Cost recorded</th><th>Needs cost</th></tr></thead><tbody>
-<% positions.forEach(function(p){ %><tr><td><%= p.variant_label||item.name %> <small><%= p.code %></small></td><td><%= p.location_name %></td><td><%= p.on_hand %></td><td><%= p.costed_units %> units</td><td><%= Math.max(0,Number(p.on_hand)-Number(p.costed_units)) %> units</td></tr><% }) %>
+<% positions.forEach(function(p){ %><tr><td><%= p.variant_label||item.name %> <small><%= p.code %></small></td><td><%= p.location_name %></td><td><%= p.on_hand %></td><td><%= helpers.unitCount(p.costed_units,'unit') %></td><td><%= helpers.unitCount(Math.max(0,Number(p.on_hand)-Number(p.costed_units)),'unit') %></td></tr><% }) %>
 </tbody></table></div></div></div>
 <% const eligible=positions.filter(p=>Number(p.on_hand)>Number(p.costed_units)); if(!settings||!Number(settings.enabled)){ %>
 <p class="notice">Accounting must be configured before StockChief can record inventory value. <a href="/accounting">Open accounting</a>.</p>
@@ -10,7 +10,7 @@
 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <div class="notice">Nothing changes until you review and approve. Stock quantities, purchasing prices, cash and supplier balances remain unchanged.</div>
 <div class="form-grid">
-<label class="field"><span>Stock position</span><select name="position" required><% eligible.forEach(function(p){ %><option value="<%= p.sku_id %>:<%= p.location_id %>"><%= p.variant_label||item.name %> · <%= p.code %> · <%= p.location_name %> · <%= Number(p.on_hand)-Number(p.costed_units) %> units missing cost</option><% }) %></select></label>
+<label class="field"><span>Stock position</span><select name="position" required><% eligible.forEach(function(p){ %><option value="<%= p.sku_id %>:<%= p.location_id %>"><%= p.variant_label||item.name %> · <%= p.code %> · <%= p.location_name %> · <%= helpers.unitCount(Number(p.on_hand)-Number(p.costed_units),'unit') %> missing cost</option><% }) %></select></label>
 <label class="field"><span>Units to cost</span><input name="quantity" type="number" min="1" step="1" value="<%= eligible.length===1?Number(eligible[0].on_hand)-Number(eligible[0].costed_units):'' %>" required></label>
 <label class="field"><span>Actual cost per unit</span><input name="unitCost" inputmode="decimal" required><small>Use the evidenced cost for these units, not an assumed current quote.</small></label>
 <label class="field"><span>Currency</span><input name="currency" value="<%= settings.base_currency %>" readonly></label>

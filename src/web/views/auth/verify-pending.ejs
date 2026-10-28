@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title><%= title %> · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"></head>
+<title><%= title %> · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
+</head>
 <body class="commercial-auth signup-auth"><main class="auth-centered">
 <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
 <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %><span class="auth-mail">✉</span><h1><%= title %></h1>

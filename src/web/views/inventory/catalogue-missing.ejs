@@ -45,7 +45,7 @@
 
         <% if (issue.type === 'serials') { %>
           <h2>Do you give every <%= record.name %> its own serial number?</h2>
-          <p class="clarification-step__lead">You entered <strong><%= record.locations.reduce(function(total, location) { return total + location.quantity; }, 0) %> units</strong> across <%= record.locations.length %> <%= record.locations.length === 1 ? 'location' : 'locations' %>, and also said “Serial Number Tracking: Yes.” StockChief needs to know which statement reflects how you really work.</p>
+          <p class="clarification-step__lead">You entered <strong><%= helpers.unitCount(record.locations.reduce(function(total, location) { return total + location.quantity; }, 0),'unit') %></strong> across <%= record.locations.length %> <%= record.locations.length === 1 ? 'location' : 'locations' %>, and also said “Serial Number Tracking: Yes.” StockChief needs to know which statement reflects how you really work.</p>
 
           <div class="clarification-why">
             <strong>How to answer</strong>

@@ -76,7 +76,7 @@
   <div class="rm-ledger__row">
     <span class="rm-ledger__k"><%= story.inventory.missingCostUnits ? 'Known stock cost' : 'Stock you own' %></span>
     <span class="rm-ledger__v"><a href="/accounting#inventory"><%= money(story.position.inventoryMinor) %></a></span>
-    <span class="rm-ledger__n"><a href="/accounting#inventory"><%= story.position.inventoryUnits %> units · <%= story.inventory.missingCostUnits ? story.inventory.missingCostUnits + ' missing cost' : 'full cost recorded' %></a></span>
+    <span class="rm-ledger__n"><a href="/accounting#inventory"><%= helpers.unitCount(story.position.inventoryUnits,'unit') %> · <%= story.inventory.missingCostUnits ? story.inventory.missingCostUnits + ' missing cost' : 'full cost recorded' %></a></span>
   </div>
 </div>
 

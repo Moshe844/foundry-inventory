@@ -20,6 +20,7 @@
     .oauth-return p { margin:0 0 20px; color:var(--muted); line-height:1.55; }
     .oauth-return [hidden] { display:none !important; }
   </style>
+<link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
 <body>
   <main class="oauth-return" data-connection-return data-pending="<%= locals.outcome.pending?'true':'false' %>" data-poll-path="<%= locals.outcome.pollPath||'' %>" data-popup="<%= outcome.popup?'true':'false' %>" data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">

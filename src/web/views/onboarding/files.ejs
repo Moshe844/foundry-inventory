@@ -77,7 +77,7 @@
             <small>
               Read as <%= source.purposeLabel %> · <%= source.purposeConfidence %> confidence
               · <%= source.profile.totals ? source.profile.totals.rows : 0 %> rows,
-              <%= source.profile.totals ? source.profile.totals.units : 0 %> units
+              <%= helpers.unitCount(source.profile.totals ? source.profile.totals.units : 0,'unit') %>
               <% if (source.observedAt) { %> · dated <%= source.observedAt %><% } else { %> · not dated<% } %>
             </small>
           </span>

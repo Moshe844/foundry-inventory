@@ -38,7 +38,7 @@
 <% } else { %>
 
   <h1 class="rm-figure">
-    <%= (totals.onHand || 0).toLocaleString('en-US') %> units on hand<% if (value && value.totalCostMinor) { %>,
+    <%= helpers.unitCount((totals.onHand || 0).toLocaleString('en-US'),'unit') %> on hand<% if (value && value.totalCostMinor) { %>,
     $<%= Math.round(value.totalCostMinor / 100).toLocaleString('en-US') %> known cost<% } %>.
   </h1>
   <p class="rm-sub">

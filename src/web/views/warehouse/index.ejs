@@ -50,7 +50,7 @@
 
 <section class="rm-panel" id="containers">
   <div class="rm-panel__head"><div><p class="rm-kicker">Containers</p><h2>Totes, cartons, pallets and packages</h2></div></div>
-  <div class="rm-list"><% containers.forEach(function(container) { %><div class="rm-row"><span><strong><%= container.code %></strong><small><%= container.kind %> · <%= container.location_name || 'not placed' %></small></span><span><%= container.units %> units · <a href="/warehouse/labels/container/<%= container.id %>">Print label</a></span></div><% }) %></div>
+  <div class="rm-list"><% containers.forEach(function(container) { %><div class="rm-row"><span><strong><%= container.code %></strong><small><%= container.kind %> · <%= container.location_name || 'not placed' %></small></span><span><%= helpers.unitCount(container.units,'unit') %> · <a href="/warehouse/labels/container/<%= container.id %>">Print label</a></span></div><% }) %></div>
   <% if (canOperate) { %><form method="post" action="/warehouse/containers" class="rm-inline-form">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input name="code" required placeholder="TOTE-01"><input name="barcode" placeholder="Scan code (defaults to code)"><select name="kind"><option>tote</option><option>carton</option><option>pallet</option><option>package</option><option>other</option></select><button class="rm-button" type="submit">Create container</button>
   </form><% } %>

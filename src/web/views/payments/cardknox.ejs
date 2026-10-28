@@ -1,4 +1,5 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment · StockChief</title><link rel="stylesheet" href="/design.css"></head>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment · StockChief</title><link rel="stylesheet" href="/design.css"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
+</head>
 <body><main class="container" style="max-width:560px;margin:40px auto;padding:24px"><a href="/">StockChief</a><h1>Payment to <%= business %></h1><p class="lede"><%= amount %></p>
 <% if(status==='PAID'){ %><div class="notice notice--success" role="status">Payment confirmed. Your receipt has been recorded.</div>
 <% }else if(status==='CLOSED'){ %><div class="notice" role="status">This payment link is closed. Contact the business if a balance is still due.</div>

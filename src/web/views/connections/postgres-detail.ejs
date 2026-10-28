@@ -59,7 +59,7 @@
 </section><% } %>
 <% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
   <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
-    <% if(provider.authorizationPrerequisite){ %><p><strong>Sandbox testing only.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a> Real customer connections use the provider’s normal sign-in and consent screen.</p><% } %>
+    <% if(provider.authorizationPrerequisite){ %><p><strong>Account sign-in needed.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize" data-oauth-connect="<%= connection.provider_type %>" data-provider-name="<%= providerName %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
       <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
       <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>

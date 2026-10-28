@@ -106,7 +106,7 @@
           <small><%= SAYS[order.status] %><% if (!order.hasCosts) { %> — a price is missing<% } %></small>
         </span>
         <span class="rm-told__m">
-          <%= order.orderedUnits %> units<%= dollars(order) %>
+          <%= helpers.unitCount(order.orderedUnits,'unit') %><%= dollars(order) %>
           <% if (permissions.approve) { %><a href="/purchasing/orders/<%= order.id %>"><%= order.hasCosts ? 'Approve' : 'Add prices' %></a><% } %>
         </span>
       </div>
@@ -133,7 +133,7 @@
           </small>
         </span>
         <span class="rm-told__m <%= late ? 'is-paused' : '' %>">
-          <%= order.outstandingUnits || order.orderedUnits %> units still to come<%= dollars(order) %>
+          <%= helpers.unitCount(order.outstandingUnits || order.orderedUnits,'unit') %> still to come<%= dollars(order) %>
           <% if (permissions.receive && order.outstandingUnits) { %><a href="/purchasing/orders/<%= order.id %>/receive">Book in</a><% } %>
         </span>
       </div>
@@ -148,7 +148,7 @@
       <div class="rm-told__row">
         <span class="rm-told__t rm-quiet">
           <a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a> · <%= order.poNumber %>
-          <small><%= order.orderedUnits %> units<%= dollars(order) %></small>
+          <small><%= helpers.unitCount(order.orderedUnits,'unit') %><%= dollars(order) %></small>
         </span>
         <span class="rm-told__m <%= order.status === 'RECEIVED' ? 'is-ok' : 'is-paused' %>"><%= SAYS[order.status] || order.status %></span>
       </div>
