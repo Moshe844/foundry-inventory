@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
 <body class="commercial-auth"><main class="auth-split"><section class="auth-form">
-<a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+<a class="pub-brand" href="/"><span class="pub-brand__mark"><i aria-hidden="true"></i></span><span>StockChief</span></a>
 <div class="auth-form__body"><span class="pub-eyebrow">WELCOME BACK</span><h1>Sign in to your operation.</h1>
 <p>StockChief runs your inventory operation—from reordering and receiving to transfers and shipping. You handle the exceptions that need your judgement.</p>
 <% if(flash&&flash.length){ %><div class="auth-messages"><% flash.forEach(function(message){ %><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><% }); %></div><% } %>

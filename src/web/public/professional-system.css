@@ -10,3 +10,21 @@ html:root body :is(.btn,.rm-btn,.pub-btn){min-height:36px;border-radius:8px;padd
 
 html:root body *::before,html:root body *::after{background-image:none!important;box-shadow:none!important;text-shadow:none!important} .pro-support-layout{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:24px;max-width:1100px}.pro-support-thread{background:#fff;border:1px solid #E4E7EC;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-height:520px;max-height:calc(100dvh - 210px)}.pro-support-status{padding:18px 22px;border-bottom:1px solid #E4E7EC}.pro-support-status p{font-size:13px;color:#667085;margin:5px 0 0}.pro-support-log{padding:22px;overflow:auto;display:flex;flex-direction:column;gap:16px;flex:1;min-height:160px;scrollbar-gutter:stable}.pro-support-bubble{max-width:85%;padding:14px 16px;border-radius:10px;border:1px solid #E4E7EC;font-size:14px;background:#F8F9FB;overflow-wrap:anywhere}.pro-support-bubble p{white-space:pre-wrap;margin:6px 0}.pro-support-bubble time{font-size:11px;color:#667085}.pro-support-bubble.is-customer{margin-left:auto;background:#EEF2FF;border-color:#E0E7FF}.pro-support-bubble.is-support{margin-right:auto}.pro-support-compose{padding:16px 22px;border-top:1px solid #E4E7EC;background:#fff;margin-top:auto}.pro-support-compose>div{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:10px}.pro-support-compose small{color:#667085;font-size:12px}.pro-support-compose textarea{width:100%;resize:vertical;min-height:72px;max-height:160px}.pro-support-compose label{display:block;font-size:13px;margin-bottom:7px}.pro-support-welcome{padding:26px 22px;flex:1}.pro-support-welcome h2{font-size:19px}.pro-support-welcome p{font-size:14px;color:#667085;line-height:1.7}.pro-support-topics{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.pro-support-aside h2{font-size:14px;margin:0 0 12px}.pro-support-aside a{display:block;font-size:13px;padding:10px 0;overflow-wrap:anywhere}.pro-support-aside small{display:block;color:#667085;margin-top:4px}.pro-support-aside h2:not(:first-child){margin-top:26px}.sc-settings-content>.rm-grid{display:block}.sc-settings-content>.rm-grid>.rm-panel{margin-bottom:18px}@media(max-width:760px){.pro-support-layout{grid-template-columns:1fr}.pro-support-thread{min-height:490px;max-height:calc(100dvh - 120px)}.pro-support-compose,.pro-support-status,.pro-support-log{padding:14px}.pro-support-bubble{max-width:94%}.pro-support-compose small{max-width:170px}.pro-support-aside{border-top:1px solid #E4E7EC;padding-top:18px}}
 body a{color:#4F46E5}
+
+/* The navigation and authentication surfaces retain StockChief's identity.
+   Solid colors keep the flat design without washing the product out. */
+.sc-sidebar{background:#24234F;color:#E8E9FF;border-right-color:#37356F}
+.sc-sidebar .sc-brand{color:#fff}
+.sc-sidebar .sc-workspace__btn{background:#302F63;border-color:#474684;color:#fff}
+.sc-sidebar .sc-workspace small{color:#C5C8E5}
+.sc-sidebar :is(.sc-primary a,.sc-account-nav a,.sc-person,.sc-person .btn,.sc-sidebar-close){color:#DBDDF4}
+.sc-sidebar :is(.sc-primary a,.sc-account-nav a)[aria-current=page]{color:#fff;background:#39377B;border-left:3px solid #8F86FF;padding-left:10px}
+.sc-sidebar :is(.sc-primary a,.sc-account-nav a):hover{background:#39377B;color:#fff}
+.sc-sidebar :is(.sc-account-nav,.sc-person){border-color:#474684}
+.sc-sidebar .sc-ask-card{background:#302F63;border-color:#474684;color:#fff}
+.sc-sidebar .sc-ask-card :is(p,small,span){color:#DBDDF4}
+.commercial-auth .pub-brand__mark{color:#fff!important;background:#4F46E5}
+.commercial-auth .auth-visual,.commercial-auth .auth-plan{background:#24234F;color:#fff}
+.commercial-auth .auth-visual__card{background:#302F63;border-color:#474684}
+.commercial-auth .auth-plan li{border-color:#474684}
+.commercial-auth .auth-plan a{color:#DCD9FF}
