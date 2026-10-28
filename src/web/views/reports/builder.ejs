@@ -7,7 +7,7 @@
     <button class="button" type="submit">Build it for me</button></form>
   <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
     <div class="report-template-locked" aria-disabled="true"><strong><%= item.name %></strong><span><%= item.description %></span><small>Available on a higher plan</small></div>
-    <% }else{ %><a href="/reports/template/<%= item.key %>"><strong><%= item.name %></strong><span><%= item.description %></span></a><% } %>
+    <% }else{ %><a href="/reports/template/<%= item.key %>" data-dest="/reports/builder?draft=1"><strong><%= item.name %></strong><span><%= item.description %></span></a><% } %>
   <% } %></div></div>
   <a class="report-manual-link" href="#report-manual">Build manually ↓</a>
 </section>

@@ -110,7 +110,8 @@ function createPostgresReportsRouter(database){
   }));
   router.get('/reports/describe',asyncRoute(async(req,res)=>{
     const description=String(req.query.q||'').trim();
-    if(!description||description.length>1800)throw new ValidationError('Describe the report in 1,800 characters or fewer.');
+    if(!description)return res.redirect(303,'/reports/builder');
+    if(description.length>1800)throw new ValidationError('Describe the report in 1,800 characters or fewer.');
     // This uses the existing metered and governed Ask path. The model proposes
     // a definition; only PostgreSQL supplies the resulting numbers.
     return res.redirect(303,'/ask?q='+encodeURIComponent('Build a custom report: '+description)+'&send=1');
