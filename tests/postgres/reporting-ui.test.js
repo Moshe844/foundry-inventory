@@ -93,6 +93,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const owner=request.agent(app);await register(owner,'Report Owner','report-owner@example.test');
     const ctx=(await database.query(`SELECT w.id AS "workspaceId",u.id AS "actorId" FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Report Owner Business'`)).rows[0];
+    await require('../helpers/postgres-model-fixture').fundWorkspace(database,ctx.workspaceId);
     const location=await locations.createLocation(database,ctx,{name:'Main',kind:'warehouse'});
     const product=await catalog.createItem(database,ctx,{name:'Copper Clamp',baseCode:'CLAMP',trackingMode:'quantity'});
     await inventory.receive(database,ctx,{skuId:product.skuIds[0],locationId:location.id,quantity:12,
@@ -618,6 +619,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const proposal=(await database.query(`SELECT id,status,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='report.template.create'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    if(!proposal){const reply=await owner.get('/ask');assert.fail(reply.text.match(/<section id="submission-problem"[^]*?<\/section>/)?.[0]||reply.text.match(/flash--error[^]*?<\/span>/)?.[0]||JSON.stringify((await database.query('SELECT message,status,answer,intent FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1',[ctx.workspaceId,ctx.actorId])).rows[0]));}
     assert.equal(proposal.status,'PENDING');
     assert.equal(proposal.payload.schedule.hour,9);
     assert.equal(proposal.payload.definition.sort,'total');
@@ -641,9 +643,9 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.rejects(()=>reports.run(database,ctx,actor,{dataset:'stock',columns:['product'],
       filters:[{field:'secret_sql',operator:'contains',value:'x'}]}),/valid report filters/i);
     const reportsPage=await owner.get('/reports');assert.equal(reportsPage.status,200);
-    assert.match(reportsPage.text,/Opening a saved report runs its current read-only query\./);
-    assert.match(reportsPage.text,/aria-label="Run saved report:/,'Actual rendered link semantics disclose that opening a template executes its read-only query');
-    assert.match(reportsPage.text,/Stock by product and location/);
+    assert.match(reportsPage.text,/Saved and scheduled reports/);
+    assert.match(reportsPage.text,/aria-label="Open saved report:/,'Saved reports remain labelled links to their real report');
+    assert.equal((reportsPage.text.match(/data-business-report=/g)||[]).length,9,'The business report directory replaces the raw dataset list');
     const marginBuilder=await owner.get('/reports/builder?dataset=posted_sales_activity');
     assert.equal(marginBuilder.status,200);
     assert.match(marginBuilder.text,/Gross margin %/);
