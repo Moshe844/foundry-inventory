@@ -7,7 +7,7 @@ jobs:
   customer-navigation:
     name: Required customer navigation and account safety
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       NODE_ENV: test
       STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin

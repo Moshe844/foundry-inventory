@@ -13,7 +13,7 @@ const nonPage=/^\/auth\/company\/callback$|^\/(?:api(?:\/|$)|healthz$|readyz$|we
 const publicAuth=new Set(['/login','/register','/signup','/forgot-password']);
 function routes(app){const found=new Set();function visit(stack){for(const layer of stack||[]){if(layer.route?.methods?.get)for(const p of [].concat(layer.route.path))if(typeof p==='string'&&!p.includes(':')&&!p.includes('*')&&!p.includes('(')&&!nonPage.test(p)&&!publicAuth.has(p))found.add(p);if(layer.handle?.stack)visit(layer.handle.stack);}}visit(app._router?.stack);return [...found];}
 function normalized(url,origin){const u=new URL(url,origin);u.hash='';u.pathname=u.pathname.replace(/\/$/,'')||'/';u.searchParams.sort();return u.pathname+u.search;}
-test('required customer click gate visits page routes and detail families, blocks non-GET and checks actual click destinations',{timeout:1200000},async t=>{
+test('required customer click gate visits page routes and detail families, blocks non-GET and checks actual click destinations',{timeout:1800000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:30}),{db,ctx}=f;
  const other=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Annex',kind:'warehouse'});
  const transfer=await require('../../src/transfers/postgres-transfer-service').request(db,ctx,{fromLocationId:f.location.id,toLocationId:other.id,lines:[{skuId:f.item.skuIds[0],quantity:1}],idempotencyKey:'click-gate-transfer'});

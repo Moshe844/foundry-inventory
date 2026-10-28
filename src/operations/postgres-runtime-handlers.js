@@ -634,7 +634,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
-  'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'planning'})};}
+  'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'maintenance'})};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,
   providerEffect,alertDelivery,systemEmail};
