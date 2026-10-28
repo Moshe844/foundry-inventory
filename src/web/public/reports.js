@@ -5,6 +5,48 @@ document.addEventListener('DOMContentLoaded',()=>{
   const previewStatus=document.querySelector('[data-report-preview-status]');
   const previewTable=document.querySelector('[data-report-preview-table]');
   const fieldSearch=document.querySelector('[data-report-field-search]');
+  const columnOrder=document.querySelector('[data-report-column-order]');
+  if(builder&&columnOrder){
+    const list=columnOrder.querySelector('[data-report-column-list]');
+    const choices=[...builder.querySelectorAll('[data-report-column-choice]')];
+    const byField=new Map(choices.map(choice=>[choice.value,choice]));
+    const parse=(value,fallback)=>{try{return JSON.parse(value)||fallback;}catch{return fallback;}};
+    const savedOrder=parse(columnOrder.dataset.initialColumns,[]);
+    const labels=parse(columnOrder.dataset.initialLabels,{});
+    let order=[...new Set([...savedOrder,...choices.filter(choice=>choice.checked).map(choice=>choice.value)])]
+      .filter(field=>byField.get(field)?.checked);
+    choices.forEach(choice=>choice.removeAttribute('name'));
+    const changed=()=>builder.dispatchEvent(new Event('change',{bubbles:true}));
+    const move=(field,target)=>{const from=order.indexOf(field);if(from<0||target<0||target>=order.length||from===target)return;
+      order.splice(from,1);order.splice(target,0,field);render();changed();};
+    function render(){
+      list.replaceChildren();
+      for(const [index,field] of order.entries()){
+        const choice=byField.get(field),row=document.createElement('li');row.draggable=true;row.dataset.field=field;
+        const hidden=document.createElement('input');hidden.type='hidden';hidden.name='columns';hidden.value=field;row.append(hidden);
+        const title=document.createElement('span');title.textContent=choice.dataset.reportColumnLabel||field;row.append(title);
+        const rename=document.createElement('input');rename.type='text';rename.name='columnLabels['+field+']';rename.maxLength=60;
+        rename.placeholder='Heading';rename.value=labels[field]||'';rename.setAttribute('aria-label','Rename '+title.textContent);
+        rename.addEventListener('input',()=>{labels[field]=rename.value;});row.append(rename);
+        for(const [direction,symbol] of [[-1,'↑'],[1,'↓']]){
+          const button=document.createElement('button');button.type='button';button.textContent=symbol;
+          button.setAttribute('aria-label','Move '+title.textContent+(direction<0?' up':' down'));
+          button.disabled=direction<0?index===0:index===order.length-1;
+          button.addEventListener('click',()=>move(field,index+direction));row.append(button);
+        }
+        row.addEventListener('dragstart',event=>event.dataTransfer.setData('text/plain',field));
+        row.addEventListener('dragover',event=>event.preventDefault());
+        row.addEventListener('drop',event=>{event.preventDefault();move(event.dataTransfer.getData('text/plain'),order.indexOf(field));});
+        list.append(row);
+      }
+    }
+    choices.forEach(choice=>choice.addEventListener('change',()=>{
+      if(choice.checked&&!order.includes(choice.value))order.push(choice.value);
+      if(!choice.checked)order=order.filter(field=>field!==choice.value);
+      render();
+    }));
+    render();
+  }
   if(fieldSearch)fieldSearch.addEventListener('input',()=>{
     const needle=fieldSearch.value.trim().toLocaleLowerCase();
     for(const area of document.querySelectorAll('.report-field-area')){

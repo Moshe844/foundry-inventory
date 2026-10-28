@@ -22,9 +22,15 @@
       value="<%= saved?.title||draft?.title||dataset.label %>" required>
   </div>
   <div class="report-card"><h2>Columns</h2><p>Choose the details to show. Grouping gives you a summary instead of individual rows.</p>
+    <div class="report-column-order" data-report-column-order
+      data-initial-columns="<%= JSON.stringify(selection?.columns||Object.keys(dataset.fields).slice(0,5)) %>"
+      data-initial-labels="<%= JSON.stringify(selection?.columnLabels||{}) %>">
+      <strong>Shown columns, in order</strong><p>Drag a row or use the arrows. Rename a heading without changing the source data.</p>
+      <ol data-report-column-list></ol>
+    </div>
     <label for="report-field-search">Find a field</label><input id="report-field-search" type="search" placeholder="Search fields" data-report-field-search>
     <div class="report-checks"><% for(const group of builderEntry.fieldsFor(dataset)){ %><fieldset class="report-field-area"><legend><%= group.area %></legend><% for(const {key:field,label,type} of group.fields){ %>
-      <label><input type="checkbox" name="columns" value="<%= field %>"
+      <label><input type="checkbox" name="columns" value="<%= field %>" data-report-column-choice data-report-column-label="<%= label %>"
         <%= (selection?.columns||Object.keys(dataset.fields).slice(0,5)).includes(field)?'checked':'' %>>
         <%= label %> <small><%= type==='money_minor'?'money':type %></small></label>
     <% } %></fieldset><% } %></div>

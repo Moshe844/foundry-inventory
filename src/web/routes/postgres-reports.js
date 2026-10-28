@@ -27,7 +27,7 @@ function source(body){
   const filters=[];
   for(const row of Object.values(body.filters||{}))if(row&&row.field&&(row.value||row.operator==='is_null'))filters.push(row);
   const groups=Array.isArray(body.groups)?body.groups.filter(Boolean):body.groups?[body.groups]:body.group?[body.group]:[];
-  return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,
+  return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,columnLabels:body.columnLabels||{},
     groups,dateGrain:body.dateGrain,aggregate:body.aggregate,measure:body.measure,
     summary:body.summary==='on'||body.summary===true,
     filters,sort:body.sort,direction:body.direction,chart:body.chart,layout:body.layout};
@@ -137,13 +137,15 @@ function createPostgresReportsRouter(database){
     const actor=await actorFor(database,req.ctx);
     try{
       const started=performance.now();
-      const result=await reports.run(database,req.ctx,actor,source(req.body),{limit:31});
+      const spec=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
+      const result=await reports.run(database,req.ctx,actor,spec,{limit:31});
       return res.json({ok:true,columns:result.columns,labels:result.columnLabels,
         rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
         links:result.rows.map(row=>row.href||null),groups:result.config.groups,
         groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],
         definition:result.config,elapsedMs:Math.round(performance.now()-started)});
     }catch(error){
+      if(error.status===402)return res.status(402).json({ok:false,message:'This report source is available on a higher plan.'});
       if(error instanceof ValidationError)return res.status(422).json({ok:false,message:error.message});
       if(/statement timeout|canceling statement/i.test(String(error.message||'')))
         return res.status(422).json({ok:false,message:'This report is taking too long. Narrow the dates or add a filter and try again.'});
@@ -179,7 +181,7 @@ function createPostgresReportsRouter(database){
       backTo:detail?{href:'/reports/run',label:'Report'}:{href:'/reports',label:'Reports'}});
   }));
   router.post('/reports/run',asyncRoute(async(req,res)=>{
-    const actor=await actorFor(database,req.ctx);const spec=source(req.body);
+    const actor=await actorFor(database,req.ctx);const spec=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
     const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
     const draftSchedule=previewSchedule(req.body,res.locals.reportBusinessTimeZone);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config,schedule:draftSchedule};

@@ -21,7 +21,7 @@ function queryContract(key,actor){
  if(!dataset||!permissions.can(actor,dataset.permission))return null;
  const fields=Object.keys(dataset.fields),field={type:'string',enum:fields};
  return {schema:{type:'object',additionalProperties:false,required:['dataset'],properties:{
-  dataset:{const:key},columns:{type:'array',maxItems:12,items:field},groups:{type:'array',maxItems:3,items:field},
+  dataset:{const:key},columns:{type:'array',maxItems:fields.length,items:field},groups:{type:'array',maxItems:3,items:field},
   summary:{type:'boolean'},aggregate:{enum:[...AGGREGATES]},measure:{enum:['',...fields,...Object.keys(dataset.metrics||{})]},dateGrain:{enum:[...DATE_GRAINS]},
   filters:{type:'array',maxItems:12,items:{type:'object',additionalProperties:false,required:['field','operator'],properties:{
    field,operator:{enum:[...OPERATORS]},value:{type:['string','number','boolean']}}}},
@@ -58,7 +58,7 @@ function normalize(spec,actor){
   const datasetKey=safeText(spec?.dataset,60);
   const dataset=registry.get(datasetKey);if(!dataset)invalid('Choose an available report dataset.');
   ensureActor(actor,dataset);
-  const columns=fieldList(spec.columns,dataset.fields,12);
+  const columns=fieldList(spec.columns,dataset.fields,Object.keys(dataset.fields).length);
   const groups=fieldList(spec.groups,dataset.fields,3);
   const summary=spec.summary===true;
   const dateGrain=DATE_GRAINS.has(spec.dateGrain)?spec.dateGrain:'exact';
@@ -111,8 +111,18 @@ function normalize(spec,actor){
     invalid('Filter this monetary ratio to one exact currency or group by currency.');
   if(!aggregated&&columns.some((field)=>dataset.fields[field]==='money_minor')
     &&Object.hasOwn(dataset.fields,'currency')&&!columns.includes('currency')){
-    if(columns.length>=12)invalid('Include currency with monetary columns; remove another column first.');
     columns.push('currency');
+  }
+  const requestedLabels=spec.columnLabels&&typeof spec.columnLabels==='object'&&!Array.isArray(spec.columnLabels)
+    ?spec.columnLabels:{};
+  const visibleColumns=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate]]:columns);
+  const columnLabels={};
+  for(const [field,label] of Object.entries(requestedLabels)){
+    if(!Object.hasOwn(dataset.fields,field)&&!Object.values(AGGREGATE_COLUMN).includes(field))
+      invalid('Rename only registered report columns.');
+    if(!visibleColumns.has(field))continue;
+    const clean=safeText(label,60);
+    if(clean)columnLabels[field]=clean;
   }
   const sort=safeText(spec.sort,60)||groups[0]||(summary?AGGREGATE_COLUMN[aggregate]:columns[0]);
   const allowedSort=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate]]:Object.keys(dataset.fields));
@@ -124,8 +134,19 @@ function normalize(spec,actor){
     ||direction!=='asc'))invalid('A trend line needs one date grouping sorted oldest to newest.');
   const title=safeText(spec.title,100)||dataset.label;
   const layout=['chart_first','table_first','dashboard'].includes(spec.layout)?spec.layout:'chart_first';
-  return {dataset:datasetKey,columns:aggregated?[]:columns,groups,summary:summary&&!groups.length,dateGrain,aggregate,
+  return {dataset:datasetKey,columns:aggregated?[]:columns,columnLabels,groups,summary:summary&&!groups.length,dateGrain,aggregate,
     measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,chart,layout,title};
+}
+async function assertWritableCapabilities(database,ctx,spec,actor){
+  const config=normalize(spec,actor);
+  const sourceKeys=config.dataset==='composed'?config.metrics.map(metric=>metric.dataset):[config.dataset];
+  const required=[...new Set(sourceKeys.map(key=>registry.get(key)?.commercialCapability).filter(Boolean))];
+  if(required.length){
+    const entitlements=require('../commercial/entitlements');
+    const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+    for(const capability of required)await entitlements.assertCapability(database,scope,capability);
+  }
+  return config;
 }
 function quote(field){return `"${field}"`;}
 function comparableGroupAmounts(config,dataset,rows,hasMore,currencyFilter){
@@ -220,7 +241,7 @@ async function run(database,ctx,actor,spec,options={}){
   const columnLabels=Object.fromEntries(columns.map(column=>{
     if(config.aggregate==='ratio'&&grouped&&column===columns.at(-1))return [column,dataset.metrics[config.measure].label];
     const label=(monetaryColumn(column)?column.replace(/_minor$/,''):column).replaceAll('_',' ').replace(/([a-z])([A-Z])/g,'$1 $2');
-    return [column,label.charAt(0).toUpperCase()+label.slice(1)];
+    return [column,config.columnLabels?.[column]||label.charAt(0).toUpperCase()+label.slice(1)];
   }));
   const displayRows=rows.map((row)=>Object.fromEntries(columns.map((column)=>{
     const value=row[column];
@@ -298,7 +319,7 @@ function drilldownSpec(spec,values,actor,sourceAlias=null){
     filters:[...config.filters,...groupFilters],sort:config.groups[0]||columns[0],chart:'table'},actor);
 }
 async function save(database,ctx,actor,spec,{id=null,schedule=null,expectedRevision=null}={}){
- const work=async client=>{const config=normalize(spec,actor),prior=id?(await client.query('SELECT * FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0]:null;if(id&&!prior)invalid('That report template is not yours to edit.');if(prior&&expectedRevision!==null&&Number(prior.revision)!==Number(expectedRevision))invalid('This saved report changed. Review its current settings first.');
+ const work=async client=>{const config=await assertWritableCapabilities(client,ctx,spec,actor),prior=id?(await client.query('SELECT * FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0]:null;if(id&&!prior)invalid('That report template is not yours to edit.');if(prior&&expectedRevision!==null&&Number(prior.revision)!==Number(expectedRevision))invalid('This saved report changed. Review its current settings first.');
  const local=require('./local-schedule'),defaultZone=(await require('../lib/business-time').forWorkspace(client,ctx.workspaceId)).timeZone,delivery=schedule|| (prior?local.fromTemplate(prior):{}),normalized=local.normalize(delivery,defaultZone),recipient=safeText(delivery.recipient||prior?.delivery_email||actor.email,200);if(!recipient||!actor.email||recipient.toLowerCase()!==actor.email.toLowerCase())invalid('Reports can only be delivered to your account email.');
  const paused=delivery.paused??prior?.schedule_paused??false,next=paused?null:local.next(normalized),reportId=id||newId('report');
  if(normalized.frequency!=='none'&&(!prior||prior.schedule_frequency==='none')){
@@ -322,5 +343,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,inspectionSpec,queryContract,querySyntax,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
+module.exports={normalize,assertWritableCapabilities,inspectionSpec,queryContract,querySyntax,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
   aggregateColumn:AGGREGATE_COLUMN};
