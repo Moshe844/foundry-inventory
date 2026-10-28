@@ -1,10 +1,10 @@
 <% var selection=saved?.definition||draft||null,unavailable=new Set(locals.unavailableSources||[]); %>
-<div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize Ask report':'Build a report' %></h1>
+<div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize report':'Build a report' %></h1>
   <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
 <section class="report-start" aria-label="Start a custom report">
   <form action="/reports/describe" method="get" class="report-describe"><label for="report-description">Describe the report you want</label>
     <textarea id="report-description" name="q" rows="3" maxlength="1800" required placeholder="For example, profit by customer by month this year"></textarea>
-    <button class="button" type="submit">Build it for me</button></form>
+    <button class="btn btn--primary" type="submit">Build it for me</button></form>
   <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
     <div class="report-template-locked" aria-disabled="true"><strong><%= item.name %></strong><span><%= item.description %></span><small>Available on a higher plan</small></div>
     <% }else{ %><a href="/reports/template/<%= item.key %>" data-dest="/reports/builder?draft=1"><strong><%= item.name %></strong><span><%= item.description %></span></a><% } %>
@@ -46,7 +46,7 @@
         <% } %></select><input name="filters[<%= index %>][value]" value="<%= filter.value||'' %>"
           aria-label="Filter value <%= index+1 %>" placeholder="Value, date, or relative period" list="report-relative-periods"></div>
     <% } %>
-    <datalist id="report-relative-periods"><% Object.entries(reportRelativePeriods).forEach(([value,label])=>{ %><option value="<%= value %>"><%= label %></option><% }); %></datalist><button class="button button--secondary" type="button" data-report-add-filter>Add another filter</button>
+    <datalist id="report-relative-periods"><% Object.entries(reportRelativePeriods).forEach(([value,label])=>{ %><option value="<%= value %>"><%= label %></option><% }); %></datalist><button class="btn" type="button" data-report-add-filter>Add another filter</button>
   </div>
   <div class="report-card"><h2>Summarize and visualize</h2>
     <label><input type="checkbox" name="summary" value="on" <%= selection?.summary?'checked':'' %>>
@@ -87,8 +87,8 @@
     <small id="report-top-limit-help">Sort high to low for top results, or low to high for bottom results.</small>
   </div></div>
   <section class="report-card"><h2>Automatic delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
-  <div class="report-actions"><button class="button" type="submit">Run report</button>
-    <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
+  <div class="report-actions"><button class="btn btn--primary" type="submit">Run report</button>
+    <button class="btn" type="submit" formaction="/reports/save">Save template</button></div>
 </form><aside class="report-live-preview" aria-label="Live preview"><h2>Preview</h2><p data-report-preview-status>Choose fields to see a preview.</p><div data-report-preview-table class="report-preview-table"></div><p class="report-preview-note">Preview shows up to 30 rows. Open the full report to browse more.</p></aside></div>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
 <script defer src="/reports.js?v=<%= assetVersion %>"></script>
