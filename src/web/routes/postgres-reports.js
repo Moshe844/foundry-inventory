@@ -135,10 +135,13 @@ function createPostgresReportsRouter(database){
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     try{
+      const started=performance.now();
       const result=await reports.run(database,req.ctx,actor,source(req.body),{limit:31});
       return res.json({ok:true,columns:result.columns,labels:result.columnLabels,
         rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
-        links:result.rows.map(row=>row.href||null)});
+        links:result.rows.map(row=>row.href||null),groups:result.config.groups,
+        groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],
+        definition:result.config,elapsedMs:Math.round(performance.now()-started)});
     }catch(error){
       if(error instanceof ValidationError)return res.status(422).json({ok:false,message:error.message});
       if(/statement timeout|canceling statement/i.test(String(error.message||'')))
@@ -194,6 +197,7 @@ function createPostgresReportsRouter(database){
     req.session.reportParentDraft={workspaceId:req.ctx.workspaceId,
       definition:reports.normalize(source(req.body),actor),schedule:draftSchedule};
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config,schedule:null};
+    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
     return res.redirect(303,'/reports/run?view=detail');
   }));
   router.post('/reports/save',asyncRoute(async(req,res)=>{

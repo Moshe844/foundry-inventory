@@ -21,11 +21,29 @@ document.addEventListener('DOMContentLoaded',()=>{
     const draw=(data)=>{
       previewTable.replaceChildren();
       if(!data.rows.length){previewStatus.textContent='No records match these choices.';return;}
-      previewStatus.textContent=data.returned+' rows shown'+(data.hasMore?' · more available':'');
+      previewStatus.textContent=data.returned+(data.hasMore?'+':'')+' rows shown · '+(data.elapsedMs/1000).toFixed(1)+' s';
       const table=document.createElement('table'),head=table.createTHead().insertRow();
       for(const key of data.columns){const cell=document.createElement('th');cell.scope='col';cell.textContent=data.labels[key]||key;head.append(cell);}
       const body=table.createTBody();
-      for(const row of data.rows){const tr=body.insertRow();for(const key of data.columns){const td=tr.insertCell();td.textContent=String(row[key]??'');}}
+      for(const [index,row] of data.rows.entries()){
+        const tr=body.insertRow();
+        for(const key of data.columns){
+          const td=tr.insertCell(),value=String(row[key]??'');
+          if(data.groups?.length&&key===data.columns.at(-1)){
+            const button=document.createElement('button');button.type='button';button.className='report-source-link';
+            button.textContent=value;button.setAttribute('aria-label','Show records behind '+value);
+            button.addEventListener('click',()=>{
+              const form=document.createElement('form');form.method='post';form.action='/reports/drilldown';
+              const values={_csrf:builder.querySelector('[name="_csrf"]')?.value||'',
+                definition:JSON.stringify(data.definition),groupValues:JSON.stringify(data.groupValues[index])};
+              for(const [name,text] of Object.entries(values)){const input=document.createElement('input');input.type='hidden';input.name=name;input.value=text;form.append(input);}
+              document.body.append(form);form.submit();
+            });td.append(button);
+          }else if(data.links?.[index]?.startsWith('/')&&!data.links[index].startsWith('//')){
+            const link=document.createElement('a');link.href=data.links[index];link.textContent=value;td.append(link);
+          }else td.textContent=value;
+        }
+      }
       previewTable.append(table);
     };
     const load=async()=>{
