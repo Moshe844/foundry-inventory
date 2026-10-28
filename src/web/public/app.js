@@ -1110,13 +1110,30 @@
     });
   }
 
+  function afterAskPaint(callback){
+    let complete=false;const run=()=>{if(complete)return;complete=true;clearTimeout(timer);callback();};
+    // Background tabs can suspend animation frames. A request must still proceed once.
+    const timer=setTimeout(run,100);requestAnimationFrame(()=>requestAnimationFrame(run));
+  }
+
+  function initAskSubmissionPaint(){
+    if(!document.body.classList.contains('page-ask'))return;
+    for(const form of document.querySelectorAll('[data-ask-form]'))form.addEventListener('submit',event=>{
+      if(event.defaultPrevented)return;
+      event.preventDefault();if(form.hasAttribute('data-ask-dispatching'))return;
+      form.setAttribute('data-ask-dispatching','true');
+      // Let the shared pending message paint before native navigation begins.
+      afterAskPaint(()=>HTMLFormElement.prototype.submit.call(form));
+    });
+  }
+
   function initFullPageAskEntry(){
     const entry=document.querySelector('[data-ask-auto-send]'),form=document.querySelector('[data-ask-form]'),input=form?.querySelector('[data-ask-input]');
     if(!entry||!form||!input?.value.trim())return;
     const url=new URL(location.href),token=url.searchParams.get('fresh'),key=token?'stockchief:ask-entry:'+token:null;
     if(key){try{if(sessionStorage.getItem(key))return;sessionStorage.setItem(key,'submitted');}catch{}}
     url.searchParams.delete('send');url.searchParams.delete('q');history.replaceState(history.state,'',url.pathname+url.search+url.hash);
-    requestAnimationFrame(()=>form.requestSubmit());
+    afterAskPaint(()=>form.requestSubmit());
   }
 
   // Home starts a conversation; the working state belongs on the conversation page.
@@ -1153,7 +1170,7 @@
     }
     input.value = saved.message;
     // Use the same composer submission and visible working state as typed Ask requests.
-    window.requestAnimationFrame(() => form.requestSubmit());
+    afterAskPaint(() => form.requestSubmit());
   }
 
   /**
@@ -1835,6 +1852,7 @@
     initMigrationAutoStart();
     initOperatorAttachment();
     initAskPending();
+    initAskSubmissionPaint();
     initHomeAskHandoff();
     initFullPageAskEntry();
     initSwitcher();
