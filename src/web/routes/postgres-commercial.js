@@ -46,7 +46,7 @@ function capabilityName(capability){return ({
 
 function createPostgresCommercialRouter(database,options={}){const router=express.Router();router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();next();});const provider=options.billingProvider||billingProvider;
   router.get('/',asyncRoute(async(req,res,next)=>{if(req.account)return next();await commercial.track(database,{eventName:'landing_viewed',
-    anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'The AI inventory operator',nav:'home',
+    anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'The AI inventory operator',nav:'home',groups:require('../presentation/public-integrations').groups(),
       description:'StockChief notices, decides and carries out routine inventory operations—then brings owners the exceptions that need judgement.'});}));
   router.get('/demo',asyncRoute(async(req,res)=>{await commercial.track(database,{eventName:'demo_opened',anonymousId:req.sessionID,
     accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo',
