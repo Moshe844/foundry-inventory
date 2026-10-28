@@ -114,7 +114,20 @@ function createPostgresReportsRouter(database){
     if(description.length>1800)throw new ValidationError('Describe the report in 1,800 characters or fewer.');
     // This uses the existing metered and governed Ask path. The model proposes
     // a definition; only PostgreSQL supplies the resulting numbers.
-    return res.redirect(303,'/ask?q='+encodeURIComponent('Build a custom report: '+description)+'&send=1');
+    return res.redirect(303,'/reports/builder?q='+encodeURIComponent(description));
+  }));
+  router.post('/reports/describe',asyncRoute(async(req,res)=>{
+    const description=String(req.body.q||'').trim();
+    if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
+    const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
+    const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous});
+    if(!result.reportConfig)return res.status(422).json({ok:false,message:result.answer||'What would you like this report to measure?'});
+    const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,result.reportConfig,actor);
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
+    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+    const url='/reports/builder?draft=1#report-manual';
+    if(req.accepts(['html','json'])==='json')return res.json({ok:true,url,title:definition.title});
+    return res.redirect(303,url);
   }));
   router.get('/reports/builder',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -131,7 +144,7 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);

@@ -75,6 +75,7 @@ function createPostgresAuthRouter(database,options={}) {
   router.get('/register', async (req,res,next) => {
     try {
     if(req.account){
+      if(req.query.plan){const plan=selfServiceSelection(await commercial.listPlans(database),String(req.query.plan));if(plan)return res.redirect(303,require('../../commercial/plan-navigation').destination(plan,{account:req.account,subscription:await require('../../commercial/entitlements').subscriptionFor(database,req.account.id),interval:req.query.interval}));}
       if(req.account.plan==='commercial_pending')return res.redirect(req.account.email_verified_at
         ?`/complete-signup${req.query.plan?`?plan=${encodeURIComponent(req.query.plan)}`:''}`:'/verify-email/pending');
       if(req.user){
@@ -140,9 +141,10 @@ function createPostgresAuthRouter(database,options={}) {
     const selection=pendingSelection(req.account,req.session.commercialSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));
     if(requested)selection.planId=requested.id;
+    if(['monthly','annual'].includes(req.query.interval))selection.interval=req.query.interval;
     return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
-      selection,lastSelection:req.session.checkoutSelection||null,plans,checkoutOpen:await checkoutAvailable()});});
+      selection,lastSelection:req.session.checkoutSelection||null,plans,existingWorkspace:Boolean(req.user),checkoutOpen:await checkoutAvailable()});});
   router.post('/complete-signup/trial',async(req,res,next)=>{try{
     if(!req.account)return res.redirect('/login');
     const result=await require('../../commercial/context').run({database,scope:{accountId:req.account.id,workspaceId:null}},()=>require('../../commercial/self-service-trial').activate(database,req.account.id));

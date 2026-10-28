@@ -12,8 +12,8 @@
     <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
     <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %>
       <span class="auth-mail auth-mail--ok">✓</span>
-      <h1>3. Activate your workspace.</h1>
-      <p>Your email is verified. Review a paid plan and enter your card securely to activate your business workspace. Includes a 14-day money-back guarantee.</p>
+      <h1><%= locals.existingWorkspace?'Activate your paid plan':'3. Activate your workspace.' %></h1>
+      <p><%= locals.existingWorkspace?'Review a paid plan for this account. Your existing inventories and records stay with this account.':'Your email is verified. Review a paid plan and enter your card securely to activate your business workspace.' %> Includes a 14-day money-back guarantee.</p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
@@ -33,18 +33,19 @@
         </label>
         <label class="auth-field" for="activation-interval">
           <span id="activation-billing-label">Billing</span>
-          <select id="activation-interval" name="interval" aria-labelledby="activation-billing-label" data-billing-interval><option value="monthly" <%= (lastSelection?.interval||selection.interval)!=='annual'?'selected':'' %>>Monthly</option><option value="annual" <%= (lastSelection?.interval||selection.interval)==='annual'?'selected':'' %>>Annual — 2 months free</option></select>
+          <select id="activation-interval" name="interval" aria-labelledby="activation-billing-label" data-billing-interval><option value="monthly" <%= (lastSelection?.interval||selection.interval)!=='annual'?'selected':'' %>>Monthly</option><option value="annual" <%= (lastSelection?.interval||selection.interval)==='annual'?'selected':'' %>>Annual billing</option></select>
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>
       <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else{ %>
         <% const chosen=plans.find(function(plan){return plan.id===(lastSelection?.planId||selection.planId);}); %>
-        <p><%= chosen?'You selected '+chosen.public_name+' with monthly billing.':'No plan has been selected yet.' %></p>
-        <div class="auth-message auth-message--warning" role="status">Checkout is not open yet. Your email is verified, but no payment has been taken and no inventory has been activated. We will not send you to a checkout that cannot complete.</div>
+        <p><%= chosen?'You selected '+chosen.public_name+' with '+(selection.interval==='annual'?'annual':'monthly')+' billing.':'No plan has been selected yet.' %></p>
+        <div class="auth-message auth-message--warning" role="status"><%= locals.existingWorkspace?'Paid checkout is unavailable here. Your existing inventories and records remain available.':'Paid checkout is unavailable here. Your account is verified; no payment has been taken.' %></div>
       <% } %>
-      <p class="auth-foot"><a href="/pricing#<%= lastSelection?.planId||selection.planId||'starter' %>">Compare monthly plans</a></p>
-      <form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <p class="auth-foot"><a href="/pricing?interval=<%= selection.interval||'monthly' %>#<%= lastSelection?.planId||selection.planId||'starter' %>">Compare plans</a></p>
+      <% if(locals.existingWorkspace){ %><a href="/settings/billing">Back to Plan &amp; billing</a><% }else{ %><form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="pub-link" type="submit">Use a different account</button></form>
+      <% } %>
     </div>
   </main>
 <script src="/billing-interval.js?v=<%= locals.assetVersion||'billing' %>" defer></script></body>

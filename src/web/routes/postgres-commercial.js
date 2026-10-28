@@ -62,7 +62,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
     title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
-    checkoutCancelled:req.query.checkout==='cancelled'});}));
+    checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),
+    currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
@@ -72,12 +73,14 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   const support=require('../../operations/postgres-support');
   const supportData=async req=>({supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
     supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0],supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId})});
-  router.get('/contact',asyncRoute(async(req,res)=>renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...await supportData(req)})));
+  router.get('/contact',asyncRoute(async(req,res)=>{const plan=(await commercial.listPlans(database)).find(p=>p.id===req.query.plan);return renderPublic(req,res,'public/contact',{title:plan?'Discuss '+plan.public_name:'Contact StockChief',nav:'contact',inquiryPlan:plan||null,...await supportData(req)});}));
   router.get('/support',asyncRoute(async(req,res,next)=>{if(req.account)return next();return renderPublic(req,res,'public/contact',{title:'StockChief support',nav:'contact',...await supportData(req)});}));
   router.post('/support/requests',asyncRoute(async(req,res)=>{
     const data=await supportData(req);
+    data.inquiryPlan=(await commercial.listPlans(database)).find(p=>p.id===req.body.planId)||null;
     try{data.supportReceipt=await support.create(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId,email:req.account?.email,ip:req.ip},req.body);}
     catch(error){if(!error.status||error.status>=500)throw error;res.status(error.status);data.supportError=error.message;data.supportRequestKey=req.body.requestKey||data.supportRequestKey;}
+    if(data.inquiryPlan)return renderPublic(req,res,'public/contact',{title:'Your plan enquiry',nav:'contact',...data});
     if(req.account)return res.page('support',{title:'Help and support',nav:null,...data});
     return renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...data});
   }));

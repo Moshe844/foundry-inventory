@@ -2,16 +2,17 @@
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize report':'Build a report' %></h1>
   <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
 <section class="report-start" aria-label="Start a custom report">
-  <form action="/reports/describe" method="get" class="report-describe"><label for="report-description">Describe the report you want</label>
-    <textarea id="report-description" name="q" rows="3" maxlength="1800" required placeholder="For example, profit by customer by month this year"></textarea>
-    <button class="btn btn--primary" type="submit">Build it for me</button></form>
-  <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
+  <form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
+    <textarea id="report-description" name="q" rows="3" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
+    <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button><p data-report-build-status role="status" hidden></p></form>
+  <details class="report-template-start" <%= selection?'':'open' %>><summary>Start from a template</summary><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
     <div class="report-template-locked" aria-disabled="true"><strong><%= item.name %></strong><span><%= item.description %></span><small>Available on a higher plan</small></div>
     <% }else{ %><a href="/reports/template/<%= item.key %>" data-dest="/reports/builder?draft=1"><strong><%= item.name %></strong><span><%= item.description %></span></a><% } %>
-  <% } %></div></div>
+  <% } %></div></details>
   <a class="report-manual-link" href="#report-manual">Build manually ↓</a>
 </section>
-<div class="report-builder-layout" id="report-manual"><form class="report-builder" method="post" action="/reports/run" data-report-builder>
+<nav class="report-section-nav" aria-label="Report builder sections"><a href="#report-manual">Source and title</a><a href="#report-columns">Columns</a><a href="#report-filters">Filters</a><a href="#report-summary">Groups and chart</a><a href="#report-delivery">Save and delivery</a></nav>
+<div class="report-builder-layout" id="report-manual"><form class="report-builder" method="post" action="/reports/run" data-report-builder data-active-report="<%= selection?'true':'false' %>">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
   <div class="report-card"><label for="report-dataset">Start with</label>
@@ -21,7 +22,7 @@
     <label for="report-title">Report title</label><input id="report-title" name="title" maxlength="100"
       value="<%= saved?.title||draft?.title||dataset.label %>" required>
   </div>
-  <div class="report-card"><h2>Columns</h2><p>Choose the details to show. Grouping gives you a summary instead of individual rows.</p>
+  <div class="report-card" id="report-columns"><h2>Columns</h2><p>Choose the details to show. Grouping gives you a summary instead of individual rows.</p>
     <div class="report-column-order" data-report-column-order
       data-initial-columns="<%= JSON.stringify(selection?.columns||Object.keys(dataset.fields).slice(0,5)) %>"
       data-initial-labels="<%= JSON.stringify(selection?.columnLabels||{}) %>">
@@ -35,7 +36,7 @@
         <%= label %> <small><%= type==='money_minor'?'money':type %></small></label>
     <% } %></fieldset><% } %></div>
   </div>
-  <div class="report-card"><h2>Filter records</h2><p>Up to eight exact, text or range filters. Blank rows are ignored.</p>
+  <div class="report-card" id="report-filters"><h2>Filter records</h2><p>Choose which records to include. Blank rows are ignored.</p>
     <% for(let index=0;index<8;index++){const filter=selection?.filters?.[index]||{}; %>
       <div class="report-filter" data-report-filter <%= index<=(selection?.filters?.length||0)?'':'hidden' %>><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
         <option value="">Field</option><% for(const field of Object.keys(dataset.fields)){ %>
@@ -48,7 +49,7 @@
     <% } %>
     <datalist id="report-relative-periods"><% Object.entries(reportRelativePeriods).forEach(([value,label])=>{ %><option value="<%= value %>"><%= label %></option><% }); %></datalist><button class="btn" type="button" data-report-add-filter>Add another filter</button>
   </div>
-  <div class="report-card"><h2>Summarize and visualize</h2>
+  <div class="report-card" id="report-summary"><h2>Groups and chart</h2>
     <label><input type="checkbox" name="summary" value="on" <%= selection?.summary?'checked':'' %>>
       One whole-dataset total (the detail columns above will not be used)</label>
     <p><small>For a breakdown, choose grouping below instead. Weighted ratios use the full recorded numerator and denominator, not an average of percentages.</small></p>
@@ -86,7 +87,7 @@
       value="<%= selection?.topN??'' %>" placeholder="All results" aria-describedby="report-top-limit-help"></label>
     <small id="report-top-limit-help">Sort high to low for top results, or low to high for bottom results.</small>
   </div></div>
-  <section class="report-card"><h2>Automatic delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
+  <section class="report-card" id="report-delivery"><h2>Save and delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
   <div class="report-actions"><button class="btn btn--primary" type="submit">Run report</button>
     <button class="btn" type="submit" formaction="/reports/save">Save template</button></div>
 </form><aside class="report-live-preview" aria-label="Live preview"><h2>Preview</h2><p data-report-preview-status>Choose fields to see a preview.</p><div data-report-preview-table class="report-preview-table"></div><p class="report-preview-note">Preview shows up to 30 rows. Open the full report to browse more.</p></aside></div>

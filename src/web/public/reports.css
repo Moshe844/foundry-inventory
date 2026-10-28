@@ -30,3 +30,4 @@
 .report-column-order li button{width:32px;height:32px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#4f46e5;cursor:pointer}
 .report-column-order li button:disabled{color:#9ca3af;cursor:default}
 @media(max-width:600px){.report-column-order li{grid-template-columns:minmax(0,1fr) 32px 32px}.report-column-order li input[type=text]{grid-column:1/-1;grid-row:2}.report-column-order li span{min-width:0;overflow-wrap:anywhere}}
+.report-template-start summary{cursor:pointer;font-size:16px;font-weight:600;margin:20px 0 12px}.report-section-nav{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.report-section-nav a{padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;color:#344054;text-decoration:none}.report-section-nav a:hover{border-color:#4f46e5;color:#4f46e5}.report-builder :is(.report-checks,.report-column-order ol){max-height:340px;overflow-y:auto}.report-card[id],#report-manual{scroll-margin-top:20px}

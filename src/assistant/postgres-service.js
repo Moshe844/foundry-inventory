@@ -1925,6 +1925,13 @@ async function askCapabilities(database,ctx,message,options={}){
   answer:results.map((row)=>row.answer).filter(Boolean).join(' '),results};
 }
 
+async function buildReportDefinition(database,ctx,message,{provider=null,priorReport=null}={}){
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+  const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const funded=fundedAskProvider(database,ctx,raw,newId('report-build'));
+  return require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
+}
+
 async function prepareInstruction(database,ctx,message,options={}){
     let proposal;
     try{proposal=await operatingInstructions.interpret(database,ctx,message,options);}
@@ -2188,4 +2195,4 @@ async function ask(database,ctx,message,options={}){
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
-  fundedAskProvider,summarizeCustomerOrders};
+  fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

@@ -1,7 +1,10 @@
 'use strict';
 
 document.addEventListener('DOMContentLoaded',()=>{
+  const describe=document.querySelector('[data-report-describe]');
+  describe?.addEventListener('submit',async event=>{event.preventDefault();const button=describe.querySelector('button[type=submit]'),status=describe.querySelector('[data-report-build-status]');button.disabled=true;status.hidden=false;status.textContent='Building your report from your business records…';try{const response=await fetch(describe.action,{method:'POST',credentials:'same-origin',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(describe))});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.message||result.error?.message||'This report could not be built. Your description is kept here.');status.textContent='Ready: '+result.title;location.assign(result.url);}catch(error){status.textContent=error.message;status.setAttribute('role','alert');button.disabled=false;describe.querySelector('textarea').focus();}});
   const builder=document.querySelector('[data-report-builder]');
+  if(builder?.dataset.activeReport==='true'&&!location.hash&&!window.StockChiefNavigation?.wasRestored())requestAnimationFrame(()=>{document.getElementById('report-manual')?.scrollIntoView({block:'start'});});
   const previewStatus=document.querySelector('[data-report-preview-status]');
   const previewTable=document.querySelector('[data-report-preview-table]');
   const fieldSearch=document.querySelector('[data-report-field-search]');

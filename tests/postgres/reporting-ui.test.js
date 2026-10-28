@@ -151,8 +151,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.match(builderPage.text,/Start from a template/);
     const described=await owner.get('/reports/describe').query({q:'Profit by customer this year'});
     assert.equal(described.status,303);
-    assert.match(decodeURIComponent(described.headers.location),/Build a custom report: Profit by customer this year/);
-    assert.match(described.headers.location,/send=1/);
+    assert.equal(decodeURIComponent(described.headers.location),'/reports/builder?q=Profit by customer this year');
     for(const startingPoint of builderEntry.templates){
       const normalized=reports.normalize(startingPoint.definition,actor);
       assert.equal(normalized.dataset,startingPoint.definition.dataset);
