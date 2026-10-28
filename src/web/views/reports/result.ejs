@@ -65,7 +65,8 @@
 <section class="report-card report-save"><h2>Save and export</h2>
   <% if(saved){ %><%- include('delivery-actions',{report:saved}) %>
     <% if(saved.last_error){ %><p class="report-error">Delivery needs attention: <%= saved.last_error %></p><% } %>
-    <div class="report-actions"><a href="/reports/saved/<%= saved.id %>/export.csv">CSV</a>
+    <div class="report-actions"><a href="/reports/saved/<%= saved.id %>/duplicate">Duplicate report</a>
+      <a href="/reports/saved/<%= saved.id %>/export.csv">CSV</a>
       <a href="/reports/saved/<%= saved.id %>/export.xlsx">Excel</a>
       <a href="/reports/saved/<%= saved.id %>/export.pdf">PDF</a></div>
   <% }else{ %><form action="/reports/save" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">

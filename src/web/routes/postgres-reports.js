@@ -210,6 +210,13 @@ function createPostgresReportsRouter(database){
     req.flash('success','Report template saved.');return res.redirect(303,`/reports/saved/${saved.id}`);
   }));
   for(const [path,action]of [['send-now','send_now'],['pause','pause'],['resume','resume'],['delete','delete']])router.post('/reports/saved/:id/'+path,asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx);if(action==='delete'&&req.body.confirmed!=='yes')throw new ValidationError('Confirm deletion of this saved report.');const result=await require('../../reports/postgres-delivery-controls').change(database,req.ctx,actor,req.params.id,{...req.body,action});req.flash('success',action==='send_now'?(result.replayed?'That exact delivery is already queued or recorded.':'Report delivery queued to your account email.'):action==='delete'?'Saved report deleted; delivery history retained.':action==='pause'?'Future report delivery paused.':'Report delivery resumed.');if(result.alreadySending)req.flash('info',result.alreadySending+' email delivery is already in progress and may finish.');res.redirect(303,action==='delete'?'/reports':'/reports/saved/'+req.params.id);}));
+  router.get('/reports/saved/:id/duplicate',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    const prior=await reports.load(database,req.ctx,actor,req.params.id);
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,
+      definition:reports.normalize({...prior.definition,title:`Copy of ${prior.title}`},actor),schedule:null};
+    return res.redirect(303,'/reports/builder?draft=1');
+  }));
   router.get('/reports/saved/:id',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const saved=await reports.load(database,req.ctx,actor,req.params.id);

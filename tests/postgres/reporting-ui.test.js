@@ -623,14 +623,14 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(askStored.intent.comparisonSafe,true);
     assert.deepEqual(askStored.intent.presentation.chartAmounts,[12]);
     assert.match(askResult.text,new RegExp(`/reports/from-ask/${askReportId}`));
-    assert.match(askResult.text,new RegExp(`/reports/from-ask/${askReportId}/run`));
+    assert.match(askResult.text,new RegExp(`href="/reports/from-ask/${askReportId}"`));
     const mixedAsk=await owner.post('/ask').type('form').send({_csrf:csrf(askResult.text),
       message:'Compare stock across our locations in a bar chart and let me inspect the underlying records'});
     assert.equal(mixedAsk.status,303);
     assert.equal(reportPlanCalls,4);
     const mixedAnswer=await owner.get('/ask');
     assert.match(mixedAnswer.text,/Units by location/);
-    assert.match(mixedAnswer.text,/Open full report and source records/);
+    assert.match(mixedAnswer.text,/Edit this report/);
     const askFull=await owner.get(`/reports/from-ask/${askReportId}/run`);
     assert.equal(askFull.status,200);
     assert.match(askFull.text,/See source records/);
@@ -659,6 +659,13 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2
       AND title='Weekly stock by location'`,[ctx.workspaceId,ctx.actorId])).rows[0];
     assert.equal(askSaved.schedule_frequency,'weekly');assert.equal(askSaved.schedule_hour_utc,9);
+    const duplicateDraft=await owner.get(`/reports/saved/${askSaved.id}/duplicate`);
+    assert.equal(duplicateDraft.status,303);
+    assert.equal(duplicateDraft.headers.location,'/reports/builder?draft=1');
+    const duplicateBuilder=await owner.get(duplicateDraft.headers.location);
+    assert.equal(duplicateBuilder.status,200);
+    assert.match(duplicateBuilder.text,/Copy of Weekly stock by location/);
+    assert.doesNotMatch(duplicateBuilder.text,new RegExp(`name="id" value="${askSaved.id}"`));
     const lineAsk=await owner.post('/ask').type('form').send({_csrf:csrf(askResult.text),
       message:'Make a monthly line-chart report of net inventory movement units'});
     assert.equal(lineAsk.status,303);
@@ -782,6 +789,8 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       WHERE id=$1`,[delivery.id])).rows[0];
     assert.equal(receipt.status,'SENT');assert.equal(receipt.provider_message_id,'fixture-report-email');
     const other=request.agent(app);await register(other,'Other Report','other-report@example.test');
+    const otherDuplicate=await other.get(`/reports/saved/${askSaved.id}/duplicate`);
+    assert.notEqual(otherDuplicate.status,303,'Another account cannot duplicate an owned report');
     const otherAsk=await other.get(`/reports/from-ask/${askReportId}`);assert.notEqual(otherAsk.status,200);
     const otherFull=await other.get(`/reports/from-ask/${askReportId}/run`);
     assert.notEqual(otherFull.status,200);

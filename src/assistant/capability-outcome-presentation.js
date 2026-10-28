@@ -11,7 +11,7 @@ function present(message,outcome,{batchId=null,planId=null,index=0,count=1,pendi
   ...(batchId?{batchId,sourceMessage:message,requestIndex:index+1,requestCount:count}:{}),
   ...(result.reportConfig?{reportConfig:result.reportConfig,comparisonSafe:result.comparisonSafe!==false}:{}),
   ...(result.proposal?{proposalId:result.proposal.id,proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
- if(interactionId){result.interactionId=interactionId;if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}/run`,label:'Open full report and source records'};}
+ if(interactionId){result.interactionId=interactionId;if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}`,label:'Edit this report'};}
  return result;
 }
 module.exports={present};
