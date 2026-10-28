@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const {PRICED_MODEL,pricedUsage}=require('../helpers/postgres-model-fixture');
 test('pricing, existing-account billing, report building and human support have coherent destinations',{timeout:180000},async t=>{
+ const checkoutKeys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT','STOCKCHIEF_BILLING_STRIPE_SECRET_KEY'],checkoutBefore=Object.fromEntries(checkoutKeys.map(key=>[key,process.env[key]]));process.env.STOCKCHIEF_RUNTIME_ENV='staging';process.env.STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT='1';process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY='sk_test_isolated_fixture';t.after(()=>{for(const key of checkoutKeys){if(checkoutBefore[key]===undefined)delete process.env[key];else process.env[key]=checkoutBefore[key];}});
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:7,timeZone:'America/New_York'}),{db,ctx}=f;
  await db.query('UPDATE accounts SET email_verified_at=now() WHERE id=$1',[f.owner.accountId]);
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) VALUES('journey-plan',$1,'pro','plan-services-2026-10-27:pro','COMP','CUSTOM','ISOLATED_TEST')",[f.owner.accountId]);

@@ -1,4 +1,4 @@
-<header class="rm-head"><div><a href="/support">Help &amp; support</a><h1>Customer inbox</h1><p>Open a conversation to read the customer’s message and send your reply.</p></div></header>
+<header class="rm-head"><div><a href="/support">Help &amp; support</a><h1>Customer inbox</h1><p>Open a conversation to read the customer’s message and send your reply. Your replies are written by you; no AI replies are generated.</p></div></header>
 <% const me=staffProfiles.find(p=>p.account_id===account.id); %>
 <section class="card card-body support-inbox" data-support-desk data-staff-account="<%= account.id %>" data-after="<%= after||'' %>" data-time-zone="<%= account.timeZone||'UTC' %>">
   <div class="support-inbox-presence"><div><h2>Your availability</h2><p role="status" data-support-live-status>You are offline. Customers can leave messages.</p><p>Keep this inbox open while you are available. Replies are written by you.</p></div><button class="btn btn--primary" type="button" data-support-presence aria-pressed="false">Go online for live chat</button></div>
