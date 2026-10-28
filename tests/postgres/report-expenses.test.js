@@ -46,8 +46,8 @@ test('the friendly Expenses source reports only posted expense lines and traces 
     await page.locator('[name=password]').fill(password);
     await Promise.all([page.waitForURL(origin+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
     await page.goto(origin+'/reports/builder?dataset=expenses');
-    await page.getByLabel('Show only the first results').fill('1');
-    await page.locator('[data-report-preview-status]').getByText(/1 rows shown/).waitFor();
+    await page.getByRole('link',{name:'Groups and chart',exact:true}).click();await page.getByLabel('Show only the first results').fill('1');
+    await page.locator('[data-report-preview-status]').getByText(/1 row shown/).waitFor();
     assert.equal(await page.locator('[data-report-preview-table] tbody tr').count(),1);
     await Promise.all([page.waitForURL('**/reports/run',{waitUntil:'domcontentloaded'}),
       page.getByRole('button',{name:'Run report'}).click()]);

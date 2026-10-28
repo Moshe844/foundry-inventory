@@ -27,13 +27,13 @@
       <a class="<%= nav==='integrations'?'is-active':'' %>" href="/integrations">Integrations</a>
       <a class="<%= nav==='pricing'?'is-active':'' %>" href="/pricing">Pricing</a><a href="/support">Help &amp; support</a>
     </nav>
-    <div class="pub-nav__actions"><a class="pub-link" href="/login">Sign in</a><a class="pub-btn pub-btn--small" href="/register">Get started</a></div>
+    <div class="pub-nav__actions"><% if(locals.account){ %><a class="pub-link" href="<%= account.plan==='commercial_pending'?'/complete-signup':'/' %>"><%= account.plan==='commercial_pending'?'Continue signup':'Back to your business' %></a><% if(account.plan!=='commercial_pending'){ %><a class="pub-btn pub-btn--small" href="/settings/billing">Plan &amp; billing</a><% } %><% }else{ %><a class="pub-link" href="/login">Sign in</a><a class="pub-btn pub-btn--small" href="/register">Get started</a><% } %></div>
   </div>
 </header>
 <main id="content"><%- body %></main>
 <footer class="pub-footer">
   <div class="pub-footer__lead"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><i></i></span><span>StockChief</span></a><p>The AI inventory operator that runs the work and brings you the exceptions.</p></div>
-  <div class="pub-footer__links"><div><b>Explore</b><a href="/demo">See it work</a><a href="/capabilities">Capabilities</a><a href="/integrations">Integrations</a><a href="/pricing">Pricing</a></div><div><b>Operate</b><a href="/how-stockchief-works">How it works</a><a href="/control">Control &amp; trust</a><a href="/switching">Switching</a><a href="/contact">Contact the founder</a></div><div><b>Account</b><a href="/register">Create account</a><a href="/login">Sign in</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></div>
+  <div class="pub-footer__links"><div><b>Explore</b><a href="/demo">See it work</a><a href="/capabilities">Capabilities</a><a href="/integrations">Integrations</a><a href="/pricing">Pricing</a></div><div><b>Operate</b><a href="/how-stockchief-works">How it works</a><a href="/control">Control &amp; trust</a><a href="/switching">Switching</a><a href="/contact">Contact the founder</a></div><div><b>Account</b><% if(locals.account){ %><a href="<%= account.plan==='commercial_pending'?'/complete-signup':'/' %>"><%= account.plan==='commercial_pending'?'Continue signup':'Your business' %></a><% }else{ %><a href="/register">Create account</a><a href="/login">Sign in</a><% } %><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></div>
   <div class="pub-footer__base"><span>© <%= new Date().getFullYear() %> StockChief</span><span>Built for businesses that want the work handled.</span></div>
 </footer>
 <script src="/local-time.js?v=<%= assetVersion %>" defer></script>

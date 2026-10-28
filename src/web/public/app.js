@@ -50,8 +50,8 @@
       const recordsHere=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}}),groups=new Map();
       for(const r of recordsHere){const label=r.type==='page'?'Pages':r.typeLabel||'Records';if(!groups.has(label))groups.set(label,[]);if(groups.get(label).length<8)groups.get(label).push(r);}
       const hit=r=>`<a class="search-hit" role="option" aria-selected="false" href="${escapeHtml(r.href)}" data-dest="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong><span class="sub">${escapeHtml(r.subtitle||'')}</span></span><span class="meta">${escapeHtml(r.meta||'')}</span></a>`;
-      const askHref='/ask?'+new URLSearchParams({q:term,send:'1',from:location.pathname+location.search});
-      panel.innerHTML='<div class="search-body">'+[...groups].map(([name,rows])=>'<div role="group" aria-label="'+escapeHtml(name)+'"><p class="search-group-heading">'+escapeHtml(name)+'</p>'+rows.map(hit).join('')+'</div>').join('')+'</div>'+ (term?`<div class="search-footer"><a class="search-hit" role="option" data-ask-panel data-ask-submit aria-selected="false" href="${escapeHtml(askHref)}" data-dest="${escapeHtml(askHref)}"><span><strong>Ask StockChief: ${escapeHtml(term)}</strong></span></a><a class="search-hit" role="option" aria-selected="false" href="/search?q=${encodeURIComponent(term)}" data-dest="/search?q=${encodeURIComponent(term)}"><strong>See all results</strong></a></div>`:'');
+      const askHref='/ask?'+new URLSearchParams({q:term,send:'1',fresh:crypto.randomUUID(),from:location.pathname+location.search});
+      panel.innerHTML='<div class="search-body">'+[...groups].map(([name,rows])=>'<div role="group" aria-label="'+escapeHtml(name)+'"><p class="search-group-heading">'+escapeHtml(name)+'</p>'+rows.map(hit).join('')+'</div>').join('')+'</div>'+ (term?`<div class="search-footer"><a class="search-hit" role="option" aria-selected="false" href="${escapeHtml(askHref)}" data-dest="${escapeHtml(askHref)}"><span><strong>Ask StockChief: ${escapeHtml(term)}</strong></span></a><a class="search-hit" role="option" aria-selected="false" href="/search?q=${encodeURIComponent(term)}" data-dest="/search?q=${encodeURIComponent(term)}"><strong>See all results</strong></a></div>`:'');
       if(!groups.size&&!term)panel.innerHTML='<div class="search-empty">No matches yet.</div>';
       panel.hidden = false; input.setAttribute('aria-expanded','true');
       sizePanel();
@@ -1110,6 +1110,15 @@
     });
   }
 
+  function initFullPageAskEntry(){
+    const entry=document.querySelector('[data-ask-auto-send]'),form=document.querySelector('[data-ask-form]'),input=form?.querySelector('[data-ask-input]');
+    if(!entry||!form||!input?.value.trim())return;
+    const url=new URL(location.href),token=url.searchParams.get('fresh'),key=token?'stockchief:ask-entry:'+token:null;
+    if(key){try{if(sessionStorage.getItem(key))return;sessionStorage.setItem(key,'submitted');}catch{}}
+    url.searchParams.delete('send');url.searchParams.delete('q');history.replaceState(history.state,'',url.pathname+url.search+url.hash);
+    requestAnimationFrame(()=>form.requestSubmit());
+  }
+
   // Home starts a conversation; the working state belongs on the conversation page.
   // The message stays in this tab (never in the URL) until that page is ready to submit it.
   function initHomeAskHandoff() {
@@ -1124,7 +1133,7 @@
       } catch { return; } // The ordinary form submission still works when storage is disabled.
       event.preventDefault();
       event.stopImmediatePropagation();
-      window.location.assign('/ask');
+      window.location.assign('/ask?fresh='+crypto.randomUUID());
     }, true);
 
     if (!document.body.classList.contains('page-ask')) return;
@@ -1143,36 +1152,7 @@
       if (title) title.textContent = 'Ask StockChief';
     }
     input.value = saved.message;
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      // Let the ordinary conversation working state render, but keep this page
-      // mounted while the backend answers. The owner is no longer stuck on Home.
-      window.setTimeout(async () => {
-        try {
-          const response = await window.fetch(form.action, {
-            method: 'POST', body: new FormData(form), credentials: 'same-origin',
-          });
-          if (!response.ok) throw new Error('ask_failed');
-          // Fetch follows the server's 303. A navigation capability can land
-          // on any registered page; don't throw that destination away and
-          // force every Home request back to the conversation.
-          const arrived = new URL(response.url, window.location.href);
-          if (arrived.origin !== window.location.origin) throw new Error('ask_redirect_origin');
-          window.location.assign(arrived.pathname === '/ask'
-            ? '/ask?latest=1#latest'
-            : `${arrived.pathname}${arrived.search}${arrived.hash}`);
-        } catch {
-          const thinking = form.parentElement.querySelector('[data-thinking-text]');
-          if (thinking) {
-            thinking.textContent = 'I could not confirm the result. ';
-            const check = document.createElement('a');
-            check.href = '/ask';
-            check.textContent = 'Reload the conversation to check before sending again.';
-            thinking.append(check);
-          }
-        }
-      }, 0);
-    }, true);
+    // Use the same composer submission and visible working state as typed Ask requests.
     window.requestAnimationFrame(() => form.requestSubmit());
   }
 
@@ -1856,6 +1836,7 @@
     initOperatorAttachment();
     initAskPending();
     initHomeAskHandoff();
+    initFullPageAskEntry();
     initSwitcher();
     initMoreMenu();
     initVendorVocabulary();

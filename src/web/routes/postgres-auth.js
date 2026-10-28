@@ -22,9 +22,9 @@ function selfServiceSelection(plans,requested){return requested
   ? plans.find((plan)=>plan.id===requested&&!plan.sales_only)||null
   : null;}
 function pendingSelection(account,sessionSelection={}){return {
-  planId:account?.pending_commercial_plan_id||sessionSelection.planId||'',
-  interval:(account?.pending_billing_interval||sessionSelection.interval||'monthly').toLowerCase(),
-  promoCode:account?.pending_promo_code||sessionSelection.promoCode||'',
+  planId:sessionSelection.planId||account?.pending_commercial_plan_id||'',
+  interval:(sessionSelection.interval||account?.pending_billing_interval||'monthly').toLowerCase(),
+  promoCode:sessionSelection.promoCode??account?.pending_promo_code??'',
 };}
 
 function matchingPasswords(body){
@@ -79,8 +79,7 @@ function createPostgresAuthRouter(database,options={}) {
       if(req.account.plan==='commercial_pending')return res.redirect(req.account.email_verified_at
         ?`/complete-signup${req.query.plan?`?plan=${encodeURIComponent(req.query.plan)}`:''}`:'/verify-email/pending');
       if(req.user){
-        req.flash('info',`You are already signed in as ${req.account.email} on ${req.user.workspace_name||'this inventory'}. Sign out before creating a different StockChief account.`);
-        return res.redirect('/settings');
+        return res.redirect(303,req.user.role==='owner'?'/settings/billing':'/');
       }
       return res.redirect('/inventories');
     }
@@ -138,13 +137,14 @@ function createPostgresAuthRouter(database,options={}) {
   });
   router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending'&&req.account.plan!=='trial'){const current=await require('../../commercial/entitlements').subscriptionFor(database,req.account.id);if(current?.stripe_subscription_id)return res.redirect('/billing');}
     if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);
-    const selection=pendingSelection(req.account,req.session.commercialSelection);
+    const selection=pendingSelection(req.account,req.session.commercialSelection||req.session.checkoutSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));
     if(requested)selection.planId=requested.id;
     if(['monthly','annual'].includes(req.query.interval))selection.interval=req.query.interval;
+    req.session.commercialSelection={...selection};delete req.session.checkoutSelection;
     return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
-      selection,lastSelection:req.session.checkoutSelection||null,plans,existingWorkspace:Boolean(req.user),checkoutOpen:await checkoutAvailable()});});
+      selection,plans,existingWorkspace:Boolean(req.user),checkoutOpen:await checkoutAvailable()});});
   router.post('/complete-signup/trial',async(req,res,next)=>{try{
     if(!req.account)return res.redirect('/login');
     const result=await require('../../commercial/context').run({database,scope:{accountId:req.account.id,workspaceId:null}},()=>require('../../commercial/self-service-trial').activate(database,req.account.id));

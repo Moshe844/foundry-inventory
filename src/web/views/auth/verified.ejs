@@ -3,46 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Choose your plan · StockChief</title>
+  <title>Secure payment · StockChief</title>
   <link rel="stylesheet" href="/commercial.css?v=auth-plan-choice">
 <link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
 <body class="commercial-auth signup-auth">
   <main class="auth-centered">
     <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
-    <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %>
+    <% const selected=plans.find(plan=>plan.id===selection.planId),annual=selection.interval==='annual'; %><div class="auth-centered__card"><% if(!locals.existingWorkspace){ %><%- include('../components/signup-progress',{step:3}) %><% } %>
       <span class="auth-mail auth-mail--ok">✓</span>
-      <h1><%= locals.existingWorkspace?'Activate your paid plan':'3. Activate your workspace.' %></h1>
-      <p><%= locals.existingWorkspace?'Review a paid plan for this account. Your existing inventories and records stay with this account.':'Your email is verified. Review a paid plan and enter your card securely to activate your business workspace.' %> Includes a 14-day money-back guarantee.</p>
+      <h1><%= locals.existingWorkspace?'Activate your paid plan':'Continue to secure payment' %></h1>
+      <p><%= locals.existingWorkspace?'Review a paid plan for this account. Your existing inventories and records stay with this account.':'Your email is verified and your selected plan is ready. Enter your card securely to activate your business workspace.' %> Includes a 14-day money-back guarantee.</p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
       <% if(locals.subscriptionTestMode){ %><p class="auth-message" role="status">Test checkout: use a Stripe test card. No real payment is taken.</p><% } %><% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
-        <label class="auth-field" for="activation-plan">
+        <% if(selected){ %><div class="signup-summary" data-selected-plan><strong><%= selected.public_name %> · <%= (Number(annual?selected.annual_amount_minor:selected.monthly_amount_minor)/100).toLocaleString('en-US',{style:'currency',currency:selected.currency||'USD',maximumFractionDigits:0}) %>/<%= annual?'year':'month' %></strong></div><details data-selected-plan-options><summary>Change plan or billing</summary><% } %><label class="auth-field" for="activation-plan">
           <span id="activation-plan-label">Plan</span>
           <select id="activation-plan" name="planId" aria-labelledby="activation-plan-label" required>
-            <option value="" <%= !(lastSelection?.planId||selection.planId)?'selected':'' %> disabled>Choose a plan</option>
+            <option value="" <%= !(selection.planId)?'selected':'' %> disabled>Choose a plan</option>
             <% plans.filter(function(plan){return !plan.sales_only;}).forEach(function(plan){
               const monthly=Number(plan.monthly_amount_minor||0)/100;
             %>
-              <option data-price-name="<%= plan.public_name %>" data-monthly="<%= Number(plan.monthly_amount_minor)/100 %>" data-annual="<%= Number(plan.annual_amount_minor)/100 %>" value="<%= plan.id %>" <%= (lastSelection?.planId||selection.planId)===plan.id?'selected':'' %>><%= plan.public_name %><%= checkoutOpen?' — '+monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0})+'/month':'' %></option>
+              <option data-price-name="<%= plan.public_name %>" data-monthly="<%= Number(plan.monthly_amount_minor)/100 %>" data-annual="<%= Number(plan.annual_amount_minor)/100 %>" value="<%= plan.id %>" <%= (selection.planId)===plan.id?'selected':'' %>><%= plan.public_name %><%= checkoutOpen?' — '+monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0})+'/month':'' %></option>
             <% }); %>
           </select>
         </label>
         <label class="auth-field" for="activation-interval">
           <span id="activation-billing-label">Billing</span>
-          <select id="activation-interval" name="interval" aria-labelledby="activation-billing-label" data-billing-interval><option value="monthly" <%= (lastSelection?.interval||selection.interval)!=='annual'?'selected':'' %>>Monthly</option><option value="annual" <%= (lastSelection?.interval||selection.interval)==='annual'?'selected':'' %>>Annual billing</option></select>
+          <select id="activation-interval" name="interval" aria-labelledby="activation-billing-label" data-billing-interval><option value="monthly" <%= (selection.interval)!=='annual'?'selected':'' %>>Monthly</option><option value="annual" <%= (selection.interval)==='annual'?'selected':'' %>>Annual billing</option></select>
         </label>
-        <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
+        <% if(selected){ %></details><% } %><button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>
       <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else{ %>
-        <% const chosen=plans.find(function(plan){return plan.id===(lastSelection?.planId||selection.planId);}); %>
+        <% const chosen=plans.find(function(plan){return plan.id===(selection.planId);}); %>
         <p><%= chosen?'You selected '+chosen.public_name+' with '+(selection.interval==='annual'?'annual':'monthly')+' billing.':'No plan has been selected yet.' %></p>
         <div class="auth-message auth-message--warning" role="status"><%= locals.existingWorkspace?'Paid checkout is unavailable here. Your existing inventories and records remain available.':'Paid checkout is unavailable here. Your account is verified; no payment has been taken.' %></div>
       <% } %>
-      <p class="auth-foot"><a href="/pricing?interval=<%= selection.interval||'monthly' %>#<%= lastSelection?.planId||selection.planId||'starter' %>">Compare plans</a></p>
+      <p class="auth-foot"><a href="/pricing?interval=<%= selection.interval||'monthly' %>#<%= selection.planId||'starter' %>">Compare plans</a></p>
       <% if(locals.existingWorkspace){ %><a href="/settings/billing">Back to Plan &amp; billing</a><% }else{ %><form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="pub-link" type="submit">Use a different account</button></form>
       <% } %>

@@ -4,7 +4,19 @@ document.addEventListener('DOMContentLoaded',()=>{
   const describe=document.querySelector('[data-report-describe]');
   describe?.addEventListener('submit',async event=>{event.preventDefault();const button=describe.querySelector('button[type=submit]'),status=describe.querySelector('[data-report-build-status]');button.disabled=true;status.hidden=false;status.textContent='Building your report from your business records…';try{const response=await fetch(describe.action,{method:'POST',credentials:'same-origin',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(describe))});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.message||result.error?.message||'This report could not be built. Your description is kept here.');status.textContent='Ready: '+result.title;location.assign(result.url);}catch(error){status.textContent=error.message;status.setAttribute('role','alert');button.disabled=false;describe.querySelector('textarea').focus();}});
   const builder=document.querySelector('[data-report-builder]');
-  if(builder?.dataset.activeReport==='true'&&!location.hash&&!window.StockChiefNavigation?.wasRestored())requestAnimationFrame(()=>{document.getElementById('report-manual')?.scrollIntoView({block:'start'});});
+  // A report control named dataset masks HTMLFormElement.dataset. Read the UI marker directly.
+  const activeReport=builder?.getAttribute('data-active-report')==='true';
+  if(activeReport&&!location.hash&&!window.StockChiefNavigation?.wasRestored())requestAnimationFrame(()=>{document.getElementById('report-manual')?.scrollIntoView({block:'start'});});
+  const stepPanels=[...document.querySelectorAll('[data-report-step-panel]')],stepLinks=[...document.querySelectorAll('[data-report-step-link]')];
+  if(builder&&stepPanels.length){
+    const editor=document.querySelector('[data-report-editor]'),startsWithEditor=activeReport||new URL(location.href).searchParams.has('dataset');if(editor)editor.hidden=!startsWithEditor&&!location.hash;
+    const keys=stepPanels.map(panel=>panel.dataset.reportStepPanel),nav=document.querySelector('.report-section-nav'),controls=document.querySelector('[data-report-step-controls]'),previous=controls.querySelector('[data-report-step-previous]'),next=controls.querySelector('[data-report-step-next]'),state=controls.querySelector('[data-report-step-status]');let current=0;controls.hidden=false;
+    const keyFromHash=()=>stepLinks.find(link=>link.getAttribute('href')===location.hash)?.dataset.reportStepLink||'source';
+    function activate(key,focus=false){current=Math.max(0,keys.indexOf(key));stepPanels.forEach((panel,index)=>{panel.hidden=index!==current;});stepLinks.forEach(link=>{if(link.dataset.reportStepLink===keys[current])link.setAttribute('aria-current','step');else link.removeAttribute('aria-current');});previous.disabled=current===0;next.disabled=current===keys.length-1;state.textContent='Section '+(current+1)+' of '+keys.length;if(focus){nav.scrollIntoView({block:'start'});const target=stepPanels[current].querySelector('h2,input:not([type=hidden]),select');if(target){if(target.tagName==='H2')target.tabIndex=-1;target.focus({preventScroll:true});}}}
+    function move(key){if(editor)editor.hidden=false;const link=stepLinks.find(link=>link.dataset.reportStepLink===key);if(link&&location.hash!==link.hash)history.pushState(history.state,'',link.hash);activate(key,true);}
+    stepLinks.forEach(link=>link.addEventListener('click',event=>{event.preventDefault();move(link.dataset.reportStepLink);}));previous.addEventListener('click',()=>move(keys[current-1]));next.addEventListener('click',()=>move(keys[current+1]));
+    const sync=()=>{if(editor)editor.hidden=!startsWithEditor&&!location.hash;activate(keyFromHash());};addEventListener('popstate',sync);addEventListener('hashchange',sync);builder.addEventListener('invalid',event=>{const panel=event.target.closest('[data-report-step-panel]');if(panel)activate(panel.dataset.reportStepPanel);},true);activate(keyFromHash());
+  }
   const previewStatus=document.querySelector('[data-report-preview-status]');
   const previewTable=document.querySelector('[data-report-preview-table]');
   const fieldSearch=document.querySelector('[data-report-field-search]');
@@ -66,7 +78,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     const draw=(data)=>{
       previewTable.replaceChildren();
       if(!data.rows.length){previewStatus.textContent='No records match these choices.';return;}
-      previewStatus.textContent=data.returned+(data.hasMore?'+':'')+' rows shown · '+(data.elapsedMs/1000).toFixed(1)+' s';
+      previewStatus.textContent=data.returned+(data.hasMore?'+':'')+(data.returned===1?' row shown · ':' rows shown · ')+(data.elapsedMs/1000).toFixed(1)+' s';
       const table=document.createElement('table'),head=table.createTHead().insertRow();
       for(const key of data.columns){const cell=document.createElement('th');cell.scope='col';cell.textContent=data.labels[key]||key;head.append(cell);}
       const body=table.createTBody();
@@ -102,7 +114,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         draw(data);
       }catch(error){if(error.name!=='AbortError'&&current===revision){previewTable.replaceChildren();previewStatus.textContent='Preview unavailable. Try again or open the full report.';}}
     };
-    const schedule=()=>{clearTimeout(timer);timer=setTimeout(load,300);};
+    const schedule=()=>{clearTimeout(timer);revision++;controller?.abort();previewStatus.textContent='Updating preview…';timer=setTimeout(load,300);};
     builder.addEventListener('input',schedule);builder.addEventListener('change',schedule);schedule();
   }
   for(const row of document.querySelectorAll('[data-report-measure]')){

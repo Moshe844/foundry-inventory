@@ -1,6 +1,7 @@
 (function(){'use strict';var form=document.querySelector('[data-signup-form]');if(!form||form.dataset.signupEnabled!=='true')return;
  var account=form.querySelector('[data-signup-panel="account"]'),plan=form.querySelector('[data-signup-panel="plan"]'),next=form.querySelector('[data-signup-next]'),back=form.querySelector('[data-signup-back]');if(!account||!plan||!next||!back)return;
  function show(name,focus){account.hidden=name!=='account';plan.hidden=name!=='plan';document.querySelectorAll('[data-signup-stage]').forEach(function(s){var active=Number(s.dataset.signupStage)===(name==='account'?1:2);if(active)s.setAttribute('aria-current','step');else s.removeAttribute('aria-current');s.dataset.complete=String(name==='plan'&&s.dataset.signupStage==='1');});if(focus){var field=name==='account'?account.querySelector('input'):plan.querySelector('h2');field.focus();field.scrollIntoView({block:'center',behavior:'instant'});}}
+ if(form.querySelector('[data-signup-plan]:checked')){next.hidden=true;back.hidden=true;account.hidden=false;plan.hidden=false;return;}
  next.hidden=false;back.hidden=false;show('account',false);
  next.addEventListener('click',function(){var invalid=Array.from(account.querySelectorAll('input')).find(function(i){return !i.checkValidity();});if(invalid){invalid.reportValidity();return;}show('plan',true);});back.addEventListener('click',function(){show('account',true);});
  form.addEventListener('invalid',function(event){if(event.target.closest('[data-signup-panel]')===account&&account.hidden)show('account',false);},true);

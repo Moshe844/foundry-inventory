@@ -39,19 +39,4 @@
     document.addEventListener('submit',event=>{const form=event.target;if(!form.matches('form[data-goal-navigation]'))return;event.preventDefault();form.target='_top';HTMLFormElement.prototype.submit.call(form);});
   }
   if(window.frameElement?.dataset.embeddedAsk==='true'&&location.pathname==='/ask')window.parent.postMessage({type:'stockchief:ask-ready',fresh:new URL(location.href).searchParams.get('fresh')},location.origin);
-  const panel=document.querySelector('dialog[data-ask-panel]');
-  if(panel){
-    const frame=panel.querySelector('iframe');let previousFocus,pendingQuestion=null;window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==frame.contentWindow||event.data?.type!=='stockchief:ask-ready'||!pendingQuestion||event.data.fresh!==pendingQuestion.fresh)return;const message=pendingQuestion.message;pendingQuestion=null;frame.contentWindow.postMessage({type:'stockchief:ask-submit',message},location.origin);});
-    window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==frame.contentWindow||event.data?.type!=='stockchief:ask-navigate')return;const url=new URL(event.data.href,location.origin);if(url.origin!==location.origin)return;panel.close();frame.removeAttribute('src');location.assign(url.pathname+url.search+url.hash);});
-    document.addEventListener('click',event=>{
-      const link=event.target.closest('a[data-ask-panel][href]');if(!link||event.defaultPrevented||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button!==0)return;
-      const url=new URL(link.href,location.href);
-      if(url.origin!==location.origin||url.pathname!=='/ask'||location.pathname==='/ask')return;
-      event.preventDefault();previousFocus=link.hasAttribute('data-ask-submit')?document.querySelector('[data-search]'):link;if(!url.searchParams.has('goal')&&!url.searchParams.has('chat'))url.searchParams.set('fresh',crypto.randomUUID());url.searchParams.set('panel','1');url.searchParams.set('from',location.pathname+location.search);
-      pendingQuestion=link.hasAttribute('data-ask-submit')?{message:url.searchParams.get('q'),fresh:url.searchParams.get('fresh')}:null;url.searchParams.delete('send');frame.src=url.pathname+url.search+url.hash;panel.showModal();panel.querySelector('button').focus();
-    });
-    function close(){pendingQuestion=null;panel.close();frame.removeAttribute('src');previousFocus?.focus({preventScroll:true});}
-    panel.querySelector('[data-close-ask]').addEventListener('click',close);
-    panel.addEventListener('cancel',event=>{event.preventDefault();close();});
-  }
 })();

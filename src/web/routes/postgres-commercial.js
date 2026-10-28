@@ -137,7 +137,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const interval=require('../../commercial/launch-interval').assertInterval(req.body.interval).toLowerCase();
     if(current?.stripe_customer_id&&current?.stripe_subscription_id&&!current.refunded_at)return res.redirect(303,
       `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=${interval}`);
-    req.session.checkoutSelection={planId:req.body.planId,interval};await saveSession(req);
+    await commercial.getSelfServicePlan(database,req.body.planId);req.session.commercialSelection={planId:req.body.planId,interval,promoCode:String(req.body.promoCode||'').trim().toUpperCase()};delete req.session.checkoutSelection;await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
       promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
     await commercial.track(database,{eventName:'billing_checkout_started',accountId:req.account.id,planId:req.body.planId,
