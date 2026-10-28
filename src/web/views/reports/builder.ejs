@@ -3,7 +3,7 @@
   <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
 <section class="report-start" aria-label="Start a custom report">
   <form action="/reports/describe" method="get" class="report-describe"><label for="report-description">Describe the report you want</label>
-    <textarea id="report-description" name="q" rows="3" maxlength="1800" placeholder="For example, profit by customer by month this year"></textarea>
+    <textarea id="report-description" name="q" rows="3" maxlength="1800" required placeholder="For example, profit by customer by month this year"></textarea>
     <button class="button" type="submit">Build it for me</button></form>
   <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
     <div class="report-template-locked" aria-disabled="true"><strong><%= item.name %></strong><span><%= item.description %></span><small>Available on a higher plan</small></div>
