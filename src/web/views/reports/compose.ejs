@@ -5,7 +5,7 @@
    var defaultSources=[...numericSources,...sourceOptions.filter((option)=>!numericSources.includes(option))].slice(0,2);
    var selectedMetrics=selection.metrics||[]; %>
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a>
-  <h1><%= saved?'Edit combined report':draft?'Customize Ask report':'Combine governed datasets' %></h1>
+  <h1><%= saved?'Edit combined report':draft?'Customize Ask report':'Build a combined report' %></h1>
   <p class="lede">Join reviewed business sources on a workspace-unique identifier. Each source is summarized before joining, so line items cannot multiply totals.</p></div></div>
 <form class="report-builder" method="post" action="/reports/run">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -102,8 +102,8 @@
     <% } %>
   </section>
   <section class="report-card"><h2>Automatic delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
-  <div class="report-actions"><button class="button" type="submit">Run combined report</button>
-    <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
+  <div class="report-actions"><button class="btn btn--primary" type="submit">Run combined report</button>
+    <button class="btn" type="submit" formaction="/reports/save">Save template</button></div>
 </form>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
 <script defer src="/reports.js?v=<%= assetVersion %>"></script>

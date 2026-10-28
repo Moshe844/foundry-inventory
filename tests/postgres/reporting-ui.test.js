@@ -309,7 +309,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     },actor),/pricing complete/i);
     const composedPage=await owner.get('/reports/compose?dimension=sku');
     assert.equal(composedPage.status,200);
-    assert.match(composedPage.text,/Combine governed datasets/);
+    assert.match(composedPage.text,/Build a combined report/);
     const combinedPreview=await owner.post('/reports/run').type('form').send({
       _csrf:csrf(composedPage.text),dataset:'composed',title:combinedDefinition.title,
       dimension:'sku',

@@ -1,8 +1,8 @@
 <% var returnLink=typeof backTo==='undefined'?null:backTo;
    var paginationBase=typeof pageHref==='undefined'?null:pageHref; %>
 <div class="page-head"><div><a class="back-link" href="<%= returnLink?.href||'/reports' %>"><%= returnLink?.label||'Reports' %></a><h1><%= result.config.title %></h1>
-  <p class="lede"><%= result.rows.length %><%= result.hasMore?' or more':'' %> displayed<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
-    <%= result.provenance.source %> · checked <%= result.asOf %></p></div>
+  <p class="lede"><%= result.rows.length %><%= result.hasMore?' or more':'' %> shown<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
+    Checked <%= new Intl.DateTimeFormat('en-US',{timeZone:reportBusinessTimeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(result.asOf)) %></p></div>
   <div><a href="<%= result.config.dataset==='composed'
     ?saved?'/reports/compose?saved='+encodeURIComponent(saved.id):'/reports/compose?draft=1'
     :saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a></div></div>
@@ -36,7 +36,7 @@
     <p><small>These are comparisons of recorded rows, not a claim about causes or future outcomes.</small></p>
   </section>
 <% } %>
-<section class="report-card report-results"><h2>Verified rows</h2>
+<section class="report-card report-results"><h2>Report results</h2>
   <% if(!result.rows.length){ %><p>No matching records. Try a wider date or different filter.</p><% }else{ %>
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
       <th scope="col"><%= result.columnLabels?.[column]||helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
@@ -76,7 +76,7 @@
     <% if(draftSchedule?.frequency&&draftSchedule.frequency!=='none'){ %>
       <p>Automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:<%= String(draftSchedule.minute||0).padStart(2,'0') %> <%= draftSchedule.timeZone||reportBusinessTimeZone %> to your account email.</p>
     <% } %>
-    <button class="button" type="submit">Save this report</button></form><% } %>
+    <button class="btn btn--primary" type="submit">Save this report</button></form><% } %>
 </section>
 </div>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
