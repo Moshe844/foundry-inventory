@@ -122,7 +122,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(normalized.context)audit({kind:'wire_context',provider:grant.provider,...normalized.context,inputTokenBound:normalized.inputTokens});
     const reservationStarted=Date.now();
     callDetail={provider:grant.provider,model:normalized.body.model,requestedServiceTier:normalized.body.service_tier||null,
-     inputTokenBound:normalized.inputTokens,outputTokenBound:normalized.outputTokens,requestHash};
+     inputTokenBound:normalized.inputTokens,outputTokenBound:normalized.outputTokens,reservationMicroUsd:normalized.upperBoundMicroUsd,requestHash};
     id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd,detail:callDetail});
     timings.budgetReservationMs=Date.now()-reservationStarted;
     const commercialStarted=Date.now();
@@ -222,7 +222,8 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    const message=reason==='EMPTY_MODEL_FINAL'?require('./finalization').EMPTY_MESSAGE:
     reason==='FINAL_REQUEST_EXHAUSTED'?'StockChief already used the final request allowance. No additional provider call was made.':
     'StockChief model budget or authority gate stopped this request.';
-   if(grant&&!grant.lastBlock)grant.lastBlock={code:reason,limitKind,upstreamAttempted:attempted,usageSettled:settled,message};
+   if(grant&&!grant.lastBlock)grant.lastBlock={code:reason,limitKind,upstreamAttempted:attempted,usageSettled:settled,message,
+    ...(Number.isSafeInteger(callDetail.reservationMicroUsd)&&callDetail.reservationMicroUsd>0?{reservationMicroUsd:callDetail.reservationMicroUsd}:{})};
    if(id&&!settled){
     if(attempted){await budget.unknown(id,reason,uncertainDetail);if(held)await commercial.unknown(held,reason).catch(()=>budget.stop());}
     else {if(held)await commercial.release(held).catch(()=>budget.stop());await budget.settle(id,0,{reason,upstreamAttempted:false});}

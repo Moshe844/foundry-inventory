@@ -278,7 +278,8 @@ async function run(database,ctx,id,options={}){
   require(base+'dependency-diagnostics').record(error,{goalId:id,phase:'agent_runtime'});
   audit({kind:'runtime_failed',code:error.code||'STAGING_RUNTIME_STOPPED'});
   if(session){const ready=await session.handoffApprovals().catch(()=>null);if(ready)return ready;
-   return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED',limitKind:error.limitKind||null});}
+   return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED',limitKind:error.limitKind||null,
+    upstreamAttempted:error.upstreamAttempted,usageSettled:error.usageSettled,reservationMicroUsd:error.reservationMicroUsd});}
   await database.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',run_token=NULL,lease_until=NULL,
    answer=$5,updated_at=now()
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,

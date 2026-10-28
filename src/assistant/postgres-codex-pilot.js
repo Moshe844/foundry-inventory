@@ -135,6 +135,13 @@ async function run(db,ctx,id,options={}){
 // Shared read-only eligibility, not an execution grant. The mutation path calls
 // this again on its freshly locked owned row. History may display its decision
 // without clearing a failure, enqueueing, reconciling usage or invoking a model.
+function savedResultNeedsNoModel(row,ctx){
+ try{const saved=require('../../scripts/environment-agent-demo/codex-runtime').savedFinal(row.checkpoint.harness||{},
+   {profile:require('./codex-model-routing').selected(row,ctx),messages:row.checkpoint.messages||[]});
+  if(saved){const check=require('./native-answer-review').checked(row,saved);return !check.required||check.verified;}
+ }catch{/* An invalid or unreviewed result cannot bypass the allowance. */}
+ return false;
+}
 async function continuationState(client,ctx,row){
   if(!row||row.workspace_id!==ctx.workspaceId||row.actor_user_id!==ctx.actorId||row.checkpoint.runtime!=='codex-staging'||row.status!=='BLOCKED'||new Date(row.expires_at)<=new Date())throw new ValidationError('This saved request cannot be continued.');
   const id=row.id;
@@ -151,15 +158,24 @@ async function continuationState(client,ctx,row){
   const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
   if(state==='BLOCKED')throw new ValidationError('A recorded dependency still needs attention before this request can continue.');
   if(state==='READY'&&h.failure?.code==='REQUEST_REFUSED')throw new ValidationError('This request was declined. Start a new request with work you are authorized to perform.');
+  if(state==='READY'&&['CERTIFICATION_SPENDING_CEILING','CERTIFICATION_WINDOW_CLOSED','SHARED_SPENDING_CEILING'].includes(h.interruption?.code)&&!savedResultNeedsNoModel(row,ctx)){
+   const pool=require('../commercial/staging-certification-budget');
+   let funding=await pool.status(client);
+   if(!funding){const budget=await require('./postgres-codex-budget').createBudget(client,ctx,id).status();
+    funding={active:Boolean(budget.approval&&!budget.stopped&&budget.expires>Date.now()),unresolved:budget.unresolved,remaining:budget.remaining};}
+   // New stops retain their exact reservation. Legacy stops have no such
+   // bound: require the existing request ceiling before offering a retry.
+   // Eligibility never resets counters, creates funding or promises execution.
+   const known=Number.isSafeInteger(h.interruption.reservationMicroUsd)&&h.interruption.reservationMicroUsd>0;
+   const required=known?h.interruption.reservationMicroUsd:require('../../scripts/environment-agent-demo/codex-wire').REQUEST_CEILING_MICRO_USD;
+   if(!funding.active||funding.unresolved||funding.remaining<required)
+    throw new ValidationError(known?'The remaining AI allowance cannot cover this request’s next paid call. Your request is saved. Restore the authorized allowance before continuing; nothing will retry automatically.':'Your request is saved. StockChief cannot confirm there is enough AI allowance to continue this saved request. Restore the authorized allowance before continuing; nothing will retry automatically.');
+  }
   if(state==='READY'&&h.interruption?.limitKind==='goal_cost'){
    // Preserve free verification and canonical approval/event recovery. A
    // previously denied paid step is different: do not offer the same futile
    // Continue while its exact reservation still exceeds this goal's balance.
-   let freeVerification=false;
-   try{const saved=require('../../scripts/environment-agent-demo/codex-runtime').savedFinal(h,
-     {profile:require('./codex-model-routing').selected(row,ctx),messages:row.checkpoint.messages||[]});
-    if(saved){const check=require('./native-answer-review').checked(row,saved);freeVerification=!check.required||check.verified;}
-   }catch{/* An invalid or unreviewed saved report cannot bypass the allowance. */}
+   const freeVerification=savedResultNeedsNoModel(row,ctx);
    if(!freeVerification){
     const denied=(await client.query(`SELECT reserved FROM stockchief_runtime.codex_pilot_calls
      WHERE workspace_id=$1 AND actor_id=$2 AND goal_id=$3 AND state='SETTLED' AND charged=0

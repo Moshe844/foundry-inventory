@@ -16,7 +16,7 @@ function create({transport,policy=wire}){
    if(!response.ok)throw Object.assign(new Error('The governed model request was stopped before a rule could be prepared.'),
     {code:transport.lastBlock()?.code||'GOVERNED_HELPER_STOPPED',
      limitKind:transport.lastBlock()?.limitKind||null,upstreamAttempted:transport.lastBlock()?.upstreamAttempted,
-     usageSettled:transport.lastBlock()?.usageSettled});
+     usageSettled:transport.lastBlock()?.usageSettled,reservationMicroUsd:transport.lastBlock()?.reservationMicroUsd});
    const body=await response.json();
    const text=(body.output||[]).filter(item=>item.type==='message').flatMap(item=>item.content||[])
     .filter(item=>item.type==='output_text').map(item=>item.text).join('');

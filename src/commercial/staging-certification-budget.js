@@ -23,6 +23,13 @@ async function exposure(db,id){
     AND status IN ('RESERVED','UNKNOWN')) AS unresolved`,[id])).rows[0];
  return {committed:Number(row.committed),unresolved:Number(row.unresolved)};
 }
+async function status(db,fundingId=fundingWorkspaceId()){
+ if(!fundingId)return null;
+ const p=(await db.query('SELECT enabled,stopped,period_starts_at,period_ends_at,ceiling_micro_usd FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[fundingId])).rows[0];
+ if(!p)return null;
+ const used=await exposure(db,fundingId);
+ return {active:p.enabled&&!p.stopped&&new Date(p.period_starts_at).getTime()<=Date.now()&&new Date(p.period_ends_at).getTime()>Date.now(),unresolved:used.unresolved,remaining:Math.max(0,Number(p.ceiling_micro_usd)-used.committed)};
+}
 async function reserve(client,maximumMicroUsd,{fundingId=fundingWorkspaceId(),goalId=null,ctx=null,nativeTransport=false}={}){
  if(!fundingId)return null;
  if(!Number.isSafeInteger(maximumMicroUsd)||maximumMicroUsd<=0||maximumMicroUsd>300000)throw Error('INVALID_CERTIFICATION_RESERVATION');
@@ -52,4 +59,4 @@ function detail(value={},fundingId=null){
  const {certificationFundingWorkspaceId:ignored,...rest}=value;
  return {...rest,...(fundingId?{certificationFundingWorkspaceId:fundingId}:{})};
 }
-module.exports={fundingWorkspaceId,exposure,reserve,detail};
+module.exports={fundingWorkspaceId,exposure,status,reserve,detail};

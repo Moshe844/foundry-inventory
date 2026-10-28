@@ -448,9 +448,11 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     h.finishedAt=new Date().toISOString();return {answer:goal.answer,completionSource:h.completionSource};
    },{access});
   },
-  async stop({code='HARNESS_INTERRUPTED',limitKind=null}={}){
+  async stop({code='HARNESS_INTERRUPTED',limitKind=null,upstreamAttempted,usageSettled,reservationMicroUsd}={}){
    const interruption=()=>({code:String(code).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80),
-    ...(typeof limitKind==='string'&&/^[a-z_]{1,80}$/.test(limitKind)?{limitKind}:{}),at:new Date().toISOString()});
+    ...(typeof limitKind==='string'&&/^[a-z_]{1,80}$/.test(limitKind)?{limitKind}:{}),
+    ...(typeof upstreamAttempted==='boolean'?{upstreamAttempted}:{}),...(typeof usageSettled==='boolean'?{usageSettled}:{}),
+    ...(Number.isSafeInteger(reservationMicroUsd)&&reservationMicroUsd>0&&reservationMicroUsd<=300000?{reservationMicroUsd}:{}),at:new Date().toISOString()});
    const existing=(await database.query(`SELECT status,run_token FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
    if(!existing||existing.status!=='RUNNING'||existing.run_token!==runToken)return {
     status:existing&&existing.status!=='RUNNING'?existing.status:'BLOCKED',completionSource:'already_stopped',

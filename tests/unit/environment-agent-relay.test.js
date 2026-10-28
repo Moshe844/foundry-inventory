@@ -52,6 +52,7 @@ test('uncertain HTTP outcome retains full reservation and prevents all subsequen
 });
 test('an underfunded shared ceiling prevents even the first provider call',async t=>{
  const s=await setup(t,{ceiling:1});assert.equal((await s.call()).status,403);assert.equal(s.calls(),0);
+ assert.equal(s.transport.lastBlock().upstreamAttempted,false);assert(s.transport.lastBlock().reservationMicroUsd>0);assert.equal(s.transport.lastBlock().reservationMicroUsd,wire.normalize('anthropic',request).upperBoundMicroUsd);
 });
 
 test('OpenAI-only certification rejects an Anthropic helper before reserving funds or contacting any provider',async t=>{

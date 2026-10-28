@@ -35,7 +35,8 @@ async function run(options){
   // Never retry an uncertain paid request or change a spending limit here.
   const verified=code==='WHOLE_GOAL_VERIFICATION_FAILED'?null:await session.completeIfVerified().catch(()=>null);
   if(verified)return {...verified,interruption:{code}};
-  let stopped;try{stopped=await session.stop({code,limitKind:gate?.limitKind||error.limitKind||null});}catch(stopError){
+  let stopped;try{stopped=await session.stop({code,limitKind:gate?.limitKind||error.limitKind||null,
+   upstreamAttempted:gate?.upstreamAttempted,usageSettled:gate?.usageSettled,reservationMicroUsd:gate?.reservationMicroUsd});}catch(stopError){
    options.audit?.({kind:'session_stop_failed',code:stopError.code||stopError.message});
    stopped={status:'BLOCKED',bookkeepingFailed:true,answer:'This worker stopped without final verification. It could not update the goal; its current canonical state must be checked before continuing.'};
   }
