@@ -62,12 +62,12 @@
       <% for(const option of ['exact','day','week','month','quarter','year']){ %>
         <option value="<%= option %>" <%= (selection?.dateGrain||'exact')===option?'selected':'' %>><%= option==='exact'?'Exact dates':option %></option>
       <% } %></select></label>
-    <label>Calculation<select name="aggregate"><% for(const option of ['count','sum','average','minimum','maximum','ratio']){ %>
-      <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option==='ratio'?'weighted percentage':option %></option><% } %></select></label>
+    <label>Calculation<select name="aggregate"><% for(const option of ['count','count_distinct','sum','average','minimum','maximum','ratio']){ %>
+      <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option==='ratio'?'weighted percentage':option==='count_distinct'?'count unique values':option %></option><% } %></select></label>
     <label>Measure<select name="measure"><option value="">Count rows</option>
-      <% for(const [field,type] of Object.entries(dataset.fields)){if(type==='number'||type==='money_minor'){ %>
+      <% for(const [field,type] of Object.entries(dataset.fields)){ %>
         <option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
-      <% }} %>
+      <% } %>
       <% for(const [key,metric] of Object.entries(dataset.metrics||{})){ %>
         <option value="<%= key %>" <%= selection?.measure===key?'selected':'' %>><%= metric.label %> · weighted ratio</option>
       <% } %></select></label>
@@ -78,7 +78,7 @@
     <label>Sort<select name="sort"><option value="">Default</option>
       <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
           <%= selection?.sort===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
-      <% for(const field of ['count','total','average','minimum','maximum','ratio']){ %><option value="<%= field %>"
+      <% for(const field of ['count','distinct_count','total','average','minimum','maximum','ratio']){ %><option value="<%= field %>"
         <%= selection?.sort===field?'selected':'' %>><%= field %></option><% } %></select></label>
     <label>Direction<select name="direction"><option value="desc">High to low / newest</option>
       <option value="asc" <%= selection?.direction==='asc'?'selected':'' %>>Low to high / oldest</option></select></label>

@@ -620,6 +620,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       WHERE workspace_id=$1 AND actor_user_id=$2 AND intent ? 'reportConfig'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0];
     const askReportId=askStored.id;
+    const distinct=await reports.run(database,ctx,actor,{dataset:'catalogue',summary:true,
+      aggregate:'count_distinct',measure:'sku',sort:'distinct_count'},{limit:31});
+    const expectedDistinct=(await database.query('SELECT count(DISTINCT code)::int n FROM skus WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
+    assert.equal(Number(distinct.rows[0].distinct_count),expectedDistinct);
     assert.equal(askStored.intent.comparisonSafe,true);
     assert.deepEqual(askStored.intent.presentation.chartAmounts,[12]);
     assert.match(askResult.text,new RegExp(`/reports/from-ask/${askReportId}`));

@@ -1,0 +1,4 @@
+# These files are baked into the immutable Staging agent image. Keep their
+# repository bytes identical across Windows checkouts and Linux releases.
+scripts/environment-agent-demo/codex-container.js text eol=lf
+scripts/environment-agent-demo/codex-models.js text eol=lf

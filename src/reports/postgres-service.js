@@ -7,9 +7,9 @@ const {ValidationError}=require('../domain/errors');
 const {newId}=require('../lib/util');
 
 const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null','relative']);
-const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
+const AGGREGATES=new Set(['count','count_distinct','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
-const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
+const AGGREGATE_COLUMN=Object.freeze({count:'count',count_distinct:'distinct_count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
 // The native tool shares this grammar. Dataset fields, permissions, money
 // completeness and currency rules remain owned by queryContract.
 const querySyntax=Object.freeze({operators:Object.freeze([...OPERATORS]),aggregates:Object.freeze([...AGGREGATES]),
@@ -72,7 +72,9 @@ function normalize(spec,actor){
     ||!['number','money_minor'].includes(dataset.fields[metric.numerator])
     ||!['number','money_minor'].includes(dataset.fields[metric.denominator])))
     invalid('Choose a registered weighted ratio.');
-  if(aggregate!=='count'&&aggregate!=='ratio'&&(!Object.hasOwn(dataset.fields,measure)
+  if(aggregate==='count_distinct'&&!Object.hasOwn(dataset.fields,measure))
+    invalid('Choose a registered field to count distinct values.');
+  if(aggregate!=='count'&&aggregate!=='count_distinct'&&aggregate!=='ratio'&&(!Object.hasOwn(dataset.fields,measure)
     ||!['number','money_minor'].includes(dataset.fields[measure])))invalid('Choose a numeric measure.');
   const filters=Array.isArray(spec.filters)?spec.filters:[];
   if(filters.length>12)invalid('Use at most twelve filters.');
@@ -98,12 +100,12 @@ function normalize(spec,actor){
   const exactCurrency=cleanFilters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals'&&/^[A-Z]{3}$/u.test(filter.value));
   const aggregated=Boolean(groups.length||summary);
-  const completeness=aggregated&&aggregate!=='count'&&aggregate!=='ratio'
+  const completeness=aggregated&&aggregate!=='count'&&aggregate!=='count_distinct'&&aggregate!=='ratio'
     ?dataset.moneyCompleteness?.[measure]:null;
   if(completeness&&!cleanFilters.some((filter)=>filter.field===completeness.field
     &&filter.operator==='equals'&&filter.value===completeness.value))
     invalid(`This amount is not known for every record. Filter ${completeness.field.replaceAll('_',' ')} to ${completeness.value} before calculating a total.`);
-  if(aggregated&&aggregate!=='count'&&dataset.fields[measure]==='money_minor'
+  if(aggregated&&!['count','count_distinct'].includes(aggregate)&&dataset.fields[measure]==='money_minor'
     &&(!Object.hasOwn(dataset.fields,'currency')||(!groups.includes('currency')&&!exactCurrency)))
     invalid('Group monetary totals by currency or filter to one exact currency.');
   if(aggregated&&aggregate==='ratio'&&metric.currencySensitive
@@ -150,7 +152,7 @@ async function assertWritableCapabilities(database,ctx,spec,actor){
 }
 function quote(field){return `"${field}"`;}
 function comparableGroupAmounts(config,dataset,rows,hasMore,currencyFilter){
-  if(!config.groups.length||config.aggregate==='count'||dataset.fields[config.measure]!=='money_minor'
+  if(!config.groups.length||['count','count_distinct'].includes(config.aggregate)||dataset.fields[config.measure]!=='money_minor'
     ||currencyFilter)return true;
   return !hasMore&&new Set(rows.map((row)=>row.currency)).size<=1;
 }
@@ -185,6 +187,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
     });
     const metric=dataset.metrics?.[config.measure];
     const expression=config.aggregate==='count'?'COUNT(*)::bigint':
+      config.aggregate==='count_distinct'?`COUNT(DISTINCT ${quote(config.measure)})::bigint`:
       config.aggregate==='ratio'
         ?`ROUND(100.0*SUM(${quote(metric.numerator)})::numeric/NULLIF(SUM(${quote(metric.denominator)}),0),2)`:
       config.aggregate==='sum'?`SUM(${quote(config.measure)})`:
@@ -226,7 +229,7 @@ async function run(database,ctx,actor,spec,options={}){
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
   const hasMore=fetched.length===limit;
   const rows=hasMore?fetched.slice(0,-1):fetched;
-  if(config.groups.includes('currency')&&config.aggregate!=='count'&&dataset.fields[config.measure]==='money_minor'
+  if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length||config.summary);
   const columns=grouped?[...config.groups,AGGREGATE_COLUMN[config.aggregate]]
@@ -234,7 +237,7 @@ async function run(database,ctx,actor,spec,options={}){
   const currencyFilter=config.filters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals')?.value||null;
   const monetaryColumn=(column)=>grouped
-    ?column===columns.at(-1)&&config.aggregate!=='count'&&dataset.fields[config.measure]==='money_minor'
+    ?column===columns.at(-1)&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
     :dataset.fields[column]==='money_minor';
   // The displayed monetary cells are formatted amounts, not raw minor units.
   // Derive headings from their declared type; retain raw field keys and values.
