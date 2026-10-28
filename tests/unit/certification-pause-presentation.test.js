@@ -5,6 +5,7 @@ test('host certification funding stops explain the actual cause without claiming
   const s=conversation.state(g);assert.equal(s.phase,phase);assert.equal(s.label,label);assert.equal(s.active,false);assert.equal(s.canReply,false);assert.doesNotMatch(s.message,/outcome could be confirmed|CERTIFICATION_|Review the recorded steps/);
   g.checkpoint.harness.completionSource='partial_verified_receipt';g.answer='A previously authorized operation is recorded.';assert.match(conversation.state(g).message,/previously authorized operation is recorded/);
   g.checkpoint.harness.codexDelivery={state:'PENDING'};assert.equal(conversation.state(g).phase,'usage_review');
+  delete g.checkpoint.harness.codexDelivery;g.checkpoint.harness.inflight={sequence:7};assert.equal(conversation.state(g).phase,code==='CERTIFICATION_UNRESOLVED'?'usage_review':'interrupted','An uncertain recorded operation outranks a budget pause');delete g.checkpoint.harness.inflight;
   g.status='WAITING_APPROVAL';assert.equal(conversation.state(g).phase,'approval');
  }
  const ordinary={id:'ordinary-interruption',status:'BLOCKED',checkpoint:{harness:{interruption:{code:'UNFAMILIAR_TRANSPORT_STOP'}}}};assert.equal(conversation.state(ordinary).phase,'interrupted','Unknown failures retain conservative recovery');
