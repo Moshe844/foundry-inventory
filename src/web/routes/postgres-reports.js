@@ -40,6 +40,22 @@ async function actorFor(database,ctx){
   if(!row)throw new ValidationError('This inventory membership is unavailable.');
   return row;
 }
+async function builderChoices(database,ctx,actor){
+  const datasets=registry.list(actor),entitlements=require('../../commercial/entitlements');
+  const needed=[...new Set(datasets.map(item=>registry.get(item.key)?.commercialCapability).filter(Boolean))];
+  const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  const states=needed.length?await entitlements.capabilityStates(database,scope,needed):new Map();
+  return {datasets,unavailableSources:datasets.filter(item=>{
+    const required=registry.get(item.key)?.commercialCapability;
+    return required&&!states.get(required)?.enabled;
+  }).map(item=>item.key)};
+}
+async function requireBuilderSource(database,ctx,key){
+  const required=registry.get(key)?.commercialCapability;
+  if(!required)return;
+  const entitlements=require('../../commercial/entitlements');
+  await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),required);
+}
 function createPostgresReportsRouter(database){
   const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
   router.get('/reports',asyncRoute(async(req,res)=>{
@@ -63,10 +79,11 @@ function createPostgresReportsRouter(database){
       nav:'accounting',saved:null,draft,draftSchedule:null,
       dimensions:composed.dimensions(actor),dimension:composed.dimensions(actor)
         .find((entry)=>entry.key===draft.dimension)});
-    const datasets=registry.list(actor),dataset=datasets.find((entry)=>entry.key===draft.dataset);
+    await requireBuilderSource(database,req.ctx,draft.dataset);
+    const {datasets,unavailableSources}=await builderChoices(database,req.ctx,actor),dataset=datasets.find((entry)=>entry.key===draft.dataset);
     if(!dataset)throw new ValidationError('That report dataset is unavailable.');
     return res.page('reports/builder',{title:'Customize Ask report',nav:'accounting',
-      datasets,dataset,saved:null,draft,draftSchedule:null,builderEntry});
+      datasets,dataset,saved:null,draft,draftSchedule:null,builderEntry,unavailableSources});
   }));
   router.get('/reports/from-ask/:interactionId/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -86,6 +103,7 @@ function createPostgresReportsRouter(database){
     const actor=await actorFor(database,req.ctx);
     const chosen=builderEntry.template(req.params.key);
     if(!chosen)throw new ValidationError('Choose an available report starting point.');
+    await requireBuilderSource(database,req.ctx,chosen.definition.dataset);
     const definition=reports.normalize({...chosen.definition,title:chosen.name},actor);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
     return res.redirect(303,'/reports/builder?draft=1');
@@ -104,13 +122,15 @@ function createPostgresReportsRouter(database){
     if(draft?.dataset==='composed'||req.query.dataset==='composed')
       return res.redirect(303,`/reports/compose${draft?'?draft=1':''}`);
     const draftSchedule=draft?req.session.reportDraft.schedule||null:null;
-    const datasets=registry.list(actor),key=String(draft?.dataset||req.query.dataset||datasets[0]?.key||'');
+    const {datasets,unavailableSources}=await builderChoices(database,req.ctx,actor);
+    const key=String(draft?.dataset||req.query.dataset||datasets.find(item=>!unavailableSources.includes(item.key))?.key||'');
+    await requireBuilderSource(database,req.ctx,key);
     const dataset=datasets.find((entry)=>entry.key===key);
     if(!dataset)return res.status(404).page('error',{title:'Dataset unavailable',status:404,
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);

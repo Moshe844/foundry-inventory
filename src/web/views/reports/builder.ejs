@@ -1,12 +1,13 @@
-<% var selection=saved?.definition||draft||null; %>
+<% var selection=saved?.definition||draft||null,unavailable=new Set(locals.unavailableSources||[]); %>
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize Ask report':'Build a report' %></h1>
   <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
 <section class="report-start" aria-label="Start a custom report">
   <form action="/reports/describe" method="get" class="report-describe"><label for="report-description">Describe the report you want</label>
     <textarea id="report-description" name="q" rows="3" maxlength="1800" placeholder="For example, profit by customer by month this year"></textarea>
     <button class="button" type="submit">Build it for me</button></form>
-  <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){ %>
-    <a href="/reports/template/<%= item.key %>"><strong><%= item.name %></strong><span><%= item.description %></span></a>
+  <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>
+    <div class="report-template-locked" aria-disabled="true"><strong><%= item.name %></strong><span><%= item.description %></span><small>Available on a higher plan</small></div>
+    <% }else{ %><a href="/reports/template/<%= item.key %>"><strong><%= item.name %></strong><span><%= item.description %></span></a><% } %>
   <% } %></div></div>
   <a class="report-manual-link" href="#report-manual">Build manually ↓</a>
 </section>
@@ -15,7 +16,7 @@
   <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
   <div class="report-card"><label for="report-dataset">Start with</label>
     <select id="report-dataset" name="dataset" onchange="location.href='/reports/builder?dataset='+encodeURIComponent(this.value)">
-      <% for(const entry of datasets){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %>><%= builderEntry.sourceNames[entry.key]||entry.label %></option><% } %>
+      <% for(const entry of datasets){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %> <%= unavailable.has(entry.key)?'disabled':'' %>><%= builderEntry.sourceNames[entry.key]||entry.label %><%= unavailable.has(entry.key)?' — higher plan':'' %></option><% } %>
     </select>
     <label for="report-title">Report title</label><input id="report-title" name="title" maxlength="100"
       value="<%= saved?.title||draft?.title||dataset.label %>" required>
