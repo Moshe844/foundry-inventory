@@ -4,6 +4,7 @@ const express=require('express');
 const registry=require('../../reports/postgres-registry');
 const composed=require('../../reports/postgres-composed');
 const reports=require('../../reports/postgres-service');
+const builderEntry=require('../../reports/builder-entry');
 const reportExports=require('../../reports/exports');
 const permissions=require('../../actions/permissions');
 const {requireAuth,asyncRoute}=require('../middleware');
@@ -65,7 +66,7 @@ function createPostgresReportsRouter(database){
     const datasets=registry.list(actor),dataset=datasets.find((entry)=>entry.key===draft.dataset);
     if(!dataset)throw new ValidationError('That report dataset is unavailable.');
     return res.page('reports/builder',{title:'Customize Ask report',nav:'accounting',
-      datasets,dataset,saved:null,draft,draftSchedule:null});
+      datasets,dataset,saved:null,draft,draftSchedule:null,builderEntry});
   }));
   router.get('/reports/from-ask/:interactionId/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -81,6 +82,21 @@ function createPostgresReportsRouter(database){
       pageHref:'/reports/run',draftSchedule:null,
       backTo:{href:'/ask',label:'Ask StockChief'}});
   }));
+  router.get('/reports/template/:key',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    const chosen=builderEntry.template(req.params.key);
+    if(!chosen)throw new ValidationError('Choose an available report starting point.');
+    const definition=reports.normalize({...chosen.definition,title:chosen.name},actor);
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
+    return res.redirect(303,'/reports/builder?draft=1');
+  }));
+  router.get('/reports/describe',asyncRoute(async(req,res)=>{
+    const description=String(req.query.q||'').trim();
+    if(!description||description.length>1800)throw new ValidationError('Describe the report in 1,800 characters or fewer.');
+    // This uses the existing metered and governed Ask path. The model proposes
+    // a definition; only PostgreSQL supplies the resulting numbers.
+    return res.redirect(303,'/ask?q='+encodeURIComponent('Build a custom report: '+description)+'&send=1');
+  }));
   router.get('/reports/builder',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const draft=req.query.draft==='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId
@@ -94,7 +110,21 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry});
+  }));
+  router.post('/reports/preview',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    try{
+      const result=await reports.run(database,req.ctx,actor,source(req.body),{limit:31});
+      return res.json({ok:true,columns:result.columns,labels:result.columnLabels,
+        rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
+        links:result.rows.map(row=>row.href||null)});
+    }catch(error){
+      if(error instanceof ValidationError)return res.status(422).json({ok:false,message:error.message});
+      if(/statement timeout|canceling statement/i.test(String(error.message||'')))
+        return res.status(422).json({ok:false,message:'This report is taking too long. Narrow the dates or add a filter and try again.'});
+      throw error;
+    }
   }));
   router.get('/reports/compose',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx),dimensions=composed.dimensions(actor);

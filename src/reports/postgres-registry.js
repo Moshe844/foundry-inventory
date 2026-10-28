@@ -33,6 +33,25 @@ const datasets=Object.freeze({
       JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',on_hand:'number',as_of:'date'}},
+  stock_recency:{label:'Stock positions and recorded sales recency',permission:permissions.VIEW_SALES,
+    source:`WITH recorded_sales AS (
+      SELECT jl.workspace_id,jl.sku_id,MAX(e.posting_date) AS last_sold_on
+      FROM accounting_journal_lines jl
+      JOIN accounting_journal_entries e ON e.id=jl.entry_id AND e.workspace_id=jl.workspace_id AND e.status='POSTED'
+      JOIN accounting_accounts a ON a.id=jl.account_id AND a.workspace_id=jl.workspace_id
+      WHERE jl.workspace_id=$1 AND a.system_key='SALES_REVENUE' AND jl.sku_id IS NOT NULL
+      GROUP BY jl.workspace_id,jl.sku_id)
+      SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,b.on_hand::bigint AS on_hand,
+        to_char(rs.last_sold_on::date,'YYYY-MM-DD') AS last_sold_on,
+        GREATEST(0,((now() AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date-
+          coalesce(rs.last_sold_on::date,(i.created_at::timestamptz AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date)))::bigint AS days_since_sale
+      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
+      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
+      JOIN workspaces w ON w.id=b.workspace_id JOIN accounts owner ON owner.id=w.owner_account_id
+      LEFT JOIN recorded_sales rs ON rs.workspace_id=b.workspace_id AND rs.sku_id=b.sku_id
+      WHERE b.workspace_id=$1 AND b.on_hand>0`,recordHref:row=>`/inventory/${row.record_id}`,
+    fields:{product:'text',sku:'text',location:'text',on_hand:'number',last_sold_on:'date',days_since_sale:'number'}},
   movements:{label:'Inventory movements',permission:permissions.VIEW,
     aggregateProjection:{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::bigint AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`},
     source:`SELECT m.item_id AS record_id,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
@@ -57,6 +76,26 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',costed_units:'number',
       book_cost_minor:'money_minor',currency:'text',as_of:'date'}},
+  inventory_receipt_age:{label:'Recorded inventory value and receipt recency',permission:permissions.VIEW,
+    source:`WITH receipts AS (SELECT workspace_id,sku_id,location_id,MAX(created_at) AS last_received_at
+      FROM accounting_inventory_cost_events WHERE workspace_id=$1 AND physical_quantity_delta>0
+      GROUP BY workspace_id,sku_id,location_id)
+      SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
+        b.quantity_units::bigint AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
+        settings.base_currency AS currency,
+        to_char(r.last_received_at::timestamptz AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'),'YYYY-MM-DD') AS last_received_on,
+        CASE WHEN r.last_received_at IS NULL THEN NULL ELSE
+          GREATEST(0,((now() AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date-
+          (r.last_received_at::timestamptz AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date))::bigint END AS days_since_last_receipt
+      FROM accounting_inventory_cost_balances b
+      JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
+      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
+      JOIN accounting_settings settings ON settings.workspace_id=b.workspace_id AND settings.enabled=1
+      JOIN workspaces w ON w.id=b.workspace_id JOIN accounts owner ON owner.id=w.owner_account_id
+      LEFT JOIN receipts r ON r.workspace_id=b.workspace_id AND r.sku_id=b.sku_id AND r.location_id=b.location_id
+      WHERE b.workspace_id=$1 AND b.quantity_units>0`,recordHref:row=>`/inventory/${row.record_id}`,
+    fields:{product:'text',sku:'text',location:'text',costed_units:'number',book_cost_minor:'money_minor',currency:'text',last_received_on:'date',days_since_last_receipt:'number'}},
   inventory_cost_movements:{label:'Recorded inventory cost changes',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       cm.quantity_delta::bigint AS quantity_delta,cm.physical_quantity_delta::bigint AS physical_quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,

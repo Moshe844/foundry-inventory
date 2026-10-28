@@ -16,6 +16,7 @@ const ledger=require('../../src/accounting/postgres-ledger');
 const reports=require('../../src/reports/postgres-service');
 const reportAsk=require('../../src/reports/postgres-ask');
 const reportRegistry=require('../../src/reports/postgres-registry');
+const builderEntry=require('../../src/reports/builder-entry');
 const scheduling=require('../../src/reports/postgres-scheduling');
 const reportExports=require('../../src/reports/exports');
 const jobs=require('../../src/operations/postgres-job-queue');
@@ -131,6 +132,31 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
           itemId:product.itemId,skuId:product.skuIds[0]},
         {accountKey:'COST_OF_GOODS_SOLD',creditMinor:80,customerId:buyer.id,
           itemId:product.itemId,skuId:product.skuIds[0]}]});
+    const builderPage=await owner.get('/reports/builder');
+    assert.equal(builderPage.status,200);
+    assert.match(builderPage.text,/Describe the report you want/);
+    assert.match(builderPage.text,/Build it for me/);
+    assert.match(builderPage.text,/Live preview|Preview/);
+    assert.match(builderPage.text,/Start from a template/);
+    const described=await owner.get('/reports/describe').query({q:'Profit by customer this year'});
+    assert.equal(described.status,303);
+    assert.match(decodeURIComponent(described.headers.location),/Build a custom report: Profit by customer this year/);
+    assert.match(described.headers.location,/send=1/);
+    for(const startingPoint of builderEntry.templates){
+      const normalized=reports.normalize(startingPoint.definition,actor);
+      assert.equal(normalized.dataset,startingPoint.definition.dataset);
+      const started=await owner.get('/reports/template/'+startingPoint.key);
+      assert.equal(started.status,303,startingPoint.key);
+      assert.equal(started.headers.location,'/reports/builder?draft=1');
+      const reopened=await owner.get('/reports/builder?draft=1');
+      assert.equal(reopened.status,200,startingPoint.key);
+      assert.match(reopened.text,new RegExp(startingPoint.name));
+      const preview=await owner.post('/reports/preview').type('form').send({
+        _csrf:csrf(reopened.text),definition:JSON.stringify(normalized)});
+      assert.equal(preview.status,200,startingPoint.key+': '+preview.text.slice(0,300));
+      assert.equal(preview.body.ok,true);
+      assert.ok(Array.isArray(preview.body.rows));
+    }
     const postedMargin=await reports.run(database,ctx,actor,{dataset:'posted_sales_activity',
       groups:['sku'],aggregate:'ratio',measure:'gross_margin_percent',
       filters:[{field:'currency',operator:'equals',value:'USD'}],sort:'ratio',chart:'bar'});

@@ -1,28 +1,38 @@
 <% var selection=saved?.definition||draft||null; %>
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize Ask report':'Build a report' %></h1>
-  <p class="lede">Your selections are translated into a safe, workspace-scoped query. No free-form SQL is accepted.</p></div></div>
-<form class="report-builder" method="post" action="/reports/run">
+  <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
+<section class="report-start" aria-label="Start a custom report">
+  <form action="/reports/describe" method="get" class="report-describe"><label for="report-description">Describe the report you want</label>
+    <textarea id="report-description" name="q" rows="3" maxlength="1800" placeholder="For example, profit by customer by month this year"></textarea>
+    <button class="button" type="submit">Build it for me</button></form>
+  <div class="report-template-start"><h2>Start from a template</h2><div class="report-template-grid"><% for(const item of builderEntry.templates){ %>
+    <a href="/reports/template/<%= item.key %>"><strong><%= item.name %></strong><span><%= item.description %></span></a>
+  <% } %></div></div>
+  <a class="report-manual-link" href="#report-manual">Build manually ↓</a>
+</section>
+<div class="report-builder-layout" id="report-manual"><form class="report-builder" method="post" action="/reports/run" data-report-builder>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
-  <div class="report-card"><label for="report-dataset">Dataset</label>
+  <div class="report-card"><label for="report-dataset">Start with</label>
     <select id="report-dataset" name="dataset" onchange="location.href='/reports/builder?dataset='+encodeURIComponent(this.value)">
-      <% for(const entry of datasets){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %>><%= entry.label %></option><% } %>
+      <% for(const entry of datasets){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %>><%= builderEntry.sourceNames[entry.key]||entry.label %></option><% } %>
     </select>
     <label for="report-title">Report title</label><input id="report-title" name="title" maxlength="100"
       value="<%= saved?.title||draft?.title||dataset.label %>" required>
   </div>
-  <div class="report-card"><h2>Columns</h2><p>Choose the detail fields to display. Grouping replaces detail rows with an aggregate.</p>
-    <div class="report-checks"><% for(const [field,type] of Object.entries(dataset.fields)){ %>
+  <div class="report-card"><h2>Columns</h2><p>Choose the details to show. Grouping gives you a summary instead of individual rows.</p>
+    <label for="report-field-search">Find a field</label><input id="report-field-search" type="search" placeholder="Search fields" data-report-field-search>
+    <div class="report-checks"><% for(const group of builderEntry.fieldsFor(dataset)){ %><fieldset class="report-field-area"><legend><%= group.area %></legend><% for(const {key:field,label,type} of group.fields){ %>
       <label><input type="checkbox" name="columns" value="<%= field %>"
         <%= (selection?.columns||Object.keys(dataset.fields).slice(0,5)).includes(field)?'checked':'' %>>
-        <%= field.replaceAll('_',' ') %> <small><%= type==='money_minor'?'money':type %></small></label>
-    <% } %></div>
+        <%= label %> <small><%= type==='money_minor'?'money':type %></small></label>
+    <% } %></fieldset><% } %></div>
   </div>
   <div class="report-card"><h2>Filter records</h2><p>Up to eight exact, text or range filters. Blank rows are ignored.</p>
     <% for(let index=0;index<8;index++){const filter=selection?.filters?.[index]||{}; %>
       <div class="report-filter" data-report-filter <%= index<=(selection?.filters?.length||0)?'':'hidden' %>><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
         <option value="">Field</option><% for(const field of Object.keys(dataset.fields)){ %>
-          <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option>
+          <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
         <% } %></select><select name="filters[<%= index %>][operator]" aria-label="Filter comparison <%= index+1 %>">
         <% for(const option of ['equals','contains','at_least','at_most','after','before','is_null','relative']){ %>
           <option value="<%= option %>" <%= filter.operator===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option>
@@ -39,7 +49,7 @@
     <% for(let position=0;position<3;position++){ %><label><%= position===0?'Group by':'Then group by' %>
       <select name="groups"><option value="">No <%= position===0?'grouping':'additional grouping' %></option>
         <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
-          <%= selection?.groups?.[position]===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option><% } %>
+          <%= selection?.groups?.[position]===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
       </select></label><% } %>
     <label>Date grouping<select name="dateGrain">
       <% for(const option of ['exact','day','week','month','quarter','year']){ %>
@@ -49,7 +59,7 @@
       <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option==='ratio'?'weighted percentage':option %></option><% } %></select></label>
     <label>Measure<select name="measure"><option value="">Count rows</option>
       <% for(const [field,type] of Object.entries(dataset.fields)){if(type==='number'||type==='money_minor'){ %>
-        <option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option>
+        <option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
       <% }} %>
       <% for(const [key,metric] of Object.entries(dataset.metrics||{})){ %>
         <option value="<%= key %>" <%= selection?.measure===key?'selected':'' %>><%= metric.label %> · weighted ratio</option>
@@ -60,7 +70,7 @@
       <option value="<%= option %>" <%= (selection?.layout||'chart_first')===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option><% } %></select></label>
     <label>Sort<select name="sort"><option value="">Default</option>
       <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
-          <%= selection?.sort===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option><% } %>
+          <%= selection?.sort===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
       <% for(const field of ['count','total','average','minimum','maximum','ratio']){ %><option value="<%= field %>"
         <%= selection?.sort===field?'selected':'' %>><%= field %></option><% } %></select></label>
     <label>Direction<select name="direction"><option value="desc">High to low / newest</option>
@@ -69,6 +79,6 @@
   <section class="report-card"><h2>Automatic delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
   <div class="report-actions"><button class="button" type="submit">Run report</button>
     <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
-</form>
+</form><aside class="report-live-preview" aria-label="Live preview"><h2>Preview</h2><p data-report-preview-status>Choose fields to see a preview.</p><div data-report-preview-table class="report-preview-table"></div><p class="report-preview-note">Preview shows up to 30 rows. Open the full report to browse more.</p></aside></div>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
 <script defer src="/reports.js?v=<%= assetVersion %>"></script>
