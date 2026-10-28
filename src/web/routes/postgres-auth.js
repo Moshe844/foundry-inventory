@@ -136,12 +136,13 @@ function createPostgresAuthRouter(database,options={}) {
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
   router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending'&&req.account.plan!=='trial'){const current=await require('../../commercial/entitlements').subscriptionFor(database,req.account.id);if(current?.stripe_subscription_id)return res.redirect('/billing');}
-    if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);
+    const plans=await commercial.listPlans(database);
     const selection=pendingSelection(req.account,req.session.commercialSelection||req.session.checkoutSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));
     if(requested)selection.planId=requested.id;
     if(['monthly','annual'].includes(req.query.interval))selection.interval=req.query.interval;
     req.session.commercialSelection={...selection};delete req.session.checkoutSelection;
+    if(!req.account.email_verified_at)return res.redirect(303,'/verify-email/pending');
     return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
       selection,plans,existingWorkspace:Boolean(req.user),checkoutOpen:await checkoutAvailable()});});
