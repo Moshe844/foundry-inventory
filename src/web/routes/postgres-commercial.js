@@ -56,7 +56,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/capabilities',asyncRoute(async(req,res)=>renderPublic(req,res,'public/capabilities',{
     title:'Capabilities',nav:'capabilities',description:'Explore the inventory, purchasing, order, communication, shipping, payment and accounting work StockChief handles today.'})));
   router.get('/integrations',asyncRoute(async(req,res)=>renderPublic(req,res,'public/integrations',{
-    title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
+    groups:require('../presentation/public-integrations').groups(),title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
   router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',

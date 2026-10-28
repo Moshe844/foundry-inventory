@@ -6,6 +6,8 @@ const permissions=require('../actions/permissions');
 // builder never accepts SQL, table names, expressions, or joins from a user or
 // model. Adding a field here is a deliberate product/permission decision.
 const datasets=Object.freeze({
+  profit_activity:{label:'Recorded sales, product cost and operating expenses',permission:permissions.VIEW_ACCOUNTING,commercialCapability:'accounting.reports',source:`SELECT e.id AS record_id,e.posting_date,l.currency,SUM(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,SUM(CASE WHEN a.account_type='COGS' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS cogs_minor,SUM(CASE WHEN a.account_type='EXPENSE' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS expenses_minor,SUM(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor WHEN a.account_type IN ('COGS','EXPENSE') THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS net_profit_minor FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id WHERE e.workspace_id=$1 AND e.status='POSTED' AND a.account_type IN ('INCOME','COGS','EXPENSE') GROUP BY e.id,e.posting_date,l.currency`,recordHref:r=>'/accounting/entries/'+r.record_id,fields:{posting_date:'date',currency:'text',revenue_minor:'money_minor',cogs_minor:'money_minor',expenses_minor:'money_minor',net_profit_minor:'money_minor'}},
+  tax_activity:{label:'Recorded sales tax collected and recoverable',permission:permissions.VIEW_ACCOUNTING,commercialCapability:'accounting.reports',source:`SELECT e.id AS record_id,e.posting_date,l.currency,a.name AS tax_account,COALESCE(c.name,s.name,'') AS counterparty,(l.credit_minor-l.debit_minor)::bigint AS net_tax_minor FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id LEFT JOIN suppliers s ON s.id=l.supplier_id AND s.workspace_id=l.workspace_id WHERE e.workspace_id=$1 AND e.status='POSTED' AND a.subtype='TAX'`,recordHref:r=>'/accounting/entries/'+r.record_id,fields:{posting_date:'date',currency:'text',tax_account:'text',counterparty:'text',net_tax_minor:'money_minor'}},
   catalogue:{label:'Product and SKU catalogue, including inactive records and current saved selling prices',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
@@ -151,17 +153,17 @@ const datasets=Object.freeze({
       v.issue_date,v.due_date,v.total_minor::bigint AS total_minor,
       v.balance_minor::bigint AS balance_minor
       FROM accounting_customer_invoices v JOIN customers c ON c.id=v.customer_id AND c.workspace_id=v.workspace_id
-      WHERE v.workspace_id=$1`,recordHref:()=>'/accounting/receivables',
+      WHERE v.workspace_id=$1`,recordHref:r=>'/money/invoices/'+r.record_id,
     fields:{invoice_number:'text',customer:'text',status:'text',currency:'text',issue_date:'date',due_date:'date',
       total_minor:'money_minor',balance_minor:'money_minor'}},
   supplier_bills:{label:'Supplier bills',permission:permissions.VIEW_ACCOUNTING,
     commercialCapability:'accounting.reports',
-    source:`SELECT v.id AS record_id,v.bill_number,s.name AS supplier,v.status,v.currency,
+    source:`SELECT v.id AS record_id,v.bill_number,s.name AS supplier,v.status,v.currency,CASE WHEN v.journal_entry_id IS NOT NULL AND v.status IN ('OPEN','PARTIALLY_PAID','PAID') THEN 'yes' ELSE 'no' END AS is_posted,
       v.issue_date,v.due_date,v.total_minor::bigint AS total_minor,
       v.balance_minor::bigint AS balance_minor
       FROM accounting_supplier_bills v JOIN suppliers s ON s.id=v.supplier_id AND s.workspace_id=v.workspace_id
-      WHERE v.workspace_id=$1`,recordHref:()=>'/accounting/payables',
-    fields:{bill_number:'text',supplier:'text',status:'text',currency:'text',issue_date:'date',due_date:'date',
+      WHERE v.workspace_id=$1`,recordHref:r=>'/money/bills/'+r.record_id,
+    fields:{bill_number:'text',supplier:'text',status:'text',currency:'text',is_posted:'text',issue_date:'date',due_date:'date',
       total_minor:'money_minor',balance_minor:'money_minor'}},
   payments:{label:'Recorded payments',permission:permissions.VIEW_ACCOUNTING,
     commercialCapability:'accounting.reports',
@@ -380,7 +382,7 @@ const datasets=Object.freeze({
     recordHref:(row)=>`/settings/operations/provider-effects/${row.record_id}`,
     enumFields:['provider','operation','status','aggregate_type'],
     fields:{provider:'text',operation:'text',status:'text',aggregate_type:'text',created_on:'date',updated_on:'date',completed_on:'date'}},
-  connection_events:{label:'Incoming connection events: provider payments, refunds, orders, references and processing results (observations are not accounting postings)',permission:permissions.ADMIN,
+  connection_events:{label:'Incoming connection events',permission:permissions.ADMIN,
     source:`SELECT e.id AS record_id,c.id AS connection_id,c.provider_type AS provider,c.display_name AS connection,
       e.event_type,e.external_event_id AS source_event_id,e.status,e.action_type,
       data.value->>'externalOrderId' AS external_order_id,data.value->>'externalPaymentId' AS external_payment_id,

@@ -823,6 +823,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         VALUES($1,$2,$3,$4,$5,$6,'OPEN',$7,0,0,0,0,0,$8,$9,$10,$10,$10)`,
       [invoiceId, ctx.workspaceId, invoiceNumber, order.customer_id, salesOrderId, await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)), order.currency,
         `sales-order:${salesOrderId}`, ctx.actorId, nowIso()]);
+      await client.query('UPDATE accounting_customer_invoices SET due_date=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,await require('../accounting/customer-terms').dueDate(client,ctx.workspaceId,order.customer_id,await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)))]);
       invoice = { id: invoiceId, invoice_number: invoiceNumber };
     }
     const revenueAccount = await accountId(client, ctx.workspaceId, 'SALES_REVENUE');

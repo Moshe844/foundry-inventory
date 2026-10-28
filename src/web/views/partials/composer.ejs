@@ -27,7 +27,7 @@
   <% if (locals.continuationGoalId) { %>
     <input type="hidden" name="continueGoalId" value="<%= locals.continuationGoalId %>">
     <input type="hidden" name="questionId" value="<%= locals.continuationQuestionId||'' %>">
-    <p class="rm-composer__context" data-agent-reply-context>Reply to StockChief’s question to continue this request.</p>
+    <p class="rm-composer__context" data-agent-reply-context>Your answer</p>
   <% } %>
   <% if (locals.emailBodyContinuation) { %>
     <input type="hidden" name="continueInteractionId" value="<%= locals.emailBodyContinuation.interactionId %>">

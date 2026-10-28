@@ -37,6 +37,14 @@
       activeIndex = -1;
     };
 
+    const sizePanel = () => {
+      if(panel.hidden)return;
+      const viewport=window.visualViewport,edge=viewport?viewport.offsetTop+viewport.height:innerHeight;
+      panel.style.maxHeight=Math.max(0,edge-panel.getBoundingClientRect().top-12)+'px';
+    };
+    window.addEventListener('resize',sizePanel);
+    window.visualViewport?.addEventListener('resize',sizePanel);
+    window.visualViewport?.addEventListener('scroll',sizePanel);
     const render = (records) => {
       const term=input.value.trim();
       const recordsHere=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}}),groups=new Map();
@@ -46,6 +54,7 @@
       panel.innerHTML='<div class="search-body">'+[...groups].map(([name,rows])=>'<div role="group" aria-label="'+escapeHtml(name)+'"><p class="search-group-heading">'+escapeHtml(name)+'</p>'+rows.map(hit).join('')+'</div>').join('')+'</div>'+ (term?`<div class="search-footer"><a class="search-hit" role="option" data-ask-panel data-ask-submit aria-selected="false" href="${escapeHtml(askHref)}" data-dest="${escapeHtml(askHref)}"><span><strong>Ask StockChief: ${escapeHtml(term)}</strong></span></a><a class="search-hit" role="option" aria-selected="false" href="/search?q=${encodeURIComponent(term)}" data-dest="/search?q=${encodeURIComponent(term)}"><strong>See all results</strong></a></div>`:'');
       if(!groups.size&&!term)panel.innerHTML='<div class="search-empty">No matches yet.</div>';
       panel.hidden = false; input.setAttribute('aria-expanded','true');
+      sizePanel();
       activeIndex = -1;
     };
 

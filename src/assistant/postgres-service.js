@@ -2167,7 +2167,7 @@ async function cancelProposal(database,ctx,id) {
 
 async function ask(database,ctx,message,options={}){
   ctx={...ctx,conversationId:options.conversationId||null};
-  const direct=await require('./direct-business-reads').run({lookup,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
+  const direct=await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
   if(direct){direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};return recordCapabilityOutcome(database,ctx,message,direct);}
   if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx)){
     // Preserve the existing zero-model page command. This is only a shortcut:

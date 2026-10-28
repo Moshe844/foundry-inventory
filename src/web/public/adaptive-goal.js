@@ -120,7 +120,7 @@
         save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Download';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
         card.append(header,content,save);root.append(card);
        }
-       if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Use this result';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
+       if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Ask a follow-up';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
        if(saved.nextActions.length){
         const next=document.createElement('div'),heading=document.createElement('p'),buttons=document.createElement('div'),note=document.createElement('p');
         next.className='rm-agent__next';heading.textContent='What would you like to do next?';buttons.className='rm-agent__next-actions';
@@ -131,9 +131,9 @@
           const input=document.createElement('input');input.type='hidden';input.name=name;input.value=value;form.append(input);
          }
          button.type='submit';button.className='rm-btn rm-btn--sm';button.textContent=action.label;form.append(button);
-         summary.textContent='What this does';explanation.textContent=action.instruction;details.append(summary,explanation);row.append(form,details);buttons.append(row);
+         summary.textContent='Proposed change';explanation.textContent=action.instruction;details.append(summary,explanation);row.append(form,details);buttons.append(row);
         }
-        note.className='rm-agent__next-note';note.textContent='Next steps continue with StockChief. Any consequential action still requires its usual authorization and approval.';
+        note.className='rm-agent__next-note';note.textContent='Review any proposed changes before they run.';
         next.append(heading,buttons,note);root.append(next);
        }
        deliveryPanel.append(root);
@@ -149,7 +149,7 @@
       }
       if(composer){let context=composer.querySelector('[data-agent-reply-context]');
        if(!context){context=document.createElement('p');context.dataset.agentReplyContext='';context.className='rm-composer__context';composer.prepend(context);}
-       context.hidden=!conversation?.canReply;context.textContent='Reply to StockChief’s question to continue this request.';
+       context.hidden=!conversation?.canReply;context.textContent='Your answer';
       }
      }
      const history=document.querySelector(`[data-conversation-history-for="${CSS.escape(goal.id)}"]`);

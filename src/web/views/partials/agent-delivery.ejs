@@ -8,7 +8,7 @@
       </article>
     <% } %>
     <% if(delivery.workProducts.length){ %>
-      <button type="button" class="rm-btn rm-btn--ghost rm-btn--sm" data-work-continuation data-source-goal="<%= goal.id %>" data-delivery-id="<%= delivery.id %>">Use this result</button>
+      <button type="button" class="rm-btn rm-btn--ghost rm-btn--sm" data-work-continuation data-source-goal="<%= goal.id %>" data-delivery-id="<%= delivery.id %>">Ask a follow-up</button>
     <% } %>
     <% if(delivery.nextActions.length){ %>
       <div class="rm-agent__next"><p><strong>What would you like to do next?</strong></p><div class="rm-agent__next-actions">
@@ -16,9 +16,9 @@
           <div><form method="post" action="/ask/goals/<%= encodeURIComponent(goal.id) %>/next">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="deliveryId" value="<%= delivery.id %>"><input type="hidden" name="actionId" value="<%= next.id %>">
             <button class="rm-btn rm-btn--sm" type="submit"><%= next.label %></button>
-          </form><details><summary>What this does</summary><p><%= next.instruction %></p></details></div>
+          </form><details><summary>Proposed change</summary><p><%= next.instruction %></p></details></div>
         <% } %>
-      </div><p class="rm-agent__next-note">Next steps continue with StockChief. Any consequential action still requires its usual authorization and approval.</p></div>
+      </div><p class="rm-agent__next-note">Review any proposed changes before they run.</p></div>
     <% } %>
   </div>
 <% } %>

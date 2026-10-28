@@ -32,7 +32,7 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
   let totalMinor=subtotalMinor+taxMinor,discountMinor=0,pricingQuote=null;
   if(!Number.isSafeInteger(totalMinor))throw new ValidationError('Invoice total is invalid.');
   const issueDate=date(input.issueDate,'Issue date');
-  const dueDate=input.dueDate?date(input.dueDate,'Due date'):null;
+  const dueDate=input.dueDate?date(input.dueDate,'Due date'):await require('./customer-terms').dueDate(client,ctx.workspaceId,customerId,issueDate);
   if(dueDate&&dueDate<issueDate)throw new ValidationError('Due date cannot be before the issue date.');
   const requestKey=requireText(input.idempotencyKey,'Invoice request key',{max:160});
   const sourceKey=`manual-customer-invoice:${requestKey}`;

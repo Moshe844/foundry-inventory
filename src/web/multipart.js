@@ -102,11 +102,13 @@ function parseBody(body, boundary, { maxFiles = MAX_FILES } = {}) {
 /**
  * Middleware. Does nothing at all unless the request is multipart.
  */
+const parsedMultipart=Symbol('stockchief.parsedMultipart');
 function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
   return function multipartMiddleware(req, res, next) {
     const type = req.get('content-type') || '';
     if (!type.toLowerCase().startsWith('multipart/form-data')) return next();
 
+    const parsed=req[parsedMultipart];if(parsed){if(parsed.received>limit||parsed.fileCount>maxFiles){const error=new Error(parsed.received>limit?'That upload exceeds this form’s size limit.':'This form accepts fewer files.');error.status=413;res.status(413);return next(error);}return next();}
     const boundary = boundaryOf(type);
     if (!boundary) {
       res.status(400);
@@ -157,7 +159,7 @@ function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
         const { fields, files } = parseBody(Buffer.concat(chunks), boundary, { maxFiles });
         req.body = { ...(req.body || {}), ...fields };
         req.files = files;
-        req.file = files[0] || null;
+        req.file = files[0] || null;req[parsedMultipart]={received,fileCount:files.length};
         next();
       } catch (error) {
         next(error);

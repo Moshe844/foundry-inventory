@@ -30,7 +30,7 @@
  function init(){identify();document.addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;let target;try{target=new URL(link.href,location.href);}catch{return;}if(target.origin!==location.origin)return;snapshot();
    if(link.matches('[data-return-to],.page-back,.back-link')&&target.pathname+target.search+target.hash!==href()){const to=target.pathname+target.search+target.hash,id=state.latest?.[to];if(id)state.pending={scope,to,id,at:Date.now()};persist();}
   },true);
-  document.addEventListener('submit',event=>{if(event.defaultPrevented||event.target.method.toLowerCase()!=='post')return;snapshot();if(event.target.matches('[data-ask-form]')){delete state.savedForm;persist();return;}state.savedForm={scope,url:href(),id:entryId,at:Date.now()};persist();},true);
+  document.addEventListener('submit',event=>{if(event.defaultPrevented||String(event.target.getAttribute('method')||'get').toLowerCase()!=='post')return;snapshot();if(event.target.matches('[data-ask-form]')){delete state.savedForm;persist();return;}state.savedForm={scope,url:href(),id:entryId,at:Date.now()};persist();},true);
   window.addEventListener('pagehide',snapshot);document.addEventListener('visibilitychange',()=>{if(document.hidden)snapshot();});
   window.addEventListener('hashchange',identify);window.addEventListener('popstate',()=>restore({persisted:true}));restore();
  }

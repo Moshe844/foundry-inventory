@@ -17,7 +17,7 @@ async function accountTotals(database,workspaceId,{from=null,to}){
     FROM accounting_accounts a LEFT JOIN accounting_journal_lines l ON l.account_id=a.id AND l.workspace_id=a.workspace_id
       AND EXISTS(SELECT 1 FROM accounting_journal_entries e WHERE e.id=l.entry_id AND e.workspace_id=$1
         AND e.status='POSTED' AND e.posting_date <= $2${fromClause})
-    WHERE a.workspace_id=$1 AND a.active=1 GROUP BY a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance
+    WHERE a.workspace_id=$1 AND (a.active=1 OR l.entry_id IS NOT NULL) GROUP BY a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance
     ORDER BY a.code`,values)).rows;
 }
 

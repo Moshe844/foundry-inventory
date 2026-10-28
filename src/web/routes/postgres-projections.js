@@ -134,7 +134,7 @@ function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0
   return {totalMinor,buckets};}
 
 function createPostgresProjectionsRouter(database){
-  const router=express.Router();
+  const router=express.Router();router.use(require('./postgres-customer-money')(database));
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
     const [result,available]=await Promise.all([presenters.home(database,req.ctx.workspaceId,req.ctx.actorId),
       require('../../assistant/postgres-discovery').available(database,req.ctx)]);

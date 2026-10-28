@@ -105,6 +105,8 @@ function createPostgresInventoryRouter(database) {
         resumeInstructionId:null,fromConfiguration:false,error:error.message,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
     }
   }));
+  router.get('/inventory/:id/photo',asyncRoute(async(req,res)=>{const image=(await database.query('SELECT image_bytes,content_hash FROM product_images WHERE workspace_id=$1 AND item_id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];if(!image)return res.sendStatus(404);res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.set('ETag','"'+image.content_hash+'"');res.set('X-Content-Type-Options','nosniff');return res.send(image.image_bytes);}));
+  router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
     const importedDetails=await require('../../domain/postgres-catalog-facts').listForSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id));
@@ -137,7 +139,8 @@ function createPostgresInventoryRouter(database) {
       return {skuId:sku.id,label:sku.variant_label||detail.item.name,total:sku.total,
         policy:policies[0]||null,policies,suppliers:supplierRows.filter((row)=>row.sku_id===sku.id)
           .map((row)=>({supplierName:row.supplier_name}))};});
-    return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    const productView=await require('../../domain/postgres-product-overview').overview(database,req.ctx,detail.item.id,req.query);
+    return res.page('inventory/item',{productView,title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),

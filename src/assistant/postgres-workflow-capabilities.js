@@ -153,7 +153,7 @@ async function recordCustomerPayment(database,ctx,order,args){
     'No open customer invoice exists on this order.');
   const balance=Number(invoice[0].balance_minor);
   const amountMinor=args.amount==null&&['BALANCE','FULL'].includes(String(args.paymentPurpose||'').toUpperCase())
-    ?balance:Math.round(Number(args.amount)*100);
+    ?balance:pricing.toMinor(String(args.amount),'Payment amount',invoice[0].currency);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<=0||amountMinor>balance)throw new ValidationError(
     'State the actual amount received, no more than the open invoice balance.');
   return prepareResult({direction:'CUSTOMER_RECEIPT',customerId:invoice[0].customer_id,
@@ -167,7 +167,7 @@ function invoicePayment(_database,_ctx,invoice,args){
   if(!['OPEN','PARTIALLY_PAID'].includes(invoice.status)||Number(invoice.balance_minor)<=0)
     throw new ValidationError('This customer invoice has no open balance to pay.');
   if(!args.paymentMethod)throw new ValidationError('Name the method of payment already received.');
-  const amountMinor=args.amount==null?Number(invoice.balance_minor):Math.round(Number(args.amount)*100);
+  const amountMinor=args.amount==null?Number(invoice.balance_minor):pricing.toMinor(String(args.amount),'Payment amount',invoice.currency);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<1||amountMinor>Number(invoice.balance_minor))
     throw new ValidationError('State the amount actually received, no more than the invoice balance.');
   return prepareResult({customerId:invoice.customer_id,customerInvoiceId:invoice.id,
@@ -964,7 +964,7 @@ const SPECS=Object.freeze([
         AND id=$2 AND kind='payment.request.create'`,[ctx.workspaceId,r.effectId])).rows.length)},
   {name:'customer_payment.record',description:'Record a customer payment that was already actually received against an existing order invoice. This posts cash and invoice allocation; it never initiates a payment.',
     record:'sales_order',fields:['recordReference','amount','paymentPurpose','paymentMethod','paymentDate','reference'],
-    permission:permissions.RECORD_PAYMENTS,capability:'payments.customer',build:recordCustomerPayment,
+    permission:permissions.RECORD_PAYMENTS,capability:'accounting.core',build:recordCustomerPayment,
     execute:async(client,ctx,p)=>{const row=(await client.query(`SELECT balance_minor FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,p.customerInvoiceId])).rows[0];
       if(!row||Number(row.balance_minor)!==p.expectedBalanceMinor)throw new ValidationError(
@@ -976,7 +976,7 @@ const SPECS=Object.freeze([
       [ctx.workspaceId,r.paymentId,p.customerInvoiceId,p.amountMinor])).rows.length)},
   {name:'customer_invoice.payment',description:'Record a payment already received against one exact open customer invoice, including an invoice not linked to a sales order. Never initiate a charge.',
     record:'customer_invoice',fields:['recordReference','amount','paymentMethod','paymentDate','reference'],
-    permission:permissions.RECORD_PAYMENTS,capability:'payments.customer',build:invoicePayment,
+    permission:permissions.RECORD_PAYMENTS,capability:'accounting.core',build:invoicePayment,
     execute:async(client,ctx,p)=>{const row=(await client.query(`SELECT balance_minor FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,p.customerInvoiceId])).rows[0];
       if(!row||Number(row.balance_minor)!==p.expectedBalanceMinor)throw new ValidationError(

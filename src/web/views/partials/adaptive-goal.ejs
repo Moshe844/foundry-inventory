@@ -36,7 +36,7 @@
     <button class="rm-btn rm-btn--sm" data-navigation-label type="submit"><%= pendingNavigation?'Open '+pendingNavigation.label:'Open page' %></button>
   </form>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
-    <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
+    <details class="rm-agent__details"><summary>What happened</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
     <% for(const card of locals.codexApprovals||[]){ const presentation=locals.agentApprovalPresentation?locals.agentApprovalPresentation(card):{summary:card.summary,fields:[]}; %>
       <article class="rm-agent__approval" data-approval-id="<%= card.id %>">
         <p class="rm-agent__approval-label">Review this change</p><h3><%= presentation.summary %></h3>
