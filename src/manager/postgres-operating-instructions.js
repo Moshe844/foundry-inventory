@@ -134,7 +134,8 @@ function cleanChange(raw={}){return {domain:DOMAINS.includes(raw.domain)?raw.dom
 
 async function resolveChange(database,workspaceId,raw){const change=cleanChange(raw);const questions=[];
   if(!change.domain){questions.push('Which lasting inventory rule should StockChief set?');return {...change,questions};}
-  if(['replenishment','supplier_terms','stock_protection','stock_alert'].includes(change.domain)){
+  if(['replenishment','supplier_terms','stock_protection','stock_alert'].includes(change.domain)||
+    ['purchase_authority','transfer_authority'].includes(change.domain)&&change.sku){
     const found=await exact(database,workspaceId,'sku',change.sku);
     if(found.row)Object.assign(change,{skuId:found.row.id,itemId:found.row.item_id,skuCode:found.row.code,
       displayName:`${found.row.name}${found.row.variant_label?` · ${found.row.variant_label}`:''}`});
@@ -198,9 +199,9 @@ function describe(change){if(change.domain==='replenishment')return `${change.di
     number(change.minimumOrderQuantity,{positive:true})!==null?`MOQ ${change.minimumOrderQuantity}`:null,
     number(change.orderMultiple,{positive:true})!==null?`order multiple ${change.orderMultiple}`:null].filter(Boolean).join(', ')}`;
   if(change.domain==='transfer_authority')return change.operation==='remove'?'Remove automatic transfer authority.':
-    `Allow automatic transfers up to ${change.maximumQuantity} units${change.locationName?` involving ${change.locationName}`:''}${change.sourceLocationName?` from ${change.sourceLocationName}`:''}.`;
+    `Allow automatic transfers up to ${change.maximumQuantity} units${change.skuCode?` of ${change.skuCode} only`:''}${change.locationName?` involving ${change.locationName}`:''}${change.sourceLocationName?` from ${change.sourceLocationName}`:''}.`;
   if(change.domain==='purchase_authority')return change.operation==='remove'?`Remove automatic purchasing authority for ${change.supplierName}.`:
-    `Allow automatic purchase orders from ${change.supplierName} up to $${change.maximumValue.toFixed(2)} each and $${change.weeklyValue.toFixed(2)} per rolling seven days.`;
+    `Allow automatic purchase orders from ${change.supplierName}${change.skuCode?` for ${change.skuCode} only`:''}${change.locationName?` delivered to ${change.locationName}`:''} up to $${change.maximumValue.toFixed(2)} each and $${change.weeklyValue.toFixed(2)} per rolling seven days.`;
   if(change.domain==='operating_preference')return change.operation==='remove'?'Remove the taught replenishment preference.':
     number(change.daysOfStock,{positive:true})!==null?`Target ${change.daysOfStock} days of stock.`:'Prefer transfers before purchasing.';
   if(change.domain==='capability_authority'){const label=capabilityDefinitions.CAPABILITIES[change.capabilityName]?.label||change.capabilityName;
@@ -405,7 +406,7 @@ async function applyChange(client,ctx,change){const at=nowIso();
     const transfer=change.domain==='transfer_authority';const enabled=change.operation!=='remove';
     const id=await autonomy.replacePolicy(client,ctx,{enabled,action:transfer?autonomy.ACTIONS.TRANSFER:autonomy.ACTIONS.PURCHASE,
       name:transfer?'Taught automatic transfers':`Taught purchasing — ${change.supplierName}`,
-      description:`Approved through Ask StockChief: ${change.statedAs}`,locationScope:
+      description:`Approved through Ask StockChief: ${change.statedAs}`,itemScope:change.skuId?[change.skuId]:[],locationScope:
         [change.sourceLocationId,change.locationId].filter(Boolean),supplierScope:change.supplierId?[change.supplierId]:[],
       conditions:transfer?['destination_stockout_risk','source_above_safety','no_conflicting_transfer']:
         ['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],

@@ -133,18 +133,16 @@ async function message(credentials, id) {
 const OVERLAP_MS = 15 * 60_000;
 
 /*
- * And "in:inbox" is not where a stranger's first email lands. Someone writing
- * to a business for the first time to ask about ordering is exactly what Gmail
- * files as spam, so the one message a shop most wants to see was the one
- * StockChief could not see. Spam is included and marked untrusted like any
- * unknown sender; the owner decides, which is the arrangement everywhere else
- * in StockChief.
+ * Incoming mail may be filed straight into Archive by a customer's Gmail
+ * rules. Include it alongside Inbox and Spam, without collecting Sent-only
+ * messages, drafts or trash. Keep the same watermark and overlap: this does
+ * not start a historical mailbox backfill or override a person's filing choice.
  */
 async function poll({ credentials, since }) {
   const from = new Date(since || Date.now() - 86400000).getTime() - OVERLAP_MS;
   const query = new URLSearchParams({
     maxResults: '50',
-    q: `(in:inbox OR in:spam) after:${Math.floor(from / 1000)}`,
+    q: `(in:inbox OR in:spam OR -in:sent) -in:drafts -in:trash after:${Math.floor(from / 1000)}`,
   });
   const messages = [];
   const visited = new Set();

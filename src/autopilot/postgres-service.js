@@ -67,15 +67,22 @@ async function resume(database,ctx,membership){assertOperate(membership);const c
     paused_by_user_id=NULL,paused_reason=NULL,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);
   return getState(database,ctx.workspaceId);}
 
-function policyFrom(row){return {id:row.id,name:row.name,description:row.description,enabled:Boolean(Number(row.enabled)),
+const scopeReviewSql=`EXISTS(SELECT 1 FROM operating_instruction_proposals instruction
+ CROSS JOIN LATERAL jsonb_array_elements(instruction.applied_records::jsonb) applied
+ CROSS JOIN LATERAL jsonb_array_elements(instruction.resolved_changes::jsonb) change
+ WHERE instruction.workspace_id=policy.workspace_id AND applied->>'id'=policy.id
+  AND change->>'domain'=applied->>'domain' AND change->>'domain' IN('purchase_authority','transfer_authority')
+  AND length(trim(COALESCE(change->>'sku','')))>0
+  AND(change->>'skuId' IS NULL OR NOT(policy.item_scope::jsonb ? (change->>'skuId'))))`;
+function policyFrom(row){return {id:row.id,name:row.name,description:row.description,enabled:Boolean(Number(row.enabled)),scopeNeedsReview:Boolean(row.scope_needs_review),
   actions:parse(row.allowed_action_types,[]),itemScope:parse(row.item_scope,[]),locationScope:parse(row.location_scope,[]),supplierScope:parse(row.supplier_scope,[]),
   conditions:parse(row.conditions,[]),thresholds:parse(row.thresholds,{}),maximumQuantity:row.maximum_quantity===null?null:Number(row.maximum_quantity),
   maximumValue:row.maximum_value===null?null:Number(row.maximum_value),dailyLimit:row.daily_limit===null?null:Number(row.daily_limit),
   version:Number(row.version),integrityHash:row.integrity_hash,approvedAt:row.approved_at,disabledAt:row.disabled_at,
-  active:Boolean(Number(row.enabled))&&Boolean(row.approved_at)&&!row.disabled_at&&(!parse(row.thresholds,{}).expiresAt||Date.parse(parse(row.thresholds,{}).expiresAt)>Date.now())};}
-async function listPolicies(database,workspaceId){return (await database.query(`SELECT * FROM automation_policies WHERE workspace_id=$1
+  active:!row.scope_needs_review&&Boolean(Number(row.enabled))&&Boolean(row.approved_at)&&!row.disabled_at&&(!parse(row.thresholds,{}).expiresAt||Date.parse(parse(row.thresholds,{}).expiresAt)>Date.now())};}
+async function listPolicies(database,workspaceId){return (await database.query(`SELECT policy.*,${scopeReviewSql} AS scope_needs_review FROM automation_policies policy WHERE workspace_id=$1
   ORDER BY created_at DESC,id`,[workspaceId])).rows.map(policyFrom);}
-async function activePolicy(database,workspaceId,action){const rows=(await database.query(`SELECT * FROM automation_policies
+async function activePolicy(database,workspaceId,action){const rows=(await database.query(`SELECT policy.*,${scopeReviewSql} AS scope_needs_review FROM automation_policies policy
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC,created_at DESC`,[workspaceId])).rows;
   return rows.map(policyFrom).find((policy)=>policy.active&&policy.actions.includes(action))||null;}
 
@@ -207,9 +214,10 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   const action=candidate.type==='transfer'?ACTIONS.TRANSFER:ACTIONS.PURCHASE;const policy=await activePolicy(database,workspaceId,action);
   const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
   if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
-  if(!policy)return {decision:'needs_approval',reason:'No approved standing authority covers this action.',policy:null};
+  if(!policy){const review=(await listPolicies(database,workspaceId)).some(p=>p.enabled&&p.scopeNeedsReview&&p.actions.includes(action));return {decision:'needs_approval',reason:review?'An earlier standing rule needs review because its product restriction was not retained. No automatic action is authorized.':'No approved standing authority covers this action.',policy:null};}
   if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
   if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
+  if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(candidate.type==='transfer'){
     if(policy.locationScope.length&&(!policy.locationScope.includes(candidate.sourceLocationId)||!policy.locationScope.includes(candidate.destinationLocationId)))
       return {decision:'needs_approval',reason:'The transfer uses a location outside the approved scope.',policy};
