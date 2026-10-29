@@ -642,7 +642,7 @@ async function revise(database,ctx,id,input={},options={}){
     const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,id])).rows[0];
     if(!saved)throw new NotFoundError('That import could not be found.');
-    if(saved.apply_checkpoint?.cataloguePrepared)throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
+    if((saved.apply_checkpoint?.cataloguePrepared||saved.apply_checkpoint?.catalogueStarted))throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
     const plan=hydratePlan(saved);
     if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
@@ -853,7 +853,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Answer where this stock is held and recalculate the preview before approving.');
     const unresolved=requirements.find(step=>['rows','empty'].includes(step.code));
     if(unresolved)throw new ValidationError(unresolved.error);
-    if(plan.transformations.dataset!=='suppliers'&&!result.rows[0].apply_checkpoint?.cataloguePrepared){
+    if(plan.transformations.dataset!=='suppliers'&&!(result.rows[0].apply_checkpoint?.cataloguePrepared||result.rows[0].apply_checkpoint?.catalogueStarted)){
       const identities=require('./postgres-execution-identities');
       await identities.stage(client,ctx,plan,{productKey,variantKey});
       const counts=await identities.counts(client,ctx,plan);
@@ -893,7 +893,7 @@ function variantKey(parsed) {
   return 'default';
 }
 
-async function assertSourceClaim(database,ctx,plan){const other=(await database.query(`SELECT id FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3 AND source_kind=$4 AND sheet_index=$5 AND status='READY' AND approval_status='APPROVED' AND apply_checkpoint->>'cataloguePrepared'='true' AND COALESCE(transformations::jsonb->>'dataset','inventory')=$6 LIMIT 1`,[ctx.workspaceId,plan.sourceHash,plan.id,plan.sourceKind,plan.sheetIndex,plan.transformations.dataset||'inventory'])).rows[0];if(other)throw new ValidationError('This source already has a saved import in progress. Continue that import instead of creating another copy.',{href:'/imports/'+other.id});}
+async function assertSourceClaim(database,ctx,plan){const other=(await database.query(`SELECT id FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3 AND source_kind=$4 AND sheet_index=$5 AND status='READY' AND approval_status='APPROVED' AND (apply_checkpoint->>'cataloguePrepared'='true' OR apply_checkpoint->>'catalogueStarted'='true') AND COALESCE(transformations::jsonb->>'dataset','inventory')=$6 LIMIT 1`,[ctx.workspaceId,plan.sourceHash,plan.id,plan.sourceKind,plan.sheetIndex,plan.transformations.dataset||'inventory'])).rows[0];if(other)throw new ValidationError('This source already has a saved import in progress. Continue that import instead of creating another copy.',{href:'/imports/'+other.id});}
 
 async function execute(database,ctx,id,options={}){await assertOperator(database,ctx);const plan=await getForMutation(database,ctx.workspaceId,id);if(plan.status==='SUCCEEDED')return executeUnlocked(database,ctx,id,options);const result=await database.withSessionLock('approved-import:'+ctx.workspaceId+':'+id,locked=>executeUnlocked(locked,ctx,id,options));if(result?.busy)throw new ValidationError('This approved import is already running. Open its saved progress.');return result;}
 
@@ -967,7 +967,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     const cp=(await database.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0]?.apply_checkpoint||{};
     await database.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN $5 THEN 'paused' ELSE 'rolled_back' END,error_message=$2,finished_at=$3,
       result=COALESCE($4,result) WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso(),
-      error.details?.checks?JSON.stringify({failedChecks:error.details.checks}):null,Boolean(cp.cataloguePrepared)]);
+      error.details?.checks?JSON.stringify({failedChecks:error.details.checks}):null,Boolean(cp.cataloguePrepared||cp.catalogueStarted)]);
     await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status<>'CANCELLED' AND approval_status='APPROVED'`,[ctx.workspaceId,id]);
     throw error;
   }
@@ -1012,7 +1012,7 @@ async function requireRolledBackExecution(database,ctx,plan,executionId){
     AND id=$3 AND status='FAILED' AND stage IN ('rolled_back','paused')`,[ctx.workspaceId,plan.id,executionId])).rows[0];
   if(!failed||plan.status!=='READY'||plan.approvalStatus!=='APPROVED')throw new ValidationError('Only an interrupted import with its unchanged approval can be continued.');
   const checkpoint=(await database.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0]?.apply_checkpoint||{};
-  const durable=checkpoint.hash===plan.integrityHash&&checkpoint.cataloguePrepared===true;
+  const durable=checkpoint.hash===plan.integrityHash&&(checkpoint.cataloguePrepared===true||checkpoint.catalogueStarted===true);
   const unsafe=(await database.query(`SELECT ($3::boolean=false AND EXISTS(SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED')) OR
     EXISTS(SELECT 1 FROM import_executions WHERE workspace_id=$1 AND import_id=$2 AND status IN ('EXECUTING','SUCCEEDED')) AS found`,[ctx.workspaceId,plan.id,durable])).rows[0];
   if(unsafe.found)throw new ValidationError('This import has active or saved effects. Review its existing result before continuing.');
@@ -1024,7 +1024,7 @@ async function retryExecution(database,ctx,id,expectedHash,executionId){
   return database.transaction(async client=>{
     const row=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
     if(!row)throw new NotFoundError('That import could not be found.');
-    const plan=hydratePlan(row);if(plan.integrityHash!==expectedHash||plan.isExpired&&!row.apply_checkpoint?.cataloguePrepared)throw new ValidationError('Review the current import preview before retrying.');
+    const plan=hydratePlan(row);if(plan.integrityHash!==expectedHash||plan.isExpired&&!(row.apply_checkpoint?.cataloguePrepared||row.apply_checkpoint?.catalogueStarted))throw new ValidationError('Review the current import preview before retrying.');
     await requireRolledBackExecution(client,ctx,plan,executionId);
     const scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};
     return require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,

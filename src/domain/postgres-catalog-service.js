@@ -112,15 +112,17 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
   const commercialScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
   await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',normalized.filter(i=>!i.appendToItemId).length);
   const candidates=normalized.flatMap(input=>input.variants.map(v=>trimOrNull(v.code)||[codeSlug(input.name),...(v.options||[]).map(p=>codeSlug(p.value))].filter(Boolean).join('-')||'SKU'));
-  const existing=new Set((await client.query('SELECT lower(code) AS code FROM skus WHERE workspace_id=$1 AND lower(code)=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(c=>c.toLowerCase()))]])).rows.map(r=>r.code));
+  const existing=new Set((await client.query('SELECT lower(btrim(code)) AS code FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(identity.codeKey))]])).rows.map(r=>r.code));
   const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
   for(const input of normalized){
     const itemId=input.appendToItemId||newId('item'),options=new Map(),result={itemId,skus:[]};
     let optionPosition=0,skuPosition=0;
     if(input.appendToItemId){
       const parent=(await client.query('SELECT name,tracking_mode,is_active,xmin::text=pg_current_xact_id()::text AS created_here FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,itemId])).rows[0];
-      if(!parent?.created_here||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
-        throw new ValidationError('Import variants may only extend the matching product being prepared in this transaction.');
+      const resumed=!parent?.created_here&&input.importPlanId&&(await client.query(`SELECT 1 FROM import_catalogue_bindings b JOIN import_plans p ON p.id=b.import_id AND p.workspace_id=b.workspace_id
+        WHERE b.workspace_id=$1 AND b.import_id=$2 AND b.product_key=$3 AND b.item_id=$4 AND p.integrity_hash=$5 AND p.approval_status='APPROVED' LIMIT 1`,[ctx.workspaceId,input.importPlanId,input.importProductKey,itemId,input.importIntegrityHash])).rows.length;
+      if(!(parent?.created_here||resumed)||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
+        throw new ValidationError('Import variants may only extend the matching product created by this approved import.');
       for(const row of (await client.query('SELECT id,name,position FROM item_options WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id',[ctx.workspaceId,itemId])).rows){options.set(row.name,row.id);optionPosition=Math.max(optionPosition,Number(row.position)+1);}
       skuPosition=Number((await client.query('SELECT position+1 AS next FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position DESC,id DESC LIMIT 1',[ctx.workspaceId,itemId])).rows[0]?.next||0);
     }

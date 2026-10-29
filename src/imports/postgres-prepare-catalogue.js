@@ -1,10 +1,11 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),catalog=require('../domain/postgres-catalog-service'),prices=require('../pricing/postgres-service'),identities=require('./postgres-execution-identities');
 
-async function prepare(client,ctx,plan,options,deps){
+async function prepare(client,ctx,plan,options,deps,saved={}){
  const params=[ctx.workspaceId,plan.id];
  // Validate cross-page conflicts in PostgreSQL before creating any catalogue
  // records. These checks must not disappear when memory is bounded by pages.
+ if(!saved.catalogueChecked){
  const conflicting=(await client.query(`SELECT 1 FROM import_execution_identities
   WHERE workspace_id=$1 AND import_id=$2 AND selling_price_minor IS NOT NULL
   GROUP BY product_key,variant_key HAVING min(selling_price_minor)<>max(selling_price_minor) OR min(currency)<>max(currency) LIMIT 1`,params)).rows.length;
@@ -19,13 +20,13 @@ async function prepare(client,ctx,plan,options,deps){
   AND catalogue_update->>'itemId' IS NOT NULL ORDER BY existing_item_id,row_number,row_id LIMIT 500`,[...params,lastItem])).rows;
   if(!updates.length)break;await catalog.updateImportedNamesInTransaction(client,ctx,updates.map(r=>r.change));lastItem=updates.at(-1).existing_item_id;
  }
- let lastProduct='',lastVariant='',tailItem=null,itemsCreated=0,skusCreated=0;
- for(;;){
+ }
+ let lastProduct=saved.catalogueCursor?.product||'',lastVariant=saved.catalogueCursor?.variant||'',tailItem=saved.catalogueTail||null,itemsCreated=Number(saved.itemsCreated||0),skusCreated=Number(saved.skusCreated||0);
   const representatives=(await client.query(`WITH page AS MATERIALIZED(SELECT DISTINCT ON(product_key,variant_key) product_key,variant_key,row_id,row_number
    FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NULL
    AND (product_key,variant_key)>($3::text,$4::text) ORDER BY product_key,variant_key,row_number,row_id LIMIT 500)
    SELECT page.*,r.parsed FROM page JOIN import_rows r ON r.id=page.row_id ORDER BY page.product_key,page.variant_key`,[...params,lastProduct,lastVariant])).rows;
-  if(!representatives.length)break;
+  if(!representatives.length){const counts=await identities.counts(client,ctx,plan);return {cataloguePrepared:true,catalogueChecked:true,itemsCreated,skusCreated,itemsUpdated:counts.updated};}
   const products=[...new Set(representatives.map(r=>r.product_key))];
   const grouped=new Map(products.map(k=>[k,[]]));for(const row of representatives){row.parsed=typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed;grouped.get(row.product_key).push(row);}
   for(const group of grouped.values())group.sort((a,b)=>Number(a.row_number)-Number(b.row_number)||a.row_id.localeCompare(b.row_id));
@@ -33,17 +34,17 @@ async function prepare(client,ctx,plan,options,deps){
    CROSS JOIN LATERAL(SELECT row_id FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND product_key=wanted.product_key ORDER BY row_number,row_id LIMIT 1)first)
    SELECT first_rows.product_key,r.parsed FROM first_rows JOIN import_rows r ON r.id=first_rows.row_id`,[...params,products.filter(p=>p!==lastProduct)])).rows;
   const firstByProduct=new Map(firstRows.map(r=>[r.product_key,typeof r.parsed==='string'?JSON.parse(r.parsed):r.parsed]));
-  const quotedPrices=(await client.query(`SELECT e.product_key,e.variant_key,max(e.selling_price_minor)::text amount,
-   max(e.currency) currency FROM jsonb_to_recordset($3::jsonb) wanted(product_key text,variant_key text)
-   JOIN import_execution_identities e ON e.workspace_id=$1 AND e.import_id=$2 AND e.product_key=wanted.product_key AND e.variant_key=wanted.variant_key
-   WHERE e.selling_price_minor IS NOT NULL
-   GROUP BY e.product_key,e.variant_key`,[...params,JSON.stringify(representatives.map(r=>({product_key:r.product_key,variant_key:r.variant_key})))])).rows;
+  const quotedPrices=(await client.query(`SELECT wanted.product_key,wanted.variant_key,quote.amount,quote.currency
+   FROM jsonb_to_recordset($3::jsonb) wanted(product_key text,variant_key text)
+   CROSS JOIN LATERAL(SELECT max(e.selling_price_minor)::text amount,max(e.currency) currency FROM import_execution_identities e
+    WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.product_key=wanted.product_key AND e.variant_key=wanted.variant_key
+      AND e.selling_price_minor IS NOT NULL)quote WHERE quote.amount IS NOT NULL`,[...params,JSON.stringify(representatives.map(r=>({product_key:r.product_key,variant_key:r.variant_key})))])).rows;
   const priceByIdentity=new Map(quotedPrices.map(r=>[r.product_key+':'+r.variant_key,r]));
   const definitions=[];
   for(const [product,group]of grouped){
    const continuing=product===lastProduct;
    if(!continuing)await options.beforeGroup?.({key:deps.productKey(group[0].parsed),group:group.map(r=>({id:r.row_id,rowNumber:Number(r.row_number),parsed:r.parsed})),itemsCreated});
-   const first=continuing?tailItem.first:firstByProduct.get(product);definitions.push({...(continuing?{appendToItemId:tailItem.id}:{}),name:first.name,description:first.description,unitLabel:first.unitLabel,trackingMode:first.trackingMode,
+   const first=continuing?tailItem.first:firstByProduct.get(product);definitions.push({...(continuing?{appendToItemId:tailItem.id,importPlanId:plan.id,importIntegrityHash:plan.integrityHash,importProductKey:product}:{}),name:first.name,description:first.description,unitLabel:first.unitLabel,trackingMode:first.trackingMode,
     variants:group.map(r=>({key:r.variant_key,code:r.parsed.code,barcode:r.parsed.barcode,options:r.parsed.variants}))});
   }
   const created=await catalog.createImportedItemsInTransaction(client,ctx,definitions),bindings=[],initialPrices=[];
@@ -58,9 +59,6 @@ async function prepare(client,ctx,plan,options,deps){
    SELECT $1,$2,x.product_key,x.variant_key,x.item_id,x.sku_id FROM jsonb_to_recordset($3::jsonb) x(product_key text,variant_key text,item_id text,sku_id text)`,[...params,JSON.stringify(bindings.slice(offset,offset+500))]);
   tailItem={id:created.at(-1).itemId,first:products.at(-1)===lastProduct?tailItem.first:firstByProduct.get(products.at(-1))};
   lastProduct=representatives.at(-1).product_key;lastVariant=representatives.at(-1).variant_key;
-  await options.onProgress?.({stage:'preparing',processedRows:0,preparedRows:skusCreated,totalRows:plan.recordsValid,attempt:1,durable:true});
- }
- const counts=await identities.counts(client,ctx,plan);
- return {itemsCreated,skusCreated,itemsUpdated:counts.updated};
+  return {cataloguePrepared:false,catalogueChecked:true,catalogueCursor:{product:lastProduct,variant:lastVariant},catalogueTail:tailItem,itemsCreated,skusCreated,itemsUpdated:Number(saved.itemsUpdated||0)};
 }
 module.exports={prepare};

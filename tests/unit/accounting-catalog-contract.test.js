@@ -1,5 +1,13 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),qbo=require('../../src/connections/providers/quickbooks'),xero=require('../../src/connections/providers/xero');
+test('Clover fixed-point sales preserve fractional evidence without inflating stock by 1000',async()=>{
+ const original=global.fetch,adapter=require('../../src/connections/providers/clover');
+ global.fetch=async()=>Response.json({id:'order',modifiedTime:1790000000000,paymentState:'PAID',lineItems:{elements:[
+  {id:'whole',item:{id:'sku'},unitQty:2000,price:100},{id:'measured',item:{id:'sku'},unitQty:1250,price:100}]}});
+ try{const events=await adapter.normalizeWebhook({credentials:{merchantId:'merchant',environment:'sandbox',accessToken:'fixture'},connection:{provider_account_id:'merchant'},body:{merchants:{merchant:[{objectId:'O:order',type:'UPDATE',ts:1790000000000}]}}});
+  assert.deepEqual(events.map(e=>e.data.quantity),[2,1.25]);
+ }finally{global.fetch=original;}
+});
 test('Clover discovery preserves absent and zero prices, authoritative currency and exact stock',async()=>{
  const original=global.fetch,adapter=require('../../src/connections/providers/clover');
  global.fetch=async value=>{const url=new URL(value);if(url.pathname.endsWith('/properties'))return Response.json({defaultCurrency:'CAD'});

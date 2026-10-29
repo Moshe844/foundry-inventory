@@ -135,7 +135,11 @@ function quantity(line) {
   if (line.quantity != null) return Number(line.quantity);
   if (line.unitQty == null) return 1;
   const fixed = Number(line.unitQty);
-  return Number.isInteger(fixed) && fixed > 0 && fixed % 1000 === 0 ? fixed / 1000 : fixed;
+  // Clover unitQty is always fixed point with a scale of 1000. Preserve a
+  // fraction for canonical admission to review; 1250 must never mean 1250 units.
+  // https://docs.clover.com/dev/reference/ordercreatelineitem-3
+  if(!Number.isSafeInteger(fixed))throw new ValidationError('Clover supplied an invalid fixed-point quantity. No stock was changed.');
+  return fixed / 1000;
 }
 
 function orderLines(order) {

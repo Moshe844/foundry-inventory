@@ -17,7 +17,7 @@ test('large PostgreSQL import certifies source, approval, inventory, money, plan
   const units=i%7+1;expectedUnits+=units;text+=`Product ${i},${tag}-${i},Count room,${units},1.25,3.75,Supplier ${i%5},14,2,10,detail-${i}\n`;
  }fs.appendFileSync(file,text);}
  const service=require('../../src/imports/postgres-service'),started=performance.now();let maxRss=0,lastStage='',lastReported=-1;
- const progress=phase=>p=>{maxRss=Math.max(maxRss,process.memoryUsage().rss);const completed=Number(p.processedRows||p.preparedRows||0),stage=phase+':'+p.stage,bucket=Math.floor(completed/50000);
+ const progress=phase=>p=>{maxRss=Math.max(maxRss,process.memoryUsage().rss);const completed=Number(p.processedRows||p.preparedRows||0),stage=phase+':'+p.stage,bucket=Math.floor(completed/10000);
   if(stage!==lastStage||bucket!==lastReported){lastStage=stage;lastReported=bucket;console.log(JSON.stringify({phase:stage,rows:completed,total:count,elapsedMs:Math.round(performance.now()-started),rss:process.memoryUsage().rss}));}};
  const plan=await service.analyse(db,ctx,{buffer:fs.readFileSync(file),filename:'inventory.csv',allowModel:false,onProgress:progress('analysis')});
  assert.equal(plan.recordsDetected,count);assert.equal(plan.recordsValid,count);assert.equal(plan.recordsInvalid,0);

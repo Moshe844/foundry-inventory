@@ -99,9 +99,9 @@
         <thead>
           <tr>
             <% if(locals.postgresNative&&currentUser.role==='owner'){ %><th class="sc-stock-selection" scope="col"><span class="sr-only">Select products</span></th><% } %>
-            <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: 'name', page: null }) %>" title="Sort by name">Product</a></th>
+            <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: 'name', page: null, after: null }) %>" title="Sort by name">Product</a></th>
             <th>Status</th>
-            <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
+            <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null, after: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
             <th class="num">Committed</th>
             <th class="num"><%= typeof postgresNative!=='undefined'&&postgresNative?'Uncommitted':'Available' %></th>
             <th class="num">On order</th>

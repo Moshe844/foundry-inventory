@@ -12,17 +12,18 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   const result=await operation(client,saved);await inputOptions.beforeBatchCommit?.();return result;
  },{isolation:'SERIALIZABLE',retrySafe:true});}
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
- checkpoint=await phase(async(client,saved)=>{
+ do {checkpoint=await phase(async(client,saved)=>{
   await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true}));
-  const imported=Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
+  const imported=saved.catalogueStarted&&!saved.cataloguePrepared?0:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
   if(saved.cataloguePrepared){if(Number(saved.savedRows)!==imported)throw new ValidationError('Saved import progress does not match its recorded rows. Its existing records remain safe.');return saved;}
   if(imported)throw new ValidationError('This import has saved records without a matching execution checkpoint. Review its saved result.');
-  const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);
-  await entitlements.assertMeterCapacity(client,scope,'active_skus',capacity.skus);
-  const newLocations=await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]);
-  const created=await require('./postgres-prepare-catalogue').prepare(client,ctx,plan,options,deps);
-  return save(client,{version:2,cataloguePrepared:true,initialPricesPrepared:true,locations:Object.fromEntries(newLocations),postingDate:await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
- });
+  if(!saved.catalogueStarted){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);
+   await entitlements.assertMeterCapacity(client,scope,'active_skus',capacity.skus);}
+  const locations=saved.locations||Object.fromEntries(await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]));
+  const created=await require('./postgres-prepare-catalogue').prepare(client,ctx,plan,options,deps,saved);
+  return save(client,{...saved,version:3,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
+ });await emit('preparing',checkpoint.skusCreated);
+ }while(!checkpoint.cataloguePrepared);
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:(row.parsed.quantity||0)*(row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;

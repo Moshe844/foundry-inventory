@@ -1,6 +1,7 @@
 name: Inventory correctness and capacity
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, codex/staging-codex-pilot]
   workflow_dispatch:
@@ -11,10 +12,13 @@ on:
         required: true
 permissions:
   contents: read
+concurrency:
+  group: inventory-capacity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   inventory:
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 300 || 45 }}
+    timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && 300 || 45 }}
     env:
       NODE_ENV: test
       STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
@@ -43,11 +47,11 @@ jobs:
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/catalog-page-capacity.test.js tests/postgres/import-preview-revisions.test.js tests/postgres/inventory-capacity.test.js tests/postgres/inventory-erp-correctness.test.js tests/postgres/inventory-engine.test.js tests/postgres/import-durable-batches.test.js tests/postgres/import-execution-pages.test.js tests/postgres/import-extended-scale-holdout.test.js tests/postgres/import-stock-intent.test.js tests/postgres/import-sku-identity.test.js tests/postgres/import-source-upload.test.js tests/postgres/replenishment-global-scope.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/product-planning-scale.test.js tests/postgres/planning-ui.test.js tests/postgres/public-plan-contract.test.js tests/postgres/public-offer-ui.test.js 2>&1 | tee output/inventory-ci/postgres.log
       - name: Full large-import certification
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')
         timeout-minutes: 240
         env:
           STOCKCHIEF_RUN_LARGE_IMPORT: '1'
-          STOCKCHIEF_IMPORT_CERTIFICATION_ROWS: ${{ inputs.large_rows }}
+          STOCKCHIEF_IMPORT_CERTIFICATION_ROWS: ${{ inputs.large_rows || '1000000' }}
         run: |
           set -euo pipefail
           node --max-old-space-size=1024 --test tests/certification/inventory-million-rows.test.js 2>&1 | tee output/inventory-ci/large-import.log
