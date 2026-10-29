@@ -28,11 +28,15 @@ function parse(raw){
 const FAILED='I could not finish this request safely. Your goal and recorded work are saved. Any completed operations retain their recorded status.';
 function publicText(value,fallback=FAILED){
  if(typeof value!=='string'||!value.trim())return fallback;
+ // A leading bracket is normal Markdown or a business label. Only an actual
+ // JSON array is a protocol envelope; a link must still pass every independent
+ // evidence and outcome check before it can be delivered as a completed answer.
+ let jsonArray=false;if(/^\s*\[/.test(value))try{jsonArray=Array.isArray(JSON.parse(value));}catch{}
  // Protocol envelopes and exception diagnostics are never a customer answer.
  // Business identifiers often contain several underscores. An identifier in
  // prose or a table is not an exception diagnostic. Retain rejection of bare
  // internal codes, explicit diagnostic labels, protocol envelopes and stacks.
- if(/^\s*(?:[\[{]|```(?:json)?\s*[\[{])/i.test(value)||
+ if(jsonArray||/^\s*(?:\{|```(?:json)?\s*[\[{])/i.test(value)||
   /^\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\s*$/.test(value)||
   /Outcome not fully verified\. Agent report:|^\s*(?:Error|Exception):|\b[A-Z][A-Za-z]*(?:Error|Exception):|\b(?:error(?: code)?|exception|failure code)\s*[:=]\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/i.test(value))return fallback;
  return value.trim().slice(0,20000);

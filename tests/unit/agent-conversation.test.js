@@ -1,6 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../../src/assistant/agent-conversation'),trace=require('../fixtures/recorded-sales-clarification.json');
+test('ordinary leading Markdown links and bracketed business text are not protocol envelopes',()=>{
+ for(const answer of ['[Customer order](/orders/example) is complete.','["Warehouse"](/locations) has the recorded stock.','[מלאי](/inventory) נבדק.','[Article] is the product label.']){
+  assert.equal(contract.publicText(answer),answer);
+  assert.equal(contract.classify({report:{status:'completed',outcome:'answer',answer,claims:[]},verified:true}).answer,answer);
+  assert.equal(contract.classify({report:{status:'completed',outcome:'answer',answer,claims:[]},verified:false}).status,'BLOCKED','Formatting never substitutes for host evidence verification');
+ }
+ for(const envelope of ['[]','[1,true,null]','["a","b"]','[{"status":"completed"}]','{"status":','```json\n[1,2]\n```','```\n{"status":"completed"}\n```'])assert.equal(contract.publicText(envelope),contract.FAILED);
+});
 
 test('ordinary business exception and error explanations remain readable while technical diagnostics stay blocked',()=>{
  for(const heading of ['Review exception:','Delivery exception:','Pricing error:','Payment exception:']){
