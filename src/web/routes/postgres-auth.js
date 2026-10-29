@@ -36,6 +36,7 @@ function matchingPasswords(body){
 
 function createPostgresAuthRouter(database,options={}) {
   const router = express.Router();
+  router.get('/password-policy.js',(req,res)=>res.type('application/javascript').sendFile(require('node:path').join(__dirname,'../../lib/password-policy.js')));
   router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();res.locals.subscriptionTestMode=commercialRelease.stagingTestCheckout();if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
   const checkoutAvailable=()=>options.testMode===true&&process.env.NODE_ENV==='test'
     ?Promise.resolve(true):commercialRelease.isSubscriptionCheckoutOpen(database);

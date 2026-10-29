@@ -57,33 +57,9 @@ function normaliseEmail(value) {
 }
 
 function checkPasswordStrength(password) {
-  const value = typeof password === 'string' ? password : '';
-  if (value.length < 12) {
-    throw new ValidationError('Use at least 12 characters for your password.', { field: 'password' });
-  }
-  if (value.length > 200) {
-    throw new ValidationError('That password is too long.', { field: 'password' });
-  }
-  if (value !== value.trim()) {
-    throw new ValidationError('Remove spaces from the beginning or end of your password.', { field: 'password' });
-  }
-  if (!/[A-Za-z]/.test(value) || !/[^A-Za-z0-9\s]/.test(value)) {
-    throw new ValidationError('Use at least one letter and one symbol in your password.', { field: 'password' });
-  }
-  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const common = new Set([
-    'password1234', 'password12345', 'qwerty123456', 'letmein123456', 'welcome123456',
-    'admin12345678', 'stockchief123', 'changeme1234', '123456789012', '1234567890123456',
-  ]);
-  const repeated = /^(.)\1+$/u.test(value);
-  const numeric = /^\d+$/u.test(value);
-  const sequential = 'abcdefghijklmnopqrstuvwxyz'.includes(compact)
-    || 'zyxwvutsrqponmlkjihgfedcba'.includes(compact)
-    || '01234567890123456789'.includes(compact);
-  if (common.has(compact) || repeated || numeric || sequential) {
-    throw new ValidationError('Choose a less predictable password or a longer passphrase.', { field: 'password' });
-  }
-  return value;
+  const result=require('../lib/password-policy').assess(password);
+  if(!result.valid)throw new ValidationError(result.error,{field:'password'});
+  return password;
 }
 
 
