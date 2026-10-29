@@ -75,7 +75,12 @@ async function purgeWorkspace(c,workspaceId){
   for(const [oid,r] of ready){order.push(r);active.delete(oid);}
  }
 
- for(const r of order)await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
+ // Product/SKU delete triggers still update their maintained account capacity.
+ // This derived row has no FK to the products it counts, so the dependency
+ // graph alone cannot keep it alive until their canonical deletes complete.
+ const capacityCounter=r=>r.schema==='stockchief_runtime'&&r.name==='inventory_capacity';
+ const deletionOrder=[...order.filter(r=>!capacityCounter(r)),...order.filter(capacityCounter)];
+ for(const r of deletionOrder)await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
  await c.query('UPDATE accounts SET last_workspace_id=NULL WHERE last_workspace_id=$1',[workspaceId]);
  await c.query('DELETE FROM workspaces WHERE id=$1',[workspaceId]);return {deleted:true};
 }

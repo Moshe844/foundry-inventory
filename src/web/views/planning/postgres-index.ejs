@@ -2,6 +2,9 @@
    const unmeasured = rows.filter(row => row.dailyRate <= 0).length; %>
 
 <p class="rm-stamp">What happens next · Evidence-based planning · <%= scanned %> product<%= scanned === 1 ? '' : 's' %> reviewed</p>
+<% if(coverage.partial||coverage.afterSkuId){ %><p class="rm-sub">Showing <%= scanned %> SKUs on this page. Shortages, transfers and inventory value below describe this page. Scheduled checks continue through every eligible SKU.
+ <% if(coverage.partial){ %><a class="rm-u" href="/planning?after=<%= encodeURIComponent(coverage.nextAfterSkuId) %>">Next SKUs</a><% } %>
+ <% if(coverage.afterSkuId){ %> · <a class="rm-u" href="/planning">First page</a><% } %></p><% } %>
 <h1 class="rm-figure"><% if (!scanned) { %>Nothing to forecast yet.<% } else if (shortages.length) { %><%= shortages.length %> stock position<%= shortages.length === 1 ? ' is' : 's are' %> heading for a shortage.<% } else if (unmeasured) { %>No shortage is proven; <%= unmeasured %> position<%= unmeasured === 1 ? ' needs' : 's need' %> demand history.<% } else { %>No measured shortage is approaching.<% } %></h1>
 <p class="rm-sub">
   StockChief compares physical stock, customer commitments, incoming purchases and recorded demand.

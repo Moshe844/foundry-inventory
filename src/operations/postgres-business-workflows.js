@@ -97,11 +97,7 @@ async function accountId(client, workspaceId, systemKey) {
 }
 
 async function numbered(client, workspaceId, table, prefix) {
-  if (!['purchase_orders', 'sales_orders', 'accounting_supplier_bills', 'accounting_customer_invoices',
-    'accounting_payments'].includes(table)) throw new Error('Unsupported numbering table.');
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`number:${workspaceId}:${table}`]);
-  const result = await client.query(`SELECT COUNT(*) AS count FROM ${table} WHERE workspace_id=$1`, [workspaceId]);
-  return `${prefix}-${String(Number(result.rows[0].count) + 1).padStart(5, '0')}`;
+  return require('./postgres-business-numbers').next(client,workspaceId,table,prefix);
 }
 
 async function event(client, table, fields, values) {

@@ -152,10 +152,10 @@ test('a CSV somebody renamed .xlsx is read rather than refused', () => {
 
 test('the reader refuses a file claiming to be enormous', () => {
   assert.ok(xlsxReader.LIMITS.maxTotalBytes > 0);
-  assert.ok(xlsxReader.LIMITS.maxEntryBytes >= 512 * 1024 * 1024,
-    'a normal 250k-row worksheet is not rejected by the obsolete 64 MiB expanded-sheet ceiling');
+  assert.ok(xlsxReader.LIMITS.maxEntryBytes > 0 && xlsxReader.LIMITS.maxEntryBytes <= xlsxReader.LIMITS.maxTotalBytes,
+    'expanded workbook bytes have a separate deployment ceiling from plan row allowances');
   assert.ok(xlsxReader.LIMITS.maxRows >= 1000000,
-    'XLSX and delimited imports share the same million-row local certification gate');
+    'the row ceiling does not silently truncate a workbook');
   assert.throws(
     () => parser.parse({ buffer: { length:parser.LIMITS.maxBytes + 1 }, filename: 'big.xlsx' }),
     /larger than StockChief can read/

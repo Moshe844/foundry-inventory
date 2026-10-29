@@ -67,7 +67,7 @@ The fields you may choose from:
 - description: extra wording about the product, when a separate name column
   already exists.
 - unitLabel: the unit it is counted in ("box", "kg", "each").
-- variant1, variant2, variant3: columns whose values are versions of the same
+- variant1 through variant32: columns whose values are versions of the same
   product — a size, a colour, a style. Put the thing they vary BY in axisName.
 - quantity: how many there are. Must be a column of numbers.
 - sellingPrice: the explicit retail, sale, list or customer price per unit.

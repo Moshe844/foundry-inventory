@@ -58,7 +58,10 @@ async function jsonRequest(url, options = {}) {
     error.status = 503;
     throw error;
   }
-  const text = await response.text();
+  let text;
+  try{text=await readResponseText(response);}catch(error){
+    error.providerOutcomeUncertain=!['GET','HEAD','OPTIONS'].includes(String(options.method||'GET').toUpperCase());throw error;
+  }
   if(response.status>=300&&response.status<400)throw new ValidationError('The store redirected an authenticated API request. Use its final HTTPS store address; no credentials were forwarded.');
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch {
@@ -80,6 +83,20 @@ async function jsonRequest(url, options = {}) {
   return { body, headers: response.headers, status: response.status };
 }
 
+// A provider page must fit within a bounded transport envelope, including
+// endpoints without pagination. Never trust Content-Length alone: compressed
+// and chunked bodies can be larger than the advertised transfer size.
+async function readResponseText(response,maxBytes=32*1024*1024){
+  const tooLarge=()=>new ValidationError('The provider response is too large to process safely. Use smaller provider pages or a staged catalogue import.');
+  if(Number(response.headers?.get('content-length'))>maxBytes){await response.body?.cancel();throw tooLarge();}
+  if(!response.body?.getReader){const text=await response.text();if(Buffer.byteLength(text)>maxBytes)throw tooLarge();return text;}
+  const reader=response.body.getReader();const chunks=[];let bytes=0;
+  try{for(;;){const {value,done}=await reader.read();if(done)break;bytes+=value.byteLength;
+    if(bytes>maxBytes){await reader.cancel();throw tooLarge();}chunks.push(Buffer.from(value));}
+    return Buffer.concat(chunks,bytes).toString('utf8');
+  }finally{reader.releaseLock();}
+}
+
 /** Preserve a provider's destination without supplying absent address parts. */
 function postalAddress(parts = {}) {
   const fields = [parts.line1, parts.line2, parts.city, parts.region, parts.postalCode, parts.country];
@@ -87,4 +104,4 @@ function postalAddress(parts = {}) {
   return values.length ? values.join(', ') : null;
 }
 
-module.exports = { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest, postalAddress };
+module.exports = { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest, postalAddress, readResponseText };

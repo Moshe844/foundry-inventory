@@ -170,12 +170,15 @@ async function meterState(database, scope, meter, options = {}) {
   [scope.accountId,scope.workspaceId || null,meter,options.now || null])).rows[0];
   const {start,end} = periodBounds(subscription,options.now ? new Date(options.now) : new Date());
   const liveQueries={
+    active_skus:`SELECT COALESCE(SUM(capacity.active_skus),0) AS used FROM stockchief_runtime.inventory_capacity capacity
+      JOIN workspaces workspace ON workspace.id=capacity.workspace_id
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     workspaces:`SELECT COUNT(*) AS used FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL`,
     members:`SELECT COUNT(DISTINCT COALESCE(member.account_id,member.id)) AS used FROM users member JOIN workspaces workspace ON workspace.id=member.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     locations:`SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1`,
-    products:`SELECT COUNT(*) AS used FROM items item JOIN workspaces workspace ON workspace.id=item.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND item.is_active=1`,
+    products:`SELECT COALESCE(SUM(capacity.active_products),0) AS used FROM stockchief_runtime.inventory_capacity capacity JOIN workspaces workspace ON workspace.id=capacity.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     scheduled_reports:`SELECT COUNT(*) AS used FROM stockchief_runtime.report_templates report JOIN workspaces workspace ON workspace.id=report.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND report.deleted_at IS NULL AND report.schedule_frequency<>'none'`,
     sales_channels:require('./connection-capacity').countQuery('sales_channels'),
     shipping_accounts:require('./connection-capacity').countQuery('shipping_accounts'),
@@ -184,7 +187,8 @@ async function meterState(database, scope, meter, options = {}) {
         AND ${require('./connection-capacity').predicate}`,
   };
   let used;let reserved=0;
-  if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],[scope.accountId])).rows[0].used);
+  if(definition.kind==='PER_OPERATION')used=0;
+  else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],[scope.accountId])).rows[0].used);
   else {const usage=(await database.query(`SELECT
       COALESCE(SUM(units) FILTER(WHERE status='COMMITTED'),0) AS used,
       COALESCE(SUM(units) FILTER(WHERE status='RESERVED'),0) AS reserved
@@ -193,10 +197,10 @@ async function meterState(database, scope, meter, options = {}) {
   let included = override?.limit_units === null || override?.limit_units === undefined
     ? (policy.included_units === null || policy.included_units === undefined ? null : Number(policy.included_units))
     : Number(override.limit_units);
-  const structural=new Set(['workspaces','members','locations','connections','products','scheduled_reports','sales_channels','shipping_accounts']);
-  let hardLimit = override&&structural.has(meter)?Number(override.limit_units):
+  const structural=new Set(['workspaces','members','locations','connections','products','scheduled_reports','sales_channels','shipping_accounts','active_skus','import_rows']);
+  let hardLimit = override&&structural.has(meter)?(override.limit_units===null?null:Number(override.limit_units)):
     policy.hard_limit === null || policy.hard_limit === undefined ? null : Number(policy.hard_limit);
-  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(o.units),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND p.meter=$2 AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
+  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(o.units),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND (p.meter=$2 OR ($2='active_skus' AND p.meter='products')) AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
   const overageMode=policy.overage_mode||'PAUSE';
   if(!structural.has(meter)&&hardLimit===null&&included!==null&&['PAUSE','PURCHASE'].includes(overageMode))hardLimit=included;
   const overageUnits = included === null ? 0 : Math.max(0,used-included);

@@ -25,7 +25,7 @@ const LIMITS = {
 };
 
 /** Splits delimited text, honouring quotes and embedded newlines. */
-function parseDelimited(text, delimiter) {
+function parseDelimited(text, delimiter, { allowIncomplete = false } = {}) {
   const rows = [];
   let row = [];
   let field = '';
@@ -43,7 +43,7 @@ function parseDelimited(text, delimiter) {
     }
 
     if (char === '"' && field === '') { quoted = true; continue; }
-    if (char === delimiter) { row.push(field); field = ''; continue; }
+    if (char === delimiter) { row.push(field); field = ''; if(row.length>=LIMITS.maxColumns)throw new SpreadsheetError('This file exceeds the import column capacity. No columns were silently dropped.'); continue; }
     if (char === '\r') continue;
     if (char === '\n') {
       row.push(field);
@@ -55,6 +55,7 @@ function parseDelimited(text, delimiter) {
     }
     field += char;
   }
+  if(quoted&&!allowIncomplete)throw new SpreadsheetError('This file ends inside a quoted field. No incomplete rows were imported.');
   if (field !== '' || row.length) { row.push(field); rows.push(row); }
   if (rows.length > LIMITS.maxRows + 1) throw new SpreadsheetError('This file exceeds the import row capacity. No rows were truncated or imported. Split the source into reviewed parts.');
   return rows;
@@ -62,7 +63,11 @@ function parseDelimited(text, delimiter) {
 
 /** Whichever separator explains the text best. */
 function detectDelimiter(text) {
-  const sample = text.split(/\r?\n/).slice(0, 20).filter((line) => line.trim());
+  const sample=[];let start=0;
+  for(let line=0;line<20&&start<text.length;line++){
+    const end=text.indexOf('\n',start),next=end<0?text.length:end+1;
+    const value=text.slice(start,next);if(value.trim())sample.push(value);start=next;
+  }
   if (sample.length === 0) return ',';
 
   const candidates = [',', '\t', ';', '|'];
@@ -72,7 +77,7 @@ function detectDelimiter(text) {
     // Title/date rows need not have the table's width. Compare the dominant
     // multi-column shape instead of requiring the first line to be a header.
     // Parse the sample together so quoted fields can contain line breaks.
-    const counts = parseDelimited(sample.join('\n'), delimiter).map(row=>row.length);
+    const counts = parseDelimited(sample.join(''), delimiter,{allowIncomplete:true}).map(row=>row.length);
     const frequencies = new Map();
     for(const count of counts)if(count>1)frequencies.set(count,(frequencies.get(count)||0)+1);
     const [columns,frequency]=[...frequencies].sort((a,b)=>b[1]-a[1]||b[0]-a[0])[0]||[];
@@ -265,14 +270,16 @@ function parse(input) {
   const parsed = looksXlsx
     ? require('./structured-files').archive(input.buffer)||parseWorkbook(input.buffer)
     : extension==='json'||/^\s*[\[{]/.test(sourceText)?require('./structured-files').json(Buffer.from(sourceText))
-    : parseText(sourceText);
+    : input.indexed ? {sheets:[require('./indexed-delimited').indexedDelimited(stripBom(sourceText),detectDelimiter(sourceText),
+      {SpreadsheetError,locateHeader,looksLikeHeader,nameColumns,parseDelimited,maxColumns:LIMITS.maxColumns},
+      {maxRows:input.maxRows??5000000})]} : parseText(sourceText);
 
   // Named like a workbook but not one. A CSV somebody renamed reads perfectly
   // well and should just work; a corrupt or wrong file parses into a single
   // meaningless column, and reading that as inventory would be worse than
   // saying so.
   if (!looksXlsx && /\.xlsx$/i.test(String(input.filename || ''))) {
-    const widest = parsed.sheets.reduce((max, sheet) => Math.max(max, sheet.grid.reduce((w, row) => Math.max(w, row.length), 0)), 0);
+    const widest = parsed.sheets.reduce((max, sheet) => Math.max(max, sheet.columns?.length??sheet.grid.reduce((w, row) => Math.max(w, row.length), 0)), 0);
     if (widest < 2) {
       throw new SpreadsheetError('That file is not a readable spreadsheet.');
     }

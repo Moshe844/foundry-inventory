@@ -23,15 +23,17 @@ const { ValidationError } = require('../domain/errors');
 
 const LIMITS = {
   maxEntries: 512,
-  // A 250k-row workbook routinely expands past 64 MiB even when the uploaded
-  // .xlsx is small.  These are abuse-safety ceilings, not product limits, and
-  // can be sized by the deployment.  Rows are aligned with the canonical
-  // million-row import gate so a workbook is never silently cut at 200k.
-  maxEntryBytes: Number(process.env.FOUNDRY_XLSX_MAX_ENTRY_BYTES || 768 * 1024 * 1024),
-  maxTotalBytes: Number(process.env.FOUNDRY_XLSX_MAX_EXPANDED_BYTES || 1536 * 1024 * 1024),
+  // XML, decoded strings and extracted cells coexist during parsing. Reserve
+  // headroom on the standard 2 GiB worker; large inventories can use CSV.
+  // Larger dedicated deployments may explicitly raise these format limits.
+  maxEntryBytes: Number(process.env.FOUNDRY_XLSX_MAX_ENTRY_BYTES || 128 * 1024 * 1024),
+  maxTotalBytes: Number(process.env.FOUNDRY_XLSX_MAX_EXPANDED_BYTES || 256 * 1024 * 1024),
   maxRows: Number(process.env.FOUNDRY_IMPORT_MAX_ROWS || 1000000),
   maxColumns: 512,
 };
+for (const [name, value] of Object.entries(LIMITS)) {
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid spreadsheet capacity configuration: ${name}.`);
+}
 
 /**
  * A spreadsheet StockChief cannot read.
@@ -60,7 +62,7 @@ function findEndOfCentralDirectory(buffer) {
   const minimum = 22;
   const from = Math.max(0, buffer.length - (minimum + 0xffff));
   for (let i = buffer.length - minimum; i >= from; i -= 1) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) return i;
+    if (buffer.readUInt32LE(i) === 0x06054b50 && i + minimum + buffer.readUInt16LE(i + 20) === buffer.length) return i;
   }
   throw new SpreadsheetError('That file is not a readable spreadsheet.');
 }
@@ -75,31 +77,44 @@ function readZip(buffer) {
   const end = findEndOfCentralDirectory(buffer);
   const entryCount = buffer.readUInt16LE(end + 10);
   let offset = buffer.readUInt32LE(end + 16);
+  const directoryEnd = offset + buffer.readUInt32LE(end + 12);
+  const invalid = () => { throw new SpreadsheetError('That spreadsheet has an incomplete or inconsistent ZIP directory.'); };
+  if (buffer.readUInt16LE(end + 4) || buffer.readUInt16LE(end + 6)
+    || buffer.readUInt16LE(end + 8) !== entryCount || directoryEnd !== end) invalid();
 
   if (entryCount > LIMITS.maxEntries) throw new SpreadsheetError('That spreadsheet has too many parts.');
 
   const entries = new Map();
 
   for (let i = 0; i < entryCount; i += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    if (offset + 46 > directoryEnd || buffer.readUInt32LE(offset) !== 0x02014b50) invalid();
+    const flags = buffer.readUInt16LE(offset + 8);
     const method = buffer.readUInt16LE(offset + 10);
+    const checksum = buffer.readUInt32LE(offset + 16);
     const compressedSize = buffer.readUInt32LE(offset + 20);
     const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const localOffset = buffer.readUInt32LE(offset + 42);
+    if (offset + 46 + nameLength + extraLength + commentLength > directoryEnd
+      || localOffset + 30 > offset || (flags & 1) || ![0, 8].includes(method)) invalid();
     const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
-
+    if (entries.has(name)) invalid();
     if (buffer.readUInt32LE(localOffset) === 0x04034b50) {
       const localNameLength = buffer.readUInt16LE(localOffset + 26);
       const localExtraLength = buffer.readUInt16LE(localOffset + 28);
       const start = localOffset + 30 + localNameLength + localExtraLength;
-      entries.set(name, { method,compressedSize,uncompressedSize,start });
-    }
+      if (start + compressedSize > buffer.readUInt32LE(end + 16)
+        || buffer.readUInt16LE(localOffset + 8) !== method
+        || buffer.readUInt16LE(localOffset + 6) !== flags
+        || buffer.toString('utf8', localOffset + 30, localOffset + 30 + localNameLength) !== name) invalid();
+      entries.set(name, { method,compressedSize,uncompressedSize,start,checksum });
+    } else invalid();
 
     offset += 46 + nameLength + extraLength + commentLength;
   }
+  if (offset !== directoryEnd) invalid();
   // Inflate only workbook parts StockChief actually reads. Large exports often
   // contain previews, images or cached objects unrelated to inventory; the old
   // eager map expanded all of them before reading a single cell.
@@ -111,19 +126,26 @@ function readZip(buffer) {
       const entry = entries.get(name);
       if (!entry) return undefined;
       if (entry.uncompressedSize > LIMITS.maxEntryBytes) {
-        throw new SpreadsheetError('One worksheet is larger than this deployment can safely process.');
+        throw new SpreadsheetError('One worksheet is larger than this deployment can safely process. Use a CSV export for larger inventories.');
       }
       if (expanded + entry.uncompressedSize > LIMITS.maxTotalBytes) {
-        throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity.');
+        throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity. Use a CSV export for larger inventories.');
       }
       const raw = buffer.subarray(entry.start, entry.start + entry.compressedSize);
+      const remaining = Math.min(LIMITS.maxEntryBytes, LIMITS.maxTotalBytes - expanded);
+      if (remaining < 1 || (entry.method === 0 && raw.length > remaining)) {
+        throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity. Use a CSV export for larger inventories.');
+      }
       let value;
       try {
         value = entry.method === 0
           ? Buffer.from(raw)
-          : zlib.inflateRawSync(raw, { maxOutputLength: LIMITS.maxEntryBytes });
+          : zlib.inflateRawSync(raw, { maxOutputLength: remaining });
       } catch {
         throw new SpreadsheetError('Part of that spreadsheet could not be read.');
+      }
+      if (value.length !== entry.uncompressedSize || zlib.crc32(value) !== entry.checksum) {
+        throw new SpreadsheetError('Part of that spreadsheet is damaged or has an inconsistent size. Export it again before importing.');
       }
       expanded += value.length;
       cache.set(name,value);
@@ -251,7 +273,7 @@ function readSheet(xml, sharedStrings, dateStyles) {
       const content = cellMatch[2] || '';
       const reference = /r="([A-Z]+\d+)"/.exec(attributes);
       const index = reference ? columnIndex(reference[1]) : cells.length;
-      if (index >= LIMITS.maxColumns) continue;
+      if (index >= LIMITS.maxColumns) throw new SpreadsheetError(`A worksheet exceeds ${LIMITS.maxColumns} columns. No columns were discarded.`);
 
       const type = /t="([^"]+)"/.exec(attributes);
       const style = /s="(\d+)"/.exec(attributes);
@@ -335,7 +357,7 @@ function readWorkbook(buffer, { transformSheet = (sheet) => sheet } = {}) {
     .map(({ name, path }) => {
       const fallback = path.replace('xl/', 'xl/worksheets/');
       const part = files.get(path) || files.get(fallback);
-      if (!part) return null;
+      if (!part) throw new SpreadsheetError(`The worksheet ${name} is missing from the file. Export it again before importing.`);
       const sheet = transformSheet({ name, rows: readSheet(part, sharedStrings, dateStyles) });
       files.release(path); files.release(fallback);
       return sheet;

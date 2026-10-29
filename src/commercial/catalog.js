@@ -84,6 +84,8 @@ const METERS = Object.freeze([
   ['members','People','STRUCTURAL',true,true],
   ['locations','Locations','STRUCTURAL',true,true],
   ['connections','Connections','STRUCTURAL',true,true],
+  ['active_skus','Active SKUs','STRUCTURAL',true,true],
+  ['import_rows','Rows per import','PER_OPERATION',true,true],
   ['business_communications','Business communications processed','USAGE',false,false],
   ['document_pages','Document pages processed','USAGE',false,false],
   ['intelligent_operations','StockChief intelligent operations','USAGE',false,false],

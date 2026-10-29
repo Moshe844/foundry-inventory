@@ -1,5 +1,13 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),qbo=require('../../src/connections/providers/quickbooks'),xero=require('../../src/connections/providers/xero');
+test('Clover fixed-point sales preserve fractional evidence without inflating stock by 1000',async()=>{
+ const original=global.fetch,adapter=require('../../src/connections/providers/clover');
+ global.fetch=async()=>Response.json({id:'order',modifiedTime:1790000000000,paymentState:'PAID',lineItems:{elements:[
+  {id:'whole',item:{id:'sku'},unitQty:2000,price:100},{id:'measured',item:{id:'sku'},unitQty:1250,price:100}]}});
+ try{const events=await adapter.normalizeWebhook({credentials:{merchantId:'merchant',environment:'sandbox',accessToken:'fixture'},connection:{provider_account_id:'merchant'},body:{merchants:{merchant:[{objectId:'O:order',type:'UPDATE',ts:1790000000000}]}}});
+  assert.deepEqual(events.map(e=>e.data.quantity),[2,1.25]);
+ }finally{global.fetch=original;}
+});
 test('Clover discovery preserves absent and zero prices, authoritative currency and exact stock',async()=>{
  const original=global.fetch,adapter=require('../../src/connections/providers/clover');
  global.fetch=async value=>{const url=new URL(value);if(url.pathname.endsWith('/properties'))return Response.json({defaultCurrency:'CAD'});
@@ -18,7 +26,7 @@ test('accounting catalogues preserve zero prices, exact currency, whole quantiti
   if(url.pathname.endsWith('/Organisation'))return Response.json({Organisations:[{Name:'Fixture organization',BaseCurrency:'JPY'}]});
   assert(url.pathname.endsWith('/Items'));return Response.json({Items:[{ItemID:'x-stock',Code:'X-1',Name:'Tracked',IsTrackedAsInventory:true,QuantityOnHand:4,SalesDetails:{UnitPrice:0}},{ItemID:'x-catalog',Code:'X-2',Name:'Catalog only',IsTrackedAsInventory:false,QuantityOnHand:99}]});
  };
- try{const qb=await qbo.discover({credentials:{realmId:'company',accessToken:'fixture'}});assert.equal(qb.products.length,2);assert.deepEqual(qb.products[0].providerData.priceMoney,{amount:0,currency:'BHD'});assert.equal(qb.products[0].providerData.inventoryCounts[0].quantity,0);assert.equal(qb.products[1].providerData.priceMoney.amount,1234);assert.match(require('../../src/connections/catalog-record-policy').exclusion(qb.products[1].providerData),/fractional/);assert.equal(qb.locations[0].providerData.stockGranularity,'organization');assert.equal(itemCalls,1);
+ try{const qb=await qbo.discover({credentials:{realmId:'company',accessToken:'fixture'}});assert.equal(qb.products.length,2);assert.deepEqual(qb.products[0].providerData.priceMoney,{amount:0,currency:'BHD'});assert.equal(qb.products[0].providerData.inventoryCounts[0].quantity,0);assert.equal(qb.products[1].providerData.priceMoney.amount,1234);assert.equal(require('../../src/connections/catalog-record-policy').exclusion(qb.products[1].providerData),null);assert.match(qb.products[1].providerData.inventoryCountUnavailable,/fractional/);assert.deepEqual(require('../../src/connections/catalog-record-policy').openingCounts(qb.products[1].providerData),[]);assert.equal(qb.locations[0].providerData.stockGranularity,'organization');assert.equal(itemCalls,1);
  const xr=await xero.discover({credentials:{tenantId:'tenant',accessToken:'fixture'}});assert.deepEqual(xr.products[0].providerData.priceMoney,{amount:0,currency:'JPY'});assert.equal(xr.products[0].providerData.inventoryCounts[0].quantity,4);assert.deepEqual(xr.products[1].providerData.inventoryCounts,[]);assert.equal(xr.locations[0].externalId,'tenant');
  }finally{global.fetch=original;}
 });

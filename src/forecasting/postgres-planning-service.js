@@ -75,9 +75,14 @@ async function saveGoals(database, ctx, input) {
   return goals(database, ctx.workspaceId);
 }
 
-async function position(database,workspaceId,{recommendationsOnly=false}={}){
- const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly});
- return source.map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
+async function position(database,workspaceId,{recommendationsOnly=false,afterSkuId=null,limitSkus=null,onlySkuIds=null}={}){
+ if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Choose a planning page of at most 1,000 SKUs.');
+ if(afterSkuId!==null&&(typeof afterSkuId!=='string'||afterSkuId.length>160))throw new ValidationError('Invalid planning page.');
+ const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly,afterSkuId,limitSkus,onlySkuIds});
+ const ids=[...new Set(source.map(r=>r.sku_id))],selected=new Set(limitSkus===null?ids:ids.slice(0,limitSkus));
+ const result=source.filter(r=>selected.has(r.sku_id)).map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
+ Object.defineProperty(result,'coverage',{value:{partial:limitSkus!==null&&ids.length>limitSkus,afterSkuId,nextAfterSkuId:[...selected].at(-1)||null,scanned:selected.size}});
+ return result;
 }
 
 async function ensureRecommendations(database, workspaceId, rows) {
@@ -125,9 +130,9 @@ function transfers(rows) {
   }));
 }
 
-async function overview(database, workspaceId) {
+async function overview(database, workspaceId, {afterSkuId=null}={}) {
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
-  const goal = await goals(database, workspaceId); const rows = await position(database, workspaceId);
+  const goal = await goals(database, workspaceId); const rows = await position(database, workspaceId,{afterSkuId,limitSkus:250});
   const maxDays = goal.maxDaysOfSupply || 90;
   const shortages = rows.filter(row => row.shortage).sort((a, b) => (a.daysOfSupply ?? 999999) - (b.daysOfSupply ?? 999999));
   const excess = rows.filter(row => row.scope!=='workspace'&&row.onHand > 0 && ((row.targetStock !== null && row.onHand > row.targetStock)
@@ -138,14 +143,19 @@ async function overview(database, workspaceId) {
   const heldMinor = rows.filter(row=>row.scope!=='workspace').reduce((sum, row) => sum + (row.costMinor === null ? 0 : row.onHand * row.costMinor), 0);
   return { scanned:new Set(rows.map(row => row.sku_id)).size,rows,shortages,excess,transfers:transfers(rows),
     recommendations:await openRecommendations(database,workspaceId),goals:goal,accuracy:await accuracy(database,workspaceId),
-    heldMinor,inventoryCapMinor:goal.inventoryCapMinor };
+    heldMinor,inventoryCapMinor:goal.inventoryCapMinor,coverage:rows.coverage };
 }
 
 // Derived recommendation persistence belongs to an authorized background
 // evaluation. Inspecting a forecast is a read, including for the agent browser.
-async function refreshRecommendations(database,workspaceId){
+async function refreshRecommendations(database,workspaceId,options={}){
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
-  await ensureRecommendations(database,workspaceId,await position(database,workspaceId,{recommendationsOnly:true}));
+  let afterSkuId=options.afterSkuId||null;
+  for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250});
+   await ensureRecommendations(database,workspaceId,rows);
+   if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
+   afterSkuId=rows.coverage.nextAfterSkuId;
+  }
 }
 
 async function decide(database, ctx, id, decision) {

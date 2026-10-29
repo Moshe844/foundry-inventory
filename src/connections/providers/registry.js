@@ -25,7 +25,7 @@ const generic = Object.freeze({
 const future = Object.freeze([
   { type: 'erp_future', name: 'An ERP not listed here', mark: 'ERP', category: 'business', available: true,
     integrationMode: 'custom_contract',
-    description: 'Name the system and StockChief sets up a connection for it using the same events as everything else. A ready-made connector is added once that system has been certified.',
+    description: 'Connect another ERP through an agreed API or file contract. Its identifiers, units, stock rules and event ordering must be mapped and tested before synchronization is enabled. A ready-made connector is added after certification.',
     provides: ['sales, orders, fulfillment, returns, receipts, transfers, adjustments, products and locations'] },
 ]);
 

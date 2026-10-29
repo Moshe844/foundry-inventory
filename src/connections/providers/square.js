@@ -111,25 +111,33 @@ async function api(credentials, path, options = {}) {
   });
 }
 
-async function discover({ credentials }) {
+async function discover({ credentials, onProduct }) {
+  const scratch=onProduct?require('../../imports/validation-scratch').create():null;
+  try{
   const locationsResponse = await api(credentials, '/v2/locations');
   const locations = (locationsResponse.body.locations || []).map((location) => ({ entityType: 'location',
     externalId: location.id, displayName: location.name || location.business_name || location.id,
     providerData: { status: location.status, type: location.type } }));
-  const objects = []; let cursor = null;
+  const itemNames=scratch?scratch.map('square-item-names'):new Map(),variations=scratch?scratch.map('square-variations'):new Map();
+  let cursor = null;
   do {
     const url = new URL(`${credentials.environment === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'}/v2/catalog/list`);
     url.searchParams.set('types', 'ITEM,ITEM_VARIATION'); if (cursor) url.searchParams.set('cursor', cursor);
     const response = await jsonRequest(url, { headers: { authorization: `Bearer ${credentials.accessToken}`, 'square-version': API_VERSION } });
-    objects.push(...(response.body.objects || [])); cursor = response.body.cursor || null;
+    for(const object of response.body.objects||[]){
+      if(object.type==='ITEM')itemNames.set(object.id,object.item_data?.name||object.id);
+      if(object.type==='ITEM_VARIATION')variations.set(object.id,object);
+    }
+    const next=response.body.cursor||null;
+    if(next&&next===cursor)throw new ValidationError('Square catalogue pagination did not advance. No catalogue was published.');
+    cursor=next;
   } while (cursor);
-  const itemNames = new Map(objects.filter((o) => o.type === 'ITEM').map((o) => [o.id, o.item_data?.name || o.id]));
-  const variations = objects.filter((o) => o.type === 'ITEM_VARIATION');
-  const countsByVariation = new Map();
+  const products=[];
   // Square accepts at most 1,000 catalog IDs and paginates the resulting
   // location counts independently. Never silently omit a later store or SKU.
-  for (let offset=0;offset<variations.length;offset+=1000) {
-    const ids=variations.slice(offset,offset+1000).map(variation=>variation.id);
+  async function processPage(pageVariations){
+    const countsByVariation=new Map();
+    const ids=pageVariations.map(variation=>variation.id);
     let countCursor=null;const seen=new Set();
     do {
       const page=(await api(credentials, '/v2/inventory/counts/batch-retrieve', { method: 'POST',
@@ -144,8 +152,7 @@ async function discover({ credentials }) {
       if(countCursor&&seen.has(countCursor))throw new ValidationError('Square inventory pagination did not advance. No stock was assumed for missing pages.');
       if(countCursor)seen.add(countCursor);
     }while(countCursor);
-  }
-  const products = variations.map((variation) => ({ entityType: 'sku',
+    for(const variation of pageVariations){const record={ entityType: 'sku',
     externalId: variation.id, parentExternalId: variation.item_variation_data?.item_id,
     code: variation.item_variation_data?.sku || null,
     displayName: `${itemNames.get(variation.item_variation_data?.item_id) || 'Square item'}${variation.item_variation_data?.name ? ` / ${variation.item_variation_data.name}` : ''}`,
@@ -157,8 +164,14 @@ async function discover({ credentials }) {
       priceMoney: variation.item_variation_data?.price_money || null,
       locationPriceOverrides:variation.item_variation_data?.location_overrides||[],
       inventoryCounts: countsByVariation.get(variation.id) || [] },
-  }));
+    };
+    if(onProduct)onProduct(record);else products.push(record);
+    }
+  }
+  let batch=[];for(const [,variation] of variations){batch.push(variation);if(batch.length===1000){await processPage(batch);batch=[];}}
+  if(batch.length)await processPage(batch);
   return { products, locations };
+  }finally{scratch?.close();}
 }
 
 async function registerWebhooks({ credentials, webhookUrl }) {

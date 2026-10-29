@@ -24,14 +24,16 @@ test('PostgreSQL provider discovery exact-maps safe records, queues signed chang
     const adapter={
       metadata(){return {type:'fixture_catalog',name:'Fixture Commerce',mark:'FC',category:'selling',authMode:'oauth',
         available:true,description:'Fixture provider discovery.',provides:['products and locations']};},
-      async discover({credentials:providerCredentials}){
+      async discover({credentials:providerCredentials,onProduct}){
         discoveries+=1;assert.equal(providerCredentials.accessToken,'provider-secret');
-        return {products:[
+        const found={products:[
           {entityType:'sku',externalId:'external-safe',code:'SAFE-1',displayName:'Safe product',
             providerData:{itemName:'Safe product',variationName:null}},
           {entityType:'sku',externalId:'external-ambiguous',code:'NO-MATCH',displayName:'Provider-only product',
             providerData:{itemName:'Provider-only product',variationName:null}},
         ],locations:[{entityType:'location',externalId:'external-store',displayName:'Provider Store',providerData:{active:true}}]};
+        if(discoveries===1){found.products.forEach(onProduct);return {...found,products:[]};}
+        return found;
       },
     };
     const providers={get(type){return type==='fixture_catalog'?adapter:null;},catalog(){return [adapter.metadata()];}};
@@ -103,4 +105,12 @@ test('PostgreSQL provider discovery exact-maps safe records, queues signed chang
     assert.match(await page.locator('main').innerText(),/Provider-only product needs a StockChief match/);
     assert.match(await page.locator('main').innerText(),/Choose the matching StockChief record once/);
     assert.deepEqual(errors,[]);
+    const failedProviders={get:()=>({...adapter,async discover({onProduct}){
+      onProduct({externalId:'incomplete-page',code:'BAD',displayName:'Incomplete provider read'});
+      throw new Error('Provider page unavailable');
+    }})};
+    await assert.rejects(require('../../src/connections/postgres-provider-sync').sync(
+      {id:'failed-stream',workspaceId:ctx.workspaceId,payload:{connectorId}},database,failedProviders),/Provider page unavailable/);
+    assert.equal(Number((await database.query('SELECT count(*) n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND selected=1',[ctx.workspaceId,connectorId])).rows[0].n),3,'A failed discovery cannot replace the last complete catalogue');
+    assert.equal((await database.query("SELECT id FROM connection_external_records WHERE workspace_id=$1 AND external_id='incomplete-page'",[ctx.workspaceId])).rows.length,0);
   });

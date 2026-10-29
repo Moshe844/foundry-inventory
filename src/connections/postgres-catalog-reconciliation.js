@@ -35,16 +35,27 @@ async function reconcile(client,c,previous){
  const ctx={workspaceId:c.workspace_id,actorId:c.authorized_by_user_id};
  const actor=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(actor?.role!=='owner')throw new AuthorizationError('Automatic catalogue authority changed. The business owner must review this connection.');
- const rows=(await client.query(`SELECT e.*,m.id AS mapping_id,m.foundry_record_id,m.catalog_sync_state,s.item_id
+ // Compute family-wide ambiguity once in PostgreSQL (which can spill its
+ // aggregation to disk). Never decide a name from just the current page.
+ await client.query(`CREATE TEMP TABLE stockchief_catalog_sync_names ON COMMIT DROP AS
+  SELECT s.item_id,COUNT(DISTINCT NULLIF(e.provider_data::jsonb->>'itemName',''))::integer AS name_count
   FROM connection_external_records e JOIN connection_mappings m ON m.workspace_id=e.workspace_id AND m.connector_id=e.connector_id AND m.entity_type=e.entity_type AND m.external_id=e.external_id
   JOIN skus s ON s.workspace_id=e.workspace_id AND s.id=m.foundry_record_id
-  WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.entity_type='sku' AND e.selected=1 AND e.mapping_status='MAPPED' AND s.is_active=1 FOR UPDATE OF m`,[c.workspace_id,c.id])).rows;
- const names=new Map();for(const row of rows){const name=parse(row.provider_data,{}).itemName;if(!names.has(row.item_id))names.set(row.item_id,new Set());if(name)names.get(row.item_id).add(name);}
- const result={names:0,prices:0,conflicts:0};
+  WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.entity_type='sku' AND e.selected=1 AND e.mapping_status='MAPPED' AND s.is_active=1
+  GROUP BY s.item_id`,[c.workspace_id,c.id]);
+ await client.query('CREATE UNIQUE INDEX ON stockchief_catalog_sync_names(item_id)');
+ const result={names:0,prices:0,conflicts:0};let after=null;
+ for(;;){
+ const rows=(await client.query(`SELECT e.*,m.id AS mapping_id,m.foundry_record_id,m.catalog_sync_state,s.item_id,names.name_count
+  FROM connection_external_records e JOIN connection_mappings m ON m.workspace_id=e.workspace_id AND m.connector_id=e.connector_id AND m.entity_type=e.entity_type AND m.external_id=e.external_id
+  JOIN skus s ON s.workspace_id=e.workspace_id AND s.id=m.foundry_record_id
+  JOIN stockchief_catalog_sync_names names ON names.item_id=s.item_id
+  WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.entity_type='sku' AND e.selected=1 AND e.mapping_status='MAPPED' AND s.is_active=1
+    AND ($3::text IS NULL OR e.external_id>$3) ORDER BY e.external_id LIMIT 500 FOR UPDATE OF m`,[c.workspace_id,c.id,after])).rows;
  for(const row of rows){
   const data=parse(row.provider_data,{});if(exclusion(data))continue;
   let state=parse(row.catalog_sync_state,{});
-  if(state.imported&&state.itemId===row.item_id&&!state.nameConflict&&!state.priceConflict&&names.get(row.item_id).size===1&&
+  if(state.imported&&state.itemId===row.item_id&&!state.nameConflict&&!state.priceConflict&&Number(row.name_count)===1&&
     state.nameBase===data.itemName&&same(state.priceBase,data.priceMoney||null))continue;
   const item=(await client.query('SELECT * FROM items WHERE workspace_id=$1 AND id=$2 AND is_active=1 FOR UPDATE',[c.workspace_id,row.item_id])).rows[0];if(!item)continue;
   const price=await prices.currentPrice(client,c.workspace_id,row.foundry_record_id);
@@ -62,7 +73,7 @@ async function reconcile(client,c,previous){
   if(typeof state.nameBase!=='string'&&wantedName===item.name)state.nameBase=item.name;
   if(typeof state.nameBase!=='string'&&typeof wantedName==='string'&&wantedName!==item.name){state.nameConflict=true;await issue(client,c,row,'name',true);result.conflicts++;}
   if(typeof state.nameBase==='string'&&typeof wantedName==='string'&&wantedName.trim()){
-   const conflict=names.get(item.id).size!==1||(wantedName!==state.nameBase&&item.name!==state.nameBase&&item.name!==wantedName);
+   const conflict=Number(row.name_count)!==1||(wantedName!==state.nameBase&&item.name!==state.nameBase&&item.name!==wantedName);
    state.nameConflict=conflict;
    await issue(client,c,row,'name',conflict);
    if(conflict)result.conflicts++;
@@ -93,6 +104,9 @@ async function reconcile(client,c,previous){
   }else if(wanted){state.priceConflict=false;await issue(client,c,row,'price',false);}
   await save(client,c.workspace_id,row.mapping_id,state);
  }
+ if(rows.length<500)break;after=rows.at(-1).external_id;
+ }
+ await client.query('DROP TABLE pg_temp.stockchief_catalog_sync_names');
  return result;
 }
 module.exports={register,reconcile};

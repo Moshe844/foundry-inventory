@@ -9,7 +9,7 @@ test('Published plan allowances govern the actual canonical services',{timeout:2
   await assert.rejects(()=>service.accept(db,scope.accountId,{confirm:'1'}),/saved terms/);assert.equal((await ent.subscriptionFor(db,scope.accountId)).plan_version_id,null);
  });
  await t.test('reference limits are real and annual is exactly ten monthly payments',async()=>{
-  for(const [id,credits,emails,users,locations,products]of [['starter',3000,1000,3,2,5000],['growth',10000,10000,10,10,50000],['pro',25000,50000,25,null,250000]]){
+  for(const [id,credits,emails,users,locations,products]of [['starter',3000,1000,3,2,500],['growth',10000,10000,10,10,25000],['pro',25000,50000,25,null,250000]]){
    await db.query('UPDATE account_subscriptions SET plan_id=$2 WHERE account_id=$1',[scope.accountId,id]);
    for(const [meter,included]of Object.entries({ai_work_credits:credits,emails_sent:emails,members:users,locations,products}))assert.equal((await ent.meterState(db,scope,meter)).included,included,id+' '+meter);
    const p=(await db.query('SELECT * FROM commercial_plans WHERE id=$1',[id])).rows[0];assert.equal(Number(p.annual_amount_minor),Number(p.monthly_amount_minor)*10);assert.equal(Number(p.trial_days),0);

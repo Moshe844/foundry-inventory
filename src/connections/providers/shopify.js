@@ -172,7 +172,7 @@ async function graphql(credentials, query, variables = {}) {
   return body.data;
 }
 
-async function bootstrapSnapshot({ credentials }) {
+async function bootstrapSnapshot({ credentials, onVariant }) {
   const productsById = new Map(); let cursor = null; let currency = 'USD';
   do {
     const data = await graphql(credentials, `query CatalogBootstrap($after:String){
@@ -220,9 +220,12 @@ async function bootstrapSnapshot({ credentials }) {
           available: level.quantities?.find(quantity=>quantity.name==='available')?.quantity??null,
         })),
       });
-      productsById.set(product.externalId, product);
+      if(onVariant)onVariant(product,product.variants[0],currency);
+      else productsById.set(product.externalId, product);
     }
-    cursor = data.productVariants.pageInfo.hasNextPage ? data.productVariants.pageInfo.endCursor : null;
+    const nextCursor=data.productVariants.pageInfo.hasNextPage?data.productVariants.pageInfo.endCursor:null;
+    if(data.productVariants.pageInfo.hasNextPage&&(!nextCursor||nextCursor===cursor))throw new ValidationError('Shopify catalogue pagination did not advance. No catalogue was published.');
+    cursor = nextCursor;
   } while (cursor);
   const locations = []; cursor = null;
   do {
@@ -234,9 +237,7 @@ async function bootstrapSnapshot({ credentials }) {
   return { currency, products: [...productsById.values()], locations };
 }
 
-async function discover({ credentials }) {
-  const snapshot = await bootstrapSnapshot({ credentials });
-  const products = snapshot.products.flatMap((product) => product.variants.map((variant) => ({
+function discoveryProduct(product,variant,currency){return {
     entityType: 'sku', externalId: variant.externalId,
     parentExternalId: product.externalId, code: variant.sku,
     displayName: `${product.title}${variant.title && variant.title !== 'Default Title' ? ` / ${variant.title}` : ''}`,
@@ -244,10 +245,10 @@ async function discover({ credentials }) {
       productId: product.externalId, productStatus: product.status, isGiftCard: product.isGiftCard,
       itemName: product.title,
       variationName: variant.title && variant.title !== 'Default Title' ? variant.title : null,
-      tracked: variant.tracked, virtual:variant.virtual, price: variant.price, currency: snapshot.currency,
+      tracked: variant.tracked, virtual:variant.virtual, price: variant.price, currency,
       inventoryItemId:variant.inventoryItemId,
       priceMoney: Number.isFinite(Number(variant.price))
-        ? { amount: money.toMinor(variant.price, snapshot.currency), currency: snapshot.currency }
+        ? { amount: money.toMinor(variant.price, currency), currency }
         : null,
       selectedOptions: variant.selectedOptions, inventoryLevels: variant.inventoryLevels,
       inventoryCounts: variant.inventoryLevels.map((level) => ({
@@ -255,7 +256,10 @@ async function discover({ credentials }) {
       })),
       syncCounts:variant.inventoryLevels.map(level=>({externalLocationId:level.externalLocationId,quantity:level.available})),
     },
-  })));
+  };}
+async function discover({ credentials, onProduct }) {
+  const snapshot = await bootstrapSnapshot({credentials,...(onProduct?{onVariant:(product,variant,currency)=>onProduct(discoveryProduct(product,variant,currency))}:{})});
+  const products = onProduct?[]:snapshot.products.flatMap(product=>product.variants.map(variant=>discoveryProduct(product,variant,snapshot.currency)));
   const locations = snapshot.locations.map((location) => ({ entityType: 'location', externalId: location.externalId,
     displayName: location.name, providerData: { active: location.active } }));
   return { products, locations };

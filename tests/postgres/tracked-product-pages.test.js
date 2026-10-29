@@ -1,0 +1,28 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('tracked product pages retain complete totals, expiry ordering and exact lookup beyond the first page',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:1}),{db,ctx,location}=f;
+ const catalog=require('../../src/domain/postgres-catalog-service'),inventory=require('../../src/domain/postgres-inventory-engine');
+ const serial=await catalog.createItem(db,ctx,{name:'Tracked machines',baseCode:'TRACK-MACHINE',trackingMode:'serial'}),lot=await catalog.createItem(db,ctx,{name:'Tracked batches',baseCode:'TRACK-BATCH',trackingMode:'lot'});
+ await inventory.receive(db,ctx,{skuId:serial.skuIds[0],locationId:location.id,quantity:205,serials:Array.from({length:205},(_,i)=>'MACHINE-'+String(i).padStart(4,'0')),idempotencyKey:'page-serial-receipt'});
+ for(let i=0;i<105;i++)await inventory.receive(db,ctx,{skuId:lot.skuIds[0],locationId:location.id,quantity:3,lotCode:'BATCH-'+String(i).padStart(4,'0'),expiresAt:i%2?'2030-01-01':null,idempotencyKey:'page-lot-receipt-'+i});
+ const units=new Set();let afterSerialId;do{const detail=await catalog.getItem(db,ctx.workspaceId,serial.itemId,{afterSerialId});assert.equal(detail.total,205);assert(detail.units.length<=100);for(const unit of detail.units){assert(!units.has(unit.serial));units.add(unit.serial);}afterSerialId=detail.trackingCoverage.nextSerialId;}while(afterSerialId);assert.equal(units.size,205);
+ const batches=[];let afterLotId;do{const detail=await catalog.getItem(db,ctx.workspaceId,lot.itemId,{afterLotId});assert.equal(detail.total,315);assert(detail.lots.length<=100);for(const batch of detail.lots){assert.equal(batch.total,3);assert.equal(batch.perLocation[0].quantity,3);batches.push(batch);}afterLotId=detail.trackingCoverage.nextLotId;}while(afterLotId);assert.equal(new Set(batches.map(b=>b.id)).size,105);assert(batches.slice(0,52).every(b=>b.expires_at));assert(batches.slice(52).every(b=>!b.expires_at));
+ const found=await catalog.getItem(db,ctx.workspaceId,serial.itemId,{trackingQuery:'machine-0204'});assert.equal(found.units.length,1);assert.equal(found.units[0].serial,'MACHINE-0204');assert.equal(found.total,205);
+ const foundLot=await catalog.getItem(db,ctx.workspaceId,lot.itemId,{trackingQuery:'batch-0104'});assert.equal(foundLot.lots.length,1);assert.equal(foundLot.lots[0].code,'BATCH-0104');assert.equal(foundLot.total,315);
+ assert.equal((await catalog.getItem(db,ctx.workspaceId,lot.itemId,{afterLotId:'foreign-lot'})).lots.length,0);
+ await assert.rejects(catalog.getItem(db,'foreign-workspace',lot.itemId),/could not be found/);
+ const html=await require('ejs').renderFile(require('node:path').join(__dirname,'../../src/web/views/partials/tracking-pages.ejs'),{mode:'serial',item:{id:serial.itemId},trackingCoverage:{query:'<needle>',limit:100,nextSerialId:'after'}});
+ assert.match(html,/Next serial units/);assert.match(html,/trackingQuery=%3Cneedle%3E/);assert.match(html,/value="&lt;needle&gt;"/);
+ const sessionStore=new (require('../../src/web/postgres-session-store').PostgresSessionStore)(db);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,sessionStore,env:'test',sessionSecret:'tracked-product-pages'});
+ const server=await new Promise(resolve=>{const server=app.listen(0,'127.0.0.1',()=>resolve(server));}),browser=await require('playwright').chromium.launch({headless:true});
+ f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await sessionStore.close();});
+ const page=await browser.newPage(),origin='http://127.0.0.1:'+server.address().port;page.setDefaultTimeout(15000);
+ await page.goto(origin+'/login');await page.getByLabel('Work email',{exact:true}).fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForURL(origin+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+ assert.equal((await page.goto(origin+'/inventory/'+serial.itemId)).status(),200);assert.equal(await page.locator('[id^="unit-"]').count(),100);
+ await Promise.all([page.waitForNavigation(),page.getByRole('link',{name:'Next serial units',exact:true}).click()]);assert.equal(await page.locator('[id^="unit-"]').count(),100);
+ await page.getByLabel('Find an exact serial number').fill('machine-0204');await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Find',exact:true}).click()]);assert.equal(await page.locator('[id^="unit-"]').count(),1);assert.match(await page.locator('[id^="unit-"]').innerText(),/MACHINE-0204/);
+ assert.equal((await page.goto(origin+'/inventory/'+lot.itemId)).status(),200);assert.equal(await page.locator('[id^="lot-"]').count(),100);
+ await Promise.all([page.waitForNavigation(),page.getByRole('link',{name:'Next lots',exact:true}).click()]);assert.equal(await page.locator('[id^="lot-"]').count(),5);
+});

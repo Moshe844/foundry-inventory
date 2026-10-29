@@ -202,7 +202,7 @@ async function runtimeSweep(job,client,options={}){
     await commercialNotifications.queueSubscriptionSuspended(scopedDatabase(client),{accountId:subscription.account_id,
       expiredAt:new Date(subscription.expired_at).toISOString()});
   }
-  const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN EXISTS(SELECT 1 FROM import_plans p WHERE p.workspace_id=import_executions.workspace_id AND p.id=import_executions.import_id AND p.apply_checkpoint->>'cataloguePrepared'='true') THEN 'paused' ELSE 'recovered_after_interruption' END,
+  const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN EXISTS(SELECT 1 FROM import_plans p WHERE p.workspace_id=import_executions.workspace_id AND p.id=import_executions.import_id AND (p.apply_checkpoint->>'cataloguePrepared'='true' OR p.apply_checkpoint->>'catalogueStarted'='true')) THEN 'paused' ELSE 'recovered_after_interruption' END,
     error_message='The worker stopped before this import completed. Previously verified batches remain saved; continue the remaining approved rows.',finished_at=$2
     WHERE status='EXECUTING' AND started_at<$1 AND NOT EXISTS(
       SELECT 1 FROM stockchief_runtime.jobs job WHERE job.workspace_id=import_executions.workspace_id
@@ -410,8 +410,8 @@ async function autopilotEvaluate(job,client){
     return {skipped:'subscription_read_only'};
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
-  if(!job.payload.afterSkuId&&basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
-    .refreshRecommendations(scopedDatabase(client),job.workspaceId);
+  if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
+    .refreshRecommendations(scopedDatabase(client),job.workspaceId,{afterSkuId:job.payload.afterSkuId||null,limitSkus:250});
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
   const result=await autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId},
    {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0)});

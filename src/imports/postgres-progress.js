@@ -23,7 +23,7 @@ function present(row){
  const p=revising?row.preview_result?.previewProgress:detail?.importProgress,known=Boolean(p&&(revising?p.stage==='checking':['preparing','processing','verifying'].includes(p.stage))&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(revising?row.records_detected:row.records_valid));
  const stage=verified?'complete':revising?'preview':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
  const failure=row.job_error;let reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='53200'?'The database ran out of memory for its transaction safety checks. This attempt was rolled back. No stock or inventory value was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
- const checkpoint=row.apply_checkpoint||{},durable=checkpoint.cataloguePrepared===true&&checkpoint.hash===row.integrity_hash,savedRows=durable?Number(checkpoint.savedRows||0):0;
+ const checkpoint=row.apply_checkpoint||{},durable=(checkpoint.cataloguePrepared===true||checkpoint.catalogueStarted===true)&&checkpoint.hash===row.integrity_hash,savedRows=durable?Number(checkpoint.savedRows||0):0;
  const detailsPending=!durable&&state==='RUNNING'&&stage==='processing'&&known&&p.totalRows>0&&p.processedRows===p.totalRows&&row.dataset!=='suppliers';
  if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. The last batch stopped safely; continue the remaining approved rows without repeating saved ones.';
  const stageLabel=(known&&p.attempt>1?'Attempt '+p.attempt+' · restarting safely after rollback · ':'')+(detailsPending?'Applying imported details and reorder settings':{preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
@@ -32,7 +32,7 @@ function present(row){
   verified,finished:!['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,detailsPending,durable,savedRows,cataloguePrepared:durable,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
+  stage,stageLabel,detailsPending,durable,savedRows,cataloguePrepared:checkpoint.cataloguePrepared===true,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
   progressPercent:verified?100:durable&&Number(row.records_valid)?Math.min(99,Math.floor(savedRows/Number(row.records_valid)*100)):known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(revising?row.preview_updated_at:row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
@@ -69,7 +69,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
    WHERE run.workspace_id=p.workspace_id AND run.import_id=p.id ORDER BY run.started_at DESC,run.id DESC LIMIT 1)e ON true
   LEFT JOIN import_verifications v ON v.workspace_id=p.workspace_id AND v.execution_id=e.id
   WHERE p.workspace_id=$1 AND ($2::text IS NULL OR p.id=$2)
-   AND ($3::boolean=false OR r.status IN ('PENDING','RETRY','RUNNING') OR j.status IN ('PENDING','RETRY','RUNNING') OR e.status='EXECUTING' OR p.status='READY' AND p.apply_checkpoint->>'cataloguePrepared'='true')
+   AND ($3::boolean=false OR r.status IN ('PENDING','RETRY','RUNNING') OR j.status IN ('PENDING','RETRY','RUNNING') OR e.status='EXECUTING' OR p.status='READY' AND (p.apply_checkpoint->>'cataloguePrepared'='true' OR p.apply_checkpoint->>'catalogueStarted'='true'))
   ORDER BY p.created_at DESC,p.id DESC LIMIT $4`,[workspaceId,id,activeOnly,Math.min(50,Math.max(1,Number(limit)||10))])).rows;
  return rows.map(present);
 }

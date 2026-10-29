@@ -8,35 +8,62 @@ const prices=require('../pricing/postgres-service');
 const mapping=require('./postgres-provider-sync');
 const parse=require('./postgres-service').parseJson;
 const {exclusion,openingCounts}=require('./catalog-record-policy');
-function revision(connection,rows){return require('./commerce-facts').hash({id:connection.id,
- rows:rows.map(r=>[r.id,r.external_id,r.parent_external_id,r.display_name,r.mapping_status,
-  r.foundry_record_id||null,r.selected,r.code,parse(r.provider_data,{})])});}
-async function read(queryable,ctx,connectorId,{lock=false}={}){
+function revision(connection){return require('./commerce-facts').hash({id:connection.id,revision:String(connection.catalogue_revision)});}
+async function read(queryable,ctx,connectorId,{lock=false,scope=null,page=null}={}){
  const connection=(await queryable.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2${lock?' FOR UPDATE':''}`,[ctx.workspaceId,connectorId])).rows[0];
  if(!connection)throw new ValidationError('That connection is not in this business.');
+ const values=[ctx.workspaceId,connectorId];
+ let where='';
+ if(scope){
+  values.push(scope.entityType,scope.externalIds);
+  where=scope.families?` AND e.entity_type=$3 AND COALESCE(NULLIF(e.parent_external_id,''),e.external_id) IN
+   (SELECT COALESCE(NULLIF(parent_external_id,''),external_id) FROM connection_external_records
+    WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=ANY($4::text[]) AND selected=1)`:
+   ' AND e.entity_type=$3 AND e.external_id=ANY($4::text[])';
+ }else if(page){
+  values.push(page.afterType||'',page.afterExternalId||'',page.q||null);
+  where=` AND (e.entity_type,e.external_id)>($3::text,$4::text)
+   AND ($5::text IS NULL OR e.display_name ILIKE '%'||$5||'%' OR e.code ILIKE '%'||$5||'%' OR e.external_id=$5)`;
+ }
  const rows=(await queryable.query(`SELECT e.*,m.foundry_record_id FROM connection_external_records e
  LEFT JOIN connection_mappings m ON m.workspace_id=e.workspace_id AND m.connector_id=e.connector_id AND m.entity_type=e.entity_type AND m.external_id=e.external_id
- WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.selected=1 ORDER BY e.entity_type,e.external_id${lock?' FOR UPDATE OF e':''}`,[ctx.workspaceId,connectorId])).rows;
- return {connection,rows,revision:revision(connection,rows)};
+ WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.selected=1${where} ORDER BY e.entity_type,e.external_id${page?' LIMIT 101':''}${lock?' FOR UPDATE OF e':''}`,values)).rows;
+ return {connection,rows,revision:revision(connection)};
 }
 async function owner(client,ctx){
  const row=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(row?.role!=='owner')throw new AuthorizationError('Only an owner can approve provider matching and opening stock.');
 }
-async function describe(database,ctx,connectorId){
- const state=await read(database,ctx,connectorId);
+async function describe(database,ctx,connectorId,input={}){
+ const q=String(input.catalogueQ||'').trim().slice(0,160),matchQ=String(input.matchQ||'').trim().slice(0,160);
+ const afterType=['location','sku'].includes(input.afterType)?input.afterType:'',afterExternalId=String(input.afterExternalId||'').slice(0,240);
+ const state=await read(database,ctx,connectorId,{page:{afterType,afterExternalId,q}});
+ const hasMore=state.rows.length>100;state.rows=state.rows.slice(0,100);
+ async function matchingSkus(){
+  if(matchQ){const exact=await database.query(`SELECT s.id,s.code,i.name,s.variant_label FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+   WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND lower(s.code)=lower($2) ORDER BY s.code,s.id LIMIT 101`,[ctx.workspaceId,matchQ]);if(exact.rows.length)return exact;}
+  return database.query(`SELECT s.id,s.code,i.name,s.variant_label FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+   WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+    AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.variant_label ILIKE '%'||$2||'%')
+   ORDER BY s.code,s.id LIMIT 101`,[ctx.workspaceId,matchQ||null]);
+ }
  const [skus,places]=await Promise.all([
-  database.query(`SELECT s.id,s.code,i.name,s.variant_label FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position`,[ctx.workspaceId]),
-  database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name)',[ctx.workspaceId])]);
+  matchingSkus(),
+  database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1
+   AND ($2::text IS NULL OR name ILIKE '%'||$2||'%') ORDER BY name,id LIMIT 101`,[ctx.workspaceId,matchQ||null])]);
  return {...state,rows:state.rows.map(row=>{const data=parse(row.provider_data,{});return {...row,
   data:{...data,inventoryCounts:openingCounts(data),inventoryCountNote:data.inventoryCountNote||data.inventoryCountUnavailable||(data.tracked===false?'The provider does not track physical stock for this product. Confirm quantities before recording any stock.':null)},
-  exclusion:exclusion(data)};}),skus:skus.rows,locations:places.rows};
+  exclusion:exclusion(data)};}),skus:skus.rows.slice(0,100),locations:places.rows.slice(0,100),
+  page:{q,matchQ,hasMore,afterType,afterExternalId,next:hasMore?{afterType:state.rows.at(-1).entity_type,afterExternalId:state.rows.at(-1).external_id}:null,
+   moreSkus:skus.rows.length>100,moreLocations:places.rows.length>100}};
 }
-async function mutate(database,ctx,connectorId,input,operation){
+async function mutate(database,ctx,connectorId,input,operation,recordScope=null){
  return database.transaction(async client=>{
   await owner(client,ctx);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
-  const state=await read(client,ctx,connectorId,{lock:true});
+  // The connector revision covers all semantic source and mapping changes;
+  // validation and mutation only load the affected records/product families.
+  const state=await read(client,ctx,connectorId,{lock:true,scope:recordScope});
   if(state.connection.status!=='connected'||state.connection.paused_at)throw new ValidationError('Reconnect or resume this provider before changing its matches.');
   const currentPolicy=parse(state.connection.config,{});
   if(input.automatic===true&&(currentPolicy.autoImportCatalog!==true||
@@ -46,8 +73,8 @@ async function mutate(database,ctx,connectorId,input,operation){
   await require('../commercial/enforcement').workspace(client,ctx.workspaceId,accounting?'connections.accounting':'connections.commerce');
   if(input.revision&&input.revision!==state.revision)throw new ValidationError('The provider catalogue or its matches changed. Review the current records before confirming.');
   const result=await operation(client,state);
-  const remaining=(await client.query("SELECT count(*) AS n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED'",[ctx.workspaceId,connectorId])).rows[0];
-  await client.query("UPDATE workspace_connectors SET setup_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,connectorId,accounting?state.connection.setup_status:Number(remaining.n)?'MAPPING':'CONNECTED',nowIso()]);
+  const remaining=(await client.query("SELECT 1 FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED' LIMIT 1",[ctx.workspaceId,connectorId])).rows.length;
+  await client.query("UPDATE workspace_connectors SET setup_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,connectorId,accounting?state.connection.setup_status:remaining?'MAPPING':'CONNECTED',nowIso()]);
   return result;
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -61,7 +88,7 @@ async function mapExternal(database,ctx,connectorId,input){
   const record=selectedRecord(state,input.entityType,input.externalId);
   const reason=exclusion(parse(record.provider_data,{}));if(reason)throw new ValidationError(reason);
   return mapping.setMappingInTransaction(client,ctx,{...input,connectorId});
- });
+ },{entityType:input.entityType,externalIds:[input.externalId]});
 }
 async function createLocation(database,ctx,connectorId,input){
  return mutate(database,ctx,connectorId,input,async(client,state)=>{
@@ -73,7 +100,7 @@ async function createLocation(database,ctx,connectorId,input){
   const place=await locations.createLocationInTransaction(client,ctx,{name:row.display_name,kind,note:'Imported from '+state.connection.display_name+'; '+row.external_id});
   await mapping.setMappingInTransaction(client,ctx,{connectorId,entityType:'location',externalId:row.external_id,foundryRecordId:place.id});
   return place;
- });
+ },{entityType:'location',externalIds:[input.externalId]});
 }
 async function ignore(database,ctx,connectorId,input){
  return mutate(database,ctx,connectorId,input,async(client,state)=>{
@@ -84,7 +111,7 @@ async function ignore(database,ctx,connectorId,input){
   await client.query("UPDATE connection_external_records SET mapping_status='IGNORED',updated_at=$4 WHERE workspace_id=$1 AND connector_id=$2 AND id=$3",[ctx.workspaceId,connectorId,row.id,at]);
   await mapping.resolveMappingIssues(client,state.connection,input.entityType,input.externalId,at);
   return {excluded:true,reason};
- });
+ },{entityType:input.entityType,externalIds:[input.externalId]});
 }
 async function importProducts(database,ctx,connectorId,input){
  const ids=[...new Set((Array.isArray(input.externalIds)?input.externalIds:[input.externalIds]).filter(Boolean).map(String))];
@@ -134,25 +161,37 @@ async function importProducts(database,ctx,connectorId,input){
   await client.query(`INSERT INTO connection_sync_runs(id,workspace_id,connector_id,sync_kind,status,discovered_products,discovered_locations,auto_mapped,needs_mapping,started_at,completed_at)
    VALUES($1,$2,$3,'OWNER_CATALOG_IMPORT','COMPLETED',$4,0,$4,0,$5,$5)`,[newId('csync'),ctx.workspaceId,connectorId,result.mapped,nowIso()]);
   return result;
- });
+ },{entityType:'sku',externalIds:ids,families:true});
 }
 async function importAutomatic(database,ctx,connectorId){
- const state=await read(database,ctx,connectorId);
- if(parse(state.connection.config,{}).autoImportCatalog!==true)return {skipped:'catalogue_import_not_enabled'};
+ const connection=(await database.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,connectorId])).rows[0];
+ if(!connection)throw new ValidationError('That connection is not in this business.');
+ if(parse(connection.config,{}).autoImportCatalog!==true)return {skipped:'catalogue_import_not_enabled'};
  const summary={locations:0,products:0,prices:0,openingUnits:0};
- for(const row of state.rows.filter(r=>r.entity_type==='location'&&!r.foundry_record_id&&r.mapping_status!=='IGNORED'&&!exclusion(parse(r.provider_data,{})))){
-  await createLocation(database,ctx,connectorId,{externalId:row.external_id,automatic:true});summary.locations++;
- }
- const current=await read(database,ctx,connectorId);
- const ids=current.rows.filter(r=>r.entity_type==='sku'&&!r.foundry_record_id&&r.mapping_status!=='IGNORED'&&!exclusion(parse(r.provider_data,{}))).map(r=>r.external_id);
- for(let offset=0;offset<ids.length;offset+=500){
+ for(const entityType of ['location','sku']){
+  let after=null;
+  while(true){
+   const page=(await database.query(`SELECT e.external_id,e.provider_data FROM connection_external_records e
+    WHERE e.workspace_id=$1 AND e.connector_id=$2 AND e.entity_type=$3 AND e.selected=1 AND e.mapping_status='UNMAPPED'
+     AND ($4::text IS NULL OR e.external_id>$4) AND NOT EXISTS(SELECT 1 FROM connection_mappings m
+      WHERE m.workspace_id=e.workspace_id AND m.connector_id=e.connector_id AND m.entity_type=e.entity_type AND m.external_id=e.external_id)
+    ORDER BY e.external_id LIMIT 500`,[ctx.workspaceId,connectorId,entityType,after])).rows;
+   if(!page.length)break;
+   after=page.at(-1).external_id;
+   const ids=page.filter(r=>!exclusion(parse(r.provider_data,{}))).map(r=>r.external_id);
+   if(entityType==='location'){
+    for(const externalId of ids){const location=await createLocation(database,ctx,connectorId,{externalId,automatic:true});if(!location.replayed)summary.locations++;}
+    continue;
+   }
+   if(!ids.length)continue;
   // The owner authorizes initial quantities explicitly at connection/setup.
   // Reuse the canonical new-record-only receipt and stable idempotency keys;
   // never replay historical orders or reset stock on subsequent snapshots.
-  const imported=await importProducts(database,ctx,connectorId,{externalIds:ids.slice(offset,offset+500),automatic:true,
-    includeOpening:parse(state.connection.config,{}).autoImportOpeningStock===true});
+  const imported=await importProducts(database,ctx,connectorId,{externalIds:ids,automatic:true,
+    includeOpening:parse(connection.config,{}).autoImportOpeningStock===true});
   summary.products+=imported.mapped;summary.prices+=imported.prices;
   summary.openingUnits+=imported.openingUnits;
+  }
  }
  return summary;
 }

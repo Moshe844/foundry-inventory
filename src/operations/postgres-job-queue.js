@@ -111,7 +111,11 @@ async function claim(database, options = {}) {
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=jobs.kind AND active.status='RUNNING'))
       AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
-      ORDER BY priority, created_at, id
+      -- A large planning cycle continuously enqueues priority-39 continuations.
+      -- Both maintenance kinds share one lane, so priority alone can starve
+      -- reconciliation forever. Give maintenance batches equal scheduling
+      -- priority and serve their oldest outstanding work first.
+      ORDER BY CASE WHEN kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];

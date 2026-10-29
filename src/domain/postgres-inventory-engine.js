@@ -88,7 +88,9 @@ async function balanceDelta(client, ctx, row, delta, at) {
     throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${onHand}, requested: ${Math.abs(delta)}.`,
       { onHand, requested: Math.abs(delta) });
   }
-  return Number(changed.rows[0].on_hand);
+  const after=Number(changed.rows[0].on_hand);
+  if(!Number.isSafeInteger(after))throw new ValidationError('Stock totals exceed the supported exact range. No stock was changed.');
+  return after;
 }
 
 async function lotDelta(client, ctx, lotId, locationId, delta, at) {
@@ -144,6 +146,27 @@ async function resolveLot(client, ctx, row, input, at, create) {
   return lot;
 }
 
+function assertLotEligible(lot,input){
+  if(!lot?.expires_at)return;
+  const expiry=String(lot.expires_at).slice(0,10);
+  const when=String(input.occurredAt||nowIso()).slice(0,10);
+  if(expiry<when&&!['damaged','damage','expired','disposal','loss','lost'].includes(input.reasonCode))
+    throw new InvariantError(`Batch ${lot.code} expired on ${expiry}. Expired stock may only leave through an explicit disposal or loss operation.`, 'lot_expired');
+}
+
+async function serialBatchDeltas(client,ctx,ids,sourceLocationId,destinationLocationId,at,input={}){
+  if(!ids.length)return;
+  const groups=(await client.query(`SELECT lot.id,lot.code,lot.expires_at,COUNT(*)::integer AS units
+    FROM serial_units unit JOIN lots lot ON lot.id=unit.lot_id AND lot.workspace_id=unit.workspace_id
+    WHERE unit.workspace_id=$1 AND unit.id=ANY($2::text[]) GROUP BY lot.id,lot.code,lot.expires_at ORDER BY lot.id`,
+  [ctx.workspaceId,ids])).rows;
+  for(const lot of groups){
+    if(input.issue)assertLotEligible(lot,input);
+    if(sourceLocationId)await lotDelta(client,ctx,lot.id,sourceLocationId,-lot.units,at);
+    if(destinationLocationId)await lotDelta(client,ctx,lot.id,destinationLocationId,lot.units,at);
+  }
+}
+
 async function receiveInTransaction(client, rawContext, input) {
   physicalInput.validate(input);
   const ctx = context(rawContext);
@@ -157,17 +180,23 @@ async function receiveInTransaction(client, rawContext, input) {
     let lot = null;
     let serials = [];
     let serialUnitIds = [];
-    if (row.tracking_mode === 'lot') lot = await resolveLot(client, ctx, row, input, at, true);
+    if (row.tracking_mode === 'lot'||(row.tracking_mode==='serial'&&(input.lotId||input.lotCode)))
+      lot = await resolveLot(client, ctx, row, input, at, true);
+    if(row.tracking_mode==='quantity'&&(input.lotId||input.lotCode||input.serials?.length||input.expiresAt))
+      throw new ValidationError('This product does not track lots or serials. Configure tracking before receiving tracked stock.');
+    if(row.tracking_mode==='serial'&&input.expiresAt&&!lot)
+      throw new ValidationError('An expiry date on serialized stock requires its batch identity.');
     if (row.tracking_mode === 'serial') {
       const returnedIds = [...new Set((input.returnSerialUnitIds || []).map(String))];
       if (returnedIds.length) {
         if (returnedIds.length !== quantity) throw new ValidationError('Select every returned serial unit.');
-        const locked = await client.query(`SELECT id,serial FROM serial_units WHERE workspace_id=$1 AND sku_id=$2
+        const locked = await client.query(`SELECT id,serial,lot_id FROM serial_units WHERE workspace_id=$1 AND sku_id=$2
           AND status='issued' AND location_id IS NULL AND id=ANY($3::text[]) FOR UPDATE`,
         [ctx.workspaceId, row.id, returnedIds]);
         if (locked.rows.length !== quantity) {
           throw new InvariantError('One or more serial units were not issued or have already returned.', 'unit_not_issued');
         }
+        if(lot&&locked.rows.some(unit=>unit.lot_id!==lot.id))throw new ValidationError('A returned serial must retain its original batch identity.');
         await client.query(`UPDATE serial_units SET status='in_stock',location_id=$4,condition=$5,note=$6,updated_at=$7
           WHERE workspace_id=$1 AND sku_id=$2 AND id=ANY($3::text[])`,
         [ctx.workspaceId, row.id, returnedIds, row.location_id, input.returnCondition || 'unknown', input.notes || null, at]);
@@ -182,17 +211,18 @@ async function receiveInTransaction(client, rawContext, input) {
         for (const serial of serials) {
           const serialUnitId = newId('serial');
           const inserted=await client.query(`INSERT INTO serial_units
-            (id, workspace_id, sku_id, serial, status, location_id, received_at, note, updated_at)
-            VALUES ($1,$2,$3,$4,'in_stock',$5,$6,$7,$6)
+            (id, workspace_id, sku_id, serial, status, location_id, received_at, note, updated_at,lot_id)
+            VALUES ($1,$2,$3,$4,'in_stock',$5,$6,$7,$6,$8)
             ON CONFLICT (workspace_id,sku_id,serial) WHERE status='in_stock' DO NOTHING RETURNING id`,
-          [serialUnitId, ctx.workspaceId, row.id, serial, row.location_id, at, input.notes || null]);
+          [serialUnitId, ctx.workspaceId, row.id, serial, row.location_id, at, input.notes || null,lot?.id||null]);
           if(!inserted.rows.length)throw new ValidationError(`Serial ${serial} is already in stock. Use a transfer to move it between locations.`);
           serialUnitIds.push(serialUnitId);
         }
       }
     }
     const balanceAfter = await balanceDelta(client, ctx, row, quantity, at);
-    if (lot) await lotDelta(client, ctx, lot.id, row.location_id, quantity, at);
+    if(row.tracking_mode==='serial')await serialBatchDeltas(client,ctx,serialUnitIds,null,row.location_id,at);
+    else if (lot) await lotDelta(client, ctx, lot.id, row.location_id, quantity, at);
     const movementId = await movement(client, ctx, row, { groupId, operation: 'receive', quantityDelta: quantity,
       balanceAfter, lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
     await recordMovementSerials(client, ctx, movementId, serialUnitIds);
@@ -213,7 +243,7 @@ async function receiveManyInTransaction(client,rawContext,inputs){
    FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
   if(targets.length!==values.length)throw new ValidationError('That item variant or location is not in this inventory.');
   for(const row of targets){assertActiveTarget(row);if(!require('../custody/authority').allows(ctx,row.custody_agreement_id))throw new ValidationError('Use the agreement to receive stock into a protected custody location.');}
-  if(targets.some(row=>row.tracking_mode!=='quantity'))return sequential();
+  if(targets.some(row=>row.tracking_mode!=='quantity')||values.some(({input})=>input.lotId||input.lotCode||input.expiresAt||input.serials?.length))return sequential();
   const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
   await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);
   const positionSkus=[...new Set(positions.map(p=>p.sku_id))];
@@ -249,6 +279,7 @@ async function issueInTransaction(client, rawContext, input) {
     const groupId = newId('grp');
     let lot = null;
     if (row.tracking_mode === 'lot') lot = await resolveLot(client, ctx, row, input, at, false);
+    assertLotEligible(lot,input);
     let serialUnitIds = [];
     if (row.tracking_mode === 'serial') {
       const ids = [...new Set((input.serialUnitIds || []).map(String))];
@@ -260,6 +291,7 @@ async function issueInTransaction(client, rawContext, input) {
       await client.query(`UPDATE serial_units SET status = 'issued', location_id = NULL, updated_at = $2
         WHERE id = ANY($1::text[])`, [ids, at]);
       serialUnitIds = ids;
+      await serialBatchDeltas(client,ctx,ids,row.location_id,null,at,{...input,issue:true});
     }
     const balanceAfter = await balanceDelta(client, ctx, row, -quantity, at);
     if (lot) await lotDelta(client, ctx, lot.id, row.location_id, -quantity, at);
@@ -306,6 +338,7 @@ async function transferInTransaction(client, rawContext, input) {
       [ctx.workspaceId, source.id, source.location_id, destination.location_id, at, ids]);
       if (moved.rows.length !== quantity) throw new InvariantError('One or more selected units are no longer available.', 'unit_not_in_stock');
       serialUnitIds = ids;
+      await serialBatchDeltas(client,ctx,ids,source.location_id,destination.location_id,at);
     }
     const outMovementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
       counterpartyLocationId: destination.location_id, quantityDelta: -quantity, balanceAfter: sourceAfter,
@@ -350,6 +383,7 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
       throw new InvariantError('One or more selected units are no longer available for dispatch.', 'unit_not_in_stock');
     }
     serialUnitIds = ids;
+    await serialBatchDeltas(client,ctx,ids,source.location_id,null,at);
   }
   const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, source.location_id, -quantity, at);
@@ -385,6 +419,7 @@ async function receiveTransferInTransaction(client, rawContext, input) {
       throw new InvariantError('One or more serialized units are no longer in transfer custody.', 'unit_not_in_transit');
     }
     serialUnitIds = ids;
+    await serialBatchDeltas(client,ctx,ids,null,destination.location_id,at);
   }
   const destinationAfter = await balanceDelta(client, ctx, destination, quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, destination.location_id, quantity, at);
@@ -412,7 +447,9 @@ async function adjustInTransaction(client,rawContext,input){
       WHERE workspace_id = $1 AND sku_id = $2 AND location_id = $3 FOR UPDATE`,
     [ctx.workspaceId, row.id, row.location_id]);
     const expected = Number(currentResult.rows[0]?.on_hand || 0);
+    if(!Number.isSafeInteger(expected))throw new ValidationError('The existing stock total exceeds the supported exact range. Reconcile its source before adjusting stock.');
     const delta = counted - expected;
+    if(!Number.isSafeInteger(delta))throw new ValidationError('The stock correction exceeds the supported exact range.');
     if (!delta) {
       const result = { unchanged: true, balanceAfter: counted };
       await completeOperation(client, operation, result);

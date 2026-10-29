@@ -4,7 +4,7 @@ const {newId,nowIso,requireText}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
 const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
-const {exclusion}=require('./catalog-record-policy');
+
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
   transaction:(operation,options)=>typeof client.transaction==='function'?client.transaction(operation,options):operation(client)};}
@@ -54,59 +54,8 @@ async function resolveMappingIssues(client,connection,entityType,externalId,at){
 }
 
 async function cacheRecord(client,connection,record){
-  const entityType=requireText(record.entityType,'Provider record type',{max:40});
-  if(!['sku','location'].includes(entityType))throw new ValidationError(`Provider discovery returned unsupported ${entityType} data.`);
-  const externalId=requireText(record.externalId,'Provider record id',{max:240});
-  const displayName=requireText(record.displayName||record.code||externalId,'Provider record name',{max:500});
-  const existing=(await client.query(`SELECT foundry_record_id FROM connection_mappings
-    WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
-  [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
-  const cached=(await client.query(`SELECT mapping_status FROM connection_external_records
-    WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
-  [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
-  const excluded=exclusion(providerData(record));
-  const target=existing?.foundry_record_id||(!excluded&&cached?.mapping_status!=='IGNORED'
-    ?await exactTarget(client,connection.workspace_id,{...record,entityType}):null);
-  const mappingStatus=target?'MAPPED':cached?.mapping_status==='IGNORED'?'IGNORED':excluded?'EXCLUDED':'UNMAPPED';
-  const at=nowIso();
-  await client.query(`INSERT INTO connection_external_records
-    (id,workspace_id,connector_id,entity_type,external_id,parent_external_id,code,display_name,
-     provider_data,mapping_status,selected,last_seen_at,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,$11,$11)
-    ON CONFLICT(workspace_id,connector_id,entity_type,external_id) DO UPDATE SET
-      parent_external_id=EXCLUDED.parent_external_id,code=EXCLUDED.code,display_name=EXCLUDED.display_name,
-      provider_data=EXCLUDED.provider_data,mapping_status=EXCLUDED.mapping_status,
-      selected=1,last_seen_at=EXCLUDED.last_seen_at,updated_at=EXCLUDED.updated_at`,
-  [newId('cext'),connection.workspace_id,connection.id,entityType,externalId,
-    record.parentExternalId?String(record.parentExternalId):null,record.code?String(record.code):null,displayName,
-    JSON.stringify(providerData(record)),mappingStatus,at]);
-  if(target){
-    if(!existing)await client.query(`INSERT INTO connection_mappings
-      (id,workspace_id,connector_id,entity_type,external_id,foundry_record_id,confidence,approved_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,'exact',$7,$8,$8)
-      ON CONFLICT(workspace_id,connector_id,entity_type,external_id) DO NOTHING`,
-    [newId('cmap'),connection.workspace_id,connection.id,entityType,externalId,target,
-      connection.authorized_by_user_id||null,at]);
-    await resolveMappingIssues(client,connection,entityType,externalId,at);
-    return 'mapped';
-  }
-  if(['IGNORED','EXCLUDED'].includes(mappingStatus)){
-    await resolveMappingIssues(client,connection,entityType,externalId,at);
-    return 'ignored';
-  }
-  const fingerprint=`unknown-${entityType}:${connection.id}:${externalId}`;
-  await client.query(`INSERT INTO connection_issues
-    (id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'[]','OPEN',$9,$9)
-    ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,title=EXCLUDED.title,
-      detail=EXCLUDED.detail,resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at`,
-  [newId('conissue'),connection.workspace_id,connection.id,`UNKNOWN_${entityType.toUpperCase()}`,fingerprint,
-    `${displayName} needs a StockChief match`,
-    `${connection.display_name} supplied ${entityType==='sku'?`SKU ${record.code||externalId}`:'this location'}, but StockChief cannot safely match it yet.`,
-    'Choose the matching StockChief record once. Future activity will use that mapping automatically.',at]);
-  return 'unmapped';
+  return (await require('./postgres-catalog-cache').cacheRecords(client,connection,[record]))[0];
 }
-
 async function sync(job,client,providers=defaultProviders){
   const connectorId=job.payload?.connectorId;
   if(!job.workspaceId||!connectorId)throw Object.assign(new Error('A provider catalogue sync needs workspace and connection identity.'),
@@ -125,13 +74,24 @@ async function sync(job,client,providers=defaultProviders){
   const runId=newId('csync');const startedAt=nowIso();
   await client.query(`INSERT INTO connection_sync_runs(id,workspace_id,connector_id,sync_kind,status,started_at)
     VALUES($1,$2,$3,'CATALOG_AND_LOCATIONS','RUNNING',$4)`,[runId,job.workspaceId,connectorId,startedAt]);
+  let previousScratch,discoveryScratch;
   try{
+  discoveryScratch=require('../imports/validation-scratch').create();
+  const discovered=discoveryScratch.map('discovered-products'),identities=discoveryScratch.map('discovered-identities');let productCount=0;
+  const onProduct=record=>{const id=requireText(record.externalId,'Provider record id',{max:240}),hash=require('node:crypto').createHash('sha256').update(JSON.stringify(record)).digest('hex');
+    if(identities.has(id)){if(identities.get(id)!==hash)throw new ValidationError('The provider returned conflicting catalogue pages for one identity. The saved catalogue was preserved.');return;}
+    identities.set(id,hash);discovered.set(String(++productCount).padStart(16,'0'),record);
+  };
   const found=await require('../commercial/operations').run(client,job.workspaceId,{capability:
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',key:`catalog-sync:${job.id}`,
     provider:connection.provider_type,operation:'catalog_sync',retryReversed:true},async()=>{
       const credentials=await providerService.loadProviderCredentials(database,connection,adapter);
-      return adapter.discover({credentials,connection});});
-  const products=Array.isArray(found?.products)?found.products:[];
+      return adapter.discover({credentials,connection,onProduct});});
+  // Legacy adapters remain compatible; streaming adapters emit normalized
+  // records as each provider page arrives and return an empty products array.
+  if(!Array.isArray(found?.products)||!Array.isArray(found?.locations))throw new ValidationError('The provider did not return a complete catalogue and location snapshot. The saved catalogue was preserved.');
+  for(const record of found.products)onProduct(record);
+  const products={length:productCount,*[Symbol.iterator](){for(const [,record] of discovered)yield record;}};
   const locations=Array.isArray(found?.locations)?found.locations:[];
   const apply=async(client)=>{
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
@@ -142,17 +102,29 @@ async function sync(job,client,providers=defaultProviders){
     return {skipped:'connection_changed',runId};}
   await require('../commercial/enforcement').workspace(client,job.workspaceId,
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
-  const previous=new Map((await client.query("SELECT external_id,provider_data FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sku'",[job.workspaceId,connectorId])).rows
-    .map(row=>[row.external_id,require('./postgres-service').parseJson(row.provider_data,{})]));
+  // Only reconciliation needs the old source values. Keep its exact baseline
+  // on scratch disk and read database pages instead of duplicating the entire
+  // provider catalogue in the worker heap.
+  let previous=new Map();
+  if(syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'){
+    previousScratch?.close();previousScratch=null;previousScratch=require('../imports/validation-scratch').create();previous=previousScratch.map('provider-previous');
+    let after=null;
+    for(;;){const rows=(await client.query(`SELECT external_id,provider_data FROM connection_external_records
+      WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sku' AND ($3::text IS NULL OR external_id>$3)
+      ORDER BY external_id LIMIT 500`,[job.workspaceId,connectorId,after])).rows;
+      for(const row of rows)previous.set(row.external_id,require('./postgres-service').parseJson(row.provider_data,{}));
+      if(rows.length<500)break;after=rows.at(-1).external_id;
+    }
+  }
   await client.query(`UPDATE connection_external_records SET selected=0,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2`,[job.workspaceId,connectorId,nowIso()]);
   let autoMapped=0;let needsMapping=0;let ignored=0;
-  for(const record of [...products.map((row)=>({...row,entityType:'sku'})),
-    ...locations.map((row)=>({...row,entityType:'location'}))]){
-    const result=await cacheRecord(client,connection,record);
-    if(result==='mapped')autoMapped+=1;
-    else if(result==='unmapped')needsMapping+=1;
-    else ignored+=1;
+  async function applyPage(page){for(const result of await require('./postgres-catalog-cache').cacheRecords(client,connection,page)){
+    if(result==='mapped')autoMapped+=1;else if(result==='unmapped')needsMapping+=1;else ignored+=1;
+  }}
+  for(const [records,entityType] of [[products,'sku'],[locations,'location']]){
+    let page=[];for(const source of records){page.push({...source,entityType});if(page.length===500){await applyPage(page);page=[];}}
+    if(page.length)await applyPage(page);
   }
   const reconciled=syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'
     ?await require('./postgres-catalog-reconciliation').reconcile(client,current,previous):{names:0,prices:0,conflicts:0};
@@ -216,7 +188,7 @@ async function sync(job,client,providers=defaultProviders){
           'The latest provider check did not finish. Your saved records are preserved; StockChief will retry automatically.',at]);
     },{isolation:'SERIALIZABLE',retrySafe:true});
     error.retryAfterMs=delay;throw error;
-  }
+  }finally{try{previousScratch?.close();}finally{discoveryScratch?.close();}}
 }
 
 async function setMappingInTransaction(client,ctx,input){
@@ -257,10 +229,10 @@ async function setMappingInTransaction(client,ctx,input){
   [ctx.workspaceId,connection.id,entityType,externalId,at]);
   await resolveMappingIssues(client,connection,entityType,externalId,at);
   await require('./postgres-webhook-inbox').scheduleMappedInTransaction(client,ctx.workspaceId,connection.id);
-  const remaining=(await client.query(`SELECT COUNT(*) AS count FROM connection_external_records
-    WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED'`,
-  [ctx.workspaceId,connection.id])).rows[0];
-  if(Number(remaining.count)===0&&defaultProviders.get(connection.provider_type)?.integrationClass!=='accounting')await client.query(`UPDATE workspace_connectors SET setup_status='CONNECTED',updated_at=$3
+  const remaining=(await client.query(`SELECT 1 FROM connection_external_records
+    WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED' LIMIT 1`,
+  [ctx.workspaceId,connection.id])).rows.length;
+  if(!remaining&&defaultProviders.get(connection.provider_type)?.integrationClass!=='accounting')await client.query(`UPDATE workspace_connectors SET setup_status='CONNECTED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='connected'`,[ctx.workspaceId,connection.id,at]);
   return (await client.query(`SELECT * FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2
     AND entity_type=$3 AND external_id=$4`,[ctx.workspaceId,connection.id,entityType,externalId])).rows[0];

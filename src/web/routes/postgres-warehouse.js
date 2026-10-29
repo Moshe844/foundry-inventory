@@ -20,8 +20,8 @@ function createPostgresWarehouseRouter(database){
   router.get('/warehouse',(req,res)=>res.redirect(302,'/warehouse/operations'));
   router.get('/warehouse/operations',asyncRoute(async(req,res)=>res.page('warehouse/postgres-operations',{
     title:'Warehouse operations',nav:'warehouse',room:true,
-    waves:await waves.list(database,req.ctx.workspaceId),
-    readyOrders:await waves.readyOrders(database,req.ctx.workspaceId),
+    waves:await waves.list(database,req.ctx.workspaceId,{afterId:req.query.afterWaveId}),
+    readyOrders:await waves.readyOrders(database,req.ctx.workspaceId,{afterId:req.query.afterOrderId}),
     releaseKey:newId('wave-form'),
   })));
   router.post('/warehouse/waves',requirePermission(permissions.MANAGE_FULFILLMENT_WAVES,'create fulfillment waves'),
@@ -34,7 +34,7 @@ function createPostgresWarehouseRouter(database){
     }));
   router.get('/warehouse/waves/:id',asyncRoute(async(req,res)=>res.page('warehouse/wave',{
     title:'Fulfillment wave',nav:'warehouse',room:true,
-    wave:await waves.get(database,req.ctx.workspaceId,req.params.id),
+    wave:await waves.get(database,req.ctx.workspaceId,req.params.id,{afterLineId:req.query.afterLineId,afterShipmentId:req.query.afterShipmentId}),
     containers:await waves.containers(database,req.ctx.workspaceId),
   })));
   router.post('/warehouse/waves/:id/scans',

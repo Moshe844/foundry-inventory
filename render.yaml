@@ -15,7 +15,7 @@ projects:
               - key: FOUNDRY_DATABASE_PRIVATE_NETWORK
                 value: "true"
               - key: FOUNDRY_POSTGRES_DISK_GB
-                value: "15"
+                value: "50"
               - key: FOUNDRY_PROCESS_MEMORY_MB
                 value: "2048"
               - key: FOUNDRY_PROCESS_CPU_CORES
@@ -46,6 +46,8 @@ projects:
                 sync: false
         databases:
           - name: stockchief-staging
+            plan: 2c-8g
+            diskSizeGB: 50
         services:
           - type: web
             name: stockchief-staging-web

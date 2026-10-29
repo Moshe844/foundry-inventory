@@ -5,6 +5,20 @@ const TYPE_LABEL={item:'Product',sku:'Product',variant:'Variant',serial:'Unit',l
 
 async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}){
   const term=String(rawTerm||'').trim().slice(0,200),short=compactReference(term);if(!term)return {term,results:[],total:0};
+  const boundedLimit=Math.min(100,Math.max(1,Number(limit)||25));
+  // An exact SKU is authoritative independently of broad text discovery. Do
+  // the indexed lookup first so a common word never requires ranking every
+  // matching product (and aggregating all its stock) to find the exact code.
+  const exactRows=(await database.query(`SELECT CASE WHEN COALESCE(s.variant_label,'')='' THEN 'sku' ELSE 'variant' END AS type,
+    s.id,CASE WHEN COALESCE(s.variant_label,'')='' THEN i.name ELSE i.name||' / '||s.variant_label END AS title,
+    CASE WHEN COALESCE(s.variant_label,'')='' THEN 'Product · ' ELSE 'Variant · ' END||s.code AS subtitle,
+    COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=s.id),0)::text||' on hand' AS meta,
+    '/inventory/'||i.id||'#sku-'||s.id AS href,120 AS score
+    FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND lower(s.code)=lower($2)
+    ORDER BY s.id LIMIT $3`,[workspaceId,term,Math.max(2,boundedLimit)])).rows;
+  if(exactRows.length){const results=exactRows.slice(0,boundedLimit).map(row=>({...row,typeLabel:TYPE_LABEL[row.type]}));
+    return {term,results,total:results.length,exactSku:exactRows.length===1};}
   const result=await database.query(`WITH matches AS (
     SELECT CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
       sku.id,CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN item.name ELSE item.name||' / '||sku.variant_label END AS title,
@@ -54,7 +68,20 @@ async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}
     FROM sales_orders sales JOIN customers customer ON customer.id=sales.customer_id
     WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR lower(regexp_replace(sales.order_number,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($4) OR customer.name ILIKE '%'||$2||'%')
   ), ranked AS (SELECT matches.*,row_number() OVER (PARTITION BY type ORDER BY score DESC,title,id) AS group_position FROM matches) SELECT * FROM ranked WHERE ($5::int IS NULL OR group_position<=$5) ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short,groupLimit==null?null:Math.min(100,Math.max(1,Number(groupLimit)||8))]);
-  if(result.rows.length<limit&&term.length>=4){const prefix=term.toLowerCase().slice(0,2),near=(await database.query(`SELECT s.id,'sku' AS type,i.name AS title,'Product · '||s.code AS subtitle,'' AS meta,'/inventory/'||i.id||'#sku-'||s.id AS href,s.code FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (i.name ILIKE $2||'%' OR i.name ILIKE '% '||$2||'%' OR s.code ILIKE $2||'%') ORDER BY abs(length(i.name)-length($3)),i.name,s.id LIMIT 300`,[workspaceId,prefix,term])).rows;const known=new Set(result.rows.map(r=>r.id));for(const r of near){const distance=Math.min(editDistance(term.toLowerCase(),r.title.toLowerCase()),editDistance(term.toLowerCase(),r.code.toLowerCase()),...r.title.toLowerCase().split(/\s+/).map(word=>editDistance(term.toLowerCase(),word)));if(distance<=Math.min(2,Math.floor(term.length/4))&&!known.has(r.id)){result.rows.push({...r,score:40-distance});known.add(r.id);}}result.rows.sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title));result.rows=result.rows.slice(0,limit);}
+  if(result.rows.length<limit&&term.length>=4){const near=(await database.query(`WITH item_matches AS MATERIALIZED (
+ SELECT id,GREATEST(similarity(name,$2),word_similarity($2,name)) AS relevance FROM items
+ WHERE workspace_id=$1 AND is_active=1 AND (name % $2 OR $2 <% name)
+ ORDER BY relevance DESC,id LIMIT 100), code_matches AS MATERIALIZED (
+ SELECT id,similarity(code,$2) AS relevance FROM skus WHERE workspace_id=$1 AND is_active=1 AND code % $2
+ ORDER BY relevance DESC,id LIMIT 100), candidates AS (
+ SELECT s.id,m.relevance FROM item_matches m CROSS JOIN LATERAL(SELECT id FROM skus
+  WHERE workspace_id=$1 AND item_id=m.id AND is_active=1 ORDER BY id LIMIT 100)s
+ UNION ALL SELECT id,relevance FROM code_matches), ranked AS (
+ SELECT id,max(relevance) AS relevance FROM candidates GROUP BY id ORDER BY max(relevance) DESC,id LIMIT 300)
+ SELECT s.id,'sku' AS type,i.name AS title,'Product · '||s.code AS subtitle,'' AS meta,
+ '/inventory/'||i.id||'#sku-'||s.id AS href,s.code FROM ranked r JOIN skus s ON s.id=r.id AND s.workspace_id=$1
+ JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE i.is_active=1
+ ORDER BY r.relevance DESC,s.id`,[workspaceId,term])).rows;const known=new Set(result.rows.map(r=>r.id));for(const r of near){const distance=Math.min(editDistance(term.toLowerCase(),r.title.toLowerCase()),editDistance(term.toLowerCase(),r.code.toLowerCase()),...r.title.toLowerCase().split(/\s+/).map(word=>editDistance(term.toLowerCase(),word)));if(distance<=Math.min(2,Math.floor(term.length/4))&&!known.has(r.id)){result.rows.push({...r,score:40-distance});known.add(r.id);}}result.rows.sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title));result.rows=result.rows.slice(0,limit);}
   const results=result.rows.map((row)=>({...row,typeLabel:TYPE_LABEL[row.type]||row.type,score:Number(row.score)}));
   const exact=results.filter(row=>['sku','variant'].includes(row.type)&&row.score===120);
   return {term,results:exact.length?exact:results,total:exact.length||results.length,exactSku:exact.length===1};

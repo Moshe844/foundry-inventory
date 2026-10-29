@@ -43,7 +43,7 @@ function createPostgresInventoryRouter(database) {
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||''};
-    const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
+    const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
     if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
@@ -56,7 +56,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      hasMore:result.hasMore,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
@@ -108,7 +108,8 @@ function createPostgresInventoryRouter(database) {
   router.get('/inventory/:id/photo',asyncRoute(async(req,res)=>{const image=(await database.query('SELECT image_bytes,content_hash FROM product_images WHERE workspace_id=$1 AND item_id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];if(!image)return res.sendStatus(404);res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.set('ETag','"'+image.content_hash+'"');res.set('X-Content-Type-Options','nosniff');return res.send(image.image_bytes);}));
   router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
-    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
+    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page,
+      trackingQuery:req.query.trackingQuery,afterLotId:req.query.afterLotId,afterSerialId:req.query.afterSerialId});
     const importedDetails=await require('../../domain/postgres-catalog-facts').listForSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id));
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));

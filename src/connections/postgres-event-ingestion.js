@@ -535,8 +535,16 @@ async function ingest(database,auth,raw,options={}){
         lotCode:event.data.lotCode,expiresAt:event.data.expiresAt,reasonCode:trimOrNull(event.data.reasonCode)});
       actionType='inventory.receive';
     }else if(event.type==='inventory.adjust'){
+      const count=countedQuantity(event.data.countedQuantity??event.data.countedQty);
+      const ordering=await require('./postgres-source-ordering').admitSnapshot(client,auth,event,sku,location,count);
+      if(ordering.stale){
+        await client.query(`UPDATE connector_feed_events SET status='STALE',error_message=$4,processed_at=$5
+          WHERE workspace_id=$1 AND connector_id=$2 AND external_event_id=$3`,
+        [auth.workspaceId,auth.connectorId,event.eventId,'A newer or identical source position is already recorded.',nowIso()]);
+        return {accepted:false,replayed:false,status:'STALE',eventId:event.eventId,movementIds:[]};
+      }
       result=await inventory.adjustInTransaction(client,ctx,{skuId:sku,locationId:location,
-        countedQuantity:countedQuantity(event.data.countedQuantity??event.data.countedQty),
+        countedQuantity:count,
         reasonCode:trimOrNull(event.data.reasonCode)||'physical_count',reference,notes,
         occurredAt:event.occurredAt||receivedAt,idempotencyKey:common.idempotencyKey});
       actionType='inventory.adjust';

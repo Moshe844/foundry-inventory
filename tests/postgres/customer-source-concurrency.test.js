@@ -39,7 +39,10 @@ test('two worker claimers serialize imports per inventory while other inventorie
  const progress=await require('../../src/imports/postgres-progress').get(db,ctx.workspaceId,active.payload.planId===first.id?second.id:first.id);assert.equal(progress.state,'QUEUED');assert.match(progress.stageLabel,/running import in this inventory/);
  let release,entered;const gate=new Promise(r=>release=r),ready=new Promise(r=>entered=r);
  const executor=imports.execute(db,ctx,active.payload.planId,{beforeRow:async()=>{entered();await gate;}});
- await ready;try{await assert.rejects(catalog.createItem(db,ctx,{name:'Manual item while importing',baseCode:'MANUAL-4',trackingMode:'quantity'}),e=>e.code==='validation_error'&&e.details.reason==='catalog_busy');}finally{release();}
+ await ready;try{
+  await assert.rejects(catalog.createItem(db,ctx,{name:'Manual item while importing',baseCode:'MANUAL-4',trackingMode:'quantity'}),e=>e.code==='validation_error'&&e.details.reason==='catalog_busy');
+  await assert.rejects(imports.execute(db,ctx,active.payload.planId===first.id?second.id:first.id),e=>e.code==='validation_error'&&e.details.reason==='catalog_busy');
+ }finally{release();}
  assert((await executor).verified);await jobs.complete(db,active.id,active.leaseToken,{verified:true});
  const next=await jobs.claim(db,{owner:'worker-d',kinds:['import.execute-approved']});assert(next);assert((await imports.execute(db,ctx,next.payload.planId)).verified);await jobs.complete(db,next.id,next.leaseToken,{verified:true});
  const manual=await catalog.createItem(db,ctx,{name:'Manual item after importing',baseCode:'MANUAL-4',trackingMode:'quantity'});assert(manual.itemId);

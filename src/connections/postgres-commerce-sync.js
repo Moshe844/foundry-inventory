@@ -164,8 +164,10 @@ async function publishPriceChangesInTransaction(db,ctx,changes){
  return result;
 }
 async function reconcile(db,c){
- const positions=(await db.query("SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND connector_id=$2 AND mode<>'off' ORDER BY id FOR UPDATE",[c.workspace_id,c.id])).rows;
  const result={queued:0,inboundPrices:0,conflicts:0};
+ let after=null;
+ for(;;){
+ const positions=(await db.query("SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND connector_id=$2 AND mode<>'off' AND ($3::text IS NULL OR id>$3) ORDER BY id LIMIT 250 FOR UPDATE",[c.workspace_id,c.id,after])).rows;
  for(const p of positions){
   const active=await connection(db,{workspaceId:c.workspace_id,actorId:p.authorized_by_user_id},c.id);
   if(p.provider_account_id!==active.provider_account_id||!await mapped(db,p)){await issue(db,p,'The connected account, product or location mapping changed. Reapprove the intended match.');result.conflicts++;continue;}
@@ -190,6 +192,8 @@ async function reconcile(db,c){
    await advance(db,p,r,r);await audit(db,p,'connection.commerce_sync.received',{before:l.value,after:r});result.inboundPrices++;continue;
   }
   await issue(db,p,p.field==='quantity'&&rc?'The channel count changed. StockChief retained the difference for a physical-count review; it did not infer a receipt, sale, refund or inventory cost.':'This change is outside the approved synchronization direction.');result.conflicts++;
+ }
+ if(positions.length<250)break;after=positions.at(-1).id;
  }
  return result;
 }
