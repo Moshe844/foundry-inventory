@@ -64,7 +64,12 @@ Provider snapshot application still uses one transaction; discovery is restarted
 after interruption. It is not yet a durable generation-by-generation sync.
 CSV source bytes/string still reside in memory. Analysis is a long transaction.
 XLSX and other structured formats are not million-row certified; their format
-limits remain separate from plan allowances. Xero Items is not documented among
+limits remain separate from plan allowances.
+XLSX defaults now bound expanded parts to 128 MiB and total expansion to 256 MiB;
+larger dedicated deployments can override these explicitly. ZIP directories,
+actual decompression bytes, declared lengths and CRCs are checked. Corrupt or
+missing worksheets fail the entire source instead of silently dropping data.
+Xero Items is not documented among
 its paginated endpoints. Provider response bodies are bounded to 32 MiB; a large
 unpaginated response fails safely and needs a staged source export.
 F12: catalogue name/newest pages use cursors and page-scoped aggregates;
@@ -89,6 +94,7 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
   picks, cancellation/expiry, paged readiness and actual Chromium workflow pass.
 - business-numbers-warehouse.log: 3/3 atomic numbering, accounting and picking.
 - all-import-unit.log: 112/112 import unit tests.
+- xlsx-integrity-retest.log: 37/37 workbook integrity and import regressions.
 - provider-release-unit.log: 40/40 provider contract/streaming/response tests.
 - provider-cache-capacity.log: 3,004 records, 23 measured DB round trips,
   436 ms cache application in an isolated local PostgreSQL fixture; exact,

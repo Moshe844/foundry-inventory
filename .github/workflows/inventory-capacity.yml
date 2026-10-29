@@ -43,7 +43,7 @@ jobs:
         run: |
           mkdir -p output/inventory-ci
           set -euo pipefail
-          node --test tests/unit/provider-response-capacity.test.js tests/unit/provider-streaming-discovery.test.js tests/unit/commerce-quantity-events.test.js tests/unit/bigcommerce-adapter.test.js tests/unit/multipart-capacity.test.js tests/unit/multipart-reuse.test.js tests/unit/import-indexed-delimited.test.js tests/unit/import-validation-scratch.test.js tests/unit/import-source-identity.test.js tests/unit/import-delimiter-preamble.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-production-boundaries.test.js 2>&1 | tee output/inventory-ci/unit.log
+          node --test tests/unit/xlsx-integrity-capacity.test.js tests/unit/provider-response-capacity.test.js tests/unit/provider-streaming-discovery.test.js tests/unit/commerce-quantity-events.test.js tests/unit/bigcommerce-adapter.test.js tests/unit/multipart-capacity.test.js tests/unit/multipart-reuse.test.js tests/unit/import-indexed-delimited.test.js tests/unit/import-validation-scratch.test.js tests/unit/import-source-identity.test.js tests/unit/import-delimiter-preamble.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-production-boundaries.test.js 2>&1 | tee output/inventory-ci/unit.log
       - name: PostgreSQL correctness, limits, durable batches and customer screens
         run: |
           set -euo pipefail
