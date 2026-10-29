@@ -23,6 +23,9 @@ function renderPublic(req,res,view,data={}){return res.render(view,{...data,csrf
       'StockChief runs inventory operations and brings owners only the exceptions that require judgement.'});});}
 
 function commercialAdmin(req,res,next){const configured=config.commercial.adminEmails.includes(String(req.account?.email||'').toLowerCase());
+  // Only the separate console supplies this freshly MFA-validated request actor.
+  // A customer identity, workspace role or body/header value cannot supply it.
+  if(res.locals.ownerConsole===true&&req.owner?.role==='OWNER'&&req.owner.id===req.account?.id&&req.session?.owner?.accountId===req.owner.id)return next();
   if(configured)return next();return req.db.query('SELECT 1 FROM commercial_admin_accounts WHERE account_id=$1',[req.account?.id])
     .then((result)=>result.rows.length?next():next(new AuthorizationError(
       'This commercial control is restricted to StockChief administrators.'))).catch(next);}
