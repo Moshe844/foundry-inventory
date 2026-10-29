@@ -107,7 +107,7 @@ async function metricsSummary(database,workspaceId){const row=(await database.qu
   [workspaceId])).rows[0];
   const autonomous=(await database.query(`SELECT COUNT(*)::int AS outcomes,
       COUNT(*) FILTER (WHERE execution_status='COMPLETED' AND verification_status='VERIFIED')::int AS completed
-    FROM work_items WHERE workspace_id=$1 AND purchase_order_id IS NOT NULL`,[workspaceId])).rows[0];
+    FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot' AND purchase_order_id IS NOT NULL`,[workspaceId])).rows[0];
   const clarificationReplies=(await database.query(`SELECT COUNT(DISTINCT COALESCE(intent->>'batchId',id))::int AS replies
     FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1
       AND intent #>> '{controlPlane,continuesPending}'='true'

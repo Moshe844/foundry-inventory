@@ -6,44 +6,9 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
 function visible(item,actor){const p=require('../actions/permissions'),required={accounting:p.VIEW_ACCOUNTING,order:p.VIEW_SALES,shipping:p.VIEW_SALES,purchase:p.VIEW_PURCHASING,repair:p.ADMIN,provider:p.ADMIN};return (item.requiredPermissions||[required[item.kind]||p.VIEW]).every(key=>p.can(actor,key));}
 
 async function needsCount(database,workspaceId,actorId=null){
-  if(actorId){const actor=await membership(database,workspaceId,actorId),p=require('../actions/permissions');if(!actor)return 0;if(![p.VIEW,p.VIEW_ACCOUNTING,p.VIEW_SALES,p.VIEW_PURCHASING,p.ADMIN].every(key=>p.can(actor,key)))return (await needs(database,workspaceId,actorId)).length;}
-  const [result,nativeApprovals]=await Promise.all([database.query(`SELECT
-    (SELECT COUNT(*) FROM attention_items WHERE workspace_id=$1 AND status='OPEN')+
-    (SELECT COUNT(*) FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING')+
-    (SELECT COUNT(*) FROM connection_issues WHERE workspace_id=$1 AND status='OPEN')+
-    (SELECT COUNT(*) FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
-      AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED'))+
-    (SELECT COUNT(*) FROM import_executions WHERE workspace_id=$1 AND status='FAILED')+
-    (SELECT COUNT(*) FROM accounting_supplier_bills WHERE workspace_id=$1 AND status='DISPUTED')+
-    (SELECT COUNT(*) FROM custody_billing_policies WHERE workspace_id=$1 AND status='NEEDS_REVIEW')+
-    (SELECT COUNT(*) FROM supplier_returns WHERE workspace_id=$1 AND status='CREDIT_MISMATCH')+
-    (SELECT COUNT(*) FROM sales_shipments WHERE workspace_id=$1 AND tracking_status IN ('FAILURE','RETURNED'))+
-    (SELECT COUNT(*) FROM connection_email_messages message WHERE message.workspace_id=$1 AND message.reply_state='NEEDS_REPLY'
-      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
-        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
-        AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')))+
-    (SELECT COUNT(*) FROM (SELECT so.id FROM sales_orders so
-      JOIN sales_order_lines sol ON sol.sales_order_id=so.id
-      LEFT JOIN (SELECT sales_order_line_id,SUM(quantity) AS allocated FROM sales_order_allocations
-        WHERE workspace_id=$1 GROUP BY sales_order_line_id) a ON a.sales_order_line_id=sol.id
-      WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-      GROUP BY so.id HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled)>COALESCE(SUM(a.allocated),0)) short_orders)+
-    (SELECT COUNT(*) FROM purchase_orders po WHERE po.workspace_id=$1
-      AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
-      AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text)+
-    (SELECT COUNT(*) FROM repair_cases WHERE workspace_id=$1
-      AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE'))+
-    (SELECT COUNT(*) FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
-      AND NOT (effect.kind IN ('shipping.label.purchase','shipping.label.void') AND effect.provider_reference->>'externalId' IS NOT NULL
-        AND EXISTS (SELECT 1 FROM stockchief_runtime.jobs verification WHERE verification.workspace_id=effect.workspace_id
-            AND verification.kind=CASE WHEN effect.kind='shipping.label.void' THEN 'shipping.void.verify' ELSE 'shipping.label.verify' END AND verification.payload->>'effectId'=effect.id
-          AND verification.status IN ('PENDING','RUNNING','RETRY')))
-      AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
-        AND EXISTS (SELECT 1 FROM connection_issues issue
-        WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
-        AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))) AS count`,[workspaceId]),
-    require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId)]);
-  return number(result.rows[0].count)+nativeApprovals.length;
+  // The badge and the decision list are one projection with the same permission
+  // filtering and related-record de-duplication. A second SQL count drifted.
+  return (await needs(database,workspaceId,actorId)).length;
 }
 
 async function runtimeFailures(database,workspaceId){
@@ -71,7 +36,7 @@ async function needs(database,workspaceId,actorId=null){
         AND effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
         AND effect.status='AMBIGUOUS' ORDER BY effect.created_at DESC LIMIT 1) related_effect ON true
       WHERE i.workspace_id=$1 AND i.status='OPEN' ORDER BY i.updated_at DESC`,[workspaceId]),
-    database.query(`SELECT id,category,source,recommended_action,policy_evaluation,urgency,confidence,priority,created_at,error_message
+    database.query(`SELECT id,category,source,recommended_action,policy_evaluation,outcome,urgency,confidence,priority,created_at,error_message
       FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
       AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED') ORDER BY priority DESC,created_at`,[workspaceId]),
     database.query(`SELECT e.id,e.import_id,e.error_message,e.finished_at,p.source_name FROM import_executions e
@@ -133,6 +98,8 @@ async function needs(database,workspaceId,actorId=null){
     database.query("SELECT id,kind,payload,created_at FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at,id",[workspaceId]),
     database.query("SELECT p.id,p.agreement_id,p.last_error,p.created_at,p.updated_at,a.agreement_number FROM custody_billing_policies p JOIN custody_agreements a ON a.workspace_id=p.workspace_id AND a.id=p.agreement_id WHERE p.workspace_id=$1 AND p.status='NEEDS_REVIEW' ORDER BY p.updated_at",[workspaceId]),
   ]);
+  const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
+  const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
   for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Important',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Important',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
@@ -147,7 +114,11 @@ async function needs(database,workspaceId,actorId=null){
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
     actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
-  for(const row of work.rows){const action=object(row.recommended_action);const authority=object(row.policy_evaluation);items.push({kind:'approval',requiredPermissions:[action.type==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],
+  for(const row of work.rows){const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
+    if(outcome.decision&&preparedLinks.has(outcome.reviewHref))continue;
+    if(outcome.decision){const d=outcome.decision,permission=action.type==='customer_order'?require('../actions/permissions').VIEW_SALES:action.type==='supplier_invoice'?require('../actions/permissions').VIEW_ACCOUNTING:require('../actions/permissions').VIEW_PURCHASING;
+      items.push({kind:'approval',requiredPermissions:[permission],importance:'Important',priority:90,title:(outcome.reference||action.displayName||'Business work')+': '+outcome.nextAction,happened:d.happened,why:d.impact,recommendation:d.recommendation+' '+d.required,checked:d.checked,alternatives:d.alternatives,href:outcome.reviewHref||outcome.href||action.href||'/autopilot/work/'+row.id,actionLabel:'Review next step',sourceId:row.id,createdAt:row.created_at,at:outcome.deadline||row.created_at});continue;}
+    items.push({kind:'approval',requiredPermissions:[action.type==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],
     importance:row.urgency==='immediate'?'Urgent':'Important',priority:70+number(row.priority),
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
     happened:action.summary || (action.type==='transfer'
@@ -160,7 +131,7 @@ async function needs(database,workspaceId,actorId=null){
     happened:'The database transaction was rolled back; no partial inventory truth was left behind.',why:row.error_message || 'The import could not be verified.',
     recommendation:'Correct the source or setup, then run the same approved preview again.',href:`/imports/${row.import_id}`,
     actionLabel:'Open import',sourceId:row.id,createdAt:row.finished_at,timeLabel:'Failed',at:row.finished_at});
-  for(const row of bills.rows)items.push({kind:'accounting',importance:'Important',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
+  for(const row of bills.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'accounting',importance:'Important',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
     happened:`${row.supplier_name} has ${row.currency} ${(number(row.balance_minor)/100).toFixed(2)} unresolved.`,
     why:'The supplier document and expected purchase do not agree.',recommendation:'Review the discrepancy before paying or posting a correction.',
     href:`/accounting/payables/${row.id}/review`,actionLabel:'Review invoice',sourceId:row.id,createdAt:row.created_at,timeLabel:'Invoice recorded',updatedAt:row.updated_at,dueDate:row.due_date,at:row.updated_at});
@@ -179,11 +150,11 @@ async function needs(database,workspaceId,actorId=null){
     happened:`${row.sender} is waiting for a response.`,why:row.reply_reason || 'A known customer or supplier sent a business message.',
     recommendation:'Read the message first. Review or write a reply only if one is needed.',href:`/mail/${row.id}`,
     actionLabel:'Read email',sourceId:row.id,createdAt:row.received_at,timeLabel:'Received',at:row.received_at});
-  for(const row of orders.rows)items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
+  for(const row of orders.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
     priority:92,title:`${row.order_number} does not have enough allocated stock`,happened:`${row.customer_name} needs ${number(row.remaining)} units; ${number(row.allocated)} are allocated.`,
     why:'The order cannot be fulfilled completely from its current allocations.',recommendation:'Review transfer or replenishment options before the promised date.',
     href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
-  for(const row of purchases.rows)items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
+  for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
     happened:`${row.supplier_name} was expected on ${row.expected_date}.`,why:'StockChief has no complete receipt for this purchase order.',
     recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,timeLabel:'Purchase order created',dueDate:row.expected_date,at:row.expected_date});
   for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Important',

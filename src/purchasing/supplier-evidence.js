@@ -132,27 +132,7 @@ function receiveTrustedDelivery(db, message, supplier, order, documentId, matche
   }
 }
 
-function matchLine(lines, proposed) {
-  const keys = [proposed.purchaseOrderLineId, proposed.supplierSku, proposed.sku, proposed.skuCode]
-    .filter(Boolean).map((entry) => String(entry).trim().toLowerCase());
-  const coded = lines.find((line) => keys.includes(String(line.id).toLowerCase())
-    || [line.supplier_sku, line.mapped_supplier_sku, line.sku_code].filter(Boolean)
-      .some((entry) => keys.includes(String(entry).trim().toLowerCase()))) || null;
-  if (coded) return coded;
-
-  // A supplier does not need to repeat its SKU when an exact product name on
-  // an already-identified PO resolves to one line. This is deliberately exact
-  // and unique: similar wording or two same-named lines still asks the owner.
-  const normalize = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const description = normalize(proposed.description || proposed.displayName || proposed.name);
-  if (!description) return null;
-  const described = lines.filter((line) => [
-    line.description,
-    line.item_name,
-    line.variant_label ? `${line.item_name} / ${line.variant_label}` : null,
-  ].some((candidate) => normalize(candidate) === description));
-  return described.length === 1 ? described[0] : null;
-}
+const {matchLine}=require('./supplier-line-match');
 
 function issue(db, message, type, fingerprint, title, detail, resolutionHint, candidates = []) {
   return connections.issue(db, { workspaceId: message.workspace_id, connectorId: message.connector_id,

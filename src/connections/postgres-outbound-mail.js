@@ -119,6 +119,11 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
     connection.id,ctx.actorId,at,idempotencyKey]);
   const message=inserted.rows[0]||(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND idempotency_key=$2`,
     [ctx.workspaceId,idempotencyKey])).rows[0];
+  if(prepared.purchaseOrderId){
+    const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
+    if(!order)throw new ValidationError('The supplier message must refer to this supplier’s purchase order.');
+    await client.query('UPDATE supplier_communications SET purchase_order_id=$3 WHERE workspace_id=$1 AND id=$2 AND (purchase_order_id IS NULL OR purchase_order_id=$3)',[ctx.workspaceId,message.id,order.id]);
+  }
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',
     provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
@@ -155,15 +160,19 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
     },{isolation:'SERIALIZABLE',retrySafe:true});
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send messages.'),{code:'email_send_unavailable'});
     const providerCredentials=await providerService.loadProviderCredentials(database,loaded.connection,provider);
-    if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
-    providerCalled=true;
     const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
-      key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},()=>provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
-      recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey}));
+      key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},async()=>{
+        if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
+        if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
+        providerCalled=true;return provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
+          recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
+      });
     if(!result||typeof result.externalMessageId!=='string'||!result.externalMessageId.trim())
       throw Object.assign(new Error('The mailbox provider did not return a verifiable message ID.'),
         {code:'email_provider_acceptance_unverified'});

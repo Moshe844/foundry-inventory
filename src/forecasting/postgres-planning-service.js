@@ -75,78 +75,25 @@ async function saveGoals(database, ctx, input) {
   return goals(database, ctx.workspaceId);
 }
 
-async function position(database, workspaceId, {recommendationsOnly=false}={}) {
-  const result = await database.query(`WITH movement_sales AS (
-      SELECT sku_id,location_id,COALESCE(SUM(-quantity_delta),0) AS sold_90
-      FROM movements WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0
-        AND occurred_at::timestamptz >= clock_timestamp()-interval '90 days' GROUP BY sku_id,location_id
-    ), committed AS (
-      SELECT line.sku_id,order_record.fulfillment_location_id AS location_id,
-        COALESCE(SUM(line.quantity_ordered-line.quantity_fulfilled),0) AS units
-      FROM sales_order_lines line JOIN sales_orders order_record ON order_record.id=line.sales_order_id
-      WHERE line.workspace_id=$1 AND order_record.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-      GROUP BY line.sku_id,order_record.fulfillment_location_id
-    ), incoming AS (
-      SELECT line.sku_id,COALESCE(line.destination_location_id,order_record.destination_location_id) AS location_id,
-        COALESCE(SUM(line.quantity_units-line.quantity_received_units),0) AS units
-      FROM purchase_order_lines line JOIN purchase_orders order_record ON order_record.id=line.purchase_order_id
-      WHERE line.workspace_id=$1 AND order_record.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
-      GROUP BY line.sku_id,COALESCE(line.destination_location_id,order_record.destination_location_id)
-    ), latest_cost AS (
-      SELECT DISTINCT ON (sku_id) sku_id,amount_minor FROM sku_purchase_costs WHERE workspace_id=$1
-      ORDER BY sku_id,created_at DESC,id DESC
-    ), position_scope AS MATERIALIZED (
-      SELECT sku_id,location_id FROM movement_sales WHERE $2::boolean AND sold_90>0
-      UNION ALL
-      SELECT sku.id,location.id FROM skus sku CROSS JOIN locations location
-      WHERE NOT $2::boolean AND sku.workspace_id=$1 AND sku.is_active=1
-        AND location.workspace_id=$1 AND location.is_active=1
-    )
-    SELECT s.id AS sku_id,s.code,i.id AS item_id,i.name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
-      COALESCE(b.on_hand,0) AS on_hand,COALESCE(c.units,0) AS committed,COALESCE(inc.units,0) AS incoming,
-      COALESCE(ms.sold_90,0) AS sold_90,rp.id AS policy_id,rp.reorder_point,rp.target_stock,rp.safety_stock,
-      COALESCE(rp.lead_time_days,14) AS lead_time_days,lc.amount_minor AS cost_minor
-    FROM position_scope scope JOIN skus s ON s.id=scope.sku_id AND s.workspace_id=$1
-    JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-    JOIN locations l ON l.id=scope.location_id AND l.workspace_id=$1 LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
-    LEFT JOIN movement_sales ms ON ms.sku_id=s.id AND ms.location_id=l.id
-    LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id
-    LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id
-    LEFT JOIN LATERAL (SELECT policy.* FROM reorder_policies policy
-      WHERE policy.workspace_id=s.workspace_id AND policy.sku_id=s.id
-        AND (policy.location_id=l.id OR policy.location_id IS NULL)
-      ORDER BY (policy.location_id IS NOT NULL) DESC,policy.updated_at DESC,policy.id LIMIT 1) rp ON TRUE
-    LEFT JOIN latest_cost lc ON lc.sku_id=s.id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1
-    ORDER BY i.name,s.position,l.name`, [workspaceId,recommendationsOnly]);
-  return result.rows.map(row => {
-    const onHand = Number(row.on_hand); const committed = Number(row.committed); const incoming = Number(row.incoming);
-    const sold90 = Number(row.sold_90); const dailyRate = sold90 / 90; const available = onHand - committed;
-    const projected = available + incoming; const leadTimeDays = Number(row.lead_time_days);
-    const reorderPoint = number(row.reorder_point); const targetStock = number(row.target_stock);
-    const inferredReorder = Math.max(1, Math.ceil(dailyRate * (leadTimeDays + 7)));
-    const effectiveReorder = reorderPoint ?? inferredReorder;
-    return { ...row, onHand, committed, incoming, sold90, dailyRate, available, projected, leadTimeDays,
-      reorderPoint, targetStock, safetyStock:number(row.safety_stock), costMinor:number(row.cost_minor),
-      inferredReorder, effectiveReorder, daysOfSupply:dailyRate > 0 ? available / dailyRate : null,
-      shortage:projected <= effectiveReorder, displayName:row.name + (row.code ? ` · ${row.code}` : '') };
-  });
+async function position(database,workspaceId,{recommendationsOnly=false}={}){
+ const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly});
+ return source.map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
 }
 
 async function ensureRecommendations(database, workspaceId, rows) {
-  for (const row of rows.filter(candidate => candidate.shortage && candidate.dailyRate > 0)) {
+  for (const row of rows.filter(candidate => candidate.shortage && candidate.dailyRate > 0&&candidate.inferredReorder!==null)) {
     const recommended = Math.max(row.inferredReorder, row.safetyStock || 0);
     if (row.reorderPoint !== null && Math.abs(row.reorderPoint - recommended) < 2) continue;
-    const key = `postgres-planning:reorder:${row.sku_id}:${recommended}`;
+    const key = `postgres-planning:reorder:${row.sku_id}:${row.location_id||'workspace'}:${recommended}`;
     const at = nowIso();
     await database.query(`INSERT INTO planning_recommendations
       (id,workspace_id,kind,subject_type,subject_id,sku_id,current_value,recommended_value,headline,why,
        confidence,evidence,authority_verdict,authority_detail,status,idempotency_key,created_at,updated_at)
       VALUES($1,$2,'reorder_point','sku',$3,$3,$4,$5,$6,$7,$8,$9,'needs_approval',$10,'OPEN',$11,$12,$12)
       ON CONFLICT(workspace_id,idempotency_key) DO NOTHING`, [newId('plan'), workspaceId, row.sku_id,
-      row.reorderPoint, recommended, `Reorder ${row.displayName} at ${recommended}`,
-      `${row.available} available, ${row.incoming} incoming, and ${row.sold90} issued in the last 90 days.`,
-      row.sold90 >= 30 ? 'high' : 'moderate', JSON.stringify({ dailyRate:row.dailyRate,leadTimeDays:row.leadTimeDays }),
+      row.reorderPoint, recommended, `Reorder ${row.displayName} in ${row.location_name} at ${recommended}`,
+      `${row.location_name}: ${row.available} available, ${row.incoming} incoming, and ${row.sold90} issued in the last 90 days.`,
+      row.sold90 >= 30 ? 'high' : 'moderate', JSON.stringify({ dailyRate:row.dailyRate,leadTimeDays:row.leadTimeDays,locationId:row.location_id }),
       JSON.stringify({ reason:'A person must approve a replenishment-policy change.' }), key, at]);
   }
 }
@@ -172,21 +119,10 @@ async function accuracy(database, workspaceId) {
 }
 
 function transfers(rows) {
-  const suggestions = [];
-  const bySku = new Map();
-  for (const row of rows) { if (!bySku.has(row.sku_id)) bySku.set(row.sku_id, []); bySku.get(row.sku_id).push(row); }
-  for (const locations of bySku.values()) {
-    for (const shortage of locations.filter(row => row.shortage)) {
-      const source = locations.filter(row => row.location_id !== shortage.location_id && row.available > row.effectiveReorder)
-        .sort((left, right) => right.available - left.available)[0];
-      if (!source) continue;
-      const units = Math.min(source.available - source.effectiveReorder, Math.max(1, shortage.effectiveReorder - shortage.projected));
-      if (units > 0) suggestions.push({ skuId:shortage.sku_id,displayName:shortage.displayName,units,
-        fromLocationName:source.location_name,toLocationName:shortage.location_name,
-        why:`Uses stock already owned before buying more. ${source.location_name} retains ${source.available - units} available.` });
-    }
-  }
-  return suggestions;
+  return require('../purchasing/replenishment-decision').transferPlan(rows).map(({skuId,source,destination,quantity})=>({
+    skuId,displayName:destination.displayName,units:quantity,fromLocationName:source.location_name,toLocationName:destination.location_name,
+    why:`Uses stock already owned before buying more. ${source.location_name} retains ${source.available-quantity} available.`
+  }));
 }
 
 async function overview(database, workspaceId) {
@@ -194,12 +130,12 @@ async function overview(database, workspaceId) {
   const goal = await goals(database, workspaceId); const rows = await position(database, workspaceId);
   const maxDays = goal.maxDaysOfSupply || 90;
   const shortages = rows.filter(row => row.shortage).sort((a, b) => (a.daysOfSupply ?? 999999) - (b.daysOfSupply ?? 999999));
-  const excess = rows.filter(row => row.onHand > 0 && ((row.targetStock !== null && row.onHand > row.targetStock)
+  const excess = rows.filter(row => row.scope!=='workspace'&&row.onHand > 0 && ((row.targetStock !== null && row.onHand > row.targetStock)
     || (row.daysOfSupply !== null && row.daysOfSupply > maxDays))).map(row => {
       const keep = row.targetStock ?? Math.ceil(row.dailyRate * maxDays); const units = Math.max(0, row.onHand - keep);
       return { ...row,excessUnits:units,excessValueMinor:row.costMinor === null ? null : units * row.costMinor };
     }).sort((a, b) => (b.excessValueMinor || 0) - (a.excessValueMinor || 0));
-  const heldMinor = rows.reduce((sum, row) => sum + (row.costMinor === null ? 0 : row.onHand * row.costMinor), 0);
+  const heldMinor = rows.filter(row=>row.scope!=='workspace').reduce((sum, row) => sum + (row.costMinor === null ? 0 : row.onHand * row.costMinor), 0);
   return { scanned:new Set(rows.map(row => row.sku_id)).size,rows,shortages,excess,transfers:transfers(rows),
     recommendations:await openRecommendations(database,workspaceId),goals:goal,accuracy:await accuracy(database,workspaceId),
     heldMinor,inventoryCapMinor:goal.inventoryCapMinor };
@@ -230,8 +166,10 @@ async function decide(database, ctx, id, decision) {
     }
     const value = Number(row.recommended_value);
     if (!Number.isSafeInteger(value) || value < 0) throw new ValidationError('The recommended policy value is invalid.');
+    const locationId=object(row.evidence).locationId??null;
+    if(locationId&&!(await client.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,locationId])).rows.length)throw new ValidationError('The recommended location is no longer active. Review the current plan.');
     const current = (await client.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2
-      AND location_id IS NULL FOR UPDATE`, [ctx.workspaceId,row.sku_id])).rows[0];
+      AND location_id IS NOT DISTINCT FROM $3 FOR UPDATE`, [ctx.workspaceId,row.sku_id,locationId])).rows[0];
     const fields = { reorder_point:'reorder_point',target_stock:'target_stock',safety_stock:'safety_stock' };
     const next = { reorder_point:current?.reorder_point ?? null,target_stock:current?.target_stock ?? null,
       safety_stock:current?.safety_stock ?? null,[fields[row.kind]]:value };
@@ -242,7 +180,7 @@ async function decide(database, ctx, id, decision) {
       source='foundry',notes=$7,updated_at=$8 WHERE workspace_id=$2 AND id=$1`, values);
     else await client.query(`INSERT INTO reorder_policies
       (id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,notes,created_at,updated_at)
-      VALUES($1,$2,$3,NULL,$4,$5,$6,'foundry',$7,$8,$8)`, values);
+        VALUES($1,$2,$3,$9,$4,$5,$6,'foundry',$7,$8,$8)`, [...values,locationId]);
     const changed = (await client.query(`UPDATE planning_recommendations SET status='APPLIED',decided_by_user_id=$3,
       decided_at=$4,updated_at=$4,resulting_action=$5,resulting_detail=$6 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
     [ctx.workspaceId,id,ctx.actorId,at,policyId,JSON.stringify({ field:fields[row.kind],value })])).rows[0];

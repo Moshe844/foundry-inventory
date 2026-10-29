@@ -1,3 +1,16 @@
+<% const ongoing=item.source==='postgres_workflow_owner'||item.execution_status==='EXECUTING'||item.outcome?.nextAction||item.execution_status==='FAILED'&&(item.outcome?.purchaseOrderId||item.outcome?.transferId); %>
+<% if(ongoing){ const outcome=item.outcome||{},decision=outcome.decision; %>
+<div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">StockChief is following this work</p><h1><%= outcome.reference||item.recommendedAction.displayName||'Business workflow' %></h1><p class="rm-prose"><%= outcome.requestedOutcome||item.recommendedAction.title||'Follow the linked business record through completion.' %></p></div></div></div>
+<section class="card"><div class="card-head"><h2><%= item.execution_status==='COMPLETED'?'Outcome verified':item.execution_status==='CANCELLED'?'Cancelled':item.execution_status==='FAILED'?'Needs a delivery check':'In progress' %></h2></div><div class="card-body">
+<p><strong><%= item.error_message||outcome.nextAction||'Checking the saved business records.' %></strong></p>
+<% if(outcome.lastCheckedAt){ %><p>Last checked <time data-local-time datetime="<%= outcome.lastCheckedAt %>"><%= helpers.dateTime(outcome.lastCheckedAt) %></time>.</p><% } %>
+<% if(outcome.nextCheckAt){ %><p>Next check <time data-local-time datetime="<%= outcome.nextCheckAt %>"><%= helpers.dateTime(outcome.nextCheckAt) %></time>.</p><% } %>
+<% if(outcome.deadline){ %><p>Decision or expected event due <time data-local-time datetime="<%= outcome.deadline %>"><%= helpers.dateTime(outcome.deadline) %></time>.</p><% } %>
+<% if(decision){ %><div class="notice notice--warn"><div><h3><%= decision.happened %></h3><p><%= decision.impact %></p><p><%= decision.recommendation %></p><p><strong>Your decision:</strong> <%= decision.required %></p></div></div><h3>Already checked</h3><ul><% for(const check of decision.checked||[]){ %><li><%= check %></li><% } %></ul><% if(decision.alternatives?.length){ %><h3>Alternatives</h3><ul><% for(const choice of decision.alternatives){ %><li><%= choice %></li><% } %></ul><% } %><% } %>
+<p><a class="btn btn--primary" href="<%= outcome.reviewHref||outcome.href||item.recommendedAction.href||(item.outcome?.transferId?'/transfers/'+item.outcome.transferId:item.outcome?.purchaseOrderId?'/purchasing/orders/'+item.outcome.purchaseOrderId:'/needs-you') %>">Open the linked record</a></p>
+<p class="muted">Approval, an email or a supplier invoice does not confirm physical receipt, delivery or payment. Those outcomes are checked against their own records.</p>
+</div></section>
+<% } else { %>
 <div class="rm-head"><div class="rm-title"><div><p class="rm-stamp"><%= item.approval_requirement==='NONE'?'Automatic decision':'Needs your approval' %></p>
   <h1><%= item.recommendedAction.type==='transfer'?'Transfer instead of buying':'Prepare a supplier order' %></h1><p class="rm-prose"><%= item.recommendedAction.displayName %></p></div></div></div>
 <section class="card"><div class="card-head"><h2>Exact proposed work</h2><span class="badge <%= item.execution_status==='COMPLETED'?'badge--ok':'badge--warn' %>"><%= String(item.execution_status).replaceAll('_',' ') %></span></div>
@@ -11,5 +24,6 @@
     <% if(item.outcome?.verified){ %><div class="notice notice--success"><div><strong><%= item.outcome.kind==='transfer'?'Prepared, authorized, and reserved.':'Executed and verified.' %></strong><p><%= item.outcome.kind==='transfer'?'The stock remains at the source until the warehouse confirms physical dispatch.':`${item.outcome.poNumber} is approved and traceable to this decision.` %></p><% if(item.outcome.transferId){ %><p><a class="btn btn--primary" href="/transfers/<%= item.outcome.transferId %>">Continue <%= item.outcome.transferNumber %></a></p><% } %></div></div><% } %>
   </div>
   <% if(item.execution_status==='WAITING_FOR_APPROVAL'){ %><div class="card-foot" style="display:flex;gap:10px;justify-content:flex-end"><form method="post" action="/autopilot/work/<%= item.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Discard</button></form>
-    <form method="post" action="/autopilot/work/<%= item.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Approve and execute</button></form></div><% } %>
+    <form method="post" action="/autopilot/work/<%= item.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if(item.recommendedAction.quantityScope==='workspace'&&!item.recommendedAction.destinationLocationId){ %><label>Where should this delivery arrive?<select name="destinationLocationId" required><option value="">Choose a receiving location</option><% for(const place of item.recommendedAction.receivingOptions||[]){ %><option value="<%= place.id %>"><%= place.name %></option><% } %></select></label><% } %><button class="btn btn--primary">Approve and execute</button></form></div><% } %>
 </section>
+<% } %>

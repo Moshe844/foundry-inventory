@@ -37,8 +37,8 @@ async function home(database,workspaceId,actorId=null){
         AND approval_requirement='NONE' AND execution_status='COMPLETED'
         AND verification_status='VERIFIED' AND completed_at>=$2
       ORDER BY completed_at DESC,id DESC LIMIT 8`,[workspaceId,new Date(Date.now()-86400000).toISOString()]),
-    database.query(`SELECT id,recommended_action FROM work_items WHERE workspace_id=$1
-      AND source='postgres_autopilot' AND execution_status='EXECUTING'
+    database.query(`SELECT id,recommended_action,outcome FROM work_items WHERE workspace_id=$1
+      AND source IN('postgres_autopilot','postgres_workflow_owner') AND execution_status='EXECUTING'
       ORDER BY created_at DESC LIMIT 4`,[workspaceId]),
     database.query(`SELECT kind,id,reference,party,event_date FROM (
       SELECT 'purchase' AS kind,po.id,po.po_number AS reference,s.name AS party,po.expected_date AS event_date
@@ -65,17 +65,10 @@ async function home(database,workspaceId,actorId=null){
   let next=null;
   if(!hasLocations)next={title:'Add the place where you keep stock',recommendation:'StockChief needs a location before it can record physical inventory.',href:'/locations/new',action:'Add a location'};
   else if(!hasInventory)next={title:'Add your inventory records',recommendation:'Import a file, connect a system, or enter the first product manually.',href:'/onboarding',action:'Add a source'};
-  const handled=completed.rows.map((row)=>{const action=json(row.recommended_action);const outcome=json(row.outcome);
-    const purchase=action.type==='purchase';const name=action.displayName||'Inventory';
-    return {headline:purchase?`${name}: purchase order approved`:`${name}: transfer approved`,
-      detail:purchase?`${Number(action.quantity||0)} units · ${action.supplierName||'supplier'} · ${outcome.poNumber||'purchase order'}; not yet sent`:
-        `${Number(action.quantity||0)} units · ${action.sourceLocationName||'source'} to ${action.destinationLocationName||'destination'}; physical move still pending`,
-      link:purchase&&outcome.purchaseOrderId?`/purchasing/orders/${outcome.purchaseOrderId}`:
-        !purchase&&outcome.transferId?`/transfers/${outcome.transferId}`:`/autopilot/work/${row.id}`,
-      verified:true,at:row.completed_at};});
-  const active=executing.rows.map((row)=>{const action=json(row.recommended_action);
-    return {title:action.type==='purchase'?'Preparing a purchase order':'Preparing a transfer',
-      detail:action.displayName||'Inventory',link:`/autopilot/work/${row.id}`};});
+  const handled=completed.rows.map(row=>{const action=json(row.recommended_action),outcome=json(row.outcome);
+    return {headline:(outcome.reference||action.displayName||'Business work')+': '+(outcome.nextAction||'Completed and verified'),detail:outcome.completionProof?'Completion checked against the linked business records.':'Open the saved verification evidence.',link:outcome.href||action.href||'/autopilot/work/'+row.id,verified:true,at:row.completed_at};});
+  const active=executing.rows.map(row=>{const action=json(row.recommended_action),outcome=json(row.outcome);
+    return {title:outcome.reference||action.displayName||'Business work',detail:outcome.nextAction||'Checking the saved order and provider evidence',link:'/autopilot/work/'+row.id};});
   const nextDates=upcoming.rows.map((row)=>({text:row.kind==='purchase'
     ?`${row.party} delivery expected · ${row.reference}`:`${row.party} order needed by · ${row.reference}`,
     when:row.event_date,href:row.kind==='purchase'?`/purchasing/orders/${row.id}`:`/orders/${row.id}`}));

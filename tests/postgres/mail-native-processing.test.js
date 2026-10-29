@@ -49,6 +49,7 @@ test('native-funded mail processing has only sender-scoped facts, no browser or 
   assert.equal((await db.query('SELECT count(*) n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
   assert.equal(await f.balance(),9);
   const credits=await require('../../src/commercial/entitlements').meterState(db,{accountId:f.owner.accountId,workspaceId:ctx.workspaceId},'ai_work_credits');
-  assert.equal(credits.used,2);assert.equal(credits.reserved,0);
+  const policy=await require('../../src/commercial/ai-credit-policy').policy(db,{accountId:f.owner.accountId,workspaceId:ctx.workspaceId});
+  assert.equal(credits.used,calls*policy.scale,'Each provider call consumes one currently configured base allocation; replay consumes none');assert.equal(credits.reserved,0);
   t.diagnostic(JSON.stringify({actualNativeRelay:true,actualPostgres:true,actualSDK:false,actualBrowser:false,providerSimulated:true,paidCalls:0,senderScoped:true,noBusinessTools:true,settledResponseReplayed:true}));
 });

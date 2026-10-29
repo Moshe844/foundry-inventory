@@ -384,13 +384,14 @@ async function runtimeSweep(job,client,options={}){
       idempotencyKey:key,payload:{missionId:mission.id,actorId:mission.actor_user_id},priority:20,
       maxAttempts:5,availableAt:now,now});
     if(scheduled.created)scheduledMissionResumes+=1;}
+  const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
   const scheduledGoals=await require('../assistant/postgres-goal-resume').sweep(scopedDatabase(client));
   const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
   return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,scheduledProviderChecks,
     scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,scheduledReconciliations,
-    scheduledMissionResumes,scheduledGoals,stockAlerts,at};
+    scheduledMissionResumes,scheduledWorkflowChecks,scheduledGoals,stockAlerts,at};
 }
 
 async function autopilotEvaluate(job,client){
@@ -453,7 +454,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
         if(work?.approval_requirement==='NONE'){
           const current=await autonomy.getWork(database,job.workspaceId,work.id);
           const state=await autonomy.getState(database,job.workspaceId);
-          const authority=await autonomy.evaluate(database,job.workspaceId,current.recommendedAction,state);
+          const authority=await autonomy.evaluate(database,job.workspaceId,current.recommendedAction,state,{committedPurchaseOrderId:current.outcome.purchaseOrderId});
           if(authority.decision!=='authorized'||authority.policy?.id!==current.policy_id||
             authority.policy?.integrityHash!==current.policyEvaluation.policyHash)
             throw Object.assign(new Error(authority.reason||'Standing supplier authority changed before delivery.'),
@@ -619,6 +620,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'developer.account-delete':external((job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId)),
     'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
   'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
+  'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
@@ -636,6 +638,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
+  'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
   'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'maintenance'})};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,

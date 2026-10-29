@@ -893,6 +893,11 @@ const SPECS=Object.freeze([
         AND purchase_order_id=$2 AND id=$3 AND quantity_units=$4`,
       [ctx.workspaceId,p.recordId,p.lineId,p.quantityUnits])).rows.length&&
       await state(client,ctx,'purchase_orders',p.recordId,['DRAFT','AWAITING_APPROVAL']))},
+  {name:'purchase_order.record_supplier_evidence',description:'Record a trusted supplier confirmation, shipping notice, backorder, quote or changed terms against an exact purchase order. Compare its supplier codes, purchase packs, prices, quantities, currency and expected date with the immutable ordered terms. Changed, partial or conflicting evidence remains a review decision. Never infer stock receipt or payment.',
+    record:'purchase_order',fields:['recordReference','supplierDocument'],permission:permissions.APPROVE_PO,capability:'purchasing.core',
+    build:async(database,ctx,row,args)=>{let document;try{document=JSON.parse(args.supplierDocument);}catch{throw new ValidationError('Read the supplier document into its structured fields before recording it.');}return require('../purchasing/postgres-supplier-evidence').assess(database,ctx,row,document);},
+    execute:(client,ctx,p)=>require('../purchasing/postgres-supplier-evidence').execute(client,ctx,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.purchaseOrderId===p.recordId&&(await client.query('SELECT 1 FROM supplier_documents WHERE workspace_id=$1 AND id=$2 AND purchase_order_id=$3 AND content_hash=$4',[ctx.workspaceId,r.documentId,p.recordId,p.contentHash])).rows.length)},
   {name:'purchase_order.place',description:'Approved PO only: record ORDERED status internally; no email, API transmission, or supplier acceptance. This records the business commitment but does not contact the supplier.',
     record:'purchase_order',fields:['recordReference','reference'],permission:permissions.APPROVE_PO,
     capability:'purchasing.core',states:['APPROVED'],verb:'Record placement of',
@@ -1033,6 +1038,10 @@ const SPECS=Object.freeze([
         AND id=$2 AND purchase_order_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5
         AND status=$6`,[ctx.workspaceId,r.billId,p.purchaseOrderId,p.supplierInvoiceNumber,
         p.expectedTotalMinor,p.expectedStatus])).rows.length)},
+  {name:'supplier_bill.confirm_due_date',description:'Confirm an unpaid supplier bill’s exact payment due date from owner-reviewed supplier evidence or agreed terms. Retain the original document and all previous dates. No amount, stock, journal or payment changes.',record:'supplier_bill',fields:['recordReference','dueDate','reason'],permission:permissions.MANAGE_ACCOUNTING,capability:'purchasing.invoices',
+    build:(database,ctx,row,args)=>require('../purchasing/postgres-supplier-bill-terms').prepare(database,ctx,row,args),
+    execute:(client,ctx,p)=>require('../purchasing/postgres-supplier-bill-terms').execute(client,ctx,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.billId===p.recordId&&(await client.query('SELECT 1 FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2 AND due_date=$3',[ctx.workspaceId,r.billId,p.dueDate])).rows.length)},
   {name:'shipping.receipt_accept',description:'Acknowledge one already-reported carrier charge that exceeds its original quote, then verify that exact retained purchase through read-only provider calls. Preserves the original approval, never buys again, and grants no future spending authority. A changed currency or unidentified purchase cannot be accepted.',
     record:'shipment',fields:['recordReference','amount','currency'],permission:permissions.ADMIN,capability:'shipping.workflow',
     build:async(database,ctx,row,args)=>{const review=await require('../shipping/postgres-receipt-review').view(database,ctx.workspaceId,row.id),money=require('../domain/currency');

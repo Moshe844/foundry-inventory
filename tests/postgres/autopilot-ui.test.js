@@ -1,4 +1,5 @@
 'use strict';
+process.env.NODE_ENV='test';
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -20,15 +21,14 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-autopilot-secret'});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();
-    context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
+    context.after(async()=>{await browser.close();server.closeAllConnections();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];
     page.on('pageerror',(error)=>errors.push(error.message));page.setDefaultTimeout(15000);
     const base=`http://127.0.0.1:${server.address().port}`;
-    await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Autopilot UI Business');
-    await page.getByLabel('Your name').fill('Autopilot Owner');await page.getByLabel('Work email').fill('autopilot-pg@example.test');
-    await page.locator('input[name="password"]').fill('autopilot-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('autopilot-password');
-    await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../../src/domain/postgres-auth-service').createBusiness(database,{businessName:'Autopilot UI Business',name:'Autopilot Owner',email:'autopilot-pg@example.test',password:'Autopilot!Fixture2026'});
+    await page.goto(`${base}/login`);await page.getByLabel('Work email').fill('autopilot-pg@example.test');await page.locator('input[name="password"]').fill('Autopilot!Fixture2026');
+    await Promise.all([page.waitForURL(base+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='autopilot-pg@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
@@ -88,7 +88,8 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     await page.getByRole('link',{name:'Review decision'}).click();
     assert.match(await page.locator('main').innerText(),/Move 10 units from North Warehouse to South Store/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Prepared, authorized, and reserved/);
+    assert.match(await page.locator('main').innerText(),/Await physical dispatch and destination receipt/);
+    assert.equal((await database.query("SELECT execution_status FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot'",[ctx.workspaceId])).rows[0].execution_status,'EXECUTING','An approved transfer remains owned until destination receipt');
     const transferred=(await database.query(`SELECT location_id,on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2`,
       [ctx.workspaceId,transferItem.skuIds[0]])).rows;
     assert.deepEqual(Object.fromEntries(transferred.map((row)=>[row.location_id,Number(row.on_hand)])),
@@ -96,7 +97,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     const preparedTransfer=(await database.query(`SELECT status,source_location_id,destination_location_id
       FROM inventory_transfers WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
     assert.deepEqual(preparedTransfer,{status:'APPROVED',source_location_id:source.id,destination_location_id:destination.id});
-    assert.match(await page.getByRole('link',{name:/Continue TR-/}).getAttribute('href'),/^\/transfers\/tr_/);
+    assert.match(await page.getByRole('link',{name:'Open the linked record'}).getAttribute('href'),/^\/transfers\/tr_/);
 
     const purchaseItem=await catalog.createItem(database,ctx,{name:'Purchase Widget',baseCode:'PW',trackingMode:'quantity',unitLabel:'unit'});
     const supplierId=newId('sup');const supplierItemId=newId('supi');
@@ -140,7 +141,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
       WHERE workspace_id=$1 AND source='foundry_recommendation'`,[ctx.workspaceId])).rows[0].count,'0',
     'automatic purchasing does not create a half-finished PO without separate supplier-email authority');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
-      AND source='postgres_autopilot' AND execution_status='COMPLETED'`,[ctx.workspaceId])).rows[0].count,'1');
+      AND source='postgres_autopilot' AND execution_status='EXECUTING'`,[ctx.workspaceId])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
       AND source='postgres_autopilot' AND execution_status='WAITING_FOR_APPROVAL'`,[ctx.workspaceId])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM inventory_transfers WHERE workspace_id=$1`,

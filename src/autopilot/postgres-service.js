@@ -24,7 +24,7 @@ function hash(value){return crypto.createHash('sha256').update(stable(value)).di
 function integer(value,label,{minimum=0,maximum=1000000}={}){const number=Number(value);
   if(!Number.isSafeInteger(number)||number<minimum||number>maximum)throw new ValidationError(`${label} must be a whole number between ${minimum} and ${maximum}.`);return number;}
 function money(value,label){const number=Number(value);if(!Number.isFinite(number)||number<=0||number>100000000)
-  throw new ValidationError(`${label} must be a positive amount.`);return Math.round(number*100)/100;}
+  throw new ValidationError(`${label} must be a positive amount.`);return number;}
 function assertAdmin(membership){permissions.assertCan(membership,permissions.ADMIN,'change StockChief authority');}
 function assertOperate(membership){permissions.assertCan(membership,permissions.OPERATE,'operate StockChief');}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
@@ -68,16 +68,16 @@ async function resume(database,ctx,membership){assertOperate(membership);const c
   return getState(database,ctx.workspaceId);}
 
 function policyFrom(row){return {id:row.id,name:row.name,description:row.description,enabled:Boolean(Number(row.enabled)),
-  actions:parse(row.allowed_action_types,[]),locationScope:parse(row.location_scope,[]),supplierScope:parse(row.supplier_scope,[]),
+  actions:parse(row.allowed_action_types,[]),itemScope:parse(row.item_scope,[]),locationScope:parse(row.location_scope,[]),supplierScope:parse(row.supplier_scope,[]),
   conditions:parse(row.conditions,[]),thresholds:parse(row.thresholds,{}),maximumQuantity:row.maximum_quantity===null?null:Number(row.maximum_quantity),
   maximumValue:row.maximum_value===null?null:Number(row.maximum_value),dailyLimit:row.daily_limit===null?null:Number(row.daily_limit),
   version:Number(row.version),integrityHash:row.integrity_hash,approvedAt:row.approved_at,disabledAt:row.disabled_at,
-  active:Boolean(Number(row.enabled))&&Boolean(row.approved_at)&&!row.disabled_at};}
+  active:Boolean(Number(row.enabled))&&Boolean(row.approved_at)&&!row.disabled_at&&(!parse(row.thresholds,{}).expiresAt||Date.parse(parse(row.thresholds,{}).expiresAt)>Date.now())};}
 async function listPolicies(database,workspaceId){return (await database.query(`SELECT * FROM automation_policies WHERE workspace_id=$1
   ORDER BY created_at DESC,id`,[workspaceId])).rows.map(policyFrom);}
 async function activePolicy(database,workspaceId,action){const rows=(await database.query(`SELECT * FROM automation_policies
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC,created_at DESC`,[workspaceId])).rows;
-  return rows.map(policyFrom).find((policy)=>policy.actions.includes(action))||null;}
+  return rows.map(policyFrom).find((policy)=>policy.active&&policy.actions.includes(action))||null;}
 
 async function listCapabilities(database,workspaceId){const rows=(await database.query(
   'SELECT capability,granted,updated_at FROM autopilot_capabilities WHERE workspace_id=$1',[workspaceId])).rows;
@@ -87,6 +87,8 @@ async function listCapabilities(database,workspaceId){const rows=(await database
 
 async function setCapability(database,ctx,membership,capability,granted){if(!capabilityDefinitions.CAPABILITIES[capability])
   throw new ValidationError(`There is no StockChief job called "${capability}".`);
+  if(granted)await require('../commercial/enforcement').workspace(database,ctx.workspaceId,
+    capability==='supplier_document_review'?'communications.ai_drafts':'authority.advanced');
   if(granted)assertAdmin(membership);else assertOperate(membership);const at=nowIso();
   await database.query(`INSERT INTO autopilot_capabilities
     (workspace_id,capability,granted,granted_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
@@ -125,16 +127,16 @@ async function replacePolicy(client,ctx,input){await ensure(client,ctx.workspace
   if(prior)await client.query(`UPDATE automation_policies SET enabled=0,disabled_at=$2,disabled_by_user_id=$3,
     updated_at=$2 WHERE workspace_id=$1 AND id=$4`,[ctx.workspaceId,at,ctx.actorId,prior.id]);
   if(!input.enabled)return null;
-  const body={allowedActionTypes:[input.action],locationScope:input.locationScope||[],supplierScope:input.supplierScope||[],
+  const body={allowedActionTypes:[input.action],itemScope:input.itemScope||[],locationScope:input.locationScope||[],supplierScope:input.supplierScope||[],
     conditions:input.conditions||[],thresholds:input.thresholds||{},maximumQuantity:input.maximumQuantity??null,
     maximumValue:input.maximumValue??null,dailyLimit:input.dailyLimit??null};const id=newId('apol');
   await client.query(`INSERT INTO automation_policies(id,workspace_id,name,description,enabled,allowed_action_types,scope,item_scope,
     location_scope,supplier_scope,exclusions,conditions,thresholds,maximum_quantity,maximum_value,daily_limit,approval_rules,version,
     supersedes_policy_id,integrity_hash,created_by_user_id,approved_by_user_id,approved_at,created_at,updated_at)
-    VALUES($1,$2,$3,$4,1,$5,'{}','[]',$6,$7,'[]',$8,$9,$10,$11,$12,'{}',$13,$14,$15,$16,$16,$17,$17,$17)`,
+    VALUES($1,$2,$3,$4,1,$5,'{}',$18,$6,$7,'[]',$8,$9,$10,$11,$12,'{}',$13,$14,$15,$16,$16,$17,$17,$17)`,
   [id,ctx.workspaceId,input.name,input.description||null,JSON.stringify(body.allowedActionTypes),JSON.stringify(body.locationScope),
     JSON.stringify(body.supplierScope),JSON.stringify(body.conditions),JSON.stringify(body.thresholds),body.maximumQuantity,
-    body.maximumValue,body.dailyLimit,Number(prior?.version||0)+1,prior?.id||null,hash(body),ctx.actorId,at]);return id;}
+    body.maximumValue,body.dailyLimit,Number(prior?.version||0)+1,prior?.id||null,hash(body),ctx.actorId,at,JSON.stringify(body.itemScope)]);return id;}
 
 async function configureRoutine(database,ctx,membership,input){assertAdmin(membership);
   const transferEnabled=['1','on',true].includes(input.transferEnabled);const purchaseEnabled=['1','on',true].includes(input.purchaseEnabled);
@@ -143,6 +145,8 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
   const maximumQuantity=transferEnabled?integer(input.maximumQuantity,'Transfer limit',{minimum:1,maximum:100000}):null;
   const maximumValue=purchaseEnabled?money(input.maximumValue,'Purchase-order limit'):null;
   const weeklyValue=purchaseEnabled?money(input.weeklyValue,'Seven-day purchasing limit'):null;
+  const followUpsEnabled=purchaseEnabled&&['1','on',true].includes(input.supplierFollowUpsEnabled);
+  const supplierFollowUps=followUpsEnabled?{version:1,maximum:integer(input.maximumSupplierFollowUps,'Follow-ups per order',{minimum:1,maximum:5}),intervalHours:integer(input.supplierFollowUpHours,'Hours between follow-ups',{minimum:24,maximum:720})}:null;
   if(purchaseEnabled&&!supplierScope.length)throw new ValidationError('Choose at least one usual supplier for automatic purchasing.');
   return database.transaction(async(client)=>{if(locationScope.length){const found=await client.query(`SELECT id FROM locations
       WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1`,[ctx.workspaceId,locationScope]);
@@ -150,13 +154,17 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(supplierScope.length){const found=await client.query(`SELECT id FROM suppliers WHERE workspace_id=$1
       AND id=ANY($2::text[]) AND status='active'`,[ctx.workspaceId,supplierScope]);
       if(found.rows.length!==supplierScope.length)throw new ValidationError('One selected supplier is unavailable.');}
+    const baseCurrency=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
+    if(purchaseEnabled)for(const [amount,label]of [[maximumValue,'Purchase-order limit'],[weeklyValue,'Seven-day purchasing limit']])require('../domain/currency').toMinor(String(amount),baseCurrency,{label});
+    const clock=await require('../lib/business-time').forWorkspace(client,ctx.workspaceId),expiresAt=input.authorityExpiresDate?require('../lib/business-time').dayBoundary(input.authorityExpiresDate,clock.timeZone,{nextDay:true}):null;
+    if(expiresAt&&expiresAt<=clock.instant)throw new ValidationError('Authority must expire after today.');
     const transferId=await replacePolicy(client,ctx,{enabled:transferEnabled,action:ACTIONS.TRANSFER,name:'Routine stock balancing',
       description:'Move stock between approved locations when one can safely spare what another needs.',locationScope,
-      conditions:['destination_stockout_risk','source_above_safety','no_conflicting_transfer'],maximumQuantity});
+      conditions:['destination_stockout_risk','source_above_safety','no_conflicting_transfer'],thresholds:{expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone},maximumQuantity});
     const purchaseId=await replacePolicy(client,ctx,{enabled:purchaseEnabled,action:ACTIONS.PURCHASE,name:'Routine replenishment',
       description:'Approve supplier orders inside supplier, per-order and rolling seven-day limits.',supplierScope,
       conditions:['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],
-      maximumValue,thresholds:{maxValuePerWeek:weeklyValue}});
+      maximumValue,thresholds:{maxValuePerWeek:weeklyValue,currency:baseCurrency,expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone,supplierFollowUps}});
     const at=nowIso();for(const [capability,granted] of [['inventory_transfers',transferEnabled],['replenishment',purchaseEnabled]])
       await client.query(`INSERT INTO autopilot_capabilities
         (workspace_id,capability,granted,granted_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
@@ -166,52 +174,8 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(transferEnabled||purchaseEnabled)await client.query(`UPDATE workspace_autopilot SET mode='POLICY_AUTOMATED',updated_at=$2
       WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);return {transferId,purchaseId};},{isolation:'SERIALIZABLE'});}
 
-async function planningRows(database,workspaceId,{afterSkuId=null,limitSkus=null}={}){return (await database.query(`WITH demand_eligible AS (
- SELECT sku_id FROM movements WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0
- AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text GROUP BY sku_id,location_id HAVING count(*)>=2),
- eligible_skus AS MATERIALIZED (SELECT sku_id FROM reorder_policies WHERE workspace_id=$1
-  UNION SELECT sku_id FROM demand_eligible),
- selected_skus AS MATERIALIZED (SELECT s.id FROM eligible_skus e JOIN skus s ON s.id=e.sku_id AND s.workspace_id=$1
-  JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.is_active=1 AND i.is_active=1
-  AND ($2::text IS NULL OR s.id>$2) ORDER BY s.id LIMIT $3), committed AS (
-    SELECT sol.sku_id,a.location_id,SUM(a.quantity) AS quantity FROM sales_order_allocations a JOIN sales_order_lines sol
-      ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND sol.sku_id IN (SELECT id FROM selected_skus) GROUP BY sol.sku_id,a.location_id
-  ), purchase_incoming AS (SELECT pol.sku_id,COALESCE(pol.destination_location_id,po.destination_location_id) AS location_id,
-      SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM purchase_order_lines pol JOIN purchase_orders po
-      ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1 AND pol.sku_id IN (SELECT id FROM selected_skus) AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
-      GROUP BY pol.sku_id,COALESCE(pol.destination_location_id,po.destination_location_id)),
-  transfer_incoming AS (SELECT tl.sku_id,t.destination_location_id AS location_id,
-      SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity WHEN 'APPROVED' THEN tl.approved_quantity
-        WHEN 'PICKED' THEN tl.picked_quantity
-        ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END) AS quantity
-      FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-      WHERE tl.workspace_id=$1 AND tl.sku_id IN (SELECT id FROM selected_skus) AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
-      GROUP BY tl.sku_id,t.destination_location_id),
-  incoming AS (SELECT sku_id,location_id,SUM(quantity) AS quantity FROM (
-      SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
-    ) sources GROUP BY sku_id,location_id),
-  demand AS (SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(-quantity_delta) AS issued FROM movements
-      WHERE workspace_id=$1 AND sku_id IN (SELECT id FROM selected_skus) AND operation='issue' AND quantity_delta<0 AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text
-      GROUP BY sku_id,location_id)
-  SELECT s.id AS sku_id,s.code,s.variant_label,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
-    COALESCE(b.on_hand,0)::bigint AS on_hand,COALESCE(c.quantity,0)::bigint AS committed,COALESCE(inc.quantity,0)::bigint AS incoming,
-    COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::bigint AS issued,rp.reorder_point,rp.target_stock,
-    rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,rp.lead_time_days
-  FROM selected_skus selected JOIN skus s ON s.id=selected.id AND s.workspace_id=$1
-  JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id CROSS JOIN locations l
-  LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
-  LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id
-  LEFT JOIN demand d ON d.sku_id=s.id AND d.location_id=l.id LEFT JOIN LATERAL (SELECT * FROM reorder_policies p
-    WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id AND (p.location_id=l.id OR p.location_id IS NULL)
-    ORDER BY (p.location_id IS NOT NULL) DESC LIMIT 1) rp ON true
-  WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1 ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1])).rows;}
-
-function position(row){const available=Number(row.on_hand)-Number(row.committed);const rate=Number(row.issued)/30;
-  const lead=Number(row.lead_time_days||14);const safety=row.safety_stock===null?Math.ceil(rate*7):Number(row.safety_stock);
-  const reorder=row.reorder_point===null?(Number(row.issue_events)>=2?Math.ceil(rate*lead)+safety:null):Number(row.reorder_point);
-  const target=row.target_stock===null?(reorder===null?null:Math.max(reorder+safety,Math.ceil(rate*30))):Number(row.target_stock);
-  return {...row,onHand:Number(row.on_hand),committed:Number(row.committed),available,incoming:Number(row.incoming),
-    issueEvents:Number(row.issue_events),issued:Number(row.issued),rate,safety,reorder,target,projected:available+Number(row.incoming)};}
+async function planningRows(database,workspaceId,options={}){return require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{...options,eligibleOnly:true});}
+function position(row){return {...row,...require('../purchasing/replenishment-decision').derive(row)};}
 
 async function planningSuppliers(database,workspaceId,skuIds){
  if(!skuIds.length)return new Map();
@@ -228,13 +192,14 @@ async function supplierChoice(database,workspaceId,shortage,cached=null){const r
   WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
     AND ($3::text IS NULL OR si.supplier_id=$3) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,
   [workspaceId,shortage.sku_id,shortage.preferred_supplier_id]);const selected=result.rows[0];if(!selected)return null;
-  const unitsPer=Number(selected.units_per_purchase_unit||1);let purchaseUnits=Math.ceil((shortage.default_order_quantity||shortage.needed)/unitsPer);
+  const unitsPer=Number(selected.units_per_purchase_unit||1);let purchaseUnits=Math.ceil(Math.max(shortage.default_order_quantity??0,shortage.needed)/unitsPer);
   purchaseUnits=Math.max(purchaseUnits,Number(selected.minimum_order_quantity||1));const multiple=Number(selected.order_multiple||1);
   purchaseUnits=Math.ceil(purchaseUnits/multiple)*multiple;const quantity=purchaseUnits*unitsPer;
-  const unitCost=selected.last_unit_cost===null?null:Number(selected.last_unit_cost);
-  return {...selected,unitsPer,purchaseUnits,quantity,unitCost,value:unitCost===null?null:Math.round(unitCost*quantity*100)/100};}
+  const unitCost=selected.last_unit_cost===null?null:Number(selected.last_unit_cost),currency=require('../domain/currency');
+  const valueMinor=unitCost===null?null:currency.integer(currency.toMinor(String(unitCost),selected.currency,{label:'Supplier unit cost'})*quantity,'Supplier order value');
+  return {...selected,unitsPer,purchaseUnits,quantity,unitCost,value:valueMinor===null?null:Number(currency.fromMinor(valueMinor,selected.currency))};}
 
-async function evaluate(database,workspaceId,candidate,state){if(state.mode===MODES.OBSERVE)
+async function evaluate(database,workspaceId,candidate,state,{committedPurchaseOrderId=null}={}){if(state.mode===MODES.OBSERVE)
   return {decision:'needs_approval',reason:'StockChief is set to watch only.',policy:null};
   if(state.paused)return {decision:'refused',reason:state.pausedReason||'StockChief is paused.',policy:null};
   if(state.suspended)return {decision:'refused',reason:state.suspendedReason||'Automatic work is suspended.',policy:null};
@@ -243,6 +208,8 @@ async function evaluate(database,workspaceId,candidate,state){if(state.mode===MO
   const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
   if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
   if(!policy)return {decision:'needs_approval',reason:'No approved standing authority covers this action.',policy:null};
+  if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
+  if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
   if(candidate.type==='transfer'){
     if(policy.locationScope.length&&(!policy.locationScope.includes(candidate.sourceLocationId)||!policy.locationScope.includes(candidate.destinationLocationId)))
       return {decision:'needs_approval',reason:'The transfer uses a location outside the approved scope.',policy};
@@ -254,10 +221,15 @@ async function evaluate(database,workspaceId,candidate,state){if(state.mode===MO
     if(!delivery.ready)return {decision:'needs_approval',reason:delivery.reason,policy};
     if(candidate.value===null)return {decision:'needs_approval',reason:'The supplier price is missing, so value authority cannot be checked.',policy};
     if(candidate.value>policy.maximumValue)return {decision:'needs_approval',reason:`The order is $${candidate.value.toFixed(2)}; the approved limit is $${policy.maximumValue.toFixed(2)}.`,policy};
-    const since=new Date(Date.now()-7*86400000).toISOString();const spent=Number((await database.query(`SELECT COALESCE(SUM((outcome::jsonb->>'value')::numeric),0) AS total
-      FROM work_items WHERE workspace_id=$1 AND category='replenishment_plan' AND execution_status='COMPLETED'
-      AND approval_requirement='NONE' AND completed_at>=$2`,[workspaceId,since])).rows[0].total||0);
-    if(spent+candidate.value>Number(policy.thresholds.maxValuePerWeek||0))return {decision:'needs_approval',reason:'This order would exceed the approved rolling seven-day purchasing limit.',policy};}
+    const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[workspaceId])).rows[0]?.base_currency||'USD';
+    if((policy.thresholds.currency||currency)!==currency||candidate.currency!==currency)return {decision:'needs_approval',reason:'The order and approved purchasing limits need the same verified currency.',policy};
+    const exposure=await require('../purchasing/postgres-purchase-exposure').read(database,workspaceId);
+    if(exposure.unknownPrices||Object.entries(exposure.currencies).some(([key,value])=>key!==currency&&value>0))return {decision:'needs_approval',reason:'Existing purchase commitments need a verified price and currency review before automatic spending.',policy};
+    const alreadyCommitted=committedPurchaseOrderId?exposure.orders.find(order=>order.id===committedPurchaseOrderId&&order.currency===currency):null;
+    if(committedPurchaseOrderId&&!alreadyCommitted)return {decision:'needs_approval',reason:'The supplier order no longer has a verified active commitment.',policy};
+    const unit=require('../domain/currency'),committedMinor=exposure.currencies[currency]||0,candidateMinor=alreadyCommitted?0:unit.toMinor(String(candidate.value),currency,{label:'Proposed commitment'}),limitMinor=unit.toMinor(String(policy.thresholds.maxValuePerWeek||0),currency,{label:'Purchasing limit'});
+    if(committedMinor+candidateMinor>limitMinor)return {decision:'needs_approval',reason:'This order would exceed the approved rolling seven-day purchasing limit, including orders still awaiting delivery or confirmation.',policy,budget:{currency,committedMinor,candidateMinor,limitMinor,orders:exposure.orders}};}
+
   return {decision:'authorized',reason:`Approved policy “${policy.name}” covers this exact action and its limits.`,policy};}
 
 function workFrom(row){return {...row,sourceEvidence:parse(row.source_evidence,[]),affectedEntities:parse(row.affected_entities,{}),
@@ -296,23 +268,23 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
+  const transferChoices=new Map(require('../purchasing/replenishment-decision').transferPlan(selected.flatMap(([,locations])=>locations)).map(entry=>[entry.skuId+':'+entry.destination.location_id,entry]));
   for(const [,locations] of selected){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
-    const needed=Math.max(1,(shortage.target??shortage.reorder)-shortage.projected);
-    const source=locations.filter((row)=>row.location_id!==shortage.location_id&&row.available>row.safety)
-      .map((row)=>({...row,spare:row.available-row.safety})).filter((row)=>row.spare>0).sort((a,b)=>b.spare-a.spare)[0];let candidate;
-    if(source&&shortage.tracking_mode==='quantity'){const quantity=Math.min(needed,source.spare);
+    const needed=require('../purchasing/replenishment-decision').requiredUnits(shortage);if(!needed&&!shortage.default_order_quantity){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'replenishment_quantity_required'});continue;}
+    const transfer=transferChoices.get(shortage.sku_id+':'+shortage.location_id),source=transfer?.source;let candidate;
+    if(transfer){const quantity=transfer.quantity;
       candidate={type:'transfer',skuId:shortage.sku_id,displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity,sourceLocationId:source.location_id,sourceLocationName:source.location_name,
         destinationLocationId:shortage.location_id,destinationLocationName:shortage.location_name,destinationAvailable:shortage.available,
         incoming:shortage.incoming,reorderPoint:shortage.reorder,targetStock:shortage.target,sourceAvailable:source.available,
-        sourceSafety:source.safety,priority:90,urgency:shortage.available<=0?'immediate':'soon',evidence:[
+        sourceSafety:transfer.sourceSafety,priority:90,urgency:shortage.available<=0?'immediate':'soon',evidence:[
           {fact:'destination_available',value:shortage.available},{fact:'destination_reorder_point',value:shortage.reorder},
           {fact:'source_available',value:source.available},{fact:'source_safety_stock',value:source.safety}]};
     }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},suppliers);if(!supplier){considered.push({skuId:shortage.sku_id,reason:'no_supplier'});continue;}
       candidate={type:'purchase',skuId:shortage.sku_id,displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
-        destinationLocationId:shortage.location_id,destinationLocationName:shortage.location_name,unitCost:supplier.unitCost,
+        destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
         reorderPoint:shortage.reorder,targetStock:shortage.target,priority:88,urgency:shortage.available<=0?'immediate':'soon',evidence:[
           {fact:'available',value:shortage.available},{fact:'incoming',value:shortage.incoming},{fact:'reorder_point',value:shortage.reorder},
@@ -323,36 +295,20 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
     [workspaceId,nowIso(),new Date(Date.now()+15*60000).toISOString()]);return {state,created,considered,partial,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
 
 async function revalidate(database,workspaceId,action){
-  if(action.type==='transfer'){
-    const result=await database.query(`WITH committed AS (SELECT a.location_id,SUM(a.quantity) AS quantity
-      FROM sales_order_allocations a JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
-      WHERE a.workspace_id=$1 AND sol.sku_id=$2 GROUP BY a.location_id)
-      SELECT l.id,COALESCE(b.on_hand,0)-COALESCE(c.quantity,0) AS available FROM locations l
-      LEFT JOIN balances b ON b.workspace_id=l.workspace_id AND b.location_id=l.id AND b.sku_id=$2
-      LEFT JOIN committed c ON c.location_id=l.id WHERE l.workspace_id=$1 AND l.id=ANY($3::text[]) FOR SHARE OF l`,
-    [workspaceId,action.skuId,[action.sourceLocationId,action.destinationLocationId]]);
-    const balances=Object.fromEntries(result.rows.map((row)=>[row.id,Number(row.available)]));
-    if((balances[action.sourceLocationId]??0)-action.quantity<Number(action.sourceSafety||0))
-      throw new ValidationError('The source can no longer spare this transfer while keeping its safety stock. StockChief did nothing.');
-    if((balances[action.destinationLocationId]??0)>Number(action.reorderPoint))
-      throw new ValidationError('The destination is no longer below its reorder point. StockChief did nothing.');
-    const openTransfer=Number((await database.query(`SELECT COALESCE(SUM(CASE t.status
-        WHEN 'REQUESTED' THEN tl.requested_quantity WHEN 'APPROVED' THEN tl.approved_quantity
-        WHEN 'PICKED' THEN tl.picked_quantity
-        ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END),0) AS quantity
-      FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-      WHERE tl.workspace_id=$1 AND tl.sku_id=$2 AND t.destination_location_id=$3
-        AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')`,
-    [workspaceId,action.skuId,action.destinationLocationId])).rows[0].quantity||0);
-    if(openTransfer>0)throw new ValidationError('An open transfer already covers this destination. StockChief did not prepare another one.');
-    return;
-  }
-  const incoming=Number((await database.query(`SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
-    FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
-    WHERE pol.workspace_id=$1 AND pol.sku_id=$2 AND COALESCE(pol.destination_location_id,po.destination_location_id)=$3
-      AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')`,
-  [workspaceId,action.skuId,action.destinationLocationId])).rows[0].quantity||0);
-  if(incoming>Number(action.incoming||0))throw new ValidationError('New incoming stock now covers this need. StockChief did not order twice.');
+ const rows=(await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{onlySkuIds:[action.skuId]})).map(position);
+ const destination=rows.find(row=>action.quantityScope==='workspace'?row.scope==='workspace':row.location_id===action.destinationLocationId);
+ if(!destination||!destination.shortage||(!require('../purchasing/replenishment-decision').requiredUnits(destination)&&!destination.default_order_quantity))
+  throw new ValidationError('The destination no longer needs this replenishment. Review the updated stock before acting.');
+ if(destination.incoming>Number(action.incoming||0))throw new ValidationError('New incoming stock changes this need. StockChief did not order or transfer twice.');
+ if(action.type==='transfer'){
+  const source=rows.find(row=>row.location_id===action.sourceLocationId);
+  if(!source||source.available-action.quantity<Math.max(source.safety,source.reorder??0,Number(action.sourceSafety||0)))
+   throw new ValidationError('The source can no longer spare this transfer while keeping its protected stock. StockChief did nothing.');
+  return;
+ }
+ const supplier=await supplierChoice(database,workspaceId,{...destination,needed:require('../purchasing/replenishment-decision').requiredUnits(destination)});
+ if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency)
+  throw new ValidationError('Supplier terms, price or the required quantity changed after this decision. Review a fresh recommendation.');
 }
 
 async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped=scopedDatabase(client);
@@ -367,12 +323,15 @@ async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped
       `${line.quantity_units} × ${line.code}${line.unit_cost===null?'':` at ${item.recommendedAction.currency} ${Number(line.unit_cost).toFixed(2)}`}`),
     '',`Please confirm acceptance and expected delivery for ${purchase.poNumber}.`].join('\n');
   return outboundMail.queueInTransaction(client,ctx,{recipientKind:'supplier',recipientId:delivery.supplier.id,
-    recipientEmail:delivery.supplier.email,connectorId:delivery.mailbox.id,
+    recipientEmail:delivery.supplier.email,connectorId:delivery.mailbox.id,purchaseOrderId:purchase.purchaseOrderId,
     subject:`Purchase order ${purchase.poNumber}`,body},`work:${item.id}:supplier-order`);
 }
 
 async function execute(database,ctx,workId,{approvedBy=null}={}){
-  return database.transaction(async(client)=>{const scoped=scopedDatabase(client);const item=await getWork(scoped,ctx.workspaceId,workId);
+  return database.transaction(async(client)=>{const scoped=scopedDatabase(client);
+  await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId);
+  await client.query('SELECT id FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,workId]);
+  const item=await getWork(scoped,ctx.workspaceId,workId);
   if(item.execution_status===STATUSES.COMPLETED)return item;if(![STATUSES.AUTHORIZED,STATUSES.WAITING].includes(item.execution_status))
     throw new ValidationError('That work is not ready to execute.');if(item.approval_requirement!=='NONE'&&!approvedBy)
     throw new ValidationError('This work needs a person to approve it.');
@@ -414,12 +373,12 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       result={kind:'purchase',purchaseOrderId:purchase.purchaseOrderId,poNumber:purchase.poNumber,status:approved.status,
         value:action.value,verified:true,phase:'SUPPLIER_DELIVERY_PENDING',effectId:delivery.effectId,
         communicationId:delivery.communicationId};}
-    if(result.phase==='SUPPLIER_DELIVERY_PENDING'){
+    if(result.phase==='SUPPLIER_DELIVERY_PENDING'||result.physicalExecutionPending){
       await client.query(`UPDATE work_items SET execution_status='EXECUTING',verification_status='PENDING',
-        purchase_order_id=$3,outcome=$4,error_message=NULL WHERE workspace_id=$1 AND id=$2`,
-      [ctx.workspaceId,item.id,result.purchaseOrderId,JSON.stringify(result)]);
+        purchase_order_id=$3,outcome=$4,error_message=NULL,due_at=$5 WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,item.id,result.purchaseOrderId||null,JSON.stringify({...result,verified:false,nextAction:result.physicalExecutionPending?'Await physical dispatch and destination receipt':'Verify the supplier email delivery'}),new Date(Date.now()+15*60000).toISOString()]);
       await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
-        VALUES($1,$2,$3,'waiting_for_supplier_delivery',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,
+        VALUES($1,$2,$3,'outcome_in_progress',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,
         JSON.stringify({effectId:result.effectId,purchaseOrderId:result.purchaseOrderId}),ctx.actorId,nowIso()]);
       if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
         await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
@@ -454,14 +413,17 @@ async function reconcileSupplierFollowThrough(database,workspaceId,{actorId=null
     if(row.effect_status==='SUCCEEDED'){
       const placed=await workflows.placePurchaseOrder(database,{workspaceId,actorId:ownerId},outcome.purchaseOrderId,
         {idempotencyKey:`work:${row.id}:place-after-delivery`});
-      await database.transaction(async(client)=>{await client.query(`UPDATE work_items SET execution_status='COMPLETED',
-          verification_status='VERIFIED',outcome=$3::jsonb,error_message=NULL,completed_at=$4
-          WHERE workspace_id=$1 AND id=$2 AND execution_status='EXECUTING'`,[workspaceId,row.id,
-          JSON.stringify({...outcome,status:placed.status,phase:'SUPPLIER_DELIVERED_AND_ORDERED',verified:true}),nowIso()]);
+      await database.transaction(async(client)=>{
+        const changed=await client.query(`UPDATE work_items SET execution_status='EXECUTING',verification_status='PENDING',
+          outcome=$3,error_message=NULL,completed_at=NULL,due_at=$4
+          WHERE workspace_id=$1 AND id=$2 AND execution_status='EXECUTING' AND outcome::jsonb->>'phase'='SUPPLIER_DELIVERY_PENDING' RETURNING id`,[workspaceId,row.id,
+          JSON.stringify({...outcome,status:placed.status,phase:'AWAITING_SUPPLIER_CONFIRMATION',verified:false}),nowIso()]);
+        if(!changed.rows.length)return;
         await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
           VALUES($1,$2,$3,'supplier_delivery_verified',$4,$5,$6)`,[newId('wievt'),workspaceId,row.id,
           JSON.stringify({effectId:outcome.effectId,purchaseOrderId:outcome.purchaseOrderId,status:placed.status}),ownerId,nowIso()]);
-      },{isolation:'SERIALIZABLE',retrySafe:true});completed+=1;
+      },{isolation:'SERIALIZABLE',retrySafe:true});waiting+=1;
+
     }else if(['FAILED','AMBIGUOUS','CANCELLED'].includes(row.effect_status)||!row.effect_status){
       const reason=row.effect_status==='AMBIGUOUS'
         ?'Supplier delivery is uncertain. Check the Sent folder before taking further action.'
@@ -481,8 +443,11 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   }
   return {planned:planned.created.length,executed,waiting:planned.created.length-executed,
     considered:planned.considered.length,followThrough,partial:planned.partial,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
-async function approve(database,ctx,membership,id){assertOperate(membership);return execute(database,ctx,id,{approvedBy:ctx.actorId});}
+async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
+ if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
+ return execute(database,ctx,id,{approvedBy:ctx.actorId});}
 async function cancel(database,ctx,membership,id){assertOperate(membership);const item=await getWork(database,ctx.workspaceId,id);
+  if(item.execution_status==='EXECUTING')throw new ValidationError('This work has already started. Review its linked purchase or transfer; discarding it would not cancel that business commitment.');
   if([STATUSES.COMPLETED,STATUSES.FAILED].includes(item.execution_status))throw new ValidationError('Completed work cannot be discarded.');
   await database.query(`UPDATE work_items SET execution_status='CANCELLED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,id,nowIso()]);return getWork(database,ctx.workspaceId,id);}
@@ -513,4 +478,4 @@ module.exports={lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
   supplierDeliveryReadiness,reconcileSupplierFollowThrough};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{configureRoutine:'authority.advanced',
- setCapability:'authority.advanced',plan:'planning.basic',run:'planning.basic'});
+ plan:'planning.basic',run:'planning.basic'});

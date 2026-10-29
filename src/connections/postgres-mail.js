@@ -133,7 +133,10 @@ async function capture(database,connection,message){
       workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
-    const nativeDocumentReview=match.kind==='supplier'&&attachments.length>0&&await require('./postgres-document-review').granted(client,connection.workspace_id);
+    const nativeReviewGranted=match.kind==='supplier'&&await require('./postgres-document-review').granted(client,connection.workspace_id);
+    const linkedSupplierReply=nativeReviewGranted&&sentThread?.kind==='supplier'&&(await client.query('SELECT 1 FROM supplier_communications WHERE workspace_id=$1 AND id=$2 AND purchase_order_id IS NOT NULL',[connection.workspace_id,sentThread.id])).rows.length>0;
+    const nativeDocumentReview=nativeReviewGranted&&(attachments.length>0||linkedSupplierReply);
+    if(linkedSupplierReply&&!attachments.length){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.supplier-review',idempotencyKey:'supplier-text-review:'+id,payload:{messageId:id},priority:45,maxAttempts:2});}
     if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview&&
       (typeof connection.config==='string'?JSON.parse(connection.config||'{}'):connection.config||{}).replyPreparationEnabled===true){
       const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};
