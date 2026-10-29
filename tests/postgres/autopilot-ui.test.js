@@ -128,7 +128,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
       WHERE workspace_id=$1 AND granted=1 ORDER BY capability`,[ctx.workspaceId])).rows;
     assert.deepEqual(grants.map((row)=>row.capability),['inventory_transfers','payment_requests','replenishment']);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Business review queued/);
+    assert.equal((await database.query("SELECT count(*) n FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='autopilot.evaluate' AND status IN('PENDING','RETRY','RUNNING')",[ctx.workspaceId])).rows[0].n,'1');
     assert.match(await page.locator('[data-maintenance-progress]').innerText(),/waiting for its next batch/);
     await page.goto(base+'/');
     assert.match(await page.locator('main').innerText(),/Review in progress/);
