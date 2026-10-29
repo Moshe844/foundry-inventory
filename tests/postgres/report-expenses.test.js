@@ -6,7 +6,8 @@ test('the friendly Expenses source reports only posted expense lines and traces 
   {timeout:120000},async t=>{
     const {db,ctx,email,password}=await require('../helpers/postgres-shipping-fixture').fixture(t);
     const ledger=require('../../src/accounting/postgres-ledger');
-    await ledger.post(db,ctx,{postingDate:'2026-10-28',sourceKey:'report-expense-fixture',
+    const postingDate=(await db.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].accounting_start_date;
+    await ledger.post(db,ctx,{postingDate,sourceKey:'report-expense-fixture',
       description:'Office supplies',currency:'USD',lines:[
         {accountKey:'OPERATING_EXPENSE',debitMinor:250},
         {accountKey:'CASH',creditMinor:250}]});
@@ -32,7 +33,7 @@ test('the friendly Expenses source reports only posted expense lines and traces 
     assert.equal((await filtered({field:'counterparty',operator:'not_empty'})).rows.length,0);
     const registry=require('../../src/reports/postgres-registry');
     assert.equal(registry.get('expenses').label,'Recorded operating expenses');
-    await ledger.post(db,ctx,{postingDate:'2026-10-28',sourceKey:'report-expense-second',
+    await ledger.post(db,ctx,{postingDate,sourceKey:'report-expense-second',
       description:'Delivery supplies',currency:'USD',lines:[
         {accountKey:'SHIPPING_EXPENSE',debitMinor:300},
         {accountKey:'CASH',creditMinor:300}]});
