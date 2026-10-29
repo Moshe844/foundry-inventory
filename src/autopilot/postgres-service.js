@@ -187,14 +187,14 @@ function position(row){return {...row,...require('../purchasing/replenishment-de
 async function planningSuppliers(database,workspaceId,skuIds){
  if(!skuIds.length)return new Map();
  const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,
-  COALESCE(si.lead_time_days,s.default_lead_time_days,30) AS effective_lead
+  COALESCE(si.lead_time_days,s.default_lead_time_days,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
   ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId,skuIds])).rows;
  const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
 }
 async function supplierChoice(database,workspaceId,shortage,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
-    s.currency,s.minimum_order_amount,COALESCE(si.lead_time_days,s.default_lead_time_days,30) AS effective_lead
+    s.currency,s.minimum_order_amount,COALESCE(si.lead_time_days,s.default_lead_time_days,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
     AND ($3::text IS NULL OR si.supplier_id=$3) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,

@@ -5,9 +5,9 @@
 const WINDOW_DAYS=90,DEFAULT_LEAD_DAYS=14,SAFETY_DAYS=7,COVER_DAYS=30,MIN_ISSUE_EVENTS=2;
 const optional=value=>value===null||value===undefined?null:Number(value);
 function derive(row){
- const onHand=Number(row.on_hand||0),committed=Number(row.committed||0),incoming=Number(row.incoming||0),issued=Number(row.issued??row.sold_90??0),issueEvents=Number(row.issue_events||0),rate=issued/WINDOW_DAYS,lead=optional(row.lead_time_days)??DEFAULT_LEAD_DAYS;
- const safety=row.planning_suppressed?0:optional(row.safety_stock)??Math.ceil(rate*SAFETY_DAYS),inferredReorder=row.planning_suppressed?null:issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(rate*lead)+safety:null,reorder=row.planning_suppressed?null:optional(row.reorder_point)??inferredReorder,target=row.planning_suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(rate*COVER_DAYS))),available=onHand-committed,projected=available+incoming;
- return {onHand,committed,incoming,available,projected,issued,issueEvents,rate,lead,safety,reorder,target,inferredReorder,windowDays:WINDOW_DAYS,shortage:reorder!==null&&projected<=reorder,daysOfSupply:rate>0?available/rate:null};
+ const onHand=Number(row.on_hand||0),committed=Number(row.committed||0),incoming=Number(row.incoming||0),issued=Number(row.issued??row.sold_90??0),issueEvents=Number(row.issue_events||0),rate=issued/WINDOW_DAYS,lead=optional(row.lead_time_days)??DEFAULT_LEAD_DAYS,coverDays=optional(row.cover_days)??COVER_DAYS;
+ const safety=row.planning_suppressed?0:optional(row.safety_stock)??Math.ceil(rate*SAFETY_DAYS),inferredReorder=row.planning_suppressed?null:issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(rate*lead)+safety:null,reorder=row.planning_suppressed?null:optional(row.reorder_point)??inferredReorder,target=row.planning_suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(rate*coverDays))),available=onHand-committed,projected=available+incoming;
+ return {onHand,committed,incoming,available,projected,issued,issueEvents,rate,lead,safety,reorder,target,inferredReorder,windowDays:WINDOW_DAYS,coverDays,shortage:reorder!==null&&projected<=reorder,daysOfSupply:rate>0?available/rate:null};
 }
 function requiredUnits(position){return Math.max(0,(position.target??position.reorder??0)-position.projected);}
 function retainedUnits(position){return Math.max(position.safety,position.reorder??0);}

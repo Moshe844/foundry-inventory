@@ -142,7 +142,7 @@ async function poll({ credentials, since }) {
   const from = new Date(since || Date.now() - 86400000).getTime() - OVERLAP_MS;
   const query = new URLSearchParams({
     maxResults: '50',
-    q: `(in:inbox OR in:spam OR -in:sent) -in:drafts -in:trash after:${Math.floor(from / 1000)}`,
+    q: `(in:inbox OR in:spam OR -in:sent) -in:draft -in:trash after:${Math.floor(from / 1000)}`,
   });
   const messages = [];
   const visited = new Set();
