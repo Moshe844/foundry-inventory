@@ -81,6 +81,10 @@ and complete-shipment packing checks. PO/SO/bill/invoice/payment/shipment number
 use atomic counters, including imported/manual numbers and rollback safety.
 Product lot and serial lists now return 100-record pages with exact lookup,
 explicit continuation and complete product totals. Lots retain expiry ordering.
+Automatic provider imports keyset-page pending identities and load only selected
+product families; matching no longer counts the entire pending catalogue after
+each SKU. Complete provider families remain atomic, so an exceptionally large
+single family and the interactive full-catalogue matching review remain gaps.
 Stock-sorted/grouped catalogue views still perform broad database aggregation;
 large option-value sets, warehouse container selectors and contention need further
 qualification.
@@ -147,3 +151,6 @@ row operating envelope. Remaining semantic and cutover gaps are material.
 Staging web: srv-daqh418473hc73853e40, stockchief-staging-web.
 Staging worker: srv-daqh418473hc73853e7g, stockchief-staging-worker.
 Both manually deploy codex/staging-codex-pilot; confirm live commits before release.
+User approved staging PostgreSQL upgrade to 2 CPU / 8 GB RAM and 50 GB storage
+at $115/month before tax. Applied in Render on October 29; verify availability
+after the compute restart. This adds headroom, not a universal scale guarantee.

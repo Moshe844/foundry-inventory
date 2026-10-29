@@ -229,10 +229,10 @@ async function setMappingInTransaction(client,ctx,input){
   [ctx.workspaceId,connection.id,entityType,externalId,at]);
   await resolveMappingIssues(client,connection,entityType,externalId,at);
   await require('./postgres-webhook-inbox').scheduleMappedInTransaction(client,ctx.workspaceId,connection.id);
-  const remaining=(await client.query(`SELECT COUNT(*) AS count FROM connection_external_records
-    WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED'`,
-  [ctx.workspaceId,connection.id])).rows[0];
-  if(Number(remaining.count)===0&&defaultProviders.get(connection.provider_type)?.integrationClass!=='accounting')await client.query(`UPDATE workspace_connectors SET setup_status='CONNECTED',updated_at=$3
+  const remaining=(await client.query(`SELECT 1 FROM connection_external_records
+    WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED' LIMIT 1`,
+  [ctx.workspaceId,connection.id])).rows.length;
+  if(!remaining&&defaultProviders.get(connection.provider_type)?.integrationClass!=='accounting')await client.query(`UPDATE workspace_connectors SET setup_status='CONNECTED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='connected'`,[ctx.workspaceId,connection.id,at]);
   return (await client.query(`SELECT * FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2
     AND entity_type=$3 AND external_id=$4`,[ctx.workspaceId,connection.id,entityType,externalId])).rows[0];
