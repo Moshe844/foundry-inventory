@@ -251,7 +251,7 @@ function readSheet(xml, sharedStrings, dateStyles) {
       const content = cellMatch[2] || '';
       const reference = /r="([A-Z]+\d+)"/.exec(attributes);
       const index = reference ? columnIndex(reference[1]) : cells.length;
-      if (index >= LIMITS.maxColumns) continue;
+      if (index >= LIMITS.maxColumns) throw new SpreadsheetError(`A worksheet exceeds ${LIMITS.maxColumns} columns. No columns were discarded.`);
 
       const type = /t="([^"]+)"/.exec(attributes);
       const style = /s="(\d+)"/.exec(attributes);

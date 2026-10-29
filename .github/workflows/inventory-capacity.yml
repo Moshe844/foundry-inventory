@@ -1,0 +1,58 @@
+name: Inventory correctness and capacity
+on:
+  pull_request:
+  push:
+    branches: [main, codex/staging-codex-pilot]
+  workflow_dispatch:
+    inputs:
+      large_rows:
+        description: Rows in the full PostgreSQL import certification (1000–2000000)
+        default: '1000000'
+        required: true
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 300 || 45 }}
+    env:
+      NODE_ENV: test
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install PostgreSQL 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Parser, source identity and provider contracts
+        run: |
+          mkdir -p output/inventory-ci
+          set -euo pipefail
+          node --test tests/unit/multipart-capacity.test.js tests/unit/multipart-reuse.test.js tests/unit/import-indexed-delimited.test.js tests/unit/import-validation-scratch.test.js tests/unit/import-source-identity.test.js tests/unit/import-delimiter-preamble.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-production-boundaries.test.js 2>&1 | tee output/inventory-ci/unit.log
+      - name: PostgreSQL correctness, limits, durable batches and customer screens
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/catalog-page-capacity.test.js tests/postgres/import-preview-revisions.test.js tests/postgres/inventory-capacity.test.js tests/postgres/inventory-erp-correctness.test.js tests/postgres/inventory-engine.test.js tests/postgres/import-durable-batches.test.js tests/postgres/import-execution-pages.test.js tests/postgres/import-extended-scale-holdout.test.js tests/postgres/import-stock-intent.test.js tests/postgres/import-sku-identity.test.js tests/postgres/import-source-upload.test.js tests/postgres/replenishment-global-scope.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/product-planning-scale.test.js tests/postgres/planning-ui.test.js tests/postgres/public-plan-contract.test.js tests/postgres/public-offer-ui.test.js 2>&1 | tee output/inventory-ci/postgres.log
+      - name: Full large-import certification
+        if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 240
+        env:
+          STOCKCHIEF_RUN_LARGE_IMPORT: '1'
+          STOCKCHIEF_IMPORT_CERTIFICATION_ROWS: ${{ inputs.large_rows }}
+        run: |
+          set -euo pipefail
+          node --max-old-space-size=1024 --test tests/certification/inventory-million-rows.test.js 2>&1 | tee output/inventory-ci/large-import.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inventory-capacity-results
+          path: output/inventory-ci

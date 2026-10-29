@@ -79,7 +79,7 @@ function problem(code, message) {
   return { code, message };
 }
 
-async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null}={}) {
+async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null}={}) {
   const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
   const scopedSkus="SELECT id FROM skus WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(code))=ANY($2::text[]))";
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
@@ -91,7 +91,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
     database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
     database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
       FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]),
-    database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1',[workspaceId]),
+    database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]),
     database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
     database.query(`SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id IN (${scopedSkus}) ORDER BY sku_id,currency,created_at DESC,id DESC`,[workspaceId,keys]),
   ]);
@@ -109,7 +109,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
   }
   const importedSourceRows=sourceHash?(await database.query(`SELECT r.row_number,r.raw FROM import_rows r
     JOIN import_plans p ON p.workspace_id=r.workspace_id AND p.id=r.import_id
-    WHERE r.workspace_id=$1 AND p.source_hash=$2 AND r.status='IMPORTED'`,[workspaceId,sourceHash])).rows:[];
+    WHERE r.workspace_id=$1 AND p.source_hash=$2 AND r.status='IMPORTED' AND ($3::bigint[] IS NULL OR r.row_number=ANY($3::bigint[]))`,[workspaceId,sourceHash,rowNumbers])).rows:[];
   return { locations:locations.rows,locationByName,skuByCode,currentPrices:new Map(currentPrices.rows.map(r=>[JSON.stringify([r.sku_id,r.currency]),r.id])),
     importedSourceRows:new Set(importedSourceRows.map(r=>stable([Number(r.row_number),json(r.raw,[])]))),
     positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value)}])),
@@ -275,7 +275,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(parsed.supplierName?.length>160)problems.push(problem('invalid_identity','Supplier names must be 160 characters or fewer.'));
     if(Object.entries(sourceFacts).some(([k,v])=>k.length>240||v.length>10000))problems.push(problem('oversize_source_fact','A product detail exceeds the supported field size. Its original value is preserved in this preview.'));
     const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
-    for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}state.reorders.set(policyKey,priorPolicy);
+    for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
     blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
     if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0};}
     if(quantity!==null&&!aggregate&&trackingMode==='quantity'){
@@ -422,12 +422,17 @@ async function analyse(database, ctx, input) {
   await input.onProgress?.({stage:'reading'});
   const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
-      parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
+      parser.parse(buffer?{buffer,filename:input.filename,indexed:true}:{text,filename:input.filename,indexed:true});
   await input.onProgress?.({stage:'matching',worksheets:parsedWorkbook.sheets.length});
   if(parsedWorkbook.format==='image'||parsedWorkbook.visualSource)input={...input,imageSource:true};
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
+  const entitlements=require('../commercial/entitlements');
+  const capacityScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
+  if(rowCapacity.hardLimit!==null&&sheet.rows.length>rowCapacity.hardLimit)
+    throw new entitlements.EntitlementError(`This import has ${sheet.rows.length.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
     sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping,lifecycle:input});
@@ -468,14 +473,19 @@ async function analyse(database, ctx, input) {
   // the source columns and rows in an unapproved preview so the operator can
   // identify the product column without editing and re-uploading the file.
   await input.onProgress?.({stage:'checking',totalRows:sheet.rows.length,worksheets:parsedWorkbook.sheets.length});
-  const canScope=proposal.mappings.code!==undefined&&!(proposal.variantColumns?.length)&&!fields.VARIANT_FIELDS.some(k=>proposal.mappings[k]!==undefined);
-  const codes=canScope?sheet.rows.map(r=>Object.hasOwn(input.codeOverrides||{},r.sourceRow)?input.codeOverrides[r.sourceRow]:textCell(r,proposal.mappings.code)):null;
-  const context=await workspaceContext(database,ctx.workspaceId,{sourceHash,codes});
+  const streaming=sheet.rows.length>500;
+  const sourceIdentity=require('./source-identity');
+  proposal.variantBases=sourceIdentity.bases(sheet,proposal.mappings,proposal,input);
+  const scopeRows=rows=>({sourceHash,rowNumbers:rows.map(r=>r.sourceRow),supplierNames:rows.map(r=>textCell(r,proposal.mappings.supplierName).toLowerCase()).filter(Boolean),
+    codes:rows.flatMap(r=>{const code=Object.hasOwn(input.codeOverrides||{},r.sourceRow)?input.codeOverrides[r.sourceRow]:textCell(r,proposal.mappings.code);
+      return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,proposal.mappings,proposal))]:[];})});
+  const context=await workspaceContext(database,ctx.workspaceId,scopeRows(streaming?[]:sheet.rows));
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
-  proposal.variantBases=require('./source-identity').bases(sheet,proposal.mappings,proposal,input);
   const proposedLocations=plannedLocations.proposals(sheet,proposal.mappings,context,input);
-  const streaming=sheet.rows.length>500;
+  const scratch=sheet.rows.length>5000?require('./validation-scratch').create():null;
+  if(scratch)context.validationState=scratch.state;
+  try{
   const validationContext=plannedLocations.withProposals(context,proposedLocations);
   const validated=validateRows(streaming?{...sheet,rows:[]}:sheet,proposal.mappings,proposal,validationContext,input);
   const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
@@ -516,15 +526,20 @@ async function analyse(database, ctx, input) {
       JSON.stringify(plan.assumptions),plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
     await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
       VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
-    if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);await input.onProgress?.({stage:'saving',processedRows:validated.rows.length,totalRows:validated.rows.length});await input.beforeCommit?.(client,plan);return;}
+    const executionIdentities=require('./postgres-execution-identities');
+    if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);await executionIdentities.insertPage(client,ctx,plan,validated.rows,{productKey,variantKey});await executionIdentities.mark(client,ctx,plan);await input.onProgress?.({stage:'saving',processedRows:validated.rows.length,totalRows:validated.rows.length});await input.beforeCommit?.(client,plan);return;}
     const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
     for(let start=0;start<sheet.rows.length;start+=500){
-      const batch=validateRows({...sheet,rows:sheet.rows.slice(start,start+500)},proposal.mappings,proposal,validationContext,input);
+      const sourceRows=sheet.rows.slice(start,start+500);
+      const batchContext=await workspaceContext(client,ctx.workspaceId,scopeRows(sourceRows));
+      const batch=validateRows({...sheet,rows:sourceRows},proposal.mappings,proposal,
+        {...batchContext,locations:validationContext.locations,locationByName:validationContext.locationByName,validationState:validationContext.validationState},input);
       trackingSummary?.add(batch.rows);
       for(const row of batch.rows)hash.append(row);
       for(const key of Object.keys(summary))summary[key]+=batch.summary[key];
       for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
       await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
+      await executionIdentities.insertPage(client,ctx,plan,batch.rows,{productKey,variantKey});
       await input.onProgress?.({stage:'saving',processedRows:Math.min(start+500,sheet.rows.length),totalRows:sheet.rows.length});
     }
     plan.integrityHash=hash.finish();plan.recordsValid=summary.valid;plan.recordsInvalid=summary.invalid;plan.conflicts=[...conflicts.values()];
@@ -534,9 +549,11 @@ async function analyse(database, ctx, input) {
       hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric});
     await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7,transformations=$8::jsonb WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash,JSON.stringify(plan.transformations)]);
+    await executionIdentities.mark(client,ctx,plan);
     await input.beforeCommit?.(client,plan);
   },{isolation:input.sourceJobId?'READ COMMITTED':'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
+  }finally{scratch?.close();}
 }
 
 async function repairSupplierPreview(database,workspaceId,id,plan,mappings){
@@ -710,7 +727,10 @@ async function revise(database,ctx,id,input={},options={}){
       trackingReview={serial:choices.serial||'source',lot:choices.lot||'source',confirmedBy:ctx.actorId,confirmedAt:nowIso()};
     }
     await options.onProgress?.({processedRows:0,totalRows:plan.recordsDetected,stage:'checking'});
-    const context=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash});
+    const context=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,codes:[],rowNumbers:[],supplierNames:[]});
+    const scratch=plan.recordsDetected>5000?require('./validation-scratch').create():null;
+    if(scratch)context.validationState=scratch.state;
+    try{
     if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
       throw new ValidationError('Choose a location in this inventory for each correction.');
     const defaultLocationId=input.defaultLocationId===undefined
@@ -746,26 +766,38 @@ async function revise(database,ctx,id,input={},options={}){
     if(!trackingReview)delete revised.transformations.trackingReview;
     let variantBases=mappingChanged?[]:plan.transformations.variantBases||[];
     if((mappingChanged||stable(codeOverrides)!==stable(plan.transformations.codeOverrides||{})||!Object.hasOwn(plan.transformations,'variantBases'))&&(plan.transformations.variantColumns?.length||fields.VARIANT_FIELDS.some(f=>fieldMappings[f]!==undefined))){
-      const identities=require('./source-identity').accumulator(fieldMappings,{axisNames,variantColumns:plan.transformations.variantColumns},{codeOverrides});
+      const identities=require('./source-identity').accumulator(fieldMappings,{axisNames,variantColumns:plan.transformations.variantColumns},{codeOverrides,boundedIdentity:plan.recordsDetected>5000});
+      try{
       let lastRow=0,lastId='';
       for(;;){const page=(await client.query('SELECT id,row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows;if(!page.length)break;
         identities.add(page.map(r=>({sourceRow:Number(r.row_number),cells:json(r.raw,[])})));lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;}
       variantBases=identities.finish();
+      }finally{identities.close?.();}
     }
     revised.transformations.variantBases=variantBases;
+    const executionIdentities=require('./postgres-execution-identities'),sourceIdentity=require('./source-identity');
+    await client.query('DELETE FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,id]);
     const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0,existingStockRows:0},conflicts=new Map(),trackingSummary=require('./tracking-review').tracker(fieldMappings);
     let lastRow=0,lastId='';
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-        const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}))},fieldMappings,
-        {detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
+      const sourceRows=current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}));
+      const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview};
+      const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,rowNumbers:sourceRows.map(r=>r.sourceRow),
+        supplierNames:sourceRows.map(r=>textCell(r,fieldMappings.supplierName).toLowerCase()).filter(Boolean),
+        codes:sourceRows.flatMap(r=>{const code=Object.hasOwn(codeOverrides,r.sourceRow)?codeOverrides[r.sourceRow]:textCell(r,fieldMappings.code);return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,fieldMappings,rowProposal))]:[];})});
+      batchContext.validationState=context.validationState;
+      const validated=validateRows({columns:plan.sourceColumns,rows:sourceRows},fieldMappings,
+        rowProposal,plannedLocations.withProposals(batchContext,proposedLocations),
           {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,imageReviewedRows,confirmCatalogOnly,importMode:revised.transformations.importMode});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
       for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
       await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
+      const savedIds=new Map(current.map(r=>[r.rowNumber,r.id]));
+      await executionIdentities.insertPage(client,ctx,revised,validated.rows.map(r=>({...r,id:savedIds.get(r.rowNumber)})),{productKey,variantKey});
       lastRow=current.at(-1).rowNumber;lastId=current.at(-1).id;
       await options.onProgress?.({processedRows:summary.total,totalRows:plan.recordsDetected,stage:'checking'});
     }
@@ -782,8 +814,10 @@ async function revise(database,ctx,id,input={},options={}){
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
       revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
+    await executionIdentities.mark(client,ctx,revised);
     await options.beforeCommit?.(client,revised);
     return revised;
+    }finally{scratch?.close();}
   // The plan lock freezes this preview until commit. A queued revision also
   // fences its job receipt in that transaction; READ COMMITTED lets it check
   // the current renewed lease rather than an obsolete transaction snapshot.
@@ -820,10 +854,12 @@ async function approve(database, ctx, id, expectedHash) {
     const unresolved=requirements.find(step=>['rows','empty'].includes(step.code));
     if(unresolved)throw new ValidationError(unresolved.error);
     if(plan.transformations.dataset!=='suppliers'&&!result.rows[0].apply_checkpoint?.cataloguePrepared){
-      const pending=(await client.query(`SELECT DISTINCT parsed::jsonb->>'name' AS name,parsed::jsonb->>'code' AS code,parsed::jsonb->>'trackingMode' AS "trackingMode",parsed::jsonb->'variants' AS variants FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='VALID' AND parsed::jsonb->>'existingSkuId' IS NULL`,[ctx.workspaceId,id])).rows;
-      const count=new Set(pending.map(row=>productKey({...row,variants:row.variants||[]}))).size;
+      const identities=require('./postgres-execution-identities');
+      await identities.stage(client,ctx,plan,{productKey,variantKey});
+      const counts=await identities.counts(client,ctx,plan);
       const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
-      await entitlements.assertMeterCapacity(client,scope,'products',count);
+      await entitlements.assertMeterCapacity(client,scope,'products',counts.products);
+      await entitlements.assertMeterCapacity(client,scope,'active_skus',counts.skus);
     }
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,

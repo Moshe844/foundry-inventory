@@ -410,8 +410,8 @@ async function autopilotEvaluate(job,client){
     return {skipped:'subscription_read_only'};
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
-  if(!job.payload.afterSkuId&&basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
-    .refreshRecommendations(scopedDatabase(client),job.workspaceId);
+  if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
+    .refreshRecommendations(scopedDatabase(client),job.workspaceId,{afterSkuId:job.payload.afterSkuId||null,limitSkus:250});
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
   const result=await autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId},
    {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0)});

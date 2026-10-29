@@ -43,7 +43,7 @@ function createPostgresInventoryRouter(database) {
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||''};
-    const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
+    const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
     if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
@@ -56,7 +56,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      hasMore:result.hasMore,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});

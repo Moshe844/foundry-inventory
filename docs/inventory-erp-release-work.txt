@@ -1,0 +1,69 @@
+StockChief inventory / ERP capacity repair — work in progress, 2026-10-29
+
+Authorized scope: audit and repair correctness and scale gaps, tier limits,
+tests, CI and publishing. Render workspace choice: StockChief.
+
+Release source: cb283b2556a7926a4087f97861108689d6ed17c1 on
+codex/staging-codex-pilot. Working branch: codex/inventory-erp-capacity.
+The original Foundry-intake checkout is older and contains unrelated edits;
+it is preserved. Its audit is a historical baseline, not current certification.
+
+Chosen tier direction: stricter Starter. Implemented active SKU / per-import
+row defaults: Starter 500 / 1,000; Growth 25,000 / 100,000; Pro 250,000 /
+1,000,000; Custom 2,000,000 / 5,000,000. Account-wide SKU/product counters,
+contract overrides, paid product capacity and downgrade protections are wired
+through PostgreSQL and billing/pricing. Other existing limits remain enforced.
+
+Implemented and under verification:
+- Monotonic ERP physical-count snapshots; stale updates and conflicting versions
+  cannot overwrite stock. Ordering checkpoint and stock effect commit together.
+- Serial/batch membership and lot balances survive receipt, issue, transfer,
+  dispatch, arrival and returns. Expired issues require explicit disposal.
+- No silent CSV row/column truncation, incomplete quoted fields or XLSX columns.
+- Indexed delimited reader retains compact offsets; exact duplicate/conflict
+  checks spill to temporary indexed storage for large sources.
+- Validation scopes existing stock to each 500-row page. Approval identities are
+  indexed during background analysis so approval need not load the full source.
+- Execution and final reconciliation read saved pages. Catalogue preparation
+  also pages variants within a single large family. Durable retry remains intact.
+- Sparse planning positions replace SKU-by-location Cartesian expansion.
+  Forecast/purchasing pages expose continuation; worker recommendations follow
+  the existing durable SKU continuation. Purchasing no longer sums both a
+  workspace total and its component location totals.
+
+Evidence so far (logs in original workspace output/inventory-erp-repair-20261029):
+- release-correctness-retest.log: 7/7 PostgreSQL correctness/capacity tests.
+- paged-import-tests.log: 20,000-row canonical import reconciled inventory,
+  value, supplier links, policies and duplicate replay. A test observer missed
+  session-scoped queries; fixed rather than accepting its zero query count.
+- bounded-catalog-tests.log: 4/4, including wide-family recovery, concurrent
+  limits and 5,000 rows with 1,067 measured database round trips.
+- Parser/source identity/scratch regressions pass, including one million rows.
+- Public pricing/billing browser and plan-contract regressions pass.
+- First million-row end-to-end run FAILED after analysis: the global execution
+  price-conflict query timed out joining full source rows. Narrow price and
+  name evidence now lives in the execution identity index; page selection is
+  materialized before reading full rows. Smaller end-to-end tests pass.
+- A second million-row run uses an immutable source copy. Analysis reached
+  all 1,000,000 rows at about 498 MB RSS in 523 seconds. Execution is pending.
+  Do not label the full import certified before final assertions pass.
+- index-admission-planning-tests.log: 10/10, including paged planning with
+  1,000 empty locations, durable wide variants and 5,000 rows/1,067 queries.
+- catalog-pages-correctness.log: 6/6, including stable duplicate-name cursor
+  pages, maintained stock totals and the ERP/tracking correctness cases.
+- Multipart concurrent admission and bounded variant-family discovery pass.
+- Full unit suite: 1,958 tests; 1,909 passed, 48 failed, one skipped. Comparing
+  the failing files at unchanged staging reproduced 47 failures. The remaining
+  live-authorization test is being rerun separately. No green-full-suite claim.
+- Earlier checkout million-SKU SQL-seeded integrity/search/planning test passed
+  in about 35 minutes. It is NOT current-branch end-to-end import certification.
+
+Outstanding work includes finishing the current audit (provider discovery buffering, catalogue/search
+reads, measured quantities and ERP-specific limits), resolving relevant suite
+failures, final immutable-source scale verification, CI and deployment.
+Broad unit/integration runs have unrelated failures and some lingering test
+servers; do not claim a green full suite. No commit, push, PR or deployment yet.
+
+Staging services: stockchief-staging-web srv-daqh418473hc73853e40;
+stockchief-staging-worker srv-daqh418473hc73853e7g. Both deploy the staging pilot
+branch manually. Confirm the latest branch and deployed commits before release.

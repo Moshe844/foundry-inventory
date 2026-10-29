@@ -31,7 +31,7 @@ function enabled(plan,key){return (plan.entitlements||[]).some(e=>catalog.canoni
 function describe(plan){const meters=new Map((plan.meters||[]).map(m=>[m.meter,m]));return {...plan,
  name:plan.id==='enterprise'?'Custom':plan.public_name,
  features:features.filter(([key,,tier])=>rank[tier]<=rank[plan.id]&&enabled(plan,key)).map(([capability,text])=>({capability,text})),
- allowances:['ai_work_credits','emails_sent','members','workspaces','locations','products','scheduled_reports','sales_channels','shipping_accounts'].map(key=>({meter:key,label:meters.get(key)?.label||catalog.meter(key)?.label,units:meters.get(key)?.included_units??null})),
+ allowances:['ai_work_credits','emails_sent','members','workspaces','locations','active_skus','import_rows','scheduled_reports','sales_channels','shipping_accounts'].map(key=>({meter:key,label:meters.get(key)?.label||catalog.meter(key)?.label,units:meters.get(key)?.included_units??null})),
  approximateWorkSteps:Math.floor(Number(meters.get('ai_work_credits')?.included_units||0)/Number(meters.get('ai_work_credits')?.credit_unit_scale||1)),
  };}
 function purchasableAddons(packs){return packs.filter(p=>p.purchasable===true&&p.status==='APPROVED');}

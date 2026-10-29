@@ -9,6 +9,9 @@
 </div>
 
 <div class="card section">
+  <% if(locals.coverage&&(coverage.partial||coverage.afterSkuId)){ %><p class="page-sub">Showing <%= coverage.scanned %> SKUs on this page.
+  <% if(coverage.partial){ %><a href="/purchasing/setup?after=<%= encodeURIComponent(coverage.nextAfterSkuId) %>">Next SKUs</a><% } %>
+  <% if(coverage.afterSkuId){ %> · <a href="/purchasing/setup">First page</a><% } %></p><% } %>
   <div class="card-head"><h2>Where you are</h2></div>
   <div class="card-body">
     <div class="act-ledger">

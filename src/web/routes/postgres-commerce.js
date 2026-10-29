@@ -457,12 +457,12 @@ function createPostgresCommerceRouter(database,options={}){
       supplierName,noMatch:Boolean(supplierName)&&matched.length===0,permissions:purchasingPermissions(req),screenGuide:null});
   }));
   router.get('/purchasing/setup',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const [rows,supplierRows]=await Promise.all([planning.position(database,req.ctx.workspaceId),commerce.suppliers(database,req.ctx.workspaceId)]);
+    const [rows,supplierRows]=await Promise.all([planning.position(database,req.ctx.workspaceId,{afterSkuId:req.query.after||null,limitSkus:250}),commerce.suppliers(database,req.ctx.workspaceId)]);
     const supplierLinks=(await database.query(`SELECT si.sku_id,s.name AS supplier_name FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id
-      WHERE si.workspace_id=$1 AND si.is_active=1 AND s.status='active' ORDER BY si.is_preferred DESC,lower(s.name)`,[req.ctx.workspaceId])).rows;
+      WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active' ORDER BY si.is_preferred DESC,lower(s.name)`,[req.ctx.workspaceId,[...new Set(rows.map(r=>r.sku_id))]])).rows;
     const bySku=new Map();for(const link of supplierLinks){if(!bySku.has(link.sku_id))bySku.set(link.sku_id,[]);bySku.get(link.sku_id).push({supplierName:link.supplier_name});}
     const consolidated=new Map();for(const row of rows){const current=consolidated.get(row.sku_id)||{...row,onHand:0,issuedInWindow:0,policyId:row.policy_id};
-      current.onHand+=row.onHand;current.issuedInWindow+=row.sold90;if(row.policy_id)current.policyId=row.policy_id;consolidated.set(row.sku_id,current);}
+      if(row.scope!=='workspace'){current.onHand+=row.onHand;current.issuedInWindow+=row.sold90;}if(row.policy_id)current.policyId=row.policy_id;consolidated.set(row.sku_id,current);}
     const lines=[...consolidated.values()].map((row)=>{const linked=bySku.get(row.sku_id)||[];const proposal={reorderPoint:row.inferredReorder,
       targetStock:Math.max(row.inferredReorder,Math.ceil((row.issuedInWindow/90)*Math.max(30,row.leadTimeDays+14)))};
       return {skuId:row.sku_id,displayName:row.displayName,onHand:row.onHand,issuedInWindow:row.issuedInWindow,windowDays:90,
@@ -471,7 +471,7 @@ function createPostgresCommerceRouter(database,options={}){
     const proposals=lines.filter((row)=>!row.policyId&&row.issuedInWindow>0);const blocked=lines.filter((row)=>!row.policyId&&row.issuedInWindow<=0);
     const configured=lines.filter((row)=>row.policyId);const assessment={proposals,blocked,configured,summary:{lines:lines.length,
       canPropose:proposals.length,needHistory:blocked.length,alreadySet:configured.length,withoutSupplier:lines.filter((row)=>!row.hasSupplier).length}};
-    return res.page('purchasing/setup',{title:'Set up purchasing',nav:'purchasing',assessment,
+    return res.page('purchasing/setup',{title:'Set up purchasing',nav:'purchasing',assessment,coverage:rows.coverage,
       suppliers:supplierRows.map((row)=>supplierForView(row)),canManage:permissions.can(req.user,permissions.MANAGE_REPLENISHMENT),
       canManageSuppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS)});
   }));
@@ -506,7 +506,9 @@ function createPostgresCommerceRouter(database,options={}){
     return res.redirect(303,'/operating-instructions/'+proposal.id);
   }));
   router.post('/purchasing/setup/policies',requirePermission(permissions.MANAGE_REPLENISHMENT,'set reorder policies'),asyncRoute(async(req,res)=>{
-    const skuIds=Array.isArray(req.body.skuIds)?req.body.skuIds:[req.body.skuIds].filter(Boolean);const rows=await planning.position(database,req.ctx.workspaceId);
+    const skuIds=Array.isArray(req.body.skuIds)?req.body.skuIds:[req.body.skuIds].filter(Boolean);
+    if(skuIds.length>250)throw new ValidationError('Choose at most 250 SKUs at a time.');
+    const rows=(await planning.position(database,req.ctx.workspaceId,{onlySkuIds:skuIds})).filter(row=>row.scope!=='workspace');
     const at=nowIso();for(const skuId of skuIds){const candidates=rows.filter((row)=>row.sku_id===skuId);if(!candidates.length)continue;
       const sold=candidates.reduce((sum,row)=>sum+row.sold90,0);const lead=Math.max(...candidates.map((row)=>row.leadTimeDays));
       const reorder=Math.max(1,Math.ceil((sold/90)*(lead+7)));const target=Math.max(reorder,Math.ceil((sold/90)*(lead+30)));

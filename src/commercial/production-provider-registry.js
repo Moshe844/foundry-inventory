@@ -25,10 +25,14 @@ const classification=Object.freeze({
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
  'connections/postgres-reply-drafting.js':'METERED',
  'connections/providers/common.js':'METERED',
+ // The self-hosted transport is invoked by common.jsonRequest through providerFetch.
+ 'connections/providers/store-network.js':'METERED',
  'connections/reply-drafting.js':'NOT_PG_ENABLED',
  'foundry/document-intake.js':'NOT_PG_ENABLED',
  'foundry/understanding-service.js':'NOT_PG_ENABLED',
  'imports/mapping-service.js':'METERED',
+ // Relational workbook interpretation receives the same funded import provider.
+ 'imports/workbook-relations.js':'METERED',
  'lib/provider-http.js':'METERED',
  'manager/operating-instructions.js':'NOT_PG_ENABLED',
  'manager/postgres-operating-instructions.js':'METERED',
@@ -39,9 +43,6 @@ const classification=Object.freeze({
  'payments/providers/stripe.js':'METERED',
  'product-brain/navigation.js':'NOT_PG_ENABLED',
  'purchasing/supplier-document-extractor.js':'NOT_PG_ENABLED',
- // Governed report composition and its independent fit check receive the
- // funded Ask provider from postgres-control-plane/postgres-service.
- 'reports/postgres-ask.js':'METERED',
  'sales/order-from-email.js':'NOT_PG_ENABLED',
  'shipping/providers/easypost-partner.js':'METERED',
  'shipping/providers/easypost.js':'METERED',

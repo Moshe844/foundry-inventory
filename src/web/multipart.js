@@ -103,7 +103,9 @@ function parseBody(body, boundary, { maxFiles = MAX_FILES } = {}) {
  * Middleware. Does nothing at all unless the request is multipart.
  */
 const parsedMultipart=Symbol('stockchief.parsedMultipart');
-function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
+let reservedUploadBytes=0;
+function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES, memoryBudgetBytes = Number(process.env.FOUNDRY_UPLOAD_MEMORY_BUDGET_BYTES)||DEFAULT_LIMIT } = {}) {
+  if(!Number.isSafeInteger(memoryBudgetBytes)||memoryBudgetBytes<1)throw new Error('Upload memory budget must be a positive integer.');
   return function multipartMiddleware(req, res, next) {
     const type = req.get('content-type') || '';
     if (!type.toLowerCase().startsWith('multipart/form-data')) return next();
@@ -128,12 +130,25 @@ function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
     const chunks = [];
     let received = 0;
     let stopped = false;
+    // Reserve through response completion: parsed files still retain their
+    // source buffer after the request ends. Buffer.concat temporarily doubles
+    // source memory, so this budget covers at most one default-size upload.
+    let reserved=declared>0?declared:limit;
+    if(reservedUploadBytes+reserved>memoryBudgetBytes){
+      const error=new Error('Other files are being saved. Retry this upload shortly.');
+      error.status=503;res.status(503);res.set?.('Retry-After','5');req.resume();return next(error);
+    }
+    reservedUploadBytes+=reserved;
+    const release=()=>{reservedUploadBytes-=reserved;reserved=0;};
+    res.once('finish',release);res.once('close',release);
+    req.once('aborted',()=>{stopped=true;chunks.length=0;release();});
 
     req.on('data', (chunk) => {
       if (stopped) return;
       received += chunk.length;
       if (received > limit) {
         stopped = true;
+        chunks.length=0;release();
         res.status(413);
         // Keep the connection alive long enough to deliver the useful 413.
         // Destroying the socket turned the owner's screen into a generic
@@ -149,19 +164,21 @@ function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
     });
 
     req.on('error', (error) => {
-      if (!stopped) { stopped = true; next(error); }
+      if (!stopped) { stopped = true; chunks.length=0;release();next(error); }
     });
 
     req.on('end', () => {
       if (stopped) return;
       stopped = true;
       try {
-        const { fields, files } = parseBody(Buffer.concat(chunks), boundary, { maxFiles });
+        const body=Buffer.concat(chunks);chunks.length=0;
+        const { fields, files } = parseBody(body, boundary, { maxFiles });
         req.body = { ...(req.body || {}), ...fields };
         req.files = files;
         req.file = files[0] || null;req[parsedMultipart]={received,fileCount:files.length};
         next();
       } catch (error) {
+        chunks.length=0;release();
         next(error);
       }
     });

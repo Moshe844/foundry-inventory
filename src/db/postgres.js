@@ -44,7 +44,11 @@ function openPostgres(connectionString, options = {}) {
     if (options.onError) options.onError(error);
   });
   const measuredQuery=async(target,statement,values)=>{const start=process.hrtime.bigint();
-    try{return await target.query(statement,values);}finally{require('../commercial/resource-metrics').queryFinished(start);}};
+    try{return await target.query(statement,values);}catch(error){
+      if(error.code==='23514'&&error.constraint==='inventory_plan_capacity')
+        throw new (require('../commercial/entitlements').EntitlementError)(error.message,{constraint:error.constraint});
+      throw error;
+    }finally{require('../commercial/resource-metrics').queryFinished(start);}};
   const query = (statement, values = []) => measuredQuery(pool,statement,values);
   async function withSessionLock(key,operation){
     const client=await pool.connect();let locked=false,discard=false;

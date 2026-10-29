@@ -110,25 +110,33 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['catalog:'+ctx.workspaceId]);
   const commercialScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
-  await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',normalized.length);
+  await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',normalized.filter(i=>!i.appendToItemId).length);
   const candidates=normalized.flatMap(input=>input.variants.map(v=>trimOrNull(v.code)||[codeSlug(input.name),...(v.options||[]).map(p=>codeSlug(p.value))].filter(Boolean).join('-')||'SKU'));
   const existing=new Set((await client.query('SELECT lower(code) AS code FROM skus WHERE workspace_id=$1 AND lower(code)=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(c=>c.toLowerCase()))]])).rows.map(r=>r.code));
   const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
   for(const input of normalized){
-    const itemId=newId('item'),options=new Map(),result={itemId,skus:[]};
+    const itemId=input.appendToItemId||newId('item'),options=new Map(),result={itemId,skus:[]};
+    let optionPosition=0,skuPosition=0;
+    if(input.appendToItemId){
+      const parent=(await client.query('SELECT name,tracking_mode,is_active,xmin::text=pg_current_xact_id()::text AS created_here FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,itemId])).rows[0];
+      if(!parent?.created_here||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
+        throw new ValidationError('Import variants may only extend the matching product being prepared in this transaction.');
+      for(const row of (await client.query('SELECT id,name,position FROM item_options WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id',[ctx.workspaceId,itemId])).rows){options.set(row.name,row.id);optionPosition=Math.max(optionPosition,Number(row.position)+1);}
+      skuPosition=Number((await client.query('SELECT position+1 AS next FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position DESC,id DESC LIMIT 1',[ctx.workspaceId,itemId])).rows[0]?.next||0);
+    }
     const optionNames=[...new Set(input.variants.flatMap(v=>(v.options||[]).map(p=>requireText(p.name,'Option name',{max:120}))))];
-    for(const [position,name]of optionNames.entries()){const id=newId('opt');options.set(name,id);optionRows.push({id,item_id:itemId,name,position});}
+    for(const name of optionNames){if(options.has(name))continue;const id=newId('opt');options.set(name,id);optionRows.push({id,item_id:itemId,name,position:optionPosition++});}
     for(const [position,v]of input.variants.entries()){
       const parts=(v.options||[]).map(p=>({name:p.name,value:requireText(p.value,'Option value',{max:120})}));
       let candidate=requireText(candidates[ci++],'SKU code',{max:240});
       if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
       taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
-      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position});
+      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position:skuPosition+position});
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});
     }
-    itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?null:result.skus[0].code,
+    if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?null:result.skus[0].code,
       description:trimOrNull(input.description),unit_label:trimOrNull(input.unitLabel)||'unit',tracking_mode:input.trackingMode,has_variants:optionNames.length?1:0});
     created.push(result);
   }
@@ -169,44 +177,45 @@ async function listItems(database, workspaceId, input = {}) {
   const archivedOnly = input.archivedOnly === true;
   const includeArchived = archivedOnly || input.includeArchived === true;
   const group = ['shortage','empty','incoming','healthy'].includes(input.group) ? input.group : null;
+  const pageFirst = !group && !['stock_desc','stock_asc'].includes(input.sort);
+  let anchor=null;
+  if(pageFirst && input.afterItemId){
+    anchor=(await database.query('SELECT id,name,created_at FROM items WHERE workspace_id=$1 AND id=$2',[workspaceId,String(input.afterItemId).slice(0,160)])).rows[0];
+    if(!anchor)throw new ValidationError('That catalogue page has changed. Return to the first page.');
+  }
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
-    (page - 1) * pageSize,group];
-  const result = await database.query(`WITH stock AS (
-      SELECT s.item_id,COALESCE(SUM(b.on_hand) FILTER (WHERE $4::text IS NULL OR b.location_id=$4),0) AS on_hand
-      FROM skus s LEFT JOIN balances b ON b.sku_id=s.id AND b.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 GROUP BY s.item_id
-    ), committed AS (
-      SELECT sol.sku_id,COALESCE(SUM(a.quantity),0) AS quantity FROM sales_order_allocations a
-      JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id
-      WHERE a.workspace_id=$1 GROUP BY sol.sku_id
-    ), committed_item AS (
-      SELECT s.item_id,COALESCE(SUM(c.quantity),0) AS quantity FROM skus s
-      LEFT JOIN committed c ON c.sku_id=s.id WHERE s.workspace_id=$1 GROUP BY s.item_id
-    ), purchase_incoming AS (
-      SELECT s.item_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
-      FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
-      JOIN skus s ON s.id=pol.sku_id
-      WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY s.item_id
-    ), history AS (
-      SELECT item_id,1 AS has_history FROM movements WHERE workspace_id=$1 GROUP BY item_id
+    anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null];
+  const result = await database.query(`WITH selected_items AS MATERIALIZED (
+      SELECT i.* FROM items i
+      WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
+        AND ($3::text IS NULL OR i.tracking_mode=$3)
+        AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
+          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND search_sku.code ILIKE '%'||$2||'%'))
+        AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name,i.id)>($11::text,$10::text)'} )
+        AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)
+      ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}
     )
     SELECT i.*,COALESCE(r.sku_count,0) AS sku_count,r.first_sku_code,
       COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed_item.quantity,0) AS committed,
-      COALESCE(purchase_incoming.quantity,0) AS on_order,COALESCE(history.has_history,0) AS has_history
-    FROM items i LEFT JOIN item_catalog_rollups r ON r.item_id=i.id
-    LEFT JOIN stock ON stock.item_id=i.id LEFT JOIN committed_item ON committed_item.item_id=i.id
-    LEFT JOIN purchase_incoming ON purchase_incoming.item_id=i.id
-    LEFT JOIN history ON history.item_id=i.id
-    WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
-      AND ($3::text IS NULL OR i.tracking_mode=$3)
-      AND ($9::text IS NULL OR ($9='shortage' AND COALESCE(committed_item.quantity,0)>COALESCE(stock.on_hand,0))
+      COALESCE(purchase_incoming.quantity,0) AS on_order,
+      EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=$1 AND m.item_id=i.id LIMIT 1)::int AS has_history
+    FROM selected_items i LEFT JOIN item_catalog_rollups r ON r.item_id=i.id
+    LEFT JOIN LATERAL (SELECT SUM(b.on_hand) AS on_hand FROM item_location_balances b
+      WHERE b.workspace_id=$1 AND b.item_id=i.id AND ($4::text IS NULL OR b.location_id=$4)) stock ON TRUE
+    LEFT JOIN LATERAL (SELECT SUM(a.quantity) AS quantity FROM skus s
+      JOIN sales_order_lines sol ON sol.sku_id=s.id AND sol.workspace_id=s.workspace_id
+      JOIN sales_order_allocations a ON a.sales_order_line_id=sol.id AND a.workspace_id=sol.workspace_id
+      WHERE s.workspace_id=$1 AND s.item_id=i.id) committed_item ON TRUE
+    LEFT JOIN LATERAL (SELECT SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM skus s
+      JOIN purchase_order_lines pol ON pol.sku_id=s.id AND pol.workspace_id=s.workspace_id
+      JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
+      WHERE s.workspace_id=$1 AND s.item_id=i.id AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) purchase_incoming ON TRUE
+    WHERE ($9::text IS NULL OR ($9='shortage' AND COALESCE(committed_item.quantity,0)>COALESCE(stock.on_hand,0))
         OR ($9='empty' AND COALESCE(stock.on_hand,0)<=0)
         OR ($9='incoming' AND COALESCE(purchase_incoming.quantity,0)>0)
         OR ($9='healthy' AND COALESCE(stock.on_hand,0)>0
           AND COALESCE(committed_item.quantity,0)<=COALESCE(stock.on_hand,0)))
-      AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
-        OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.item_id=i.id AND search_sku.code ILIKE '%'||$2||'%'))
-    ORDER BY ${listOrder(input.sort)} LIMIT $7 OFFSET $8`, values);
+    ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET ${pageFirst?'0':'$8::bigint'}`, values);
   const hasMore = result.rows.length > pageSize;
   const items = result.rows.slice(0, pageSize).map((row) => {
     const onHand = Number(row.on_hand || 0);
@@ -215,7 +224,7 @@ async function listItems(database, workspaceId, input = {}) {
       available: Math.max(0, onHand - committed), onOrder: Number(row.on_order || 0),
       hasHistory: Boolean(Number(row.has_history)), is_active: Number(row.is_active) };
   });
-  return { items, page, pageSize, hasMore };
+  return { items, page, pageSize, hasMore, nextAfterItemId:pageFirst&&hasMore?items.at(-1)?.id:null };
 }
 
 async function getItem(database, workspaceId, itemId, input = {}) {
@@ -223,29 +232,30 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   if (!itemResult.rows.length) throw new NotFoundError('That product could not be found.');
   const item = { ...itemResult.rows[0], is_active: Number(itemResult.rows[0].is_active),
     has_variants: Number(itemResult.rows[0].has_variants),allow_negative:Number(itemResult.rows[0].allow_negative) };
-  const totalResult = await database.query(`SELECT COUNT(DISTINCT s.id) AS sku_count,COALESCE(SUM(b.on_hand),0) AS on_hand
-    FROM skus s LEFT JOIN balances b ON b.sku_id=s.id AND b.workspace_id=s.workspace_id
-    WHERE s.workspace_id=$1 AND s.item_id=$2`, [workspaceId, itemId]);
+  const totalResult = await database.query(`SELECT COALESCE((SELECT sku_count FROM item_catalog_rollups WHERE workspace_id=$1 AND item_id=$2),0) AS sku_count,
+    COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand`, [workspaceId, itemId]);
   const skuCount = Number(totalResult.rows[0].sku_count || 0);
   const pageSize = 25;
   const pageCount = Math.max(1, Math.ceil(skuCount / pageSize));
   const page = Math.min(pageCount, Math.max(1, Number.parseInt(input.page, 10) || 1));
-  const skuResult = await database.query(`WITH committed AS (
+  const skuResult = await database.query(`WITH selected_skus AS MATERIALIZED (
+      SELECT * FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id LIMIT $3 OFFSET $4
+    ), committed AS (
       SELECT sol.sku_id,COALESCE(SUM(a.quantity),0) AS quantity FROM sales_order_allocations a
       JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id
-      WHERE a.workspace_id=$1 GROUP BY sol.sku_id
+      WHERE a.workspace_id=$1 AND sol.sku_id IN (SELECT id FROM selected_skus) GROUP BY sol.sku_id
     ), purchase_incoming AS (
       SELECT pol.sku_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
-      WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
+      WHERE pol.workspace_id=$1 AND pol.sku_id IN (SELECT id FROM selected_skus) AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
     ), stock AS (
-      SELECT sku_id,COALESCE(SUM(on_hand),0) AS on_hand FROM balances WHERE workspace_id=$1 GROUP BY sku_id
+      SELECT sku_id,COALESCE(SUM(on_hand),0) AS on_hand FROM balances WHERE workspace_id=$1 AND sku_id IN (SELECT id FROM selected_skus) GROUP BY sku_id
     )
     SELECT s.*,COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed.quantity,0) AS committed,
       COALESCE(purchase_incoming.quantity,0) AS on_order
-    FROM skus s LEFT JOIN stock ON stock.sku_id=s.id LEFT JOIN committed ON committed.sku_id=s.id
+    FROM selected_skus s LEFT JOIN stock ON stock.sku_id=s.id LEFT JOIN committed ON committed.sku_id=s.id
     LEFT JOIN purchase_incoming ON purchase_incoming.sku_id=s.id
-    WHERE s.workspace_id=$1 AND s.item_id=$2 ORDER BY s.position,s.id LIMIT $3 OFFSET $4`,
+    ORDER BY s.position,s.id`,
   [workspaceId, itemId, pageSize, (page - 1) * pageSize]);
   const skuIds = skuResult.rows.map((row) => row.id);
   let positions = [];

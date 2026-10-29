@@ -167,10 +167,10 @@
         <span class="muted"><%= items.length %> on this page · page <%= page %></span>
         <span class="spacer" style="margin-left:auto;"></span>
         <% if (page > 1) { %>
-          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
+          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page - 1, after: null }) %>">Previous</a>
         <% } %>
         <% if (hasMore) { %>
-          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
+          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page + 1, after: locals.nextAfterItemId || null }) %>">Next</a>
         <% } %>
       </div>
     <% } %>
