@@ -895,7 +895,16 @@ function variantKey(parsed) {
 
 async function assertSourceClaim(database,ctx,plan){const other=(await database.query(`SELECT id FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3 AND source_kind=$4 AND sheet_index=$5 AND status='READY' AND approval_status='APPROVED' AND (apply_checkpoint->>'cataloguePrepared'='true' OR apply_checkpoint->>'catalogueStarted'='true') AND COALESCE(transformations::jsonb->>'dataset','inventory')=$6 LIMIT 1`,[ctx.workspaceId,plan.sourceHash,plan.id,plan.sourceKind,plan.sheetIndex,plan.transformations.dataset||'inventory'])).rows[0];if(other)throw new ValidationError('This source already has a saved import in progress. Continue that import instead of creating another copy.',{href:'/imports/'+other.id});}
 
-async function execute(database,ctx,id,options={}){await assertOperator(database,ctx);const plan=await getForMutation(database,ctx.workspaceId,id);if(plan.status==='SUCCEEDED')return executeUnlocked(database,ctx,id,options);const result=await database.withSessionLock('approved-import:'+ctx.workspaceId+':'+id,locked=>executeUnlocked(locked,ctx,id,options));if(result?.busy)throw new ValidationError('This approved import is already running. Open its saved progress.');return result;}
+async function execute(database,ctx,id,options={}){
+ await assertOperator(database,ctx);const plan=await getForMutation(database,ctx.workspaceId,id);
+ if(plan.status==='SUCCEEDED')return executeUnlocked(database,ctx,id,options);
+ // Keep catalogue ownership across durable commits, on the same connection
+ // used by each batch. Transaction locks inside a batch are reentrant. This
+ // also serializes direct execution calls that bypass the job queue.
+ const result=await database.withSessionLock('catalog:'+ctx.workspaceId,locked=>executeUnlocked(locked,ctx,id,options));
+ if(result?.busy)throw new ValidationError('Another product update or approved import is already running in this inventory. Open its saved progress and retry when it finishes.',{reason:'catalog_busy'});
+ return result;
+}
 
 async function executeUnlocked(database, ctx, id, options={}) {
   await assertOperator(database,ctx);

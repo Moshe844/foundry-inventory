@@ -54,8 +54,11 @@ continuation and durable SKU cursors, avoiding SKU-by-location multiplication.
 F11: source context and validation read bounded pages. Indexed execution
 identities, catalogue preparation, stock application and reconciliation use
 bounded reads; execution checkpoints commit with each page and survive crashes.
-Catalogue preparation also resumes inside a wide variant family. Multipart
-admission bounds simultaneous buffered uploads. Six catalogue adapters emit
+Catalogue preparation also resumes inside a wide variant family.
+The catalogue session lock spans these durable commits, excluding manual product
+creation and another direct import in the same inventory until execution exits.
+Other inventories remain independent; crashed connections release the lock.
+Multipart admission bounds simultaneous buffered uploads. Six catalogue adapters emit
 records as pages arrive; Square and BigCommerce join stock/family facts through
 scratch indexes. Provider mapping uses 500-record batches; previous values are
 stored on scratch disk and catalogue/commerce reconciliation is paged.
@@ -95,6 +98,11 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
 - business-numbers-warehouse.log: 3/3 atomic numbering, accounting and picking.
 - all-import-unit.log: 112/112 import unit tests.
 - xlsx-integrity-retest.log: 37/37 workbook integrity and import regressions.
+- complex-inventory-release.log: manufacturing tracking/cost/capacity, custody,
+  rental authority and reservation races passed; exposed the import-lock gap.
+- import-lock-retest.log: 4/4 after restoring the catalogue session lock,
+  including direct concurrent executions, worker claims, durable crash recovery
+  and wide-family continuation. These complex checks now run in CI.
 - provider-release-unit.log: 40/40 provider contract/streaming/response tests.
 - provider-cache-capacity.log: 3,004 records, 23 measured DB round trips,
   436 ms cache application in an isolated local PostgreSQL fixture; exact,
