@@ -86,10 +86,10 @@ async function api(credentials, path, options = {}) {
   }
 }
 
-async function discover({ credentials }) {
+async function discover({ credentials, onProduct }) {
   const currency=await storeCurrency(credentials);
   const priceMoney=value=>String(value??'').trim()===''?null:{amount:money.toMinor(value,currency),currency};
-  const products = [];
+  const products = [];const output=onProduct?{push:onProduct}:products;
   for (let page = 1; ; page += 1) {
     const response = await api(credentials, `/products?per_page=100&page=${page}`);
     const rows = response.body || [];
@@ -98,7 +98,7 @@ async function discover({ credentials }) {
         for (let variantPage = 1; ; variantPage += 1) {
           const variantsResponse = await api(credentials, `/products/${product.id}/variations?per_page=100&page=${variantPage}`);
           const variants = variantsResponse.body || [];
-          for (const variant of variants) products.push({ entityType: 'sku', externalId: String(variant.id),
+          for (const variant of variants) output.push({ entityType: 'sku', externalId: String(variant.id),
             parentExternalId: String(product.id), code: variant.sku || null,
             displayName: `${product.name}${variant.attributes?.length ? ` / ${variant.attributes.map((a) => a.option).join(' / ')}` : ''}`,
             providerData: { status: variant.status,productStatus:(variant.status||product.status)==='publish'?'ACTIVE':String(variant.status||product.status||'UNKNOWN').toUpperCase(), itemName: product.name,virtual:variant.virtual===true,
@@ -111,7 +111,7 @@ async function discover({ credentials }) {
           const variantPages = Number(variantsResponse.headers.get('x-wp-totalpages') || 1);
           if (variantPage >= variantPages) break;
         }
-      } else products.push({ entityType: 'sku', externalId: String(product.id), code: product.sku || null,
+      } else output.push({ entityType: 'sku', externalId: String(product.id), code: product.sku || null,
         displayName: product.name, providerData: { status: product.status,productStatus:product.status==='publish'?'ACTIVE':String(product.status||'UNKNOWN').toUpperCase(), itemName: product.name,virtual:product.virtual===true,
           variationName: null,
           priceMoney:priceMoney(product.price),

@@ -93,24 +93,21 @@ function elements(body) {
   return body?.elements || body?.items || [];
 }
 
-async function discover({ credentials }) {
+async function discover({ credentials, onProduct }) {
   const merchant = (await api(credentials, `/v3/merchants/${encodeURIComponent(credentials.merchantId)}`)).body;
   const properties = merchant.currency || merchant.properties?.defaultCurrency ? merchant.properties
     : (await api(credentials, `/v3/merchants/${encodeURIComponent(credentials.merchantId)}/properties`)).body;
   const currency = money.code(merchant.currency || properties?.defaultCurrency);
-  const rows = [];
+  const products = [];
   for (let offset = 0; ; offset += 100) {
     const response = await api(credentials,
       `/v3/merchants/${encodeURIComponent(credentials.merchantId)}/items?limit=100&offset=${offset}&expand=itemStock`);
     const page = elements(response.body);
-    rows.push(...page);
-    if (page.length < 100) break;
-  }
-  const products = rows.filter((item) => !item.hidden && !item.deleted).map((item) => {
+    for(const item of page){if(item.hidden||item.deleted)continue;
     const rawStock = item.itemStock?.quantity ?? item.stockCount ?? item.itemStock?.stockCount;
     const stock = rawStock == null || rawStock === '' ? null : Number(rawStock);
     const validStock = stock !== null && Number.isSafeInteger(stock) && stock >= 0;
-    return { entityType: 'sku', externalId: String(item.id), code: item.sku || item.code || null,
+    const record={ entityType: 'sku', externalId: String(item.id), code: item.sku || item.code || null,
       displayName: item.name || item.sku || String(item.id),
       providerData: { itemName: item.name || item.sku || String(item.id), variationName: null,
         priceMoney: item.price == null || item.price === '' ? null : { amount: money.integer(item.price,'Clover price'), currency },
@@ -118,7 +115,10 @@ async function discover({ credentials }) {
         inventoryCountUnavailable: stock!==null&&!validStock ? 'The provider quantity is negative or fractional; opening stock requires review.' : null,
         inventoryCounts: validStock ? [{ externalLocationId: credentials.merchantId,
           state: 'IN_STOCK', quantity: stock }] : [] } };
-  });
+    if(onProduct)onProduct(record);else products.push(record);
+    }
+    if (page.length < 100) break;
+  }
   return { products, locations: [{ entityType: 'location', externalId: credentials.merchantId,
     displayName: merchant.name || `Clover merchant ${credentials.merchantId.slice(-6)}`,
     providerData: { kind: 'store', address: merchant.address || null } }] };

@@ -29,7 +29,7 @@ test('developer removal deletes the actual Staging sign-in account and its owned
  const self=await service.review(db,f.owner.accountId,f.email);assert.equal(self.canDelete,false);
  const queued=await service.queue(db,f.owner.accountId,{email,confirmEmail:email,confirmed:'yes',password:f.password,reviewHash:snapshot.reviewHash});
  const queue=require('../../src/operations/postgres-job-queue'),handlers=require('../../src/operations/postgres-runtime-handlers').create();
- const processed=await queue.processOne(db,{'developer.account-delete':handlers['developer.account-delete']},{owner:'canonical-removal-worker',leaseMs:180000});assert.equal(processed.status,'COMPLETED');assert(processed.result.signInAccountRemoved);assert.equal(await queue.processOne(db,{'developer.account-delete':handlers['developer.account-delete']},{owner:'duplicate-worker',leaseMs:180000}),null);
+ const processed=await queue.processOne(db,{'developer.account-delete':handlers['developer.account-delete']},{owner:'canonical-removal-worker',leaseMs:180000});assert.equal(processed.status,'COMPLETED',JSON.stringify(processed));assert(processed.result.signInAccountRemoved);assert.equal(await queue.processOne(db,{'developer.account-delete':handlers['developer.account-delete']},{owner:'duplicate-worker',leaseMs:180000}),null);
  assert.equal((await db.query('SELECT 1 FROM accounts WHERE id=$1 OR email=$2',[target.accountId,email])).rows.length,0);
  assert.equal((await db.query('SELECT 1 FROM workspaces WHERE owner_account_id=$1',[target.accountId])).rows.length,0);
  assert.equal((await db.query("SELECT 1 FROM stockchief_runtime.sessions WHERE sid='target-session'")).rows.length,0);

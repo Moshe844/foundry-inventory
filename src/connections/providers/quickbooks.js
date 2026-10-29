@@ -125,12 +125,12 @@ async function readAccountingSnapshot({ credentials, asOf }) {
   return { asOf, currency,
     version: String(response.body.Header?.Time || asOf), accounts: rows };
 }
-async function entities(credentials,entity,start=1){
+async function entities(credentials,entity,start=1,onRow){
  if(!['Account','Customer','Vendor','Item'].includes(entity))throw new ValidationError('Unsupported accounting identity type.');
  const result=[];for(let position=start;;position+=1000){
   const query=encodeURIComponent('select * from '+entity+' startposition '+position+' maxresults 1000');
   const response=await api(credentials,'/v3/company/'+encodeURIComponent(credentials.realmId)+'/query?query='+query+'&minorversion=75');
-  const rows=response.body.QueryResponse?.[entity]||[];result.push(...rows);if(rows.length<1000)return result;
+  const rows=response.body.QueryResponse?.[entity]||[];if(onRow){for(const row of rows)onRow(row);}else result.push(...rows);if(rows.length<1000)return result;
  }
 }
 
@@ -144,13 +144,14 @@ async function listPostingParties({ credentials, partyType }) {
   }));
 }
 
-async function discover({credentials}){
+async function discover({credentials,onProduct}){
  const company=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/companyinfo/${encodeURIComponent(credentials.realmId)}?minorversion=75`)).body.CompanyInfo;
  if(!company?.CompanyName)throw new ValidationError('QuickBooks did not identify the company for inventory discovery.');
  const preferences=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/preferences?minorversion=75`)).body.Preferences;
  const currency=money.code(preferences?.CurrencyPrefs?.HomeCurrency?.value),locationId=String(credentials.realmId),catalog=require('../accounting-catalog');
- const rows=await entities(credentials,'Item');
- return {products:rows.filter(row=>row.Active!==false&&['Inventory','NonInventory'].includes(row.Type)).map(row=>catalog.product({id:row.Id,code:row.Sku,name:row.Name,currency,price:row.UnitPrice,tracked:row.Type==='Inventory'&&row.TrackQtyOnHand===true,quantity:row.QtyOnHand,locationId})),locations:[catalog.location(locationId,company.CompanyName)]};
+ const products=[];await entities(credentials,'Item',1,row=>{if(row.Active===false||!['Inventory','NonInventory'].includes(row.Type))return;
+  const record=catalog.product({id:row.Id,code:row.Sku,name:row.Name,currency,price:row.UnitPrice,tracked:row.Type==='Inventory'&&row.TrackQtyOnHand===true,quantity:row.QtyOnHand,locationId});if(onProduct)onProduct(record);else products.push(record);});
+ return {products,locations:[catalog.location(locationId,company.CompanyName)]};
 }
 
 async function createPostingParty({ credentials, partyType, party, idempotencyKey }) {

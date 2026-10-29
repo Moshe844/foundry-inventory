@@ -88,7 +88,9 @@ async function balanceDelta(client, ctx, row, delta, at) {
     throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${onHand}, requested: ${Math.abs(delta)}.`,
       { onHand, requested: Math.abs(delta) });
   }
-  return Number(changed.rows[0].on_hand);
+  const after=Number(changed.rows[0].on_hand);
+  if(!Number.isSafeInteger(after))throw new ValidationError('Stock totals exceed the supported exact range. No stock was changed.');
+  return after;
 }
 
 async function lotDelta(client, ctx, lotId, locationId, delta, at) {
@@ -445,7 +447,9 @@ async function adjustInTransaction(client,rawContext,input){
       WHERE workspace_id = $1 AND sku_id = $2 AND location_id = $3 FOR UPDATE`,
     [ctx.workspaceId, row.id, row.location_id]);
     const expected = Number(currentResult.rows[0]?.on_hand || 0);
+    if(!Number.isSafeInteger(expected))throw new ValidationError('The existing stock total exceeds the supported exact range. Reconcile its source before adjusting stock.');
     const delta = counted - expected;
+    if(!Number.isSafeInteger(delta))throw new ValidationError('The stock correction exceeds the supported exact range.');
     if (!delta) {
       const result = { unchanged: true, balanceAfter: counted };
       await completeOperation(client, operation, result);

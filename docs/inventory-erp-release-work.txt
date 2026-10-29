@@ -1,69 +1,129 @@
-StockChief inventory / ERP capacity repair — work in progress, 2026-10-29
+StockChief inventory / ERP capacity repair — release work in progress
+29 October 2026
 
 Authorized scope: audit and repair correctness and scale gaps, tier limits,
-tests, CI and publishing. Render workspace choice: StockChief.
+testing, CI and publishing. Render workspace: StockChief.
 
-Release source: cb283b2556a7926a4087f97861108689d6ed17c1 on
-codex/staging-codex-pilot. Working branch: codex/inventory-erp-capacity.
-The original Foundry-intake checkout is older and contains unrelated edits;
-it is preserved. Its audit is a historical baseline, not current certification.
+Source: cb283b2556a7926a4087f97861108689d6ed17c1, staging pilot branch.
+Working branch: codex/inventory-erp-capacity.
+Draft PR: https://github.com/Moshe844/foundry-inventory/pull/4
+The original checkout has unrelated changes and was preserved. Its audit is a
+historical baseline; current staging already includes additional manufacturing,
+custody, rental and company identity capabilities.
 
-Chosen tier direction: stricter Starter. Implemented active SKU / per-import
-row defaults: Starter 500 / 1,000; Growth 25,000 / 100,000; Pro 250,000 /
-1,000,000; Custom 2,000,000 / 5,000,000. Account-wide SKU/product counters,
-contract overrides, paid product capacity and downgrade protections are wired
-through PostgreSQL and billing/pricing. Other existing limits remain enforced.
+Commercial capacity
+Starter $199: 500 active SKUs / 1,000 rows per import.
+Growth $499: 25,000 active SKUs / 100,000 rows per import.
+Pro $999: 250,000 active SKUs / 1,000,000 rows per import.
+Custom/Enterprise: 2,000,000 active SKUs / 5,000,000 rows per import;
+agreed contract overrides are supported. These are allowances, not a claim
+that every format, source or workload has been certified at those volumes.
+Active SKU and product capacity is account-wide; each variant counts. Paid
+product add-ons increase both. Existing team, location, usage and capability
+limits remain enforced. Deletion excludes an inventory from pooled usage;
+restoring or transferring it rechecks capacity. Permanent deletion retains the
+capacity counter until canonical products and SKUs have been removed.
 
-Implemented and under verification:
-- Monotonic ERP physical-count snapshots; stale updates and conflicting versions
-  cannot overwrite stock. Ordering checkpoint and stock effect commit together.
-- Serial/batch membership and lot balances survive receipt, issue, transfer,
-  dispatch, arrival and returns. Expired issues require explicit disposal.
-- No silent CSV row/column truncation, incomplete quoted fields or XLSX columns.
-- Indexed delimited reader retains compact offsets; exact duplicate/conflict
-  checks spill to temporary indexed storage for large sources.
-- Validation scopes existing stock to each 500-row page. Approval identities are
-  indexed during background analysis so approval need not load the full source.
-- Execution and final reconciliation read saved pages. Catalogue preparation
-  also pages variants within a single large family. Durable retry remains intact.
-- Sparse planning positions replace SKU-by-location Cartesian expansion.
-  Forecast/purchasing pages expose continuation; worker recommendations follow
-  the existing durable SKU continuation. Purchasing no longer sums both a
-  workspace total and its component location totals.
+Audit disposition
+F01: CSV/column overflow and incomplete quoted rows now fail explicitly. Large
+CSV reads use compact row offsets; cross-page duplicate checks use scratch disk.
+F02: absolute ERP snapshots enforce per-source/position versions or timestamps.
+Stale updates are ignored; equal versions with conflicting counts are rejected.
+Checkpoint and physical effect commit together under concurrent delivery.
+F03: unsupported foreign-currency posting is rejected atomically. This is not
+an implementation of arbitrary FX conversion or multi-company consolidation.
+F04/F06: serial-to-lot membership and lot balances survive receipt, issue,
+transfer, dispatch, arrival and returns. Expired sales/picks are refused;
+explicit disposal remains supported. Cross-wave lot/serial reservations count
+only active work, and scan IDs cannot be replayed against a different wave.
+F05: native fractional, catch-weight and dual-unit stock remain unsupported.
+Clover fixed-point units are decoded accurately and unsupported fractions are
+retained for review, never rounded or multiplied into stock. Whole-unit balance
+overflow beyond the exact integer range rolls back.
+F07: indexed exact SKU lookup runs before broad discovery. PostgreSQL trigram
+indexes rank typo candidates before bounding results. Search remains a ranked
+response, not an exhaustive export of every approximate match.
+F08: full native ERP snapshot/delta/freeze/activation cutover remains a gap.
+Catalogue/opening-stock import must not be represented as migration of all open
+orders, reservations, counterparties and historical financial positions.
+F09: connectors remain subject to existing provider availability, credentials,
+distribution and live qualification. A generic typed API does not automatically
+understand SAP, Dynamics, NetSuite, Odoo or every proprietary ERP.
+F10: planning uses sparse evidenced positions, scoped aggregation, visible
+continuation and durable SKU cursors, avoiding SKU-by-location multiplication.
+F11: source context and validation read bounded pages. Indexed execution
+identities, catalogue preparation, stock application and reconciliation use
+bounded reads; execution checkpoints commit with each page and survive crashes.
+Catalogue preparation also resumes inside a wide variant family. Multipart
+admission bounds simultaneous buffered uploads. Six catalogue adapters emit
+records as pages arrive; Square and BigCommerce join stock/family facts through
+scratch indexes. Provider mapping uses 500-record batches; previous values are
+stored on scratch disk and catalogue/commerce reconciliation is paged.
+Incomplete or conflicting provider snapshots cannot replace the saved catalogue.
+Provider snapshot application still uses one transaction; discovery is restarted
+after interruption. It is not yet a durable generation-by-generation sync.
+CSV source bytes/string still reside in memory. Analysis is a long transaction.
+XLSX and other structured formats are not million-row certified; their format
+limits remain separate from plan allowances. Xero Items is not documented among
+its paginated endpoints. Provider response bodies are bounded to 32 MiB; a large
+unpaginated response fails safely and needs a staged source export.
+F12: catalogue name/newest pages use cursors and page-scoped aggregates;
+warehouse waves/orders/lines/cartons have bounded pages with whole-wave totals
+and complete-shipment packing checks. PO/SO/bill/invoice/payment/shipment numbers
+use atomic counters, including imported/manual numbers and rollback safety.
+Stock-sorted/grouped catalogue views still perform broad database aggregation;
+large lot/serial detail views and contention need further qualification.
+F13: imports now preserve up to 32 explicit option axes. Existing current-native
+manufacturing/custody/rental services were preserved, but arbitrary regulated
+quality release, catch weight, all kit forms and intercompany accounting are not
+certified by this release. No capability was enabled solely by changing its label.
+F14: current million-row end-to-end certification is still running in CI.
+Do not describe an entitlement limit or SQL-seeded test as an end-to-end pass.
 
-Evidence so far (logs in original workspace output/inventory-erp-repair-20261029):
-- release-correctness-retest.log: 7/7 PostgreSQL correctness/capacity tests.
-- paged-import-tests.log: 20,000-row canonical import reconciled inventory,
-  value, supplier links, policies and duplicate replay. A test observer missed
-  session-scoped queries; fixed rather than accepting its zero query count.
-- bounded-catalog-tests.log: 4/4, including wide-family recovery, concurrent
-  limits and 5,000 rows with 1,067 measured database round trips.
-- Parser/source identity/scratch regressions pass, including one million rows.
-- Public pricing/billing browser and plan-contract regressions pass.
-- First million-row end-to-end run FAILED after analysis: the global execution
-  price-conflict query timed out joining full source rows. Narrow price and
-  name evidence now lives in the execution identity index; page selection is
-  materialized before reading full rows. Smaller end-to-end tests pass.
-- A second million-row run uses an immutable source copy. Analysis reached
-  all 1,000,000 rows at about 498 MB RSS in 523 seconds. Execution is pending.
-  Do not label the full import certified before final assertions pass.
-- index-admission-planning-tests.log: 10/10, including paged planning with
-  1,000 empty locations, durable wide variants and 5,000 rows/1,067 queries.
-- catalog-pages-correctness.log: 6/6, including stable duplicate-name cursor
-  pages, maintained stock totals and the ERP/tracking correctness cases.
-- Multipart concurrent admission and bounded variant-family discovery pass.
-- Full unit suite: 1,958 tests; 1,909 passed, 48 failed, one skipped. Comparing
-  the failing files at unchanged staging reproduced 47 failures. The remaining
-  live-authorization test is being rerun separately. No green-full-suite claim.
-- Earlier checkout million-SKU SQL-seeded integrity/search/planning test passed
-  in about 35 minutes. It is NOT current-branch end-to-end import certification.
+Evidence (logs in original workspace output/inventory-erp-repair-20261029)
+- inventory-precision-retest.log: 6/6 exact-range, FX, ordered ERP, serial/lot,
+  expiry and rollback checks on native PostgreSQL.
+- capacity-deletion-retest.log: 9/9 developer removal, refund retention and
+  owner workspace removal; other tenants and funded receipts preserved.
+- warehouse-tracked-capacity.log and warehouse-pages.log: concurrent tracked
+  picks, cancellation/expiry, paged readiness and actual Chromium workflow pass.
+- business-numbers-warehouse.log: 3/3 atomic numbering, accounting and picking.
+- all-import-unit.log: 112/112 import unit tests.
+- provider-release-unit.log: 40/40 provider contract/streaming/response tests.
+- provider-cache-capacity.log: 3,004 records, 23 measured DB round trips,
+  436 ms cache application in an isolated local PostgreSQL fixture; exact,
+  ambiguous, ignored and excluded matches verified. Not a production benchmark.
+- provider-batch-retest.log: 4/4 provider mapping, exclusions, scheduled sync,
+  owner authority, price/stock conflicts and incomplete-source preservation.
+- trigram-axes-search.log: 15/15, including 32 axes, exact and late typo matches,
+  tenant isolation, and actual browser/Ask search flows over 6,001 records.
+- post-index-import-scale.log: 3/3 wide-family and crash recovery plus a real
+  20,000-product import; 79,997 units, value 9,999,625 minor units, exact replay,
+  4,267 DB round trips, approximately 101 seconds execution under local load.
+- preview-revision-retest.log: actual browser background revision and durable
+  progress/recovery pass without duplicate stock or money.
+- current-unit-bounded.log: 1,958 tests, 1,909 pass, 48 fail, one skipped.
+  Comparing the failing files against untouched staging reproduced 47 failures;
+  the remaining live-authorization test passes isolated. No green-full-suite claim.
 
-Outstanding work includes finishing the current audit (provider discovery buffering, catalogue/search
-reads, measured quantities and ERP-specific limits), resolving relevant suite
-failures, final immutable-source scale verification, CI and deployment.
-Broad unit/integration runs have unrelated failures and some lingering test
-servers; do not claim a green full suite. No commit, push, PR or deployment yet.
+Large-run history
+First current million-row import analysed all rows, then failed a 600-second
+price-conflict query. Narrow indexed evidence and materialized pages replaced
+that full source-JSON join. Second run analysed 1,000,000 rows at roughly 498 MB
+RSS, but catalogue preparation was too slow; it was intentionally stopped.
+The unindexed code lookup and long catalogue-preparation transaction were then
+replaced with indexed lookups and durable 500-variant transactions.
+An earlier checkout's SQL-seeded million-SKU test passed, but it is not current
+end-to-end import certification.
+CI run 40958730160 on commit 237c6c86410a0b665fef792b0d7b95f94a9ee358 passed
+its correctness gate and is running the million-row certification. Customer CI
+on that commit exposed the capacity-counter purge ordering bug; fixed and
+verified locally in the later working changes. Final-source CI remains required.
 
-Staging services: stockchief-staging-web srv-daqh418473hc73853e40;
-stockchief-staging-worker srv-daqh418473hc73853e7g. Both deploy the staging pilot
-branch manually. Confirm the latest branch and deployed commits before release.
+Publication status
+Not deployed. Finish final-source CI and inspect the actual scale outcome before
+publishing. Do not promise universal ERP compatibility or a certified five-million
+row operating envelope. Remaining semantic and cutover gaps are material.
+Staging web: srv-daqh418473hc73853e40, stockchief-staging-web.
+Staging worker: srv-daqh418473hc73853e7g, stockchief-staging-worker.
+Both manually deploy codex/staging-codex-pilot; confirm live commits before release.

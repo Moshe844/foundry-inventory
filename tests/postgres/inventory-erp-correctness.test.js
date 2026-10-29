@@ -19,6 +19,13 @@ test('ERP and tracked-stock correctness regressions',{timeout:180000},async t=>{
   await db.query('INSERT INTO skus(id,workspace_id,item_id,code,is_default,is_active,created_at) VALUES($1,\'w\',$2,$1,1,1,$3)',['s-'+mode,'i-'+mode,at]);
  }
  const ctx={workspaceId:'w',actorId:'u',accountId:'a'};
+ await t.test('single receipts reject cumulative precision overflow atomically',async()=>{
+  await db.query("INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) VALUES('w','s-quantity','l2',$1,$2)",[String(Number.MAX_SAFE_INTEGER),at]);
+  await assert.rejects(inventory.receive(db,ctx,{skuId:'s-quantity',locationId:'l2',quantity:1,idempotencyKey:'precision-overflow'}),/exact range/);
+  assert.equal((await db.query("SELECT on_hand FROM balances WHERE sku_id='s-quantity' AND location_id='l2'")).rows[0].on_hand,String(Number.MAX_SAFE_INTEGER));
+  assert.equal(Number((await db.query("SELECT count(*) n FROM movements WHERE sku_id='s-quantity'")).rows[0].n),0);
+  await db.query("DELETE FROM balances WHERE sku_id='s-quantity' AND location_id='l2'");
+ });
  await t.test('foreign-currency postings fail atomically without conversion evidence',async()=>{
   await ledger.configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});
   const entry={postingDate:'2026-10-29',sourceKey:'foreign',currency:'EUR',lines:[{accountKey:'CASH',debitMinor:10000},{accountKey:'SALES_REVENUE',creditMinor:10000}]};

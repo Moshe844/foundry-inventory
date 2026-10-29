@@ -18,15 +18,14 @@
  * inventory value, but an explicit per-unit cost can be posted to the opening
  * inventory cost ledger when accounting is configured.
  */
+const VARIANT_FIELDS=Array.from({length:32},(_,index)=>'variant'+(index+1));
 const FIELDS = [
   { id: 'name', label: 'Product name' },
   { id: 'code', label: 'Code or SKU' },
   { id: 'barcode', label: 'Barcode (GTIN, UPC, EAN)' },
   { id: 'description', label: 'Description' },
   { id: 'unitLabel', label: 'Unit of measure' },
-  { id: 'variant1', label: 'Variant (1)' },
-  { id: 'variant2', label: 'Variant (2)' },
-  { id: 'variant3', label: 'Variant (3)' },
+  ...VARIANT_FIELDS.map((id,index)=>({id,label:`Variant (${index+1})`})),
   { id: 'quantity', label: 'Quantity' },
   { id: 'sellingPrice', label: 'Selling price' },
   /*
@@ -61,7 +60,6 @@ const FIELDS = [
 
 const FIELD_IDS = FIELDS.map((field) => field.id);
 const FIELD_LABEL = Object.fromEntries(FIELDS.map((field) => [field.id, field.label]));
-const VARIANT_FIELDS = ['variant1', 'variant2', 'variant3'];
 
 const DETECTED_TYPES = [
   'catalog',
@@ -169,8 +167,7 @@ const PATTERNS = {
     /\b(?:variant|option)\s*\d*\b/,
   ],
 };
-PATTERNS.variant2 = PATTERNS.variant1;
-PATTERNS.variant3 = PATTERNS.variant1;
+for(const field of VARIANT_FIELDS)PATTERNS[field]=PATTERNS.variant1;
 
 // Language aliases describe fields, never a particular document or customer.
 const LANGUAGE_HEADERS={code:['מק ט','מקט','קוד מוצר','קוד פריט','reference article','code article'],
