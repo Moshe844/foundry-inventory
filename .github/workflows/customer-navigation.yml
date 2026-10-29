@@ -40,7 +40,11 @@ jobs:
       - run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
-          npm run test:customer-navigation 2>&1 | tee output/customer-navigation-ci/test.log
+          npm run test:customer-navigation:core 2>&1 | tee output/customer-navigation-ci/core-test.log
+      - name: Click every customer destination
+        run: |
+          set -euo pipefail
+          npm run test:customer-navigation:links 2>&1 | tee output/customer-navigation-ci/link-test.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
