@@ -147,6 +147,19 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
 - current-unit-bounded.log: 1,958 tests, 1,909 pass, 48 fail, one skipped.
   Comparing the failing files against untouched staging reproduced 47 failures;
   the remaining live-authorization test passes isolated. No green-full-suite claim.
+- provider-final-integration.log: five of 11 broader provider/browser checks pass.
+  All six failures reproduce on untouched staging, including old customer-address,
+  navigation and order wording expectations and provider-availability fixtures.
+- Existing-data upgrade from 124 to 134 migrations preserves 501 legacy Starter
+  SKUs, blocks additions over the new limit, permits archive-driven recovery,
+  continues existing document numbers and is a no-op on reapplication.
+- volume-upgrade.log: the same upgrade over 210,099 synthetic existing SKUs
+  preserves every SKU and builds exact capacity counters in 6,932 ms locally.
+  This is an isolated migration rehearsal, not a production-load guarantee.
+- Inventory CI on 0a3a032 passed all 129 checks. Customer CI passed 226 of 227
+  core checks; the WooCommerce assertion still expected the pre-pagination heading.
+  Updated that assertion to check the current heading and page-scoped match state;
+  mappings, opening balances and duplicate-free refresh remain asserted.
 
 Large-run history
 First current million-row import analysed all rows, then failed a 600-second
