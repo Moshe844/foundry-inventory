@@ -29,7 +29,8 @@ async function capture(client,ctx,kind,recordId,operation){
  const saved=await client.query(`INSERT INTO work_items(id,workspace_id,category,source,source_evidence,affected_entities,recommended_action,
   confidence,approval_requirement,execution_status,verification_status,idempotency_key,outcome,created_at,due_at)
   VALUES($1,$2,'business_follow_through',$3,$4,$5,$6,'high','NONE','EXECUTING','PENDING',$7,$8,$9,$9)
-  ON CONFLICT(workspace_id,idempotency_key) DO UPDATE SET due_at=EXCLUDED.due_at RETURNING id`,
+  ON CONFLICT(workspace_id,idempotency_key) DO UPDATE SET due_at=EXCLUDED.due_at,
+   execution_status='EXECUTING',verification_status='PENDING',completed_at=NULL RETURNING id`,
  [id,ctx.workspaceId,SOURCE,JSON.stringify([{fact:'canonical_record',kind,id:recordId}]),JSON.stringify({kind,recordId}),JSON.stringify(action),
   'business-outcome:'+kind+':'+recordId,JSON.stringify({kind,recordId,ownerActorId:ctx.actorId,requestedOutcome:definition.title,phase:'CHECK_QUEUED',nextAction:'Check the saved business records',startedAt:at,nextCheckAt:at}),at]);
  const workId=saved.rows[0].id;
@@ -41,7 +42,9 @@ async function captureResult(client,operation,result){
  const ctx=operation.ctx;if(!ctx)return;
  if(result.purchaseOrderId)await capture(client,ctx,'purchase',result.purchaseOrderId,operation);
  if(result.billId)await capture(client,ctx,'supplier_invoice',result.billId,operation);
- if(result.salesOrderId)await capture(client,ctx,'customer_order',result.salesOrderId,operation);
+ let salesOrderId=result.salesOrderId;
+ if(!salesOrderId&&result.customerReturnId)salesOrderId=(await client.query('SELECT sales_order_id FROM customer_returns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,result.customerReturnId])).rows[0]?.sales_order_id;
+ if(salesOrderId)await capture(client,ctx,'customer_order',salesOrderId,operation);
 }
 function decision(code,happened,impact,checked,recommendation,alternatives,required){return {code,happened,impact,checked,recommendation,alternatives,required};}
 async function purchase(database,workspaceId,id,prior,clock){
@@ -85,18 +88,31 @@ async function supplierInvoice(database,workspaceId,id,_prior,clock){
 }
 async function customerOrder(database,workspaceId,id,_prior,clock){
  const so=(await database.query('SELECT o.*,c.name AS customer_name FROM sales_orders o JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id WHERE o.workspace_id=$1 AND o.id=$2',[workspaceId,id])).rows[0];if(!so)return missing();
- const lines=(await database.query('SELECT l.*,COALESCE((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0) AS allocated FROM sales_order_lines l WHERE l.workspace_id=$1 AND l.sales_order_id=$2',[workspaceId,id])).rows;
+ const lines=(await database.query(`SELECT l.*,COALESCE((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0) AS allocated,
+  COALESCE((SELECT sum((e.metadata::jsonb->>'quantity')::numeric) FROM accounting_journal_entries e WHERE e.workspace_id=l.workspace_id AND e.source_type='sale_fulfillment' AND e.source_record_type='sales_order' AND e.source_record_id=l.sales_order_id AND e.status='POSTED' AND e.metadata::jsonb->>'salesOrderLineId'=l.id),0) AS posted_quantity
+  FROM sales_order_lines l WHERE l.workspace_id=$1 AND l.sales_order_id=$2`,[workspaceId,id])).rows;
  const shipments=(await database.query("SELECT id,status,handover,tracking_status,expected_delivery_date,delivered_at FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'CANCELLED'",[workspaceId,id])).rows;
- const invoices=(await database.query("SELECT id,status,balance_minor,due_date,journal_entry_id FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'VOID'",[workspaceId,id])).rows;
+ const invoices=(await database.query("SELECT i.id,i.status,i.balance_minor,i.due_date,i.journal_entry_id,i.source_key,EXISTS(SELECT 1 FROM accounting_journal_entries e WHERE e.workspace_id=i.workspace_id AND e.id=i.journal_entry_id AND e.status='POSTED') AS header_posted FROM accounting_customer_invoices i WHERE i.workspace_id=$1 AND i.sales_order_id=$2 AND i.status<>'VOID'",[workspaceId,id])).rows;
  const remaining=lines.reduce((n,l)=>n+Number(l.quantity_ordered)-Number(l.quantity_fulfilled),0),allocated=lines.reduce((n,l)=>n+Number(l.allocated),0),fulfilled=lines.reduce((n,l)=>n+Number(l.quantity_fulfilled),0);
  const base={recordId:id,reference:so.order_number,href:kinds.customer_order.href+id,party:so.customer_name,proof:{salesOrderId:id,status:so.status,remaining,allocated,fulfilled,shipmentIds:shipments.map(s=>s.id),invoices:invoices.map(i=>({id:i.id,status:i.status,balanceMinor:Number(i.balance_minor),dueDate:i.due_date}))}};
  if(so.status==='CANCELLED'&&!fulfilled)return {...base,phase:'CANCELLED',cancelled:true,nextAction:'The unfulfilled order was cancelled.'};
  if(so.status==='DRAFT')return {...base,phase:'ORDER_REVIEW',nextAction:'Confirm the customer, prices, delivery and tax before reserving stock.'};
+ const returns=(await database.query(`SELECT r.id,r.return_number,r.status,r.resolution,
+  COALESCE((SELECT sum(c.cash_due_minor-c.cash_refunded_minor) FROM accounting_return_receipt_credits c WHERE c.workspace_id=r.workspace_id AND c.customer_return_id=r.id),0) AS cash_outstanding,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('lineId',l.sales_order_line_id,'received',l.quantity_received,'disposed',l.quantity_restocked+l.quantity_scrapped+l.quantity_repair)) FROM customer_return_lines l WHERE l.workspace_id=r.workspace_id AND l.customer_return_id=r.id),'[]'::jsonb) AS lines
+  FROM customer_returns r WHERE r.workspace_id=$1 AND r.sales_order_id=$2 AND r.status<>'CANCELLED' ORDER BY r.created_at,r.id`,[workspaceId,id])).rows;
+ base.proof.returns=returns.map(r=>({id:r.id,status:r.status,resolution:r.resolution,cashOutstanding:Number(r.cash_outstanding),lines:r.lines}));
+ const pendingReturn=returns.find(r=>r.status!=='COMPLETED'||Number(r.cash_outstanding)>0);
+ if(pendingReturn)return {...base,phase:'CUSTOMER_RETURN_IN_PROGRESS',reviewHref:'/returns/'+pendingReturn.id,nextAction:'Complete the recorded return, physical inspection and financial resolution before closing this order.'};
+ const returned=new Map();for(const r of returns)for(const l of r.lines)if(Number(l.disposed)===Number(l.received))returned.set(l.lineId,(returned.get(l.lineId)||0)+Number(l.received));
+ const fulfillmentPosted=fulfilled>0&&lines.every(l=>Number(l.posted_quantity)===Number(l.quantity_fulfilled));
+ const financesClear=invoices.length>0&&invoices.every(i=>Number(i.balance_minor)===0&&(i.header_posted||i.source_key==='sales-order:'+id&&fulfillmentPosted));
+ if(fulfilled>0&&(!remaining||so.status==='CANCELLED')&&lines.every(l=>Number(l.quantity_fulfilled)===Number(returned.get(l.id)||0))&&financesClear)return {...base,phase:'RETURNED_AND_RECONCILED',complete:true,nextAction:'All fulfilled units have completed returns and the recorded financial resolution agrees.',completionProof:base.proof};
  const failed=shipments.find(s=>['FAILURE','RETURNED'].includes(s.tracking_status));
  if(failed)return {...base,phase:'DELIVERY_EXCEPTION',nextAction:'Investigate the carrier exception',reviewHref:'/fulfilment/'+failed.id,decision:decision('customer_delivery_exception','A carrier reported a failed or returned shipment.',`${so.customer_name}'s delivery needs attention.`,['Shipment tracking','Order lines and invoices'],'Review the carrier evidence and prepare the customer update.',['Arrange redelivery','Prepare an authorized return'],'Choose the delivery remedy before changing stock or refunding.')};
  if(remaining>allocated&&so.status!=='CANCELLED')return {...base,phase:'STOCK_SHORTAGE',deadline:so.needed_by?time.dayBoundary(so.needed_by,clock.timeZone):null,nextAction:'Resolve the unallocated customer demand',decision:decision('customer_stock_shortage',`${so.order_number} has ${remaining} units left and ${allocated} reserved.`,`${remaining-allocated} units cannot yet be fulfilled.`,['Current allocations','Physical stock and incoming supply'],'Review safe transfers before an additional supplier purchase.',['Partially fulfill available units','Agree a revised delivery promise'],'Approve any additional commitment outside the current authority.')};
  const delivered=shipments.length>0&&shipments.every(s=>s.status==='DELIVERED'||s.tracking_status==='DELIVERED'||s.handover==='COLLECTED'&&s.status==='SHIPPED');
- if((!remaining||so.status==='CANCELLED')&&fulfilled>0&&delivered&&invoices.length&&invoices.every(i=>i.journal_entry_id&&Number(i.balance_minor)===0))return {...base,phase:'DELIVERED_AND_RECONCILED',complete:true,nextAction:'Delivery or collection and invoicing/payment agree.',completionProof:base.proof};
+ if((!remaining||so.status==='CANCELLED')&&fulfilled>0&&delivered&&financesClear)return {...base,phase:'DELIVERED_AND_RECONCILED',complete:true,nextAction:'Delivery or collection and invoicing/payment agree.',completionProof:base.proof};
  const unpaid=invoices.find(i=>Number(i.balance_minor)>0&&i.due_date&&i.due_date<=clock.calendarDate);
  if(unpaid)return {...base,phase:'CUSTOMER_PAYMENT_DUE',deadline:time.dayBoundary(unpaid.due_date,clock.timeZone),nextAction:'Review the overdue customer payment',decision:decision('customer_payment_due',`${so.customer_name}'s invoice is due.`,`${require('../domain/currency').format(Number(unpaid.balance_minor),so.currency)} remains outstanding.`,['Posted invoice','Recorded payments'],'Prepare a payment reminder under the saved communication authority.',['Investigate a dispute','Record payment evidence'],'Approve the reminder or reconcile an actual payment.')};
  return {...base,phase:remaining>0&&so.status!=='CANCELLED'?'AWAITING_DISPATCH':!delivered?'AWAITING_DELIVERY':'AWAITING_CUSTOMER_PAYMENT',nextAction:remaining>0&&so.status!=='CANCELLED'?'Prepare warehouse work and wait for confirmed physical dispatch.':!delivered?'Monitor actual tracking or collection confirmation.':'Monitor the recorded customer invoice and payment.'};

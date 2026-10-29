@@ -48,7 +48,7 @@ async function beginOperation(client, ctx, kind, rawKey) {
       (id,workspace_id,kind,idempotency_key) VALUES($1,$2,$3,$4)
       ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING RETURNING id`,
   [id, ctx.workspaceId, kind, key]);
-  if (inserted.rows.length) return { id, key, replayed: false };
+  if (inserted.rows.length) return { id, key, kind, ctx, replayed: false };
   const prior = await client.query(`SELECT id,status,result FROM stockchief_runtime.business_operations
     WHERE workspace_id=$1 AND kind=$2 AND idempotency_key=$3 FOR UPDATE`, [ctx.workspaceId, kind, key]);
   if (prior.rows[0]?.status === 'COMPLETED') return { id: prior.rows[0].id, key, replayed: true, result: prior.rows[0].result };
@@ -59,6 +59,7 @@ async function completeOperation(client, operation, result) {
   await client.query(`UPDATE stockchief_runtime.business_operations
     SET status='COMPLETED',result=$2::jsonb,completed_at=now() WHERE id=$1`,
   [operation.id, JSON.stringify(result)]);
+  await require('./postgres-workflow-ownership').captureResult(client,operation,result);
 }
 
 function transaction(database, callback) {
