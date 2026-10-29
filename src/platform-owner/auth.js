@@ -12,10 +12,10 @@ function codeAt(secret,counter){const bytes=Buffer.alloc(8);bytes.writeBigUInt64
 function matchedCounter(secret,code,now=Date.now()){if(!/^\d{6}$/.test(String(code)))return null;const counter=Math.floor(now/30000);for(const delta of [0,-1,1]){const n=counter+delta;if(n>=0&&crypto.timingSafeEqual(Buffer.from(codeAt(secret,n)),Buffer.from(String(code))))return n;}return null;}
 function version(account){return crypto.createHash('sha256').update(account.password_hash).digest('hex');}
 function unseal(value){return credentials.decrypt({...value,auth_tag:value.authTag});}
-async function operator(db,id){const account=(await db.query(`SELECT a.id,a.email,a.name,a.password_hash,a.time_zone,o.role,o.active,
+async function operator(db,id){const account=(await db.query(`SELECT a.id,a.email,a.name,a.password_hash,a.time_zone,a.email_verified_at,o.role,o.active,
  EXISTS(SELECT 1 FROM commercial_admin_accounts c WHERE c.account_id=a.id) legacy_admin
  FROM accounts a LEFT JOIN platform_console_operators o ON o.account_id=a.id WHERE a.id=$1`,[id])).rows[0];
- if(!account)return null;
+ if(!account||!account.email_verified_at)return null;
  // An explicitly disabled operator cannot regain access through the legacy allow-list.
  if(account.active===false)return null;
  const configured=require('../config').commercial.adminEmails.includes(account.email.toLowerCase());
