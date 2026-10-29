@@ -59,7 +59,7 @@ jobs:
       - name: Provider automatic import and owner approval
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/provider-automatic-pages.test.js tests/postgres/provider-catalog-import.test.js tests/postgres/catalogue-stock-evidence.test.js tests/postgres/accounting-catalog-import.test.js 2>&1 | tee output/inventory-ci/provider-import.log
+          node --test --test-concurrency=2 tests/postgres/provider-review-pages.test.js tests/postgres/provider-automatic-pages.test.js tests/postgres/provider-catalog-import.test.js tests/postgres/catalogue-stock-evidence.test.js tests/postgres/accounting-catalog-import.test.js 2>&1 | tee output/inventory-ci/provider-import.log
       - name: Maintenance fairness and worker isolation
         run: |
           set -euo pipefail

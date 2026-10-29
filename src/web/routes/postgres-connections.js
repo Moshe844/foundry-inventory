@@ -307,7 +307,7 @@ function createPostgresConnectionsRouter(database,options={}){
       WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN' AND ($3::text IS NULL OR issue.id=$3)
       ORDER BY issue.updated_at DESC,issue.id LIMIT 10 OFFSET $4`,[req.ctx.workspaceId,connection.id,issueId,issueId?0:issueOffset])).rows};
     const catalogueReview=adapter?.discover&&!isMailbox
-      ?await catalogue.describe(database,req.ctx,connection.id):null;
+      ?await catalogue.describe(database,req.ctx,connection.id,req.query):null;
     const connectionProof=(await database.query(`SELECT
       (SELECT max(completed_at) FROM connection_sync_runs WHERE workspace_id=$1 AND connector_id=$2
         AND sync_kind='CATALOG_AND_LOCATIONS' AND status='COMPLETED') AS catalogue_at,

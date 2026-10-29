@@ -2,19 +2,27 @@
  const physical=unlinked.filter(r=>r.entity_type==='sku'&&!r.exclusion);
  const places=unlinked.filter(r=>r.entity_type==='location');
  const base='/settings/connections/'+encodeURIComponent(connection.id);
+ const paging=catalogueReview.page;
 %>
 <section class="card" aria-label="Match products and locations">
- <div class="card-head"><div><h2><%= unlinked.length?'Finish importing products and locations':'Imported products and locations' %></h2><p class="muted"><%= unlinked.length?'Authorization worked. These provider records have not been added to this business yet. Match existing records or import new ones below.':'Current provider records are matched. Their saved history and mappings are preserved.' %></p></div></div>
+ <div class="card-head"><div><h2><%= unlinked.length?'Finish importing products and locations':'Provider products and locations' %></h2><p class="muted">Review the provider records on this page. Match existing records or import new ones below; saved history and mappings are preserved.</p></div></div>
  <div class="card-body grid">
+  <form method="get" action="<%= base %>" class="form-actions" role="search" aria-label="Search provider catalogue and matches">
+   <label class="field"><span class="field-label">Find provider record</span><input class="input" name="catalogueQ" value="<%= paging.q %>" placeholder="Name, code or external ID"></label>
+   <label class="field"><span class="field-label">Find StockChief match</span><input class="input" name="matchQ" value="<%= paging.matchQ %>" placeholder="Exact SKU code, product or location name"></label>
+   <button class="btn" type="submit">Search catalogue and matches</button><a class="btn btn--secondary" href="<%= base %>">Reset catalogue search</a>
+  </form>
+  <p class="hint">Showing <%= catalogueReview.rows.length %> provider records on this page. Match lists show up to 100 results; search to find another product or location.<% if(paging.moreSkus||paging.moreLocations){ %> More matches are available. Narrow the match search.<% } %></p>
+  <% if(!catalogueReview.rows.length){ %><p class="notice">No provider records match this search.</p><% } %>
   <% const quantityNotes=catalogueReview.rows.filter(r=>r.entity_type==='sku'&&r.data.inventoryCountNote); if(quantityNotes.length){ %>
    <div class="notice notice--warn"><div><strong>Stock quantities still need confirmation</strong><p>Product details and selling prices can be imported. Physical counts are not established for <%= quantityNotes.length %> variant<%= quantityNotes.length===1?'':'s' %>; no opening receipt or inventory cost is inferred from these records.</p>
     <details><summary>Show the <%= quantityNotes.length %> variant<%= quantityNotes.length===1?'':'s' %> needing stock evidence</summary><ul><% quantityNotes.forEach(function(row){ %><li><%= row.display_name %>: <%= row.data.inventoryCountNote %></li><% }); %></ul></details></div></div>
   <% } %>
-  <% if(!unlinked.length){ %><p class="notice notice--success">All current physical products and locations are matched or explicitly excluded.</p><% } %>
+  <% if(catalogueReview.rows.length&&!unlinked.length){ %><p class="notice notice--success">The records on this page are matched or excluded.</p><% } %>
   <% const matched=catalogueReview.rows.filter(r=>r.entity_type==='sku'&&r.foundry_record_id); if(matched.length){ %>
    <div class="table-scroll"><table class="table"><caption>Imported products · latest provider observations</caption><thead><tr><th scope="col">Product</th><th scope="col">Provider selling price</th><th scope="col">Provider stock</th></tr></thead><tbody>
-    <% matched.slice(0,25).forEach(function(row){ const data=row.data; %><tr><th scope="row"><%= row.display_name %></th><td><%= data.priceMoney?helpers.money(data.priceMoney.amount,data.priceMoney.currency):'Not supplied' %></td><td><%= data.inventoryCounts?.length?data.inventoryCounts.reduce((sum,count)=>sum+Number(count.quantity||0),0):'Not reported' %></td></tr><% }); %>
-   </tbody></table></div><p class="hint">Showing <%= Math.min(matched.length,25) %> of <%= matched.length %> matched variants. Provider observations do not reset StockChief quantities or overwrite a price changed in StockChief.</p><a class="btn" href="/inventory/table">Open inventory</a>
+    <% matched.forEach(function(row){ const data=row.data; %><tr><th scope="row"><%= row.display_name %></th><td><%= data.priceMoney?helpers.money(data.priceMoney.amount,data.priceMoney.currency):'Not supplied' %></td><td><%= data.inventoryCounts?.length?data.inventoryCounts.reduce((sum,count)=>sum+Number(count.quantity||0),0):'Not reported' %></td></tr><% }); %>
+   </tbody></table></div><p class="hint">Showing <%= matched.length %> matched variants on this page. Provider observations do not reset StockChief quantities or overwrite a price changed in StockChief.</p><a class="btn" href="/inventory/table">Open inventory</a>
   <% } %>
   <% if(places.length){ %><h3>1. Match locations</h3><p>Each provider location stays separate. Matching a location never moves stock.</p>
    <% places.forEach(function(row){ %><div class="card" data-external-location="<%= row.external_id %>"><div class="card-body grid"><strong><%= row.display_name %></strong>
@@ -24,7 +32,7 @@
      <form method="post" action="<%= base %>/create-location-map"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= catalogueReview.revision %>"><input type="hidden" name="externalId" value="<%= row.external_id %>"><button class="btn btn--secondary" type="submit">Create this provider location</button></form>
     <% } %></div></div><% }); %>
   <% } %>
-  <% if(physical.length){ %><h3>2. Match or import products</h3><p>Variants stay grouped under their product. Existing matches keep their current prices and stock.</p>
+  <% if(physical.length){ %><h3>2. Match or import products</h3><p>Selecting a variant imports its complete product family, including variants on other pages. Existing matches keep their current prices and stock.</p>
    <% if(currentUser.role==='owner'){ %><form id="provider-products-import" method="post" action="<%= base %>/create-products-map"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= catalogueReview.revision %>"></form><% } %>
    <div class="table-scroll"><table class="table"><thead><tr><th scope="col">Import</th><th scope="col">Provider product / variant</th><th scope="col">Price</th><th scope="col">Current units</th><th scope="col">Match an existing product</th></tr></thead><tbody>
    <% physical.forEach(function(row){ const data=row.data; %><tr data-external-product="<%= row.external_id %>"><td><% if(currentUser.role==='owner'){ %><input type="checkbox" name="externalIds" value="<%= row.external_id %>" form="provider-products-import" aria-label="Import <%= row.display_name %>"><% } %></td><th scope="row"><%= row.display_name %><% if(row.code){ %><small class="muted"><%= row.code %></small><% } %></th><td><%= data.priceMoney?helpers.money(data.priceMoney.amount,data.priceMoney.currency):'Not supplied' %><% if(data.inventoryCountUnavailable){ %><small class="muted"><%= data.inventoryCountUnavailable %></small><% } %></td><td><%= data.inventoryCounts?.length?data.inventoryCounts.reduce((sum,count)=>sum+Number(count.quantity||0),0):'Not supplied' %></td><td>
@@ -33,5 +41,7 @@
    <% if(currentUser.role==='owner'){ %><label class="checkbox"><input type="checkbox" name="includeOpening" value="1" form="provider-products-import"> Import the provider’s current physical stock for newly created products</label><p class="hint">Match every location holding these products first. Opening stock is captured once; historical orders are never replayed. No purchase cost, supplier bill or payment is invented. Stock without recorded cost remains blocked from sale posting until its cost is established.</p><button class="btn btn--primary" type="submit" form="provider-products-import">Import selected products</button><% } %>
   <% } %>
   <% const excluded=catalogueReview.rows.filter(r=>r.exclusion||r.mapping_status==='IGNORED'); if(excluded.length){ %><details><summary>Excluded or non-physical records · <%= excluded.length %></summary><div class="grid"><% excluded.forEach(function(row){ %><div class="list-row"><div><strong><%= row.display_name %></strong><p><%= row.exclusion||'Excluded by the owner.' %></p></div><% if(row.mapping_status==='UNMAPPED'&&!row.foundry_record_id&&currentUser.role==='owner'){ %><form method="post" action="<%= base %>/exclude-record"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= catalogueReview.revision %>"><input type="hidden" name="entityType" value="<%= row.entity_type %>"><input type="hidden" name="externalId" value="<%= row.external_id %>"><button class="btn btn--sm" type="submit">Confirm exclusion</button></form><% } else { %><span class="badge"><%= row.mapping_status==='IGNORED'?'Excluded by you':'Not eligible for new inventory' %></span><% } %></div><% }); %></div></details><% } %>
+  <% if(paging.hasMore){ const nextQuery=new URLSearchParams({catalogueQ:paging.q,matchQ:paging.matchQ,...paging.next}); %><a class="btn" href="<%= base+'?'+nextQuery.toString() %>">Next provider records</a><% } %>
+  <% if(paging.afterExternalId){ const firstQuery=new URLSearchParams({catalogueQ:paging.q,matchQ:paging.matchQ}); %><a class="btn btn--secondary" href="<%= base+'?'+firstQuery.toString() %>">First provider records</a><% } %>
  </div>
 </section>

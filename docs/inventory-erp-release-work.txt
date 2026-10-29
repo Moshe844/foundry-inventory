@@ -86,8 +86,12 @@ Product lot and serial lists now return 100-record pages with exact lookup,
 explicit continuation and complete product totals. Lots retain expiry ordering.
 Automatic provider imports keyset-page pending identities and load only selected
 product families; matching no longer counts the entire pending catalogue after
-each SKU. Complete provider families remain atomic, so an exceptionally large
-single family and the interactive full-catalogue matching review remain gaps.
+each SKU. Owner matching pages 100 source records and bounds searchable target
+lists. Exact SKU lookup runs first. Database statement triggers track semantic
+catalogue/mapping revisions, preserving stale-approval safety without loading
+the whole source; unchanged refreshes and rolled-back changes keep the revision.
+Complete provider families remain atomic, so exceptionally large single families
+still need dedicated qualification.
 Stock-sorted/grouped catalogue views still perform broad database aggregation;
 large option-value sets, warehouse container selectors and contention need further
 qualification.
@@ -128,6 +132,10 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
 - provider-automatic-pages-retest.log: 1,002 product identities across two batches,
   a family spanning the page boundary, 5,000 unrelated cached records, exact prices,
   no opening stock fabrication, idempotent rerun and second-tenant isolation pass.
+- provider-review-pages.log: complete 205-record traversal, late exact SKU and
+  location lookup, off-page changes, direct mapping repairs, rollback safety and
+  browser continuation/search pass. Provider revision regression suite preserves
+  owner authority, exclusion and unchanged-refresh behavior.
 - maintenance-fairness.log: 5/5 concurrent maintenance claims, oldest-first
   fairness, ordinary priorities, 751-SKU durable planning, customer authority and
   bulk/routine worker isolation checks pass.
