@@ -36,7 +36,7 @@ test('ERP and tracked-stock correctness regressions',{timeout:180000},async t=>{
   await assert.rejects(ingestion.ingest(db,auth,event('unversioned',null,8)),/version|timestamp/);
   await Promise.all([ingestion.ingest(db,auth,event('v3','3',30)),ingestion.ingest(db,auth,event('v4','4',40))]);
   assert.equal(Number((await db.query("SELECT on_hand FROM balances WHERE sku_id='s-quantity' AND location_id='l'")).rows[0].on_hand),40);
-  await assert.rejects(ingestion.ingest(db,auth,{eventId:'measured-receipt',type:'inventory.receive',data:{skuId:'s-quantity',locationId:'l',quantity:1.25}}),/whole|integer/);
+  await assert.rejects(ingestion.ingest(db,auth,{eventId:'measured-receipt',type:'inventory.receipt',data:{skuId:'s-quantity',locationId:'l',quantity:1.25}}),/whole|integer/);
   assert.equal(Number((await db.query("SELECT on_hand FROM balances WHERE sku_id='s-quantity' AND location_id='l'")).rows[0].on_hand),40,'Unsupported fractions must never be rounded or inflated into physical stock');
  });
  await t.test('serialized batches survive transfer, issue and return with reconciled lot balances',async()=>{

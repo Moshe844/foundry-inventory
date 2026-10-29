@@ -1,0 +1,30 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('concurrent waves cannot reuse reserved lot or serial stock, and expired batches stay blocked',{timeout:180000},async t=>{
+ const {db,ctx,location,workflows}=await require('../helpers/postgres-shipping-fixture').fixture(t);
+ const catalog=require('../../src/domain/postgres-catalog-service'),inventory=require('../../src/domain/postgres-inventory-engine'),waves=require('../../src/operations/postgres-fulfillment-waves');
+ let sequence=0;
+ const wave=async(sku,quantity)=>{const key='tracked-wave-'+(++sequence),order=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'SHIP',fulfillmentLocationId:location.id,idempotencyKey:key,lines:[{skuId:sku,quantity,unitPriceMinor:500}]});
+  await workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:key+'-confirm'});return waves.create(db,ctx,{orderIds:[order.salesOrderId],idempotencyKey:key+'-release'});};
+ const receive=async(input)=>{const r=await inventory.receive(db,ctx,{locationId:location.id,...input});await db.transaction(c=>require('../../src/accounting/postgres-costing').receiveInTransaction(c,ctx,{movementId:r.movementId,unitCostMinor:100,sourceType:'opening_inventory',sourceRecordId:r.movementId}));return r;};
+ const lot=await catalog.createItem(db,ctx,{name:'Tracked lots',baseCode:'TRACKED-LOT',trackingMode:'lot'});
+ await receive({skuId:lot.skuIds[0],quantity:3,lotCode:'GOOD',expiresAt:'2099-01-01'});
+ await receive({skuId:lot.skuIds[0],quantity:3,lotCode:'OLD',lotReceivedAt:'2019-01-01',expiresAt:'2020-01-01'});
+ const [first,second]=[await wave(lot.skuIds[0],3),await wave(lot.skuIds[0],3)];
+ const scan=(id,key,extra)=>waves.scan(db,ctx,id,{locationBarcode:location.name,itemBarcode:'TRACKED-LOT',quantity:3,clientScanId:key,...extra});
+ const results=await Promise.all([scan(first.waveId,'lot-first',{lotBarcode:'GOOD'}),scan(second.waveId,'lot-second',{lotBarcode:'GOOD'})]);
+ assert.deepEqual(results.map(r=>r.status).sort(),['ACCEPTED','REJECTED']);
+ const blocked=results[0].status==='REJECTED'?first:second;
+ assert.match((await scan(blocked.waveId,'lot-expired',{lotBarcode:'OLD'})).message,/expired/);
+ assert.equal(Number((await db.query('SELECT sum(picked_quantity) n FROM fulfillment_wave_lines WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),3);
+ const serial=await catalog.createItem(db,ctx,{name:'Tracked serials',baseCode:'TRACKED-SERIAL',trackingMode:'serial'});
+ await receive({skuId:serial.skuIds[0],quantity:2,serials:['UNIT-ONE','UNIT-TWO']});
+ const a=await wave(serial.skuIds[0],1),b=await wave(serial.skuIds[0],1),serialInput={locationBarcode:location.name,itemBarcode:'TRACKED-SERIAL',quantity:1,serialBarcode:'UNIT-ONE'};
+ assert.equal((await waves.scan(db,ctx,a.waveId,{...serialInput,clientScanId:'serial-a'})).status,'ACCEPTED');
+ assert.equal((await waves.scan(db,ctx,b.waveId,{...serialInput,clientScanId:'serial-b'})).status,'REJECTED');
+ await assert.rejects(waves.scan(db,ctx,b.waveId,{...serialInput,clientScanId:'serial-a'}),/another fulfillment wave/);
+ // Cancelled work releases its pick reservation while retaining scan history.
+ await db.query("UPDATE fulfillment_waves SET status='CANCELLED' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,a.waveId]);
+ assert.equal((await waves.scan(db,ctx,b.waveId,{...serialInput,clientScanId:'serial-reuse'})).status,'ACCEPTED');
+ assert.equal(Number((await db.query('SELECT sum(on_hand) n FROM balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[])',[ctx.workspaceId,[...lot.skuIds,...serial.skuIds]])).rows[0].n),8,'Scanning does not move physical stock');
+});

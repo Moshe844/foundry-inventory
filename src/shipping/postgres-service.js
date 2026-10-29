@@ -48,10 +48,8 @@ async function prepare(database,ctx,salesOrderId,input={}){
     if(!addresses.parse(destination).complete)throw new ValidationError(addresses.why(addresses.parse(destination)));
     const actor=await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId]);
     if(!actor.rows.length)throw new ValidationError('The acting user does not belong to this inventory.');
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`shipment-number:${ctx.workspaceId}`]);
-    const count=await client.query('SELECT COUNT(*) AS count FROM sales_shipments WHERE workspace_id=$1',[ctx.workspaceId]);
     const shipmentId=newId('shp');
-    const shipmentNumber=`SHP-${String(Number(count.rows[0].count)+1).padStart(5,'0')}`;
+    const shipmentNumber=await require('../operations/postgres-business-numbers').next(client,ctx.workspaceId,'sales_shipments','SHP');
     const at=nowIso();
     await client.query(`INSERT INTO sales_shipments
       (id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,ship_to_address,
@@ -555,9 +553,7 @@ async function recordProviderFulfillment(database,ctx,input){
         if(shipment.sales_order_id!==order.id||shipment.ship_from_location_id!==locationId||shipment.provider_shipment_id!==identity)
           throw new InvariantError('The source fulfillment identity conflicts with its recorded shipment.','provider_shipment_conflict');
         shipments.push({...prior.result,replayed:true});continue;}
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`shipment-number:${ctx.workspaceId}`]);
-      const count=Number((await client.query('SELECT count(*) AS n FROM sales_shipments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
-      const id=newId('shp'),name=`SHP-${String(count+1).padStart(5,'0')}`,at=nowIso(),shippedAt=input.occurredAt||at;
+      const id=newId('shp'),name=await require('../operations/postgres-business-numbers').next(client,ctx.workspaceId,'sales_shipments','SHP'),at=nowIso(),shippedAt=input.occurredAt||at;
       await client.query(`INSERT INTO sales_shipments(id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,
         ship_to_address,handover,carrier,tracking_number,tracking_url,currency,notes,shipped_at,created_by_user_id,created_at,updated_at,
         provider,provider_shipment_id) VALUES($1,$2,$3,$4,'SHIPPED',$5,$6,'CARRIER',$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)`,
