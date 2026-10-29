@@ -18,7 +18,7 @@
 <body class="public-page" data-public-page="<%= nav||'' %>">
 <a class="pub-skip" href="#content">Skip to content</a>
 <header class="pub-nav" data-public-nav>
-  <a class="pub-brand" href="/" aria-label="StockChief home"><span class="pub-brand__mark" aria-hidden="true"><i></i></span><span>StockChief</span></a>
+  <a class="pub-brand" href="/" aria-label="StockChief home"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
   <button class="pub-nav__toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="public-navigation"><span></span><span></span><span></span><b class="sr-only">Open navigation</b></button>
   <div class="pub-nav__menu" id="public-navigation" data-nav-menu>
     <nav aria-label="Public navigation">
@@ -32,7 +32,7 @@
 </header>
 <main id="content"><%- body %></main>
 <footer class="pub-footer">
-  <div class="pub-footer__lead"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><i></i></span><span>StockChief</span></a><p>The AI inventory operator that runs the work and brings you the exceptions.</p></div>
+  <div class="pub-footer__lead"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a><p>The AI inventory operator that runs the work and brings you the exceptions.</p></div>
   <div class="pub-footer__links"><div><b>Explore</b><a href="/demo">See it work</a><a href="/capabilities">Capabilities</a><a href="/integrations">Integrations</a><a href="/pricing">Pricing</a></div><div><b>Operate</b><a href="/how-stockchief-works">How it works</a><a href="/control">Control &amp; trust</a><a href="/switching">Switching</a><a href="/contact">Contact the founder</a></div><div><b>Account</b><% if(locals.account){ %><a href="<%= account.plan==='commercial_pending'?'/complete-signup':'/' %>"><%= account.plan==='commercial_pending'?'Continue signup':'Your business' %></a><% }else{ %><a href="/register">Create account</a><a href="/login">Sign in</a><% } %><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></div>
   <div class="pub-footer__base"><span>© <%= new Date().getFullYear() %> StockChief</span><span>Built for businesses that want the work handled.</span></div>
 </footer>

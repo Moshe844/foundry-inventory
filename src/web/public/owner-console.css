@@ -9,3 +9,5 @@
 /* Keep account actions accessible independently of a long navigation list. */
 .owner-nav{height:100dvh;overflow:hidden}.owner-nav nav{flex:1;min-height:0;overflow-y:auto;display:block}.owner-nav nav a{display:block}.owner-nav footer{flex-shrink:0;padding-top:14px;border-top:1px solid #ffffff1c}.owner-nav footer form{display:block}
 @media(max-width:850px){.owner-nav{height:auto;overflow:visible}.owner-nav nav{display:flex;flex:initial;overflow-y:visible;overflow-x:auto}.owner-nav footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:10px}.owner-nav footer small{margin:0}.owner-nav footer form{margin:0}.owner-nav footer button{padding:7px 12px}}
+
+.owner-nav .brand,.owner-auth .brand{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.owner-brand-symbol{display:inline-grid;place-items:center;width:34px;height:34px;background:#4f46e5;border-radius:10px;color:#fff;vertical-align:middle}.owner-brand-symbol svg{display:block;width:24px;height:24px}.owner-nav .brand>span:last-child{flex-basis:100%}

@@ -5,9 +5,9 @@
 <link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 <link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>
 <body class="commercial-auth"><main class="auth-split"><section class="auth-form">
-<a class="pub-brand" href="/"><span class="pub-brand__mark"><i aria-hidden="true"></i></span><span>StockChief</span></a>
-<div class="auth-form__body"><span class="pub-eyebrow">WELCOME BACK</span><h1>Sign in to your operation.</h1>
-<p>StockChief runs your inventory operation—from reordering and receiving to transfers and shipping. You handle the exceptions that need your judgement.</p>
+<a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
+<div class="auth-form__body"><span class="pub-eyebrow">Welcome back</span><h1>Your business, ready for the day.</h1>
+<p>Sign in to manage stock, orders, purchasing and Money from one connected workspace.</p>
 <% if(flash&&flash.length){ %><div class="auth-messages"><% flash.forEach(function(message){ %><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><% }); %></div><% } %>
 <form method="post" action="/login" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="next" value="<%= next %>">
 <label class="auth-field"><span>Work email</span><input id="email" name="email" type="email" value="<%= email %>" required autocomplete="username" autofocus></label>
@@ -16,5 +16,5 @@
 <button class="pub-btn pub-btn--block" type="submit" data-loading-label="Signing in…">Sign in</button></form>
 <p><a class="pub-btn pub-btn--secondary pub-btn--block" href="/auth/company">Sign in with your company</a></p>
 <div class="auth-create"><span>New to StockChief?</span><a class="pub-btn pub-btn--secondary pub-btn--block" href="/register">Create account</a><p><a href="/demo">See it in action</a> or <a href="/pricing">compare plans</a>.</p></div></div></section>
-<aside class="auth-visual"><p class="pub-kicker">Your StockChief operation</p><h2>The stock, the order<br>and the next step.</h2><p>Work from the same connected records across your business.</p><figure class="auth-product-capture"><img src="/demo/inventory.png?v=<%= locals.assetVersion||'current' %>" alt="Actual StockChief item screen in the controlled demonstration business"><figcaption>The real product, with synthetic demo records.</figcaption></figure><a href="/demo">Watch the product walkthrough →</a></aside>
+<aside class="auth-visual"><div class="auth-visual__card auth-operation-card"><span class="auth-panel-kicker">StockChief · Inventory &amp; operations</span><h2>A clearer view.<br>A calmer working day.</h2><p>Bring the records and systems you already use into one place.</p><div><b>01</b><p><strong>Know where your stock stands</strong><small>Products, locations and the history behind every balance.</small></p></div><div><b>02</b><p><strong>Keep the work moving</strong><small>Orders, purchasing, returns and Money use the same business records.</small></p></div><div><b>03</b><p><strong>Keep control of the decisions</strong><small>Ask StockChief to investigate or prepare work for your approval.</small></p></div><a class="auth-panel-link" href="/demo">Explore the product walkthrough <span>↗</span></a></div></aside>
 </main><script src="/commercial.js?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>" defer></script></body></html>

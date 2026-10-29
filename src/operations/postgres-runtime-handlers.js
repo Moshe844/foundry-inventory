@@ -614,7 +614,9 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'custody.recurring-invoice':external((job,database)=>require('../custody/postgres-billing').run(database,job.workspaceId,job.payload.agreementId)),
   'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
-  'developer.account-delete':(job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId),
+  // Deletion owns its serializable transaction, just like retention removal.
+  // The durable request is its completion receipt if the worker stops afterward.
+  'developer.account-delete':external((job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId)),
     'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
   'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
