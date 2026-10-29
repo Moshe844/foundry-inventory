@@ -108,7 +108,8 @@ function createPostgresInventoryRouter(database) {
   router.get('/inventory/:id/photo',asyncRoute(async(req,res)=>{const image=(await database.query('SELECT image_bytes,content_hash FROM product_images WHERE workspace_id=$1 AND item_id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];if(!image)return res.sendStatus(404);res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.set('ETag','"'+image.content_hash+'"');res.set('X-Content-Type-Options','nosniff');return res.send(image.image_bytes);}));
   router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
-    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
+    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page,
+      trackingQuery:req.query.trackingQuery,afterLotId:req.query.afterLotId,afterSerialId:req.query.afterSerialId});
     const importedDetails=await require('../../domain/postgres-catalog-facts').listForSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id));
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));

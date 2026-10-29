@@ -230,6 +230,7 @@ async function listItems(database, workspaceId, input = {}) {
 }
 
 async function getItem(database, workspaceId, itemId, input = {}) {
+  const trackingQuery=String(input.trackingQuery||'').trim().slice(0,240),trackingLimit=100;
   const itemResult = await database.query('SELECT * FROM items WHERE workspace_id=$1 AND id=$2', [workspaceId, itemId]);
   if (!itemResult.rows.length) throw new NotFoundError('That product could not be found.');
   const item = { ...itemResult.rows[0], is_active: Number(itemResult.rows[0].is_active),
@@ -308,18 +309,30 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       FROM item_options option_row LEFT JOIN sku_option_values value_row ON value_row.option_id=option_row.id
       WHERE option_row.workspace_id=$1 AND option_row.item_id=$2 GROUP BY option_row.id
       ORDER BY option_row.position,option_row.id`,[workspaceId,itemId]),
-    database.query(`SELECT lot.id,lot.sku_id,lot.code,lot.received_at,lot.expires_at,sku.variant_label,
+    database.query(`WITH selected_lots AS MATERIALIZED (
+      SELECT lot.* FROM lots lot JOIN skus sku ON sku.id=lot.sku_id AND sku.workspace_id=lot.workspace_id
+      WHERE lot.workspace_id=$1 AND sku.item_id=$2
+        AND ($3='' OR lower(lot.code)=lower($3))
+        AND ($4::text IS NULL OR (COALESCE(lot.expires_at,'9999-12-31'),lot.code,lot.id)>(
+          SELECT COALESCE(anchor.expires_at,'9999-12-31'),anchor.code,anchor.id FROM lots anchor
+          JOIN skus anchor_sku ON anchor_sku.id=anchor.sku_id AND anchor_sku.workspace_id=anchor.workspace_id
+          WHERE anchor.workspace_id=$1 AND anchor_sku.item_id=$2 AND anchor.id=$4))
+        AND EXISTS(SELECT 1 FROM lot_balances balance WHERE balance.workspace_id=lot.workspace_id AND balance.lot_id=lot.id AND balance.quantity>0)
+      ORDER BY lot.expires_at NULLS LAST,lot.code,lot.id LIMIT $5)
+      SELECT lot.id,lot.sku_id,lot.code,lot.received_at,lot.expires_at,sku.variant_label,
       balance.location_id,location.name AS location_name,balance.quantity
-      FROM lots lot JOIN skus sku ON sku.id=lot.sku_id
+      FROM selected_lots lot JOIN skus sku ON sku.id=lot.sku_id
       JOIN lot_balances balance ON balance.lot_id=lot.id AND balance.workspace_id=lot.workspace_id
       JOIN locations location ON location.id=balance.location_id
       WHERE lot.workspace_id=$1 AND sku.item_id=$2 AND balance.quantity>0
-      ORDER BY lot.expires_at NULLS LAST,lot.code,location.name`,[workspaceId,itemId]),
+      ORDER BY lot.expires_at NULLS LAST,lot.code,lot.id,location.name`,[workspaceId,itemId,trackingQuery,input.afterLotId||null,trackingLimit+1]),
     database.query(`SELECT unit.id,unit.sku_id,unit.serial,unit.condition,unit.status,unit.location_id,
       location.name AS location_name,sku.variant_label
       FROM serial_units unit JOIN skus sku ON sku.id=unit.sku_id
       JOIN locations location ON location.id=unit.location_id
-      WHERE unit.workspace_id=$1 AND sku.item_id=$2 ORDER BY unit.status,location.name,unit.serial`,[workspaceId,itemId]),
+      WHERE unit.workspace_id=$1 AND sku.item_id=$2
+        AND ($3='' OR lower(unit.serial)=lower($3)) AND ($4::text IS NULL OR unit.id>$4)
+      ORDER BY unit.id LIMIT $5`,[workspaceId,itemId,trackingQuery,input.afterSerialId||null,trackingLimit+1]),
     database.query(`SELECT location.id,location.name,COALESCE(SUM(balance.on_hand),0) AS total
       FROM balances balance JOIN skus sku ON sku.id=balance.sku_id
       JOIN locations location ON location.id=balance.location_id
@@ -342,7 +355,10 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
   return { item, skus, locations, recent, total, committed: committedTotal,
     available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
-    options:optionResult.rows,lots:[...lotsById.values()],units:unitResult.rows,
+    options:optionResult.rows,lots:[...lotsById.values()].slice(0,trackingLimit),units:unitResult.rows.slice(0,trackingLimit),
+    trackingCoverage:{query:trackingQuery,limit:trackingLimit,
+      nextLotId:lotsById.size>trackingLimit?[...lotsById.keys()][trackingLimit-1]:null,
+      nextSerialId:unitResult.rows.length>trackingLimit?unitResult.rows[trackingLimit-1].id:null},
     locationTotals:locationTotalResult.rows.map((row)=>({...row,total:Number(row.total)})),
     variantTotal: skuCount, variantPage: page, variantPageSize: pageSize,variantPageCount: pageCount };
 }

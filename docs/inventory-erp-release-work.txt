@@ -79,8 +79,11 @@ F12: catalogue name/newest pages use cursors and page-scoped aggregates;
 warehouse waves/orders/lines/cartons have bounded pages with whole-wave totals
 and complete-shipment packing checks. PO/SO/bill/invoice/payment/shipment numbers
 use atomic counters, including imported/manual numbers and rollback safety.
+Product lot and serial lists now return 100-record pages with exact lookup,
+explicit continuation and complete product totals. Lots retain expiry ordering.
 Stock-sorted/grouped catalogue views still perform broad database aggregation;
-large lot/serial detail views and contention need further qualification.
+large option-value sets, warehouse container selectors and contention need further
+qualification.
 F13: imports now preserve up to 32 explicit option axes. Existing current-native
 manufacturing/custody/rental services were preserved, but arbitrary regulated
 quality release, catch weight, all kit forms and intercompany accounting are not
@@ -111,6 +114,9 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
   owner authority, price/stock conflicts and incomplete-source preservation.
 - trigram-axes-search.log: 15/15, including 32 axes, exact and late typo matches,
   tenant isolation, and actual browser/Ask search flows over 6,001 records.
+- tracked-product-pages.log: 2/2 catalogue/tracked pages with complete totals.
+- tracked-product-browser.log: 17/17, including Chromium continuation and exact
+  lookup over 205 serials/105 lots, product tabs and existing money/report screens.
 - post-index-import-scale.log: 3/3 wide-family and crash recovery plus a real
   20,000-product import; 79,997 units, value 9,999,625 minor units, exact replay,
   4,267 DB round trips, approximately 101 seconds execution under local load.

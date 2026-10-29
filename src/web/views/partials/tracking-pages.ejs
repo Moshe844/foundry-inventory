@@ -1,0 +1,11 @@
+<% if(typeof trackingCoverage!=='undefined'&&trackingCoverage&&['serial','lot'].includes(mode)){ const serial=mode==='serial',next=serial?trackingCoverage.nextSerialId:trackingCoverage.nextLotId; %>
+<section class="sc-business-card" aria-label="Find tracked stock">
+  <form method="get" action="/inventory/<%= item.id %>">
+    <label>Find an exact <%= serial?'serial number':'lot or batch code' %><input class="input" name="trackingQuery" value="<%= trackingCoverage.query %>" maxlength="240"></label>
+    <button class="btn" type="submit">Find</button> <a href="/inventory/<%= item.id %>">Show first page</a>
+  </form>
+  <p>Showing up to <%= trackingCoverage.limit %> <%= serial?'serial units':'lots' %> on this page. Product totals include all stock.
+    <% if(next){ %><a href="/inventory/<%= item.id %>?<%= serial?'afterSerialId':'afterLotId' %>=<%= encodeURIComponent(next) %>&amp;trackingQuery=<%= encodeURIComponent(trackingCoverage.query) %>">Next <%= serial?'serial units':'lots' %></a><% } %>
+  </p>
+</section>
+<% } %>
