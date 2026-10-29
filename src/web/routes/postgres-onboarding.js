@@ -73,7 +73,7 @@ function createPostgresOnboardingRouter(database) {
       state:await paths.ensure(database,req.ctx.workspaceId),paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,
       recommendation,recommendedOption,description,canOperate:true,suppressBack:true,
       onboardingEntry:await exploration.state(database,req.ctx.workspaceId,req.account.id),
-      sourcePrompt:recommendation?`StockChief recommends this because ${recommendation.reason}. You can still choose any other source below.`:
+      sourcePrompt:recommendation?`StockChief recommends this because ${recommendation.reason}. Continue below, or choose another source.`:
         (description?'That describes the business, but not its actual products or quantities. Choose where those records live.':null),
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));

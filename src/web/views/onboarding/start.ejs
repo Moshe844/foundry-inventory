@@ -1,78 +1,25 @@
-<div class="rm-head rm-source-head">
-  <span class="rm-stamp">Get started</span>
-  <h1>Add your inventory</h1>
-  <p>Bring the records you already have. Start with one source; add others later.</p>
-  <% if (currentUser.role === 'owner') { %>
-    <form method="post" action="/onboarding/time-zone" class="rm-inline-name"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Business time zone <input name="timeZone" data-business-time-zone value="<%= locals.account?.timeZone||'UTC' %>" required maxlength="100"></label><button class="btn btn--secondary" type="submit">Confirm time zone</button><small>Used for new posting dates, reports and activity times.</small></form>
-    <form method="post" action="/onboarding/name" class="rm-inline-name">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label for="inventory-name">Inventory name</label>
-      <input class="input" id="inventory-name" name="name" maxlength="120" required value="<%= workspace.name %>" placeholder="e.g. Clothing Business">
-      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Save name</button>
-    </form>
+<section class="inventory-setup" aria-labelledby="setup-title">
+  <header class="setup-header"><span class="setup-eyebrow">Get started</span><h1 id="setup-title">Add your inventory</h1><p>Bring the records you already have. Choose one way to start; add others whenever you’re ready.</p></header>
+  <% if(currentUser.role==='owner'){ %><details class="setup-details" data-setup-details><summary><span><%= workspace.name %></span><span class="setup-details__hint">Business name &amp; time zone</span></summary><div class="setup-details__forms">
+    <form method="post" action="/onboarding/name"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field" for="inventory-name"><span>Inventory name</span><input id="inventory-name" name="name" maxlength="120" required value="<%= workspace.name %>"></label><button class="btn btn--secondary" type="submit">Save name</button></form>
+    <form method="post" action="/onboarding/time-zone"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Business time zone</span><input name="timeZone" data-business-time-zone value="<%= locals.account?.timeZone||'UTC' %>" required maxlength="100"></label><button class="btn btn--secondary" type="submit">Confirm time zone</button><small>Used for posting dates, reports and activity times.</small></form>
+  </div></details><% } %>
+  <% const setupActions={spreadsheet:'Continue with files',software:'Choose a platform',fresh:'Add my first item'};if(locals.recommendation||locals.sourcePrompt){ %>
+  <section class="setup-recommendation" id="source-recommendation" data-setup-recommendation aria-labelledby="source-recommendation-title" tabindex="-1"><span class="setup-icon" aria-hidden="true"><%- helpers.icon('foundry',{size:22}) %></span><div><h2 id="source-recommendation-title"><%= locals.recommendation?'Start here: '+recommendation.label:'Choose where your records are stored' %></h2><p><%= locals.sourcePrompt %></p><div class="setup-recommendation__actions"><% (locals.recommendedOption?[recommendedOption]:sourceOptions).forEach(option=>{ %><form method="post" action="/onboarding/choose"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="path" value="<%= option.id %>"><input type="hidden" name="describedAs" value="<%= locals.description||'' %>"><button class="btn <%= locals.recommendedOption?'btn--primary':'btn--secondary' %>" type="submit"><%= setupActions[option.id]||option.label %> →</button></form><% }); %></div></div></section>
   <% } %>
-</div>
-<p class="rm-source-options-note">Three ways to start — choose the one that suits you.</p>
-<div class="rm-source-grid">
-  <form class="rm-source-files rm-choice" method="post" action="<%= locals.importAction || '/onboarding/migrations/new' %>" enctype="multipart/form-data" data-migration-upload data-direct-upload>
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <h2>Move from files <span class="badge badge--muted">Fastest</span></h2>
-    <% if(locals.importAction==='/imports'){ %><input type="hidden" name="prepareAsync" value="yes"><input type="hidden" name="uploadKey" value=""><% } %>
-    <p><%= locals.importAction==='/imports'?'A spreadsheet, document or clear image with product records.':'A CSV, TSV or Excel export with SKU, name and quantity.' %></p>
-    <label class="rm-drop" data-file-drop>
-      <span>Drop your file here, or <strong>browse files</strong></span>
-      <input type="file" name="<%= locals.importFieldName || 'files' %>" aria-label="Inventory spreadsheets, documents and images" accept="<%= locals.importAction==='/imports'?helpers.importSourceFormats.accept:'.csv,.tsv,.txt,.xlsx' %>" <%= locals.importMultiple === false ? '' : 'multiple' %> data-migration-files>
-    </label>
-    <% if(locals.importAction==='/imports'){ %><p class="rm-note"><%= helpers.importSourceFormats.description %> Maximum upload <%= Math.floor(helpers.importSourceFormats.maxBytes/1048576) %> MB.</p><% } %>
-    <div data-migration-selection hidden aria-live="polite"></div>
-    <div data-migration-progress hidden aria-live="polite">
-      <strong data-migration-progress-title>Uploading…</strong><span data-migration-progress-detail></span>
-      <progress max="100" value="0" data-migration-progress-bar></progress>
-    </div>
-    <p data-migration-error hidden role="alert"></p>
-    <button class="rm-btn rm-btn--ghost rm-btn--sm rm-upload-retry" type="submit" data-migration-submit hidden>Retry upload</button>
-    <a href="<%= locals.importOptionsHref || '/onboarding/migrations/new' %>">Paste data or see upload options</a>
-  </form>
-  <% sourceOptions.filter(function (source) { return source.id !== 'spreadsheet'; }).forEach(function (source) { %>
-    <form class="rm-choice__form" method="post" action="/onboarding/choose">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="hidden" name="path" value="<%= source.id %>">
-      <button class="rm-choice" type="submit">
-        <span class="rm-choice__ic"><%- helpers.icon(source.icon, { size: 19 }) %></span>
-        <span class="rm-choice__t"><%= source.label %></span>
-        <span class="rm-choice__b"><%= source.prerequisite %></span>
-        <span class="rm-choice__d"><%= source.id === 'software' ? 'Import products, SKUs and available quantities from a supported platform.' : 'Add products and opening quantities yourself.' %></span>
-        <span class="rm-choice__go">Choose this →</span>
-      </button>
-    </form>
-  <% }) %>
-</div>
-<div class="rm-choices">
-  <form method="post" action="/onboarding/skip">
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="rm-btn rm-btn--ghost" type="submit">Skip for now</button>
-  </form>
-  <span>You’ll review imported records before they become live.</span>
-</div>
-<% if (currentUser.role === 'owner' && !onboardingEntry.dismissed) { %>
-  <div class="rm-sample-prompt" aria-label="Explore with samples">
-    <span>Just looking around? Sample data is separate from your business.</span>
-    <form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Load sample data to explore</button></form>
-    <form method="post" action="/onboarding/sample/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/onboarding"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit" aria-label="Dismiss sample suggestion">Dismiss</button></form>
+  <div class="setup-source-grid">
+    <article class="setup-source-card setup-source-card--file"><header><span class="setup-icon" aria-hidden="true"><%- helpers.icon('import',{size:24}) %></span><div><h2>Move from files</h2><p>Upload the records you already use.</p></div></header>
+      <form method="post" action="<%= locals.importAction||'/onboarding/migrations/new' %>" enctype="multipart/form-data" data-migration-upload data-direct-upload><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <% if(locals.importAction==='/imports'){ %><input type="hidden" name="prepareAsync" value="yes"><input type="hidden" name="uploadKey" value=""><% } %>
+        <label class="setup-drop" data-file-drop><span class="setup-drop__icon" aria-hidden="true"><%- helpers.icon('import',{size:26}) %></span><strong>Drop a file here</strong><span>or choose it from your device</span><span class="setup-file-button">Choose a file</span><input type="file" name="<%= locals.importFieldName||'files' %>" aria-label="Inventory spreadsheets, documents and images" accept="<%= locals.importAction==='/imports'?helpers.importSourceFormats.accept:'.csv,.tsv,.txt,.xlsx' %>" <%= locals.importMultiple===false?'':'multiple' %> data-migration-files></label>
+        <div class="setup-upload-selection" data-migration-selection hidden aria-live="polite"></div><div class="setup-upload-progress" data-migration-progress hidden aria-live="polite"><strong data-migration-progress-title>Uploading…</strong><span data-migration-progress-detail></span><progress max="100" value="0" data-migration-progress-bar></progress></div><p class="setup-upload-error" data-migration-error hidden role="alert"></p><button class="btn btn--secondary" type="submit" data-migration-submit hidden>Retry upload</button>
+        <a class="setup-text-link" href="<%= locals.importOptionsHref||'/onboarding/migrations/new' %>">Paste records or open upload options →</a>
+      </form>
+      <% if(locals.importAction==='/imports'){ %><details class="setup-file-types"><summary>Supported files &amp; upload limits</summary><dl><% helpers.importSourceFormats.groups.forEach(group=>{ %><div><dt><%= group.label %></dt><dd><%= group.formats %></dd></div><% }); %><div><dt>Limits</dt><dd>Spreadsheets and text: up to <%= Math.floor(helpers.importSourceFormats.maxBytes/1048576) %> MB. Images: 20 MB, 10 pages and 12 megapixels in total. PDFs: 32 MB and 30 pages.</dd></div><div><dt>Other sources</dt><dd>For XML or ZIP archives, export the records as CSV, JSON or Excel first.</dd></div></dl><p>StockChief prepares a preview before you approve changes. Unclear scans or values are flagged for review.</p></details><% }else{ %><p class="setup-file-types">A CSV, TSV or Excel export with SKU, name and quantity.</p><% } %>
+    </article>
+    <% sourceOptions.filter(s=>s.id!=='spreadsheet').forEach(source=>{ %><article class="setup-source-card"><header><span class="setup-icon" aria-hidden="true"><%- helpers.icon(source.icon,{size:24}) %></span><div><h2><%= source.label %></h2><p><%= source.id==='software'?'Bring in products from your store or POS.':'Start with your first product.' %></p></div></header><p class="setup-source-copy"><%= source.id==='software'?'Connect a supported platform to bring in products, SKUs and stock. You’ll sign in with that platform and approve access.':'Add products, locations and opening quantities directly in StockChief. You can import or connect a platform later.' %></p><form method="post" action="/onboarding/choose"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="path" value="<%= source.id %>"><button class="btn btn--secondary" type="submit"><%= setupActions[source.id] %> →</button></form></article><% }); %>
   </div>
-<% } %>
-<details class="rm-disclosure">
-  <summary>Not sure which source fits?</summary>
-  <form method="post" action="/onboarding/describe#source-recommendation">
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <label class="rm-field"><span>Where are your inventory records now?</span>
-      <textarea name="description" rows="2" required placeholder="e.g. We keep quantities in an Excel workbook."><%= locals.description || '' %></textarea>
-    </label>
-    <button class="rm-btn rm-btn--ghost" type="submit">Recommend my starting source</button>
-  </form>
-</details>
-<% if (locals.recommendation || locals.sourcePrompt) { %>
-  <div class="rm-note" id="source-recommendation" role="status">
-    <span><%= locals.recommendation ? recommendation.label + ': ' : '' %><%= locals.sourcePrompt || '' %></span>
-  </div>
-<% } %>
+  <details class="setup-source-helper" <%= locals.description?'open':'' %>><summary>Not sure which source fits?</summary><form method="post" action="/onboarding/describe#source-recommendation"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Where do you keep your inventory records now?</span><textarea name="description" rows="3" required maxlength="2000" placeholder="Tell us where your product list and quantities are kept."><%= locals.description||'' %></textarea></label><p>We’ll suggest a starting point and take you to its next step. This won’t change your stock.</p><button class="btn btn--primary" type="submit" data-setup-recommend-submit>Recommend my starting source</button></form></details>
+  <footer class="setup-footer"><form method="post" action="/onboarding/skip"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Skip for now</button></form><span>Nothing is imported until you review and approve it.</span></footer>
+  <% if(currentUser.role==='owner'&&!onboardingEntry.dismissed){ %><details class="setup-sample"><summary>Explore with sample records instead</summary><p>Sample data is kept separate from your business.</p><div><form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary" type="submit">Load sample data to explore</button></form><form method="post" action="/onboarding/sample/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/onboarding"><button class="btn btn--ghost" type="submit">Dismiss</button></form></div></details><% } %>
+</section>

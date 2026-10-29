@@ -397,7 +397,7 @@ router.post(
          for a recommendation has to come from the list the page renders. */
       recommendedOption,
       sourcePrompt: recommendation
-        ? `StockChief recommends this because ${recommendation.reason}. You can still choose any other source below.`
+        ? `StockChief recommends this because ${recommendation.reason}. Continue below, or choose another source.`
         : (description
           ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where StockChief should get those real records.'
           : null),

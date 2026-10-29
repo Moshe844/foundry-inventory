@@ -25,7 +25,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
 <script src="/presentation-format.js?v=<%= assetVersion %>" defer></script>
 <link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
-<link rel="stylesheet" href="/customer-usage.css?v=<%= assetVersion %>"></head>
+<link rel="stylesheet" href="/customer-usage.css?v=<%= assetVersion %>"><% if(['/onboarding','/onboarding/describe'].includes(currentHref.split('?')[0])){ %><link rel="stylesheet" href="/onboarding.css?v=<%= assetVersion %>"><script src="/onboarding.js?v=<%= assetVersion %>" defer></script><% } %></head>
 <body class="page-<%= nav || 'plain' %><%= locals.panelMode?' sc-embedded-chat':'' %>">
 <% var isRoom=!!locals.room;var allWorkspaces=locals.workspaces||[];var others=allWorkspaces.filter(w=>!workspace||w.workspaceId!==workspace.id); %>
 <a class="skip-link" href="#main">Skip to content</a>

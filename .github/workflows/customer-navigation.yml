@@ -36,7 +36,7 @@ jobs:
           if [ -f /etc/apt/apt-mirrors.txt ]; then
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium firefox
       - run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
