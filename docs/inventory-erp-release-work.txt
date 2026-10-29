@@ -51,6 +51,9 @@ distribution and live qualification. A generic typed API does not automatically
 understand SAP, Dynamics, NetSuite, Odoo or every proprietary ERP.
 F10: planning uses sparse evidenced positions, scoped aggregation, visible
 continuation and durable SKU cursors, avoiding SKU-by-location multiplication.
+Planning and reconciliation batches share oldest-first maintenance scheduling;
+an endless stream of higher-priority planning continuations cannot starve older
+reconciliation. Other job kinds retain their ordinary priority ordering.
 F11: source context and validation read bounded pages. Indexed execution
 identities, catalogue preparation, stock application and reconciliation use
 bounded reads; execution checkpoints commit with each page and survive crashes.
@@ -92,8 +95,9 @@ F13: imports now preserve up to 32 explicit option axes. Existing current-native
 manufacturing/custody/rental services were preserved, but arbitrary regulated
 quality release, catch weight, all kit forms and intercompany accounting are not
 certified by this release. No capability was enabled solely by changing its label.
-F14: current million-row end-to-end certification is still running in CI.
-Do not describe an entitlement limit or SQL-seeded test as an end-to-end pass.
+F14: million-row end-to-end certification passed on commit 237c6c8 (details below).
+A newer run on b05b216 is still running. Later correctness changes have focused
+regressions; do not describe a plan allowance as certification of every workload.
 
 Evidence (logs in original workspace output/inventory-erp-repair-20261029)
 - inventory-precision-retest.log: 6/6 exact-range, FX, ordered ERP, serial/lot,
@@ -121,6 +125,12 @@ Evidence (logs in original workspace output/inventory-erp-repair-20261029)
 - tracked-product-pages.log: 2/2 catalogue/tracked pages with complete totals.
 - tracked-product-browser.log: 17/17, including Chromium continuation and exact
   lookup over 205 serials/105 lots, product tabs and existing money/report screens.
+- provider-automatic-pages-retest.log: 1,002 product identities across two batches,
+  a family spanning the page boundary, 5,000 unrelated cached records, exact prices,
+  no opening stock fabrication, idempotent rerun and second-tenant isolation pass.
+- maintenance-fairness.log: 5/5 concurrent maintenance claims, oldest-first
+  fairness, ordinary priorities, 751-SKU durable planning, customer authority and
+  bulk/routine worker isolation checks pass.
 - post-index-import-scale.log: 3/3 wide-family and crash recovery plus a real
   20,000-product import; 79,997 units, value 9,999,625 minor units, exact replay,
   4,267 DB round trips, approximately 101 seconds execution under local load.
@@ -140,7 +150,14 @@ replaced with indexed lookups and durable 500-variant transactions.
 An earlier checkout's SQL-seeded million-SKU test passed, but it is not current
 end-to-end import certification.
 CI run 40958730160 on commit 237c6c86410a0b665fef792b0d7b95f94a9ee358 passed
-its correctness gate and is running the million-row certification. Customer CI
+its correctness gate and full million-row certification: 1,000,000 SKUs,
+3,999,997 physical units, 499,999,625 inventory-value minor units, 1,000,000 supplier
+links and reorder policies, exact capacity usage and duplicate-free replay.
+Analysis through final verification took 3,351,975 ms (55.9 minutes); sampled
+peak RSS 713,977,856 bytes (681 MiB). No paid model calls. Node 22 / PostgreSQL 17
+on an isolated GitHub runner, not a production concurrency benchmark.
+Evidence: https://github.com/Moshe844/foundry-inventory/actions/runs/40958730160
+Artifact 12938826242 contains complete logs. Customer CI
 on that commit exposed the capacity-counter purge ordering bug; fixed and
 verified locally in the later working changes. Final-source CI remains required.
 
@@ -152,5 +169,8 @@ Staging web: srv-daqh418473hc73853e40, stockchief-staging-web.
 Staging worker: srv-daqh418473hc73853e7g, stockchief-staging-worker.
 Both manually deploy codex/staging-codex-pilot; confirm live commits before release.
 User approved staging PostgreSQL upgrade to 2 CPU / 8 GB RAM and 50 GB storage
-at $115/month before tax. Applied in Render on October 29; verify availability
-after the compute restart. This adds headroom, not a universal scale guarantee.
+at $115/month before tax. Applied in Render on October 29; database availability
+and worker recovery confirmed. Both service capacity settings and the Blueprint
+now specify 50 GB; Blueprint validated against Render's current JSON schema.
+This adds headroom, not a universal scale guarantee. Readiness still reports
+starved maintenance on the old live build; verify the fairness fix after release.
