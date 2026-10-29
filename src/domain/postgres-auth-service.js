@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const auth = require('./auth-service');
 const ledger = require('../accounting/postgres-ledger');
 const entitlements=require('../entitlements/postgres-service');
-const { ValidationError, NotFoundError, RateLimitError } = require('./errors');
+const { ValidationError, NotFoundError, RateLimitError, AuthorizationError } = require('./errors');
 const { newId, nowIso, requireText } = require('../lib/util');
 const DUMMY_PASSWORD_HASH = auth.hashPassword('stockchief-timing-password');
 const LOGIN_WINDOW_MINUTES = 15;
@@ -58,7 +58,7 @@ function accountView(row) {
 }
 
 async function getAccount(database, accountId) {
-  const result = await database.query('SELECT * FROM accounts WHERE id=$1', [accountId]);
+  const result = await database.query('SELECT a.*,x.disabled_at AS platform_access_disabled_at,coalesce(x.revision,0) AS platform_access_revision FROM accounts a LEFT JOIN platform_account_access x ON x.account_id=a.id WHERE a.id=$1', [accountId]);
   return accountView(result.rows[0]);
 }
 
@@ -77,8 +77,9 @@ async function authenticate(database, emailInput, password, options = {}) {
     await recordLoginFailure(database, keys);
     return null;
   }
+  const accessRevision=await require('./postgres-account-access').sessionRevision(database,account.id);
   await recordLoginSuccess(database, keys);
-  return accountView(account);
+  return accountView({...account,platform_access_revision:accessRevision});
 }
 
 async function createBusiness(database, input) {
@@ -179,7 +180,7 @@ async function resolveForAccount(database, accountId, workspaceId) {
   const result = await database.query(`SELECT w.*,u.id AS membership_id,u.name AS membership_name,
       u.role AS membership_role,u.permissions AS membership_permissions,u.created_at AS membership_created_at
     FROM users u JOIN workspaces w ON w.id=u.workspace_id
-    WHERE u.account_id=$1 AND w.id=$2 AND w.deletion_requested_at IS NULL`, [accountId,workspaceId]);
+    WHERE u.account_id=$1 AND w.id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)`, [accountId,workspaceId]);
   if (!result.rows.length) return null;
   const row = result.rows[0];
   return { workspace: {
@@ -199,14 +200,14 @@ async function listWorkspacesForAccount(database, accountId, {includeMetrics=tru
       (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b WHERE b.workspace_id=w.id) AS units_on_hand,
       (SELECT COUNT(*) FROM users members WHERE members.workspace_id=w.id) AS member_count`:''}
     FROM users u JOIN workspaces w ON w.id=u.workspace_id
-    WHERE u.account_id=$1 AND w.deletion_requested_at IS NULL ORDER BY w.created_at,w.name`, [accountId]);
+    WHERE u.account_id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL) ORDER BY w.created_at,w.name`, [accountId]);
   return result.rows;
 }
 
 async function defaultWorkspaceFor(database, accountId) {
   const result = await database.query(`SELECT w.id FROM accounts a
     JOIN users u ON u.account_id=a.id JOIN workspaces w ON w.id=u.workspace_id
-    WHERE a.id=$1 AND w.deletion_requested_at IS NULL
+    WHERE a.id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)
     ORDER BY CASE WHEN w.id=a.last_workspace_id THEN 0 ELSE 1 END,w.created_at,w.name LIMIT 1`, [accountId]);
   return result.rows[0]?.id || null;
 }

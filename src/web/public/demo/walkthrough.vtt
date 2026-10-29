@@ -1,16 +1,19 @@
 WEBVTT
 
-00:00:00.000 --> 00:00:27.000
+00:00:01.000 --> 00:00:28.000
 Inventory by location — actual StockChief interface with demonstration records
 
-00:00:27.000 --> 00:00:54.000
+00:00:28.000 --> 00:00:55.000
 Replenishment planning — actual StockChief interface with demonstration records
 
-00:00:54.000 --> 00:01:21.000
+00:00:55.000 --> 00:01:22.000
 Purchase order and expected stock — actual StockChief interface with demonstration records
 
-00:01:21.000 --> 00:01:47.000
+00:01:22.000 --> 00:01:49.000
 Actual database answer — actual StockChief interface with demonstration records
 
-00:01:47.000 --> 00:02:13.000
+00:01:49.000 --> 00:02:17.000
 Home and work requiring attention — actual StockChief interface with demonstration records
+
+00:02:17.000 --> 00:02:43.000
+Review an import before approval — actual StockChief interface with demonstration records

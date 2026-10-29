@@ -18,10 +18,10 @@ const ACCESSIBLE = new Set(['ACTIVE','TRIALING','GRACE','COMP']);
 
 async function subscriptionFor(database, accountId) {
   if (!accountId) return null;
-  const subscription = (await database.query(`SELECT subscription.*,version.plan_id AS version_plan_id,
+  const subscription = (await database.query(`SELECT subscription.*,access.disabled_at AS platform_access_disabled_at,version.plan_id AS version_plan_id,
       plan.public_name AS plan_name,plan.outcome AS plan_outcome,
       plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor
-      FROM account_subscriptions subscription JOIN commercial_plans plan ON plan.id=subscription.plan_id
+      FROM account_subscriptions subscription JOIN commercial_plans plan ON plan.id=subscription.plan_id LEFT JOIN platform_account_access access ON access.account_id=subscription.account_id
       LEFT JOIN commercial_plan_versions version ON version.id=subscription.plan_version_id
       WHERE subscription.account_id=$1`, [accountId])).rows[0] || null;
   if(!subscription)return null;
@@ -31,6 +31,7 @@ async function subscriptionFor(database, accountId) {
 
 function operationalAccess(subscription, now = new Date()) {
   if (!subscription) return {mode:'UNSUBSCRIBED',canOperate:false,canRead:true};
+  if(subscription.platform_access_disabled_at)return {mode:'ACCESS_DISABLED',canOperate:false,canRead:false};
   if(subscription.refunded_at)return {mode:'REFUNDED_READ_ONLY',canOperate:false,canRead:true,deleteAfter:subscription.refund_deletion_at};
   if(subscription.source==='SELF_SERVICE_TRIAL')return {mode:'PAID_ACTIVATION_REQUIRED',canOperate:false,canRead:true};
   if(subscription.status==='GRACE'&&subscription.grace_ends_at&&new Date(subscription.grace_ends_at)<=now)
@@ -55,9 +56,10 @@ async function capabilitySnapshot(database,scope,keys,now){
  wallet.assertScopeMatch(scope,true);
  const found=(await database.query(`WITH base AS (
   SELECT ($2::text IS NULL OR EXISTS(SELECT 1 FROM workspaces WHERE id=$2 AND owner_account_id=$1)) AS scope_valid,
-   subscription.*,version.plan_id AS version_plan_id,version.entitlements AS version_entitlements,
+   subscription.*,access.disabled_at AS platform_access_disabled_at,version.plan_id AS version_plan_id,version.entitlements AS version_entitlements,
    plan.public_name AS plan_name,plan.outcome AS plan_outcome,plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor
   FROM (SELECT 1) anchor LEFT JOIN account_subscriptions subscription ON subscription.account_id=$1
+  LEFT JOIN platform_account_access access ON access.account_id=$1
   LEFT JOIN commercial_plans plan ON plan.id=subscription.plan_id
   LEFT JOIN commercial_plan_versions version ON version.id=subscription.plan_version_id)
  SELECT base.*,keys.capability AS snapshot_capability,
@@ -80,7 +82,7 @@ async function capabilitySnapshot(database,scope,keys,now){
   subscription.cancel_at_period_end=Boolean(Number(subscription.cancel_at_period_end));}
  const overrides=found.filter(r=>r.snapshot_override).map(r=>{const o=r.snapshot_override;
   for(const k of ['starts_at','ends_at','created_at'])if(o[k]!==null&&o[k]!==undefined)o[k]=new Date(o[k]);return o;});
- return {subscription,overrides,rows:found.filter(r=>r.snapshot_plan).map(r=>({capability:r.snapshot_capability,...r.snapshot_plan}))};
+ return {subscription,accessDisabled:Boolean(value.platform_access_disabled_at),overrides,rows:found.filter(r=>r.snapshot_plan).map(r=>({capability:r.snapshot_capability,...r.snapshot_plan}))};
 }
 // One fresh snapshot for one catalogue construction, never a cache or an
 // execution permit. Canonical operations still recheck their own entitlement.
@@ -91,8 +93,9 @@ async function capabilityStates(database,scope,capabilities,options={}){
   if(!options.subscription)snapshot=await capabilitySnapshot(database,scope,keys,options.now);
   else await wallet.assertScope(database,scope);
   const subscription=options.subscription||snapshot.subscription;
-  const access=operationalAccess(subscription,options.now);
-  if(!subscription&&!config.commercial.requirePaidWorkspace)return new Map(keys.map(capability=>[capability,{
+  const explicitDisabled=options.subscription?await require('../domain/postgres-account-access').disabled(database,scope.accountId):snapshot?.accessDisabled;
+  const access=explicitDisabled?{mode:'ACCESS_DISABLED',canOperate:false,canRead:false}:operationalAccess(subscription,options.now);
+  if(!subscription&&!snapshot?.accessDisabled&&!config.commercial.requirePaidWorkspace)return new Map(keys.map(capability=>[capability,{
     capability,definition:definitions.get(capability),enabled:definitions.get(capability).readiness!=='DISABLED',source:'development',
     subscription:null,access:{mode:'DEVELOPMENT',canOperate:true,canRead:true}}]));
   if(!access.canOperate&&!(options.allowReadOnly&&access.canRead&&subscription))return new Map(keys.map(capability=>[capability,{
@@ -227,7 +230,8 @@ async function ownerScopeForWorkspace(database,workspaceId){
 async function operationalAccessForWorkspace(database,workspaceId,options={}){
   const scope=await ownerScopeForWorkspace(database,workspaceId);
   const subscription=await subscriptionFor(database,scope.accountId);
-  const access=!subscription&&!config.commercial.requirePaidWorkspace
+  const disabled=await require('../domain/postgres-account-access').disabled(database,scope.accountId);
+  const access=disabled?{mode:'ACCESS_DISABLED',canOperate:false,canRead:false}:!subscription&&!config.commercial.requirePaidWorkspace
     ?{mode:'DEVELOPMENT',canOperate:true,canRead:true}
     :operationalAccess(subscription,options.now ? new Date(options.now) : new Date());
   return {scope,subscription,access};

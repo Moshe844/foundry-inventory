@@ -55,7 +55,7 @@ function createPostgresAuthRouter(database,options={}) {
         origin:res.locals.origin,
       });
       await sessionCall(req,'regenerate');
-      req.session.accountId=account.id;
+      req.session.accountId=account.id;req.session.accountAccessRevision=Number(account.platform_access_revision||0);
       try{require('../../domain/auth-service').checkPasswordStrength(req.body.password);}
       catch{req.session.passwordUpgradeRequired=true;req.session.passwordUpgradeNoticeDismissed=true;req.session.flash=[{type:'warning',message:'Please strengthen your password in Settings → Password to meet the current security requirements.'}];}
       req.session.cookie.maxAge=req.body.rememberMe==='1'?30*86400000:null;
@@ -108,7 +108,7 @@ function createPostgresAuthRouter(database,options={}) {
         requestedPlanId);
       const created=paidRequired?await auth.createPendingAccount(database,req.body):await auth.createBusiness(database,req.body);
       await sessionCall(req,'regenerate');
-      req.session.accountId=created.accountId||created.id;
+      req.session.accountId=created.accountId||created.id;req.session.accountAccessRevision=0;
       if(created.workspaceId)req.session.workspaceId=created.workspaceId;
       req.session.commercialSelection={planId:requestedPlanId,interval:req.body.interval==='annual'?'annual':'monthly',
         promoCode:String(req.body.promoCode||'').trim().toUpperCase()};
@@ -164,7 +164,7 @@ function createPostgresAuthRouter(database,options={}) {
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.post('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.body.token||'');
-    if(!req.account||req.account.id!==verified.accountId){await sessionCall(req,'regenerate');req.session.accountId=verified.accountId;}
+    if(!req.account||req.account.id!==verified.accountId){await sessionCall(req,'regenerate');req.session.accountId=verified.accountId;await require('../../domain/postgres-account-access').stampSession(database,req.session,verified.accountId);}
     req.session.flash=(req.session.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     res.locals.flash=(res.locals.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     const account=await auth.getAccount(database,verified.accountId);
@@ -177,7 +177,7 @@ function createPostgresAuthRouter(database,options={}) {
       csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,invitation,token:req.query.token||'',account:req.account});}
     catch(error){return next(error);}});
   router.post('/invite',async(req,res,next)=>{try{const accepted=await accountLifecycle.acceptInvitation(database,req.body.token||'',{
-      accountId:req.account?.id||null,name:req.body.name,password:req.body.password});if(!req.account){await sessionCall(req,'regenerate');req.session.accountId=accepted.accountId;}
+      accountId:req.account?.id||null,name:req.body.name,password:req.body.password});if(!req.account){await sessionCall(req,'regenerate');req.session.accountId=accepted.accountId;await require('../../domain/postgres-account-access').stampSession(database,req.session,accepted.accountId);}
     req.session.workspaceId=accepted.workspaceId;await sessionCall(req,'save');return res.redirect(303,'/');}catch(error){if(error.status&&error.status<500){
       const invitation=await accountLifecycle.inspectInvitation(database,req.body.token||'');return res.status(error.status).render('auth/invite',{
         title:'Join a StockChief workspace',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],origin:res.locals.origin,

@@ -34,6 +34,8 @@ function loadUser(database,{readonly=false}={}) {
       if (!account || !await require('../domain/postgres-business-sso').validateSession(database,account?.id,req.session.sso)) {
         return req.session.destroy((error) => error ? next(error) : next());
       }
+      if(account.platform_access_disabled_at)return req.session.destroy(error=>next(error||new (require('../domain/errors').AuthorizationError)('Account access has been disabled by StockChief. Contact support@stockchiefhq.com for help.')));
+      if(Number(req.session.accountAccessRevision||0)!==Number(account.platform_access_revision||0))return req.session.destroy(error=>next(error));
       req.account = account;
       res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
       const accountFormatting=require('./presentation/formatting').forTimeZone(account.time_zone||'UTC');res.locals.helpers={...res.locals.helpers,shortDate:accountFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,accountFormatting.timeZone),dateTime:accountFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};

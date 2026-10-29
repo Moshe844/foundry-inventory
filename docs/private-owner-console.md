@@ -28,7 +28,21 @@ Inventory, order, purchasing and Money inspection is read-only. Business changes
 
 ## Public product truth
 
+## Company operations
+
+Customers are account identities; Users lists each person once with their business memberships. Customer workspaces join the existing subscription, usage, connection and support records by their authoritative identifiers, but display names, email addresses, business names, money and local dates. Connection status uses the same health calculation as the customer application. Recorded revenue and cost totals describe their coverage rather than claiming reconciled provider invoices.
+
+An owner can disable access, restore access or end an account's current sessions. Each action requires fresh MFA, the exact target email, a reason and confirmation. An account access revision invalidates previously saved sessions even if an in-flight request writes an old session back. Disabled owners cannot start new business work; existing billing is not silently cancelled. The owner's own identity and active operator identities are protected.
+
+Permanent removal uses the existing account-removal review, queue and tenant purge engine. It requires disabled access, a fresh review, the owner's password, exact email and explicit irreversible confirmation. Active subscriptions, other-owner memberships, active/uncertain work and protected spending records remain blockers. Deletion is audited and does not substitute for cancelling billing. Tests execute destructive cases only in disposable databases, including email reuse and preservation of other customers.
+
+Read-only support permission can be requested from the business page without inventing a support conversation. The customer must still approve the exact areas and duration before records become visible.
+
+## Reference public experience
+
 `scripts/capture-product-truth.js --video` creates a fresh disposable PostgreSQL demo through canonical stock, pricing and purchasing engines, records actual Chromium pages and removes the fixture when finished. The controlled scenario is independent of any customer upload, item name or account. The recording explicitly excludes real merchant, carrier and mailbox certification, and uses a deterministic test classifier for its database-backed Ask answer.
+
+The public experience follows the supplied local design's hero cards, capability grid, recording timeline, connections orbit, control and switching sections. The design's illustrative orders, prices, event counts and tolerances are not copied as product evidence. Cards and chapter controls open matching points in the actual recording. The import preview is prepared without importing any stock. Motion respects reduced-motion preferences. Native signup, selected plans and billing rules remain authoritative.
 
 The public website consumes the existing plan/entitlement catalogue and real add-on pack catalogue. No subscription price, business accounting amount, paid-model allowance or checkout release is changed by this work.
 

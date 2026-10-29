@@ -103,7 +103,9 @@ async function claim(database, options = {}) {
     await recover(client, now);
     const candidate = await client.query(`SELECT id,kind,workspace_id FROM stockchief_runtime.jobs
       WHERE status IN ('PENDING','RETRY') AND available_at <= $1
-      AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL FOR KEY SHARE SKIP LOCKED))
+      AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
+        AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
+          AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
       AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
       AND (kind<>'import.execute-approved' OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=jobs.kind AND active.status='RUNNING'))

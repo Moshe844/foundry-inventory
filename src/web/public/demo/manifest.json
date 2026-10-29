@@ -1,42 +1,49 @@
 {
-  "at": "2026-10-28T23:59:53.726Z",
+  "at": "2026-10-29T13:39:17.952Z",
   "seed": "capture-product-truth.js",
   "reset": "Each run creates and removes its own isolated PostgreSQL cluster.",
   "business": "Maple & Main · demonstration",
   "screens": [
     {
-      "route": "/inventory/item_xzi7c0hyyz0m6jzumxpkkaaf",
+      "route": "/inventory/item_bssd1456qtfqjodfj1lp91zu",
       "file": "inventory.png",
       "title": "Inventory by location",
-      "atMilliseconds": 972,
+      "atMilliseconds": 1370,
       "visibleHeading": "Black Tee Small"
     },
     {
       "route": "/planning",
       "file": "planning.png",
       "title": "Replenishment planning",
-      "atMilliseconds": 27695,
+      "atMilliseconds": 28534,
       "visibleHeading": "No shortage is proven; 1 position needs demand history."
     },
     {
-      "route": "/purchasing/orders/po_r7kfjqqh0grziv0jbogxd27h",
+      "route": "/purchasing/orders/po_rpre9y71t4zb780zi6qwn7ng",
       "file": "purchasing.png",
       "title": "Purchase order and expected stock",
-      "atMilliseconds": 54482,
+      "atMilliseconds": 55952,
       "visibleHeading": "PO-00001 · Demo Apparel Supply"
     },
     {
       "route": "/ask",
       "file": "ask.png",
       "title": "Actual database answer",
-      "atMilliseconds": 81311
+      "atMilliseconds": 82607
     },
     {
       "route": "/",
       "file": "brief.png",
       "title": "Home and work requiring attention",
-      "atMilliseconds": 107926,
-      "visibleHeading": "Good evening, Demo"
+      "atMilliseconds": 109558,
+      "visibleHeading": "Good morning, Demo"
+    },
+    {
+      "route": "/imports/imp_imrio03ih7k4uoaxr849nglk",
+      "file": "import.png",
+      "title": "Review an import before approval",
+      "atMilliseconds": 137344,
+      "visibleHeading": "Pasted inventory data"
     }
   ],
   "actualBrowser": true,
@@ -45,6 +52,6 @@
   "externalEventsClaimed": false,
   "paidCalls": 0,
   "classification": "Deterministic fixture classifier; answers are read from PostgreSQL.",
-  "durationMilliseconds": 133943,
+  "durationMilliseconds": 163358,
   "video": "walkthrough.webm"
 }
