@@ -3,7 +3,7 @@
 <title>Sign in · StockChief</title>
 <link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>">
 <link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
-</head>
+<link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>
 <body class="commercial-auth"><main class="auth-split"><section class="auth-form">
 <a class="pub-brand" href="/"><span class="pub-brand__mark"><i aria-hidden="true"></i></span><span>StockChief</span></a>
 <div class="auth-form__body"><span class="pub-eyebrow">WELCOME BACK</span><h1>Sign in to your operation.</h1>
@@ -16,8 +16,5 @@
 <button class="pub-btn pub-btn--block" type="submit" data-loading-label="Signing in…">Sign in</button></form>
 <p><a class="pub-btn pub-btn--secondary pub-btn--block" href="/auth/company">Sign in with your company</a></p>
 <div class="auth-create"><span>New to StockChief?</span><a class="pub-btn pub-btn--secondary pub-btn--block" href="/register">Create account</a><p><a href="/demo">See it in action</a> or <a href="/pricing">compare plans</a>.</p></div></div></section>
-<aside class="auth-visual"><div class="auth-visual__card"><span>EXAMPLE OPERATING DAY · SYNTHETIC RECORDS</span><h2>Five routine jobs handled.<br>One decision waiting.</h2>
-<div><b>✓</b><p><strong>2 orders are shipping</strong><small>Labels prepared and tracking queued</small></p></div>
-<div><b>✓</b><p><strong>Supplier delivery confirmed</strong><small>PO-1054 now expected Thursday</small></p></div>
-<div><b>!</b><p><strong>Price change needs you</strong><small>Everything else is under control</small></p></div><p class="auth-help">This is an illustrative outcome. <a href="/demo">See the actual StockChief interface.</a></p></div></aside>
+<aside class="auth-visual"><p class="pub-kicker">Your StockChief operation</p><h2>The stock, the order<br>and the next step.</h2><p>Work from the same connected records across your business.</p><figure class="auth-product-capture"><img src="/demo/inventory.png?v=<%= locals.assetVersion||'current' %>" alt="Actual StockChief item screen in the controlled demonstration business"><figcaption>The real product, with synthetic demo records.</figcaption></figure><a href="/demo">Watch the product walkthrough →</a></aside>
 </main><script src="/commercial.js?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>" defer></script></body></html>

@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-28T23:59:53.726Z",
+  "seed": "capture-product-truth.js",
+  "reset": "Each run creates and removes its own isolated PostgreSQL cluster.",
+  "business": "Maple & Main · demonstration",
+  "screens": [
+    {
+      "route": "/inventory/item_xzi7c0hyyz0m6jzumxpkkaaf",
+      "file": "inventory.png",
+      "title": "Inventory by location",
+      "atMilliseconds": 972,
+      "visibleHeading": "Black Tee Small"
+    },
+    {
+      "route": "/planning",
+      "file": "planning.png",
+      "title": "Replenishment planning",
+      "atMilliseconds": 27695,
+      "visibleHeading": "No shortage is proven; 1 position needs demand history."
+    },
+    {
+      "route": "/purchasing/orders/po_r7kfjqqh0grziv0jbogxd27h",
+      "file": "purchasing.png",
+      "title": "Purchase order and expected stock",
+      "atMilliseconds": 54482,
+      "visibleHeading": "PO-00001 · Demo Apparel Supply"
+    },
+    {
+      "route": "/ask",
+      "file": "ask.png",
+      "title": "Actual database answer",
+      "atMilliseconds": 81311
+    },
+    {
+      "route": "/",
+      "file": "brief.png",
+      "title": "Home and work requiring attention",
+      "atMilliseconds": 107926,
+      "visibleHeading": "Good evening, Demo"
+    }
+  ],
+  "actualBrowser": true,
+  "actualPostgreSQL": true,
+  "onHand": 52,
+  "externalEventsClaimed": false,
+  "paidCalls": 0,
+  "classification": "Deterministic fixture classifier; answers are read from PostgreSQL.",
+  "durationMilliseconds": 133943,
+  "video": "walkthrough.webm"
+}

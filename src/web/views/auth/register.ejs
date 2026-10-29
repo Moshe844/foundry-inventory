@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Create your account · StockChief</title><link rel="stylesheet" href="/commercial.css?v=<%= assetVersion %>"><link rel="stylesheet" href="/signup.css?v=<%= assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
-</head>
+<link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>
 <% var availablePlans=typeof plans!=='undefined'?plans.filter(function(p){return !p.sales_only;}):[];var chosenPlan=typeof selectedPlan==='undefined'?'':selectedPlan;var chosen=availablePlans.find(p=>p.id===chosenPlan);var annual=selectedInterval==='annual'; %>
 <body class="commercial-auth signup-auth"><main class="auth-split auth-split--register"><section class="auth-form"><a class="pub-brand" href="/"><span class="pub-brand__mark"><i aria-hidden="true"></i></span><span>StockChief</span></a><div class="auth-form__body">
 <%- include('../components/signup-progress',{step:1}) %><h1>Start running your business with StockChief.</h1>

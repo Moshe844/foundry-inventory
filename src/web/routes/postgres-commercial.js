@@ -49,7 +49,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'The AI inventory operator',nav:'home',groups:require('../presentation/public-integrations').groups(),
       description:'StockChief notices, decides and carries out routine inventory operations—then brings owners the exceptions that need judgement.'});}));
   router.get('/demo',asyncRoute(async(req,res)=>{await commercial.track(database,{eventName:'demo_opened',anonymousId:req.sessionID,
-    accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo',
+    accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo',demo:require('../../commercial/product-demo').current(),
       description:'Follow a realistic business day from sale and shortage through supplier, receiving, fulfillment, payment and accounting.'});}));
   router.get('/how-stockchief-works',asyncRoute(async(req,res)=>renderPublic(req,res,'public/how-it-works',{
     title:'How StockChief works',nav:'how',description:'See how StockChief turns business signals into governed, verified operational work.'})));
@@ -93,6 +93,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     await require('../../commercial/provider-costs').ingest(database,statement,req.account.id);
     req.flash('success','Provider invoice cost recorded with its evidence and allocation. Coverage warnings remain until independently verified.');
     return res.redirect(303,'/commercial-admin');}));
+  router.get('/usage',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);res.page('commercial/usage',{title:'Usage and add more',nav:null,room:true,summary:await entitlements.summary(database,scope),packs:addons.currentPacks(await addons.packs(database,scope)),purchaseKey:newId('purchasekey'),checkoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
   router.get('/billing',requireAccount,requireBillingOwner,(req,res)=>res.redirect(301,'/settings/billing'+(req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')));
   router.get('/settings/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});

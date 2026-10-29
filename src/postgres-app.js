@@ -50,7 +50,7 @@ const { requireOperationalSubscription } = require('./web/commercial-middleware'
 
 function createPostgresApp({database,resourceDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
-  commercialOptions=null,ssoOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
+  commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
@@ -63,6 +63,21 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
   app.disable('x-powered-by');
+  // The private console is dispatched before ALL customer authentication,
+  // tenant selection, subscription checks, API routes and application rendering.
+  const ownerModule=require('./platform-owner/app');
+  const ownerOrigin=ownerModule.origin(ownerConsoleOptions?.origin||process.env.STOCKCHIEF_OWNER_ORIGIN,{test:env==='test'});
+  if(ownerOrigin){
+    const ownerApp=ownerModule.createOwnerConsole({database,store,sessionSecret,env,
+      customerOrigin:connectionPublicOrigin||config.connections.publicOrigin,
+      ...(ownerConsoleOptions||{})});
+    app.use((req,res,next)=>ownerModule.matchesHost(req,ownerOrigin)?ownerApp(req,res,next):next());
+  }
+  app.use((req,res,next)=>{
+    if(req.path==='/commercial-admin'||req.path.startsWith('/commercial-admin/'))
+      return res.status(404).type('html').send('<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page unavailable · StockChief</title><link rel="stylesheet" href="/owner-console.css"></head><body><main class="owner-auth"><section class="auth-card"><h1>This page is unavailable in the customer app.</h1><p>Help and support stays with your own conversations.</p><a href="/support">Help and support</a></section></main></body></html>');
+    next();
+  });
   app.use(require('./commercial/resource-metrics').middleware(resourceDatabase));
   app.get('/app-system.css',(req,res)=>res.type('text/css').set('Cache-Control','public, max-age=86400').send(require('./web/presentation/stylesheets').stylesheet()));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));

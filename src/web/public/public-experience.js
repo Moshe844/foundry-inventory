@@ -1,0 +1,2 @@
+'use strict';
+(()=>{if(matchMedia('(prefers-reduced-motion: reduce)').matches||!('IntersectionObserver'in window))return;const elements=[...document.querySelectorAll('[data-reveal]')];if(!elements.length)return;document.body.classList.add('reveal-enabled');const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('is-visible');observer.unobserve(entry.target);}},{rootMargin:'60px',threshold:.05});for(const element of elements)observer.observe(element);})();
