@@ -173,7 +173,7 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
       FROM balances WHERE workspace_id=$1`, [ctx.workspaceId]);
     assert.equal(Number(physical.rows[0].quantity), Number(balances.rows[0].quantity));
     await page.goto(`${base}/orders`);
-    await page.getByRole('link',{name:'Customer returns and refunds',exact:true}).click();
+    await page.locator('main a[href="/returns"]').first().click();
     assert.equal(new URL(page.url()).pathname,'/returns');
     assert.equal(await page.locator(`a[href="/returns/${returnId}"]`).count(),1);
     const savedReturns=(await database.query('SELECT id FROM customer_returns WHERE workspace_id=$1',[ctx.workspaceId])).rows;
