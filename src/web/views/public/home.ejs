@@ -4,7 +4,7 @@
   <div class="product-preview" data-product-preview aria-label="Explore StockChief product screens">
     <div class="product-preview__bar"><span><i></i> Explore StockChief</span><a href="/demo">Watch walkthrough ↗</a></div>
     <div class="product-preview__tabs" role="group" aria-label="Choose a product screen"><% for(const [index,screen] of demo.screens.entries()){ %><button type="button" data-preview-file="<%= screen.file %>" data-preview-title="<%= screen.title %>" data-preview-chapter="<%= Math.floor(screen.atMilliseconds/1000) %>" aria-pressed="<%= index===0?'true':'false' %>"><%= ['Stock','Planning','Purchasing','Ask','Home','Import'][index] %></button><% } %></div>
-    <a class="product-preview__screen" data-preview-open href="<%= sceneLink('inventory.png') %>" aria-label="Watch inventory by location"><img data-preview-image src="/demo/inventory.png?v=<%= stamp %>" width="1440" height="900" alt="<%= demo.screens[0].title %> · StockChief demonstration"><span class="product-preview__play" aria-hidden="true">▶</span></a>
+    <a class="product-preview__screen" data-preview-open href="<%= sceneLink('inventory.png') %>" aria-label="Watch inventory by location"><img data-preview-image src="/demo/inventory.png?v=<%= stamp %>" width="1440" height="900" alt="<%= demo.screens[0].title %> · StockChief demonstration"><span class="product-preview__play" aria-hidden="true"><svg width="22" height="26" viewBox="0 0 22 26" aria-hidden="true"><path fill="#fff" d="M5 3 20 13 5 23Z"/></svg></span></a>
     <div class="product-preview__caption"><strong data-preview-caption><%= demo.screens[0].title %></strong><span>Product capture · demonstration records</span></div>
   </div>
 </section>
