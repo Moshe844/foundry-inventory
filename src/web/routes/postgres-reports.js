@@ -10,6 +10,8 @@ const permissions=require('../../actions/permissions');
 const {requireAuth,asyncRoute}=require('../middleware');
 const {ValidationError}=require('../../domain/errors');
 
+function saveDraftSession(req){return new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));}
+
 function source(body){
   if(body.definition){try{return JSON.parse(body.definition);}catch{throw new ValidationError('The report definition was invalid.');}}
   if(body.dataset==='composed')return {dataset:'composed',title:body.title,dimension:body.dimension,
@@ -65,7 +67,7 @@ function createPostgresReportsRouter(database){
       compositions:composed.dimensions(actor)});
   }));
   router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);return res.page('reports/business',{title:report.definition.title,nav:'accounting',room:true,report});}));
-  router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};return res.redirect(303,'/reports/builder?draft=1');}));
+  router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
   router.get('/reports/business/:key/export.csv',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);if(await reports.countAtMost(database,req.ctx,actor,report.result.config,100000)>100000)throw new ValidationError('This export has more than 100,000 rows. Narrow the dates or filters before exporting.');res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="stockchief-'+report.definition.key+'.csv"');res.set('Cache-Control','private, no-store');let offset=0,started=false;do{const part=await reports.run(database,req.ctx,actor,report.result.config,{limit:1001,offset});await require('../../reports/business-reports').enrich(database,req.ctx,report.definition.key,part);if(!started){res.write(reportExports.csvHeader(part));started=true;}res.write(reportExports.csvRows(part));offset+=part.rows.length;if(!part.hasMore)break;if(offset>=100000)break;}while(!res.destroyed);return res.end();}));
   router.get('/reports/from-ask/:interactionId',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -106,7 +108,7 @@ function createPostgresReportsRouter(database){
     await requireBuilderSource(database,req.ctx,chosen.definition.dataset);
     const definition=reports.normalize({...chosen.definition,title:chosen.name},actor);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
-    return res.redirect(303,'/reports/builder?draft=1');
+    await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');
   }));
   router.get('/reports/describe',asyncRoute(async(req,res)=>{
     const description=String(req.query.q||'').trim();
@@ -228,7 +230,7 @@ function createPostgresReportsRouter(database){
     const prior=await reports.load(database,req.ctx,actor,req.params.id);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,
       definition:reports.normalize({...prior.definition,title:`Copy of ${prior.title}`},actor),schedule:null};
-    return res.redirect(303,'/reports/builder?draft=1');
+    await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');
   }));
   router.get('/reports/saved/:id',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);

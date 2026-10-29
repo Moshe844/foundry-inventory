@@ -4,6 +4,19 @@ const auth=require('./auth'),data=require('./data'),support=require('../operatio
 const {asyncRoute,flash,csrf,rateLimit}=require('../web/middleware');
 const {newId}=require('../lib/util'),{ValidationError,AuthorizationError}=require('../domain/errors');
 const audit=require('../commercial/control-service').audit;
+// express-session installs a mutable `generate` hook on its Store. Sharing the
+// same Store object between two middleware instances lets the later customer
+// middleware replace the private console's cookie defaults during regeneration.
+// Share persistence, not that middleware-local generator. Preserve PostgreSQL's
+// createSession snapshot so concurrent field updates remain safe.
+class ConsoleSessionStore extends session.Store {
+ constructor(delegate){super();this.delegate=delegate;}
+ get(...args){return this.delegate.get(...args);}
+ set(...args){return this.delegate.set(...args);}
+ touch(...args){return this.delegate.touch(...args);}
+ destroy(...args){return this.delegate.destroy(...args);}
+ createSession(...args){return this.delegate.createSession(...args);}
+}
 function origin(value,{test=false}={}){if(!value)return null;const url=new URL(value);if(url.username||url.password||url.pathname!=='/'||url.search||url.hash||url.protocol!=='https:'&&!(test&&url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname)))throw new TypeError('The private owner console requires an HTTPS origin.');return url;}
 function matchesHost(req,configured){if(!configured)return false;return String(req.get('host')||'').toLowerCase()===configured.host.toLowerCase();}
 function createOwnerConsole({database:db,store,sessionSecret,env='production',billingProvider=null,providerOptions={},customerOrigin=null}={}){
@@ -13,7 +26,7 @@ function createOwnerConsole({database:db,store,sessionSecret,env='production',bi
  for(const asset of ['owner-console.css','owner-console.js','support-chat.js'])app.get('/'+asset,(req,res)=>res.sendFile(path.join(__dirname,'../web/public',asset)));
  app.get('/fonts/inter-latin.woff2',(req,res)=>res.sendFile(path.join(__dirname,'../web/public/fonts/inter-latin.woff2')));
  app.use(express.urlencoded({extended:false,limit:'32kb'}));app.use(express.json({limit:'32kb'}));
- app.use(session({name:secure?'__Host-stockchief.owner':'stockchief.owner.test',secret:sessionSecret,store,resave:false,saveUninitialized:false,rolling:true,cookie:{secure,httpOnly:true,sameSite:'strict',path:'/',maxAge:30*60000}}));
+ app.use(session({name:secure?'__Host-stockchief.owner':'stockchief.owner.test',secret:sessionSecret,store:new ConsoleSessionStore(store),resave:false,saveUninitialized:false,rolling:true,cookie:{secure,httpOnly:true,sameSite:'strict',path:'/',maxAge:30*60000}}));
  app.use(flash);app.use((req,res,next)=>{res.locals.ownerConsole=true;res.locals.csrfToken=req.session.csrfToken;res.locals.account=null;res.locals.actor=null;res.locals.scopes=data.scopes;res.locals.env=process.env.STOCKCHIEF_RUNTIME_ENV||env;res.locals.sections=data.sections;res.locals.currentPath=req.path;res.locals.customerOrigin=customerOrigin;res.locals.helpers={...require('../web/view-helpers'),...require('../web/presentation/formatting').forTimeZone('America/New_York')};res.owner=(view,values={})=>{const notices=req.session?.flash||res.locals.flash||[];if(req.session)req.session.flash=[];return res.render('owner/layout',{view,flash:notices,...values});};next();});app.use(csrf);
  const limit=rateLimit({max:15,windowMs:15*60000});
  const regenerate=req=>new Promise((resolve,reject)=>req.session.regenerate(e=>e?reject(e):resolve()));
