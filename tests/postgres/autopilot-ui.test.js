@@ -71,7 +71,9 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     assert.deepEqual(grants.map((row)=>({capability:row.capability,granted:Number(row.granted)})),
       [{capability:'payment_requests',granted:1},{capability:'supplier_document_review',granted:0}]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Business review queued/);
+    // A reload can consume a one-time notice. The durable confirmation must
+    // remain: exactly one queued review and its visible, saved progress state.
+    assert.equal((await database.query("SELECT count(*) n FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='autopilot.evaluate' AND status IN('PENDING','RETRY','RUNNING')",[ctx.workspaceId])).rows[0].n,'1');
     assert.match(await page.locator('[data-maintenance-progress]').innerText(),/waiting for its next batch/);
     await page.goto(base+'/');
     assert.match(await page.locator('main').innerText(),/Review in progress/);
