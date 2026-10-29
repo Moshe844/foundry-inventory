@@ -19,8 +19,7 @@ function createPostgresOnboardingRouter(database) {
     if(state.isComplete && products.rows.length && req.query.add!=='1')return res.redirect(303,'/inventory');
     const entry=await exploration.state(database,req.ctx.workspaceId,req.account.id);
     return res.page('onboarding/start',{title:'Get your inventory into StockChief',nav:'inventory',state,
-      paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,recommendation:null,recommendedOption:null,
-      sourcePrompt:null,description:'',canOperate:true,suppressBack:true,onboardingEntry:entry,
+      paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,canOperate:true,suppressBack:true,onboardingEntry:entry,
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));
   router.post('/onboarding/time-zone',requireOwner,asyncRoute(async(req,res)=>{
@@ -60,23 +59,8 @@ function createPostgresOnboardingRouter(database) {
     req.flash('success','Sample inventory cleared. Your real inventory is unchanged.');
     return req.session.save(()=>res.redirect(303,'/inventory'));
   }));
-  router.post('/onboarding/describe',asyncRoute(async(req,res)=>{
-    const description=trimOrNull(req.body.description) || '';
-    const inferred=paths.recommendFromDescription(description);
-    const recommendationResult=inferred && ['messy','mailbox'].includes(inferred.path)
-      ? {...inferred,path:'spreadsheet',reason:'you can start with an exported file and add ongoing sources later'}:inferred;
-    const recommendedOption=recommendationResult
-      ? paths.SOURCE_OPTIONS.find((option)=>option.id===recommendationResult.path) || null:null;
-    const recommendation=recommendationResult && recommendedOption
-      ? {...recommendationResult,label:recommendedOption.label}:null;
-    return res.page('onboarding/start',{title:'Get your inventory into StockChief',nav:'inventory',
-      state:await paths.ensure(database,req.ctx.workspaceId),paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,
-      recommendation,recommendedOption,description,canOperate:true,suppressBack:true,
-      onboardingEntry:await exploration.state(database,req.ctx.workspaceId,req.account.id),
-      sourcePrompt:recommendation?`StockChief recommends this because ${recommendation.reason}. Continue below, or choose another source.`:
-        (description?'That describes the business, but not its actual products or quantities. Choose where those records live.':null),
-      importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
-  }));
+  // Old open tabs return to the three direct setup choices.
+  router.post('/onboarding/describe',(req,res)=>res.redirect(303,'/onboarding'));
   router.get('/onboarding/system',requireOwner,(req,res)=>res.redirect(303,'/settings/connections?setup=inventory'));
   router.get('/onboarding/files',requireOwner,(req,res)=>res.redirect(303,'/imports/start'));
   router.get('/onboarding/migrations/new',(req,res)=>res.redirect(303,'/imports'));

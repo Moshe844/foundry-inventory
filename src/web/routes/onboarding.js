@@ -369,44 +369,8 @@ router.post('/onboarding/migrations/:id/resolve-missing-serials', asyncRoute(asy
   return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
 }));
 
-/** "Not sure — here's what's going on." */
-router.post(
-  '/onboarding/describe',
-  asyncRoute(async (req, res) => {
-    const description = trimOrNull(req.body.description) || '';
-    const inferred = paths.recommendFromDescription(description);
-    const recommendationResult = inferred && ['messy', 'mailbox'].includes(inferred.path)
-      ? { ...inferred, path: 'spreadsheet', reason: 'you can start with an exported file and add ongoing sources later' }
-      : inferred;
-    const recommendedOption = recommendationResult
-      ? paths.SOURCE_OPTIONS.find((option) => option.id === recommendationResult.path) || null
-      : null;
-    const recommendation = recommendationResult && recommendedOption
-      ? { ...recommendationResult, label: recommendedOption.label }
-      : null;
-    const state = paths.ensure(req.db, req.ctx.workspaceId);
-
-    return res.page('onboarding/start', {
-      title: 'Get your inventory into StockChief',
-      nav: 'foundry',
-      state,
-      paths: paths.PATHS,
-      sourceOptions: paths.SOURCE_OPTIONS,
-      recommendation,
-      /* The chooser offers a mailbox that PATHS does not carry, so the button
-         for a recommendation has to come from the list the page renders. */
-      recommendedOption,
-      sourcePrompt: recommendation
-        ? `StockChief recommends this because ${recommendation.reason}. Continue below, or choose another source.`
-        : (description
-          ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where StockChief should get those real records.'
-          : null),
-      description,
-      canOperate: permissions.can(req.user, permissions.OPERATE),
-      suppressBack: true,
-    });
-  })
-);
+// Compatibility for source-helper forms in older open tabs.
+router.post('/onboarding/describe',(req,res)=>res.redirect(303,'/onboarding'));
 
 // Email is one supported way of supplying inventory evidence, alongside files,
 // connected systems and manual entry. It belongs in onboarding, not somewhere
