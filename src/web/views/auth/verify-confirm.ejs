@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify your email · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
-<body class="commercial-auth signup-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+<body class="commercial-auth signup-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
 <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %><span class="auth-mail">✉</span><span class="pub-eyebrow">ONE SAFE STEP</span>
 <h1>Verify your email.</h1><p>Confirm that <strong><%= verification.email %></strong> belongs to you. Verification alone does not charge you or activate a business workspace.</p>
 <form method="post" action="/verify-email" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>">

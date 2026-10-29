@@ -9,7 +9,7 @@
 </head>
 <body class="commercial-auth signup-auth">
   <main class="auth-centered">
-    <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+    <a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
     <% const selected=plans.find(plan=>plan.id===selection.planId),annual=selection.interval==='annual'; %><div class="auth-centered__card"><% if(!locals.existingWorkspace){ %><%- include('../components/signup-progress',{step:3}) %><% } %>
       <span class="auth-mail auth-mail--ok">✓</span>
       <h1><%= locals.existingWorkspace?'Activate your paid plan':'Continue to secure payment' %></h1>

@@ -3,7 +3,7 @@
 <title><%= title %> · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
 <body class="commercial-auth signup-auth"><main class="auth-centered">
-<a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+<a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
 <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %><span class="auth-mail">✉</span><h1><%= title %></h1>
 <p>We sent a secure verification link<% if(account){ %> to <strong><%= account.email %></strong><% } %>.
   Open the message and select <strong>Verify my email</strong>. On the confirmation page, select <strong>Verify and continue</strong>.</p>

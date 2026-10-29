@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workspace invitation · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 </head>
-<body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a><div class="auth-centered__card">
+<body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a><div class="auth-centered__card">
 <% if(invitation&&invitation.status==='PENDING'){ %><span class="pub-eyebrow">WORKSPACE INVITATION</span><h1>Join <%= invitation.workspace_name %>.</h1><p><%= invitation.inviter_name %> invited <strong><%= invitation.email %></strong> as <%= invitation.role %>.</p>
 <% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>"><%= message.message %></div><%});}%>
 <form method="post" action="/invite" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="token" value="<%= token %>">
