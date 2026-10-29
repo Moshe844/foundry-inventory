@@ -15,3 +15,4 @@ test('The private console accepts only an exact configured host and HTTPS origin
  assert.equal(matchesHost({get:()=> 'admin.stockchiefhq.com.attacker.test'},admin),false);
  assert.equal(matchesHost({get:()=> 'qualify.stockchiefhq.com'},admin),false);
 });
+test('Conversation context links to its scoped records and never mistakes a list or foreign URL for a record',()=>{const record=require('../../src/platform-owner/data').recordContext;assert.deepEqual(record('/inventory/item_a1b2c3'),{area:'stock',dataset:null,label:'product',id:'item_a1b2c3'});assert.equal(record('/purchasing/orders/po_d4e5f6').area,'purchasing');assert.equal(record('/money/bills/bill_a1b2c3').dataset,'bills');for(const path of ['/inventory/table','/inventory/new','https://other.example/inventory/item_a1b2c3','//other.example/','/orders/../../settings'])assert.equal(record(path),null);});
