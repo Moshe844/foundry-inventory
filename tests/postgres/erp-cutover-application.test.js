@@ -32,4 +32,13 @@ test('native PostgreSQL ERP application resumes atomic batches without duplicate
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),1);
  assert.equal(Number((await db.query('SELECT sum(debit_minor-credit_minor) AS n FROM accounting_journal_lines WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM migration_history_facts WHERE package_id=$1',[pkg.id])).rows[0].n),1,'history remains evidence rather than replaying old stock');
+ await assert.rejects(db.query("UPDATE migration_records SET payload_json='{}' WHERE package_id=$1",[pkg.id]),/sealed/);
+ let reconciled;for(let i=0;i<records.length+2;i++){reconciled=await cutover.reconcilePage(db,ctx,pkg.id,{limit:1});if(reconciled.done)break;}
+ if(!reconciled.matched)t.diagnostic(JSON.stringify((await db.query("SELECT label,evidence_json FROM migration_reconciliation_checks WHERE package_id=$1 AND status<>'MATCHED'",[pkg.id])).rows));
+ assert.equal(reconciled.matched,true);assert.equal(reconciled.package.status,'VERIFIED');
+ await assert.rejects(cutover.activate(db,ctx,pkg.id,'changed-hash'),/must match/);
+ const active=await cutover.activate(db,ctx,pkg.id,sealed.postgres_state.sealedHash);assert.equal(active.status,'CUTOVER_ACTIVE');assert.equal((await cutover.activate(db,ctx,pkg.id,sealed.postgres_state.sealedHash)).replayed,true);
+ await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'First post-cutover item',trackingMode:'quantity'});
+ assert.equal((await cutover.applyPage(db,ctx,pkg.id)).replayed,true,'activation cannot replay the initial operating position');
+
 });

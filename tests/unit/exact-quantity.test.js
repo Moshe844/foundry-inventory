@@ -20,3 +20,11 @@ test('valuation rounds currency only once and accepts a price per measured quant
  assert.throws(()=>q.costMinor('1','0.1'),/decimal places/);assert.throws(()=>q.costMinor('1',100,{perQuantity:'0'}),/above zero/);
  assert.equal(q.costMinor('9007199254740991','1'),'9007199254740991'*1);assert.throws(()=>q.costMinor('9007199254740991','2'),/exact range/);
 });
+
+test('quantity arithmetic and partial monetary allocation stay exact across fractional operations',()=>{
+ assert.equal(q.add('0.1','0.2'),'0.3');assert.equal(q.subtract('0.3','0.2'),'0.1');assert.equal(q.subtract('0.1','0.2'),'-0.1');assert.equal(q.safeNumber('1.25',{precision:2}),1.25);
+ assert.throws(()=>q.safeNumber('1.001',{precision:2}),/decimal places/);assert.throws(()=>q.safeNumber('9007199254740991.1'),/exact range/);
+ assert.equal(q.ratioMinor(100,'0.1','0.3'),33);assert.equal(q.ratioMinor(100,'0.2','0.3'),67);
+ const parts=[q.portionMinor(100,'0.3','0','0.1'),q.portionMinor(100,'0.3','0.1','0.1'),q.portionMinor(100,'0.3','0.2','0.1')];assert.deepEqual(parts,[33,33,34]);assert.equal(parts.reduce((a,b)=>a+b),100);
+ assert.throws(()=>q.portionMinor(100,'0.3','0.2','0.2'),/exceeds/);assert.equal(q.portionMinor(9007199254740991,3,1,1),3002399751580330);
+});
