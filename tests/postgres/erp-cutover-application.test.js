@@ -36,6 +36,9 @@ test('native PostgreSQL ERP application resumes atomic batches without duplicate
  assert.equal(Number((await db.query('SELECT sum(debit_minor-credit_minor) AS n FROM accounting_journal_lines WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM migration_history_facts WHERE package_id=$1',[pkg.id])).rows[0].n),1,'history remains evidence rather than replaying old stock');
  await assert.rejects(db.query("UPDATE migration_records SET payload_json='{}' WHERE package_id=$1",[pkg.id]),/sealed/);
+ await db.transaction(async c=>{await c.query("SELECT set_config('stockchief.cutover_package_id',$1,true)",[pkg.id]);await c.query('UPDATE items SET name=$2 WHERE workspace_id=$1',[ctx.workspaceId,'Synthetic reconciliation mismatch']);});
+ let failedCheck;do{failedCheck=await cutover.reconcilePage(db,ctx,pkg.id,{limit:1});}while(!failedCheck.done);assert.equal(failedCheck.matched,false);await assert.rejects(cutover.activate(db,ctx,pkg.id,sealed.postgres_state.sealedHash),/must match/);
+ await db.transaction(async c=>{await c.query("SELECT set_config('stockchief.cutover_package_id',$1,true)",[pkg.id]);await c.query('UPDATE items SET name=$2 WHERE workspace_id=$1',[ctx.workspaceId,records.find(r=>r.type==='product').payload.name]);});const retried=await cutover.retryReconciliation(db,ctx,pkg.id);assert.equal(retried.postgres_state.reconciliationAfter,null,'A failed earlier record is reconsidered from the beginning');
  let reconciled;for(let i=0;i<records.length+2;i++){reconciled=await cutover.reconcilePage(db,ctx,pkg.id,{limit:1});if(reconciled.done)break;}
  if(!reconciled.matched)t.diagnostic(JSON.stringify((await db.query("SELECT label,evidence_json FROM migration_reconciliation_checks WHERE package_id=$1 AND status<>'MATCHED'",[pkg.id])).rows));
  assert.equal(reconciled.matched,true);assert.equal(reconciled.package.status,'VERIFIED');
