@@ -45,7 +45,7 @@ async function currentPrice(queryable,workspaceId,skuId){
 
 async function purchaseCost(queryable,workspaceId,skuId){
   const stated=(await queryable.query(`SELECT pc.*,sup.name AS supplier_name FROM sku_purchase_costs pc
-    LEFT JOIN supplier_items si ON si.id=pc.supplier_item_id LEFT JOIN suppliers sup ON sup.id=si.supplier_id
+    LEFT JOIN supplier_items si ON si.id=pc.supplier_item_id AND si.workspace_id=pc.workspace_id LEFT JOIN suppliers sup ON sup.id=si.supplier_id AND sup.workspace_id=pc.workspace_id
     WHERE pc.workspace_id=$1 AND pc.sku_id=$2 ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1`,[workspaceId,skuId])).rows[0];
   if(stated)return {...stated,amount_minor:Number(stated.amount_minor),isSet:true,
     formatted:formatMinor(stated.amount_minor,stated.currency),sourceLabel:stated.supplier_name||'Owner supplied'};
@@ -53,7 +53,7 @@ async function purchaseCost(queryable,workspaceId,skuId){
       supplier.currency,supplier.name AS supplier_name FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id
     WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND si.last_unit_cost IS NOT NULL
     ORDER BY si.is_preferred DESC,si.last_cost_at DESC,si.updated_at DESC LIMIT 1`,[workspaceId,skuId])).rows[0];
-  if(!supplier){const stock=(await queryable.query(`SELECT round(sum(c.total_cost_minor)::numeric/nullif(sum(c.quantity_units),0)) AS amount_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.sku_id=$2 AND c.quantity_units>0 GROUP BY a.base_currency`,[workspaceId,skuId])).rows[0];return stock?{amount_minor:Number(stock.amount_minor),currency:stock.currency,isSet:true,formatted:formatMinor(stock.amount_minor,stock.currency),sourceLabel:'Average recorded stock cost'}:null;}
+  if(!supplier){const stock=(await queryable.query(`SELECT round(sum(c.total_cost_minor)::numeric/nullif(sum(CASE WHEN i.secondary_unit_label IS NOT NULL THEN c.secondary_quantity_units ELSE c.quantity_units END),0)) AS amount_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE c.workspace_id=$1 AND c.sku_id=$2 AND c.quantity_units>0 AND (i.secondary_unit_label IS NULL OR c.secondary_quantity_units>0) GROUP BY a.base_currency`,[workspaceId,skuId])).rows[0];return stock?{amount_minor:Number(stock.amount_minor),currency:stock.currency,isSet:true,formatted:formatMinor(stock.amount_minor,stock.currency),sourceLabel:'Average recorded stock cost'}:null;}
   const amountMinor=money.toMinor(supplier.last_unit_cost,supplier.currency);
   return {...supplier,amount_minor:amountMinor,isSet:true,formatted:formatMinor(amountMinor,supplier.currency),sourceLabel:supplier.supplier_name};
 }
@@ -108,6 +108,7 @@ async function setPurchaseCostInTransaction(client,ctx,input){
   const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?
     toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');
+  if(input.supplierItemId&&!(await client.query('SELECT 1 FROM supplier_items WHERE workspace_id=$1 AND id=$2 AND sku_id=$3 AND is_active=1',[ctx.workspaceId,input.supplierItemId,sku.id])).rows.length)throw new ValidationError('Choose the supplier-product terms from this inventory.');
   const currency=normaliseCurrency(input.currency);const current=await purchaseCost(client,ctx.workspaceId,sku.id);
   if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(current?.id||null)!==(input.expectedCurrentId||null))
     throw new ValidationError('The current purchase cost changed after this preview was prepared. Start again from the latest cost.');
@@ -120,6 +121,17 @@ async function setPurchaseCostInTransaction(client,ctx,input){
   if(input.supplierItemId)await client.query(`UPDATE supplier_items SET last_unit_cost=$1,last_cost_at=$2,updated_at=$2
     WHERE id=$3 AND workspace_id=$4 AND sku_id=$5`,[money.fromMinor(amountMinor,currency),at,input.supplierItemId,ctx.workspaceId,sku.id]);
   return purchaseCost(client,ctx.workspaceId,sku.id);
+}
+
+async function setPurchaseCostsInTransaction(client,ctx,inputs){
+ if(!Array.isArray(inputs))throw new ValidationError('Purchase costs must be a list.');if(!inputs.length)return [];
+ if(new Set(inputs.map(i=>i.skuId)).size!==inputs.length||inputs.some(i=>i.supplierItemId||Object.hasOwn(i,'expectedCurrentId'))){const result=[];for(const input of inputs)result.push(await setPurchaseCostInTransaction(client,ctx,input));return result;}
+ const ids=inputs.map(i=>i.skuId),active=(await client.query('SELECT s.id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,ids])).rows;if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
+ if(ctx.actorId&&!(await client.query('SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows.length)throw new NotFoundError('The acting user does not belong to this inventory.');
+ const current=new Map((await client.query('SELECT DISTINCT ON(sku_id) * FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,created_at DESC,id DESC',[ctx.workspaceId,ids])).rows.map(r=>[r.sku_id,r])),rows=[],at=nowIso();
+ for(const input of inputs){const amount=input.amountMinor===undefined?toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor),currency=normaliseCurrency(input.currency);if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');const before=current.get(input.skuId);if(before&&Number(before.amount_minor)===amount&&before.currency===currency){current.set(input.skuId,{...before,replayed:true});continue;}rows.push({id:newId('pcost'),sku_id:input.skuId,amount_minor:amount,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});}
+ if(rows.length){const saved=(await client.query('INSERT INTO sku_purchase_costs(id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at) SELECT x.id,$1,x.sku_id,x.amount_minor,x.currency,x.source,x.source_detail,$2,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,sku_id text,amount_minor bigint,currency text,source text,source_detail jsonb) RETURNING *',[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(rows)])).rows;for(const row of saved)current.set(row.sku_id,row);}
+ return inputs.map(input=>{const row=current.get(input.skuId);return {...row,amount_minor:Number(row.amount_minor),isSet:true,formatted:formatMinor(Number(row.amount_minor),row.currency),sourceLabel:'Owner supplied'};});
 }
 
 async function setPurchaseCost(database,ctx,input){return database.transaction((client)=>setPurchaseCostInTransaction(client,ctx,input));}
@@ -238,11 +250,11 @@ async function cancelPurchaseCostProposal(database,workspaceId,id){
 }
 
 module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,listForSkus,
-  setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,createPriceProposal,getPriceProposal,
+  setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,setPurchaseCostsInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{
   setPrice:'inventory.core',setPriceInTransaction:'inventory.core',setPricesInTransaction:'inventory.core',createPriceProposal:'inventory.core',
   approvePriceProposal:'inventory.core',cancelPriceProposal:'inventory.core',setPurchaseCost:'purchasing.suppliers',
-  setPurchaseCostInTransaction:'purchasing.suppliers',createPurchaseCostProposal:'purchasing.suppliers',
+  setPurchaseCostInTransaction:'purchasing.suppliers',setPurchaseCostsInTransaction:'purchasing.suppliers',createPurchaseCostProposal:'purchasing.suppliers',
   approvePurchaseCostProposal:'purchasing.suppliers',cancelPurchaseCostProposal:'purchasing.suppliers'});

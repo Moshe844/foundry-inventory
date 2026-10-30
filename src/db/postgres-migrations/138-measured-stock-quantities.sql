@@ -9,13 +9,16 @@ ALTER TABLE items
 
 -- Preserve the reporting view and its explicit access grants while changing
 -- physical quantities. Existing integral values stay integral numeric values.
+-- Historical CSV row receipts keep their original integral quantity column.
+-- Their parser still accepts whole stock units only; rewriting millions of
+-- immutable source receipts does not enable measured stock operations.
 DO $$
 DECLARE view_sql text; old_acl aclitem[]; item record; group_row record; alters text;
 BEGIN
  SELECT pg_get_viewdef(c.oid,true),c.relacl INTO view_sql,old_acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='accounting_inventory_cost_events';
  DROP VIEW accounting_inventory_cost_events;
  FOR group_row IN SELECT table_schema,table_name FROM information_schema.columns
-  WHERE table_schema IN ('public','stockchief_runtime') AND data_type IN ('bigint','integer')
+  WHERE table_schema IN ('public','stockchief_runtime') AND table_name<>'import_rows' AND data_type IN ('bigint','integer')
    AND (column_name ~ '(^quantity($|_)|_quantity($|_))' OR column_name IN ('on_hand','balance_after','reorder_point','target_stock','safety_stock','physical_units','costed_units_before','expected_qty','counted_qty','units_per_purchase_unit','order_multiple','units_established','over_by_units','confirmed_units','shipping_units','backordered_units','fulfilled_units','committed_units','costed_units_after'))
    AND column_name<>'quantity_tolerance_percent' GROUP BY table_schema,table_name ORDER BY table_schema,table_name
  LOOP

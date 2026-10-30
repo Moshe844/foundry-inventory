@@ -144,7 +144,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
       taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
-      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position:skuPosition+position});
+      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length||input.appendToItemId||position>0?0:1,position:skuPosition+position});
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});
     }
@@ -247,7 +247,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const item = { ...itemResult.rows[0], is_active: Number(itemResult.rows[0].is_active),
     has_variants: Number(itemResult.rows[0].has_variants),allow_negative:Number(itemResult.rows[0].allow_negative) };
   const totalResult = await database.query(`SELECT COALESCE((SELECT sku_count FROM item_catalog_rollups WHERE workspace_id=$1 AND item_id=$2),0) AS sku_count,
-    COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand`, [workspaceId, itemId]);
+    COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand,COALESCE((SELECT SUM(secondary_on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS secondary_on_hand`, [workspaceId, itemId]);
   const skuCount = Number(totalResult.rows[0].sku_count || 0);
   const pageSize = 25;
   const pageCount = Math.max(1, Math.ceil(skuCount / pageSize));
@@ -278,7 +278,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       SELECT sol.sku_id,a.location_id,COALESCE(SUM(a.quantity),0) AS quantity
       FROM sales_order_allocations a JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
       WHERE a.workspace_id=$1 AND sol.sku_id=ANY($2::text[]) GROUP BY sol.sku_id,a.location_id
-    ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,COALESCE(committed.quantity,0) AS committed
+    ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,b.secondary_on_hand,COALESCE(committed.quantity,0) AS committed
       FROM balances b JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       LEFT JOIN committed ON committed.sku_id=b.sku_id AND committed.location_id=b.location_id
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand<>0 ORDER BY l.name`,
@@ -290,7 +290,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     return { ...row, total, committed, available: Math.max(0, total - committed),
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
-        locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),
+        locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),secondaryOnHand:position.secondary_on_hand==null?null:Number(position.secondary_on_hand),
         committed:Number(position.committed||0),available:Number(position.on_hand)-Number(position.committed||0),
       })) };
   });
@@ -364,7 +364,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     return `${String(row.operation).replaceAll('_',' ')} ${quantity} × ${product} at ${row.location_name}.`;};
   const recent=recentRows.map((row)=>({...row,itemId:row.item_id,displayName:row.variant_label||item.name,
     sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
-  return { item, skus, locations, recent, total, committed: committedTotal,
+  return { item, skus, locations, recent, total,secondaryTotal:Number(totalResult.rows[0].secondary_on_hand||0),committed: committedTotal,
     available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
     options:optionResult.rows,lots:[...lotsById.values()].slice(0,trackingLimit),units:unitResult.rows.slice(0,trackingLimit),
     trackingCoverage:{query:trackingQuery,limit:trackingLimit,
