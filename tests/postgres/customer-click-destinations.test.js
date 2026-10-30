@@ -33,7 +33,7 @@ test('required customer click gate visits page routes and detail families, block
  page.on('dialog',d=>d.dismiss());
  // Deep links can intentionally open a native modal (for example Add a location).
  // Dismiss it through the same control a customer uses before testing background navigation.
- async function dismissOpenDialogs(){for(const dialog of await page.locator('dialog[open]').all()){const close=dialog.locator('[data-modal-close], [data-close-ask]').first();if(await close.isVisible())await close.click();else await page.keyboard.press('Escape');assert.equal(await dialog.getAttribute('open'),null,'Dialog could not be dismissed');}}
+ async function dismissOpenDialogs(){let remaining=await page.locator('dialog[open]').count();while(remaining){const dialog=page.locator('dialog[open]').first(),close=dialog.locator('[data-modal-close], [data-close-ask]').first();if(await close.isVisible())await close.click();else await page.keyboard.press('Escape');const after=await page.locator('dialog[open]').count();assert(after<remaining,'Dialog could not be dismissed');remaining=after;}}
  page.on('pageerror',error=>{failures.push({page:new URL(page.url()).pathname,error:'Browser script error: '+error.message});save();});
  page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame()&&response.status()>=400){failures.push({page:new URL(response.url()).pathname,error:'Click navigation HTTP '+response.status()});save();}});
  while(queue.length){const target=queue.shift(),key=new URL(target,origin).pathname;if(seen.has(key)||nonPage.test(key)||publicAuth.has(key))continue;seen.add(key);let response;
