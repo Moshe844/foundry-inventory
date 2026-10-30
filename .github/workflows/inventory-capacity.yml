@@ -51,7 +51,7 @@ jobs:
       - name: ERP cutover and exact quantity regressions
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/unit/exact-quantity.test.js tests/unit/odoo-cutover-reader.test.js tests/unit/commercial-network.test.js tests/unit/postgres-migration-history.test.js tests/postgres/erp-cutover-contract.test.js tests/postgres/erp-cutover-batches.test.js tests/postgres/erp-cutover-application.test.js tests/postgres/erp-cutover-ui.test.js tests/postgres/odoo-cutover-qualified.test.js tests/postgres/measured-stock.test.js tests/postgres/existing-stock-costs.test.js tests/postgres/transfers-ui.test.js 2>&1 | tee output/inventory-ci/erp-cutover.log
+          node --test --test-concurrency=2 tests/unit/exact-quantity.test.js tests/unit/odoo-cutover-reader.test.js tests/unit/commercial-network.test.js tests/unit/postgres-migration-history.test.js tests/unit/persisted-secret-startup.test.js tests/postgres/erp-cutover-contract.test.js tests/postgres/erp-cutover-batches.test.js tests/postgres/erp-cutover-application.test.js tests/postgres/erp-cutover-ui.test.js tests/postgres/odoo-cutover-qualified.test.js tests/postgres/measured-stock.test.js tests/postgres/existing-stock-costs.test.js tests/postgres/transfers-ui.test.js 2>&1 | tee output/inventory-ci/erp-cutover.log
       - name: Complex inventory and source concurrency
         run: |
           set -euo pipefail
