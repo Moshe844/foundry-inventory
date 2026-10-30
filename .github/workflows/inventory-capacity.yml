@@ -48,6 +48,10 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/provider-catalog-cache.test.js tests/postgres/provider-sync.test.js tests/postgres/connection-synchronization.test.js tests/postgres/commerce-position-sync.test.js tests/postgres/warehouse-pages.test.js tests/postgres/import-many-axes.test.js tests/postgres/developer-account-removal.test.js tests/postgres/business-number-capacity.test.js tests/postgres/warehouse-tracked-capacity.test.js tests/postgres/warehouse-waves-ui.test.js tests/postgres/catalog-page-capacity.test.js tests/postgres/import-preview-revisions.test.js tests/postgres/inventory-capacity.test.js tests/postgres/inventory-erp-correctness.test.js tests/postgres/inventory-engine.test.js tests/postgres/import-durable-batches.test.js tests/postgres/import-execution-pages.test.js tests/postgres/import-extended-scale-holdout.test.js tests/postgres/import-stock-intent.test.js tests/postgres/import-sku-identity.test.js tests/postgres/import-source-upload.test.js tests/postgres/replenishment-global-scope.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/product-planning-scale.test.js tests/postgres/planning-ui.test.js tests/postgres/public-plan-contract.test.js tests/postgres/public-offer-ui.test.js 2>&1 | tee output/inventory-ci/postgres.log
+      - name: ERP cutover and exact quantity regressions
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/unit/exact-quantity.test.js tests/unit/odoo-cutover-reader.test.js tests/unit/commercial-network.test.js tests/unit/postgres-migration-history.test.js tests/postgres/erp-cutover-contract.test.js tests/postgres/erp-cutover-application.test.js 2>&1 | tee output/inventory-ci/erp-cutover.log
       - name: Complex inventory and source concurrency
         run: |
           set -euo pipefail

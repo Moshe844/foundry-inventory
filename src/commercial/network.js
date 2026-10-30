@@ -43,7 +43,7 @@ async function reserveGmailQuota(database,quota,ceiling=GMAIL_PROJECT_DAILY_SAFE
  if(!row.rows.length)throw new ValidationError('Gmail project quota safety ceiling reached. Mail processing is paused before a chargeable provider call.');
  return Number(row.rows[0].reserved_units);
 }
-async function before(context,url,init,provider){const def=definition(url);
+async function before(context,url,init,provider){const def=definition(url);if(provider==='Odoo ERP'){def.provider='odoo';def.capability='connections.custom_api';def.version='json2';}
  const headers=init.headers||{};const version=Object.entries(headers).find(([key])=>
    ['stripe-version','square-version','x-api-version'].includes(key.toLowerCase()))?.[1];
  const address=new URL(url);
