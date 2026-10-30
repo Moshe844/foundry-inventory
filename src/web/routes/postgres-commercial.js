@@ -174,10 +174,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const quote=await commercial.subscriptionChangeQuote(database,scope.accountId,{planId:req.query.plan,
       interval:req.query.interval},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
-    return res.page('commercial/change',{title:'Review plan change',nav:'settings',room:true,quote});}));
+    return res.page('commercial/change',{title:'Review plan change',nav:'settings',room:true,quote,changeKey:newId('planreview')});}));
   router.post('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const changed=await commercial.requestSubscriptionChange(database,scope.accountId,{planId:req.body.planId,
-      interval:req.body.interval,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
+      interval:req.body.interval,idempotencyKey:req.body.changeKey,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
     req.flash('success',changed.status==='APPLIED'?`${changed.quote.target.public_name} is active.`:changed.quote.downgrade?
       `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}.`:
       `Stripe is confirming your change to ${changed.quote.target.public_name}. Your features unlock as soon as payment is confirmed. Refresh this page in a moment.`);

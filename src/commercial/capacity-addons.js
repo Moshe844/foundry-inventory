@@ -50,7 +50,7 @@ async function receive(client,event){
 async function cancel(db,accountId,orderId,options={}){
  const row=(await db.query('SELECT * FROM commercial_capacity_orders WHERE id=$1 AND account_id=$2',[orderId,accountId])).rows[0];if(!row?.stripe_subscription_id)throw new ValidationError('That add-on has no active billing subscription.');
  if(row.status==='CANCELLED'||row.cancel_at_period_end)return {alreadyCancelled:true};
- const remote=await (options.provider||stripe).setCancellation({accountId,subscriptionId:row.stripe_subscription_id,requestId:'capacity-cancel:'+row.id,cancelAtPeriodEnd:true},options.providerOptions||{});
+ const remote=await (options.provider||stripe).setCancellation({accountId,subscriptionId:row.stripe_subscription_id,customerId:row.stripe_customer_id,requestId:'capacity-cancel:'+row.id,cancelAtPeriodEnd:true},options.providerOptions||{});
  if(remote.id!==row.stripe_subscription_id||id(remote.customer)!==row.stripe_customer_id||remote.cancel_at_period_end!==true)throw new ValidationError('The provider did not confirm this add-on cancellation.');
  await db.query('UPDATE commercial_capacity_orders SET cancel_at_period_end=true,updated_at=now() WHERE id=$1',[row.id]);return {cancelledAtRenewal:true};
 }

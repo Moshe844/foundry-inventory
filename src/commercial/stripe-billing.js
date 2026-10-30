@@ -142,7 +142,26 @@ async function previewSubscriptionChange(input,options={}){
     'subscription_details[proration_date]':input.prorationBehavior==='none'?undefined:input.prorationDate}});
 }
 
+async function activeSubscriptionSchedule(input,options={}){
+ const subscription=await retrieveSubscription(input.subscriptionId,options);
+ const objectId=value=>typeof value==='string'?value:value?.id;
+ if(subscription.id!==input.subscriptionId||(input.customerId&&objectId(subscription.customer)!==input.customerId))
+  throw new ValidationError('Stripe returned another billing subscription.');
+ const scheduleId=objectId(subscription.schedule);if(!scheduleId)return null;
+ const schedule=await retrieveSchedule(scheduleId,options);
+ if(schedule.id!==scheduleId||objectId(schedule.subscription)!==subscription.id||objectId(schedule.customer)!==objectId(subscription.customer)
+   ||!['active','not_started'].includes(schedule.status))throw new ValidationError('Stripe returned another subscription schedule.');
+ return schedule;
+}
+async function releaseActiveSchedule(input,options={}){
+ const schedule=await activeSubscriptionSchedule(input,options);if(!schedule)return;
+ const released=await call(`/subscription_schedules/${encodeURIComponent(schedule.id)}/release`,{...options,
+  idempotencyKey:`stockchief-schedule-release:${schedule.id}:${input.changeId||input.requestId}`,values:{preserve_cancel_date:'false'}});
+ if(released.id!==schedule.id||released.status!=='released'||released.released_subscription!==input.subscriptionId)
+  throw new ValidationError('Stripe did not confirm the previous plan schedule was removed.');
+}
 async function updateSubscription(input,options={}){
+  await releaseActiveSchedule(input,options);
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
     idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
       'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
@@ -151,7 +170,7 @@ async function updateSubscription(input,options={}){
     }});
 }
 async function scheduleDowngrade(input,options={}){
- const schedule=await call('/subscription_schedules',{...options,idempotencyKey:`stockchief-schedule:${input.changeId}`,
+ const schedule=await activeSubscriptionSchedule(input,options)||await call('/subscription_schedules',{...options,idempotencyKey:`stockchief-schedule:${input.changeId}`,
   values:{from_subscription:input.subscriptionId}});
  return call(`/subscription_schedules/${encodeURIComponent(schedule.id)}`,{...options,
   idempotencyKey:`stockchief-schedule-phases:${input.changeId}`,values:{end_behavior:'release',proration_behavior:'none',
@@ -164,6 +183,7 @@ async function scheduleDowngrade(input,options={}){
 
 async function cancelImmediately(input,options={}){return call('/subscriptions/'+encodeURIComponent(input.subscriptionId),{...options,method:'DELETE',idempotencyKey:'stockchief-refund-cancel:'+input.refundId,values:{invoice_now:'false',prorate:'false'}});}
 async function setCancellation(input,options={}){
+  await releaseActiveSchedule(input,options);
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
     idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.requestId}`,
     values:{cancel_at_period_end:input.cancelAtPeriodEnd?'true':'false',

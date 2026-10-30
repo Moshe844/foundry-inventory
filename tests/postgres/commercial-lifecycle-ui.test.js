@@ -77,6 +77,13 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
     page.getByRole('button',{name:'Schedule downgrade'}).click()]);
   assert.match(await page.locator('body').innerText(),/Your plan changes to Starter on/);assert.equal(changes[2].priceId,'price_starter_monthly');
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'pro');
+  await Promise.all([page.waitForURL(base+'/settings/billing'),page.getByRole('button',{name:'Cancel at renewal'}).last().click()]);
+  assert.match(await page.locator('body').innerText(),/Your plan ends on/);assert.doesNotMatch(await page.locator('body').innerText(),/Your plan changes to Starter on/);
+  assert.equal((await database.query("SELECT status FROM commercial_subscription_changes WHERE account_id=$1 AND to_plan_id='starter' ORDER BY created_at DESC LIMIT 1",[business.accountId])).rows[0].status,'CANCELLED');
+  await page.getByRole('button',{name:'Keep my subscription'}).click();await page.waitForURL(base+'/settings/billing');
+  await page.getByRole('link',{name:'Starter',exact:true}).click();await Promise.all([page.waitForURL(base+'/settings/billing'),page.getByRole('button',{name:'Schedule downgrade'}).click()]);
+  assert.match(await page.locator('body').innerText(),/Your plan changes to Starter on/);
+  assert.equal((await database.query("SELECT count(*)::int AS n FROM commercial_subscription_changes WHERE account_id=$1 AND to_plan_id='starter' AND status='PENDING'",[business.accountId])).rows[0].n,1,'a fresh review can schedule the same plan again after cancellation');
   const effective=Math.floor(new Date((await database.query(`SELECT effective_at FROM commercial_subscription_changes
     WHERE account_id=$1 AND to_plan_id='starter' AND status='PENDING'`,[business.accountId])).rows[0].effective_at).getTime()/1000);
   providerSubscription={...providerSubscription,current_period_start:effective,current_period_end:effective+2592000,

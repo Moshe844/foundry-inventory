@@ -158,10 +158,10 @@ async function requestSubscriptionChange(database,accountId,input,options={}){
     return {changeId:prior.id,quote:prior.request_quote,subscription:await entitlements.subscriptionFor(database,accountId),
       status:prior.status,replayed:true};}
   let updated;try{updated=quote.downgrade?await provider.scheduleDowngrade({changeId,
-      subscriptionId:quote.current.stripe_subscription_id,currentPriceId:planPriceId(quote.currentPlan,quote.current.billing_interval),
+      subscriptionId:quote.current.stripe_subscription_id,customerId:quote.current.stripe_customer_id,currentPriceId:planPriceId(quote.currentPlan,quote.current.billing_interval),
       periodEnd:Math.floor(new Date(quote.current.current_period_end).getTime()/1000),priceId:quote.priceId,interval:quote.interval},options.providerOptions||{}):
     await provider.updateSubscription({changeId,accountId,planId:quote.target.id,
-      subscriptionId:quote.current.stripe_subscription_id,itemId:quote.itemId,priceId:quote.priceId,
+      subscriptionId:quote.current.stripe_subscription_id,customerId:quote.current.stripe_customer_id,itemId:quote.itemId,priceId:quote.priceId,
       prorationBehavior:quote.downgrade?'none':'always_invoice',paymentBehavior:'pending_if_incomplete',
       prorationDate:quote.downgrade?undefined:quote.prorationDate},options.providerOptions||{});
   }catch(error){await database.query(`UPDATE commercial_subscription_changes SET status='BLOCKED',updated_at=now()
@@ -171,6 +171,8 @@ async function requestSubscriptionChange(database,accountId,input,options={}){
       ON CONFLICT(fingerprint) DO NOTHING`,[newId('critical'),accountId,`subscription-change:${changeId}`,
       JSON.stringify({changeId,subscriptionId:quote.current.stripe_subscription_id,error:String(error.message).slice(0,500)})]);
     throw error;}
+  await database.query(`UPDATE commercial_subscription_changes SET status='CANCELLED',updated_at=now()
+    WHERE account_id=$1 AND subscription_id=$2 AND id<>$3 AND status='PENDING' AND effective_at>now()`,[accountId,quote.current.id,changeId]);
   const saved=await entitlements.subscriptionFor(database,accountId);
   const applied=false; // Entitlement changes are activated only by a verified webhook.
   const change=(await database.query(`UPDATE commercial_subscription_changes
@@ -184,7 +186,7 @@ async function setSubscriptionCancellation(database,accountId,cancelAtPeriodEnd,
   const provider=options.provider||stripe;const current=await entitlements.subscriptionFor(database,accountId);
   if(!current?.stripe_subscription_id)throw new ValidationError('This account does not have an active Stripe subscription.');
   const updated=await provider.setCancellation({accountId,planId:current.plan_id,requestId:options.requestId||newId('cancellation'),
-    subscriptionId:current.stripe_subscription_id,cancelAtPeriodEnd:Boolean(cancelAtPeriodEnd)},options.providerOptions||{});
+    subscriptionId:current.stripe_subscription_id,customerId:current.stripe_customer_id,cancelAtPeriodEnd:Boolean(cancelAtPeriodEnd)},options.providerOptions||{});
   const customer=typeof updated.customer==='string'?updated.customer:updated.customer?.id;
   if(updated.id!==current.stripe_subscription_id||customer!==current.stripe_customer_id)
     throw new ValidationError('Stripe cancellation response does not match this billing account.');
@@ -193,7 +195,8 @@ async function setSubscriptionCancellation(database,accountId,cancelAtPeriodEnd,
   const result=(await database.query(`UPDATE account_subscriptions SET cancel_at_period_end=$2,updated_at=now()
     WHERE account_id=$1 AND stripe_subscription_id=$3 RETURNING *`,
     [accountId,updated.cancel_at_period_end?1:0,current.stripe_subscription_id])).rows[0];
-  if(updated.cancel_at_period_end){await require('../operations/postgres-job-queue').enqueue(database,{kind:'commercial.capacity-reconcile',idempotencyKey:'capacity-cancel:'+current.stripe_subscription_id+':'+String(current.current_period_end),payload:{accountId},maxAttempts:12});try{await require('./capacity-addons').cancelAll(database,accountId,options);}catch{/* The durable job retries without charging or losing the confirmed cancellation. */}}return result;
+  if(updated.cancel_at_period_end){await database.query(`UPDATE commercial_subscription_changes SET status='CANCELLED',updated_at=now()
+    WHERE account_id=$1 AND subscription_id=$2 AND status='PENDING' AND effective_at>now()`,[accountId,current.id]);await require('../operations/postgres-job-queue').enqueue(database,{kind:'commercial.capacity-reconcile',idempotencyKey:'capacity-cancel:'+current.stripe_subscription_id+':'+String(current.current_period_end),payload:{accountId},maxAttempts:12});try{await require('./capacity-addons').cancelAll(database,accountId,options);}catch{/* The durable job retries without charging or losing the confirmed cancellation. */}}return result;
 }
 
 function statusFromStripe(subscription) {
