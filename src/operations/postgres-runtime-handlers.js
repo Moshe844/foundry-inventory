@@ -575,6 +575,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   }),
   'shipping.tracking.check':external((job,database)=>require('../shipping/postgres-tracking').check(database,job,{providerResolver:options.shippingProviderResolver})),
   'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'erp.cutover.continue':external((job,database)=>require('../onboarding/postgres-cutover-runner').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.execute-approved':external(async(job,database)=>{

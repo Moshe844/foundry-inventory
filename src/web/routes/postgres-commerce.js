@@ -581,7 +581,7 @@ function createPostgresCommerceRouter(database,options={}){
   router.post('/purchasing/orders',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
     try{
       const quantities=req.body.quantity&&typeof req.body.quantity==='object'?req.body.quantity:null,costs=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
-      const lines=quantities?Object.entries(quantities).filter(([,q])=>String(q).trim()!==''&&Number(q)!==0).map(([skuId,quantity])=>({skuId,quantityPurchaseUnits:quantity,unitCost:costs[skuId]===''?undefined:costs[skuId],destinationLocationId:req.body.destinationLocationId})):[{skuId:req.body.skuId,quantityUnits:req.body.quantity,unitCost:req.body.unitCost,destinationLocationId:req.body.destinationLocationId}];
+      const lines=quantities?Object.entries(quantities).filter(([,q])=>String(q).trim()!==''&&Number(q)!==0).map(([skuId,quantity])=>({skuId,quantityPurchaseUnits:quantity,secondaryQuantity:req.body.secondaryQuantity?.[skuId],unitCost:costs[skuId]===''?undefined:costs[skuId],destinationLocationId:req.body.destinationLocationId})):[{skuId:req.body.skuId,quantityUnits:req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,unitCost:req.body.unitCost,destinationLocationId:req.body.destinationLocationId}];
       if(quantities){const linked=(await database.query('SELECT sku_id FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId])).rows;if(lines.some(l=>!linked.some(s=>s.sku_id===l.skuId)))throw new ValidationError('Choose products linked to this supplier.');}
       for(const line of lines){if(line.unitCost==null||String(line.unitCost).trim()===''){const supplier=(await database.query('SELECT currency FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0],linked=(await database.query('SELECT last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId,line.skuId])).rows[0];if(linked?.last_unit_cost!=null)line.unitCost=linked.last_unit_cost;else{const fallback=await require('../../pricing/postgres-service').purchaseCost(database,req.ctx.workspaceId,line.skuId);if(fallback?.currency===supplier?.currency)line.unitCost=require('../../domain/currency').fromMinor(fallback.amount_minor,fallback.currency);}}}
       if(lines.some(l=>l.unitCost!==undefined&&Number(l.unitCost)===0)&&req.body.confirmZeroCost!=='1')return purchaseEntry(req,res,{submitted:req.body,errors:['One or more selected lines have a $0 unit cost. Confirm that these are free before saving.'],status:400});
@@ -654,7 +654,7 @@ function createPostgresCommerceRouter(database,options={}){
     requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
       const detail=await commerce.purchaseOrder(database,req.ctx.workspaceId,req.params.id);
       const lines=detail.lines.map((line)=>({skuId:line.sku_id,locationId:line.destination_location_id,
-        quantity:req.body[`quantity_${line.id}`],lotCode:trimOrNull(req.body[`lot_${line.id}`]),
+        quantity:req.body[`quantity_${line.id}`],secondaryQuantity:req.body[`secondary_${line.id}`],lotCode:trimOrNull(req.body[`lot_${line.id}`]),
         serials:String(req.body[`serials_${line.id}`]||'').split(',').map((value)=>value.trim()).filter(Boolean)}))
         .filter((line)=>Number(line.quantity)>0);
       const result=await returns.requestSupplierReturn(database,req.ctx,{supplierId:detail.order.supplier_id,
@@ -1028,8 +1028,8 @@ function createPostgresCommerceRouter(database,options={}){
   router.post(['/orders/:id/fulfill','/sales/orders/:id/fulfill'],requirePermission(permissions.OPERATE,'fulfill sales orders'),asyncRoute(async(req,res)=>{
     const lineIds=Array.isArray(req.body.lineId)?req.body.lineId:[req.body.lineId];
     const locationIds=Array.isArray(req.body.locationId)?req.body.locationId:[req.body.locationId];
-    const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity];
-    const lines=lineIds.map((lineId,index)=>({lineId,locationId:locationIds[index]||locationIds[0],quantity:quantities[index]}))
+    const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity],weights=Array.isArray(req.body.secondaryQuantity)?req.body.secondaryQuantity:[req.body.secondaryQuantity];
+    const lines=lineIds.map((lineId,index)=>({lineId,locationId:locationIds[index]||locationIds[0],quantity:quantities[index],secondaryQuantity:weights[index]}))
       .filter((line)=>Number(line.quantity)>0);
     const result=await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines,
       shipment:{handover:req.body.handover,carrier:req.body.carrier,trackingNumber:req.body.trackingNumber}});

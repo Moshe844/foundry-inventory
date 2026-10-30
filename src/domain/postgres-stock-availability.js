@@ -1,4 +1,5 @@
 'use strict';
+const exact=require('./exact-quantity');
 const {ValidationError}=require('./errors');
 const key=(skuId,locationId)=>JSON.stringify([skuId,locationId]);
 const POSITION_SQL=` SELECT p.sku_id,p.location_id,loc.custody_agreement_id,coalesce(b.on_hand,0)::text on_hand,
@@ -24,13 +25,13 @@ async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=nu
  const rows=(await c.query(`WITH requested AS (SELECT DISTINCT sku_id,location_id FROM jsonb_to_recordset($2::jsonb) AS p(sku_id text,location_id text))
  ${POSITION_SQL}`,[workspaceId,requested,lotId,excludeTransferId])).rows;
  const rentals=await require('../custody/postgres-bookings').heldMany(c,workspaceId,positions,{excludeAgreementId:excludeRentalAgreementId,rentalWindow}),result=new Map();
- for(const row of rows){const full=Number(row.on_hand),onHand=lotId?Number(row.lot_quantity):full,committed=Number(row.committed),transferReserved=Number(lotId?row.lot_reserved:row.transfer_quantity),rentalReserved=rentals.get(key(row.sku_id,row.location_id))||0;if(![full,onHand,committed,transferReserved,rentalReserved].every(Number.isSafeInteger))throw new ValidationError('Stock commitments need an exact quantity review.');
-  result.set(key(row.sku_id,row.location_id),row.custody_agreement_id?{onHand:0,committed:0,reserved:0,rentalReserved:0,available:0,protectedCustody:true}:{onHand,committed:lotId?0:committed,reserved:transferReserved+rentalReserved,rentalReserved,available:Math.max(0,Math.min(onHand-(lotId?0:committed)-transferReserved-(lotId?0:rentalReserved),full-committed-Number(row.transfer_quantity)-rentalReserved))});
+ for(const row of rows){const full=Number(row.on_hand),onHand=lotId?Number(row.lot_quantity):full,committed=Number(row.committed),transferReserved=Number(lotId?row.lot_reserved:row.transfer_quantity),rentalReserved=rentals.get(key(row.sku_id,row.location_id))||0;if(![full,onHand,committed,transferReserved,rentalReserved].every(v=>{exact.safeNumber(v,{signed:true});return true;}))throw new ValidationError('Stock commitments need an exact quantity review.');
+  result.set(key(row.sku_id,row.location_id),row.custody_agreement_id?{onHand:0,committed:0,reserved:0,rentalReserved:0,available:0,protectedCustody:true}:{onHand,committed:lotId?0:committed,reserved:exact.safeNumber(exact.add(transferReserved,rentalReserved)),rentalReserved,available:Math.max(0,Math.min(exact.safeNumber(exact.subtract(exact.subtract(exact.subtract(onHand,lotId?0:committed),transferReserved),lotId?0:rentalReserved),{signed:true}),exact.safeNumber(exact.subtract(exact.subtract(exact.subtract(full,committed),row.transfer_quantity),rentalReserved),{signed:true})))});
  }return result;
 }
 async function read(c,workspaceId,skuId,locationId,options={}){return (await readMany(c,workspaceId,[{skuId,locationId}],options)).get(key(skuId,locationId))||{onHand:0,committed:0,reserved:0,rentalReserved:0,available:0};}
 async function total(c,workspaceId){
  const holds=await require('../custody/postgres-bookings').heldMany(c,workspaceId,null),rows=[...holds].map(([key,quantity])=>{const [sku_id,location_id]=JSON.parse(key);return {sku_id,location_id,quantity};});
- const r=(await c.query(`WITH requested AS (SELECT sku_id,location_id FROM balances WHERE workspace_id=$1 AND on_hand>0),positions AS (${POSITION_SQL}),rental_holds AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(sku_id text,location_id text,quantity bigint)) SELECT coalesce(sum(greatest(p.on_hand::bigint-p.committed::bigint-p.transfer_quantity::bigint-coalesce(r.quantity,0),0)),0)::text quantity FROM positions p LEFT JOIN rental_holds r ON r.sku_id=p.sku_id AND r.location_id=p.location_id WHERE p.custody_agreement_id IS NULL`,[workspaceId,JSON.stringify(rows),null,null])).rows[0];return Number(r.quantity);
+ const r=(await c.query(`WITH requested AS (SELECT sku_id,location_id FROM balances WHERE workspace_id=$1 AND on_hand>0),positions AS (${POSITION_SQL}),rental_holds AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(sku_id text,location_id text,quantity numeric)) SELECT coalesce(sum(greatest(p.on_hand::numeric-p.committed::numeric-p.transfer_quantity::numeric-coalesce(r.quantity,0),0)),0)::text quantity FROM positions p LEFT JOIN rental_holds r ON r.sku_id=p.sku_id AND r.location_id=p.location_id WHERE p.custody_agreement_id IS NULL`,[workspaceId,JSON.stringify(rows),null,null])).rows[0];return Number(r.quantity);
 }
 module.exports={read,readMany,key,total};

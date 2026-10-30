@@ -87,10 +87,10 @@ function quote(input){
   const guardAt=input.guardAt?Date.parse(input.guardAt):at;if(!Number.isFinite(guardAt))invalid('An explicit safeguard evaluation time is required.');
   const rules=(input.rules||[]).map(validateRule).filter(r=>active(r,r.kind==='guard'?guardAt:at,input.currency)).sort(stable),codes=new Set((input.codes||[]).map(s=>String(s).trim().toUpperCase()));
   const lists=rules.filter(r=>r.kind==='price_list'),discounts=rules.filter(r=>r.kind==='promotion'),guards=rules.filter(r=>r.kind==='guard');
-  const scaled=input.lines.map(line=>quantityScaled(line.quantity,input.allowFractionalQuantities===true));
+  const scaled=input.lines.map(line=>quantityScaled(line.pricingQuantity??line.quantity,input.allowFractionalQuantities===true));
   const quantities=new Map();input.lines.forEach((line,i)=>quantities.set(line.skuId,sum([quantities.get(line.skuId)||0,scaled[i]])));
   const lines=input.lines.map((line,index)=>{
-    const quantity=scaled[index]/QUANTITY_SCALE,base=integer(line.unitPriceMinor,'Unit price');
+    const quantity=Number(line.quantity),base=integer(line.unitPriceMinor,'Unit price');
     let selected=null,unitPriceMinor=base;const candidates=[];
     for(const list of lists){if(line.priceOverride===true||input.priceListId&&list.id!==input.priceListId||!eligible(list.scope,line,input.customerId))continue;
       const tier=list.entries.filter(e=>e.skuId===line.skuId&&e.minQuantity*QUANTITY_SCALE<=quantities.get(line.skuId)).sort((a,b)=>b.minQuantity-a.minQuantity)[0];
@@ -100,7 +100,7 @@ function quote(input){
     const grossMinor=recorded?integer(line.grossMinor,'Recorded line gross'):extended(unitPriceMinor,scaled[index]);
     const discountMinor=recorded?integer(line.discountMinor??0,'Recorded line discount'):0;
     if(discountMinor>grossMinor)invalid('Recorded discount exceeds its line value.');
-    return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
+    return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,...(line.pricingQuantity!=null?{pricingQuantity:Number(line.pricingQuantity)}:{}),priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
   });
   if(input.priceListId&&!lists.some(r=>r.id===input.priceListId&&lines.some(l=>l.priceSource?.id===r.id)))invalid('The selected price list is not applicable to this customer, currency or quantity.');
   const originalSubtotal=sum(lines.map(l=>l.grossMinor)),applied=[],groups=new Set();let exclusive=false;
@@ -158,7 +158,7 @@ function quote(input){
 }
 // Cumulative allocation makes splitting a fulfillment or return conserve every
 // penny; the final unit receives exactly the snapshot's remaining fraction.
-function portion(total,quantity,before,take){integer(total,'Historical amount');integer(quantity,'Ordered quantity',{min:1});integer(before,'Already processed');integer(take,'Requested quantity');if(before+take>quantity)invalid('Quantity exceeds the historical line.');return number(BigInt(total)*BigInt(before+take)/BigInt(quantity)-BigInt(total)*BigInt(before)/BigInt(quantity));}
+function portion(total,quantity,before,take){return require('../domain/exact-quantity').portionMinor(total,quantity,before,take);}
 // Allocate non-negative economic components, then derive their parents.
 // Independently flooring gross and discount (or total tax and shipping tax)
 // can otherwise produce negative revenue/tax on an intermediate unit.

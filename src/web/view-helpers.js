@@ -13,7 +13,7 @@ const {
 
 const { icon } = require('./icons');
 
-const numberFormat = new Intl.NumberFormat('en-US');
+const numberFormat = new Intl.NumberFormat('en-US',{maximumFractionDigits:6});
 
 function qty(value) {
   const n = Number(value || 0);

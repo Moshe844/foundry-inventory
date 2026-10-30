@@ -63,7 +63,7 @@ async function list(database,workspaceId,options={}){
   const limit=pageSize(options);
   const result=await database.query(`SELECT wave.*,
     (SELECT COUNT(*) FROM fulfillment_wave_shipments shipment WHERE shipment.wave_id=wave.id)::integer AS shipment_count,
-    (SELECT COALESCE(SUM(planned_quantity),0) FROM fulfillment_wave_lines line WHERE line.wave_id=wave.id)::bigint AS units
+    (SELECT COALESCE(SUM(planned_quantity),0) FROM fulfillment_wave_lines line WHERE line.wave_id=wave.id)::numeric AS units
     FROM fulfillment_waves wave WHERE wave.workspace_id=$1
       AND ($2::text IS NULL OR wave.wave_number<(SELECT wave_number FROM fulfillment_waves WHERE workspace_id=$1 AND id=$2))
     ORDER BY wave.wave_number DESC LIMIT $3`,[workspaceId,options.afterId||null,limit+1]);

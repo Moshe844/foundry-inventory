@@ -95,7 +95,7 @@ function createPostgresInventoryRouter(database) {
     const hasVariants=req.body.hasVariants==='1' || req.body.hasVariants==='on';
     try {
       const created=await catalog.createItem(database,req.ctx,{name:req.body.name,baseCode:req.body.baseCode,
-        description:req.body.description,unitLabel:req.body.unitLabel,trackingMode:req.body.trackingMode,
+        description:req.body.description,unitLabel:req.body.unitLabel,quantityPrecision:Number(req.body.quantityPrecision||0),quantityIncrement:req.body.quantityIncrement||undefined,secondaryUnitLabel:trimOrNull(req.body.secondaryUnitLabel),secondaryPrecision:Number(req.body.secondaryPrecision||3),startingSecondaryQuantity:req.body.startingSecondaryQuantity,trackingMode:req.body.trackingMode,
         startingQuantity:req.body.startingQuantity,startingLocationId:req.body.startingLocationId,startingCost:req.body.startingCost,startingLotCode:req.body.startingLotCode,startingSerials:req.body.startingSerials,hasVariants,options:hasVariants?normaliseOptionInput(req.body.options):[],sellingPrice:req.body.sellingPrice,purchaseCost:req.body.purchaseCost,weightGrams:req.body.weightGrams,lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
       req.flash('success',Number(req.body.startingQuantity)>0?'Item and starting stock saved.':'Item created. Add starting stock when you are ready.');
       return res.redirect(303,`/inventory/${created.itemId}`);
@@ -161,7 +161,7 @@ function createPostgresInventoryRouter(database) {
   }));
   router.post('/inventory/:id/receive',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);
-    const input={skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.quantity,
+    const input={skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,serialWeights:require('../../domain/stock-quantity').parseSerialWeights(req.body.serialWeights),
       notes:trimOrNull(req.body.notes),reference:trimOrNull(req.body.reference),
       idempotencyKey:operationKey(req,'receive')};
     if(detail.item.tracking_mode==='lot')Object.assign(input,{lotCode:req.body.lotCode,
@@ -182,7 +182,7 @@ function createPostgresInventoryRouter(database) {
     const selected=await serialSelection(database,req.ctx.workspaceId,serialUnitIds);
     const result=await inventory.issue(database,req.ctx,{skuId:selected?.skuId || req.body.skuId,
       locationId:selected?.locationId || req.body.locationId,
-      quantity:serialUnitIds.length || req.body.quantity,lotId:trimOrNull(req.body.lotId),serialUnitIds,
+      quantity:serialUnitIds.length || req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,lotId:trimOrNull(req.body.lotId),serialUnitIds,
       occurredAt:trimOrNull(req.body.occurredAt),reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'issue')});
     req.flash('success',`Issued ${result.quantity} ${result.quantity===1?'unit':'units'}.`);
@@ -202,8 +202,8 @@ function createPostgresInventoryRouter(database) {
     return res.redirect(303,`/transfers/${transfer.id}`);
   }));
   router.post('/inventory/:id/adjust',asyncRoute(async(req,res)=>{
-    const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await inventory.adjust(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
-      countedQuantity:req.body.countedQty,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
+    const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,secondaryQuantity:req.body.secondaryCountedQuantity,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await inventory.adjust(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
+      countedQuantity:req.body.countedQty,secondaryCountedQuantity:req.body.secondaryCountedQuantity,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'adjust')});
     req.flash('success',result.unchanged?'The count already matched.':`Count corrected to ${result.balanceAfter}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
@@ -230,7 +230,7 @@ function createPostgresInventoryRouter(database) {
     const [skuId,locationId]=String(req.body.position||'').split(':');
     if(!(await database.query('SELECT 1 FROM skus WHERE workspace_id=$1 AND item_id=$2 AND id=$3 AND is_active=1',
       [req.ctx.workspaceId,req.params.id,skuId])).rows.length)throw new ValidationError('Choose a variant from this product.');
-    const prepared=await require('../../accounting/postgres-inventory-costs').prepare(database,req.ctx,{skuId,locationId,quantity:req.body.quantity,
+    const prepared=await require('../../accounting/postgres-inventory-costs').prepare(database,req.ctx,{skuId,locationId,quantity:req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,
       unitCost:req.body.unitCost,currency:req.body.currency,basis:req.body.basis,evidenceReference:req.body.evidenceReference,postingDate:req.body.postingDate},
       `Record the recorded cost of existing ${detail.item.name} stock; do not change physical quantities.`);
     return res.redirect(303,`/actions/${prepared.proposal.id}`);

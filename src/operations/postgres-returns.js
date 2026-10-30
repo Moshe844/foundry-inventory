@@ -153,7 +153,7 @@ async function requestCustomerReturn(database, rawContext, input) {
       const line = lineResult.rows[0];
       if (!line) throw new ValidationError(`Return line ${index + 1} is not on that order.`);
       const quantity = positiveInteger(requested.quantity, `Return line ${index + 1} quantity`);
-      const prior = await client.query(`SELECT COALESCE(SUM(rl.quantity_authorized),0)::bigint AS quantity
+      const prior = await client.query(`SELECT COALESCE(SUM(rl.quantity_authorized),0)::numeric AS quantity
         FROM customer_return_lines rl JOIN customer_returns r ON r.id=rl.customer_return_id
         WHERE rl.workspace_id=$1 AND rl.sales_order_line_id=$2 AND r.status<>'CANCELLED'`, [ctx.workspaceId, line.id]);
       if (Number(prior.rows[0].quantity) + quantity > Number(line.quantity_fulfilled)) {
@@ -193,7 +193,7 @@ async function authorizeCustomerReturn(database, rawContext, id, input) {
 
 async function fulfillmentEvidence(client, ctx, salesOrderLineId) {
   const result = await client.query(`SELECT icm.inventory_movement_id,icm.journal_entry_id,
-      ABS(icm.quantity_delta)::bigint AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata
+      ABS(icm.quantity_delta)::numeric AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata
     FROM accounting_inventory_cost_movements icm
     JOIN accounting_journal_entries je ON je.id=icm.journal_entry_id AND je.workspace_id=icm.workspace_id
     JOIN movements m ON m.id=icm.inventory_movement_id AND m.workspace_id=icm.workspace_id
@@ -681,7 +681,7 @@ async function requestSupplierReturn(database, rawContext, input) {
       trimOrNull(input.reason), ctx.actorId, at]);
     for (const [index, raw] of input.lines.entries()) {
       const stock = (await client.query(`SELECT s.id,s.item_id,i.name,i.tracking_mode,l.id AS location_id,
-          COALESCE(b.on_hand,0)::bigint AS on_hand FROM skus s JOIN items i ON i.id=s.item_id
+          COALESCE(b.on_hand,0)::numeric AS on_hand FROM skus s JOIN items i ON i.id=s.item_id
         JOIN locations l ON l.id=$3 AND l.workspace_id=s.workspace_id
         LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
         WHERE s.id=$1 AND s.workspace_id=$2 AND s.is_active=1 AND i.is_active=1 AND l.is_active=1`,

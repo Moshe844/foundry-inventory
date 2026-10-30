@@ -9,7 +9,7 @@ test('unsupported physical precision, non-decimals, negatives and unsafe totals 
  assert.throws(()=>q.atoms('1.0001',3),/decimal places/);assert.throws(()=>q.atoms('9007199254740992',0),/exact range/);assert.throws(()=>q.atoms('0',3,{positive:true}),/above zero/);
  assert.throws(()=>q.fromAtoms(1,10));assert.equal(q.fromAtoms(q.atoms('-1.25',3,{signed:true}),3),'-1.25');
 });
-test('unit conversions require supplied exact factors, preserve dimensions supplied by the caller and refuse lossy division',()=>{
+test('unit conversions require supplied exact factors, use caller-supplied factors and refuse lossy division',()=>{
  assert.equal(q.convert('1.25',{numerator:'1000',precision:0}),'1250');assert.equal(q.convert('1250',{denominator:'1000',precision:3}),'1.25');
  assert.equal(q.convert('3',{numerator:'12',precision:0}),'36');assert.equal(q.convert('1',{numerator:'0.45359237',precision:8}),'0.45359237');
  assert.throws(()=>q.convert('1',{denominator:'3'}),/exactly/);assert.throws(()=>q.convert('1',{denominator:'0'}),/positive/);
@@ -26,5 +26,6 @@ test('quantity arithmetic and partial monetary allocation stay exact across frac
  assert.throws(()=>q.safeNumber('1.001',{precision:2}),/decimal places/);assert.throws(()=>q.safeNumber('9007199254740991.1'),/exact range/);
  assert.equal(q.ratioMinor(100,'0.1','0.3'),33);assert.equal(q.ratioMinor(100,'0.2','0.3'),67);
  const parts=[q.portionMinor(100,'0.3','0','0.1'),q.portionMinor(100,'0.3','0.1','0.1'),q.portionMinor(100,'0.3','0.2','0.1')];assert.deepEqual(parts,[33,33,34]);assert.equal(parts.reduce((a,b)=>a+b),100);
+ assert.throws(()=>q.portionMinor(100,'0.3','-0.1','0.1'),/negative/);assert.throws(()=>q.portionMinor(100,'0.3','0.1','-0.1'),/negative/);assert.throws(()=>q.safeNumber('1',{precision:10}),/precision/);
  assert.throws(()=>q.portionMinor(100,'0.3','0.2','0.2'),/exceeds/);assert.equal(q.portionMinor(9007199254740991,3,1,1),3002399751580330);
 });

@@ -4,6 +4,9 @@ test('native PostgreSQL ERP application resumes atomic batches without duplicate
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Cutover owner',businessName:'Native ERP application',email:'native-cutover@example.test',password:'ERP-cutover-qualification!'}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  const records=[
+ {type:'account',key:'equipment',payload:{name:'ERP Equipment',code:'QA-EQUIPMENT',type:'ASSET'}},
+ {type:'opening_receivable',key:'ar-1',payload:{documentNumber:'ERP-AR-1',customerKey:'customer',issueDate:'2026-10-01',dueDate:'2026-11-01',balanceMinor:10000,originalTotalMinor:15000,currency:'USD'}},
+ {type:'opening_payable',key:'ap-1',payload:{documentNumber:'ERP-AP-1',supplierKey:'supplier',issueDate:'2026-10-01',balanceMinor:3000,currency:'USD'}},
  {type:'location',key:'warehouse',payload:{name:'ERP Main',kind:'warehouse'}},
  {type:'product',key:'product',payload:{name:'ERP product',trackingMode:'quantity',unitLabel:'unit'}},
  ...['red','blue'].map((key,i)=>({type:'sku',key,payload:{productKey:'product',code:'ERP-'+key,options:[{name:'Colour',value:key}]}})),
@@ -17,7 +20,7 @@ test('native PostgreSQL ERP application resumes atomic batches without duplicate
  {type:'inventory_position',key:'blue-stock',payload:{skuKey:'blue',locationKey:'warehouse',quantity:5,totalCostMinor:47500,currency:'USD',reservedQuantity:0,damagedQuantity:0,availableQuantity:5}},
  {type:'purchase_order',key:'po',payload:{orderNumber:'ERP-PO-42',supplierKey:'supplier',destinationLocationKey:'warehouse',currency:'USD',status:'ORDERED',remainingOnly:true,lines:[{skuKey:'red',quantity:4,unitPriceMinor:9500}]}},
  {type:'sales_order',key:'so',payload:{orderNumber:'ERP-SO-42',customerKey:'customer',fulfillmentLocationKey:'warehouse',deliveryMethod:'PICKUP',currency:'USD',status:'CONFIRMED',remainingOnly:true,lines:[{skuKey:'red',quantity:2,unitPriceMinor:12500}]}},
- {type:'opening_journal',key:'opening',payload:{currency:'USD',postingDate:'2026-10-30',lines:[{accountKey:'INVENTORY_ASSET',debitMinor:161500},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:161500}]}},
+ {type:'opening_journal',key:'opening',payload:{currency:'USD',postingDate:'2026-10-30',lines:[{accountKey:'INVENTORY_ASSET',debitMinor:161500},{accountKey:'ACCOUNTS_RECEIVABLE',customerKey:'customer',debitMinor:10000},{accountKey:'ACCOUNTS_PAYABLE',supplierKey:'supplier',creditMinor:3000},{accountSourceKey:'equipment',debitMinor:2000},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:170500}]}},
  {type:'history_fact',key:'prior-shipment',payload:{factType:'source_order_history',operatingEffect:false,originalOrder:'ERP-SO-42',previouslyShipped:6}}
  ];
  const counts=Object.fromEntries(Object.keys(cutover.TYPES).map(k=>[k,records.filter(r=>r.type===k).length])),manifest={counts,accounting:{currency:'USD',startDate:'2026-10-30'}};

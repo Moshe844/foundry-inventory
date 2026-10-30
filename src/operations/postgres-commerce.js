@@ -53,6 +53,7 @@ function supplierItemValues(input,current){
       if(nullable)return null;throw new ValidationError(`${name} is required.`);}
     const value=Number(input[name]);if(!Number.isSafeInteger(value)||value<min||value>max)
       throw new ValidationError(`${name} must be a whole number from ${min} to ${max}.`);return value;};
+  const decimal=(name,fallback,min,nullable=false)=>{if(!Object.hasOwn(input,name))return fallback;if(input[name]==null||String(input[name]).trim()===''){if(nullable)return null;throw new ValidationError(name+' is required.');}const value=require('../domain/exact-quantity').safeNumber(input[name],{label:name});if(value<min||value>100000)throw new ValidationError(name+' is outside the supported range.');return value;};
   const cost=Object.hasOwn(input,'lastUnitCost')?(input.lastUnitCost==null||String(input.lastUnitCost).trim()===''
     ?null:Number(input.lastUnitCost)):
     current?.last_unit_cost==null?null:Number(current.last_unit_cost);
@@ -60,10 +61,10 @@ function supplierItemValues(input,current){
     throw new ValidationError('Unit cost must be a non-negative amount with no more than two decimals.');
   const value={supplierSku:text('supplierSku',current?.supplier_sku||null),
     purchaseUnit:text('purchaseUnit',current?.purchase_unit||'unit')||'unit',
-    unitsPerPurchaseUnit:whole('unitsPerPurchaseUnit',Number(current?.units_per_purchase_unit||1),1,100000),
+    unitsPerPurchaseUnit:decimal('unitsPerPurchaseUnit',Number(current?.units_per_purchase_unit||1),0.000001),
     lastUnitCost:cost,leadTimeDays:whole('leadTimeDays',current?.lead_time_days==null?null:Number(current.lead_time_days),0,365,true),
-    minimumOrderQuantity:whole('minimumOrderQuantity',current?.minimum_order_quantity==null?null:Number(current.minimum_order_quantity),0,100000,true),
-    orderMultiple:whole('orderMultiple',current?.order_multiple==null?null:Number(current.order_multiple),1,100000,true),
+    minimumOrderQuantity:decimal('minimumOrderQuantity',current?.minimum_order_quantity==null?null:Number(current.minimum_order_quantity),0,true),
+    orderMultiple:decimal('orderMultiple',current?.order_multiple==null?null:Number(current.order_multiple),0.000001,true),
     isPreferred:Object.hasOwn(input,'isPreferred')?[true,1,'true','1'].includes(input.isPreferred):Boolean(Number(current?.is_preferred)),
     notes:text('notes',current?.notes||null)};
 
@@ -92,7 +93,7 @@ async function linkSupplierItemsInTransaction(client,ctx,inputs){
  if(preferred.size)await client.query(`UPDATE supplier_items p SET is_preferred=0,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,supplier_id text) WHERE p.workspace_id=$1 AND p.sku_id=x.sku_id AND p.supplier_id<>x.supplier_id AND p.is_preferred=1`,[ctx.workspaceId,JSON.stringify([...preferred].map(([sku_id,supplier_id])=>({sku_id,supplier_id}))),at]);
  const result=await client.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,units_per_purchase_unit,last_unit_cost,last_cost_at,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,notes,created_at,updated_at)
   SELECT x.id,$1,x.supplier_id,x.sku_id,x.supplier_sku,x.purchase_unit,x.units_per_purchase_unit,x.last_unit_cost,x.last_cost_at,x.lead_time_days,x.minimum_order_quantity,x.order_multiple,x.is_preferred,1,x.notes,x.created_at,$3
-  FROM jsonb_to_recordset($2::jsonb) AS x(id text,supplier_id text,sku_id text,supplier_sku text,purchase_unit text,units_per_purchase_unit bigint,last_unit_cost numeric,last_cost_at text,lead_time_days bigint,minimum_order_quantity bigint,order_multiple bigint,is_preferred bigint,notes text,created_at text)
+  FROM jsonb_to_recordset($2::jsonb) AS x(id text,supplier_id text,sku_id text,supplier_sku text,purchase_unit text,units_per_purchase_unit numeric,last_unit_cost numeric,last_cost_at text,lead_time_days bigint,minimum_order_quantity numeric,order_multiple numeric,is_preferred bigint,notes text,created_at text)
   ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET supplier_sku=EXCLUDED.supplier_sku,purchase_unit=EXCLUDED.purchase_unit,units_per_purchase_unit=EXCLUDED.units_per_purchase_unit,last_unit_cost=EXCLUDED.last_unit_cost,last_cost_at=EXCLUDED.last_cost_at,lead_time_days=EXCLUDED.lead_time_days,minimum_order_quantity=EXCLUDED.minimum_order_quantity,order_multiple=EXCLUDED.order_multiple,is_preferred=EXCLUDED.is_preferred,is_active=1,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at RETURNING id,supplier_id,sku_id,is_active`,[ctx.workspaceId,JSON.stringify(rows),at]);
  return result.rows;
 }
@@ -162,17 +163,17 @@ async function catalogue(database, workspaceId, {limit=null,search='',ids=null,t
   // Immediately after a bulk import the planner can still estimate one item
   // per tenant and repeatedly scan that tenant's entire item index. Keep the
   // unique-ID lookup as a boundary, then enforce tenant/activity outside it.
-  const result=await database.query(`WITH selected AS (SELECT s.*,i.name AS item_name,i.tracking_mode FROM skus s
-    JOIN LATERAL (SELECT name,workspace_id,is_active,tracking_mode FROM items WHERE id=s.item_id OFFSET 0) i
+  const result=await database.query(`WITH selected AS (SELECT s.*,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment FROM skus s
+    JOIN LATERAL (SELECT name,workspace_id,is_active,tracking_mode,unit_label,quantity_precision,quantity_increment,secondary_unit_label,secondary_precision,secondary_increment FROM items WHERE id=s.item_id OFFSET 0) i
       ON i.workspace_id=s.workspace_id AND i.is_active=1
     WHERE s.workspace_id=$1 AND s.is_active=1
       AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
       AND ($3='' OR position(lower($3) in lower(s.code||' '||i.name||' '||coalesce(s.variant_label,'')))>0)
       AND ($5::text IS NULL OR i.tracking_mode=$5)
     ORDER BY lower(i.name),s.position,s.id LIMIT $4)
-    SELECT s.id,s.code,s.variant_label,s.item_name,s.weight_grams,s.tracking_mode,
+    SELECT s.id,s.code,s.variant_label,s.item_name,s.weight_grams,s.tracking_mode,s.unit_label,s.quantity_precision,s.quantity_increment,s.secondary_unit_label,s.secondary_precision,s.secondary_increment,
       CASE WHEN coalesce(s.variant_label,'')='' THEN s.item_name ELSE s.item_name||' / '||s.variant_label END AS display_name,
-      p.amount_minor,p.currency,coalesce(b.on_hand,0)::bigint AS on_hand,coalesce(b.available_on_hand,0)::bigint AS available_on_hand,coalesce(a.committed,0)::bigint AS committed
+      p.amount_minor,p.currency,coalesce(b.on_hand,0)::numeric AS on_hand,coalesce(b.available_on_hand,0)::numeric AS available_on_hand,coalesce(a.committed,0)::numeric AS committed
     FROM selected s LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices p
       WHERE p.workspace_id=$1 AND p.sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1)p ON true
     LEFT JOIN LATERAL(SELECT sum(b.on_hand) AS on_hand,sum(CASE WHEN l.custody_agreement_id IS NULL THEN b.on_hand ELSE 0 END) AS available_on_hand FROM balances b JOIN locations l ON l.workspace_id=b.workspace_id AND l.id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id=s.id)b ON true
@@ -198,8 +199,8 @@ async function purchaseOrders(database, workspaceId, {q=''}={}) {
   const result=await database.query(`SELECT po.*,s.name AS supplier_name,
       COUNT(pol.id)::integer AS line_count,
       COALESCE(SUM(pol.line_total),0) AS total,
-      COALESCE(SUM(pol.quantity_units),0)::bigint AS ordered_units,
-      COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0)::bigint AS units_outstanding,
+      COALESCE(SUM(pol.quantity_units),0)::numeric AS ordered_units,
+      COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0)::numeric AS units_outstanding,
       COUNT(pol.id) FILTER (WHERE pol.unit_cost IS NOT NULL)::integer AS priced_line_count,
       COALESCE((SELECT SUM(balance_minor) FROM accounting_supplier_bills b
         WHERE b.workspace_id=po.workspace_id AND b.purchase_order_id=po.id AND b.status<>'VOID'),0)::bigint AS balance_minor
@@ -234,8 +235,8 @@ async function purchaseOrder(database, workspaceId, id) {
 async function salesOrders(database, workspaceId, {q=''}={}) {
   const result=await database.query(`SELECT so.*,c.name AS customer_name,
       COUNT(sol.id)::integer AS line_count,
-      COALESCE(SUM(sol.quantity_ordered),0)::bigint AS units_ordered,
-      COALESCE(SUM(sol.quantity_fulfilled),0)::bigint AS units_fulfilled,
+      COALESCE(SUM(sol.quantity_ordered),0)::numeric AS units_ordered,
+      COALESCE(SUM(sol.quantity_fulfilled),0)::numeric AS units_fulfilled,
       CASE WHEN so.status='CANCELLED' THEN COALESCE((SELECT SUM(total_minor) FROM accounting_customer_invoices i WHERE i.workspace_id=so.workspace_id AND i.sales_order_id=so.id AND i.status<>'VOID'),0) ELSE COALESCE(so.pricing_total_minor,(COALESCE(SUM(sol.quantity_ordered*sol.unit_price_minor),0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0))) END::bigint AS total_minor,
       COALESCE((SELECT SUM(balance_minor) FROM accounting_customer_invoices i
         WHERE i.workspace_id=so.workspace_id AND i.sales_order_id=so.id AND i.status<>'VOID'),0)::bigint AS balance_minor
@@ -253,10 +254,10 @@ async function salesOrder(database, workspaceId, id) {
   if(!header.rows.length)throw new NotFoundError('That sales order was not found.');
   const [lines,invoices,shipments,events,paymentRequests,paymentTerms,orderReceipts]=await Promise.all([
     database.query(`SELECT sol.*,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,s.code,s.variant_label,
-      COALESCE((SELECT SUM(quantity) FROM sales_order_allocations a WHERE a.sales_order_line_id=sol.id),0)::bigint AS allocated
+      COALESCE((SELECT SUM(quantity) FROM sales_order_allocations a WHERE a.sales_order_line_id=sol.id),0)::numeric AS allocated
       ,COALESCE((SELECT SUM(rl.quantity_authorized) FROM customer_return_lines rl
         JOIN customer_returns r ON r.id=rl.customer_return_id
-        WHERE rl.sales_order_line_id=sol.id AND r.status<>'CANCELLED'),0)::bigint AS quantity_returned
+        WHERE rl.sales_order_line_id=sol.id AND r.status<>'CANCELLED'),0)::numeric AS quantity_returned
       FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id JOIN items i ON i.id=s.item_id
       WHERE sol.workspace_id=$1 AND sol.sales_order_id=$2 ORDER BY sol.created_at,sol.id`,[workspaceId,id]),
     database.query(`SELECT i.*,COALESCE((SELECT SUM(amount_minor) FROM accounting_payment_allocations a

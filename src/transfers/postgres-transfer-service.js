@@ -1,5 +1,6 @@
 'use strict';
 
+const exact=require('../domain/exact-quantity'),stockQuantity=require('../domain/stock-quantity');
 const inventory = require('../domain/postgres-inventory-engine');
 const permissions = require('../actions/permissions');
 const costing = require('../accounting/postgres-costing');
@@ -20,17 +21,8 @@ function requireContext(ctx) {
   return ctx;
 }
 
-function positiveInteger(value, label = 'Quantity') {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number <= 0) throw new ValidationError(`${label} must be a whole number above zero.`);
-  return number;
-}
-
-function outcomeInteger(value, label) {
-  const number = Number(value || 0);
-  if (!Number.isSafeInteger(number) || number < 0) throw new ValidationError(`${label} must be a non-negative whole number.`);
-  return number;
-}
+function positiveInteger(value,label='Quantity'){return exact.safeNumber(value,{positive:true,label});}
+function outcomeInteger(value,label){return exact.safeNumber(value??0,{label});}
 
 async function requirePermission(client, ctx, permission, what) {
   await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.transfers');
@@ -86,13 +78,12 @@ async function get(client, workspaceId, id, { lock = false } = {}) {
     WHERE t.id=$1 AND t.workspace_id=$2${lock ? ' FOR UPDATE OF t' : ''}`, [id, workspaceId]);
   if (!result.rows.length) throw new NotFoundError('That transfer could not be found.');
   const transfer = result.rows[0];
-  const lines = (await client.query(`SELECT tl.*,s.code,s.variant_label,i.name AS item_name,i.tracking_mode,l.code AS lot_code
+  const lines = (await client.query(`SELECT tl.*,s.code,s.variant_label,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,l.code AS lot_code
     FROM inventory_transfer_lines tl JOIN skus s ON s.id=tl.sku_id JOIN items i ON i.id=s.item_id
     LEFT JOIN lots l ON l.id=tl.lot_id WHERE tl.transfer_id=$1 AND tl.workspace_id=$2
     ORDER BY i.name,s.position,tl.id${lock ? ' FOR UPDATE OF tl' : ''}`, [id, workspaceId])).rows;
   for (const line of lines) {
-    line.in_transit_quantity = Math.max(0, Number(line.shipped_quantity) - Number(line.received_quantity)
-      - Number(line.lost_quantity) - Number(line.damaged_quantity));
+    line.in_transit_quantity = Math.max(0,exact.safeNumber(exact.subtract(exact.subtract(exact.subtract(line.shipped_quantity,line.received_quantity),line.lost_quantity),line.damaged_quantity),{signed:true}));
     line.serials = (await client.query(`SELECT ts.*,su.serial FROM inventory_transfer_serials ts
       JOIN serial_units su ON su.id=ts.serial_unit_id WHERE ts.transfer_line_id=$1 ORDER BY su.serial`, [line.id])).rows;
     line.pegs = (await client.query(`SELECT p.*,so.order_number,c.name AS customer_name
@@ -184,11 +175,11 @@ async function requestInTransaction(client, rawContext, input) {
   const duplicate = new Set();
   const prepared = [];
   for (const [index, supplied] of input.lines.entries()) {
-    const skuResult = await client.query(`SELECT s.id,i.name,i.tracking_mode FROM skus s JOIN items i ON i.id=s.item_id
+    const skuResult = await client.query(`SELECT i.*,s.id FROM skus s JOIN items i ON i.id=s.item_id
       WHERE s.id=$1 AND s.workspace_id=$2 AND s.is_active=1 AND i.is_active=1`, [supplied.skuId, ctx.workspaceId]);
     const sku = skuResult.rows[0];
     if (!sku) throw new ValidationError(`Transfer line ${index + 1} does not name an active product in this inventory.`);
-    const quantity = positiveInteger(supplied.quantity, `Transfer line ${index + 1} quantity`);
+    const quantity = stockQuantity.validate(sku,supplied.quantity,{label:`Transfer line ${index+1} quantity`}),secondaryQuantity=stockQuantity.secondary(sku,supplied.secondaryQuantity);
     let lotId = null;
     if (sku.tracking_mode === 'lot') {
       const lot = (await client.query(`SELECT l.id FROM lots l JOIN lot_balances b ON b.lot_id=l.id
@@ -222,7 +213,7 @@ async function requestInTransaction(client, rawContext, input) {
           AND transfer.status IN ('REQUESTED','APPROVED','PICKED') LIMIT 1`,[ctx.workspaceId,serialUnitIds]);
       if(reserved.rows.length)throw new ValidationError('One selected serial unit is already held for another transfer.');
     }
-    prepared.push({ supplied, sku, quantity, lotId, serialUnitIds });
+    prepared.push({ supplied, sku, quantity, secondaryQuantity,lotId, serialUnitIds });
   }
   const at = nowIso();
   const id = newId('tr');
@@ -237,9 +228,9 @@ async function requestInTransaction(client, rawContext, input) {
   for (const row of prepared) {
     const lineId = newId('trl');
     await client.query(`INSERT INTO inventory_transfer_lines
-      (id,workspace_id,transfer_id,sku_id,lot_id,requested_quantity,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$7)`,
-    [lineId, ctx.workspaceId, id, row.sku.id, row.lotId, row.quantity, at]);
+      (id,workspace_id,transfer_id,sku_id,lot_id,requested_quantity,created_at,updated_at,requested_secondary_quantity)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8)`,
+    [lineId, ctx.workspaceId, id, row.sku.id, row.lotId, row.quantity, at,row.secondaryQuantity]);
     for (const serialUnitId of row.serialUnitIds) {
       await client.query(`INSERT INTO inventory_transfer_serials
         (workspace_id,transfer_line_id,serial_unit_id,state,created_at,updated_at)
@@ -290,6 +281,7 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
   for (const line of transfer.lines) {
     const quantity = input.quantities?.[line.id] === undefined ? Number(line.requested_quantity)
       : positiveInteger(input.quantities[line.id], 'Approved quantity');
+    stockQuantity.validate(line,quantity);const approvedWeight=stockQuantity.secondary(line,input.secondaryQuantities?.[line.id]??(quantity===Number(line.requested_quantity)?line.requested_secondary_quantity:null));
     if (quantity > Number(line.requested_quantity)) throw new ValidationError('Approved quantity cannot exceed requested quantity.');
     const availability = await sourceAvailable(client, ctx.workspaceId, line.sku_id, transfer.source_location_id,
       { lotId: line.lot_id, excludeTransferId: transfer.id });
@@ -309,8 +301,8 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
         throw new ValidationError('One selected serial unit is no longer available for this transfer.');
       }
     }
-    await client.query(`UPDATE inventory_transfer_lines SET approved_quantity=$2,
-      cancelled_quantity=requested_quantity-$2,updated_at=$3 WHERE id=$1`, [line.id, quantity, nowIso()]);
+    await client.query(`UPDATE inventory_transfer_lines SET approved_quantity=$2,approved_secondary_quantity=$4,
+      cancelled_quantity=requested_quantity-$2,updated_at=$3 WHERE id=$1`, [line.id, quantity, nowIso(),approvedWeight]);
   }
   const at = nowIso();
   await client.query(`UPDATE inventory_transfers SET status='APPROVED',approved_by_user_id=$3,approved_at=$4,
@@ -392,7 +384,7 @@ async function dispatchInTransaction(client, rawContext, transferId, input = {})
     const physical = await inventory.dispatchTransferInTransaction(client, ctx, {
       groupId: `transfer:${transferId}:${line.id}`, skuId: line.sku_id,
       sourceLocationId: transfer.source_location_id, destinationLocationId: transfer.destination_location_id,
-      quantity: Number(line.picked_quantity), lotId: line.lot_id, serialUnitIds,
+      quantity: Number(line.picked_quantity), secondaryQuantity:line.approved_secondary_quantity,lotId: line.lot_id, serialUnitIds,
       reference: transfer.transfer_number, notes: `Dispatched ${transfer.transfer_number}`,
       idempotencyKey: `${key}:line:${line.id}`,
     });
@@ -409,7 +401,7 @@ async function dispatchInTransaction(client, rawContext, transferId, input = {})
       dispatchedCost = prepared.totalCostMinor;
       costStatus = 'RECORDED';
     }
-    await client.query(`UPDATE inventory_transfer_lines SET shipped_quantity=picked_quantity,
+    await client.query(`UPDATE inventory_transfer_lines SET shipped_quantity=picked_quantity,shipped_secondary_quantity=approved_secondary_quantity,
       dispatched_cost_minor=$2,cost_status=$3,updated_at=$4 WHERE id=$1`,
     [line.id, dispatchedCost, costStatus, nowIso()]);
     await client.query(`UPDATE inventory_transfer_serials SET state='IN_TRANSIT',updated_at=$2
@@ -512,8 +504,12 @@ async function receiveInTransaction(client, rawContext, transferId, input = {}) 
     const good = outcomeInteger(supplied.received, 'Received quantity');
     const lost = outcomeInteger(supplied.lost, 'Lost quantity');
     const damaged = outcomeInteger(supplied.damaged, 'Damaged quantity');
-    if (good + lost + damaged <= 0) throw new ValidationError('Record at least one received, lost, or damaged unit.');
-    if (good + lost + damaged > Number(line.in_transit_quantity)) {
+    for(const q of [good,lost,damaged])stockQuantity.validate(line,q,{positive:false});
+    const goodWeight=stockQuantity.secondary(line,good?supplied.receivedSecondaryQuantity:0,{positive:good>0}),lostWeight=stockQuantity.secondary(line,lost?supplied.lostSecondaryQuantity:0,{positive:lost>0}),damagedWeight=stockQuantity.secondary(line,damaged?supplied.damagedSecondaryQuantity:0,{positive:damaged>0}),weightBefore=exact.safeNumber(exact.add(exact.add(line.received_secondary_quantity,line.lost_secondary_quantity),line.damaged_secondary_quantity)),settledWeight=goodWeight===null?null:exact.safeNumber(exact.add(exact.add(goodWeight,lostWeight),damagedWeight));
+    const outcomeQuantity=exact.safeNumber(exact.add(exact.add(good,lost),damaged));
+    if(settledWeight!==null){const remainingWeight=exact.safeNumber(exact.subtract(line.shipped_secondary_quantity,weightBefore));if(settledWeight>remainingWeight||(outcomeQuantity===Number(line.in_transit_quantity))!==(settledWeight===remainingWeight))throw new ValidationError('The pieces and actual weight must settle the same remaining transfer.');}
+    if (outcomeQuantity <= 0) throw new ValidationError('Record at least one received, lost, or damaged unit.');
+    if (outcomeQuantity > Number(line.in_transit_quantity)) {
       throw new ValidationError(`That would over-receive ${line.item_name}. Only ${line.in_transit_quantity} remain in transit.`);
     }
     let serialGood = [];
@@ -530,38 +526,36 @@ async function receiveInTransaction(client, rawContext, transferId, input = {}) 
         throw new ValidationError('Name each serialized unit exactly once in the outcome where it belongs.');
       }
     }
-    const settledBefore = Number(line.received_quantity) + Number(line.lost_quantity) + Number(line.damaged_quantity);
+    const settledBefore = exact.safeNumber(exact.add(exact.add(line.received_quantity,line.lost_quantity),line.damaged_quantity));
     if (good > 0) {
       const physical = await inventory.receiveTransferInTransaction(client, ctx, {
         groupId: `transfer:${transferId}:${line.id}`, skuId: line.sku_id,
         sourceLocationId: transfer.source_location_id, destinationLocationId: transfer.destination_location_id,
-        quantity: good, lotId: line.lot_id, serialUnitIds: serialGood,
+        quantity: good,secondaryQuantity:goodWeight,lotId: line.lot_id, serialUnitIds: serialGood,
         reference: transfer.transfer_number, notes: `Received ${transfer.transfer_number}`,
         idempotencyKey: `${key}:line:${line.id}:received`,
       });
       const receivedCost = line.cost_status === 'RECORDED'
-        ? Math.round(Number(line.dispatched_cost_minor) * (settledBefore + good) / Number(line.shipped_quantity))
-          - Math.round(Number(line.dispatched_cost_minor) * settledBefore / Number(line.shipped_quantity)) : 0;
+        ? exact.ratioMinor(Number(line.dispatched_cost_minor),exact.add(goodWeight===null?settledBefore:weightBefore,goodWeight??good),line.shipped_secondary_quantity??line.shipped_quantity)-exact.ratioMinor(Number(line.dispatched_cost_minor),goodWeight===null?settledBefore:weightBefore,line.shipped_secondary_quantity??line.shipped_quantity) : 0;
       const posted = await postTransitJournal(client, ctx, transfer, line, event.id, receivedCost, 'receipt');
       if (line.cost_status === 'RECORDED') await costing.receiveInTransaction(client, ctx, {
         movementId: physical.movementId, totalCostMinor: receivedCost, journalEntryId: posted?.entry.id || null,
         sourceType: 'inventory_transfer_receipt', sourceRecordId: line.id,
       });
       await client.query(`UPDATE inventory_transfer_lines SET received_quantity=received_quantity+$2,
-        received_cost_minor=received_cost_minor+$3,updated_at=$4 WHERE id=$1`,
-      [line.id, good, receivedCost, nowIso()]);
+        received_cost_minor=received_cost_minor+$3,updated_at=$4,received_secondary_quantity=received_secondary_quantity+$5 WHERE id=$1`,
+      [line.id, good, receivedCost, nowIso(),goodWeight??0]);
       await client.query(`INSERT INTO inventory_transfer_movement_links
         (workspace_id,transfer_line_id,movement_id,role,event_id,created_at)
         VALUES($1,$2,$3,'RECEIPT',$4,$5)`, [ctx.workspaceId, line.id, physical.movementId, event.id, nowIso()]);
     }
     if (lost + damaged > 0) {
       const lossCost = line.cost_status === 'RECORDED'
-        ? Math.round(Number(line.dispatched_cost_minor) * (settledBefore + good + lost + damaged) / Number(line.shipped_quantity))
-          - Math.round(Number(line.dispatched_cost_minor) * (settledBefore + good) / Number(line.shipped_quantity)) : 0;
+        ? exact.ratioMinor(Number(line.dispatched_cost_minor),exact.add(settledWeight===null?settledBefore:weightBefore,settledWeight??exact.add(exact.add(good,lost),damaged)),line.shipped_secondary_quantity??line.shipped_quantity)-exact.ratioMinor(Number(line.dispatched_cost_minor),exact.add(goodWeight===null?settledBefore:weightBefore,goodWeight??good),line.shipped_secondary_quantity??line.shipped_quantity) : 0;
       await postTransitJournal(client, ctx, transfer, line, event.id, lossCost, 'writeoff');
       await client.query(`UPDATE inventory_transfer_lines SET lost_quantity=lost_quantity+$2,
-        damaged_quantity=damaged_quantity+$3,written_off_cost_minor=written_off_cost_minor+$4,updated_at=$5 WHERE id=$1`,
-      [line.id, lost, damaged, lossCost, nowIso()]);
+        damaged_quantity=damaged_quantity+$3,lost_secondary_quantity=lost_secondary_quantity+$6,damaged_secondary_quantity=damaged_secondary_quantity+$7,written_off_cost_minor=written_off_cost_minor+$4,updated_at=$5 WHERE id=$1`,
+      [line.id, lost, damaged, lossCost, nowIso(),lostWeight??0,damagedWeight??0]);
     }
     for (const [state, ids] of [['RECEIVED', serialGood], ['LOST', serialLost], ['DAMAGED', serialDamaged]]) {
       if (!ids.length) continue;

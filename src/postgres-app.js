@@ -213,6 +213,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresMessagesRouter(database));
   app.use(createPostgresShippingRouter(database,shippingOptions || {}));
   app.use(createPostgresImportsRouter(database,{provider:aiProvider}));
+  app.use(require('./web/routes/postgres-erp-cutovers').createRouter(database));
   app.use(createPostgresCommerceRouter(database,{paymentOptions:paymentOptions||{}}));
   app.use(createPostgresAutopilotRouter(database));
   app.use(createPostgresWarehouseRouter(database));

@@ -63,6 +63,7 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
       WHERE a.email='transfers-ui@example.test'`)).rows[0];
     const ctx = { workspaceId: identity.workspace_id, actorId: identity.actor_id };
+    await database.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) SELECT 'transfer-ui-pro',owner_account_id,'pro',v.id,'COMP','CUSTOM','TEST' FROM workspaces w CROSS JOIN commercial_plan_versions v WHERE w.id=$1 AND v.plan_id='pro' AND v.status='ACTIVE' ORDER BY v.created_at DESC LIMIT 1",[ctx.workspaceId]);
     const source = await locations.createLocation(database, ctx, { name: 'North Warehouse', kind: 'warehouse' });
     const destination = await locations.createLocation(database, ctx, { name: 'South Store', kind: 'store' });
     const item = await catalog.createItem(database, ctx, { name: 'Transfer Widget', baseCode: 'TW',
@@ -73,7 +74,8 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
     await costReceipt(database, ctx, opening, 2000, 'opening-transfer-quantity');
 
     await page.goto(`${base}/inventory/${item.itemId}`);
-    await page.getByRole('button', { name: 'Request a move' }).click();
+    await page.locator('details').filter({has:page.locator('[data-modal-open="modal-transfer"]')}).locator('summary').click();
+    await page.getByRole('button', { name: 'Move stock',exact:true }).click();
     const modal = page.locator('#modal-transfer');
     await modal.locator('select[name="skuId"]').selectOption(item.skuIds[0]);
     await modal.locator('select[name="fromLocationId"]').selectOption(source.id);

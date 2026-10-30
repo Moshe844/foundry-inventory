@@ -1,6 +1,6 @@
 <p class="rm-stamp"><a href="/purchasing">Purchasing</a> · <%= order.supplier_name %></p>
 <h1 class="rm-verdict"><%= order.po_number %> is <%= order.status.toLowerCase().replaceAll('_',' ') %>.</h1>
-<p class="rm-prose">Order value <%= order.currency %> <%= lines.reduce((sum,line)=>sum+Number(line.line_total||0),0).toFixed(2) %>. On-hand inventory changes only when a receipt below is recorded.</p>
+<p class="rm-prose">Order value <%= helpers.money(order.source_financials?order.source_financials.totalMinor:Math.round(lines.reduce((sum,line)=>sum+Number(line.line_total||0),0)*10**helpers.currencyExponent(order.currency)),order.currency) %>. On-hand inventory changes only when a receipt below is recorded.</p>
 <% if(['DRAFT','AWAITING_APPROVAL'].includes(order.status)){ %><p class="rm-sub">Nothing was sent to the supplier and nothing is incoming yet.</p>
 <% } else if(order.status==='APPROVED'){ %><p class="rm-sub">The purchase is approved but has not been sent yet.</p>
 <% } else if(order.status==='ORDERED'){ %><p class="rm-sub">Supplier placement is recorded as incoming; on-hand stock did not change.</p>

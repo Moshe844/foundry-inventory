@@ -141,6 +141,8 @@
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
+<% if(item.secondary_unit_label){ %><label class="field"><span class="label">Actual <%= item.secondary_unit_label %></span><input name="secondaryQuantity" type="number" min="<%= item.secondary_increment %>" step="<%= item.secondary_increment %>" required></label><% if(mode==='serial'){ %><label class="field"><span>Weight for each serial</span><textarea name="serialWeights" placeholder="SER-001 = 1.25" required></textarea><small>One serial and its actual weight per line, in <%= item.secondary_unit_label %>.</small></label><% } %><% } %>
+
         <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'receive' }) %>
         <div class="field">
           <label class="label" for="receive-location">Into location</label>
@@ -169,7 +171,7 @@
         <% } else { %>
           <div class="field">
             <label class="label" for="receive-quantity">Quantity</label>
-            <input class="input num" id="receive-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric" placeholder="0">
+            <input class="input num" id="receive-quantity" name="quantity" type="number" min="<%= item.quantity_increment||1 %>" step="<%= item.quantity_increment||1 %>" required inputmode="decimal" placeholder="0">
           </div>
         <% } %>
 
@@ -220,6 +222,8 @@
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
+<% if(item.secondary_unit_label){ %><label class="field"><span class="label">Actual <%= item.secondary_unit_label %></span><input name="secondaryQuantity" type="number" min="<%= item.secondary_increment %>" step="<%= item.secondary_increment %>" required></label><% } %>
+
         <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'issue' }) %>
         <div class="field">
           <label class="label" for="issue-location">From location</label>
@@ -247,7 +251,7 @@
           <% } %>
           <div class="field">
             <label class="label" for="issue-quantity">Quantity</label>
-            <input class="input num" id="issue-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric">
+            <input class="input num" id="issue-quantity" name="quantity" type="number" min="<%= item.quantity_increment||1 %>" step="<%= item.quantity_increment||1 %>" required inputmode="decimal">
           </div>
         <% } %>
 
@@ -294,6 +298,8 @@
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
+<% if(item.secondary_unit_label){ %><label class="field"><span class="label">Actual <%= item.secondary_unit_label %></span><input name="secondaryQuantity" type="number" min="<%= item.secondary_increment %>" step="<%= item.secondary_increment %>" required></label><% } %>
+
         <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'transfer' }) %>
         <div class="field-row">
           <div class="field">
@@ -331,7 +337,7 @@
           <% } %>
           <div class="field">
             <label class="label" for="transfer-quantity">Quantity</label>
-            <input class="input num" id="transfer-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric">
+            <input class="input num" id="transfer-quantity" name="quantity" type="number" min="<%= item.quantity_increment||1 %>" step="<%= item.quantity_increment||1 %>" required inputmode="decimal">
           </div>
         <% } %>
 
@@ -368,6 +374,8 @@
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
+<% if(item.secondary_unit_label){ %><label class="field"><span class="label">Counted actual <%= item.secondary_unit_label %></span><input name="secondaryCountedQuantity" type="number" min="0" step="<%= item.secondary_increment %>" required></label><% } %>
+
         <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'adjust' }) %>
         <div class="field">
           <label class="label" for="adjust-location">Location</label>
@@ -399,7 +407,7 @@
             </div>
             <div class="field">
               <label class="label" for="adjust-counted">Physical count</label>
-              <input class="input num" id="adjust-counted" name="countedQty" type="number" min="0" step="1" required inputmode="numeric">
+              <input class="input num" id="adjust-counted" name="countedQty" type="number" min="0" step="<%= item.quantity_increment||1 %>" required inputmode="decimal">
             </div>
           </div>
         <% } %>

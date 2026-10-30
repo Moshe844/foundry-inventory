@@ -1,0 +1,15 @@
+'use strict';
+const cutover=require('./postgres-cutover'),jobs=require('../operations/postgres-job-queue'),{ValidationError}=require('../domain/errors');
+const scoped=c=>({query:c.query.bind(c),transaction:fn=>fn(c)});
+async function queue(db,ctx,pkg){return jobs.enqueue(db,{workspaceId:ctx.workspaceId,kind:'erp.cutover.continue',idempotencyKey:'cutover:'+pkg.id+':'+pkg.status+':'+Number(pkg.applied_count)+':'+Number(pkg.postgres_state.revision)+':'+pkg.updated_at,payload:{packageId:pkg.id,actorId:ctx.actorId,sealedHash:pkg.postgres_state.sealedHash},priority:45,maxAttempts:5});}
+async function run(job,db){const ctx={workspaceId:job.workspaceId,actorId:job.payload?.actorId},id=job.payload?.packageId;if(!ctx.workspaceId||!ctx.actorId||!id||!job.payload.sealedHash)throw new ValidationError('The ERP continuation is missing its approved source identity.');
+ return db.transaction(async c=>{const tx=scoped(c),pkg=await cutover.get(c,ctx,id,{lock:true});if(pkg.postgres_state.sealedHash!==job.payload.sealedHash)throw new ValidationError('The sealed ERP source changed. Review the current source.');
+ let result;if(pkg.status==='VALIDATING')result=await cutover.validatePage(tx,ctx,id);else if(['APPROVED','APPLYING'].includes(pkg.status))result=await cutover.applyPage(tx,ctx,id,{limit:100});else if(pkg.status==='RECONCILING')result=await cutover.reconcilePage(tx,ctx,id,{limit:100});else return {packageId:id,status:pkg.status};
+ const next=result.package;if(['VALIDATING','APPROVED','APPLYING','RECONCILING'].includes(next.status)&&!(pkg.status==='RECONCILING'&&next.status==='RECONCILING'&&result.done&&!result.matched))await queue(tx,ctx,next);
+ if(job.leaseToken&&!await jobs.heartbeat(tx,job.id,job.leaseToken,{leaseMs:60000}))throw Object.assign(new Error('The ERP worker lease expired before committing this page.'),{code:'lease_lost'});
+ return {packageId:id,status:next.status,applied:Number(next.applied_count),problems:Number(next.problem_count)};
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+async function seal(db,ctx,id,input){return db.transaction(async c=>{const tx=scoped(c),pkg=await cutover.freeze(tx,ctx,id,input);await queue(tx,ctx,pkg);return pkg;});}
+async function approve(db,ctx,id,sealedHash){return db.transaction(async c=>{const tx=scoped(c),pkg=await cutover.approve(tx,ctx,id,sealedHash);await queue(tx,ctx,pkg);return pkg;});}
+module.exports={queue,run,seal,approve};

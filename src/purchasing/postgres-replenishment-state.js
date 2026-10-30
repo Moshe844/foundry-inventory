@@ -38,8 +38,8 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
   SELECT s.id,l.id FROM selected_skus s CROSS JOIN(SELECT id FROM active_locations ORDER BY id LIMIT 1)l
   WHERE NOT EXISTS(SELECT 1 FROM active_positions p WHERE p.sku_id=s.id))
  SELECT s.id AS sku_id,s.code,s.variant_label,s.position AS sku_position,i.id AS item_id,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
-  COALESCE(b.on_hand,0)::bigint AS on_hand,COALESCE(c.quantity,0)::bigint AS committed,COALESCE(inc.quantity,0)::bigint AS incoming,
-  COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::bigint AS issued,rp.id AS policy_id,rp.location_id AS policy_location_id,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,
+  COALESCE(b.on_hand,0)::numeric AS on_hand,COALESCE(c.quantity,0)::numeric AS committed,COALESCE(inc.quantity,0)::numeric AS incoming,
+  COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::numeric AS issued,rp.id AS policy_id,rp.location_id AS policy_location_id,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,
   (SELECT to_jsonb(global_policy) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
   (SELECT value FROM operational_preferences preference WHERE preference.workspace_id=$1 AND preference.key='target_days_of_stock') AS saved_cover_days,
   COALESCE(rp.lead_time_days,terms.lead_time_days,$7) AS lead_time_days,cost.amount_minor AS cost_minor

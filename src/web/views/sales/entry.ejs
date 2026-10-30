@@ -17,7 +17,7 @@
  <label class="rm-field"><span>Ship from</span><select name="fulfillmentLocationId" id="order-location"><option value="">Use available stock across locations</option><% locations.forEach((l,i)=>{ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId!==undefined?(form.fulfillmentLocationId===l.id?'selected':''):(i===0?'selected':'') %>><%= l.name %></option><% }) %></select></label>
  </div></section>
  <section class="rm-step-panel"><div class="rm-step-panel__h"><h2>Products</h2></div><div class="rm-step-panel__b">
- <div id="order-lines"><% for(let n=0;n<count;n++){ %><%- include('entry-line',{n,selected:ids[n]||'',quantity:form.quantity===undefined?'1':qty[n]??'',price:prices[n]??'',override:overrides[n]??(prices[n]?'1':'0'),catalogue}) %><% } %></div>
+ <div id="order-lines"><% for(let n=0;n<count;n++){ %><%- include('entry-line',{n,selected:ids[n]||'',quantity:form.quantity===undefined?'1':qty[n]??'',secondaryQuantity:list(form.secondaryQuantity)[n]||'',price:prices[n]??'',override:overrides[n]??(prices[n]?'1':'0'),catalogue}) %><% } %></div>
  <button type="button" class="btn btn--ghost" id="add-order-line">+ Add another product</button>
  <p id="order-stock-check" role="status">Choose products to see available stock.</p>
  <p id="order-weight" class="hint"></p>
@@ -37,6 +37,6 @@
  <div class="form-actions"><% if(locals.quotation){ %><button class="rm-btn" type="submit">Save quotation</button><% }else if(editOrder){ %><button class="rm-btn" type="submit">Save draft changes</button><% }else{ %><button class="rm-btn" id="order-confirm-button" name="nextStep" value="confirm">Create order and reserve stock</button><button class="rm-btn" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button><button class="rm-btn rm-btn--ghost" name="nextStep" value="draft">Save draft</button><% } %><a href="<%= locals.quotation?'/quotes':'/orders' %>">Cancel</a></div>
 </form>
 <dialog class="modal" id="new-order-customer"><form action="/sales/customers" method="post" data-inline-customer><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="modal-head"><h2>New customer</h2><button type="button" data-modal-close aria-label="Close">×</button></div><div class="modal-body"><label class="field"><span>Customer name</span><input name="name" required></label><label class="field"><span>Customer email</span><input name="email" type="email"></label><label class="field"><span>Customer phone</span><input name="phone"></label><label class="field"><span>Customer shipping address</span><textarea name="shippingAddress"></textarea></label><p role="status" data-customer-status></p><button class="btn btn--primary">Save customer</button></div></form></dialog><script src="/inline-customer.js?v=<%= assetVersion %>" defer></script>
-<template id="order-line-template"><%- include('entry-line',{n:0,selected:'',quantity:'1',price:'',override:'0',catalogue}) %></template>
+<template id="order-line-template"><%- include('entry-line',{n:0,selected:'',quantity:'1',secondaryQuantity:'',price:'',override:'0',catalogue}) %></template>
 <script type="application/json" id="order-catalogue"><%- JSON.stringify(catalogue).replace(/</g,'\\u003c') %></script>
 <script src="/sales-entry.js?v=<%= assetVersion %>" defer></script>

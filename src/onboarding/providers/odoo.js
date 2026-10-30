@@ -4,17 +4,20 @@ const {providerFetch}=require('../../lib/provider-http'),network=require('../../
 const FIELDS=Object.freeze({
  'res.company':['id','name','currency_id'],
  'res.currency':['id','name','rounding','decimal_places'],
- 'uom.uom':['id','name','rounding'],
+ 'uom.uom':['id','name','rounding','factor','relative_factor','relative_uom_id'],
  'res.partner':['id','name','email','phone','street','street2','city','state_id','zip','country_id','supplier_rank','customer_rank','company_id','write_date'],
- 'product.product':['id','name','default_code','barcode','product_tmpl_id','uom_id','is_storable','tracking','standard_price','list_price','company_id','currency_id','write_date','product_template_attribute_value_ids'],
+ 'product.template':['id','name','uom_id','tracking','is_storable','company_id','write_date'],
+ 'product.product':['id','name','default_code','barcode','product_tmpl_id','uom_id','is_storable','tracking','standard_price','list_price','company_id','currency_id','write_date','product_template_attribute_value_ids','cost_method','valuation','categ_id'],
  'product.template.attribute.value':['id','name','attribute_id'],
+ 'stock.warehouse':['id','name','lot_stock_id','company_id'],
+ 'stock.picking.type':['id','name','default_location_dest_id','company_id'],
  'stock.location':['id','name','complete_name','usage','location_id','company_id','write_date'],
  'stock.quant':['id','product_id','location_id','lot_id','quantity','reserved_quantity','company_id','owner_id','package_id','write_date'],
  'stock.lot':['id','name','product_id','company_id','write_date'],
- 'purchase.order':['id','name','partner_id','currency_id','date_order','state','company_id','write_date'],
- 'purchase.order.line':['id','order_id','product_id','product_qty','qty_received','price_unit','state','company_id','write_date'],
- 'sale.order':['id','name','partner_id','currency_id','date_order','state','company_id','write_date'],
- 'sale.order.line':['id','order_id','product_id','product_uom_qty','qty_delivered','price_unit','state','company_id','write_date'],
+ 'purchase.order':['id','name','partner_id','currency_id','date_order','state','company_id','write_date','picking_type_id','amount_total','amount_tax'],
+ 'purchase.order.line':['id','order_id','product_id','product_qty','qty_received','price_unit','product_uom_id','tax_ids','price_subtotal','price_total','display_type','state','company_id','write_date'],
+ 'sale.order':['id','name','partner_id','currency_id','date_order','state','company_id','write_date','warehouse_id','amount_total','amount_tax'],
+ 'sale.order.line':['id','order_id','product_id','product_uom_qty','qty_delivered','price_unit','product_uom_id','tax_ids','discount','price_subtotal','price_total','display_type','is_downpayment','state','company_id','write_date'],
  'account.move':['id','name','partner_id','currency_id','invoice_date','invoice_date_due','move_type','state','amount_total','amount_residual','company_id','write_date']
 });
 function create(input,options={}){
