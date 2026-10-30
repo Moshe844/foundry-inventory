@@ -232,7 +232,7 @@ function createPostgresInventoryRouter(database) {
       [req.ctx.workspaceId,req.params.id,skuId])).rows.length)throw new ValidationError('Choose a variant from this product.');
     const prepared=await require('../../accounting/postgres-inventory-costs').prepare(database,req.ctx,{skuId,locationId,quantity:req.body.quantity,
       unitCost:req.body.unitCost,currency:req.body.currency,basis:req.body.basis,evidenceReference:req.body.evidenceReference,postingDate:req.body.postingDate},
-      `Record the evidenced cost of existing ${detail.item.name} stock; do not change physical quantities.`);
+      `Record the recorded cost of existing ${detail.item.name} stock; do not change physical quantities.`);
     return res.redirect(303,`/actions/${prepared.proposal.id}`);
   }));
   return router;

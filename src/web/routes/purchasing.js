@@ -148,7 +148,7 @@ router.post(
     guard(req, permissions.ALLOCATE_LANDED_COST, 'approve landed-cost allocations');
     const document = landedCosts.document(req.db, req.ctx.workspaceId, req.params.documentId);
     landedCosts.approve(req.db, req.ctx, req.user, document.id);
-    req.flash('success', 'Allocation approved. Apply it when you are ready to capitalise the evidenced cost.');
+    req.flash('success', 'Allocation approved. Apply it when you are ready to add the recorded cost to your stock value.');
     return res.redirect(303, `/purchasing/orders/${req.params.id}/landed-costs/${document.id}`);
   })
 );

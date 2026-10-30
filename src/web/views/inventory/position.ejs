@@ -55,7 +55,7 @@
       <%= typeof postgresNative!=='undefined'&&postgresNative?'Actual stock cost':'Purchase cost' %> is still missing for <strong><%= missingCostUnits.toLocaleString('en-US') %></strong> units,
       so <%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'the amount above' %>
       is not the full inventory value.
-      <% if(typeof postgresNative!=='undefined'&&postgresNative){ %>A purchasing price may already be saved without cost being attached to these units. <a href="/inventory/table">Open a product to record actual stock cost</a>.<% }else{ %><a href="/accounting#inventory">Show the units and recorded cost</a>.<% } %>
+      <% if(typeof postgresNative!=='undefined'&&postgresNative){ %>A purchasing price may already be saved without cost being attached to these units. <a href="/inventory/table">Open a product to record stock cost</a>.<% }else{ %><a href="/accounting#inventory">Show the units and recorded cost</a>.<% } %>
     </p>
   <% } else if (value && value.totalCostMinor) { %>
     <p class="rm-sub"><a href="/accounting#inventory">Show the units and recorded cost</a>.</p>
