@@ -1,0 +1,37 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),cutover=require('../../src/onboarding/postgres-cutover');
+const auth=require('../../src/domain/postgres-auth-service');
+const manifest=changes=>({counts:{...Object.fromEntries(Object.keys(cutover.TYPES).map(k=>[k,0])),...changes}});
+test('PostgreSQL ERP source pages seal only complete, ordered, tenant-bound source truth',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const a=await auth.createBusiness(db,{name:'ERP Owner',businessName:'ERP Cutover',email:'erp-owner@example.test',password:'ERP-qualification!'}),ctx={workspaceId:a.workspaceId,actorId:a.userId};
+ const create={sourceNamespace:'odoo-qa:company-1',sourceLabel:'Odoo qualification',snapshotHash:'a'.repeat(64),mode:'SNAPSHOT_DELTA',sourceCursor:'cursor-1',manifest:manifest({location:1,product:1})};
+ const pkg=await cutover.create(db,ctx,create);assert.equal((await cutover.create(db,ctx,create)).replayed,true);await assert.rejects(cutover.create(db,ctx,{...create,manifest:manifest({product:2})}),/different cutover/);
+ const records=[{type:'location',key:'warehouse',payload:{name:'Main',kind:'warehouse'}},{type:'product',key:'material',payload:{name:'Material'}}];
+ const batch={batchKey:'snapshot-page-1',records};assert.equal((await cutover.stage(db,ctx,pkg.id,batch)).staged,2);assert.equal((await cutover.stage(db,ctx,pkg.id,batch)).replayed,true);
+ await assert.rejects(cutover.stage(db,ctx,pkg.id,{...batch,records:[{...records[0],payload:{name:'Changed'}}]}),/different content/);
+ await assert.rejects(cutover.stage(db,ctx,pkg.id,{batchKey:'gap',delta:true,previousCursor:'cursor-0',cursor:'cursor-2',records:[]}),/exact previous/);
+ await assert.rejects(cutover.freeze(db,ctx,pkg.id,{sourceStopped:true,finalCursor:'cursor-1',manifest:manifest({location:2,product:1})}),/count mismatch/);
+ await cutover.stage(db,ctx,pkg.id,{batchKey:'delta-2',delta:true,previousCursor:'cursor-1',cursor:'cursor-2',records:[{type:'product',key:'material',payload:{name:'Material revised'}}]});assert.equal(Number((await cutover.get(db,ctx,pkg.id)).staged_count),2,'updates do not double-count source identities');
+ await assert.rejects(cutover.stage(db,ctx,pkg.id,{batchKey:'late-snapshot',records:[]}),/Finish the snapshot/);
+ await assert.rejects(cutover.freeze(db,ctx,pkg.id,{sourceStopped:true,finalCursor:'cursor-1',manifest:create.manifest}),/final cursor/);
+ const b=await auth.createBusiness(db,{name:'Other',businessName:'Other tenant',email:'other-erp@example.test',password:'ERP-qualification!'});await assert.rejects(cutover.get(db,{workspaceId:b.workspaceId,actorId:b.userId},pkg.id),/not in this inventory/);
+ await cutover.stage(db,ctx,pkg.id,{batchKey:'delta-3',delta:true,previousCursor:'cursor-2',cursor:'cursor-3',records:[{type:'sku',key:'variant',payload:{productKey:'missing',code:'SKU'}}]});
+ await assert.rejects(cutover.freeze(db,ctx,pkg.id,{sourceStopped:true,finalCursor:'cursor-3',manifest:manifest({location:1,product:1,sku:1})}),/Unknown source reference/);
+ await cutover.stage(db,ctx,pkg.id,{batchKey:'delta-4',delta:true,previousCursor:'cursor-3',cursor:'cursor-4',records:[{type:'sku',key:'variant',payload:{productKey:'material',code:'SKU'}}]});
+ await assert.rejects(cutover.freeze(db,ctx,pkg.id,{finalCursor:'cursor-4',manifest:manifest({location:1,product:1,sku:1})}),/Confirm/);
+ await cutover.stage(db,ctx,pkg.id,{batchKey:'delta-5',delta:true,previousCursor:'cursor-4',cursor:'cursor-5',records:[{type:'history_fact',key:'temporary',payload:{factType:'QA'}}]});
+ await cutover.stage(db,ctx,pkg.id,{batchKey:'delta-6',delta:true,previousCursor:'cursor-5',cursor:'cursor-6',records:[{type:'history_fact',key:'temporary',operation:'DELETE'}]});
+ assert.equal(Number((await cutover.get(db,ctx,pkg.id)).staged_count),3,'ordered deletes remove source truth without changing native stock');
+ assert.equal(Number((await db.query("SELECT count(*) AS n FROM migration_source_changes WHERE package_id=$1 AND operation='DELETE'",[pkg.id])).rows[0].n),1,'delete evidence is retained');
+ const frozen=await cutover.freeze(db,ctx,pkg.id,{sourceStopped:true,finalCursor:'cursor-6',manifest:manifest({location:1,product:1,sku:1})});assert.equal(frozen.status,'VALIDATING');assert.match(frozen.postgres_state.sealedHash,/^[a-f0-9]{64}$/);await assert.rejects(cutover.stage(db,ctx,pkg.id,{batchKey:'late',records:[]}),/sealed/);
+ assert.equal(Number((await db.query('SELECT count(*) AS n FROM items WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'staging and freezing do not mutate business records');
+ const validated=await cutover.validatePage(db,ctx,pkg.id);assert.equal(validated.package.status,'READY');
+ await assert.rejects(cutover.approve(db,ctx,pkg.id,'stale-hash'),/Review/);
+ await cutover.approve(db,ctx,pkg.id,frozen.postgres_state.sealedHash);
+ const catalog=require('../../src/domain/postgres-catalog-service');await assert.rejects(catalog.createItem(db,ctx,{name:'Concurrent owner write',trackingMode:'quantity'}),/ERP cutover/);
+ const otherCtx={workspaceId:b.workspaceId,actorId:b.userId};await catalog.createItem(db,otherCtx,{name:'Other inventory still works',trackingMode:'quantity'});
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) SELECT 'qa-starter',$1,'starter',id,'ACTIVE','MONTHLY','TEST' FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE' LIMIT 1",[b.accountId]);
+ await assert.rejects(cutover.create(db,otherCtx,{...create,snapshotHash:'b'.repeat(64),manifest:manifest({product:1001})}),e=>e.code==='entitlement_required'&&/1000/.test(e.message));
+
+});
