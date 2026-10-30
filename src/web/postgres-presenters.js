@@ -95,14 +95,14 @@ async function home(database,workspaceId,actorId=null){
 
 async function inventoryPosition(database,workspaceId){
   const result=await database.query(`WITH sku_position AS (
-      SELECT s.id,s.item_id,COALESCE(SUM(b.on_hand),0)::bigint AS on_hand,
+      SELECT s.id,s.item_id,COALESCE(SUM(b.on_hand),0)::numeric AS on_hand,
         COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a
           JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
-          WHERE a.workspace_id=s.workspace_id AND sol.sku_id=s.id),0)::bigint AS committed,
+          WHERE a.workspace_id=s.workspace_id AND sol.sku_id=s.id),0)::numeric AS committed,
         COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id=pol.purchase_order_id
           WHERE pol.workspace_id=s.workspace_id AND pol.sku_id=s.id
-            AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)::bigint AS incoming
+            AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)::numeric AS incoming
       FROM skus s LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.item_id,s.workspace_id
@@ -110,8 +110,8 @@ async function inventoryPosition(database,workspaceId){
       SELECT item_id,SUM(on_hand) AS on_hand,SUM(committed) AS committed,SUM(incoming) AS incoming
       FROM sku_position GROUP BY item_id
     ) SELECT COUNT(*)::bigint AS products,
-      (SELECT COUNT(*)::bigint FROM sku_position) AS skus,COALESCE(SUM(on_hand),0)::bigint AS on_hand,
-      COALESCE(SUM(committed),0)::bigint AS committed,COALESCE(SUM(incoming),0)::bigint AS incoming,
+      (SELECT COUNT(*)::bigint FROM sku_position) AS skus,COALESCE(SUM(on_hand),0)::numeric AS on_hand,
+      COALESCE(SUM(committed),0)::numeric AS committed,COALESCE(SUM(incoming),0)::numeric AS incoming,
       COUNT(*) FILTER (WHERE on_hand<=0)::bigint AS empty_count,
       COUNT(*) FILTER (WHERE committed>on_hand)::bigint AS shortage_count,
       COUNT(*) FILTER (WHERE incoming>0)::bigint AS incoming_count,
@@ -119,7 +119,7 @@ async function inventoryPosition(database,workspaceId){
     FROM item_position`,[workspaceId]);
   const [locations,cost,names]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
-    database.query(`SELECT COALESCE(SUM(quantity_units),0)::bigint AS units,
+    database.query(`SELECT COALESCE(SUM(quantity_units),0)::numeric AS units,
       COALESCE(SUM(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
   ]);
@@ -183,7 +183,7 @@ async function money(database,workspaceId,input={},actorId=null){
       WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID') ORDER BY due_date NULLS LAST,id`,[workspaceId]),
     database.query(`SELECT id,bill_number,due_date,balance_minor,currency FROM accounting_supplier_bills
       WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID','DISPUTED') ORDER BY due_date NULLS LAST,id`,[workspaceId]),
-    database.query(`SELECT COALESCE(SUM(b.on_hand),0)::bigint AS units,
+    database.query(`SELECT COALESCE(SUM(b.on_hand),0)::numeric AS units,
       COALESCE((SELECT SUM(quantity_units) FROM accounting_inventory_cost_balances WHERE workspace_id=$1),0)::bigint AS cost_units,
       COALESCE((SELECT SUM(total_cost_minor) FROM accounting_inventory_cost_balances WHERE workspace_id=$1),0)::bigint AS cost_minor
       FROM balances b WHERE b.workspace_id=$1`,[workspaceId]),

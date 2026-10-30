@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const exact=require('../domain/exact-quantity'),stockQuantity=require('../domain/stock-quantity');
+async function physicalQuantity(c,ctx,skuId,value,label){return stockQuantity.validate(await stockQuantity.forSku(c,ctx,skuId),value,{label});}
 const { newId, nowIso, trimOrNull } = require('../lib/util');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const access = require('../actions/permissions');
@@ -131,19 +133,19 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
     const at = nowIso();
     const resolved = [];
     for (const [index, line] of input.lines.entries()) {
-      const sku = await requireRow(client, `SELECT s.id,i.name FROM skus s JOIN items i ON i.id=s.item_id
+      const sku = await requireRow(client, `SELECT i.*,s.id FROM skus s JOIN items i ON i.id=s.item_id
         WHERE s.id=$1 AND s.workspace_id=$2 AND s.is_active=1 AND i.is_active=1`,
       [line.skuId, ctx.workspaceId], `Purchase-order line ${index + 1} has an unavailable SKU.`);
       const supplierItemResult = await client.query(`SELECT * FROM supplier_items
         WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1`,
       [ctx.workspaceId, supplier.id, sku.id]);
       const supplierItem = supplierItemResult.rows[0] || null;
-      const unitsPer = positiveInteger(line.unitsPerPurchaseUnit ?? supplierItem?.units_per_purchase_unit ?? 1,
-        `Line ${index + 1} pack size`);
-      const purchaseUnits = positiveInteger(line.quantityPurchaseUnits ??
-        Math.ceil(positiveInteger(line.quantityUnits, `Line ${index + 1} quantity`) / unitsPer),
-      `Line ${index + 1} purchase quantity`);
-      const quantityUnits = purchaseUnits * unitsPer;
+      const unitsPer = exact.safeNumber(line.unitsPerPurchaseUnit ?? supplierItem?.units_per_purchase_unit ?? 1,
+        {positive:true,label:`Line ${index + 1} pack size`});
+      const requestedUnits=line.quantityUnits==null?null:stockQuantity.validate(sku,line.quantityUnits,{label:`Line ${index+1} quantity`});
+      const purchaseUnits=exact.safeNumber(line.quantityPurchaseUnits??(Number(sku.quantity_precision)>0?exact.convert(requestedUnits,{denominator:unitsPer,precision:6}):Math.ceil(requestedUnits/unitsPer)),{positive:true,label:`Line ${index+1} purchase quantity`});
+      const quantityUnits=stockQuantity.validate(sku,exact.convert(purchaseUnits,{numerator:unitsPer,precision:6}));
+      if(line.quantityPurchaseUnits!=null&&requestedUnits!=null&&quantityUnits!==requestedUnits)throw new ValidationError('Purchase quantity and stocking quantity must describe the same amount.');
       const unitCost = line.unitCost === undefined || line.unitCost === null
         ? (supplierItem?.last_unit_cost === null || supplierItem?.last_unit_cost === undefined
           ? null : Number(supplierItem.last_unit_cost)) : Number(line.unitCost);
@@ -154,7 +156,7 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
       const locationId = line.destinationLocationId || input.destinationLocationId;
       await requireRow(client, 'SELECT id FROM locations WHERE id=$1 AND workspace_id=$2 AND is_active=1',
         [locationId, ctx.workspaceId], `Purchase-order line ${index + 1} needs an active destination location.`);
-      resolved.push({ sku, supplierItem, unitsPer, purchaseUnits, quantityUnits, unitCost:resolvedCost,
+      resolved.push({ sku, supplierItem, unitsPer, purchaseUnits, quantityUnits, secondaryQuantity:stockQuantity.secondary(sku,line.secondaryQuantity),unitCost:resolvedCost,
         locationId, description: trimOrNull(line.description) || supplierItem?.supplier_description || sku.name,
         purchaseUnit: trimOrNull(line.purchaseUnit) || supplierItem?.purchase_unit || 'unit',
         supplierSku: trimOrNull(line.supplierSku) || supplierItem?.supplier_sku || null,
@@ -182,8 +184,9 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0,$13,$14,$15,$16,$17)`,
       [lineId, ctx.workspaceId, id, index + 1, line.sku.id, line.supplierItem?.id || null,
         line.supplierSku, line.description, line.purchaseUnit, line.unitsPer, line.purchaseUnits,
-        line.quantityUnits, line.unitCost, line.unitCost === null ? null : line.unitCost * line.quantityUnits,
+        line.quantityUnits, line.unitCost, line.unitCost === null ? null : Number(require('../domain/currency').fromMinor(exact.costMinor(line.secondaryQuantity??line.quantityUnits,require('../domain/currency').toMinor(line.unitCost,input.currency||supplier.currency||'USD')),input.currency||supplier.currency||'USD')),
         line.locationId, line.notes, at]);
+      if(line.secondaryQuantity!==null)await client.query('UPDATE purchase_order_lines SET secondary_quantity_ordered=$2 WHERE id=$1',[lineId,line.secondaryQuantity]);
     }
     await event(client, 'purchase_order_events', null, { workspaceId: ctx.workspaceId, recordId: id,
       type: 'created', detail: { lineCount: lineIds.length }, actorId: ctx.actorId, at });
@@ -216,14 +219,14 @@ async function reviseDraftPurchaseOrderLineInTransaction(client, rawContext, pur
     'Received purchase-order goods cannot be revised as a draft.');
   if (input.expectedQuantityUnits != null && Number(line.quantity_units) !== Number(input.expectedQuantityUnits))
     throw new ValidationError('The ordered quantity changed after review. Ask again before revising it.');
-  const quantityUnits = positiveInteger(input.quantityUnits, 'Revised stock-unit quantity');
-  const unitsPer = positiveInteger(line.units_per_purchase_unit, 'Purchase pack size');
-  if (quantityUnits % unitsPer !== 0) throw new ValidationError(
+  const quantityUnits = await physicalQuantity(client,ctx,line.sku_id,input.quantityUnits,'Revised stock-unit quantity');
+  const unitsPer = exact.safeNumber(line.units_per_purchase_unit,{positive:true,label:'Purchase pack size'});
+  if (Number((await stockQuantity.forSku(client,ctx,line.sku_id)).quantity_precision)===0&&quantityUnits % unitsPer !== 0) throw new ValidationError(
     `Order a multiple of ${unitsPer} stock units for this supplier pack.`);
   const at = nowIso();
-  await client.query(`UPDATE purchase_order_lines SET quantity_units=$4::bigint,
-    quantity_purchase_units=$5::bigint,
-    line_total=CASE WHEN unit_cost IS NULL THEN NULL ELSE unit_cost*($4::bigint) END
+  await client.query(`UPDATE purchase_order_lines SET quantity_units=$4::numeric,
+    quantity_purchase_units=$5::numeric,
+    line_total=CASE WHEN unit_cost IS NULL THEN NULL ELSE unit_cost*($4::numeric) END
     WHERE workspace_id=$1 AND purchase_order_id=$2 AND id=$3`,
   [ctx.workspaceId, purchaseOrderId, line.id, quantityUnits, quantityUnits / unitsPer]);
   const hash = crypto.createHash('sha256').update(JSON.stringify({previous:order.integrity_hash,
@@ -360,21 +363,22 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         JOIN skus s ON s.id=pol.sku_id WHERE pol.id=$1 AND pol.purchase_order_id=$2
         AND pol.workspace_id=$3 FOR UPDATE`, [requested.lineId, purchaseOrderId, ctx.workspaceId],
       `Receipt line ${index + 1} is not on this purchase order.`);
-      const quantity = positiveInteger(requested.quantity, `Receipt line ${index + 1} quantity`);
-      const outstanding = Number(line.quantity_units) - Number(line.quantity_received_units);
-      const overBy = Math.max(0, quantity - outstanding);
+      const quantity = await physicalQuantity(client,ctx,line.sku_id,requested.quantity,`Receipt line ${index + 1} quantity`);
+      const outstanding = exact.safeNumber(exact.subtract(line.quantity_units,line.quantity_received_units));
+      const overBy = Math.max(0,exact.safeNumber(exact.subtract(quantity,outstanding),{signed:true}));
       if (overBy && !input.overReceiptApproved) {
         throw new ValidationError(`Receipt line ${index + 1} exceeds the ordered quantity by ${overBy}.`);
       }
       const locationId = requested.locationId || line.destination_location_id || order.destination_location_id;
       const physical = await inventory.receiveInTransaction(client, ctx, {
-        skuId: line.sku_id, locationId, quantity, lotId: requested.lotId,
+        skuId: line.sku_id, locationId, quantity, secondaryQuantity:requested.secondaryQuantity,lotId: requested.lotId,
         lotCode: requested.lotCode, expiresAt: requested.expiresAt, serials: requested.serials,
         reference: input.reference || order.po_number, notes: input.note,
         occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${line.id}`,
       });
       const unitCostMinor = require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Supplier unit cost'});
-      const totalCostMinor = unitCostMinor * quantity;
+      const measuredQuantity=stockQuantity.secondary(await stockQuantity.forSku(client,ctx,line.sku_id),requested.secondaryQuantity);
+      const totalCostMinor = exact.costMinor(measuredQuantity??quantity,unitCostMinor);
       if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at);
       const posted = totalCostMinor===0?null:await ledger.postInTransaction(client, ctx, {
         postingInstant:at, sourceKey: `purchase-receipt:${receiptId}:${line.id}`,
@@ -391,8 +395,8 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
       });
       await costing.receiveInTransaction(client, ctx, { movementId: physical.movementId, unitCostMinor,
         totalCostMinor, journalEntryId: posted?.entry.id||null, sourceType: 'purchase_order_receipt', sourceRecordId: receiptId });
-      await client.query(`UPDATE purchase_order_lines SET quantity_received_units=quantity_received_units+$4
-        WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3`, [line.id, purchaseOrderId, ctx.workspaceId, quantity]);
+      await client.query(`UPDATE purchase_order_lines SET quantity_received_units=quantity_received_units+$4,secondary_quantity_received=secondary_quantity_received+$5
+        WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3`, [line.id, purchaseOrderId, ctx.workspaceId, quantity,measuredQuantity??0]);
       await client.query(`INSERT INTO purchase_order_receipt_lines
         (id,workspace_id,receipt_id,purchase_order_line_id,sku_id,location_id,quantity_units,lot_id,lot_code,
          expires_at,serials,over_by_units,movement_ids,created_at)
@@ -614,7 +618,7 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
       await client.query(`INSERT INTO sales_order_lines
         (id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,notes,created_at,updated_at,external_line_id)
         VALUES($1,$2,$3,$4,$5,0,$6,$7,$8,$8,$9)`,
-      [lineId, ctx.workspaceId, id, line.skuId, positiveInteger(line.quantity, `Sales-order line ${index + 1} quantity`),
+      [lineId, ctx.workspaceId, id, line.skuId, await physicalQuantity(client,ctx,line.skuId,line.quantity,`Sales-order line ${index + 1} quantity`),
         quote.lines[index].unitPriceMinor, trimOrNull(line.notes), at, trimOrNull(line.externalLineId)]);
     }
     await promotions.saveQuote(client,ctx,id,quote,lineIds);
@@ -648,7 +652,7 @@ async function editDraftSalesOrder(database,ctx,id,input){
   const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});
   if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost.');
   await client.query('DELETE FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,id]);
-  const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,positiveInteger(line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
+  const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,await physicalQuantity(client,ctx,line.skuId,line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
   await client.query(`UPDATE sales_orders SET customer_id=$3,contact_email=$4,contact_phone=$5,order_date=$6,needed_by=$7,fulfillment_location_id=$8,
     delivery_method=$9,ship_to_address=$10,ship_to_source=$11,notes=$12,reference=$13,currency=$14,version=version+1,updated_at=$15
     WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
@@ -677,10 +681,10 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const allocations = [];
     let short = false;
     for (const line of lines.rows) {
-      let needed = Number(line.quantity_ordered) - Number(line.quantity_fulfilled);
+      let needed = exact.safeNumber(exact.subtract(line.quantity_ordered,line.quantity_fulfilled));
       const existing = await client.query(`SELECT COALESCE(SUM(quantity),0) AS quantity FROM sales_order_allocations
         WHERE sales_order_line_id=$1 AND workspace_id=$2`, [line.id, ctx.workspaceId]);
-      needed -= Number(existing.rows[0].quantity);
+      needed = exact.safeNumber(exact.subtract(needed,existing.rows[0].quantity),{signed:true});
       const balances = await client.query(`SELECT b.location_id,b.on_hand,
           COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a JOIN sales_order_lines ol ON ol.id=a.sales_order_line_id
             WHERE a.workspace_id=b.workspace_id AND a.location_id=b.location_id AND ol.sku_id=b.sku_id),0) AS committed
@@ -700,7 +704,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
             updated_at=EXCLUDED.updated_at`,
         [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso()]);
         allocations.push({ lineId: line.id, locationId: balance.location_id, quantity });
-        needed -= quantity;
+        needed = exact.safeNumber(exact.subtract(needed,quantity));
       }
       if (needed > 0) short = true;
     }
@@ -742,15 +746,15 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       const line = await requireRow(client, `SELECT sol.*,s.item_id FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id
         WHERE sol.id=$1 AND sol.sales_order_id=$2 AND sol.workspace_id=$3 FOR UPDATE`,
       [requested.lineId, salesOrderId, ctx.workspaceId], `Fulfillment line ${index + 1} is not on this sales order.`);
-      const quantity = positiveInteger(requested.quantity, `Fulfillment line ${index + 1} quantity`);
-      const remaining = Number(line.quantity_ordered) - Number(line.quantity_fulfilled);
+      const quantity = await physicalQuantity(client,ctx,line.sku_id,requested.quantity,`Fulfillment line ${index + 1} quantity`);
+      const remaining = exact.safeNumber(exact.subtract(line.quantity_ordered,line.quantity_fulfilled));
       if (quantity > remaining) throw new ValidationError(`Fulfillment line ${index + 1} exceeds the quantity still open.`);
       const allocation = await requireRow(client, `SELECT * FROM sales_order_allocations
         WHERE sales_order_line_id=$1 AND location_id=$2 AND workspace_id=$3 FOR UPDATE`,
       [line.id, requested.locationId, ctx.workspaceId], `Fulfillment line ${index + 1} is not allocated at that location.`);
       if (quantity > Number(allocation.quantity)) throw new ValidationError(`Fulfillment line ${index + 1} exceeds its allocation.`);
       const physical = await inventory.issueInTransaction(client, ctx, {
-        skuId: line.sku_id, locationId: requested.locationId, quantity,
+        skuId: line.sku_id, locationId: requested.locationId, quantity,secondaryQuantity:requested.secondaryQuantity,
         lotId: requested.lotId, serialUnitIds: requested.serialUnitIds,
         reasonCode: 'sale', reference: order.order_number, occurredAt: at,
         idempotencyKey: `${input.idempotencyKey}:line:${line.id}:${requested.locationId}`,
@@ -765,12 +769,14 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         snapshot=legacy.lines[original.findIndex(r=>r.id===line.id)];
       }
       if(snapshot.quantity!==Number(line.quantity_ordered)||snapshot.unitPriceMinor!==Number(line.unit_price_minor))throw new ValidationError('The order pricing snapshot no longer matches its line. Review pricing before fulfillment.');
-      const before=Number(line.quantity_fulfilled);
+      const actualWeight=stockQuantity.secondary(await stockQuantity.forSku(client,ctx,line.sku_id),requested.secondaryQuantity);
+      if(actualWeight!==null){const remainingWeight=exact.safeNumber(exact.subtract(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled));if(actualWeight>remainingWeight||(quantity===remaining)!==(actualWeight===remainingWeight))throw new ValidationError('The fulfilled pieces and actual weight must match the confirmed remaining order. Review an order amendment if its weight changed.');}
+      const before=actualWeight===null?Number(line.quantity_fulfilled):Number(line.secondary_quantity_fulfilled),allocationQuantity=actualWeight??quantity,orderedMeasure=snapshot.pricingQuantity??snapshot.quantity;
       if(before&&snapshot.allocationVersion!==2){
-        const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax,coalesce(sum((metadata::jsonb->>'revenueMinor')::bigint),0) AS revenue FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,line.id])).rows[0],expected=priceCalculator.monetaryPortion(snapshot,snapshot.quantity,0,before);
+        const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax,coalesce(sum((metadata::jsonb->>'revenueMinor')::bigint),0) AS revenue FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,line.id])).rows[0],expected=priceCalculator.monetaryPortion(snapshot,orderedMeasure,0,before);
         if([['grossMinor','gross'],['discountMinor','discount'],['taxMinor','tax'],['revenueMinor','revenue']].some(([k,c])=>expected[k]!==Number(historical[c])))throw new ValidationError('The historical partial amounts need reconciliation before more units can be fulfilled. No earlier transaction was rewritten.');
       }
-      const {grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,revenueMinor,totalMinor}=priceCalculator.monetaryPortion(snapshot,snapshot.quantity,before,quantity);
+      const {grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,revenueMinor,totalMinor}=priceCalculator.monetaryPortion(snapshot,orderedMeasure,before,allocationQuantity);
       const posted = await ledger.postInTransaction(client, ctx, {
         postingInstant:at, sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}`,
         description: `Fulfill ${quantity} units on ${order.order_number}`, sourceType: 'sale_fulfillment',
@@ -797,8 +803,8 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         await client.query(`UPDATE sales_order_allocations SET quantity=quantity-$2,updated_at=$3 WHERE id=$1`,
           [allocation.id, quantity, nowIso()]);
       }
-      await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3 WHERE id=$1`,
-        [line.id, quantity, nowIso()]);
+      await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3,secondary_quantity_fulfilled=secondary_quantity_fulfilled+$4 WHERE id=$1`,
+        [line.id, quantity, nowIso(),actualWeight??0]);
       fulfilled.push({ lineId: line.id, quantity, locationId: requested.locationId,
         movementId: physical.movementId, revenueMinor,grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,unitPriceMinor:Number(line.unit_price_minor),costMinor: preparedCost.totalCostMinor,
         journalEntryId: posted.entry.id });
@@ -945,7 +951,7 @@ async function synchronizeSalesOrderInTransaction(client,rawContext,salesOrderId
   for(const [index,line] of input.lines.entries()){
     await requireRow(client,'SELECT id FROM skus WHERE id=$1 AND workspace_id=$2 AND is_active=1',
       [line.skuId,ctx.workspaceId],`Sales-order line ${index+1} has an unavailable SKU.`);
-    const quantity=positiveInteger(line.quantity,`Sales-order line ${index+1} quantity`);
+    const quantity=await physicalQuantity(client,ctx,line.skuId,line.quantity,`Sales-order line ${index+1} quantity`);
     const externalLineId=trimOrNull(line.externalLineId),identity=externalLineId?'external:'+externalLineId:'sku:'+line.skuId;
     if(identities.has(identity))throw new ValidationError('Distinct provider lines need distinct external line identities.');identities.add(identity);
     const exact=externalLineId?current.find(row=>row.external_line_id===externalLineId):null;
@@ -1010,7 +1016,7 @@ async function reviseDraftSalesOrderLineInTransaction(client,rawContext,salesOrd
   if(Number(line.quantity_ordered)!==Number(input.expectedQuantity)||
     Number(line.unit_price_minor)!==Number(input.expectedUnitPriceMinor))
     throw new ValidationError('This order line changed after review. Ask again before changing it.');
-  const quantity=positiveInteger(input.quantity,'Draft order quantity');
+  const quantity=exact.safeNumber(input.quantity,{positive:true,label:'Draft order quantity'});
   const unitPriceMinor=nonNegativeMinor(input.unitPriceMinor,'Draft order unit price');
   const promotions=require('../pricing/postgres-promotions'),revision=await promotions.revisionQuote(client,ctx,salesOrderId,{skuId:input.skuId,quantity,unitPriceMinor,priceOverride:input.priceOverride??true},{lock:true});
   if(input.pricingQuoteHash&&input.pricingQuoteHash!==promotions.quoteHash(revision.quote))throw new ValidationError('The draft pricing changed after approval. Review the complete price again.');

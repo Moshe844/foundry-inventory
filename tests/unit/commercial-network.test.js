@@ -14,12 +14,12 @@ test('only existing Stripe Billing/Payments REST paths are evidenced as non-incr
  assert.equal(classify('https://api.stripe.com/v1/tax/calculations'),null);
  assert.equal(classify('https://example.test/v1/invoices/in_test'),null);
 });
-test('initial self-service launch rejects annual without changing legacy annual webhook support',()=>{
+test('billing interval validation accepts the published monthly and annual plans and rejects unknown periods',()=>{
  const {assertMonthly}=require('../../src/commercial/launch-interval');
  assert.equal(assertMonthly('monthly'),'MONTHLY');
  assert.equal(assertMonthly(),'MONTHLY');
- assert.throws(()=>assertMonthly('annual'),/Annual billing is not available/);
- assert.throws(()=>assertMonthly('ANNUAL'),/Annual billing is not available/);
+ assert.equal(assertMonthly('annual'),'ANNUAL');
+ assert.equal(assertMonthly('ANNUAL'),'ANNUAL');assert.throws(()=>assertMonthly('weekly'),/Choose monthly or annual/);
 });
 test('Gmail provider attempts retain official method-specific quota units without storing message IDs',()=>{
  for(const [path,verb,method,units] of [

@@ -4,11 +4,11 @@ const { newId, nowIso } = require('../lib/util');
 const { ValidationError, InsufficientStockError, InvariantError } = require('./errors');
 const permissions = require('../actions/permissions');
 const physicalInput=require('./physical-stock-input');
+const exact=require('./exact-quantity'),stockQuantity=require('./stock-quantity');
 
 function positiveInteger(value, label = 'Quantity') {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number <= 0) throw new ValidationError(`${label} must be a whole number above zero.`);
-  if(number>physicalInput.MAX_QUANTITY)throw new ValidationError(`${label} exceeds the supported maximum of ${physicalInput.MAX_QUANTITY.toLocaleString('en-US')} units per movement.`);
+  const number=exact.safeNumber(value,{positive:true,label});
+  if(number>physicalInput.MAX_QUANTITY)throw new ValidationError(label+' exceeds the supported per-movement maximum.');
   return number;
 }
 
@@ -38,11 +38,11 @@ function assertActiveTarget(row){
 
 async function target(client, ctx, skuId, locationId) {
   const result = await client.query(`SELECT s.id, s.item_id, s.is_active AS sku_active,
-      i.name, i.tracking_mode, i.allow_negative AS allow_negative_stock, i.is_active AS item_active,
+      i.name, i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment, i.allow_negative AS allow_negative_stock, i.is_active AS item_active,
       l.id AS location_id, l.name AS location_name, l.is_active AS location_active,l.custody_agreement_id
     FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
     JOIN locations l ON l.id = $3 AND l.workspace_id = s.workspace_id
-    WHERE s.id = $1 AND s.workspace_id = $2`, [skuId, ctx.workspaceId, locationId]);
+    WHERE s.id = $1 AND s.workspace_id = $2 FOR SHARE OF i`, [skuId, ctx.workspaceId, locationId]);
   const row = result.rows[0];
   if (!row) throw new ValidationError('That item variant or location is not in this inventory.');
   if(['lot','serial'].includes(row.tracking_mode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
@@ -88,8 +88,7 @@ async function balanceDelta(client, ctx, row, delta, at) {
     throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${onHand}, requested: ${Math.abs(delta)}.`,
       { onHand, requested: Math.abs(delta) });
   }
-  const after=Number(changed.rows[0].on_hand);
-  if(!Number.isSafeInteger(after))throw new ValidationError('Stock totals exceed the supported exact range. No stock was changed.');
+  const after=stockQuantity.validate(row,changed.rows[0].on_hand,{positive:false,signed:Boolean(Number(row.allow_negative_stock)),total:true});
   return after;
 }
 
@@ -101,24 +100,35 @@ async function lotDelta(client, ctx, lotId, locationId, delta, at) {
     WHERE workspace_id = $1 AND lot_id = $2 AND location_id = $3 AND quantity + $4 >= 0 RETURNING quantity`,
   [ctx.workspaceId, lotId, locationId, delta, at]);
   if (!changed.rows.length) throw new InsufficientStockError('That lot does not have enough stock at this location.');
-  return Number(changed.rows[0].quantity);
+  return exact.safeNumber(changed.rows[0].quantity);
 }
 
+async function secondaryDelta(client,ctx,row,input){
+ const delta=stockQuantity.secondary(row,input.secondaryQuantityDelta,{positive:false,signed:true,total:true});if(delta===null)return null;
+ const result=(await client.query('UPDATE balances SET secondary_on_hand=coalesce(secondary_on_hand,0)+$4 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND coalesce(secondary_on_hand,0)+$4>=0 RETURNING on_hand,secondary_on_hand',[ctx.workspaceId,row.id,row.location_id,delta])).rows[0];
+ if(!result)throw new InsufficientStockError('There is not enough measured weight at this location.');
+ const after=stockQuantity.secondary(row,result.secondary_on_hand,{positive:false,total:true});if((Number(result.on_hand)===0)!==(after===0))throw new ValidationError('Pieces and actual weight must run out together. Enter the weight of the pieces being moved.');
+ if(input.lotId&&row.tracking_mode!=='serial'){const lot=(await client.query('UPDATE lot_balances SET secondary_quantity=coalesce(secondary_quantity,0)+$4 WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3 AND coalesce(secondary_quantity,0)+$4>=0 RETURNING quantity,secondary_quantity',[ctx.workspaceId,input.lotId,row.location_id,delta])).rows[0];if(!lot||(Number(lot.quantity)===0)!==(Number(lot.secondary_quantity)===0))throw new ValidationError('The batch pieces and actual weight do not agree.');}
+ return after;
+}
 async function movement(client, ctx, row, input) {
+  const secondaryAfter=await secondaryDelta(client,ctx,row,input);
   const id = newId('mv');
   await client.query(`INSERT INTO movements
       (id, workspace_id, group_id, operation, leg, item_id, sku_id, location_id,
        counterparty_location_id, lot_id, serial_unit_id, quantity_delta, balance_after,
-       reason_code, notes, reference, actor_user_id, occurred_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+       reason_code, notes, reference, actor_user_id, occurred_at,secondary_quantity_delta,secondary_balance_after)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
   [id, ctx.workspaceId, input.groupId, input.operation, input.leg || null, row.item_id, row.id,
     row.location_id, input.counterpartyLocationId || null, input.lotId || null, input.serialUnitId || null,
     input.quantityDelta, input.balanceAfter, input.reasonCode || null, input.notes || null,
-    input.reference || null, ctx.actorId, input.occurredAt]);
+    input.reference || null, ctx.actorId, input.occurredAt,input.secondaryQuantityDelta??null,secondaryAfter]);
   return id;
 }
 
 async function recordMovementSerials(client, ctx, movementId, serialUnitIds) {
+  if(serialUnitIds?.length){const m=(await client.query('SELECT secondary_quantity_delta FROM movements WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,movementId])).rows[0];if(m?.secondary_quantity_delta!=null){const proof=(await client.query('SELECT sum(secondary_quantity) AS weight,count(*) FILTER(WHERE secondary_quantity IS NULL) AS missing FROM serial_units WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,serialUnitIds])).rows[0];if(Number(proof.missing)||exact.canonical(proof.weight)!==exact.canonical(Math.abs(Number(m.secondary_quantity_delta))))throw new ValidationError('The actual weight must match the recorded weights of these exact serial units.');}}
+
   for (const serialUnitId of serialUnitIds || []) {
     await client.query(`INSERT INTO stockchief_runtime.inventory_movement_serial_units
       (workspace_id,movement_id,serial_unit_id) VALUES($1,$2,$3)
@@ -156,14 +166,14 @@ function assertLotEligible(lot,input){
 
 async function serialBatchDeltas(client,ctx,ids,sourceLocationId,destinationLocationId,at,input={}){
   if(!ids.length)return;
-  const groups=(await client.query(`SELECT lot.id,lot.code,lot.expires_at,COUNT(*)::integer AS units
+  const groups=(await client.query(`SELECT lot.id,lot.code,lot.expires_at,COUNT(*)::integer AS units,SUM(unit.secondary_quantity) AS weight
     FROM serial_units unit JOIN lots lot ON lot.id=unit.lot_id AND lot.workspace_id=unit.workspace_id
     WHERE unit.workspace_id=$1 AND unit.id=ANY($2::text[]) GROUP BY lot.id,lot.code,lot.expires_at ORDER BY lot.id`,
   [ctx.workspaceId,ids])).rows;
   for(const lot of groups){
     if(input.issue)assertLotEligible(lot,input);
-    if(sourceLocationId)await lotDelta(client,ctx,lot.id,sourceLocationId,-lot.units,at);
-    if(destinationLocationId)await lotDelta(client,ctx,lot.id,destinationLocationId,lot.units,at);
+    if(sourceLocationId){await lotDelta(client,ctx,lot.id,sourceLocationId,-lot.units,at);if(lot.weight!=null)await client.query('UPDATE lot_balances SET secondary_quantity=coalesce(secondary_quantity,0)-$4 WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3',[ctx.workspaceId,lot.id,sourceLocationId,lot.weight]);}
+    if(destinationLocationId){await lotDelta(client,ctx,lot.id,destinationLocationId,lot.units,at);if(lot.weight!=null)await client.query('UPDATE lot_balances SET secondary_quantity=coalesce(secondary_quantity,0)+$4 WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3',[ctx.workspaceId,lot.id,destinationLocationId,lot.weight]);}
   }
 }
 
@@ -175,6 +185,8 @@ async function receiveInTransaction(client, rawContext, input) {
     const operation = await beginOperation(client, ctx, 'inventory.receive', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const row = await target(client, ctx, input.skuId, input.locationId);
+    stockQuantity.validate(row,quantity);
+    const secondaryQuantity=stockQuantity.secondary(row,input.secondaryQuantity);
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
     let lot = null;
@@ -220,10 +232,13 @@ async function receiveInTransaction(client, rawContext, input) {
         }
       }
     }
+    if(row.tracking_mode==='serial'&&row.secondary_unit_label){
+      if(!(input.returnSerialUnitIds||[]).length){if(!input.serialWeights||typeof input.serialWeights!=='object'||Array.isArray(input.serialWeights)||Object.keys(input.serialWeights).length!==serials.length)throw new ValidationError('Record the actual weight of every serialized piece. An average weight cannot identify an individual piece.');for(const [i,serial]of serials.entries()){if(!Object.hasOwn(input.serialWeights,serial))throw new ValidationError('Record the actual weight for serial '+serial+'.');const weight=stockQuantity.secondary(row,input.serialWeights[serial]);await client.query('UPDATE serial_units SET secondary_quantity=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,serialUnitIds[i],weight]);}}
+    }
     const balanceAfter = await balanceDelta(client, ctx, row, quantity, at);
     if(row.tracking_mode==='serial')await serialBatchDeltas(client,ctx,serialUnitIds,null,row.location_id,at);
     else if (lot) await lotDelta(client, ctx, lot.id, row.location_id, quantity, at);
-    const movementId = await movement(client, ctx, row, { groupId, operation: 'receive', quantityDelta: quantity,
+    const movementId = await movement(client, ctx, row, { groupId, operation: 'receive', quantityDelta: quantity,secondaryQuantityDelta:secondaryQuantity,
       balanceAfter, lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
     await recordMovementSerials(client, ctx, movementId, serialUnitIds);
     const result = { movementId, groupId, balanceAfter, quantity, lotId: lot?.id || null, serials, serialUnitIds };
@@ -239,25 +254,25 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   async function sequential(){const out=[];for(const value of values)out.push(await receiveInTransaction(client,ctx,{...value.input,idempotencyKey:value.key}));return out;}
   if(existing.length||new Set(keys).size!==keys.length)return sequential();
   const pairs=values.map(value=>({position:value.index,sku_id:value.input.skuId,location_id:value.input.locationId}));
-  const targets=(await client.query(`SELECT x.position,s.id,s.item_id,s.is_active AS sku_active,i.tracking_mode,i.allow_negative AS allow_negative_stock,i.is_active AS item_active,l.id AS location_id,l.name AS location_name,l.is_active AS location_active,l.custody_agreement_id
-   FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
+  const targets=(await client.query(`SELECT x.position,s.id,s.item_id,s.is_active AS sku_active,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,i.allow_negative AS allow_negative_stock,i.is_active AS item_active,l.id AS location_id,l.name AS location_name,l.is_active AS location_active,l.custody_agreement_id
+   FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position FOR SHARE OF i`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
   if(targets.length!==values.length)throw new ValidationError('That item variant or location is not in this inventory.');
   for(const row of targets){assertActiveTarget(row);if(!require('../custody/authority').allows(ctx,row.custody_agreement_id))throw new ValidationError('Use the agreement to receive stock into a protected custody location.');}
-  if(targets.some(row=>row.tracking_mode!=='quantity')||values.some(({input})=>input.lotId||input.lotCode||input.expiresAt||input.serials?.length))return sequential();
+  if(targets.some(row=>row.tracking_mode!=='quantity'||row.secondary_unit_label)||values.some(({input})=>input.lotId||input.lotCode||input.expiresAt||input.serials?.length))return sequential();
   const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
   await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);
   const positionSkus=[...new Set(positions.map(p=>p.sku_id))];
   const balances=(await client.query(`SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON b.sku_id=x.sku_id AND b.location_id=x.location_id WHERE b.workspace_id=$1 AND b.sku_id=ANY($3::text[]) ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,[ctx.workspaceId,positionJSON,positionSkus])).rows;
   const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before:Number(row.on_hand),after:Number(row.on_hand)}])),operations=[],movements=[],results=[];
-  for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;state.after+=value.quantity;if(!Number.isSafeInteger(state.after))throw new ValidationError('Stock totals exceed the supported exact range.');
+  for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:Boolean(Number(row.allow_negative_stock)),total:true});
     if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
     const result={movementId:newId('mv'),groupId:newId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:null,serials:[],serialUnitIds:[]};
     operations.push({id:newId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
   }
   const inserted=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key) SELECT x.id,$1,'inventory.receive',x.idempotency_key FROM jsonb_to_recordset($2::jsonb) AS x(id text,idempotency_key text) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING`,[ctx.workspaceId,JSON.stringify(operations)]);if(inserted.rowCount!==values.length)throw new InvariantError('That inventory operation is already running.','operation_in_progress');
-  const changed=await client.query(`UPDATE balances b SET on_hand=x.after,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,before bigint,after bigint) WHERE b.workspace_id=$1 AND b.sku_id=ANY($4::text[]) AND b.sku_id=x.sku_id AND b.location_id=x.location_id AND b.on_hand=x.before`,[ctx.workspaceId,JSON.stringify([...states.values()]),at,positionSkus]);if(changed.rowCount!==states.size)throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
+  const changed=await client.query(`UPDATE balances b SET on_hand=x.after,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,before numeric,after numeric) WHERE b.workspace_id=$1 AND b.sku_id=ANY($4::text[]) AND b.sku_id=x.sku_id AND b.location_id=x.location_id AND b.on_hand=x.before`,[ctx.workspaceId,JSON.stringify([...states.values()]),at,positionSkus]);if(changed.rowCount!==states.size)throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
   await client.query(`INSERT INTO movements(id,workspace_id,group_id,operation,item_id,sku_id,location_id,quantity_delta,balance_after,notes,reference,actor_user_id,occurred_at)
-   SELECT x.id,$1,x.group_id,'receive',x.item_id,x.sku_id,x.location_id,x.quantity_delta,x.balance_after,x.notes,x.reference,$2,x.occurred_at FROM jsonb_to_recordset($3::jsonb) AS x(position integer,id text,group_id text,item_id text,sku_id text,location_id text,quantity_delta bigint,balance_after bigint,notes text,reference text,occurred_at text) ORDER BY x.position`,[ctx.workspaceId,ctx.actorId,JSON.stringify(movements)]);
+   SELECT x.id,$1,x.group_id,'receive',x.item_id,x.sku_id,x.location_id,x.quantity_delta,x.balance_after,x.notes,x.reference,$2,x.occurred_at FROM jsonb_to_recordset($3::jsonb) AS x(position integer,id text,group_id text,item_id text,sku_id text,location_id text,quantity_delta numeric,balance_after numeric,notes text,reference text,occurred_at text) ORDER BY x.position`,[ctx.workspaceId,ctx.actorId,JSON.stringify(movements)]);
   await client.query(`UPDATE stockchief_runtime.business_operations b SET status='COMPLETED',result=x.result,completed_at=now() FROM jsonb_to_recordset($2::jsonb) AS x(id text,result jsonb) WHERE b.workspace_id=$1 AND b.id=x.id`,[ctx.workspaceId,JSON.stringify(operations)]);
   return results;
 }
@@ -275,6 +290,8 @@ async function issueInTransaction(client, rawContext, input) {
     const operation = await beginOperation(client, ctx, 'inventory.issue', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const row = await target(client, ctx, input.skuId, input.locationId);
+    stockQuantity.validate(row,quantity);
+    const secondaryQuantity=stockQuantity.secondary(row,input.secondaryQuantity);
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
     let lot = null;
@@ -295,7 +312,7 @@ async function issueInTransaction(client, rawContext, input) {
     }
     const balanceAfter = await balanceDelta(client, ctx, row, -quantity, at);
     if (lot) await lotDelta(client, ctx, lot.id, row.location_id, -quantity, at);
-    const movementId = await movement(client, ctx, row, { groupId, operation: 'issue', quantityDelta: -quantity,
+    const movementId = await movement(client, ctx, row, { groupId, operation: 'issue', quantityDelta: -quantity,secondaryQuantityDelta:secondaryQuantity===null?null:-secondaryQuantity,
       balanceAfter, lotId: lot?.id, reasonCode: input.reasonCode, notes: input.notes,
       reference: input.reference, occurredAt: at });
     await recordMovementSerials(client, ctx, movementId, serialUnitIds);
@@ -317,7 +334,10 @@ async function transferInTransaction(client, rawContext, input) {
     const operation = await beginOperation(client, ctx, 'inventory.transfer', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const source = await target(client, ctx, input.skuId, input.sourceLocationId);
+    stockQuantity.validate(source,quantity);
+    const secondaryQuantity=stockQuantity.secondary(source,input.secondaryQuantity);
     const destination = await target(client, ctx, input.skuId, input.destinationLocationId);
+    stockQuantity.validate(destination,quantity);
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
     let lot = null;
@@ -341,10 +361,10 @@ async function transferInTransaction(client, rawContext, input) {
       await serialBatchDeltas(client,ctx,ids,source.location_id,destination.location_id,at);
     }
     const outMovementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
-      counterpartyLocationId: destination.location_id, quantityDelta: -quantity, balanceAfter: sourceAfter,
+      counterpartyLocationId: destination.location_id, quantityDelta: -quantity,secondaryQuantityDelta:secondaryQuantity===null?null:-secondaryQuantity, balanceAfter: sourceAfter,
       lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
     const inMovementId = await movement(client, ctx, destination, { groupId, operation: 'transfer', leg: 'in',
-      counterpartyLocationId: source.location_id, quantityDelta: quantity, balanceAfter: destinationAfter,
+      counterpartyLocationId: source.location_id, quantityDelta: quantity,secondaryQuantityDelta:secondaryQuantity, balanceAfter: destinationAfter,
       lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
     await recordMovementSerials(client, ctx, outMovementId, serialUnitIds);
     await recordMovementSerials(client, ctx, inMovementId, serialUnitIds);
@@ -367,6 +387,8 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
   const operation = await beginOperation(client, ctx, 'inventory.transfer.dispatch', input.idempotencyKey);
   if (operation.replayed) return { ...operation.result, replayed: true };
   const source = await target(client, ctx, input.skuId, input.sourceLocationId);
+    stockQuantity.validate(source,quantity);
+    const secondaryQuantity=stockQuantity.secondary(source,input.secondaryQuantity);
   const at = input.occurredAt || nowIso();
   const groupId = input.groupId || newId('grp');
   let lot = null;
@@ -388,7 +410,7 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
   const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, source.location_id, -quantity, at);
   const movementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
-    counterpartyLocationId: input.destinationLocationId, quantityDelta: -quantity, balanceAfter: sourceAfter,
+    counterpartyLocationId: input.destinationLocationId, quantityDelta: -quantity,secondaryQuantityDelta:secondaryQuantity===null?null:-secondaryQuantity, balanceAfter: sourceAfter,
     lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
   await recordMovementSerials(client, ctx, movementId, serialUnitIds);
   const result = { groupId, movementId, sourceAfter, quantity, lotId: lot?.id || null, serialUnitIds };
@@ -403,6 +425,8 @@ async function receiveTransferInTransaction(client, rawContext, input) {
   const operation = await beginOperation(client, ctx, 'inventory.transfer.receive', input.idempotencyKey);
   if (operation.replayed) return { ...operation.result, replayed: true };
   const destination = await target(client, ctx, input.skuId, input.destinationLocationId);
+    stockQuantity.validate(destination,quantity);
+  const secondaryQuantity=stockQuantity.secondary(destination,input.secondaryQuantity);
   const at = input.occurredAt || nowIso();
   const groupId = input.groupId || newId('grp');
   let lot = null;
@@ -424,7 +448,7 @@ async function receiveTransferInTransaction(client, rawContext, input) {
   const destinationAfter = await balanceDelta(client, ctx, destination, quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, destination.location_id, quantity, at);
   const movementId = await movement(client, ctx, destination, { groupId, operation: 'transfer', leg: 'in',
-    counterpartyLocationId: input.sourceLocationId, quantityDelta: quantity, balanceAfter: destinationAfter,
+    counterpartyLocationId: input.sourceLocationId, quantityDelta: quantity,secondaryQuantityDelta:secondaryQuantity, balanceAfter: destinationAfter,
     lotId: lot?.id, notes: input.notes, reference: input.reference, occurredAt: at });
   await recordMovementSerials(client, ctx, movementId, serialUnitIds);
   const result = { groupId, movementId, destinationAfter, quantity, lotId: lot?.id || null, serialUnitIds };
@@ -434,22 +458,23 @@ async function receiveTransferInTransaction(client, rawContext, input) {
 
 async function adjustInTransaction(client,rawContext,input){
   const ctx = context(rawContext);
-  const counted = Number(input.countedQuantity);
-  if (!Number.isSafeInteger(counted) || counted < 0) throw new ValidationError('Counted quantity must be a whole number of zero or more.');
+  const counted = exact.safeNumber(input.countedQuantity,{label:'Counted quantity'});
   if(counted>physicalInput.MAX_QUANTITY)throw new ValidationError('Counted quantity exceeds the supported range.');
   if (!input.reasonCode) throw new ValidationError('A count correction requires a reason.');
     await requirePermission(client, ctx, permissions.ADJUST, 'correct counts');
     const operation = await beginOperation(client, ctx, 'inventory.adjust', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const row = await target(client, ctx, input.skuId, input.locationId);
+    stockQuantity.validate(row,counted,{positive:false});
     if (row.tracking_mode !== 'quantity') throw new ValidationError('Lot and serial counts must identify the affected stock.');
     const currentResult = await client.query(`SELECT on_hand FROM balances
       WHERE workspace_id = $1 AND sku_id = $2 AND location_id = $3 FOR UPDATE`,
     [ctx.workspaceId, row.id, row.location_id]);
-    const expected = Number(currentResult.rows[0]?.on_hand || 0);
-    if(!Number.isSafeInteger(expected))throw new ValidationError('The existing stock total exceeds the supported exact range. Reconcile its source before adjusting stock.');
-    const delta = counted - expected;
-    if(!Number.isSafeInteger(delta))throw new ValidationError('The stock correction exceeds the supported exact range.');
+    const expected = stockQuantity.validate(row,currentResult.rows[0]?.on_hand||0,{positive:false,signed:true,total:true});
+    const delta=stockQuantity.validate(row,exact.subtract(counted,expected),{positive:false,signed:true,total:true});
+    const weightBefore=(await client.query('SELECT secondary_on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,row.id,row.location_id])).rows[0]?.secondary_on_hand||0;
+    const countedWeight=stockQuantity.secondary(row,input.secondaryCountedQuantity,{positive:false,total:true}),secondaryCountDelta=countedWeight===null?null:exact.safeNumber(exact.subtract(countedWeight,weightBefore),{signed:true});
+    if (!delta&&secondaryCountDelta)throw new ValidationError('A weight-only count change needs a measured stock correction with its cost review.');
     if (!delta) {
       const result = { unchanged: true, balanceAfter: counted };
       await completeOperation(client, operation, result);
@@ -458,15 +483,15 @@ async function adjustInTransaction(client,rawContext,input){
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
     const balanceAfter = await balanceDelta(client, ctx, row, delta, at);
-    const movementId = await movement(client, ctx, row, { groupId, operation: 'adjust', quantityDelta: delta,
+    const movementId = await movement(client, ctx, row, { groupId, operation: 'adjust', quantityDelta: delta,secondaryQuantityDelta:secondaryCountDelta,
       balanceAfter, reasonCode: input.reasonCode, notes: input.notes, reference: input.reference, occurredAt: at });
     const adjustmentId = newId('adj');
     await client.query(`INSERT INTO adjustments
       (id, workspace_id, movement_id, sku_id, location_id, expected_qty, counted_qty,
-       reason_code, notes, actor_user_id, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       reason_code, notes, actor_user_id, created_at,secondary_expected_qty,secondary_counted_qty)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [adjustmentId, ctx.workspaceId, movementId, row.id, row.location_id, expected, counted,
-      input.reasonCode, input.notes || null, ctx.actorId, at]);
+      input.reasonCode, input.notes || null, ctx.actorId, at,countedWeight===null?null:weightBefore,countedWeight]);
     const result = { adjustmentId, movementId, groupId, expected, counted, balanceAfter };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };

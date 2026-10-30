@@ -24,7 +24,7 @@ async function copy(database,ctx,itemId,input){
    return {...prior.result.result,replayed:true};
   }
   const source=await describe(client,ctx,itemId);if(source.hash!==input.sourceHash)throw new ValidationError('The source product or its prices changed. Review the duplicate again.');
-  const result=await require('./postgres-catalog-service').createImportedItemInTransaction(client,ctx,{name,description:source.item.description,unitLabel:source.item.unit_label,trackingMode:source.item.tracking_mode,
+  const result=await require('./postgres-catalog-service').createImportedItemInTransaction(client,ctx,{name,description:source.item.description,unitLabel:source.item.unit_label,quantityPrecision:Number(source.item.quantity_precision),quantityIncrement:source.item.quantity_increment,secondaryUnitLabel:source.item.secondary_unit_label,secondaryPrecision:Number(source.item.secondary_precision),secondaryIncrement:source.item.secondary_increment,trackingMode:source.item.tracking_mode,
     variants:source.skus.map((s,i)=>({key:s.id,code:base+(source.skus.length>1?'-'+(i+1):''),options:s.options}))});
   const values=[];for(const sku of result.skus){const price=source.prices.find(p=>p.sku_id===sku.key);if(price)values.push({skuId:sku.skuId,amountMinor:price.amount_minor===null?null:Number(price.amount_minor),currency:price.currency,source:'approved_instruction',sourceDetail:{copiedFromItemId:itemId,copiedFromSkuId:sku.key}});}
   await require('../pricing/postgres-service').setPricesInTransaction(client,ctx,values);

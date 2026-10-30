@@ -27,7 +27,12 @@ async function migratePostgres(database) {
         if (![checksum,originalChecksum].includes(prior.rows[0].checksum)) throw new Error(`Applied PostgreSQL migration ${name} has changed.`);
         continue;
       }
+      // Converting existing physical-quantity tables can rewrite several GiB.
+      // Keep this single, bounded migration allowance out of runtime queries.
+      const extendedQuantityMigration=name==='138-measured-stock-quantities.sql';
+      if(extendedQuantityMigration)await client.query("SELECT set_config('statement_timeout','600000',true)");
       await client.query(statement);
+      if(extendedQuantityMigration)await client.query("SELECT set_config('statement_timeout','120000',true)");
       await client.query('INSERT INTO stockchief_postgres_migrations(name, checksum) VALUES ($1, $2)', [name, checksum]);
       applied.push(name);
     }

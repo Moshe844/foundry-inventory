@@ -45,6 +45,8 @@ function openPostgres(connectionString, options = {}) {
   });
   const measuredQuery=async(target,statement,values)=>{const start=process.hrtime.bigint();
     try{return await target.query(statement,values);}catch(error){
+      if(error.code==='55000'&&String(error.message).startsWith('This inventory is completing its ERP cutover.'))throw new (require('../domain/errors').InvariantError)(error.message,'cutover_in_progress');
+      if(error.code==='23514'&&['stock_quantity_precision','stock_unit_definition'].includes(error.constraint))throw new (require('../domain/errors').ValidationError)(error.message);
       if(error.code==='23514'&&error.constraint==='inventory_plan_capacity')
         throw new (require('../commercial/entitlements').EntitlementError)(error.message,{constraint:error.constraint});
       throw error;

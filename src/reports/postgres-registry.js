@@ -40,7 +40,7 @@ const datasets=Object.freeze({
       status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,l.name AS location,
-      b.on_hand::bigint AS on_hand,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
+      b.on_hand::numeric AS on_hand,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
       LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
@@ -55,7 +55,7 @@ const datasets=Object.freeze({
       JOIN accounting_accounts a ON a.id=jl.account_id AND a.workspace_id=jl.workspace_id
       WHERE jl.workspace_id=$1 AND a.system_key='SALES_REVENUE' AND jl.sku_id IS NOT NULL
       GROUP BY jl.workspace_id,jl.sku_id)
-      SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,b.on_hand::bigint AS on_hand,
+      SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,b.on_hand::numeric AS on_hand,
         to_char(rs.last_sold_on::date,'YYYY-MM-DD') AS last_sold_on,
         GREATEST(0,((now() AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date-
           coalesce(rs.last_sold_on::date,(i.created_at::timestamptz AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'))::date)))::bigint AS days_since_sale
@@ -67,20 +67,20 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1 AND b.on_hand>0`,recordHref:row=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',on_hand:'number',last_sold_on:'date',days_since_sale:'number'}},
   movements:{label:'Inventory movements',permission:permissions.VIEW,
-    aggregateProjection:{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::bigint AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`},
+    aggregateProjection:{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`},
     source:`SELECT m.item_id AS record_id,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
       i.name AS product,s.code AS sku,l.name AS location,m.operation,
-      m.quantity_delta::bigint AS quantity_delta,COALESCE(m.reference,'') AS reference
+      m.quantity_delta::numeric AS quantity_delta,COALESCE(m.reference,'') AS reference
       FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id
       JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
       JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id
       WHERE m.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     fields:{occurred_on:'date',product:'text',sku:'text',location:'text',operation:'text',quantity_delta:'number',reference:'text'}},
   inventory_valuation:{label:'Recorded inventory book value',permission:permissions.VIEW,
-    aggregateProjections:[{fields:['sku','costed_units','book_cost_minor','currency'],source:`SELECT s.code AS sku,b.quantity_units::bigint AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`}],
-    aggregateProjection:{fields:['costed_units','book_cost_minor','currency'],source:`SELECT b.quantity_units::bigint AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`},
+    aggregateProjections:[{fields:['sku','costed_units','book_cost_minor','currency'],source:`SELECT s.code AS sku,b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`}],
+    aggregateProjection:{fields:['costed_units','book_cost_minor','currency'],source:`SELECT b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`},
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
-      b.quantity_units::bigint AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
+      b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
       a.base_currency AS currency,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM accounting_inventory_cost_balances b
       JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
@@ -95,7 +95,7 @@ const datasets=Object.freeze({
       FROM accounting_inventory_cost_events WHERE workspace_id=$1 AND physical_quantity_delta>0
       GROUP BY workspace_id,sku_id,location_id)
       SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
-        b.quantity_units::bigint AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
+        b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
         settings.base_currency AS currency,
         to_char(r.last_received_at::timestamptz AT TIME ZONE coalesce(w.time_zone,owner.time_zone,'UTC'),'YYYY-MM-DD') AS last_received_on,
         CASE WHEN r.last_received_at IS NULL THEN NULL ELSE
@@ -112,7 +112,7 @@ const datasets=Object.freeze({
     fields:{product:'text',sku:'text',location:'text',costed_units:'number',book_cost_minor:'money_minor',currency:'text',last_received_on:'date',days_since_last_receipt:'number'}},
   inventory_cost_movements:{label:'Recorded inventory cost changes',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
-      cm.quantity_delta::bigint AS quantity_delta,cm.physical_quantity_delta::bigint AS physical_quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,
+      cm.quantity_delta::numeric AS quantity_delta,cm.physical_quantity_delta::numeric AS physical_quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,
       cm.cost_source_type AS source_kind,a.base_currency AS currency,
       to_char(cm.created_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS recorded_on,COALESCE(cm.source_reference,m.reference,'') AS reference
       FROM accounting_inventory_cost_events cm
@@ -134,7 +134,7 @@ const datasets=Object.freeze({
     fields:{customer:'text',company:'text',email:'text',record_state:'text',created_on:'date'}},
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,o.currency,
-      o.order_date,o.needed_by,COALESCE(lines.units,0)::bigint AS ordered_units,
+      o.order_date,o.needed_by,COALESCE(lines.units,0)::numeric AS ordered_units,
       CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(o.priced_subtotal_minor,lines.quoted_minor,0)::bigint
         ELSE NULL END AS quoted_line_total_minor,
       o.discount_minor AS quoted_discount_minor,o.tax_minor AS quoted_tax_minor,o.charges_minor AS quoted_charges_minor,
@@ -153,7 +153,7 @@ const datasets=Object.freeze({
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
       o.order_date,o.needed_by,i.name AS product,s.code AS sku,
-      l.quantity_ordered::bigint AS ordered_units,l.quantity_fulfilled::bigint AS fulfilled_units,
+      l.quantity_ordered::numeric AS ordered_units,l.quantity_fulfilled::numeric AS fulfilled_units,
       (l.quantity_ordered-l.quantity_fulfilled)::bigint AS open_units
       FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
       JOIN customers c ON c.id=o.customer_id AND c.workspace_id=l.workspace_id
@@ -181,8 +181,8 @@ const datasets=Object.freeze({
       status:'text',currency:'text',lead_time_days:'number',product_links:'number',active_product_links:'number',created_on:'date'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
-      o.order_date,o.expected_date,(COALESCE(lines.units,0)-COALESCE(lines.received,0))::bigint AS outstanding_units,CASE WHEN o.status NOT IN ('DRAFT','CANCELLED') AND COALESCE(lines.units,0)>COALESCE(lines.received,0) THEN 'yes' ELSE 'no' END AS is_open,COALESCE(lines.units,0)::bigint AS ordered_units,
-      COALESCE(lines.received,0)::bigint AS received_units
+      o.order_date,o.expected_date,(COALESCE(lines.units,0)-COALESCE(lines.received,0))::numeric AS outstanding_units,CASE WHEN o.status NOT IN ('DRAFT','CANCELLED') AND COALESCE(lines.units,0)>COALESCE(lines.received,0) THEN 'yes' ELSE 'no' END AS is_open,COALESCE(lines.units,0)::numeric AS ordered_units,
+      COALESCE(lines.received,0)::numeric AS received_units
       FROM purchase_orders o JOIN suppliers s ON s.id=o.supplier_id AND s.workspace_id=o.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_units) AS units,SUM(quantity_received_units) AS received
         FROM purchase_order_lines WHERE workspace_id=o.workspace_id AND purchase_order_id=o.id) lines ON TRUE
@@ -192,8 +192,8 @@ const datasets=Object.freeze({
   purchase_order_lines:{label:'Supplier purchase order lines by product',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,v.name AS supplier,o.status,
       o.order_date,o.expected_date,i.name AS product,s.code AS sku,
-      l.quantity_units::bigint AS ordered_units,l.quantity_received_units::bigint AS received_units,
-      (l.quantity_units-l.quantity_received_units)::bigint AS outstanding_units
+      l.quantity_units::numeric AS ordered_units,l.quantity_received_units::numeric AS received_units,
+      (l.quantity_units-l.quantity_received_units)::numeric AS outstanding_units
       FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.purchase_order_id AND o.workspace_id=l.workspace_id
       JOIN suppliers v ON v.id=o.supplier_id AND v.workspace_id=l.workspace_id
       JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
@@ -310,7 +310,7 @@ const datasets=Object.freeze({
       origin.name AS source_location,destination.name AS destination_location,
       t.expected_arrival_date,to_char(t.created_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS requested_on,
       COALESCE(lines.requested,0)::bigint AS requested_units,
-      COALESCE(lines.received,0)::bigint AS received_units
+      COALESCE(lines.received,0)::numeric AS received_units
       FROM inventory_transfers t JOIN locations origin ON origin.id=t.source_location_id AND origin.workspace_id=t.workspace_id
       JOIN locations destination ON destination.id=t.destination_location_id AND destination.workspace_id=t.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(requested_quantity) AS requested,SUM(received_quantity) AS received
@@ -321,7 +321,7 @@ const datasets=Object.freeze({
   customer_returns:{label:'Customer returns',permission:permissions.VIEW_SALES,
     source:`SELECT r.id AS record_id,r.return_number,o.order_number,r.status,r.resolution,r.reason,
       to_char(r.created_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS requested_on,COALESCE(lines.authorized,0)::bigint AS authorized_units,
-      COALESCE(lines.received,0)::bigint AS received_units
+      COALESCE(lines.received,0)::numeric AS received_units
       FROM customer_returns r JOIN sales_orders o ON o.id=r.sales_order_id AND o.workspace_id=r.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_authorized) AS authorized,SUM(quantity_received) AS received
         FROM customer_return_lines WHERE workspace_id=r.workspace_id AND customer_return_id=r.id) lines ON TRUE
@@ -338,7 +338,7 @@ const datasets=Object.freeze({
     fields:{return_number:'text',supplier:'text',status:'text',expected_credit_minor:'money_minor',
       actual_credit_minor:'money_minor',requested_on:'date'}},
   low_stock:{label:'Stock at or below its reorder point',permission:permissions.VIEW_PURCHASING,
-    source:`SELECT i.id AS record_id,s.code AS sku,i.name AS product,coalesce(l.name,'Whole business') AS location,coalesce(stock.on_hand,0)::bigint AS on_hand,p.reorder_point::bigint AS reorder_point,p.target_stock::bigint AS target_stock
+    source:`SELECT i.id AS record_id,s.code AS sku,i.name AS product,coalesce(l.name,'Whole business') AS location,coalesce(stock.on_hand,0)::numeric AS on_hand,p.reorder_point::numeric AS reorder_point,p.target_stock::numeric AS target_stock
       FROM reorder_policies p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id LEFT JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
       LEFT JOIN LATERAL(SELECT sum(b.on_hand) on_hand FROM balances b JOIN locations active_location ON active_location.workspace_id=b.workspace_id AND active_location.id=b.location_id AND active_location.is_active=1 WHERE b.workspace_id=p.workspace_id AND b.sku_id=p.sku_id AND (p.location_id IS NULL OR b.location_id=p.location_id)) stock ON true
       WHERE p.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (p.location_id IS NULL OR l.is_active=1) AND p.reorder_point IS NOT NULL AND coalesce(stock.on_hand,0)<=p.reorder_point`,recordHref:row=>'/inventory/'+row.record_id,
@@ -346,8 +346,8 @@ const datasets=Object.freeze({
   replenishment_rules:{label:'Replenishment settings',permission:permissions.VIEW_PURCHASING,
     source:`SELECT p.id AS record_id,s.code AS sku,i.name AS product,
       COALESCE(l.name,'Whole business') AS location,
-      p.reorder_point::bigint AS reorder_point,p.target_stock::bigint AS target_stock,
-      p.safety_stock::bigint AS safety_stock,COALESCE(v.name,'') AS preferred_supplier,
+      p.reorder_point::numeric AS reorder_point,p.target_stock::numeric AS target_stock,
+      p.safety_stock::numeric AS safety_stock,COALESCE(v.name,'') AS preferred_supplier,
       p.source,to_char(p.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS updated_on
       FROM reorder_policies p JOIN skus s ON s.id=p.sku_id AND s.workspace_id=p.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=p.workspace_id

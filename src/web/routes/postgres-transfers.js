@@ -68,7 +68,7 @@ function createPostgresTransfersRouter(database) {
       fromLocationId: req.body.fromLocationId, toLocationId: req.body.toLocationId,
       expectedArrivalDate: trimOrNull(req.body.expectedArrivalDate), reason: req.body.reason,
       notes: req.body.notes, reference: req.body.reference,
-      lines: lines||[{ skuId: req.body.skuId, quantity: req.body.quantity,
+      lines: lines||[{ skuId: req.body.skuId, quantity: req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,
         lotId: trimOrNull(req.body.lotId), serialUnitIds: values(req.body.serialUnitIds) }],
     });
     req.flash('success', `${transfer.transfer_number} was requested. No stock moved yet.`);
@@ -128,7 +128,7 @@ function createPostgresTransfersRouter(database) {
         received: line?.tracking_mode === 'serial' ? serialOutcomes.RECEIVED.length : req.body.received,
         lost: line?.tracking_mode === 'serial' ? serialOutcomes.LOST.length : req.body.lost,
         damaged: line?.tracking_mode === 'serial' ? serialOutcomes.DAMAGED.length : req.body.damaged,
-        receivedSerialUnitIds: serialOutcomes.RECEIVED, lostSerialUnitIds: serialOutcomes.LOST,
+        receivedSecondaryQuantity:req.body.receivedSecondaryQuantity,lostSecondaryQuantity:req.body.lostSecondaryQuantity,damagedSecondaryQuantity:req.body.damagedSecondaryQuantity,receivedSerialUnitIds: serialOutcomes.RECEIVED, lostSerialUnitIds: serialOutcomes.LOST,
         damagedSerialUnitIds: serialOutcomes.DAMAGED }],
     });
     req.flash('success', transfer.status === 'RECEIVED'

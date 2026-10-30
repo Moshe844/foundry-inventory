@@ -1,7 +1,8 @@
 <div class="sales-order-line" data-order-line>
  <label class="rm-field"><span>Search products</span><input type="search" data-product-search placeholder="Name or SKU · searches all products" autocomplete="off"></label>
  <label class="rm-field"><span>Product or variant</span><select name="skuId" required><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>" <%= selected===s.id?'selected':'' %>><%= s.display_name %> · <%= s.code %></option><% }) %></select><small data-search-status>Showing up to 50 products. Search to find any SKU.</small></label>
- <label class="rm-field"><span>Quantity</span><input type="number" name="quantity" min="1" max="1000000000" step="1" value="<%= quantity %>" required></label>
+ <label class="rm-field"><span>Quantity</span><input type="number" name="quantity" min="0.000001" max="1000000000" step="any" value="<%= quantity %>" required></label>
+ <label class="rm-field" data-secondary-field hidden><span data-secondary-label>Actual weight</span><input name="secondaryQuantity" inputmode="decimal" value="<%= locals.secondaryQuantity||'' %>"></label>
  <label class="rm-field"><span>Price <small>editable selling price</small></span><input name="unitPrice" inputmode="decimal" value="<%= price %>" placeholder="Use saved pricing"><input type="hidden" name="priceOverride" value="<%= override %>"><small data-price-source></small></label>
  <div><span>Line total</span><output data-line-total>—</output></div><button class="btn btn--ghost btn--sm" type="button" data-remove-order-line>Remove</button>
 </div>

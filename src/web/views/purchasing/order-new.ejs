@@ -70,8 +70,8 @@
                          placeholder="Required if unknown">
                 </td>
                 <td class="num">
-                  <input class="input input--sm" type="number" min="0" aria-label="Packs of <%= item.displayName %>" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
-                         value="<%= submitted && submitted.quantity && submitted.quantity[item.skuId] !== undefined ? submitted.quantity[item.skuId] : '' %>">
+                  <input class="input input--sm" type="number" min="0" step="any" aria-label="Packs of <%= item.displayName %>" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
+                         value="<%= submitted && submitted.quantity && submitted.quantity[item.skuId] !== undefined ? submitted.quantity[item.skuId] : '' %>"><input name="secondaryQuantity[<%= item.skuId %>]" inputmode="decimal" aria-label="Actual weight for <%= item.displayName %>" placeholder="Actual weight if also weighed" value="<%= submitted?.secondaryQuantity?.[item.skuId]||'' %>">
                 </td>
                 <td class="num" data-line-total>—</td>
               </tr>

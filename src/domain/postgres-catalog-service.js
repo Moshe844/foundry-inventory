@@ -56,6 +56,7 @@ async function createItemInTransaction(client, ctx, input) {
       has_variants,allow_negative,is_active,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,0,1,$9,$9)`,
     [itemId, ctx.workspaceId, name, baseCode, description, unitLabel, trackingMode, hasVariants ? 1 : 0, at]);
+    await require('./stock-quantity').save(client,ctx,itemId,input);
     const optionRows = [];
     for (const [position, option] of options.entries()) {
       const row = { ...option, id: newId('opt') };
@@ -88,7 +89,7 @@ async function createItemInTransaction(client, ctx, input) {
   if(Object.keys(physical).length)await client.query('UPDATE skus SET '+Object.keys(physical).map((k,i)=>k+'=$'+(i+3)).join(',')+' WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,skuIds,...Object.values(physical)]);
   if(input.startingQuantity!=null&&String(input.startingQuantity).trim()!==''&&Number(input.startingQuantity)!==0){
     if(skuIds.length!==1)throw new ValidationError('Add starting stock for each variant after creating this item.');
-    await require('./postgres-opening-stock').receiveInTransaction(client,ctx,{skuId:skuIds[0],locationId:input.startingLocationId,quantity:input.startingQuantity,unitCost:input.startingCost,lotCode:input.startingLotCode,serials:String(input.startingSerials||'').split(/[\r\n,]+/).map(v=>v.trim()).filter(Boolean),idempotencyKey:'item-opening:'+itemId});
+    await require('./postgres-opening-stock').receiveInTransaction(client,ctx,{skuId:skuIds[0],locationId:input.startingLocationId,quantity:input.startingQuantity,secondaryQuantity:input.startingSecondaryQuantity,unitCost:input.startingCost,lotCode:input.startingLotCode,serials:String(input.startingSerials||'').split(/[\r\n,]+/).map(v=>v.trim()).filter(Boolean),idempotencyKey:'item-opening:'+itemId});
   }
   return { itemId, skuIds };
 }
@@ -120,13 +121,18 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
   const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
   for(const input of normalized){
     const itemId=input.appendToItemId||newId('item'),options=new Map(),result={itemId,skus:[]};
+    let measurement=require('./stock-quantity').profile(input);
     let optionPosition=0,skuPosition=0;
     if(input.appendToItemId){
-      const parent=(await client.query('SELECT name,tracking_mode,is_active,xmin::text=pg_current_xact_id()::text AS created_here FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,itemId])).rows[0];
+      const parent=(await client.query('SELECT name,tracking_mode,unit_label,quantity_precision,quantity_increment,secondary_unit_label,secondary_precision,secondary_increment,has_variants,is_active,xmin::text=pg_current_xact_id()::text AS created_here FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,itemId])).rows[0];
       const resumed=!parent?.created_here&&input.importPlanId&&(await client.query(`SELECT 1 FROM import_catalogue_bindings b JOIN import_plans p ON p.id=b.import_id AND p.workspace_id=b.workspace_id
         WHERE b.workspace_id=$1 AND b.import_id=$2 AND b.product_key=$3 AND b.item_id=$4 AND p.integrity_hash=$5 AND p.approval_status='APPROVED' LIMIT 1`,[ctx.workspaceId,input.importPlanId,input.importProductKey,itemId,input.importIntegrityHash])).rows.length;
-      if(!(parent?.created_here||resumed)||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
+      const cutover=!parent?.created_here&&input.cutoverPackageId&&(await client.query("SELECT 1 FROM migration_packages p JOIN external_identity_maps e ON e.workspace_id=p.workspace_id AND e.source_namespace=p.source_namespace AND e.first_package_id=p.id WHERE p.id=$1 AND p.workspace_id=$2 AND p.status='APPLYING' AND p.postgres_state IS NOT NULL AND p.approved_by_user_id=$3 AND e.entity_type='product' AND e.external_key=$4 AND e.local_type='item' AND e.local_id=$5 AND current_setting('stockchief.cutover_package_id',true)=p.id",[input.cutoverPackageId,ctx.workspaceId,ctx.actorId,input.cutoverProductKey,itemId])).rows.length;
+      if(!(parent?.created_here||resumed||cutover)||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
         throw new ValidationError('Import variants may only extend the matching product created by this approved import.');
+      measurement=require('./stock-quantity').profile(input,parent);
+      if(measurement.unitLabel!==parent.unit_label||measurement.quantityPrecision!==Number(parent.quantity_precision)||measurement.quantityIncrement!==require('./exact-quantity').canonical(parent.quantity_increment)||measurement.secondaryUnitLabel!==(parent.secondary_unit_label||null)||measurement.secondaryPrecision!==Number(parent.secondary_precision)||measurement.secondaryIncrement!==require('./exact-quantity').canonical(parent.secondary_increment))throw new ValidationError('Imported variants must retain their product unit definitions.');
+      if(!Number(parent.has_variants))await client.query('UPDATE items SET has_variants=1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,itemId]);
       for(const row of (await client.query('SELECT id,name,position FROM item_options WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id',[ctx.workspaceId,itemId])).rows){options.set(row.name,row.id);optionPosition=Math.max(optionPosition,Number(row.position)+1);}
       skuPosition=Number((await client.query('SELECT position+1 AS next FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position DESC,id DESC LIMIT 1',[ctx.workspaceId,itemId])).rows[0]?.next||0);
     }
@@ -138,17 +144,18 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
       taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
-      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position:skuPosition+position});
+      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length||input.appendToItemId||position>0?0:1,position:skuPosition+position});
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});
     }
     if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?null:result.skus[0].code,
-      description:trimOrNull(input.description),unit_label:trimOrNull(input.unitLabel)||'unit',tracking_mode:input.trackingMode,has_variants:optionNames.length?1:0});
+      description:trimOrNull(input.description),unit_label:measurement.unitLabel,tracking_mode:input.trackingMode,has_variants:optionNames.length||input.variants.length>1?1:0,quantity_precision:measurement.quantityPrecision,quantity_increment:measurement.quantityIncrement,secondary_unit_label:measurement.secondaryUnitLabel,secondary_precision:measurement.secondaryPrecision,secondary_increment:measurement.secondaryIncrement});
     created.push(result);
   }
-  for(let start=0;start<itemRows.length;start+=500)await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,has_variants,allow_negative,is_active,created_at,updated_at)
-    SELECT x.id,$1,x.name,x.base_code,x.description,x.unit_label,x.tracking_mode,x.has_variants,0,1,$2,$2
-    FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,base_code text,description text,unit_label text,tracking_mode text,has_variants bigint)`,[ctx.workspaceId,at,JSON.stringify(itemRows.slice(start,start+500))]);
+  if(itemRows.some(i=>i.quantity_precision||i.secondary_unit_label)){const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];require('../actions/permissions').assertCan(actor,require('../actions/permissions').ADMIN,'configure measured stock units');}
+  for(let start=0;start<itemRows.length;start+=500)await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,has_variants,quantity_precision,quantity_increment,secondary_unit_label,secondary_precision,secondary_increment,allow_negative,is_active,created_at,updated_at)
+    SELECT x.id,$1,x.name,x.base_code,x.description,x.unit_label,x.tracking_mode,x.has_variants,x.quantity_precision,x.quantity_increment,x.secondary_unit_label,x.secondary_precision,x.secondary_increment,0,1,$2,$2
+    FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,base_code text,description text,unit_label text,tracking_mode text,has_variants bigint,quantity_precision smallint,quantity_increment numeric,secondary_unit_label text,secondary_precision smallint,secondary_increment numeric)`,[ctx.workspaceId,at,JSON.stringify(itemRows.slice(start,start+500))]);
   for(let start=0;start<optionRows.length;start+=500)await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
     SELECT x.id,$1,x.item_id,x.name,x.position FROM jsonb_to_recordset($2::jsonb) AS x(id text,item_id text,name text,position bigint)`,[ctx.workspaceId,JSON.stringify(optionRows.slice(start,start+500))]);
   for(let start=0;start<skuRows.length;start+=500)await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
@@ -240,7 +247,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const item = { ...itemResult.rows[0], is_active: Number(itemResult.rows[0].is_active),
     has_variants: Number(itemResult.rows[0].has_variants),allow_negative:Number(itemResult.rows[0].allow_negative) };
   const totalResult = await database.query(`SELECT COALESCE((SELECT sku_count FROM item_catalog_rollups WHERE workspace_id=$1 AND item_id=$2),0) AS sku_count,
-    COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand`, [workspaceId, itemId]);
+    COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand,COALESCE((SELECT SUM(secondary_on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS secondary_on_hand`, [workspaceId, itemId]);
   const skuCount = Number(totalResult.rows[0].sku_count || 0);
   const pageSize = 25;
   const pageCount = Math.max(1, Math.ceil(skuCount / pageSize));
@@ -271,7 +278,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       SELECT sol.sku_id,a.location_id,COALESCE(SUM(a.quantity),0) AS quantity
       FROM sales_order_allocations a JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
       WHERE a.workspace_id=$1 AND sol.sku_id=ANY($2::text[]) GROUP BY sol.sku_id,a.location_id
-    ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,COALESCE(committed.quantity,0) AS committed
+    ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,b.secondary_on_hand,COALESCE(committed.quantity,0) AS committed
       FROM balances b JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       LEFT JOIN committed ON committed.sku_id=b.sku_id AND committed.location_id=b.location_id
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand<>0 ORDER BY l.name`,
@@ -283,7 +290,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     return { ...row, total, committed, available: Math.max(0, total - committed),
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
-        locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),
+        locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),secondaryOnHand:position.secondary_on_hand==null?null:Number(position.secondary_on_hand),
         committed:Number(position.committed||0),available:Number(position.on_hand)-Number(position.committed||0),
       })) };
   });
@@ -357,7 +364,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     return `${String(row.operation).replaceAll('_',' ')} ${quantity} × ${product} at ${row.location_name}.`;};
   const recent=recentRows.map((row)=>({...row,itemId:row.item_id,displayName:row.variant_label||item.name,
     sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
-  return { item, skus, locations, recent, total, committed: committedTotal,
+  return { item, skus, locations, recent, total,secondaryTotal:Number(totalResult.rows[0].secondary_on_hand||0),committed: committedTotal,
     available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
     options:optionResult.rows,lots:[...lotsById.values()].slice(0,trackingLimit),units:unitResult.rows.slice(0,trackingLimit),
     trackingCoverage:{query:trackingQuery,limit:trackingLimit,
@@ -381,7 +388,7 @@ async function updateItem(database,ctx,itemId,input){
     const updated=(await client.query(`UPDATE items SET name=$3,base_code=$4,description=$5,unit_label=$6,
       allow_negative=$7,updated_at=$8 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
     [ctx.workspaceId,itemId,name,baseCode,trimOrNull(input.description),unitLabel,normaliseBoolean(input.allowNegative)?1:0,nowIso()])).rows[0];
-    return updated;
+    return require('./stock-quantity').save(client,ctx,itemId,input,{current:updated});
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 

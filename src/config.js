@@ -53,14 +53,9 @@ function ensureDataDir() {
 function resolveSessionSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   ensureDataDir();
-  const secretPath = path.join(dataDir, 'session-secret');
-  if (fs.existsSync(secretPath)) {
-    const existing = fs.readFileSync(secretPath, 'utf8').trim();
-    if (existing) return existing;
-  }
-  const secret = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(secretPath, secret, { mode: 0o600 });
-  return secret;
+  return require('./lib/persisted-secret').readOrCreate(path.join(dataDir,'session-secret'),{
+    create:()=>Buffer.from(crypto.randomBytes(32).toString('hex')),valid:value=>Boolean(value.toString('utf8').trim()),
+  }).toString('utf8').trim();
 }
 
 function resolveConnectionEncryptionKey() {
@@ -68,14 +63,9 @@ function resolveConnectionEncryptionKey() {
     return crypto.createHash('sha256').update(process.env.FOUNDRY_CONNECTION_ENCRYPTION_KEY).digest();
   }
   ensureDataDir();
-  const secretPath = path.join(dataDir, 'connection-encryption-key');
-  if (fs.existsSync(secretPath)) {
-    const existing = fs.readFileSync(secretPath);
-    if (existing.length === 32) return existing;
-  }
-  const key = crypto.randomBytes(32);
-  fs.writeFileSync(secretPath, key, { mode: 0o600 });
-  return key;
+  return require('./lib/persisted-secret').readOrCreate(path.join(dataDir,'connection-encryption-key'),{
+    create:()=>crypto.randomBytes(32),valid:value=>value.length===32,
+  });
 }
 
 const config = {

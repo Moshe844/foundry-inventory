@@ -1,0 +1,260 @@
+{
+  "header": {
+    "protocol": "stockchief.erp.v1",
+    "mode": "STATIC",
+    "sourceNamespace": "odoo19:qualification:company1",
+    "sourceLabel": "Frozen Odoo 19 measured-stock qualification",
+    "snapshotHash": "b5ea9fda125e6639ca6ed3949876536cb102c26183266cd42a8374fc521771be",
+    "manifest": {
+      "counts": {
+        "account": 0,
+        "location": 5,
+        "product": 1,
+        "sku": 1,
+        "supplier": 1,
+        "customer": 1,
+        "supplier_item": 0,
+        "selling_price": 1,
+        "purchase_cost": 1,
+        "reorder_policy": 0,
+        "inventory_position": 1,
+        "purchase_order": 1,
+        "sales_order": 1,
+        "opening_receivable": 0,
+        "opening_payable": 0,
+        "opening_journal": 1,
+        "history_fact": 1
+      },
+      "accounting": {
+        "currency": "USD",
+        "startDate": "2026-10-30"
+      }
+    }
+  },
+  "records": [
+    {
+      "type": "location",
+      "key": "location:5",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "name": "WH/Stock",
+        "kind": "warehouse"
+      }
+    },
+    {
+      "type": "location",
+      "key": "location:6",
+      "version": "2026-10-30 15:27:12",
+      "payload": {
+        "name": "WH/Input",
+        "kind": "warehouse"
+      }
+    },
+    {
+      "type": "location",
+      "key": "location:7",
+      "version": "2026-10-30 15:27:12",
+      "payload": {
+        "name": "WH/Quality Control",
+        "kind": "warehouse"
+      }
+    },
+    {
+      "type": "location",
+      "key": "location:8",
+      "version": "2026-10-30 15:27:12",
+      "payload": {
+        "name": "WH/Output",
+        "kind": "warehouse"
+      }
+    },
+    {
+      "type": "location",
+      "key": "location:9",
+      "version": "2026-10-30 15:27:12",
+      "payload": {
+        "name": "WH/Packing Zone",
+        "kind": "warehouse"
+      }
+    },
+    {
+      "type": "supplier",
+      "key": "partner:6",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "name": "StockChief QA Supplier",
+        "email": null,
+        "phone": null,
+        "currency": "USD"
+      }
+    },
+    {
+      "type": "customer",
+      "key": "partner:7",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "name": "StockChief QA Customer",
+        "email": null,
+        "phone": null
+      }
+    },
+    {
+      "type": "product",
+      "key": "product:1",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "name": "StockChief QA measured material",
+        "unitLabel": "kg",
+        "quantityPrecision": 2,
+        "quantityIncrement": "0.01",
+        "trackingMode": "quantity"
+      }
+    },
+    {
+      "type": "sku",
+      "key": "sku:1",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "productKey": "product:1",
+        "code": "SC-QA-KG",
+        "barcode": null,
+        "options": []
+      }
+    },
+    {
+      "type": "purchase_cost",
+      "key": "cost:1",
+      "payload": {
+        "skuKey": "sku:1",
+        "currency": "USD",
+        "amountMinor": 9500
+      }
+    },
+    {
+      "type": "selling_price",
+      "key": "price:1",
+      "payload": {
+        "skuKey": "sku:1",
+        "currency": "USD",
+        "amountMinor": 12500
+      }
+    },
+    {
+      "type": "inventory_position",
+      "key": "quant:1",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "skuKey": "sku:1",
+        "locationKey": "location:5",
+        "quantity": "12.75",
+        "reservedQuantity": "1.25",
+        "availableQuantity": "11.5",
+        "damagedQuantity": 0,
+        "totalCostMinor": 121125,
+        "currency": "USD"
+      }
+    },
+    {
+      "type": "purchase_order",
+      "key": "po:1",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "orderNumber": "P00001",
+        "currency": "USD",
+        "status": "ORDERED",
+        "remainingOnly": true,
+        "lines": [
+          {
+            "grossMinor": 42750,
+            "discountMinor": 0,
+            "taxMinor": 6413,
+            "skuKey": "sku:1",
+            "quantity": 4.5,
+            "unitPriceMinor": 9500,
+            "sourceLineKey": "order-line:1"
+          }
+        ],
+        "sourceFinancials": {
+          "subtotalMinor": 42750,
+          "discountMinor": 0,
+          "taxMinor": 6413,
+          "totalMinor": 49163
+        },
+        "discountMinor": 0,
+        "taxMinor": 6413,
+        "supplierKey": "partner:6",
+        "destinationLocationKey": "location:5"
+      }
+    },
+    {
+      "type": "sales_order",
+      "key": "so:1",
+      "version": "2026-10-30 15:29:41",
+      "payload": {
+        "orderNumber": "S00001",
+        "currency": "USD",
+        "status": "CONFIRMED",
+        "remainingOnly": true,
+        "lines": [
+          {
+            "grossMinor": 15625,
+            "discountMinor": 0,
+            "taxMinor": 2344,
+            "skuKey": "sku:1",
+            "quantity": 1.25,
+            "unitPriceMinor": 12500,
+            "sourceLineKey": "order-line:1"
+          }
+        ],
+        "sourceFinancials": {
+          "subtotalMinor": 15625,
+          "discountMinor": 0,
+          "taxMinor": 2344,
+          "totalMinor": 17969
+        },
+        "discountMinor": 0,
+        "taxMinor": 2344,
+        "recordedAmounts": true,
+        "customerKey": "partner:7",
+        "fulfillmentLocationKey": "location:5",
+        "deliveryMethod": "PICKUP"
+      }
+    },
+    {
+      "type": "opening_journal",
+      "key": "opening-inventory",
+      "payload": {
+        "currency": "USD",
+        "postingDate": "2026-10-30",
+        "lines": [
+          {
+            "accountKey": "INVENTORY_ASSET",
+            "debitMinor": 121125
+          },
+          {
+            "accountKey": "OPENING_BALANCE_EQUITY",
+            "creditMinor": 121125
+          }
+        ]
+      }
+    },
+    {
+      "type": "history_fact",
+      "key": "freeze-evidence",
+      "payload": {
+        "factType": "odoo_source_freeze",
+        "operatingEffect": false,
+        "companyId": 1,
+        "freezeEvidence": "Owned local Odoo 19 PostgreSQL database set read-only; existing connections terminated before capture, 2026-10-30.",
+        "valuationBasis": "OWNER_CONFIRMED_STANDARD_COST"
+      }
+    }
+  ],
+  "qualification": {
+    "provider": "Odoo 19.0-20261015",
+    "capturedFrom": "Actual JSON2 API in a local official Odoo image",
+    "sourceFrozen": "Database read-only before capture",
+    "profile": "Standard-cost manual valuation; measured stock, remaining orders, real source tax; no posted accounting entries",
+    "capturedAt": "2026-10-30T16:27:58.570Z"
+  }
+}
