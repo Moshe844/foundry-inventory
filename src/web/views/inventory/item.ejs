@@ -48,6 +48,7 @@
 
 
 <% var canAct=locations.length>0&&item.is_active&&(locals.canOperate!==false); %>
+<% if(!canAct){ %><p class="notice notice--warn"><%= !locations.length?'Add a location first.':!item.is_active?'Restore this archived item before changing stock.':'Your role or plan does not allow stock changes.' %><% if(!locations.length){ %> <a class="btn" href="/locations#add-location">Add a location</a><% } %></p><% } %>
 <%- include('product-overview',{mode,canAct,policyBySku}) %>
 <script type="application/json" id="item-data"><%- JSON.stringify(itemData) %></script>
 
@@ -414,7 +415,7 @@
           <div class="hint">Adjustments always need a reason. It is stored with the movement.</div>
         </div>
         <div class="field">
-          <label class="label" for="adjust-notes">Notes <span class="optional">optional</span></label>
+          <label class="label" for="opening-cost">Opening stock cost per unit ($, optional)</label><input class="input" id="opening-cost" name="unitCost" inputmode="decimal"><small>For Opening stock only. Leave blank to use the saved purchase cost.</small></div><div class="field"><label class="label" for="adjust-notes">Notes <span class="optional">optional</span></label>
           <input class="input" id="adjust-notes" name="notes" placeholder="Anything the next person should know">
         </div>
       </div>

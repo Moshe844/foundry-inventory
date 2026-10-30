@@ -575,7 +575,8 @@ function errorHandler(isProduction) {
       res.status(status);
       if (res.page) {
         return res.page('error', {
-          title: status === 404 ? 'Not found' : 'Something went wrong',
+          title: err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
+          errorTitle:err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
           status,
           message,
           detail: null,

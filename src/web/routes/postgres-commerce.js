@@ -109,7 +109,7 @@ async function purchaseOrderPage(database,workspaceId,id){
     paidMinor:approvedBills.reduce((sum,bill)=>sum+Number(bill.total_minor)-Number(bill.balance_minor),0),
     owedMinor:approvedBills.reduce((sum,bill)=>sum+Number(bill.balance_minor),0),
     needsReview:supplierBills.some((bill)=>['DRAFT','DISPUTED'].includes(bill.status))};
-  return {detail,order,receipts,supplierBills,billSummary,
+  return {detail,order,receipts,supplierBills,billSummary,supplierMailboxConnected:Boolean((await database.query("SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND provider_type IN ('gmail','microsoft365') AND status='connected' LIMIT 1",[workspaceId])).rows.length),
     events:detail.events.map((event)=>({...event,createdAt:event.created_at,actorName:null})),
     charges:charges.rows.map((charge)=>({...charge,amountMinor:Number(charge.amount_minor)})),
     supplierDocuments:documents.rows,
@@ -558,11 +558,12 @@ function createPostgresCommerceRouter(database,options={}){
     if(supplierId&&!supplierRows.some(s=>s.id===supplierId))throw new ValidationError('Choose a supplier from this inventory.');
     const supplierItems=supplierId?(await database.query(`SELECT si.sku_id AS "skuId",i.name||coalesce(' / '||s.variant_label,'') AS "displayName",
       si.supplier_sku AS "supplierSku",si.units_per_purchase_unit AS "unitsPerPurchaseUnit",si.purchase_unit AS "purchaseUnit",
-      CASE WHEN si.last_unit_cost IS NOT NULL THEN si.last_unit_cost ELSE pc.amount_minor / power(10, $3) END AS "lastUnitCost",
+      COALESCE(pc.amount_minor / power(10,$3),si.last_unit_cost,stock.amount_minor / power(10,$3)) AS "lastUnitCost",
       coalesce(si.lead_time_days,sup.default_lead_time_days) AS "leadTimeDays"
       FROM supplier_items si JOIN suppliers sup ON sup.workspace_id=si.workspace_id AND sup.id=si.supplier_id
       JOIN skus s ON s.workspace_id=si.workspace_id AND s.id=si.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
       LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=si.workspace_id AND pc.sku_id=si.sku_id AND pc.currency=sup.currency ORDER BY created_at DESC,id DESC LIMIT 1)pc ON true
+      LEFT JOIN LATERAL(SELECT round(sum(c.total_cost_minor)::numeric/nullif(sum(c.quantity_units),0)) AS amount_minor FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id WHERE c.workspace_id=si.workspace_id AND c.sku_id=si.sku_id AND c.quantity_units>0 AND a.base_currency=sup.currency)stock ON true
       WHERE si.workspace_id=$1 AND si.supplier_id=$2 AND si.is_active=1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.code`,
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
@@ -813,7 +814,8 @@ function createPostgresCommerceRouter(database,options={}){
   router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>customerEntry(req,res,{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''}));
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
-    let customer;try{customer=await commerce.createCustomer(database,req.ctx,req.body);}catch(error){if(error instanceof ValidationError)return customerEntry(req,res,req.body,error.message,400);throw error;}
+    let customer;try{customer=await commerce.createCustomer(database,req.ctx,req.body);}catch(error){if(error instanceof ValidationError){if(req.accepts(['html','json'])==='json')return res.status(400).json({ok:false,message:error.message});return customerEntry(req,res,req.body,error.message,400);}throw error;}
+    if(req.accepts(['html','json'])==='json')return res.status(201).json({ok:true,customer:{id:customer.id,name:customer.name,email:customer.email,phone:customer.phone,shipping_address:customer.shipping_address}});
     req.flash('success',`${customer.name} was added.`);
     return res.redirect(303,'/customers');
   }));

@@ -91,7 +91,7 @@
     <div class="notice notice--info"><div><strong>These balances never change each other.</strong><br>A partial delivery changes “Still expected.” A partial payment changes “Still owed.” StockChief waits for evidence of each event and never treats an invoice as a delivery or a delivery as a payment.</div></div>
 
     <% if (!supplierBills.length) { %>
-      <div class="notice"><div><strong>No supplier invoice has been received for this order yet.</strong><br>StockChief is watching the approved supplier mailbox. A trusted invoice will be matched to <%= order.poNumber %>, checked against its products and prices, and turned into a supplier bill automatically. Receiving inventory alone does not say the supplier was paid.</div></div>
+      <div class="notice"><div><strong>No supplier invoice has been received for this order yet.</strong><br><% if(locals.supplierMailboxConnected){ %>A supplier mailbox is connected. Eligible invoice messages can be checked against <%= order.poNumber %>. Review its connection settings to enable automatic handling.<% }else{ %>No supplier mailbox is connected. Connect a mailbox or add the supplier invoice when it arrives.<% } %> Receiving inventory alone does not say the supplier was paid.</div></div>
     <% } else { %>
       <div class="stack supplier-bill-list">
         <% supplierBills.forEach(function(bill) { var openBill = ['OPEN','PARTIALLY_PAID'].includes(bill.status); var paid = Number(bill.total_minor) - Number(bill.balance_minor); %>

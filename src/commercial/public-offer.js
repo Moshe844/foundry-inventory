@@ -16,6 +16,8 @@ const features=[
  ['shipping.labels','Rates, labels and tracking with your own shipping account.','starter'],
  ['accounting.sync','Connect your accounting account and reconcile records.','growth'],
  ['planning.basic','Review stock shortages and replenishment plans.','growth'],
+ ['inventory.transfers','Move stock between your locations.','starter'],
+ ['payments.customer','Accept customer card payments through your connected payment account (subject to provider setup).','enterprise'],
  ['automation.transfers','Automatic transfers within limits you approve.','pro'],
  ['automation.purchasing','Automatic purchasing within limits you approve.','pro'],
  ['warehouse.advanced','Warehouse picking and scan verification.','pro'],

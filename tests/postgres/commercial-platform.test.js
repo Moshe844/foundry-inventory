@@ -192,7 +192,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
     const account=(await database.query('SELECT id,email FROM accounts WHERE id=$1',[business.accountId])).rows[0];
     await database.query("UPDATE commercial_plans SET packaging_status='PROPOSED',stripe_monthly_price_id='price_starter_test' WHERE id='starter'");
     await assert.rejects(()=>commercial.beginCheckout(database,account,{planId:'starter',interval:'monthly',origin:'https://stockchief.example'}),
-      /pending approval of the Commercial Readiness Report/i);
+      /Plan changes are paused/i);
   });
   await context.test('20 an expired grace period is read-only before the cleanup sweep runs',async()=>{
     await database.query(`UPDATE account_subscriptions SET status='GRACE',grace_ends_at='2026-08-31T00:00:00Z'

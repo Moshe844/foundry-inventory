@@ -168,6 +168,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     res.locals.commercial=req.account
       ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId},{includePresentation:Boolean(req.accepts('html'))})
       :{subscription:null,access:postgresEntitlements.operationalAccess(null),capabilities:[],meters:[]};
+    res.locals.planGates=req.ctx&&req.accepts('html')?await require('./web/presentation/plan-gates').read(database,{accountId:commercialAccountId,workspaceId:req.ctx.workspaceId}):{};
     return next();}catch(error){return next(error);}});
   app.use(requireOperationalSubscription);
   app.use(require('./commercial/enforcement').middleware(database));

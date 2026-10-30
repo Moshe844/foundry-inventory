@@ -63,7 +63,7 @@ async function home(database,workspaceId,actorId=null){
   const hasInventory=brief.stats.itemCount>0;
   const hasLocations=brief.stats.locationCount>0;
   let next=null;
-  if(!hasLocations)next={title:'Add the place where you keep stock',recommendation:'StockChief needs a location before it can record physical inventory.',href:'/locations/new',action:'Add a location'};
+  if(!hasLocations)next={title:'Add the place where you keep stock',recommendation:'StockChief needs a location before it can record physical inventory.',href:'/locations#add-location',action:'Add a location'};
   else if(!hasInventory)next={title:'Add your inventory records',recommendation:'Import a file, connect a system, or enter the first product manually.',href:'/onboarding',action:'Add a source'};
   const handled=completed.rows.map(row=>{const action=json(row.recommended_action),outcome=json(row.outcome);
     return {headline:(outcome.reference||action.displayName||'Business work')+': '+(outcome.nextAction||'Completed and verified'),detail:outcome.completionProof?'Completion checked against the linked business records.':'Open the saved verification evidence.',link:outcome.href||action.href||'/autopilot/work/'+row.id,verified:true,at:row.completed_at};});

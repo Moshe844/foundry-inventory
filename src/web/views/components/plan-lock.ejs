@@ -1,0 +1,1 @@
+<% const gate=locals.planGates?.[capability];if(gate&&!gate.enabled){ %><div class="notice notice--warn" data-plan-lock="<%= capability %>"><span class="rm-pillbadge"><%= gate.tier %></span> <span><%= label %> is included with <%= gate.tier %>.</span> <a class="rm-btn" href="/upgrade?capability=<%= encodeURIComponent(capability) %>">Upgrade</a></div><% } %>

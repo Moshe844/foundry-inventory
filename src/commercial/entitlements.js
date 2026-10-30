@@ -126,7 +126,7 @@ async function assertCapability(database, scope, capability, options = {}) {
     JOIN commercial_plans plan ON plan.id=entitlement.plan_id
     WHERE entitlement.capability=$1 AND entitlement.enabled=1 AND plan.is_public=1 AND plan.status='ACTIVE'
     ORDER BY plan.display_order LIMIT 1`, [capability])).rows[0];
-  throw new EntitlementError(options.message || 'Your current plan does not include this capability.', {
+  throw new EntitlementError(options.message || (minimum ? `${state.definition.label||'This feature'} requires the ${minimum.id==='enterprise'?'Custom':minimum.public_name||minimum.name||minimum.id} plan. Upgrade to unlock it.` : 'This feature is unavailable on your current plan. Contact support for access.'), {
     capability,currentPlan:state.subscription?.plan_id || null,recommendedPlan:minimum || null,
   });
 }
@@ -135,10 +135,14 @@ function periodBounds(subscription, now = new Date()) {
   const start = subscription?.current_period_start ? new Date(subscription.current_period_start) : new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),1));
   const end = subscription?.current_period_end ? new Date(subscription.current_period_end) : new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,1));
   if(subscription?.billing_interval==='ANNUAL'){
-    const anchor=start.getUTCDate();let monthly=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),1));
-    monthly.setUTCDate(Math.min(anchor,new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,0)).getUTCDate()));
+    // Stripe test clocks and delayed renewals can put wall time outside the
+    // paid term. Select a real monthly bucket within that term, never an empty
+    // or reversed period that would break every authenticated page.
+    const reference=new Date(Math.max(start.getTime(),Math.min(now.getTime(),end.getTime()-1)));
+    const anchor=start.getUTCDate();let monthly=new Date(Date.UTC(reference.getUTCFullYear(),reference.getUTCMonth(),1));
+    monthly.setUTCDate(Math.min(anchor,new Date(Date.UTC(reference.getUTCFullYear(),reference.getUTCMonth()+1,0)).getUTCDate()));
     monthly.setUTCHours(start.getUTCHours(),start.getUTCMinutes(),start.getUTCSeconds(),start.getUTCMilliseconds());
-    if(monthly>now){monthly=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-1,1));
+    if(monthly>reference){monthly=new Date(Date.UTC(reference.getUTCFullYear(),reference.getUTCMonth()-1,1));
       monthly.setUTCDate(Math.min(anchor,new Date(Date.UTC(monthly.getUTCFullYear(),monthly.getUTCMonth()+1,0)).getUTCDate()));
       monthly.setUTCHours(start.getUTCHours(),start.getUTCMinutes(),start.getUTCSeconds(),start.getUTCMilliseconds());}
     const next=new Date(Date.UTC(monthly.getUTCFullYear(),monthly.getUTCMonth()+1,1));
@@ -174,10 +178,15 @@ async function meterState(database, scope, meter, options = {}) {
       JOIN workspaces workspace ON workspace.id=capacity.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     workspaces:`SELECT COUNT(*) AS used FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL`,
-    members:`SELECT COUNT(DISTINCT COALESCE(member.account_id,member.id)) AS used FROM users member JOIN workspaces workspace ON workspace.id=member.workspace_id
-      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
-    locations:`SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
-      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1`,
+    members:`SELECT COUNT(*) AS used FROM (
+      SELECT COALESCE(lower(account.email),'user:'||member.id) AS person FROM users member
+      JOIN workspaces workspace ON workspace.id=member.workspace_id LEFT JOIN accounts account ON account.id=member.account_id
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL
+      UNION SELECT lower(invitation.email) FROM workspace_invitations invitation JOIN workspaces workspace ON workspace.id=invitation.workspace_id
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND invitation.status='PENDING' AND invitation.expires_at>now()
+    ) people`,
+    locations:`SELECT COALESCE(MAX(per_inventory.used),0) AS used FROM (SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1 AND ($2::text IS NULL OR location.workspace_id=$2) GROUP BY location.workspace_id) per_inventory`,
     products:`SELECT COALESCE(SUM(capacity.active_products),0) AS used FROM stockchief_runtime.inventory_capacity capacity JOIN workspaces workspace ON workspace.id=capacity.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     scheduled_reports:`SELECT COUNT(*) AS used FROM stockchief_runtime.report_templates report JOIN workspaces workspace ON workspace.id=report.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND report.deleted_at IS NULL AND report.schedule_frequency<>'none'`,
     sales_channels:require('./connection-capacity').countQuery('sales_channels'),
@@ -188,7 +197,7 @@ async function meterState(database, scope, meter, options = {}) {
   };
   let used;let reserved=0;
   if(definition.kind==='PER_OPERATION')used=0;
-  else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],[scope.accountId])).rows[0].used);
+  else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],meter==='locations'?[scope.accountId,scope.workspaceId||null]:[scope.accountId])).rows[0].used);
   else {const usage=(await database.query(`SELECT
       COALESCE(SUM(units) FILTER(WHERE status='COMMITTED'),0) AS used,
       COALESCE(SUM(units) FILTER(WHERE status='RESERVED'),0) AS reserved

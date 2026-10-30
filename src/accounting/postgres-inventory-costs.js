@@ -59,7 +59,7 @@ async function previewInTransaction(client,ctx,input){
 async function preview(database,ctx,input){return database.transaction(client=>previewInTransaction(client,ctx,input),{isolation:'REPEATABLE READ',retrySafe:true});}
 async function prepare(database,ctx,input,message){
  const review=await preview(database,ctx,input);
- const impact=input.basis==='opening_inventory'?'This records opening inventory against opening equity.':'This moves a previously expensed purchase into inventory and increases profit in the posting period.';
+ const impact=input.basis==='opening_inventory'?'This records the value of stock you already owned when you started.':'This moves a previously expensed purchase into inventory and increases profit in the posting period.';
  return require('../assistant/postgres-service').createProposal(database,ctx,message||review.summary,'inventory.establish_cost',review.payload,
   `${review.summary} ${impact} Evidence: ${review.payload.evidenceReference}. Posting date: ${review.payload.postingDate}. No payment or supplier debt is created.`);
 }

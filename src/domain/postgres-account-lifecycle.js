@@ -57,7 +57,12 @@ async function createInvitation(database,ctx,input,options={}){
   const role=['owner','staff','accountant'].includes(input.role)?input.role:'staff';const token=crypto.randomBytes(32).toString('base64url');
   const id=newId('invite');const origin=options.origin||config.connections.publicOrigin;
   if(!origin)throw new ValidationError('Workspace invitations need a public StockChief URL.');
-  return database.transaction(async(client)=>{await client.query(`UPDATE workspace_invitations SET status='REVOKED'
+  return database.transaction(async(client)=>{const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    await require('../commercial/wallet').lock(client,scope,'members');
+    const known=(await client.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id JOIN accounts a ON a.id=u.account_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(a.email)=$2 UNION SELECT 1 FROM workspace_invitations i JOIN workspaces w ON w.id=i.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(i.email)=$2 AND i.status='PENDING' AND i.expires_at>now() LIMIT 1`,[scope.accountId,email])).rows.length>0;
+    if((await client.query(`SELECT 1 FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND lower(a.email)=$2`,[ctx.workspaceId,email])).rows.length)throw new ValidationError('This person is already on your team.');
+    await entitlements.assertMeterCapacity(client,scope,'members',known?0:1);
+    await client.query(`UPDATE workspace_invitations SET status='REVOKED'
     WHERE workspace_id=$1 AND email=$2 AND status='PENDING'`,[ctx.workspaceId,email]);
     await client.query(`INSERT INTO workspace_invitations
       (id,workspace_id,invited_by_user_id,email,name,role,token_hash,expires_at)
@@ -93,7 +98,7 @@ async function acceptInvitation(database,token,input={}){return database.transac
     [invitation.workspace_id,account.id])).rows[0];
   if(!membership){const scope=await entitlements.ownerScopeForWorkspace(client,invitation.workspace_id);
     const known=(await client.query('SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND u.account_id=$2 LIMIT 1',[scope.accountId,account.id])).rows.length>0;
-    await entitlements.assertMeterCapacity(client,scope,'members',known?0:1);}
+    await entitlements.assertMeterCapacity(client,scope,'members',0);}
   await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,$4,$5,now())
     ON CONFLICT(workspace_id,account_id) DO NOTHING`,[newId('usr'),invitation.workspace_id,account.id,
     input.name||invitation.name||account.name,invitation.role]);

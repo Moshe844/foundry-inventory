@@ -1,3 +1,4 @@
+<%- include('../components/plan-lock',{capability:'api.public',label:'API access'}) %>
 <details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
   <summary>Advanced: connect custom software with APIs and webhooks</summary>
   <div class="rm-work__body">
@@ -8,7 +9,7 @@
     <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
     <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" aria-label="New API token" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
     <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
-    <% if (currentUser.role === 'owner') { %>
+    <% if (currentUser.role === 'owner'&&locals.planGates?.['api.public']?.enabled!==false) { %>
       <form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label>

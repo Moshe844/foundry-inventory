@@ -85,7 +85,7 @@ function createPostgresInventoryRouter(database) {
     await require('../../domain/postgres-catalog-bulk').cancel(database,req.ctx,req.params.reviewId);req.flash('success','The bulk changes were cancelled.');return res.redirect(303,'/inventory/table');
   }));
   router.get('/inventory/new',asyncRoute(async(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
-    form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
+    backTo:{href:'/inventory',label:'Inventory'},startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId),form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
     fromConfiguration:false,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'})));
   router.get('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/duplicate',{title:'Duplicate product',nav:'inventory',idempotencyKey:newId('copy'),source:await require('../../domain/postgres-catalog-copy').describe(database,req.ctx,req.params.id)})));
   router.post('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>{
@@ -96,12 +96,12 @@ function createPostgresInventoryRouter(database) {
     try {
       const created=await catalog.createItem(database,req.ctx,{name:req.body.name,baseCode:req.body.baseCode,
         description:req.body.description,unitLabel:req.body.unitLabel,trackingMode:req.body.trackingMode,
-        hasVariants,options:hasVariants?normaliseOptionInput(req.body.options):[],sellingPrice:req.body.sellingPrice,purchaseCost:req.body.purchaseCost,weightGrams:req.body.weightGrams,lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
-      req.flash('success','Item created. Receive some stock to get started.');
+        startingQuantity:req.body.startingQuantity,startingLocationId:req.body.startingLocationId,startingCost:req.body.startingCost,startingLotCode:req.body.startingLotCode,startingSerials:req.body.startingSerials,hasVariants,options:hasVariants?normaliseOptionInput(req.body.options):[],sellingPrice:req.body.sellingPrice,purchaseCost:req.body.purchaseCost,weightGrams:req.body.weightGrams,lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
+      req.flash('success',Number(req.body.startingQuantity)>0?'Item and starting stock saved.':'Item created. Add starting stock when you are ready.');
       return res.redirect(303,`/inventory/${created.itemId}`);
     } catch(error) {
       if(!(error instanceof ValidationError))throw error;
-      return res.status(400).page('inventory/new',{title:'Add an item',nav:'inventory',form:req.body,
+      return res.status(400).page('inventory/new',{title:'Add an item',nav:'inventory',startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId),form:req.body,
         resumeInstructionId:null,fromConfiguration:false,error:error.message,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
     }
   }));
@@ -141,7 +141,7 @@ function createPostgresInventoryRouter(database) {
         policy:policies[0]||null,policies,suppliers:supplierRows.filter((row)=>row.sku_id===sku.id)
           .map((row)=>({supplierName:row.supplier_name}))};});
     const productView=await require('../../domain/postgres-product-overview').overview(database,req.ctx,detail.item.id,req.query);
-    return res.page('inventory/item',{productView,title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    return res.page('inventory/item',{productView,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
@@ -202,7 +202,7 @@ function createPostgresInventoryRouter(database) {
     return res.redirect(303,`/transfers/${transfer.id}`);
   }));
   router.post('/inventory/:id/adjust',asyncRoute(async(req,res)=>{
-    const result=await inventory.adjust(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
+    const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await inventory.adjust(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
       countedQuantity:req.body.countedQty,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'adjust')});
     req.flash('success',result.unchanged?'The count already matched.':`Count corrected to ${result.balanceAfter}.`);

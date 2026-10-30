@@ -108,7 +108,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,workspace:req.workspace,
+  return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,pendingInvitations:(await database.query("SELECT id,name,email,role,expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='PENDING' AND expires_at>now() ORDER BY created_at",[req.ctx.workspaceId])).rows,workspace:req.workspace,
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -184,7 +184,15 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     if(!name||name.length>120)throw new ValidationError('Enter a name up to 120 characters.');
     if(!ROLE_IDS.includes(role))throw new ValidationError('Choose a valid role.');
     await accountLifecycle.createInvitation(database,req.ctx,{name,email,role},{origin:config.connections.publicOrigin||res.locals.origin});
-    req.flash('success',`Invitation email queued for ${email}. They choose their own password.`);return res.redirect(303,'/settings');
+    req.flash('success',`Invitation email queued for ${email}. They choose their own password.`);return res.redirect(303,'/settings?section=team');
+  }));
+  router.post('/settings/people/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{
+    await database.query("UPDATE workspace_invitations SET status='REVOKED' WHERE workspace_id=$1 AND id=$2 AND status='PENDING'",[req.ctx.workspaceId,req.params.id]);req.flash('success','Invitation cancelled.');return res.redirect(303,'/settings?section=team');
+  }));
+  router.post('/settings/people/:id/resend',requireOwner,asyncRoute(async(req,res)=>{
+    const invite=(await database.query("SELECT name,email,role FROM workspace_invitations WHERE workspace_id=$1 AND id=$2 AND status='PENDING' AND expires_at>now()",[req.ctx.workspaceId,req.params.id])).rows[0];
+    if(!invite)throw new ValidationError('This invitation is no longer pending.');
+    await accountLifecycle.createInvitation(database,req.ctx,invite,{origin:config.connections.publicOrigin||res.locals.origin});req.flash('success','A new invitation was queued. The old link has expired.');return res.redirect(303,'/settings?section=team');
   }));
   router.post('/settings/email-alerts',requireOwner,asyncRoute(async(req,res)=>{const enabled=req.body.enabled==='1';
     await require('../../commercial/enforcement').workspace(database,req.ctx.workspaceId,'operations.alerts');

@@ -1,0 +1,6 @@
+'use strict';
+const entitlements=require('../commercial/entitlements'),wallet=require('../commercial/wallet');
+async function settle(db,ctx,prefix,{failed=false}={}){if(!/^report-build_[a-zA-Z0-9_-]+$/.test(prefix))throw Error('Invalid report build reference');const scope=await entitlements.ownerScopeForWorkspace(db,ctx.workspaceId),key=ctx.workspaceId+':'+prefix+':';return db.transaction(async client=>{await wallet.lock(client,scope,'ai_work_credits');
+ if(failed)await client.query(`UPDATE commercial_usage_events SET status='REVERSED',reversed_at=now(),detail=detail||'{"reversalReason":"Report build did not produce a usable report","failedReportBuild":true}'::jsonb WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits' AND left(idempotency_key,length($3))=$3 AND status IN ('RESERVED','COMMITTED')`,[scope.accountId,ctx.workspaceId,key]);
+ const row=(await client.query(`SELECT coalesce(sum(units) FILTER(WHERE status='COMMITTED'),0) AS used FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits' AND left(idempotency_key,length($3))=$3`,[scope.accountId,ctx.workspaceId,key])).rows[0];return Number(row.used);});}
+module.exports={settle};

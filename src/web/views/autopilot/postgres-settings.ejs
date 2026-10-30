@@ -5,11 +5,11 @@
 <% if(state.paused){ %><div class="notice notice--warn"><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'Read-only monitoring continues.' %></p></div>
   <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Resume safely</button></form></div><% } %>
 
-<section class="card"><div class="card-head"><div><h2>How much control?</h2><p class="muted">Taking authority away is immediate. Increasing it requires the owner.</p></div></div>
+<%- include('../components/plan-lock',{capability:'authority.advanced',label:'Automatic purchasing and transfers'}) %><section class="card"><div class="card-head"><div><h2>How much control?</h2><p class="muted">Taking authority away is immediate. Increasing it requires the owner.</p></div></div>
   <div class="card-body"><form method="post" action="/autopilot/mode" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="choice"><input type="radio" name="mode" value="OBSERVE" <%= state.mode==='OBSERVE'?'checked':'' %>><span><strong>Watch only</strong><small>Notice and explain. Prepare or change nothing.</small></span></label>
     <label class="choice"><input type="radio" name="mode" value="SUPERVISED" <%= state.mode==='SUPERVISED'?'checked':'' %>><span><strong>Ask me first</strong><small>Prepare exact work and wait for approval.</small></span></label>
-    <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
+    <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= locals.planGates?.['authority.advanced']?.enabled===false?'disabled':'' %> <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
     <div class="form-actions"><button class="btn btn--primary" type="submit">Save control level</button></div></form></div></section>
 
 <section class="card" id="jobs"><div class="card-head"><div><h2>Which jobs StockChief may do on its own</h2>
@@ -18,16 +18,16 @@
     <div class="job-body"><strong><%= job.label %></strong><span class="t-xs t-muted"><%= job.blurb %></span>
       <span class="t-xs t-muted"><em><%= job.consequence %></em></span>
       <% if(job.minimumMode==='SUPERVISED'){ %><span class="t-xs t-muted">Can investigate and prepare approvals in Ask me first mode.</span><% } %></div>
-    <form method="post" action="/autopilot/capability" class="job-action"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% const jobKey=job.capability==='supplier_document_review'?'communications.ai_drafts':'authority.advanced';const jobLocked=locals.planGates?.[jobKey]?.enabled===false; %><%- include('../components/plan-lock',{capability:jobKey,label:job.label}) %><form method="post" action="/autopilot/capability" class="job-action"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="capability" value="<%= job.capability %>"><input type="hidden" name="granted" value="<%= job.granted?'0':'1' %>">
-      <button class="btn btn--sm <%= job.granted?'':'btn--primary' %>" type="submit"><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
+      <button <%= jobLocked&&!job.granted?'disabled':'' %> class="btn btn--sm <%= job.granted?'':'btn--primary' %>" type="submit"><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
     <span class="job-state <%= job.granted?'is-on':'' %>"><%= job.granted?'Authorised':'Asks first' %></span>
   </div><% }) %></div>
   <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="hint"><strong>Watch only keeps every job inactive. Ask me first allows authorised investigation and preparation; business actions still wait for approval.</strong> Changing the mode grants nothing by itself.</p><% } %>
   </div></section>
 
 <section class="card"><div class="card-head"><div><h2>Routine transfer and purchasing limits</h2><p class="muted">One confirmation creates immutable, versioned authority. Everything else goes to Needs you.</p></div></div>
-  <div class="card-body"><form method="post" action="/autopilot/routine-authority" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="card-body"><form method="post" action="/autopilot/routine-authority" class="grid"><fieldset <%= locals.planGates?.['authority.advanced']?.enabled===false?'disabled':'' %> style="border:0;padding:0"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="choice"><input type="checkbox" name="transferEnabled" value="1" <%= transferPolicy?'checked':'' %>><span><strong>Balance stock between locations</strong><small>Prefer a safe internal transfer before buying more.</small></span></label>
     <label>Most units in one automatic transfer<input name="maximumQuantity" inputmode="numeric" value="<%= transferPolicy?.maximumQuantity || 25 %>"></label>
     <fieldset><legend>Locations StockChief may use</legend><div class="grid grid--2"><% locations.forEach(function(location){ %><label class="choice"><input type="checkbox" name="locationIds" value="<%= location.id %>" <%= !transferPolicy || !transferPolicy.locationScope.length || transferPolicy.locationScope.includes(location.id)?'checked':'' %>><span><strong><%= location.name %></strong></span></label><% }) %></div></fieldset>
@@ -37,7 +37,7 @@
     <fieldset><legend>Usual suppliers StockChief may use</legend><div class="grid grid--2"><% suppliers.forEach(function(supplier){ %><label class="choice"><input type="checkbox" name="supplierIds" value="<%= supplier.id %>" <%= purchasePolicy?.supplierScope.includes(supplier.id)?'checked':'' %>><span><strong><%= supplier.name %></strong></span></label><% }) %></div></fieldset>
     <fieldset><legend>Supplier follow-up</legend><label class="choice"><input type="checkbox" name="supplierFollowUpsEnabled" value="1" <%= purchasePolicy?.thresholds?.supplierFollowUps?'checked':'' %>><span><strong>Send routine confirmation and late-delivery follow-ups</strong><small>Only for orders created under this exact purchasing policy, to the same verified supplier mailbox. Changed terms still require review.</small></span></label><div class="grid grid--2"><label>Maximum follow-ups per order<input name="maximumSupplierFollowUps" type="number" min="1" max="5" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.maximum??1 %>"></label><label>Minimum hours between follow-ups<input name="supplierFollowUpHours" type="number" min="24" max="720" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.intervalHours??48 %>"></label></div></fieldset>
     <label>Authority expiry date (optional)<input name="authorityExpiresDate" type="date" value="<%= purchasePolicy?.thresholds?.expiresOn||'' %>"><span class="hint">Expires at the end of that date in your business time zone. Leave blank for no scheduled expiry; you can pause or revoke it at any time.</span></label>
-    <div class="form-actions"><button class="btn btn--primary" type="submit">Confirm these limits</button></div></form></div></section>
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Confirm these limits</button></div></fieldset></form></div></section>
 
 <section class="card"><div class="card-head"><div><h2>Run and audit</h2><p class="muted">Request a business review. Large inventories are checked in saved batches.</p></div></div><div class="card-body">
   <%- include('../components/maintenance-progress',{maintenanceProgress}) %>

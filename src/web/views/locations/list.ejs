@@ -79,7 +79,7 @@
 <% } %>
 
 <% if (currentUser.role === 'owner') { %>
-  <dialog class="modal" id="modal-location">
+  <span id="add-location"></span><dialog class="modal" id="modal-location">
     <form method="post" action="/locations">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% if (locals.resumeInstruction) { %><input type="hidden" name="resumeInstruction" value="<%= resumeInstruction %>"><% } %>
@@ -197,3 +197,5 @@
     </dialog>
   <% }) %>
 <% } %>
+
+<script src="/location-entry.js?v=<%= assetVersion %>" defer></script>

@@ -1928,8 +1928,10 @@ async function askCapabilities(database,ctx,message,options={}){
 async function buildReportDefinition(database,ctx,message,{provider=null,priorReport=null}={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  const funded=fundedAskProvider(database,ctx,raw,newId('report-build'));
-  return require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
+  const prefix=newId('report-build'),funded=fundedAskProvider(database,ctx,raw,prefix),settlement=require('../reports/build-usage');
+  try{const result=await require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
+    const creditsUsed=await settlement.settle(database,ctx,prefix,{failed:!result.reportConfig});return {...result,creditsUsed};
+  }catch(error){await settlement.settle(database,ctx,prefix,{failed:true});error.creditsUsed=0;throw error;}
 }
 
 async function prepareInstruction(database,ctx,message,options={}){

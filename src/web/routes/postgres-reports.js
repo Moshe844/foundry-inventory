@@ -63,7 +63,7 @@ function createPostgresReportsRouter(database){
   router.get('/reports',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,req.query),businessCards=await business.cards(database,req.ctx,actor,req.query);
-    return res.page('reports/index',{title:'Reports',nav:'accounting',datasets,saved,businessContext,businessCards,
+    return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,
       compositions:composed.dimensions(actor)});
   }));
   router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);return res.page('reports/business',{title:report.definition.title,nav:'accounting',room:true,report});}));
@@ -123,12 +123,13 @@ function createPostgresReportsRouter(database){
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
     const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
     const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous});
-    if(!result.reportConfig)return res.status(422).json({ok:false,message:result.answer||'What would you like this report to measure?'});
+    if(!result.reportConfig)return res.status(422).json({ok:false,creditsUsed:0,message:(result.answer||'What would you like this report to measure?')+' No AI credits were used.'});
     const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,result.reportConfig,actor);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
     await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+    req.flash('success',`Report ready. AI credits used: ${result.creditsUsed||0}.`);
     const url='/reports/builder?draft=1#report-manual';
-    if(req.accepts(['html','json'])==='json')return res.json({ok:true,url,title:definition.title});
+    if(req.accepts(['html','json'])==='json')return res.json({ok:true,url,title:definition.title,creditsUsed:result.creditsUsed||0});
     return res.redirect(303,url);
   }));
   router.get('/reports/builder',asyncRoute(async(req,res)=>{

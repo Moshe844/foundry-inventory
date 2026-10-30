@@ -117,7 +117,7 @@ function prorationAmount(preview){return (preview?.lines?.data||[]).filter((line
   ||line.parent?.subscription_item_details?.proration===true).reduce((sum,line)=>sum+Number(line.amount||0),0);}
 
 async function subscriptionChangeQuote(database,accountId,input,options={}){
-  await release.assertCheckoutOpen(database,options);
+  await release.assertSubscriptionCheckoutOpen(database,options);
   const provider=options.provider||stripe;const current=await entitlements.subscriptionFor(database,accountId);
   if(!current?.stripe_subscription_id||!current.stripe_customer_id)throw new ValidationError(
     'This account does not have a Stripe subscription to change.');
@@ -128,7 +128,8 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
   const providerSubscription=await provider.retrieveSubscription(current.stripe_subscription_id,options.providerOptions||{});
   const item=providerSubscription.items?.data?.[0];if(!item?.id)throw new ValidationError(
     'Stripe did not return the subscription item required to change this plan.');
-  const downgrade=Number(target.display_order)<Number(currentPlan.display_order);
+  const downgrade=Number(target.display_order)<Number(currentPlan.display_order)
+    ||current.billing_interval==='ANNUAL'&&interval==='MONTHLY';
   const excess=downgrade?await control.resourceExcess(database,{accountId,workspaceId:null},target.id):{};
   const prorationDate=Math.floor(Date.now()/1000);let preview=null;
   if(options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
@@ -221,7 +222,7 @@ async function upsertSubscription(client, data, options={}) {
   if(!options.authoritative&&providerCreatedAt&&existing?.last_provider_event_created_at
       &&new Date(existing.last_provider_event_created_at)>new Date(providerCreatedAt))return {...existing,ignoredStaleEvent:true};
   const pending=existing?(await client.query(`SELECT change.*,
-    (target.display_order<source.display_order) AS is_downgrade FROM commercial_subscription_changes change
+    (target.display_order<source.display_order OR COALESCE((change.request_quote->>'downgrade')::boolean,false)) AS is_downgrade FROM commercial_subscription_changes change
     JOIN commercial_plans source ON source.id=change.from_plan_id JOIN commercial_plans target ON target.id=change.to_plan_id
     WHERE change.account_id=$1 AND change.to_plan_id=$2 AND change.status='PENDING'
     ORDER BY change.created_at DESC LIMIT 1 FOR UPDATE`,[accountId,requestedPlanId])).rows[0]:null;
@@ -257,8 +258,11 @@ async function upsertSubscription(client, data, options={}) {
     typeof data.customer==='string'?data.customer:data.customer?.id, data.id,
     periodStart || null,periodEnd || null,data.trial_end || null,graceEnds,
     data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status,stripePlanId:requestedPlanId,
-      scheduledPlanId:deferPlan?requestedPlanId:null}),providerCreatedAt]);
+      scheduledPlanId:deferPlan?requestedPlanId:null,scheduleId:typeof data.schedule==='string'?data.schedule:data.schedule?.id||null}),providerCreatedAt]);
   let saved={...result.rows[0],scheduledChange:deferPlan?pending:null};
+  if(pending&&!deferPlan&&existing?.plan_id===saved.plan_id&&saved.plan_id===pending.to_plan_id&&saved.billing_interval===pending.request_quote?.interval){
+    await client.query("UPDATE commercial_subscription_changes SET status='APPLIED',provider_reference=COALESCE(provider_reference,$2),updated_at=now() WHERE id=$1",[pending.id,data.id]);
+  }
   if(saved.refunded_at&&status==='ACTIVE'){
    const prior=(await client.query('SELECT status,stripe_subscription_id FROM commercial_subscription_refund_retention WHERE account_id=$1',[accountId])).rows;
    if(prior.length&&prior.every(r=>r.status==='PURGED'&&r.stripe_subscription_id!==data.id))saved={...saved,...(await client.query('UPDATE account_subscriptions SET refunded_at=NULL,refund_deletion_at=NULL WHERE account_id=$1 RETURNING *',[accountId])).rows[0]};

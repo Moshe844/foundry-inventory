@@ -35,12 +35,12 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
  const options={provider,testMode:true};
  await t.test('live release remains closed even when plan packaging is approved',async()=>{
   await assert.rejects(()=>release.assertCheckoutOpen(db),/closed/);await assert.rejects(()=>commercial.beginCheckout(db,{id:business.accountId},
-   {planId:'starter'}),/closed/);assert.equal((await release.state(db)).checkout_enabled,false);
+   {planId:'starter'}),/Plan changes are paused/);assert.equal((await release.state(db)).checkout_enabled,false);
  });
  await t.test('unsupported capabilities remain disabled and aliases resolve canonically',async()=>{
   for(const key of ['communications.ai_drafts','documents.extraction','shipping.automation','adaptive_optimization'])assert.equal((await usage.capabilityState(db,scope,key)).enabled,false);
   assert.equal((await usage.capabilityState(db,scope,'ask_stockchief')).capability,'ask.lookup');
-  await assert.rejects(()=>usage.assertCapability(db,scope,'warehouse.advanced'),/does not include/);
+  await assert.rejects(()=>usage.assertCapability(db,scope,'warehouse.advanced'),/requires the|unavailable on your current plan/);
  });
  await t.test('tenant scope is checked inside the commercial service',async()=>{
   await assert.rejects(()=>usage.meterState(db,{accountId:other.accountId,workspaceId:business.workspaceId},'ai_work_credits'),/another commercial account/);
@@ -291,12 +291,12 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   const app=createPostgresApp({database:db,env:'test',sessionSecret:'wallet-browser-test-long',commercialOptions:{billingProvider:provider,loadInvoices:false,publicOrigin:'request'}});
   const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});const browser=await chromium.launch();
   try{const page=await browser.newPage();const base=`http://127.0.0.1:${server.address().port}`;
-   await page.goto(`${base}/pricing`);assert.equal(await page.getByText('View usage details',{exact:true}).count(),4);
+   await page.goto(`${base}/pricing`);for(const name of ['Starter','Growth','Pro','Custom'])assert.equal(await page.getByRole('heading',{name,exact:true}).count(),1);
    assert.doesNotMatch(await page.locator('body').innerText(),/AI communication drafts|Routine auto-send|Business-email understanding/);
    await page.goto(`${base}/login`);await page.getByLabel('Email').fill('wallet@example.test');await page.locator('input[name="password"]').fill('wallet-password-long');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('wallet-password-long');
    await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);await page.goto(`${base}/billing`);
-   assert.equal(await page.locator('[data-usage-category]').count(),2);assert.match(await page.locator('body').innerText(),/Plan & Usage/);
-   const buy=page.locator('form[action="/billing/buy-more"] button').first();await buy.locator('..').locator('..').evaluate(e=>e.open=true);assert.equal(await buy.isDisabled(),true);
+   assert.equal(await page.locator('[data-usage-category]').count(),2);assert.match(await page.locator('body').innerText(),/Plan & billing/);
+   assert.match(await page.locator('body').innerText(),/Plan changes are paused/);for(const buy of await page.locator('form[action="/billing/buy-more"] button').all())assert.equal(await buy.isDisabled(),true);
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
  });
 });

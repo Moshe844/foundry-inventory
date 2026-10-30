@@ -1,6 +1,6 @@
 'use strict';
 const config=require('../config');
-const {ValidationError}=require('../domain/errors');
+const {ValidationError,DomainError}=require('../domain/errors');
 const stripeFeeEvidence=require('./stripe-live-fee-evidence');
 const LAUNCH_BLOCKERS=Object.freeze(['UNVERIFIED_STRIPE_BILLING_VOLUME_COST',
   'UNVERIFIED_INTUIT_PLATFORM_FEES','UNVERIFIED_XERO_PLATFORM_FEES',
@@ -34,5 +34,11 @@ async function assertCheckoutOpen(database,options={}){
     throw new ValidationError('Checkout is closed pending approval of the Commercial Readiness Report and final usage pricing.');
 }
 async function isSubscriptionCheckoutOpen(database){return stagingTestCheckout()||await isOpen(database);}
-async function assertSubscriptionCheckoutOpen(database,options={}){if(stagingTestCheckout())return;return assertCheckoutOpen(database,options);}
+async function assertSubscriptionCheckoutOpen(database,options={}){
+ if(stagingTestCheckout())return;
+ try{return await assertCheckoutOpen(database,options);}catch(error){
+  if(error instanceof ValidationError)throw new DomainError('Plan changes are paused right now. Please contact support.',{code:'checkout_paused',status:409});
+  throw error;
+ }
+}
 module.exports={stagingTestCheckout,isSubscriptionCheckoutOpen,assertSubscriptionCheckoutOpen,state,isOpen,assertCheckoutOpen,LAUNCH_BLOCKERS};

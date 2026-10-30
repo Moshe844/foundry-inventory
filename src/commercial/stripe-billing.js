@@ -64,7 +64,9 @@ async function createPortal(input, options = {}) {
   // A generic portal may expose annual Prices configured in Stripe outside of
   // StockChief. Use only the payment-method deep link until annual is launched;
   // invoice links are rendered separately in Plan & Usage.
-  const flow={
+  const testPlans=Boolean(input.planConfigurationId&&require('./release').stagingTestCheckout()
+    &&/^sk_test_/.test(options.secretKey||config.commercial.stripeSecretKey||''));
+  const flow=testPlans?{configuration:input.planConfigurationId}:{
     'flow_data[type]':'payment_method_update',
     'flow_data[after_completion][type]':'redirect',
     'flow_data[after_completion][redirect][return_url]':input.returnUrl,
@@ -75,6 +77,8 @@ async function createPortal(input, options = {}) {
     values:{customer:input.customerId,return_url:input.returnUrl,...flow},
   });
 }
+
+async function retrieveSchedule(id,options={}){return call(`/subscription_schedules/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 
 async function createAddonCheckout(input,options={}){return call('/checkout/sessions',{...options,
  idempotencyKey:`stockchief-addon:${input.purchaseId}`,values:{mode:'payment',customer:input.customerId,
@@ -208,6 +212,6 @@ function verifyEvent(raw, headers = {}, options = {}) {
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
   createCapacityCheckout,createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
-  scheduleDowngrade,
+  scheduleDowngrade,retrieveSchedule,
   cancelImmediately,setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form,apiVersion:API_VERSION} };

@@ -13,6 +13,7 @@ function input(body) {
 function createPostgresLocationsRouter(database) {
   const router=express.Router();
   router.use('/locations',requireAuth);
+  router.get('/locations/new',(req,res)=>res.redirect(302,'/locations#add-location'));
   router.get('/locations',asyncRoute(async(req,res)=>res.page('locations/list',{title:'Locations',nav:'locations',
     locations:await locations.listHierarchy(database,req.ctx.workspaceId,{includeInactive:true}),
     editId:req.query.edit || null,renameTo:req.query.edit && req.query.name?String(req.query.name).slice(0,120):null,

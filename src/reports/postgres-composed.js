@@ -42,7 +42,7 @@ function queryContract(actor){
    field:{type:'string'},operator:{enum:[...RESULT_OPERATORS]},value:{type:['string','number']}}}},
   layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
  }},dimensions:available.map(d=>({key:d.key,sources:d.sources.map(s=>s.key)})),rules:[
-  'Combine two to four measures from at least two datasets sharing the selected registered dimension. Use distinct simple aliases.',
+  'Combine two to four measures from one or more datasets sharing the selected registered dimension. Use distinct simple aliases.',
   'Only selected aliases, numbers and arithmetic are permitted in formulas. Money must use one matching currency and registered completeness filters.']};
 }
 
@@ -144,7 +144,8 @@ function normalize(spec,actor){
     }
     return {alias,dataset:datasetKey,aggregate,measure:aggregate==='count'?'':measure,filters:cleanFilters};
   });
-  if(datasets.size<2)invalid('Choose measures from at least two different datasets.');
+  // Multiple measures may share a governed source. Each remains independently
+  // aggregated by the stable dimension, so joins cannot multiply source rows.
   const formula=text(spec.formula,FORMULA_LIMIT);
   const parsed=formula?parseFormula(formula,metricTypes):null;
   const formulaLabel=text(spec.formulaLabel,60)||'Calculated';

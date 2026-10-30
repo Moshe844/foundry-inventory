@@ -53,7 +53,7 @@ async function purchaseCost(queryable,workspaceId,skuId){
       supplier.currency,supplier.name AS supplier_name FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id
     WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND si.last_unit_cost IS NOT NULL
     ORDER BY si.is_preferred DESC,si.last_cost_at DESC,si.updated_at DESC LIMIT 1`,[workspaceId,skuId])).rows[0];
-  if(!supplier)return null;
+  if(!supplier){const stock=(await queryable.query(`SELECT round(sum(c.total_cost_minor)::numeric/nullif(sum(c.quantity_units),0)) AS amount_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.sku_id=$2 AND c.quantity_units>0 GROUP BY a.base_currency`,[workspaceId,skuId])).rows[0];return stock?{amount_minor:Number(stock.amount_minor),currency:stock.currency,isSet:true,formatted:formatMinor(stock.amount_minor,stock.currency),sourceLabel:'Average recorded stock cost'}:null;}
   const amountMinor=money.toMinor(supplier.last_unit_cost,supplier.currency);
   return {...supplier,amount_minor:amountMinor,isSet:true,formatted:formatMinor(amountMinor,supplier.currency),sourceLabel:supplier.supplier_name};
 }

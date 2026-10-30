@@ -20,15 +20,15 @@
         <% if (isOwner) { %><button class="rm-btn rm-btn--sm" type="submit">Save</button><% } %>
       </form>
     </section>
-<% }else if(section==='team'){ %><section class="rm-panel" id="people">
+<% }else if(section==='team'){ const seats=entitlements.limits.find(m=>m.key==='members');const teamFull=seats&&!seats.unlimited&&seats.used>=seats.limit; %><section class="rm-panel" id="people">
       <div class="rm-panel__head">
         <%- helpers.icon('user', { size: 15, className: 'rm-quiet' }) %>
         <h2>People</h2>
         <span class="right">
           <% if (isOwner) { %>
-            <button class="rm-btn rm-btn--sm rm-btn--ghost" type="button" data-modal-open="modal-person">
+            <% if(teamFull){ %><span>People limit reached (pending invitations included).</span> <a class="rm-btn" href="/upgrade?meter=members">Upgrade</a><% }else{ %><button class="rm-btn rm-btn--sm rm-btn--ghost" type="button" data-modal-open="modal-person">
               <%- helpers.icon('plus', { size: 13 }) %> Add person
-            </button>
+            </button><% } %>
           <% } %>
         </span>
       </div>
@@ -42,6 +42,7 @@
             <span class="rm-told__m"><span class="rm-pillbadge"><%= helpers.roleLabel(user.role) %></span></span>
           </div>
         <% }) %>
+        <% for(const invite of locals.pendingInvitations||[]){ %><div class="rm-told__row"><span><strong><%= invite.name||invite.email %></strong><small><%= invite.email %> · Pending invitation · <%= helpers.roleLabel(invite.role) %></small></span><% if(isOwner){ for(const action of ['resend','cancel']){ %><form method="post" action="/settings/people/<%= invite.id %>/<%= action %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost"><%= action==='resend'?'Resend':'Cancel' %></button></form><% }} %></div><% } %>
       </div>
       <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
         Owners manage locations, people and settings. Staff do the day-to-day inventory work.
