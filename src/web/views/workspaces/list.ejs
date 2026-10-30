@@ -12,7 +12,7 @@
   </div>
 </div>
 
-<% if(!allowance.unlimited){ %><div class="notice notice--<%= allowance.exceeded?'warn':'info' %>" role="status"><strong><%= allowance.used %> of <%= allowance.limit %> inventories used.</strong><% if(allowance.exceeded){ %><p>Your current plan limit has been reached. Review your plan before creating another inventory.</p><a href="/settings/billing">Review plan</a><% } %></div><% } %>
+<% if(!allowance.unlimited){ %><div class="notice notice--<%= allowance.exceeded?'warn':'info' %>" role="status"><strong><%= allowance.used %> of <%= allowance.limit %> inventories used.</strong><% if(allowance.exceeded){ %><p>Your current plan limit has been reached. Review your plan before creating another inventory.</p><a class="btn btn--primary" href="/upgrade">Upgrade</a><% } %></div><% } %>
 <% if (workspaces.length === 0) { %>
   <div class="card section">
     <div class="empty">

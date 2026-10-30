@@ -28,7 +28,7 @@ test('Professional customer experience uses real plans, human messages and canon
      await visit('/reports/builder');const csrf=await page.locator('[name=_csrf]').first().inputValue();
      const form={_csrf:csrf,dataset:'posted_sales_activity',columns:'product',sort:'product',title:'Denied source'};
      const preview=await context.request.post(origin+'/reports/preview',{form});assert.equal(preview.status(),402);
-     assert.match((await preview.json()).message,/higher plan/);
+     assert.match((await preview.json()).message,/requires the|unavailable on your current plan/);
      const headers={referer:origin+'/reports/builder'};
      const run=await context.request.post(origin+'/reports/run',{form,headers});assert.equal(new URL(run.url()).pathname,'/reports/builder');assert.match(await run.text(),/requires the|unavailable on your current plan/i);
      const save=await context.request.post(origin+'/reports/save',{form,headers});assert.equal(new URL(save.url()).pathname,'/reports/builder');assert.match(await save.text(),/requires the|unavailable on your current plan/i);

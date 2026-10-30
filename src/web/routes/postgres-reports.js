@@ -163,7 +163,7 @@ function createPostgresReportsRouter(database){
         groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],
         definition:result.config,elapsedMs:Math.round(performance.now()-started)});
     }catch(error){
-      if(error.status===402)return res.status(402).json({ok:false,message:'This report source is available on a higher plan.'});
+      if(error.status===402)return res.status(402).json({ok:false,message:error.message,upgradeUrl:'/upgrade'});
       if(error instanceof ValidationError)return res.status(422).json({ok:false,message:error.message});
       if(/statement timeout|canceling statement/i.test(String(error.message||'')))
         return res.status(422).json({ok:false,message:'This report is taking too long. Narrow the dates or add a filter and try again.'});
