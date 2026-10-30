@@ -44,7 +44,7 @@ function postgresPageRenderer(req,res,next){
     let arrivedFrom=null;
     if(!data.suppressBack&&!data.backTo&&!data.backToFallback){try{const referer=new URL(req.get('referer'));
       if(referer.host===req.get('host')){const href=`${referer.pathname}${referer.search}`;
-        if(href!==currentHref)arrivedFrom={href,label:req.session?.renderedPageLabels?.[href]||'previous page'};}}
+        if(href!==currentHref)arrivedFrom=require('./presentation/return-navigation').resolve(currentHref,href,req.session?.renderedPageLabels);}}
     catch{arrivedFrom=null;}}
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
       moreSections,panelMode:req.path==='/ask'&&req.query.panel==='1',navigation:require('./presentation/navigation'),pageSection:require('./presentation/navigation').sectionFor(req.path),

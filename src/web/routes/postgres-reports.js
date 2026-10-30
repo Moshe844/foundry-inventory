@@ -122,11 +122,13 @@ function createPostgresReportsRouter(database){
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
     const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
-    const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous});
+    const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
+      const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,reportConfig,actor);
+      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
+      await saveDraftSession(req);return definition;
+    }});
     if(!result.reportConfig)return res.status(422).json({ok:false,creditsUsed:0,message:(result.answer||'What would you like this report to measure?')+' No AI credits were used.'});
-    const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,result.reportConfig,actor);
-    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
-    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+    const definition=result.reportConfig;
     req.flash('success',`Report ready. AI credits used: ${result.creditsUsed||0}.`);
     const url='/reports/builder?draft=1#report-manual';
     if(req.accepts(['html','json'])==='json')return res.json({ok:true,url,title:definition.title,creditsUsed:result.creditsUsed||0});

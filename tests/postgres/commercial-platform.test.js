@@ -58,7 +58,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   assert.equal(packaging.length,4);assert.ok(packaging.every((plan)=>plan.packaging_status==='PROPOSED'&&plan.packaging_reviewed_at));
 
   await context.test('1 Starter cannot activate automatic email extraction',async()=>{
-    await assert.rejects(()=>entitlements.assertCapability(database,scope,'email.auto_extract'),/does not include/i);
+    await assert.rejects(()=>entitlements.assertCapability(database,scope,'email.auto_extract'),/requires the|unavailable on your current plan/i);
   });
   await context.test('2 upgrade Starter to Growth grants email extraction immediately',async()=>{
     await database.query("UPDATE account_subscriptions SET plan_id='growth',updated_at=now() WHERE account_id=$1",[business.accountId]);
@@ -147,7 +147,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   });
   await context.test('15 Starter connection limit is enforced before credentials are created',async()=>{
     await assert.rejects(()=>connections.createFeed(database,{workspaceId:business.workspaceId,actorId:business.userId},
-      {displayName:'Plan-excluded custom feed'}),/does not include/);
+      {displayName:'Plan-excluded custom feed'}),/requires the|unavailable on your current plan/);
     await database.query(`INSERT INTO commercial_entitlement_overrides(id,account_id,capability,enabled,reason)
       VALUES($1,$2,'connections.custom_api',1,'Structural capacity certification only')`,[newId('override'),business.accountId]);
     const first=await connections.createFeed(database,{workspaceId:business.workspaceId,actorId:business.userId},

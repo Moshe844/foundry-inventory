@@ -23,7 +23,9 @@ test('Starter reserves pending seats, paid inventories have their own locations 
  await assert.rejects(locations.createLocation(db,ctx,{name:'Third',kind:'warehouse'}),/plan limit/);
  await db.query("INSERT INTO commercial_capacity_orders(id,account_id,product_id,quantity,units,amount_minor,currency,price_id,stripe_customer_id,status,paid_through,request_key) VALUES('extra',$1,'extra-inventory',1,1,9900,'USD','price_test','cus_test','ACTIVE',now()+interval '1 month','extra')",[owner.accountId]);
  const added=await auth.createWorkspace(db,owner.accountId,{name:'Paid extra'}),extraScope={accountId:owner.accountId,workspaceId:added.workspaceId};
- await locations.createLocation(db,{workspaceId:added.workspaceId,actorId:added.userId},{name:'Extra warehouse',kind:'warehouse'});
+ const extraContext={workspaceId:added.workspaceId,actorId:added.userId},extraLocation=await locations.createLocation(db,extraContext,{name:'Extra warehouse',kind:'warehouse'});
+ const extraItem=await require('../../src/domain/postgres-catalog-service').createItem(db,extraContext,{name:'Extra inventory stock',trackingMode:'quantity',purchaseCost:'5',startingQuantity:4,startingLocationId:extraLocation.id});
+ assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[added.workspaceId,extraItem.skuIds[0]])).rows[0].on_hand),4,'a paid additional inventory can receive stock immediately');
  assert.equal((await ent.meterState(db,extraScope,'locations')).used,1);assert.equal((await ent.meterState(db,scope,'locations')).used,2);assert.equal((await ent.meterState(db,{accountId:owner.accountId},'locations')).used,2,'account downgrade checks use the highest per-inventory count');
  assert.equal((await ent.meterState(db,scope,'members')).used,3,'owner in two inventories consumes one seat');
  await assert.rejects(ent.assertCapability(db,scope,'api.public'),/Pro/);

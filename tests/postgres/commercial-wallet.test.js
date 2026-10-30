@@ -255,7 +255,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'ACTIVE');
  });
  await t.test('provider exhaustion blocks before invocation; failed operations reverse customer usage and retain cost',async()=>{
-  let called=0;await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'communications.ai_drafts',key:'disabled-email',provider:'gmail',operation:'draft'},async()=>{called++;}),/does not include/);assert.equal(called,0);
+  let called=0;await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'communications.ai_drafts',key:'disabled-email',provider:'gmail',operation:'draft'},async()=>{called++;}),/requires the|unavailable on your current plan/);assert.equal(called,0);
   const before=(await usage.meterState(db,scope,'connected_operations')).remaining;
   await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'connections.commerce',key:'failed-provider',provider:'shopify',operation:'catalog_sync'},async()=>{throw new Error('Provider failed');}),/Provider failed/);
   assert.equal((await usage.meterState(db,scope,'connected_operations')).remaining,before);

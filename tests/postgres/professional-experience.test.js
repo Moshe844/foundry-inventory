@@ -30,8 +30,8 @@ test('Professional customer experience uses real plans, human messages and canon
      const preview=await context.request.post(origin+'/reports/preview',{form});assert.equal(preview.status(),402);
      assert.match((await preview.json()).message,/higher plan/);
      const headers={referer:origin+'/reports/builder'};
-     const run=await context.request.post(origin+'/reports/run',{form,headers});assert.equal(new URL(run.url()).pathname,'/reports/builder');assert.match(await run.text(),/current plan does not include/i);
-     const save=await context.request.post(origin+'/reports/save',{form,headers});assert.equal(new URL(save.url()).pathname,'/reports/builder');assert.match(await save.text(),/current plan does not include/i);
+     const run=await context.request.post(origin+'/reports/run',{form,headers});assert.equal(new URL(run.url()).pathname,'/reports/builder');assert.match(await run.text(),/requires the|unavailable on your current plan/i);
+     const save=await context.request.post(origin+'/reports/save',{form,headers});assert.equal(new URL(save.url()).pathname,'/reports/builder');assert.match(await save.text(),/requires the|unavailable on your current plan/i);
    }finally{
      await db.query('UPDATE commercial_plan_versions SET entitlements=$2::jsonb WHERE id=$1',[version,JSON.stringify(original)]);
      await db.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id='plan-services-2026-10-27:pro' WHERE account_id=$1",[f.owner.accountId]);
