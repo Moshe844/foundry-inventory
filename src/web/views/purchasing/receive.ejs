@@ -28,7 +28,7 @@
   </div>
 <% } %>
 
-<form method="post" action="/purchasing/orders/<%= order.id %>/receive" class="card section" data-busy>
+<form method="post" action="/purchasing/orders/<%= order.id %>/receive" class="card section" data-busy data-purchase-receipt>
   <div class="card-head"><h2>What arrived</h2></div>
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -36,7 +36,7 @@
     <% if (sourceEvent) { %><input type="hidden" name="physicalEventId" value="<%= sourceEvent.id %>"><% } %>
     <% lines.forEach(function (line) { %>
       <div class="card section">
-        <div class="card-body">
+        <div class="card-body" data-receipt-line>
           <h3 class="sub-head"><%= line.displayName %></h3>
           <p class="muted">
             Ordered <%= line.quantityUnits %> · already received <%= line.quantityReceivedUnits %> ·
@@ -47,8 +47,8 @@
           </p>
           <div class="grid grid--3">
             <label class="field">
-              <span class="field-label">Arrived (<%= line.unitLabel %>s)</span>
-              <input class="input" type="number" min="0" name="qty_<%= line.id %>"
+              <span class="field-label">Arrived · <%= line.unitLabel %></span>
+              <input class="input" type="number" min="0" step="<%= line.quantityIncrement||1 %>" data-receipt-quantity name="qty_<%= line.id %>"
                      value="<%= submitted && submitted['qty_' + line.id] !== undefined ? submitted['qty_' + line.id] : line.outstandingUnits %>">
             </label>
             <label class="field">
@@ -59,6 +59,7 @@
                 <% }) %>
               </select>
             </label>
+            <% if(line.secondaryUnitLabel){ %><label class="field"><span class="field-label">Actual <%= line.secondaryUnitLabel %> received</span><input class="input" type="number" min="<%= line.secondaryIncrement %>" step="<%= line.secondaryIncrement %>" name="secondary_<%= line.id %>" data-receipt-measure required value="<%= submitted ? submitted['secondary_'+line.id]||'' : '' %>"><span class="field-help">Enter the weight you measured for this delivery.</span></label><% if(line.trackingMode==='serial'){ %><label class="field" style="grid-column:1 / -1"><span class="field-label">Actual weight of each serial</span><textarea class="input" name="weights_<%= line.id %>" data-receipt-measure required placeholder="SERIAL = 1.25"><%= submitted ? submitted['weights_'+line.id]||'' : '' %></textarea><span class="field-help">One serial and measured <%= line.secondaryUnitLabel %> per line. These must total the delivery weight.</span></label><% }} %>
             <% if (line.trackingMode === 'lot') { %>
               <label class="field">
                 <span class="field-label">Lot or batch</span>
@@ -75,7 +76,7 @@
               <label class="field" style="grid-column: 1 / -1;">
                 <span class="field-label">Serial numbers, one per line</span>
                 <textarea class="input" name="serials_<%= line.id %>" rows="4"><%= submitted ? (submitted['serials_' + line.id] || '') : '' %></textarea>
-                <span class="field-help">StockChief counts the serials you list, not the number in the box.</span>
+                <span class="field-help">List one serial for every piece recorded above.</span>
               </label>
             <% } %>
           </div>
@@ -108,3 +109,5 @@
     <span class="muted">Stock arrives through the same inventory engine as everything else.</span>
   </div>
 </form>
+
+<script src="/purchase-receipt.js" defer></script>
