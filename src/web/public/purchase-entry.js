@@ -3,7 +3,7 @@
  const date=form.elements.namedItem('expectedDate'),auto=form.elements.namedItem('expectedDateAuto');
  const exponent=Number(form.dataset.currencyExponent||2),currency=form.dataset.currency||'USD';
  const minor=value=>{const m=String(value||'').trim().match(/^(\d+)(?:\.(\d*))?$/);if(!m||m[2]?.length>exponent)return null;return BigInt(m[1])*10n**BigInt(exponent)+BigInt((m[2]||'').padEnd(exponent,'0')||'0');};
- const format=n=>{const base=10n**BigInt(exponent),raw=(n/base).toString()+(exponent?'.'+(n%base).toString().padStart(exponent,'0'):'');return currency+' '+raw;};
+ const format=n=>{const base=10n**BigInt(exponent),raw=(n/base).toString()+(exponent?'.'+(n%base).toString().padStart(exponent,'0'):'');const parts=raw.split('.');parts[0]=BigInt(parts[0]).toLocaleString('en-US');return (currency==='USD'?'$':currency+' ')+parts.join('.');};
  date?.addEventListener('input',()=>{if(auto)auto.value='0';});
  function update(){let total=0n,valid=true;const days=[];
   for(const row of form.querySelectorAll('[data-purchase-line]')){const quantity=row.querySelector('[name^="quantity["]'),cost=row.querySelector('[name^="unitCost["]'),out=row.querySelector('[data-line-total]'),q=String(quantity?.value||'').trim();

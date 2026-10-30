@@ -5,7 +5,7 @@
     <% if(proposal.action_type==='inventory.establish_cost'){ const p=proposal.payload; %>
     <section aria-label="Existing stock cost review"><h3>Actual cost for stock already on hand</h3>
     <table class="table"><tbody><tr><th>Product</th><td><%= p.productName %> · <%= p.skuCode %></td></tr><tr><th>Location</th><td><%= p.locationName %></td></tr><tr><th>Units receiving cost</th><td><%= p.quantity %></td></tr><tr><th>Actual unit cost</th><td><%= helpers.money(p.unitCostMinor,p.currency) %></td></tr><tr><th>Inventory value added</th><td><%= helpers.money(p.totalCostMinor,p.currency) %></td></tr><tr><th>Stock quantity</th><td><%= p.physicalUnits %> — unchanged</td></tr><tr><th>Supporting evidence</th><td><%= p.evidenceReference %></td></tr><tr><th>Posting date</th><td><%= p.postingDate %></td></tr></tbody></table>
-    <p><%= p.basis==='opening_inventory'?'Records the opening inventory value against opening equity.':'Moves a previously expensed purchase into inventory, increasing profit in the posting period.' %> No receipt, supplier bill or payment is created.</p></section>
+    <p><%= p.basis==='opening_inventory'?'Records the value of stock you already owned when you started.':'Moves a previously expensed purchase into inventory, increasing profit in the posting period.' %> No receipt, supplier bill or payment is created.</p></section>
     <% } %>
     <% if (typeof mission !== 'undefined' && mission) { %>
       <section class="rm-mission-scope" aria-labelledby="mission-outcome"><h3 id="mission-outcome"><%= proposal.status==='PENDING'?'Review all':'Recorded' %> <%= (mission.approved_steps || []).length %> changes</h3>

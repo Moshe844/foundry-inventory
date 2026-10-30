@@ -8,7 +8,7 @@ function commercialScope(req){return {accountId:req.workspace?.owner_account_id|
 function requireCapability(database,capability){return async function entitlementGuard(req,res,next){try{
   const state=await entitlements.capabilityState(database,commercialScope(req),capability);if(state.enabled)return next();
   if(req.accepts('html'))return res.redirect(303,`/upgrade?capability=${encodeURIComponent(capability)}&return=${encodeURIComponent(req.originalUrl||'/')}`);
-  return next(new entitlements.EntitlementError('Your current plan does not include this capability.',{capability}));
+  await entitlements.assertCapability(database,commercialScope(req),capability);return next();
 }catch(error){return next(error);}};}
 
 const OPERATIONAL_BYPASSES=[

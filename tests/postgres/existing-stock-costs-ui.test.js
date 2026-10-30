@@ -18,22 +18,22 @@ test('real website reviews and approves actual existing-stock cost and shows its
  const at=new Date().toISOString();await db.query("INSERT INTO locations(id,workspace_id,name,kind,is_active,created_at) VALUES('cost-ui-depot',$1,'River depot','warehouse',1,$2)",[ctx.workspaceId,at]);
  await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId,locationId:'cost-ui-depot',quantity:7,idempotencyKey:'ui-original-receipt'});
  await require('../../src/pricing/postgres-service').setPurchaseCost(db,ctx,{skuId,amount:'19.25',currency:'USD'});
- await page.goto(base+'/inventory/'+created.itemId);assert.match(await page.locator('main').innerText(),/Stock cost missing:\s*7 units/i);
- assert.match(await page.locator('main').innerText(),/Purchasing price/);assert.match(await page.locator('main').innerText(),/uncommitted/);
+ await page.goto(base+'/inventory/'+created.itemId);assert.match(await page.locator('main').innerText(),/Cost not recorded for 7 units/i);
+ assert.match(await page.locator('main').innerText(),/Purchase cost\s*\$19\.25/);assert.match(await page.locator('main').innerText(),/Available\s*7/);
  const proofDirectory=path.resolve(__dirname,'../../data/stock-cost-proof');fs.mkdirSync(proofDirectory,{recursive:true});
  await page.screenshot({path:path.join(proofDirectory,'before-cost.png'),fullPage:true});
- await page.getByRole('link',{name:'Record actual stock cost'}).click();await page.getByLabel(/^Actual cost per unit/).fill('16.50');
+ await page.getByRole('link',{name:'Add stock cost →'}).click();await page.getByLabel(/^Actual cost per unit/).fill('16.50');
  await page.getByLabel('Why is this cost being recorded?').selectOption('opening_inventory');
  await page.getByLabel('Supporting evidence or document reference').fill('Owner-certified opening-stock sheet, seven connectors at $16.50 each');
  await Promise.all([page.waitForURL(/\/actions\//),page.getByRole('button',{name:'Review stock cost'}).click()]);
- const approval=await page.locator('main').innerText();assert.match(approval,/\$115\.50 total/);assert.match(approval,/Quantity stays 7/);assert.match(approval,/opening equity/);assert.match(approval,/No payment or supplier debt/);
+ const approval=await page.locator('main').innerText();assert.match(approval,/\$115\.50 total/);assert.match(approval,/Quantity stays 7/);assert.match(approval,/stock you already owned/);assert.doesNotMatch(approval,/opening equity|evidenced cost|Sku Id|Unit Cost Minor|Expected Snapshot/);assert.match(approval,/No payment or supplier debt/);
  assert.equal((await db.query('SELECT count(*) AS n FROM accounting_inventory_cost_establishments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  await page.screenshot({path:path.join(proofDirectory,'approval.png'),fullPage:true});
  await page.getByRole('button',{name:'Approve only this change'}).click();await page.getByText('EXECUTED',{exact:true}).waitFor();
  const proof=(await db.query('SELECT c.quantity_units,c.total_cost_minor,e.journal_entry_id FROM accounting_inventory_cost_balances c JOIN accounting_inventory_cost_establishments e USING(workspace_id,sku_id,location_id) WHERE c.workspace_id=$1',[ctx.workspaceId])).rows[0];
  assert.equal(Number(proof.quantity_units),7);assert.equal(Number(proof.total_cost_minor),11550);assert.ok(proof.journal_entry_id);
  assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].on_hand),7);
- await page.goto(base+'/inventory/'+created.itemId);assert.match(await page.locator('main').innerText(),/Actual cost recorded for all 7 units/);assert.doesNotMatch(await page.locator('main').innerText(),/Stock cost missing:/);
+ await page.goto(base+'/inventory/'+created.itemId);assert.equal(await page.locator('[data-product-cost-hold]').count(),0);assert.match(await page.locator('main').innerText(),/On hand\s*7/);
  await page.screenshot({path:path.join(proofDirectory,'after-cost.png'),fullPage:true});
  // The embedded gateway discovers the new canonical action through ordinary
  // metadata, and preparation uses the same service without any helper model.

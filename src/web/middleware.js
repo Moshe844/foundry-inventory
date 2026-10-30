@@ -41,10 +41,10 @@ function rateLimit(options = {}) {
 
 /** Adds req.flash()/res.locals.flash without pulling in another dependency. */
 function flash(req, res, next) {
-  req.flash = (type, message) => {
+  req.flash = (type, message, options={}) => {
     if (!req.session) return;
     req.session.flash = req.session.flash || [];
-    req.session.flash.push({ type, message, id:crypto.randomBytes(12).toString('hex') });
+    req.session.flash.push({ type, message, id:crypto.randomBytes(12).toString('hex'),...(options.upgrade===true?{upgrade:true}:{}) });
   };
   const messages = (req.session && req.session.flash) || [];
   res.locals.flash = messages;
@@ -563,7 +563,7 @@ function errorHandler(isProduction) {
 
     if (req.accepts('html') && !req.xhr && req.path.startsWith('/api/') === false) {
       if (req.method === 'POST' && req.session) {
-        req.flash('error', message);
+        req.flash('error', message, {upgrade:status===402});
         const back = req.get('referer') || '/';
         if(typeof req.session.save==='function')return req.session.save((saveError)=>{
           if(saveError){res.status(503);return res.page?res.page('error',{title:'Please try again',status:503,
@@ -575,7 +575,8 @@ function errorHandler(isProduction) {
       res.status(status);
       if (res.page) {
         return res.page('error', {
-          title: status === 404 ? 'Not found' : 'Something went wrong',
+          title: err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
+          errorTitle:err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
           status,
           message,
           detail: null,

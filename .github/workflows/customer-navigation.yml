@@ -41,6 +41,10 @@ jobs:
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
           npm run test:customer-navigation:core 2>&1 | tee output/customer-navigation-ci/core-test.log
+      - name: Plan changes and first-customer regression tests
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/unit/commercial-stripe-lifecycle.test.js tests/unit/staging-plan-portal.test.js tests/unit/annual-usage-periods.test.js tests/unit/return-navigation.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/round15-plan-limits.test.js tests/postgres/round15-first-sale.test.js tests/postgres/round15-report-credits.test.js tests/postgres/existing-stock-costs-ui.test.js 2>&1 | tee output/customer-navigation-ci/round15.log
       - name: Click every customer destination
         run: |
           set -euo pipefail

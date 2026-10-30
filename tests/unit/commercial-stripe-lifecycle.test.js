@@ -16,7 +16,7 @@ test('self-service portal is payment-method-only and cannot expose annual Price 
 });
 
 test('Stripe subscription lifecycle requests are idempotent and carry the exact requested plan',async()=>{
-  const calls=[];const fetch=async(url,options)=>{calls.push({url,options,body:new URLSearchParams(options.body)});
+  const calls=[];const fetch=async(url,options)=>{if(options.method!=='GET')calls.push({url,options,body:new URLSearchParams(options.body)});
     if(url.includes('/invoices/create_preview'))return response({id:'upcoming_1',lines:{data:[{amount:2500,proration:true}]}});
     return response({id:'sub_1',status:'active'});};
   await stripe.previewSubscriptionChange({customerId:'cus_1',subscriptionId:'sub_1',itemId:'si_1',priceId:'price_pro',
@@ -76,4 +76,44 @@ test('webhook secret rotation accepts only explicitly bounded overlap and still 
   {'stripe-signature':signature('whsec_previous')},{...options,previousWebhookSecretExpiresAt:deadline}),/did not come/);
  assert.throws(()=>stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_previous',now-301)},options),/too old/);
  assert.throws(()=>stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_unknown')},options),/did not come/);
+});
+
+function scheduledFixture(overrides={}){
+ const calls=[];let attached=true;
+ const subscription={id:'sub_scheduled',customer:'cus_owner',status:'active',...overrides.subscription};
+ const schedule={id:'sched_owned',subscription:'sub_scheduled',customer:'cus_owner',status:'active',current_phase:{start_date:1791000000,end_date:1793678400},...overrides.schedule};
+ const options={secretKey:'sk_test_fixture',fetch:async(url,request)=>{
+  const path=new URL(url).pathname;const body=new URLSearchParams(request.body);calls.push({path,method:request.method,body,key:request.headers['Idempotency-Key']});
+  if(request.method==='GET')return response(path.includes('/subscription_schedules/')?schedule:{...subscription,schedule:attached?'sched_owned':null});
+  if(path.endsWith('/release')){if(overrides.releaseFailure)return new Response(JSON.stringify({error:{message:'Release unavailable'}}),{status:503});attached=false;return response({id:'sched_owned',status:'released',released_subscription:'sub_scheduled'});}
+  if(path==='/v1/subscription_schedules/sched_owned')return response(schedule);
+  if(path==='/v1/subscriptions/sub_scheduled')return response({...subscription,cancel_at_period_end:body.get('cancel_at_period_end')==='true'});
+  throw Error('Unexpected Stripe mutation: '+path);
+ }};
+ return {calls,options};
+}
+const scheduledInput={subscriptionId:'sub_scheduled',customerId:'cus_owner',accountId:'acct_owner',planId:'pro',requestId:'cancel_once',changeId:'change_once'};
+test('cancel at renewal releases an attached downgrade without cancelling the paid subscription immediately',async()=>{
+ const f=scheduledFixture();const result=await stripe.setCancellation({...scheduledInput,cancelAtPeriodEnd:true},f.options);
+ const writes=f.calls.filter(c=>c.method!=='GET');assert.deepEqual(writes.map(c=>c.path),['/v1/subscription_schedules/sched_owned/release','/v1/subscriptions/sub_scheduled']);
+ assert.equal(writes[0].body.get('preserve_cancel_date'),'false');assert.equal(writes[1].body.get('cancel_at_period_end'),'true');assert.equal(result.status,'active');assert.equal(result.cancel_at_period_end,true);
+ await stripe.setCancellation({...scheduledInput,cancelAtPeriodEnd:true},f.options);
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/release')).length,1,'retry reads the now-detached subscription');
+ assert.equal(f.calls.at(-1).key,writes[1].key,'retry uses the same cancellation key');
+});
+test('an immediate upgrade removes the previous downgrade before updating the price',async()=>{
+ const f=scheduledFixture();await stripe.updateSubscription({...scheduledInput,itemId:'si_owned',priceId:'price_pro',prorationBehavior:'always_invoice'},f.options);
+ const writes=f.calls.filter(c=>c.method!=='GET');assert.match(writes[0].path,/release$/);assert.equal(writes[1].body.get('items[0][price]'),'price_pro');assert.equal(writes[1].body.get('proration_behavior'),'always_invoice');
+});
+test('changing a pending downgrade reuses the owned Stripe schedule',async()=>{
+ const f=scheduledFixture();await stripe.scheduleDowngrade({...scheduledInput,currentPriceId:'price_pro',priceId:'price_growth',periodEnd:1793678400},f.options);
+ const writes=f.calls.filter(c=>c.method!=='GET');assert.equal(writes.length,1);assert.equal(writes[0].path,'/v1/subscription_schedules/sched_owned');assert.equal(writes[0].body.get('phases[1][items][0][price]'),'price_growth');assert.equal(writes[0].body.get('phases[0][end_date]'),'1793678400');
+});
+test('foreign subscription or schedule identities cannot be released or changed',async()=>{
+ for(const overrides of [{subscription:{customer:'cus_foreign'}},{schedule:{subscription:'sub_foreign'}},{schedule:{customer:'cus_foreign'}},{schedule:{id:'sched_foreign'}},{schedule:{status:'released'}}]){
+  const f=scheduledFixture(overrides);await assert.rejects(()=>stripe.setCancellation({...scheduledInput,cancelAtPeriodEnd:true},f.options),/another/);assert.equal(f.calls.filter(c=>c.method!=='GET').length,0);
+ }
+});
+test('failed schedule release never submits a subscription change',async()=>{
+ const f=scheduledFixture({releaseFailure:true});await assert.rejects(()=>stripe.updateSubscription({...scheduledInput,itemId:'si_owned',priceId:'price_pro'},f.options),/did not confirm the operation/);assert.equal(f.calls.filter(c=>c.method==='POST'&&c.path==='/v1/subscriptions/sub_scheduled').length,0);
 });

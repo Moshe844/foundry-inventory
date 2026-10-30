@@ -1,4 +1,4 @@
-<div class="rm-operation-page">
+<%- include('../components/plan-lock',{capability:'warehouse.advanced',label:'Wave picking and scan verification'}) %><fieldset <%= locals.planGates?.['warehouse.advanced']?.enabled===false?'disabled':'' %> style="border:0;padding:0"><div class="rm-operation-page">
 <p class="rm-stamp"><a href="/warehouse/operations#waves">Fulfillment waves</a> · wave #<%= wave.wave_number %></p>
 <h1 class="rm-figure"><%= wave.title %></h1>
 <p class="rm-sub"><%= wave.strategy %> · <%= wave.units.picked %> of <%= wave.units.planned %> scan-verified · <%= wave.status %></p>
@@ -15,3 +15,4 @@
   <p class="rm-note">Packing does not move stock. Shipping each carton uses the normal shipment flow, posts inventory and accounting once, and supports partial fulfillment.</p>
   <form method="post" action="/warehouse/waves/<%= wave.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button">Verify shipment outcomes</button></form>
 </section>
+</fieldset>

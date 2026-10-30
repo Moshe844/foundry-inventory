@@ -12,6 +12,7 @@
   <div class="rm-list"><a class="rm-row" href="/orders"><span><strong>Customer returns</strong><small>Open the fulfilled customer order to authorize, receive, inspect and refund the exact line.</small></span><span>Open orders</span></a><a class="rm-row" href="/purchasing/orders"><span><strong>Supplier returns</strong><small>Open the purchase order or supplier return to ship the exact stock and reconcile the credit.</small></span><span>Open purchases</span></a></div>
 </section>
 
+<%- include('../components/plan-lock',{capability:'warehouse.advanced',label:'Wave picking and scan verification'}) %>
 <section class="rm-panel" id="waves">
   <div class="rm-panel__head"><div><p class="rm-kicker">High-volume fulfillment</p><h2>Pick several orders as one wave</h2><p>Scanning proves what was picked. Packing does not reduce inventory; only the shipment handoff records goods leaving.</p></div></div>
   <% if (waves.length) { %><div class="rm-list"><% waves.forEach(function(wave){ %>
@@ -24,7 +25,7 @@
 <section class="rm-panel">
   <div class="rm-panel__head"><div><p class="rm-kicker">Release work</p><h2>Orders with committed stock</h2>
     <p>One release creates pick cartons and scan lines. It does not issue stock or mark an order fulfilled.</p></div></div>
-  <% if (readyOrders.length) { %><form method="post" action="/warehouse/waves" class="rm-form-grid">
+  <% if(locals.planGates?.['warehouse.advanced']?.enabled===false){ %><p>Upgrade to release a picking wave.</p><% }else if (readyOrders.length) { %><form method="post" action="/warehouse/waves" class="rm-form-grid">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= releaseKey %>">
     <label>Strategy<select name="strategy"><option>WAVE</option><option>BATCH</option><option>CLUSTER</option></select></label>
     <label>Name <span class="optional">optional</span><input name="title" placeholder="Morning carrier pickup"></label>

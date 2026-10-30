@@ -45,7 +45,7 @@
     <% if (flash && flash.length) { %>
       <div class="flash-stack" data-flash-stack><% flash.forEach(function (message) {
         var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
-      %><div class="flash flash--<%= message.type %>" role="<%= live %>"><span><%= message.message %></span></div><% }) %></div>
+      %><div class="flash flash--<%= message.type %>" role="<%= live %>"><span><%= message.message %></span><% if(message.upgrade){ %> <a class="btn btn--sm" href="/upgrade">Upgrade</a><% } %></div><% }) %></div>
     <% } %>
     <% if(workspace){ (locals.globalSourceUploads||[]).filter(upload=>upload.id!==locals.sourceUpload?.id).forEach(upload=>{ %><%- include('imports/source-upload-panel',{upload,detail:false}) %><% }); } %>
     <% const visibleImports=(locals.globalImportActivity||[]).filter(function(activity){return activity.id!==locals.importProgress?.id;}); if(workspace&&visibleImports.length){ %>

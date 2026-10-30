@@ -86,6 +86,10 @@ async function createItemInTransaction(client, ctx, input) {
   if(input.purchaseCost!=null&&String(input.purchaseCost).trim()!=='')for(const skuId of skuIds)await pricing.setPurchaseCostInTransaction(client,ctx,{skuId,amount:input.purchaseCost,currency});
   const physical={};for(const[key,column]of Object.entries({weightGrams:'weight_grams',lengthMm:'length_mm',widthMm:'width_mm',heightMm:'height_mm'})){if(input[key]==null||String(input[key]).trim()==='')continue;const n=Number(input[key]);if(!Number.isSafeInteger(n)||n<=0||n>1000000000)throw new ValidationError(key+' must be a whole number from 1 to 1,000,000,000.');physical[column]=n;}
   if(Object.keys(physical).length)await client.query('UPDATE skus SET '+Object.keys(physical).map((k,i)=>k+'=$'+(i+3)).join(',')+' WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,skuIds,...Object.values(physical)]);
+  if(input.startingQuantity!=null&&String(input.startingQuantity).trim()!==''&&Number(input.startingQuantity)!==0){
+    if(skuIds.length!==1)throw new ValidationError('Add starting stock for each variant after creating this item.');
+    await require('./postgres-opening-stock').receiveInTransaction(client,ctx,{skuId:skuIds[0],locationId:input.startingLocationId,quantity:input.startingQuantity,unitCost:input.startingCost,lotCode:input.startingLotCode,serials:String(input.startingSerials||'').split(/[\r\n,]+/).map(v=>v.trim()).filter(Boolean),idempotencyKey:'item-opening:'+itemId});
+  }
   return { itemId, skuIds };
 }
 

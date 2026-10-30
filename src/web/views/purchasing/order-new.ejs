@@ -64,9 +64,9 @@
                 <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
                 <td class="num">
                   <label class="sr-only" for="unit-cost-<%= item.skuId %>">Unit cost for <%= item.displayName %></label>
-                  <input class="input input--sm" id="unit-cost-<%= item.skuId %>" type="number" min="0" step="0.01"
+                  <span><%= chosen.currency==='USD'?'$':chosen.currency %></span> <input class="input input--sm" id="unit-cost-<%= item.skuId %>" type="number" min="0" step="0.01"
                          name="unitCost[<%= item.skuId %>]" style="max-width:120px;"
-                         value="<%= submitted && submitted.unitCost && submitted.unitCost[item.skuId] !== undefined ? submitted.unitCost[item.skuId] : item.lastUnitCost === null ? '' : item.lastUnitCost %>"
+                         value="<%= submitted && submitted.unitCost && submitted.unitCost[item.skuId] !== undefined ? submitted.unitCost[item.skuId] : item.lastUnitCost == null ? '' : Number(item.lastUnitCost).toFixed(2) %>"
                          placeholder="Required if unknown">
                 </td>
                 <td class="num">

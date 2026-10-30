@@ -11,10 +11,10 @@
 <div class="card errorpage">
   <div class="empty">
     <div class="icon-wrap"><%- helpers.icon(status === 404 ? 'empty' : 'alert', { size: 22 }) %></div>
-    <h1><%= status === 404 ? 'We could not find that' : 'Something went wrong' %></h1>
+    <h1><%= locals.errorTitle || (status === 404 ? 'We could not find that' : 'Something went wrong') %></h1>
     <p><%= message %></p>
     <div class="btn-row" style="justify-content: center;">
-      <a class="btn btn--primary" href="/">Back to overview</a>
+      <% if(status===402){ %><a class="btn btn--primary" href="/upgrade">Upgrade</a><% } %><a class="btn btn--primary" href="/">Back to overview</a>
       <a class="btn" href="/inventory">Go to inventory</a>
       <a class="btn" href="/support">Report a problem</a>
     </div>

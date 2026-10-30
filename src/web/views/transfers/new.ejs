@@ -1,4 +1,4 @@
-<p class="rm-stamp">New inventory transfer</p>
+<%- include('../components/plan-lock',{capability:'inventory.transfers',label:'Stock transfers'}) %><fieldset <%= locals.planGates?.['inventory.transfers']?.enabled===false?'disabled':'' %> style="border:0;padding:0"><p class="rm-stamp">New inventory transfer</p>
 <div class="rm-titleline"><div><h1 class="rm-figure">Request stock to move.</h1>
   <p class="rm-sub">This prepares and reserves work. Nothing leaves inventory until dispatch is recorded.</p></div></div>
 <% if (locations.length < 2) { %>
@@ -55,3 +55,4 @@
 <script src="/transfer-defaults.js?v=<%= assetVersion %>" defer></script>
 <p class="rm-note">The fastest path is usually to <a href="/actions">tell StockChief what needs moving</a>. Lot- and serial-tracked stock starts from the product page so StockChief can preserve the exact identity.</p>
 <% } %>
+</fieldset>

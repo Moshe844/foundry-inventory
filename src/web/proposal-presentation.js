@@ -12,13 +12,13 @@ function impact(type){
  return 'Changes a business record';
 }
 function fields(payload){
- const result=[],hidden=new Set(['integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash']);
+ const result=[],hidden=new Set(['integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
  function walk(value,path,depth){
   if(result.length>=120||depth>5||value===null||value===undefined||value==='')return;
   if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{value=JSON.parse(value);}catch{}}
   if(Array.isArray(value)){value.forEach((v,i)=>walk(v,path+' · '+(i+1),depth+1));return;}
   if(typeof value==='object'){if(Object.hasOwn(value,'$step')){result.push({label:path,value:'Result of change '+(Number(value.$step)+1)});return;}
-   for(const[k,v]of Object.entries(value))if(!hidden.has(k))walk(v,path?path+' · '+label(k):label(k),depth+1);return;}
+   for(const[k,v]of Object.entries(value)){if(hidden.has(k)||/Hash$|Snapshot$|Id$/.test(k))continue;const money=/Minor$/.test(k)&&Number.isSafeInteger(Number(v));const key=label(money?k.replace(/Minor$/,''):k);if(money)result.push({label:path?path+' · '+key:key,value:require('../domain/currency').format(Number(v),value.currency||payload.currency||'USD')});else walk(v,path?path+' · '+key:key,depth+1);}return;}
   result.push({label:path,value:typeof value==='boolean'?(value?'Yes':'No'):String(value)});
  }
  walk(payload,'',0);return result;

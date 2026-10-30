@@ -64,7 +64,9 @@ async function createPortal(input, options = {}) {
   // A generic portal may expose annual Prices configured in Stripe outside of
   // StockChief. Use only the payment-method deep link until annual is launched;
   // invoice links are rendered separately in Plan & Usage.
-  const flow={
+  const testPlans=Boolean(input.planConfigurationId&&require('./release').stagingTestCheckout()
+    &&/^sk_test_/.test(options.secretKey||config.commercial.stripeSecretKey||''));
+  const flow=testPlans?{configuration:input.planConfigurationId}:{
     'flow_data[type]':'payment_method_update',
     'flow_data[after_completion][type]':'redirect',
     'flow_data[after_completion][redirect][return_url]':input.returnUrl,
@@ -75,6 +77,8 @@ async function createPortal(input, options = {}) {
     values:{customer:input.customerId,return_url:input.returnUrl,...flow},
   });
 }
+
+async function retrieveSchedule(id,options={}){return call(`/subscription_schedules/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 
 async function createAddonCheckout(input,options={}){return call('/checkout/sessions',{...options,
  idempotencyKey:`stockchief-addon:${input.purchaseId}`,values:{mode:'payment',customer:input.customerId,
@@ -138,7 +142,26 @@ async function previewSubscriptionChange(input,options={}){
     'subscription_details[proration_date]':input.prorationBehavior==='none'?undefined:input.prorationDate}});
 }
 
+async function activeSubscriptionSchedule(input,options={}){
+ const subscription=await retrieveSubscription(input.subscriptionId,options);
+ const objectId=value=>typeof value==='string'?value:value?.id;
+ if(subscription.id!==input.subscriptionId||(input.customerId&&objectId(subscription.customer)!==input.customerId))
+  throw new ValidationError('Stripe returned another billing subscription.');
+ const scheduleId=objectId(subscription.schedule);if(!scheduleId)return null;
+ const schedule=await retrieveSchedule(scheduleId,options);
+ if(schedule.id!==scheduleId||objectId(schedule.subscription)!==subscription.id||objectId(schedule.customer)!==objectId(subscription.customer)
+   ||!['active','not_started'].includes(schedule.status))throw new ValidationError('Stripe returned another subscription schedule.');
+ return schedule;
+}
+async function releaseActiveSchedule(input,options={}){
+ const schedule=await activeSubscriptionSchedule(input,options);if(!schedule)return;
+ const released=await call(`/subscription_schedules/${encodeURIComponent(schedule.id)}/release`,{...options,
+  idempotencyKey:`stockchief-schedule-release:${schedule.id}:${input.changeId||input.requestId}`,values:{preserve_cancel_date:'false'}});
+ if(released.id!==schedule.id||released.status!=='released'||released.released_subscription!==input.subscriptionId)
+  throw new ValidationError('Stripe did not confirm the previous plan schedule was removed.');
+}
 async function updateSubscription(input,options={}){
+  await releaseActiveSchedule(input,options);
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
     idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
       'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
@@ -147,7 +170,7 @@ async function updateSubscription(input,options={}){
     }});
 }
 async function scheduleDowngrade(input,options={}){
- const schedule=await call('/subscription_schedules',{...options,idempotencyKey:`stockchief-schedule:${input.changeId}`,
+ const schedule=await activeSubscriptionSchedule(input,options)||await call('/subscription_schedules',{...options,idempotencyKey:`stockchief-schedule:${input.changeId}`,
   values:{from_subscription:input.subscriptionId}});
  return call(`/subscription_schedules/${encodeURIComponent(schedule.id)}`,{...options,
   idempotencyKey:`stockchief-schedule-phases:${input.changeId}`,values:{end_behavior:'release',proration_behavior:'none',
@@ -160,6 +183,7 @@ async function scheduleDowngrade(input,options={}){
 
 async function cancelImmediately(input,options={}){return call('/subscriptions/'+encodeURIComponent(input.subscriptionId),{...options,method:'DELETE',idempotencyKey:'stockchief-refund-cancel:'+input.refundId,values:{invoice_now:'false',prorate:'false'}});}
 async function setCancellation(input,options={}){
+  await releaseActiveSchedule(input,options);
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
     idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.requestId}`,
     values:{cancel_at_period_end:input.cancelAtPeriodEnd?'true':'false',
@@ -208,6 +232,6 @@ function verifyEvent(raw, headers = {}, options = {}) {
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
   createCapacityCheckout,createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
-  scheduleDowngrade,
+  scheduleDowngrade,retrieveSchedule,
   cancelImmediately,setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form,apiVersion:API_VERSION} };

@@ -55,6 +55,7 @@ const OPERATIONS = [
 const OPERATION_IDS = OPERATIONS.map((o) => o.id);
 
 const ADJUSTMENT_REASONS = [
+  { id: 'opening', label: 'Opening stock' },
   { id: 'physical_count', label: 'Physical count' },
   { id: 'damage', label: 'Damaged' },
   { id: 'loss', label: 'Lost or missing' },

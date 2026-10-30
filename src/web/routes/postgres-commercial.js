@@ -96,20 +96,32 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     await require('../../commercial/provider-costs').ingest(database,statement,req.account.id);
     req.flash('success','Provider invoice cost recorded with its evidence and allocation. Coverage warnings remain until independently verified.');
     return res.redirect(303,'/commercial-admin');}));
-  router.get('/usage',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req),summary=await entitlements.summary(database,scope);for(const meter of ['ai_work_credits','emails_sent'])if(!summary.meters.some(row=>row.meter===meter))summary.meters.push(await entitlements.meterState(database,scope,meter,{subscription:summary.subscription}));res.page('commercial/usage',{title:'Usage and add more',nav:null,room:true,summary,packs:addons.currentPacks(await addons.packs(database,scope)),purchaseKey:newId('purchasekey'),checkoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
+  router.get('/usage',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req),summary=await entitlements.summary(database,scope);for(const meter of ['ai_work_credits','emails_sent'])if(!summary.meters.some(row=>row.meter===meter))summary.meters.push(await entitlements.meterState(database,scope,meter,{subscription:summary.subscription}));res.page('commercial/usage',{title:'Usage and add more',nav:null,room:true,summary,aiActions:(await database.query("SELECT occurred_at,units,status,detail->>'operation' operation,detail->>'failedReportBuild' failed_report FROM commercial_usage_events WHERE account_id=$1 AND workspace_id IS NOT DISTINCT FROM $2 AND meter='ai_work_credits' ORDER BY occurred_at DESC,id DESC LIMIT 50",[scope.accountId,scope.workspaceId||null])).rows,packs:addons.currentPacks(await addons.packs(database,scope)),purchaseKey:newId('purchasekey'),checkoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
   router.get('/billing',requireAccount,requireBillingOwner,(req,res)=>res.redirect(301,'/settings/billing'+(req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')));
   router.get('/settings/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
-    const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
+    let summary=await entitlements.summary(database,scope);let usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     const pendingChanges=(await database.query(`SELECT change.*,plan.public_name AS target_plan_name
       FROM commercial_subscription_changes change JOIN commercial_plans plan ON plan.id=change.to_plan_id
       WHERE change.account_id=$1 AND change.status='PENDING' ORDER BY change.created_at DESC`,[scope.accountId])).rows;
+    let scheduleUnavailable=false;
+    if(release.stagingTestCheckout())try{
+      const scheduled=await require('../../commercial/staging-plan-portal').scheduledChange(database,summary.subscription,{provider,providerOptions:options.providerOptions});
+      if(scheduled?.checked){for(let i=pendingChanges.length-1;i>=0;i--)if(new Date(pendingChanges[i].effective_at)>new Date())pendingChanges.splice(i,1);if(scheduled.change)pendingChanges.push(scheduled.change);}
+    }catch{scheduleUnavailable=true;}
     let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
       invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
-    return res.page('commercial/billing',{title:'Plan & billing',nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
-      pendingChanges,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
+    // Stripe can confirm a payment while schedule/invoice requests are in flight.
+    // Refresh the plan snapshot before rendering so limits and plan name agree.
+    const latest=await entitlements.subscriptionFor(database,scope.accountId);
+    if(String(latest?.updated_at)!==String(summary.subscription?.updated_at)){
+      summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
+    }
+    return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
+      pendingChanges,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
       packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
+      planPortal:release.stagingTestCheckout()&&Boolean(process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID),
       checkoutOpen:await release.isSubscriptionCheckoutOpen(database),usageCheckoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
   router.get('/billing/terms',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>res.page('commercial/plan-terms',{title:'Review plan terms',nav:'settings',room:true,terms:await require('../../commercial/plan-terms').review(database,req.account.id)})));
   router.post('/billing/terms',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{await require('../../commercial/plan-terms').accept(database,req.account.id,req.body);req.flash('success','Updated allowances accepted. Subscription price, billing dates, existing usage and records are unchanged.');res.redirect(303,'/billing');}));
@@ -124,7 +136,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       explicitConsent:req.body.consent==='1',monthlyCapMinor:Math.round(Number(req.body.monthlyCap||0)*100)},
       {provider,providerOptions:options.providerOptions,testMode:options.testMode});
     req.flash('success','Auto-top-up preferences saved.');return res.redirect(303,'/billing');}));
-  router.get('/upgrade',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const capability=commercialCatalog.canonicalCapability(String(req.query.capability||'').trim());
+  router.get('/upgrade',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{if(!String(req.query.capability||'').trim())return res.redirect(303,'/settings/billing');const capability=commercialCatalog.canonicalCapability(String(req.query.capability||'').trim());
     const scope=commercialScope(req);const returnPath=safeReturnPath(req.query.return);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const currentCapability=await entitlements.capabilityState(database,scope,capability,{subscription:current});
     if(currentCapability.enabled){req.flash('success','This capability is already active on your current plan.');await saveSession(req);
@@ -162,12 +174,13 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const quote=await commercial.subscriptionChangeQuote(database,scope.accountId,{planId:req.query.plan,
       interval:req.query.interval},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
-    return res.page('commercial/change',{title:'Review plan change',nav:'settings',room:true,quote});}));
+    return res.page('commercial/change',{title:'Review plan change',nav:'settings',room:true,quote,changeKey:newId('planreview')});}));
   router.post('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const changed=await commercial.requestSubscriptionChange(database,scope.accountId,{planId:req.body.planId,
-      interval:req.body.interval,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
-    req.flash('success',changed.status==='APPLIED'?`${changed.quote.target.public_name} is active.`:
-      `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}.`);
+      interval:req.body.interval,idempotencyKey:req.body.changeKey,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
+    req.flash('success',changed.status==='APPLIED'?`${changed.quote.target.public_name} is active.`:changed.quote.downgrade?
+      `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}.`:
+      `Stripe is confirming your change to ${changed.quote.target.public_name}. Your features unlock as soon as payment is confirmed. Refresh this page in a moment.`);
     return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/cancel',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,true,{provider,providerOptions:options.providerOptions});
@@ -180,6 +193,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const subscription=await entitlements.subscriptionFor(database,scope.accountId);
     if(!subscription?.stripe_customer_id)throw new ValidationError('A billing account has not been created yet.');
     const portal=await provider.createPortal({accountId:scope.accountId,requestId:newId('portal'),customerId:subscription.stripe_customer_id,
+      planConfigurationId:release.stagingTestCheckout()?process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID:undefined,
       returnUrl:`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`},options.providerOptions||{});
     return res.redirect(303,portal.url);}));
   router.use('/commercial-admin/accounts',requireAccount,asyncRoute(async(req,res,next)=>{await require('../../domain/postgres-developer-accounts').assertAdmin(database,req.account.id);next();}));

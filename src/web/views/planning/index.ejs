@@ -135,7 +135,7 @@
                         && option.totalCostMinor !== null && option.totalCostMinor !== undefined) { %>
                       <p class="t-muted"><%= new Intl.NumberFormat('en-US', { style: 'currency',
                         currency: row.adaptivePlan.constraints.currency || 'USD' })
-                        .format(option.totalCostMinor / 100) %> evidenced cost</p>
+                        .format(option.totalCostMinor / 100) %> recorded cost</p>
                     <% } %>
                     <% if (option.reasons && option.reasons.length) { %>
                       <p class="t-xs t-muted"><%= option.reasons.join(' ') %></p>
