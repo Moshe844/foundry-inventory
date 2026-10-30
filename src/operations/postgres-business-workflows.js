@@ -372,7 +372,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
       const locationId = requested.locationId || line.destination_location_id || order.destination_location_id;
       const physical = await inventory.receiveInTransaction(client, ctx, {
         skuId: line.sku_id, locationId, quantity, secondaryQuantity:requested.secondaryQuantity,lotId: requested.lotId,
-        lotCode: requested.lotCode, expiresAt: requested.expiresAt, serials: requested.serials,
+        lotCode: requested.lotCode, expiresAt: requested.expiresAt, serials: requested.serials,serialWeights:requested.serialWeights,
         reference: input.reference || order.po_number, notes: input.note,
         occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${line.id}`,
       });
@@ -399,11 +399,11 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3`, [line.id, purchaseOrderId, ctx.workspaceId, quantity,measuredQuantity??0]);
       await client.query(`INSERT INTO purchase_order_receipt_lines
         (id,workspace_id,receipt_id,purchase_order_line_id,sku_id,location_id,quantity_units,lot_id,lot_code,
-         expires_at,serials,over_by_units,movement_ids,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         expires_at,serials,over_by_units,movement_ids,created_at,secondary_quantity)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [newId('porline'), ctx.workspaceId, receiptId, line.id, line.sku_id, locationId, quantity,
         physical.lotId, requested.lotCode || null, requested.expiresAt || null,
-        JSON.stringify(requested.serials || []), overBy, JSON.stringify([physical.movementId]), nowIso()]);
+        JSON.stringify(requested.serials || []), overBy, JSON.stringify([physical.movementId]), nowIso(),measuredQuantity]);
       movementGroupIds.push(physical.groupId);
       received.push({ lineId: line.id, quantity, movementId: physical.movementId,
         journalEntryId: posted?.entry.id||null, totalCostMinor, overBy });

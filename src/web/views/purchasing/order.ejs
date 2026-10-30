@@ -1,3 +1,4 @@
+<% var poMoney = value => helpers.money(Math.round(Number(value)*10**helpers.currencyExponent(order.currency||'USD')),order.currency||'USD'); %>
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchase orders</a>
@@ -136,10 +137,10 @@
               </div>
             </td>
             <td class="muted"><%= line.supplierSku || '—' %></td>
-            <td class="num"><%= line.quantityUnits %></td>
-            <td class="num <%= line.isComplete ? '' : 'is-warn' %>"><%= line.quantityReceivedUnits %></td>
-            <td class="num"><%= line.unitCost === null ? '—' : line.unitCost %></td>
-            <td class="num"><%= line.lineTotal === null ? '—' : line.lineTotal.toFixed(2) %></td>
+            <td class="num"><%= line.quantityUnits %><% if(line.secondary_unit_label&&line.secondary_quantity_ordered!=null){ %><small class="muted"> · <%= helpers.qty(line.secondary_quantity_ordered) %> <%= line.secondary_unit_label %> planned</small><% } %></td>
+            <td class="num <%= line.isComplete ? '' : 'is-warn' %>"><%= line.quantityReceivedUnits %><% if(line.secondary_unit_label&&Number(line.secondary_quantity_received)){ %><small class="muted"> · <%= helpers.qty(line.secondary_quantity_received) %> <%= line.secondary_unit_label %> actual</small><% } %></td>
+            <td class="num"><%= line.unitCost === null ? '—' : poMoney(line.unitCost) %><% if(line.unitCost!==null){ %><small class="muted"> / <%= line.secondary_unit_label||line.unitLabel %></small><% } %></td>
+            <td class="num"><%= line.lineTotal === null ? '—' : poMoney(line.lineTotal) %></td>
           </tr>
         <% }) %>
       </tbody>
@@ -149,8 +150,9 @@
           <td class="num"><strong><%= order.orderedUnits %></strong></td>
           <td class="num"><strong><%= order.receivedUnits %></strong></td>
           <td></td>
-          <td class="num"><strong><%= order.hasCosts ? order.subtotal.toFixed(2) : '—' %></strong></td>
+          <td class="num"><strong><%= order.hasCosts ? poMoney(order.subtotal) : '—' %></strong></td>
         </tr>
+        <% if(order.source_financials){const source=order.source_financials; %><tr><td colspan="5">Tax on the remaining order</td><td class="num"><%= helpers.money(source.taxMinor,order.currency) %></td></tr><tr><td colspan="5"><strong>Remaining ERP order total</strong></td><td class="num"><strong><%= helpers.money(source.totalMinor,order.currency) %></strong></td></tr><% } %>
         <%#
           What the goods cost to get here, beside what the goods cost.
 
@@ -167,7 +169,7 @@
               <span class="t-xs t-muted">· <%= charge.kind %></span>
             </td>
             <td></td>
-            <td class="num"><%= (charge.amountMinor / 100).toFixed(2) %></td>
+            <td class="num"><%= helpers.money(charge.amountMinor,order.currency) %></td>
           </tr>
         <% }) %>
         <% if ((locals.charges || []).length) { %>
@@ -224,7 +226,7 @@
             knows, so on those orders the button led straight to an error it
             could never not produce; they go to the form that asks instead. %>
         <% var needsArrivalDetail = (order.lines || []).some(function (line) {
-             return line.outstandingUnits > 0 && (line.trackingMode === 'lot' || line.trackingMode === 'serial');
+             return line.outstandingUnits > 0 && (line.secondary_unit_label || line.trackingMode === 'lot' || line.trackingMode === 'serial');
            });
            var futureExpected = typeof expectedInFuture !== 'undefined' && expectedInFuture; %>
         <% if (futureExpected) { %>
@@ -232,7 +234,7 @@
           <span class="muted" style="font-size:12px;">Expected <%= order.expectedDate %>. Nothing is booked in until you report that it arrived.</span>
         <% } else if (needsArrivalDetail) { %>
           <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
-          <span class="muted" style="font-size:12px;">StockChief needs the batch or serial numbers that arrived — it cannot know those.</span>
+          <span class="muted" style="font-size:12px;">Record the actual weight, batch or serial numbers that arrived.</span>
         <% } else { %>
           <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" style="display:inline;" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">

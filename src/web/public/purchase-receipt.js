@@ -1,0 +1,1 @@
+'use strict';(()=>{const form=document.querySelector('[data-purchase-receipt]');if(!form)return;function update(){for(const row of form.querySelectorAll('[data-receipt-line]'))for(const field of row.querySelectorAll('[data-receipt-measure]'))field.required=Number(row.querySelector('[data-receipt-quantity]').value)>0;}form.addEventListener('input',update);update();})();

@@ -218,7 +218,7 @@ async function purchaseOrder(database, workspaceId, id) {
     WHERE po.workspace_id=$1 AND po.id=$2`,[workspaceId,id]);
   if(!header.rows.length)throw new NotFoundError('That purchase order was not found.');
   const [lines,receipts,bills,events]=await Promise.all([
-    database.query(`SELECT pol.*,i.name AS item_name,i.tracking_mode,i.unit_label,s.code,s.variant_label,l.name AS location_name
+    database.query(`SELECT pol.*,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,s.code,s.variant_label,l.name AS location_name
       FROM purchase_order_lines pol JOIN skus s ON s.id=pol.sku_id JOIN items i ON i.id=s.item_id
       LEFT JOIN locations l ON l.id=pol.destination_location_id
       WHERE pol.workspace_id=$1 AND pol.purchase_order_id=$2 ORDER BY pol.line_number`,[workspaceId,id]),

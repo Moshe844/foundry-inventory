@@ -25,8 +25,8 @@ async function submitOrder(database,ctx,input,nextStep){
     const created=await workflows.createSalesOrderInTransaction(client,ctx,input);if(nextStep==='draft')return {...created,status:'DRAFT'};
     if(nextStep==='fulfill'){const prior=(await client.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='sales_order.fulfill' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,input.idempotencyKey+':fulfill'])).rows[0];if(prior&&prior.result.salesOrderId===created.salesOrderId)return {...created,...prior.result};}
     const confirmed=await workflows.confirmSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':confirm',requireFullAllocation:nextStep==='fulfill'});if(nextStep==='confirm')return {...created,status:confirmed.status};
-    const allocations=(await client.query('SELECT a.sales_order_line_id,a.location_id,a.quantity FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,created.salesOrderId])).rows;
-    const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':fulfill',lines:allocations.map(a=>({lineId:a.sales_order_line_id,locationId:a.location_id,quantity:Number(a.quantity)}))});return {...created,status:fulfilled.status,invoiceId:fulfilled.invoiceId};
+    const allocations=(await client.query('SELECT a.sales_order_line_id,a.location_id,a.quantity,l.secondary_quantity_ordered,l.secondary_quantity_fulfilled,count(*) OVER(PARTITION BY a.sales_order_line_id) AS allocation_count FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,created.salesOrderId])).rows;
+    const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':fulfill',lines:allocations.map(a=>{if(a.secondary_quantity_ordered!=null&&Number(a.allocation_count)!==1)throw new ValidationError('This weighed line is reserved at multiple locations. Record the actual weight leaving each location from the order page.');return {lineId:a.sales_order_line_id,locationId:a.location_id,quantity:Number(a.quantity),secondaryQuantity:a.secondary_quantity_ordered==null?undefined:require('../../domain/exact-quantity').safeNumber(require('../../domain/exact-quantity').subtract(a.secondary_quantity_ordered,a.secondary_quantity_fulfilled||0))};})});return {...created,status:fulfilled.status,invoiceId:fulfilled.invoiceId};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
@@ -544,7 +544,7 @@ function createPostgresCommerceRouter(database,options={}){
       outstandingUnits:detail.lines.reduce((sum,line)=>sum+Math.max(0,Number(line.quantity_units)-Number(line.quantity_received_units)),0)};
     const lines=detail.lines.filter((line)=>Number(line.quantity_received_units)<Number(line.quantity_units)).map((line)=>({
       id:line.id,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),skuCode:line.code,
-      trackingMode:line.tracking_mode,unitLabel:line.unit_label||'unit',purchaseUnit:line.purchase_unit||'unit',
+      trackingMode:line.tracking_mode,quantityPrecision:Number(line.quantity_precision||0),quantityIncrement:String(line.quantity_increment||1),secondaryUnitLabel:line.secondary_unit_label||null,secondaryIncrement:String(line.secondary_increment||'0.001'),unitLabel:line.unit_label||'unit',purchaseUnit:line.purchase_unit||'unit',
       unitsPerPurchaseUnit:Number(line.units_per_purchase_unit||1),quantityUnits:Number(line.quantity_units),
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
@@ -635,8 +635,8 @@ function createPostgresCommerceRouter(database,options={}){
       lineId:line.id,quantity:Number(line.quantity_units)-Number(line.quantity_received_units),locationId:line.destination_location_id}));
     if(!lines.length)throw new ValidationError('There is nothing outstanding on this order.');
     if(lines.some((line)=>!line.locationId))throw new ValidationError('Choose where the delivery arrived before receiving it.');
-    if(detail.lines.some((line)=>Number(line.quantity_received_units)<Number(line.quantity_units)&&['lot','serial'].includes(line.tracking_mode)))
-      throw new ValidationError('Batch or serial details are required. Use “Something is different” to book this delivery.');
+    if(detail.lines.some((line)=>Number(line.quantity_received_units)<Number(line.quantity_units)&&(line.secondary_unit_label||['lot','serial'].includes(line.tracking_mode))))
+      throw new ValidationError('Actual weights, batch or serial details are required. Use delivery details to book this delivery.');
     await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'po-receive-all'),
       reference:null,note:null,overReceiptApproved:false,lines});
     req.flash('success','The complete physical delivery was recorded through the inventory ledger.');
@@ -714,8 +714,8 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/purchasing/orders/:id/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),asyncRoute(async(req,res)=>{
     const detail=await commerce.purchaseOrder(database,req.ctx.workspaceId,req.params.id);
-    const lines=req.body.lineId?[{lineId:req.body.lineId,quantity:req.body.quantity,locationId:req.body.locationId}]:
-      detail.lines.map((line)=>({lineId:line.id,quantity:req.body[`qty_${line.id}`],locationId:req.body[`location_${line.id}`]||line.destination_location_id,
+    const lines=req.body.lineId?[{lineId:req.body.lineId,quantity:req.body.quantity,locationId:req.body.locationId,secondaryQuantity:req.body.secondaryQuantity,serialWeights:require('../../domain/stock-quantity').parseSerialWeights(req.body.serialWeights)}]:
+      detail.lines.filter(line=>Number(req.body[`qty_${line.id}`])>0).map((line)=>({lineId:line.id,quantity:req.body[`qty_${line.id}`],secondaryQuantity:req.body[`secondary_${line.id}`],serialWeights:require('../../domain/stock-quantity').parseSerialWeights(req.body[`weights_${line.id}`]),locationId:req.body[`location_${line.id}`]||line.destination_location_id,
         lotCode:trimOrNull(req.body[`lot_${line.id}`]),expiresAt:trimOrNull(req.body[`expires_${line.id}`]),
         serials:String(req.body[`serials_${line.id}`]||'').split(/[\n,]+/).map((value)=>value.trim()).filter(Boolean)}))
         .filter((line)=>Number(line.quantity)>0);
