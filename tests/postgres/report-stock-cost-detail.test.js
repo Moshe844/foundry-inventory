@@ -17,10 +17,18 @@ test('stock report keeps variant, warehouse, physical quantity and recorded cost
  assert.throws(()=>reports.normalize({...definition,groups:['currency'],aggregate:'sum',measure:'recorded_cost_minor',sort:'total'},{role:'owner'}),/not known for every record/);
  const quantity=await reports.run(db,ctx,{role:'owner'},{...definition,groups:['location'],aggregate:'sum',measure:'on_hand',sort:'total'});assert.equal(quantity.rows.reduce((n,r)=>n+Number(r.total),0),7);
  assert.equal((await reports.run(db,{...ctx,workspaceId:'another-inventory'},{role:'owner'},definition)).rows.length,0);
+ let fitChecks=0,plans=0;
  const proposed=await require('../../src/reports/postgres-ask').prepare(db,ctx,'Show stock by warehouse with product, variant, on-hand quantity and recorded inventory cost.',{provider:{async complete(request){
-  if(request.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''}};
+  if(request.schemaName==='stockchief_governed_report_fit'){
+   const evidence=JSON.parse(request.prompt);assert.deepEqual(evidence.renderer.displayedColumns,full.columns);
+   assert.equal(evidence.renderer.rowKind,'individual records');assert.equal(evidence.fields.recorded_cost_minor,'money_minor');
+   if(++fitChecks===1)return {data:{aligned:false,reason:'Stock by warehouse requires SQL grouping'}};
+   assert.match(evidence.initialObjection,/SQL grouping/);assert.match(request.system,/groups means SQL aggregation/);
+   return {data:{aligned:true,reason:''}};
+  }
+  plans++;
   assert.match(request.system,/For a detail list/);const stock=JSON.parse(request.prompt).catalogue.find(r=>r.dataset==='stock');assert.equal(stock.fields.recorded_cost_minor,'money_minor');assert.equal(stock.fields.variant,'text');return {data:definition};
- }}});assert(proposed.reportConfig);assert.equal(proposed.rows.length,2);
+ }}});assert(proposed.reportConfig);assert.equal(proposed.rows.length,2);assert.equal(plans,1);assert.equal(fitChecks,2);
  const weighed=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Weighed product',trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:3});
  await require('../../src/domain/postgres-opening-stock').receive(db,ctx,{skuId:weighed.skuIds[0],locationId:f.location.id,quantity:2,secondaryQuantity:4.5,unitCost:'1.00',currency:'USD',idempotencyKey:'weighted-report'});
  const completeWeight=await reports.run(db,ctx,{role:'owner'},definition);assert.equal(completeWeight.rows.find(r=>r.product==='Weighed product').cost_status,'complete');
