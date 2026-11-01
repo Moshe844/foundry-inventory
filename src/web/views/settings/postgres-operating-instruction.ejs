@@ -1,6 +1,6 @@
 <% if(locals.editProposal&&proposal.status==='PENDING'){ %><section class="card" id="revise-proposal"><div class="card-body"><h2>Revise this instruction</h2><form method="post" action="/operating-instructions/<%= proposal.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Revised instruction</span><textarea name="message" required maxlength="10000" autofocus><%= proposal.statedAs %></textarea></label><button class="btn btn--primary" type="submit">Prepare revised instruction</button></form></div></section><% } %>
 <section class="rm-head"><div><p class="rm-eyebrow">Standing instruction</p><h1><%= proposal.summary %></h1>
-  <p class="rm-lede">You said: “<%= proposal.statedAs %>”</p></div><span class="rm-badge"><%= proposal.status %></span></section>
+  <p class="rm-lede">Original instruction: “<%= proposal.statedAs %>”</p></div><span class="rm-badge"><%= proposal.status %></span></section>
 
 <section class="rm-card"><h2>Exact effect</h2>
   <% descriptions.forEach(function(description){ %><div class="rm-row"><span><strong><%= description %></strong></span></div><% }) %>

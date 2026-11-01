@@ -67,7 +67,7 @@
         <span class="rm-told__t">
           <%= rule.summary || rule.statedAs %>
           <% if (rule.summary && rule.statedAs && rule.summary !== rule.statedAs) { %>
-            <small>You said: “<%= rule.statedAs %>”</small>
+            <small>Original instruction: “<%= rule.statedAs %>”</small>
           <% } %>
         </span>
         <span class="rm-told__m is-ok">

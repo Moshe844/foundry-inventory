@@ -1,34 +1,18 @@
 'use strict';
 
 const express=require('express');
-const config=require('../../config');
-const readiness=require('../../operations/postgres-readiness');
 const jobs=require('../../operations/postgres-job-queue');
 const providerEffects=require('../../operations/postgres-provider-effects');
-const monitoring=require('../../operations/postgres-monitoring');
 const {requireOwner,asyncRoute}=require('../middleware');
 const {NotFoundError}=require('../../domain/errors');
 
 function createPostgresOperationsRouter(database){
   const router=express.Router();router.use('/settings/operations',requireOwner);
   router.get('/settings/operations',asyncRoute(async(req,res)=>{
-    const [state,deadJobs,alerts,runs]=await Promise.all([
-      readiness.snapshot(database,req.ctx.workspaceId,{env:'production'}),
-      jobs.listDead(database,req.ctx.workspaceId),
-      database.query(`SELECT * FROM operational_alerts WHERE workspace_id=$1 AND status<>'RESOLVED'
-        ORDER BY last_seen_at DESC,id DESC LIMIT 100`,[req.ctx.workspaceId]),
-      database.query(`SELECT * FROM production_certification_runs WHERE workspace_id=$1
-        ORDER BY started_at DESC,id DESC LIMIT 20`,[req.ctx.workspaceId]),
-    ]);
-    const byCause=new Map();
-    for(const job of deadJobs){
-      const key=JSON.stringify([job.kind,job.lastError?.code||'',job.lastError?.message||'']);
-      if(!byCause.has(key))byCause.set(key,{kind:job.kind,error:job.lastError,jobs:[]});
-      byCause.get(key).jobs.push(job);
-    }
-    return res.page('settings/postgres-operations',{title:'Production operations',nav:'settings',room:true,
-      backTo:{href:'/settings',label:'Settings'},readiness:state,deadJobs,jobGroups:[...byCause.values()],
-      alerts:alerts.rows,runs:runs.rows});
+    const deadJobs=await jobs.listDead(database,req.ctx.workspaceId),groups=new Map();
+    for(const job of deadJobs){const kind=job.kind.startsWith('import.')?'imports':job.kind.startsWith('report.')?'reports':job.kind.startsWith('connection.')||job.kind.startsWith('connector.')?'connections':'other';groups.set(kind,(groups.get(kind)||0)+1);}
+    const labels={imports:{title:'Some file imports could not finish',href:'/imports',action:'Review imports'},reports:{title:'Some reports could not finish',href:'/reports',action:'Review reports'},connections:{title:'A connection needs attention',href:'/settings/connections',action:'Review connections'},other:{title:'Some background work needs attention',href:'/support',action:'Contact support'}};
+    return res.page('settings/background-issues',{title:'Work needing attention',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},issues:[...groups].map(([kind,count])=>({...labels[kind],count}))});
   }));
   router.get('/settings/operations/provider-effects/:id',asyncRoute(async(req,res)=>{
     const effect=await providerEffects.get(database,req.ctx.workspaceId,req.params.id);
@@ -44,26 +28,6 @@ function createPostgresOperationsRouter(database){
     const job=await jobs.retryDead(database,req.params.id,req.ctx.workspaceId,{by:req.user.id});
     if(!job)throw new NotFoundError('No dead-lettered job with that id belongs to this inventory.');
     req.flash('success','The job is queued for one controlled retry.');return res.redirect(303,'/settings/operations#dead-letters');
-  }));
-  router.post('/settings/operations/alerts/test',asyncRoute(async(req,res)=>{
-    await monitoring.raise(database,{workspaceId:req.ctx.workspaceId,severity:'WARNING',kind:'certification.injected',
-      title:'StockChief production alert test',detail:'Intentional alert for responder qualification.',
-      fingerprint:`certification.injected:${Date.now()}`});
-    req.flash(config.operations.alertWebhookUrl?'success':'warn',config.operations.alertWebhookUrl
-      ?'The test alert is recorded for external delivery qualification.':'The alert is recorded, but no external alert webhook is configured.');
-    return res.redirect(303,'/settings/operations#alerts');
-  }));
-  router.post('/settings/operations/alerts/:id/resolve',asyncRoute(async(req,res)=>{
-    const result=await database.query(`UPDATE operational_alerts SET status='RESOLVED',resolved_at=$3
-      WHERE workspace_id=$1 AND id=$2 AND status<>'RESOLVED' RETURNING id`,[req.ctx.workspaceId,req.params.id,new Date().toISOString()]);
-    if(!result.rows.length)throw new NotFoundError('That operational alert was not found in this inventory.');
-    req.flash('success','The incident is resolved; its evidence remains recorded.');return res.redirect(303,'/settings/operations#alerts');
-  }));
-  router.post('/settings/operations/certify',asyncRoute(async(req,res)=>{
-    const result=await readiness.certify(database,req.ctx.workspaceId);
-    req.flash(result.ok?'success':'warn',result.ok?`Certification ${result.id} passed.`:
-      `Certification ${result.id} remains blocked by ${result.blockers.join(', ')}.`);
-    return res.redirect(303,'/settings/operations#certification');
   }));
   return router;
 }
