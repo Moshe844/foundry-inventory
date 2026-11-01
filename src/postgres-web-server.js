@@ -12,7 +12,10 @@ async function startPostgresWeb(options={}){
   validateProductionEnvironment(options);
   const database=options.database||openPostgres(connectionString,{applicationName:'stockchief-postgres-web'});
   await migratePostgres(database);
-  const app=createPostgresApp({database,env:options.env||config.env,
+  // A busy request pool must not make Render mistake the live process for a
+  // crashed service. Probes retain a bounded, separate database connection.
+  const probeDatabase=options.probeDatabase||(options.database?database:openPostgres(connectionString,{max:1,connectionTimeoutMillis:2000,applicationName:'stockchief-postgres-probes'}));
+  const app=createPostgresApp({database,probeDatabase,env:options.env||config.env,
     sessionSecret:options.sessionSecret||config.sessionSecret,
     connectionPublicOrigin:options.publicOrigin||config.connections.publicOrigin});
   const port=options.port===undefined?config.port:options.port;
@@ -35,7 +38,7 @@ async function startPostgresWeb(options={}){
     if(closing)return;closing=true;if(stopCrashMonitor)stopCrashMonitor();
     console.log(`[stockchief] ${signal}; stopping PostgreSQL web.`);
     await new Promise((resolve)=>server.close(resolve));
-    if(capacity)await capacity.stop();await app.locals.sessionStore.close();await database.close();
+    if(capacity)await capacity.stop();await app.locals.sessionStore.close();await database.close();if(probeDatabase!==database&&!options.probeDatabase)await probeDatabase.close();
     if(exit)process.exit(0);
   };
   if(options.installSignalHandlers!==false){

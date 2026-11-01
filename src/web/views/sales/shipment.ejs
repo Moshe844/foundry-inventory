@@ -581,6 +581,7 @@
               <% }) %>
             </fieldset>
           </details>
+          <% if(locals.postgresPlacement){for(const stop of pickList.stops){for(const line of stop.lines){ %><%- include('../partials/tracked-fulfillment-fields',{trackingMode:line.tracking_mode,secondaryUnit:line.secondary_unit_label,field:line.sales_order_line_id+'_'+line.location_id,label:line.item_name+(line.variant_label?' — '+line.variant_label:'')}) %><% }}} %>
           <div data-carrier-handoff-fields <%= plannedHandover === 'CARRIER' ? '' : 'hidden' %>>
           <div class="field-row">
             <label class="field">

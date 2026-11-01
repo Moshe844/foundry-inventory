@@ -1,0 +1,19 @@
+'use strict';
+const {ValidationError}=require('../domain/errors'),exact=require('../domain/exact-quantity');
+function codes(value){if(value==null)return [];if(typeof value==='string'){if(value.length>20000)throw new ValidationError('Scan at most 500 serial numbers at once.');value=value.split(/[\n,]+/);}if(!Array.isArray(value)||value.length>500)throw new ValidationError('Scan at most 500 serial numbers at once.');const result=value.map(v=>String(v).trim()).filter(Boolean);if(new Set(result.map(v=>v.toLowerCase())).size!==result.length)throw new ValidationError('Each serial number must be scanned once.');return result;}
+async function expand(client,ctx,orderId,requested,at){
+ if(requested.length>500)throw new ValidationError('Fulfill at most 500 order lines at once.');
+ const lines=(await client.query('SELECT l.id,l.sku_id,i.name,i.tracking_mode,i.secondary_unit_label FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2 AND l.id=ANY($3::text[])',[ctx.workspaceId,orderId,requested.map(r=>r.lineId)])).rows,result=[];
+ for(const request of requested){const line=lines.find(l=>l.id===request.lineId);if(!line)throw new ValidationError('Choose lines from this order.');const quantity=exact.safeNumber(request.quantity,{label:line.name+' quantity'});if(quantity<=0)throw new ValidationError('Fulfillment quantity must be above zero.');
+  if(line.tracking_mode==='serial'&&request.serials!=null){const serials=codes(request.serials);if(serials.length!==quantity)throw new ValidationError(line.name+': scan one serial number for each unit leaving.');const found=(await client.query("SELECT id FROM serial_units WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND status='in_stock' AND lower(serial)=ANY($4::text[]) ORDER BY id FOR UPDATE",[ctx.workspaceId,line.sku_id,request.locationId,serials.map(s=>s.toLowerCase())])).rows;if(found.length!==quantity)throw new ValidationError(line.name+': one or more scanned serial numbers are not available at this location.');result.push({...request,serialUnitIds:found.map(r=>r.id)});continue;}
+  if(line.tracking_mode!=='lot'||request.lotId){result.push(request);continue;}
+  if(request.lotCode){const lot=(await client.query('SELECT id FROM lots WHERE workspace_id=$1 AND sku_id=$2 AND code=$3',[ctx.workspaceId,line.sku_id,String(request.lotCode).trim()])).rows[0];if(!lot)throw new ValidationError(line.name+': that lot or batch was not found.');result.push({...request,lotId:lot.id});continue;}
+  if(request.lotStrategy!=='FEFO'){result.push(request);continue;}
+  if(line.secondary_unit_label)throw new ValidationError(line.name+': choose the exact batch and measured weight before fulfilling it.');
+  const lots=(await client.query(`SELECT l.id,b.quantity FROM lots l JOIN lot_balances b ON b.workspace_id=l.workspace_id AND b.lot_id=l.id WHERE l.workspace_id=$1 AND l.sku_id=$2 AND b.location_id=$3 AND b.quantity>0 AND (l.expires_at IS NULL OR l.expires_at::date>=$4::date) ORDER BY l.expires_at::date NULLS LAST,l.received_at,l.id FOR UPDATE OF l,b`,[ctx.workspaceId,line.sku_id,request.locationId,String(at).slice(0,10)])).rows;
+  let remaining=quantity;for(const lot of lots){if(remaining<=0)break;const take=Math.min(remaining,Number(lot.quantity));result.push({...request,quantity:take,lotId:lot.id});remaining=exact.safeNumber(exact.subtract(remaining,take));}
+  if(remaining>0)throw new ValidationError(line.name+': not enough unexpired batch stock is available at this location. Nothing was fulfilled.');
+ }
+ return result;
+}
+module.exports={expand,codes};

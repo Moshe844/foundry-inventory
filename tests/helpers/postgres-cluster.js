@@ -36,16 +36,21 @@ async function startCluster() {
   run('initdb', ['-D', data, '--username=stockchief_fixture', `--pwfile=${passwordFile}`,
     '--auth=scram-sha-256', '--encoding=UTF8', '--no-locale']);
   fs.unlinkSync(passwordFile);
-  const socket = net.createServer();
-  await new Promise((resolve, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', resolve); });
-  const port = socket.address().port;
-  await new Promise((resolve) => socket.close(resolve));
+  let port;
   // The fixture uses TCP only. Distribution defaults can point Unix sockets
   // at a system directory that an unprivileged CI runner cannot write.
-  const options = `-h 127.0.0.1 -p ${port}`
-    + (process.platform === 'win32' ? '' : ' -c unix_socket_directories=');
-  run('pg_ctl', ['-D', data, '-l', path.join(directory, 'postgres.log'), '-w', '-t', '30',
-    '-o', options, 'start']);
+  for(let attempt=0;attempt<4;attempt++){
+   const socket=net.createServer();await new Promise((resolve,reject)=>{socket.once('error',reject);socket.listen(0,'127.0.0.1',resolve);});
+   port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
+   const log=path.join(directory,'postgres.log'),offset=fs.existsSync(log)?fs.statSync(log).size:0;
+   const options=`-h 127.0.0.1 -p ${port}`+(process.platform==='win32'?'':' -c unix_socket_directories=');
+   try{run('pg_ctl',['-D',data,'-l',log,'-w','-t','30','-o',options,'start']);break;}
+   catch(error){const attemptLog=fs.existsSync(log)?fs.readFileSync(log).subarray(offset).toString():'';
+    // Another parallel fixture can claim an ephemeral port after the socket
+    // closes. Retry only that startup race, never a migration or test failure.
+    if(attempt===3||fs.existsSync(path.join(data,'postmaster.pid'))||!/could not bind.*Address already in use/i.test(attemptLog))throw error;
+   }
+  }
   let stopped = false;
   return { directory, connectionString: `postgresql://stockchief_fixture:${password}@127.0.0.1:${port}/postgres?sslmode=disable`,
     stop: () => {

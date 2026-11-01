@@ -496,6 +496,7 @@ async function handoff(database,ctx,shipmentId,input={}){
     throw new ValidationError('Enter the carrier tracking number, or buy and verify a label, before recording carrier handoff.');
   const lines=(await client.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity
     FROM sales_shipment_lines WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY id`,[ctx.workspaceId,shipmentId])).rows;
+  for(const line of lines){const field=line.lineId+'_'+line.locationId;line.lotCode=input['lot_'+field];line.lotStrategy=input['lotStrategy_'+field];line.serials=input['serials_'+field];line.secondaryQuantity=input['secondary_'+field];}
   const result=await workflows.fulfillSalesOrderInTransaction(client,ctx,shipment.sales_order_id,{lines,
     idempotencyKey:`shipment-handoff:${shipmentId}`});
   const at=nowIso();
