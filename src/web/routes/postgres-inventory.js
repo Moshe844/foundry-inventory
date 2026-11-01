@@ -42,7 +42,7 @@ function createPostgresInventoryRouter(database) {
     const activeGroup=presenters.STOCK_GROUPS.find((group)=>group.key===req.query.group)||null;
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
-      archivedOnly:req.query.archived==='only',group:activeGroup?.key||''};
+      archivedOnly:req.query.archived==='only',group:activeGroup?.key||'',category:String(req.query.category||'').slice(0,160),supplier:String(req.query.supplier||'').slice(0,160),size:String(req.query.size||'').slice(0,120),color:String(req.query.color||'').slice(0,120),lowStock:req.query.lowStock==='1'};
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
     if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
@@ -56,7 +56,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
@@ -70,12 +70,16 @@ function createPostgresInventoryRouter(database) {
     if(req.body.kind==='export'){
       return require('../../operations/postgres-export-stream').download(database,req.ctx.workspaceId,res,{itemIds:items.map(i=>i.id)});
     }
-    if(req.body.kind==='price')return res.page('inventory/bulk-price',{title:'Change selected selling prices',nav:'inventory',items});
+    if(req.body.kind==='reorder')return res.page('inventory/bulk-reorder',{title:'Change reorder levels',nav:'inventory',items,locations:(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name',[req.ctx.workspaceId])).rows});
+    if(['price','cost'].includes(req.body.kind))return res.page('inventory/bulk-price',{title:req.body.kind==='cost'?'Change selected purchase costs':'Change selected selling prices',nav:'inventory',items,kind:req.body.kind});
     if(req.body.kind==='move')return res.redirect(303,'/transfers/new?'+new URLSearchParams(items.map(i=>['itemIds',i.id])));
     const review=await bulk.prepare(database,req.ctx,{itemIds:items.map(i=>i.id),kind:req.body.kind});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
   }));
+  router.post('/inventory/bulk/reorder',requireOwner,asyncRoute(async(req,res)=>{
+    const review=await require('../../domain/postgres-catalog-bulk').prepare(database,req.ctx,{itemIds:values(req.body.itemIds),kind:'reorder',locationId:req.body.locationId,reorderPoint:req.body.reorderPoint,targetStock:req.body.targetStock});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
+  }));
   router.post('/inventory/bulk/prices',requireOwner,asyncRoute(async(req,res)=>{
-    const review=await require('../../domain/postgres-catalog-bulk').prepare(database,req.ctx,{itemIds:values(req.body.itemIds),kind:'price',amount:req.body.amount,currency:req.body.currency});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
+    const review=await require('../../domain/postgres-catalog-bulk').prepare(database,req.ctx,{itemIds:values(req.body.itemIds),kind:req.body.kind==='cost'?'cost':'price',amount:req.body.amount,currency:req.body.currency});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
   }));
   router.get('/inventory/bulk/reviews/:reviewId',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/bulk-review',{title:'Review selected product changes',nav:'inventory',review:await require('../../domain/postgres-catalog-bulk').get(database,req.ctx,req.params.reviewId)})));
   router.post('/inventory/bulk/reviews/:reviewId/approve',requireOwner,asyncRoute(async(req,res)=>{
@@ -153,6 +157,12 @@ function createPostgresInventoryRouter(database) {
     await catalog.updateItem(database,req.ctx,req.params.id,req.body);
     req.flash('success','Product details saved.');
     return res.redirect(303,`/inventory/${req.params.id}`);
+  }));
+  router.post('/inventory/:id/variants/:skuId/details',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../domain/postgres-sku-maintenance').update(database,req.ctx,req.params.id,req.params.skuId,{barcode:req.body.barcode,expectedBarcode:req.body.expectedBarcode});req.flash('success','Variant barcode saved.');return res.redirect(303,'/inventory/'+req.params.id+'#sku-'+req.params.skuId);
+  }));
+  router.post('/inventory/:id/variants/:skuId/archive',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../domain/postgres-sku-maintenance').update(database,req.ctx,req.params.id,req.params.skuId,{active:req.body.restore==='1'});req.flash('success',req.body.restore==='1'?'Variant restored.':'Variant archived.');return res.redirect(303,'/inventory/'+req.params.id+'#sku-'+req.params.skuId);
   }));
   router.post('/inventory/:id/variants',requirePermission(permissions.OPERATE,'add product variants'),asyncRoute(async(req,res)=>{
     const created=await catalog.addVariant(database,req.ctx,req.params.id,req.body);

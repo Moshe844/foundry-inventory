@@ -63,6 +63,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
           if(!salePriceBySku.has(skuId)){(row.parsed.existingSkuId?newPrices:initialPrices).push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',...(Object.hasOwn(row.parsed,'currentPriceId')?{expectedCurrentId:row.parsed.currentPriceId}:{}),sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
         }
+        await require('./postgres-barcodes').apply(client,ctx,chunk);
         const catalogueCosts=chunk.filter(row=>row.parsed.unitCostMinor!==null&&(row.parsed.quantity===null||row.parsed.quantity===0)).map(row=>({skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,amountMinor:row.parsed.unitCostMinor,currency:row.parsed.currency,source:'catalogue_import',sourceDetail:{importId:id,importRowId:row.id}}));
         if(catalogueCosts.length)await postgresPrices.setPurchaseCostsInTransaction(client,ctx,catalogueCosts);
         if(newPrices.length)await postgresPrices.setPricesInTransaction(client,ctx,newPrices);

@@ -87,7 +87,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
   const scopedSkus=`SELECT id FROM skus WHERE workspace_id=$1 AND ${skuFilter('')}`;
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
-    database.query(`SELECT s.id,s.code,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
+    database.query(`SELECT s.id,s.code,s.barcode,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
@@ -243,7 +243,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     try{require('../domain/catalog-identity').unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
     const parsed={name,code,...(code!==sourceCode?{sourceCode,identityNote:'This code identifies a product with several option combinations. Each SKU includes its option values; review these derived codes before approval.'}:{}),description:trimOrNull(textCell(row,mappings.description)),
-      ...(existingMatches.length===1&&rawName?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
+      ...(existingMatches.length===1&&rawName&&rawName!==existingMatches[0].name?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
       unitCostMinor,sellingPriceMinor,currency,
       quantity,variants,locationId:location?.id || null,locationName:location?.name || null,locationText,
@@ -253,8 +253,10 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       trackingMode,
       ...(proposal.provenanceIndex!==undefined?{sourceRows:json(textCell(row,proposal.provenanceIndex),{})}:{}),
       existingSkuId:existingMatches.length===1?existingMatches[0].id:null,
+      ...(existingMatches.length===1?{existingBarcode:existingMatches[0].barcode||null}:{}),
       existingItemId:existingMatches.length===1?existingMatches[0].item_id:null,
       ...(existingMatches.length===1?{currentPriceId:context.currentPrices.get(JSON.stringify([existingMatches[0].id,currency]))||null}:{})};
+    if(parsed.barcode&&(parsed.barcode.length>240||/[\x00-\x1f\x7f]/.test(parsed.barcode)))problems.push(problem('invalid_identity','Use a barcode of at most 240 printable characters.'));
     const sourceFacts=Object.create(null);
     for(const field of ['category','subcategory','supplierName']){const value=trimOrNull(textCell(row,mappings[field]));if(value)sourceFacts[fields.FIELD_LABEL[field]]=value;}
     const claimed=new Set([...Object.values(mappings),proposal.provenanceIndex,proposal.problemsIndex]);

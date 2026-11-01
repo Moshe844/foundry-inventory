@@ -7,8 +7,14 @@ test('stock-count import preserves opening value and meets the 150k-row throughp
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Scale owner',businessName:'Stock throughput',email:randomUUID()+'@example.test',password:randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('stock-throughput',$1,'enterprise','COMP','ISOLATED_TEST')",[owner.accountId]);
  await require('../../src/accounting/postgres-ledger').configure(db,ctx,{currency:'USD',startDate:'2026-01-01'});await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Main',kind:'warehouse'});
- const at=new Date().toISOString();await db.query("INSERT INTO items(id,workspace_id,name,base_code,tracking_mode,is_active,created_at,updated_at) SELECT 'bench-item-'||n,$1,'Product '||n,'BENCH-'||n,'quantity',1,$2,$2 FROM generate_series(1,$3::int)n",[ctx.workspaceId,at,count]);
- await db.query("INSERT INTO skus(id,workspace_id,item_id,code,is_default,is_active,created_at) SELECT 'bench-sku-'||n,$1,'bench-item-'||n,'BENCH-'||n,1,1,$2 FROM generate_series(1,$3::int)n",[ctx.workspaceId,at,count]);
+ const profile=new Map();if(process.env.STOCKCHIEF_PROFILE_STOCK==='1'){
+  const wrap=q=>({query:async(sql,args)=>{const start=performance.now();try{return await q.query(sql,args);}finally{const key=String(sql).replace(/\s+/g,' ').slice(0,160),old=profile.get(key)||{calls:0,ms:0,maxMs:0};const ms=performance.now()-start;old.calls++;old.ms+=ms;old.maxMs=Math.max(old.maxMs,ms);profile.set(key,old);}}});
+  const query=db.query.bind(db),transaction=db.transaction.bind(db),lock=db.withSessionLock.bind(db);db.query=wrap({query}).query;db.transaction=(fn,settings)=>transaction(c=>fn(wrap(c)),settings);db.withSessionLock=(key,fn)=>lock(key,scoped=>fn({...scoped,query:wrap(scoped).query,transaction:(callback,settings)=>scoped.transaction(c=>callback(wrap(c)),settings)}));
+  t.after(()=>console.log(JSON.stringify({queryProfile:[...profile].sort((a,b)=>b[1].ms-a[1].ms).slice(0,20)})));
+ }
+ const seedCount=Number(process.env.STOCKCHIEF_STOCK_THROUGHPUT_CATALOGUE||count);assert(Number.isSafeInteger(seedCount)&&seedCount>=count&&seedCount<=150000);
+ const at=new Date().toISOString();await db.query("INSERT INTO items(id,workspace_id,name,base_code,tracking_mode,is_active,created_at,updated_at) SELECT 'bench-item-'||n,$1,'Product '||n,'BENCH-'||n,'quantity',1,$2,$2 FROM generate_series(1,$3::int)n",[ctx.workspaceId,at,seedCount]);
+ await db.query("INSERT INTO skus(id,workspace_id,item_id,code,is_default,is_active,created_at) SELECT 'bench-sku-'||n,$1,'bench-item-'||n,'BENCH-'||n,1,1,$2 FROM generate_series(1,$3::int)n",[ctx.workspaceId,at,seedCount]);
  const text='Name,SKU,Location,Quantity,Cost\n'+Array.from({length:count},(_,i)=>'Product '+(i+1)+',BENCH-'+(i+1)+',Main,10,95').join('\n');
  const imports=require('../../src/imports/postgres-service'),started=performance.now();let last=-1;
  const progress=p=>{const n=Number(p.processedRows||0),bucket=Math.floor(n/10000);if(bucket!==last){last=bucket;console.log(JSON.stringify({stage:p.stage,rows:n,total:count,elapsedMs:Math.round(performance.now()-started)}));}};

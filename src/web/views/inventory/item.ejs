@@ -119,7 +119,7 @@
             <input class="input" id="variant-<%= option.id %>" name="optionValues[<%= option.id %>]" required>
           </div>
         <% }) %>
-        <div class="hint">A new tracked variant is created with its own stock, starting at zero.</div>
+        <label class="field"><span>Copy selling price and purchase cost from</span><select class="select" name="inheritFromSkuId"><% for(const sku of skus.filter(s=>s.is_active)){ %><option value="<%= sku.id %>"><%= sku.variant_label||sku.code %> · <%= sku.sellingPrice.formatted %> / <%= sku.purchaseCost?.formatted||'Cost not set' %></option><% } %></select></label><div class="hint">Price and cost are copied from this variant. Stock starts at zero.</div>
       </div>
       <div class="modal-foot">
         <button class="btn" type="button" data-modal-close>Cancel</button>
