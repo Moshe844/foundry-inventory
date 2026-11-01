@@ -3,7 +3,7 @@
 const permissions=require('../actions/permissions');
 // Daily totals preserve additive money measures. Transaction counts, averages
 // and individual-entry evidence continue to use the original journal source.
-const profitActivityProjection={aggregates:['sum'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`SELECT t.posting_date,t.currency,
+const profitActivityProjection={aggregates:['sum'],filterFields:['posting_date','currency'],groupFields:['posting_date','currency'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`SELECT t.posting_date,t.currency,
  sum(CASE WHEN a.account_type='INCOME' THEN t.credit_minor-t.debit_minor ELSE 0 END)::bigint AS revenue_minor,
  sum(CASE WHEN a.account_type='COGS' THEN t.debit_minor-t.credit_minor ELSE 0 END)::bigint AS cogs_minor,
  sum(CASE WHEN a.account_type='EXPENSE' THEN t.debit_minor-t.credit_minor ELSE 0 END)::bigint AS expenses_minor,
@@ -86,7 +86,8 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1 AND b.on_hand>0`,recordHref:row=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',on_hand:'number',last_sold_on:'date',days_since_sale:'number'}},
   movements:{label:'Inventory movements',permission:permissions.VIEW,
-    aggregateProjection:{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`},
+    aggregateProjection:{aggregates:['sum'],filterFields:['occurred_on'],groupFields:['occurred_on'],fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta,to_char(m.occurred_second AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM inventory_movement_second_totals m WHERE m.workspace_id=$1`},
+    aggregateProjections:[{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`}],
     source:`SELECT m.item_id AS record_id,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
       i.name AS product,s.code AS sku,l.name AS location,m.operation,
       m.quantity_delta::numeric AS quantity_delta,COALESCE(m.reference,'') AS reference
@@ -97,7 +98,7 @@ const datasets=Object.freeze({
     fields:{occurred_on:'date',product:'text',sku:'text',location:'text',operation:'text',quantity_delta:'number',reference:'text'}},
   inventory_valuation:{label:'Recorded inventory book value',permission:permissions.VIEW,
     aggregateProjections:[{fields:['sku','costed_units','book_cost_minor','currency'],source:`SELECT s.code AS sku,b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`}],
-    aggregateProjection:{fields:['costed_units','book_cost_minor','currency'],source:`SELECT b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`},
+      aggregateProjection:{aggregates:['sum'],filterFields:['currency'],groupFields:['currency'],fields:['costed_units','book_cost_minor','currency'],source:`SELECT b.costed_units,b.book_cost_minor,a.base_currency AS currency FROM inventory_cost_coverage_totals b JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1 AND EXISTS(SELECT 1 FROM accounting_inventory_cost_balances c WHERE c.workspace_id=b.workspace_id)`},
     source:`SELECT i.id AS record_id,i.name AS product,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product_variant,s.code AS sku,l.name AS location,
       b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
       a.base_currency AS currency,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
