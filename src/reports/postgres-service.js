@@ -215,7 +215,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
   // differs, its valid additive aggregates. Other counts, averages, filters
   // and groupings retain the full contributing-record source.
   const metric=dataset.metrics?.[config.measure],needed=[...config.groups,...config.filters.map(f=>f.field),...(config.aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[config.measure])];
-  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||p.aggregates.includes(config.aggregate))&&needed.every(f=>p.fields.includes(f)));
+  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||p.aggregates.includes(config.aggregate))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
   const source=reduced?reduced.source:dataset.source;
   const sql=`WITH source AS (${source}) SELECT ${select} FROM source ${where} ${group}
     ORDER BY ${stableOrder.join(',')}
