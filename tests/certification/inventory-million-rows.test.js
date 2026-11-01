@@ -16,13 +16,15 @@ test('large PostgreSQL import certifies source, approval, inventory, money, plan
  for(let start=0;start<count;start+=5000){let text='';for(let i=start;i<Math.min(start+5000,count);i++){
   const units=i%7+1;expectedUnits+=units;text+=`Product ${i},${tag}-${i},Count room,${units},1.25,3.75,Supplier ${i%5},14,2,10,detail-${i}\n`;
  }fs.appendFileSync(file,text);}
+ const profiler=process.env.STOCKCHIEF_IMPORT_PROFILE==='1'?require('../helpers/postgres-query-profile').profile(db):null,executionDatabase=profiler?.database||db;
+ if(profiler)t.after(()=>console.log(JSON.stringify({importQueryProfile:profiler.report()})));
  const service=require('../../src/imports/postgres-service'),started=performance.now();let maxRss=0,lastStage='',lastReported=-1;
- const progress=phase=>p=>{maxRss=Math.max(maxRss,process.memoryUsage().rss);const completed=Number(p.processedRows||p.preparedRows||0),stage=phase+':'+p.stage,bucket=Math.floor(completed/10000);
+ const progress=phase=>p=>{maxRss=Math.max(maxRss,process.memoryUsage().rss);const completed=Number(p.processedRows||p.preparedRows||0),stage=phase+':'+p.stage,bucket=Math.floor(completed/10000);profiler?.phase(stage);
   if(stage!==lastStage||bucket!==lastReported){lastStage=stage;lastReported=bucket;console.log(JSON.stringify({phase:stage,rows:completed,total:count,elapsedMs:Math.round(performance.now()-started),rss:process.memoryUsage().rss}));}};
- const plan=await service.analyse(db,ctx,{buffer:fs.readFileSync(file),filename:'inventory.csv',allowModel:false,onProgress:progress('analysis')});
+ const plan=await service.analyse(executionDatabase,ctx,{buffer:fs.readFileSync(file),filename:'inventory.csv',allowModel:false,onProgress:progress('analysis')});
  assert.equal(plan.recordsDetected,count);assert.equal(plan.recordsValid,count);assert.equal(plan.recordsInvalid,0);
- await service.approve(db,ctx,plan.id,plan.integrityHash);
- const result=await service.execute(db,ctx,plan.id,{onProgress:progress('execution')});
+ await service.approve(executionDatabase,ctx,plan.id,plan.integrityHash);
+ const result=await service.execute(executionDatabase,ctx,plan.id,{onProgress:progress('execution')});
  assert(result.verified);assert.equal(result.itemsCreated,count);assert.equal(result.skusCreated,count);assert.equal(result.rowsImported,count);assert.equal(result.units,expectedUnits);
  const state=(await db.query(`SELECT (SELECT count(*) FROM skus WHERE workspace_id=$1)::text skus,
   (SELECT sum(on_hand) FROM balances WHERE workspace_id=$1)::text units,

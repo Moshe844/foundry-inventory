@@ -10,6 +10,10 @@ on:
         description: Rows in the full PostgreSQL import certification (1000–2000000)
         default: '1000000'
         required: true
+      profile_only:
+        description: Run the full synthetic import with query profiling; normal release checks stay unchanged
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -19,6 +23,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   inventory:
+    if: github.event_name != 'workflow_dispatch' || !inputs.profile_only
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && 300 || 45 }}
     env:
@@ -68,7 +73,7 @@ jobs:
       - name: Historical stock costs and availability protection
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
+          node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-return-availability.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/round16-profit-report-projection.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
       - name: Generic variant grids, list filters and count approvals
         run: |
           set -euo pipefail
@@ -111,3 +116,8 @@ jobs:
         with:
           name: inventory-capacity-results
           path: output/inventory-ci
+  import-profile:
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_only
+    uses: ./.github/workflows/import-query-profile.yml
+    with:
+      rows: ${{ inputs.large_rows }}
