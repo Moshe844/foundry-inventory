@@ -119,8 +119,8 @@ async function inventoryPosition(database,workspaceId){
     FROM item_position`,[workspaceId]);
   const [locations,cost,names,coverage]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
-    database.query(`SELECT COALESCE(SUM(quantity_units),0)::numeric AS units,
-      COALESCE(SUM(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1`,[workspaceId]),
+    database.query(`SELECT COALESCE(SUM(costed_units),0)::numeric AS units,
+      COALESCE(SUM(book_cost_minor),0)::bigint AS cost FROM inventory_cost_coverage_totals WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
     require('../accounting/customer-money').inventoryCoverage(database,workspaceId),
   ]);
@@ -184,10 +184,10 @@ async function money(database,workspaceId,input={},actorId=null){
       WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID') ORDER BY due_date NULLS LAST,id`,[workspaceId]),
     database.query(`SELECT id,bill_number,due_date,balance_minor,currency FROM accounting_supplier_bills
       WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID','DISPUTED') ORDER BY due_date NULLS LAST,id`,[workspaceId]),
-    database.query(`SELECT COALESCE(SUM(b.on_hand),0)::numeric AS units,
-      COALESCE(SUM(GREATEST(b.on_hand-COALESCE(c.quantity_units,0),0)),0)::numeric AS missing_units,
-      COALESCE((SELECT SUM(total_cost_minor) FROM accounting_inventory_cost_balances WHERE workspace_id=$1),0)::bigint AS cost_minor
-      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1`,[workspaceId]),
+    database.query(`SELECT COALESCE(SUM(physical_units),0)::numeric AS units,
+      COALESCE(SUM(missing_units),0)::numeric AS missing_units,
+      COALESCE(SUM(book_cost_minor),0)::bigint AS cost_minor
+      FROM inventory_cost_coverage_totals WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT id,order_number FROM sales_orders WHERE workspace_id=$1
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED') ORDER BY needed_by NULLS LAST,created_at LIMIT 20`,[workspaceId]),
     database.query(`SELECT posting_date AS at,description AS what FROM accounting_journal_entries
