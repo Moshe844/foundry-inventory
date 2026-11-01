@@ -23,7 +23,7 @@ permissions:
 concurrency:
   # Long certifications preserve evidence for their source revision. Normal
   # PR checks still replace obsolete runs when another commit is pushed.
-  group: inventory-capacity-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && github.sha || 'latest' }}
+  group: inventory-capacity-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && github.sha || 'latest' }}-${{ inputs.stock_only && 'stock' || 'catalogue' }}
   cancel-in-progress: true
 jobs:
   inventory:
