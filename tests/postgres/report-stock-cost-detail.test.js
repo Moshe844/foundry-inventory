@@ -21,4 +21,10 @@ test('stock report keeps variant, warehouse, physical quantity and recorded cost
   if(request.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''}};
   assert.match(request.system,/For a detail list/);const stock=JSON.parse(request.prompt).catalogue.find(r=>r.dataset==='stock');assert.equal(stock.fields.recorded_cost_minor,'money_minor');assert.equal(stock.fields.variant,'text');return {data:definition};
  }}});assert(proposed.reportConfig);assert.equal(proposed.rows.length,2);
+ const weighed=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Weighed product',trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:3});
+ await require('../../src/domain/postgres-opening-stock').receive(db,ctx,{skuId:weighed.skuIds[0],locationId:f.location.id,quantity:2,secondaryQuantity:4.5,unitCost:'1.00',currency:'USD',idempotencyKey:'weighted-report'});
+ const completeWeight=await reports.run(db,ctx,{role:'owner'},definition);assert.equal(completeWeight.rows.find(r=>r.product==='Weighed product').cost_status,'complete');
+ // A legacy weight discrepancy must remain visible even when piece counts match.
+ await db.query('UPDATE accounting_inventory_cost_balances SET secondary_quantity_units=4 WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,weighed.skuIds[0]]);
+ const partialWeight=await reports.run(db,ctx,{role:'owner'},definition);assert.equal(partialWeight.rows.find(r=>r.product==='Weighed product').cost_status,'partial');
 });

@@ -44,7 +44,7 @@ const datasets=Object.freeze({
       CASE WHEN settings.enabled=1 THEN cost.total_cost_minor::bigint END AS recorded_cost_minor,
       CASE WHEN settings.enabled=1 THEN settings.base_currency END AS currency,
       CASE WHEN settings.enabled IS DISTINCT FROM 1 OR cost.sku_id IS NULL THEN 'missing'
-        WHEN cost.quantity_units=b.on_hand THEN 'complete' ELSE 'partial' END AS cost_status,
+        WHEN cost.quantity_units=b.on_hand AND cost.secondary_quantity_units IS NOT DISTINCT FROM b.secondary_on_hand THEN 'complete' ELSE 'partial' END AS cost_status,
       to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
