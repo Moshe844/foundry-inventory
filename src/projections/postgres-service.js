@@ -177,14 +177,18 @@ async function needsUncached(database,workspaceId,actorId=null){
 }
 
 async function brief(database,workspaceId,actorId=null){
-  const [stats,locations,activity,openOrders,openPurchases,needItems,totalAvailable]=await Promise.all([
+  const [data,needItems]=await Promise.all([require('../lib/versioned-read-model').read(database,workspaceId,['business-brief'],()=>briefData(database,workspaceId),{domain:'business'}),needs(database,workspaceId,actorId)]);
+  return {...data,needs:needItems};
+}
+async function briefData(database,workspaceId){
+  const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
     database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
       (SELECT COALESCE(SUM(on_hand),0) FROM balances WHERE workspace_id=$1) AS units_on_hand,
-      (SELECT COUNT(*) FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND
-        COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.sku_id=s.id),0)<=0) AS zero_count,
+      (SELECT COUNT(*) FROM skus s LEFT JOIN(SELECT sku_id,sum(on_hand) quantity FROM balances WHERE workspace_id=$1 GROUP BY sku_id) b ON b.sku_id=s.id
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
@@ -201,7 +205,6 @@ async function brief(database,workspaceId,actorId=null){
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`,[workspaceId]),
     database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1
       AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')`,[workspaceId]),
-    needs(database,workspaceId,actorId),
     require('../domain/postgres-stock-availability').total(database,workspaceId),
   ]);
   const row=stats.rows[0];
@@ -209,7 +212,7 @@ async function brief(database,workspaceId,actorId=null){
     unitsOnHand:number(row.units_on_hand),zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
     available:totalAvailable,openOrders:number(openOrders.rows[0].count),
     openPurchases:number(openPurchases.rows[0].count)},locations:locations.rows.map((entry)=>({...entry,onHand:number(entry.on_hand)})),
-    activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)})),needs:needItems};
+    activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)}))};
 }
 
 module.exports={brief,needs,needsCount,runtimeFailures};
