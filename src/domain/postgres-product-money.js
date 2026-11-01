@@ -17,8 +17,10 @@ async function summary(db,workspaceId,itemId){
  SELECT 'price' AS kind,price_currency AS currency,price AS amount FROM quoted WHERE price IS NOT NULL
  UNION ALL SELECT 'cost',cost_currency,cost FROM quoted WHERE cost IS NOT NULL
  UNION ALL SELECT 'profit',price_currency,price-cost FROM quoted WHERE price IS NOT NULL AND cost IS NOT NULL AND price_currency=cost_currency
+ UNION ALL SELECT 'margin',price_currency,round((price::numeric-cost::numeric)*100/price::numeric,1) FROM quoted WHERE price>0 AND cost IS NOT NULL AND price_currency=cost_currency
  ) SELECT kind,currency,min(amount)::text AS minimum,max(amount)::text AS maximum,count(*)::int AS recorded,(SELECT count(*)::int FROM quoted) AS variants FROM amounts GROUP BY kind,currency`,[workspaceId,itemId,currencyDigits])).rows;
- const label=kind=>rows.filter(r=>r.kind===kind).map(r=>range(Number(r.minimum),Number(r.maximum),r.currency)+(r.recorded<r.variants?' ('+r.recorded+' of '+r.variants+' variants)':'')).join(' · ')||'Not set';
- return {priceLabel:label('price'),costLabel:label('cost'),profitLabel:label('profit')};
+ const percent=n=>Number(n).toFixed(1).replace(/\.0$/,'')+'%';
+ const label=kind=>{const values=rows.filter(r=>r.kind===kind);return values.map(r=>(kind==='margin'?(r.minimum===r.maximum?percent(r.minimum):percent(r.minimum)+'–'+percent(r.maximum))+(values.length>1?' '+r.currency:''):range(Number(r.minimum),Number(r.maximum),r.currency))+(r.recorded<r.variants?' ('+r.recorded+' of '+r.variants+' variants)':'')).join(' · ')||'Not set';};
+ return {priceLabel:label('price'),costLabel:label('cost'),profitLabel:label('profit'),marginLabel:label('margin')};
 }
 module.exports={summary,range};
