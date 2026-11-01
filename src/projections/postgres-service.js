@@ -24,7 +24,7 @@ function needs(database,workspaceId,actorId=null){return require('../lib/request
 async function needsUncached(database,workspaceId,actorId=null){
   const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,nativeApprovals,bulkReviews,rentalBilling]=await Promise.all([
+    repairs,ambiguousEffects,nativeApprovals,bulkReviews,rentalBilling,batchExpiry]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
@@ -96,10 +96,12 @@ async function needsUncached(database,workspaceId,actorId=null){
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
     database.query("SELECT id,kind,payload,created_at FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at,id",[workspaceId]),
     database.query("SELECT p.id,p.agreement_id,p.last_error,p.created_at,p.updated_at,a.agreement_number FROM custody_billing_policies p JOIN custody_agreements a ON a.workspace_id=p.workspace_id AND a.id=p.agreement_id WHERE p.workspace_id=$1 AND p.status='NEEDS_REVIEW' ORDER BY p.updated_at",[workspaceId]),
+    require('../domain/postgres-batch-expiry').summary(database,workspaceId),
   ]);
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
+  if(batchExpiry.expired||batchExpiry.soon)items.push({kind:'inventory',grouped:true,importance:batchExpiry.expired?'Urgent':'Important',priority:batchExpiry.expired?94:70,title:batchExpiry.expired?batchExpiry.expired+' batches have expired':batchExpiry.soon+' batches expire within 30 days',happened:batchExpiry.expired+' expired batches; '+batchExpiry.soon+' more expire within 30 days.',why:'Expired stock is blocked from sale. Review batch stock before picking or disposing of it.',recommendation:'Review the batches and their locations. Use unexpired stock with the earliest expiry first.',href:'/warehouse/batches',actionLabel:'Review batch expiry',sourceId:'batch-expiry'});
   for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Important',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Important',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
