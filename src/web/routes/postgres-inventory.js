@@ -58,7 +58,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      hasProducts,isFlat,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      hasProducts,isFlat,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId,{includeStock:false}),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
@@ -93,7 +93,7 @@ function createPostgresInventoryRouter(database) {
     await require('../../domain/postgres-catalog-bulk').cancel(database,req.ctx,req.params.reviewId);req.flash('success','The bulk changes were cancelled.');return res.redirect(303,'/inventory/table');
   }));
   router.get('/inventory/new',asyncRoute(async(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
-    backTo:{href:'/inventory',label:'Inventory'},startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId),form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
+    backTo:{href:'/inventory',label:'Inventory'},startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId,{includeStock:false}),form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
     fromConfiguration:false,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'})));
   router.get('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/duplicate',{title:'Duplicate product',nav:'inventory',idempotencyKey:newId('copy'),source:await require('../../domain/postgres-catalog-copy').describe(database,req.ctx,req.params.id)})));
   router.post('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>{
@@ -109,7 +109,7 @@ function createPostgresInventoryRouter(database) {
       return res.redirect(303,`/inventory/${created.itemId}`);
     } catch(error) {
       if(!(error instanceof ValidationError))throw error;
-      return res.status(400).page('inventory/new',{title:'Add an item',nav:'inventory',startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId),form:req.body,
+      return res.status(400).page('inventory/new',{title:'Add an item',nav:'inventory',startingLocations:await locations.listHierarchy(database,req.ctx.workspaceId,{includeStock:false}),form:req.body,
         resumeInstructionId:null,fromConfiguration:false,error:error.message,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
     }
   }));
