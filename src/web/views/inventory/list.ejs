@@ -16,7 +16,8 @@
   </div>
 <% } %>
 
-<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
+<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="cost">Change purchase costs</option><option value="reorder">Change reorder levels</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
+<% if(locals.postgresNative){ %><p data-catalogue-total><%= Number(totalCount).toLocaleString('en-US') %> matching products</p><% } %>
 <form class="filters" method="get" action="<%= locals.postgresNative?'/inventory/table':'/inventory' %>">
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
   <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>
@@ -31,6 +32,7 @@
       <option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option>
     <% }) %>
   </select>
+  <% if(locals.postgresNative){ %><input class="input" name="category" value="<%= filters.category||'' %>" placeholder="Category" aria-label="Category"><input class="input" name="supplier" value="<%= filters.supplier||'' %>" placeholder="Supplier" aria-label="Supplier"><input class="input" name="size" value="<%= filters.size||'' %>" placeholder="Size" aria-label="Size"><input class="input" name="color" value="<%= filters.color||'' %>" placeholder="Color" aria-label="Color"><label><input type="checkbox" name="lowStock" value="1" <%= filters.lowStock?'checked':'' %>> Low stock</label><% } %>
   <select class="select" name="sort" aria-label="Sort" data-auto-submit>
     <option value="name" <%= filters.sort === 'name' ? 'selected' : '' %>>Name A–Z</option>
     <option value="stock_desc" <%= filters.sort === 'stock_desc' ? 'selected' : '' %>>Most stock</option>
@@ -43,7 +45,7 @@
   <% if (fromMessage) { %><input type="hidden" name="fromMessage" value="<%= fromMessage %>"><% } %>
   <% if (sourceDocument) { %><input type="hidden" name="sourceDocument" value="<%= sourceDocument %>"><% } %>
   <button class="btn btn--sm" type="submit">Apply</button>
-  <% if (filters.q || filters.trackingMode || filters.locationId) { %>
+  <% if (filters.q || filters.trackingMode || filters.locationId || filters.category || filters.supplier || filters.size || filters.color || filters.lowStock) { %>
     <a class="btn btn--ghost btn--sm" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString({}, { archived: filters.archivedOnly ? 'only' : null, sourceDocument: sourceDocument, fromConnection: fromConnection, fromMessage: fromMessage }) %>">Clear</a>
   <% } %>
 </form>

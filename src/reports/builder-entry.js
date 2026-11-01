@@ -23,4 +23,12 @@ const fieldArea=(field)=>/^(product|sku|variant|barcode|category|unit|tracking)$
   /minor$|profit|cost|revenue|tax/.test(field)?'Money':'Records';
 function fieldsFor(dataset){const groups=new Map();for(const [key,type] of Object.entries(dataset.fields)){const area=fieldArea(key);if(!groups.has(area))groups.set(area,[]);groups.get(area).push({key,label:friendlyField(key),type});}return [...groups].map(([area,fields])=>({area,fields}));}
 function template(key){return templates.find(row=>row.key===key)||null;}
-module.exports={templates,sourceNames,friendlyField,fieldsFor,template};
+// Exact standard requests use a governed definition without a model round trip.
+// Additional filters, dates or follow-up instructions stay with the full planner.
+function standardDefinition(message,currency){
+ const match=String(message||'').trim().match(/^(?:show\s+)?sales,?\s+cost(?:s)?\s+(?:and|&)\s+(?:gross\s+)?profit\s+by\s+(?:product|item|sku)(?:\s+in\s+([A-Z]{3}))?[.!?]?$/i);
+ if(!match)return null;
+ const money=(match[1]||currency).toUpperCase();
+ return {dataset:'composed',title:'Sales, cost and profit by product',dimension:'sku',metrics:[['sales','revenue_minor'],['cost','cogs_minor'],['profit','gross_profit_minor']].map(([alias,measure])=>({alias,dataset:'posted_sales_activity',aggregate:'sum',measure,filters:[{field:'currency',operator:'equals',value:money}]})),columns:[],groups:[],aggregate:'sum',measure:'',filters:[],chart:'table',sort:'profit',direction:'desc'};
+}
+module.exports={templates,sourceNames,friendlyField,fieldsFor,template,standardDefinition};

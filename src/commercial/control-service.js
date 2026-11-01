@@ -183,9 +183,9 @@ async function resourceExcess(database,scope,targetPlanId){
   const rows=(await database.query(`SELECT policy.meter,policy.hard_limit FROM commercial_plan_meters policy
     JOIN commercial_meter_definitions definition ON definition.meter=policy.meter
     WHERE policy.plan_id=$1 AND policy.hard_limit IS NOT NULL AND definition.kind='STRUCTURAL'`,
-    [targetPlanId])).rows;const excess={};
-  for(const row of rows){catalog.assertMeterKey(row.meter);const current=await entitlements.meterState(database,scope,row.meter);
-    if(current.used>Number(row.hard_limit))excess[row.meter]={used:current.used,allowed:Number(row.hard_limit),label:current.label};}
+    [targetPlanId])).rows;const excess={},subscription={...(await entitlements.subscriptionFor(database,scope.accountId)),plan_id:targetPlanId,plan_version_id:null};
+  for(const row of rows){catalog.assertMeterKey(row.meter);const current=await entitlements.meterState(database,scope,row.meter,{subscription});
+    if(current.hardLimit!==null&&current.capacityUsed>current.hardLimit)excess[row.meter]={used:current.capacityUsed,allowed:current.hardLimit,label:current.label};}
   return excess;
 }
 

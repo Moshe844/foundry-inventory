@@ -69,6 +69,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
+  for(const [path,title] of [['/security','Security'],['/roadmap','Product roadmap'],['/api/docs','Public API documentation']])router.get(path,asyncRoute(async(req,res)=>renderPublic(req,res,'public/operations-information',{title,nav:'',kind:path,staging:require('../../config').operations.runtimeEnvironment==='staging'})));
+  router.get('/status',asyncRoute(async(req,res)=>{let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
@@ -192,9 +194,11 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.post('/billing/portal',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const subscription=await entitlements.subscriptionFor(database,scope.accountId);
     if(!subscription?.stripe_customer_id)throw new ValidationError('A billing account has not been created yet.');
+    const returnUrl=`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`;
+    const configuration=release.stagingTestCheckout()&&process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID
+      ?await require('../../commercial/staging-plan-portal').forAccount(database,subscription,{...options.providerOptions,returnUrl}):null;
     const portal=await provider.createPortal({accountId:scope.accountId,requestId:newId('portal'),customerId:subscription.stripe_customer_id,
-      planConfigurationId:release.stagingTestCheckout()?process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID:undefined,
-      returnUrl:`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`},options.providerOptions||{});
+      planConfigurationId:configuration?.id,returnUrl},options.providerOptions||{});
     return res.redirect(303,portal.url);}));
   router.use('/commercial-admin/accounts',requireAccount,asyncRoute(async(req,res,next)=>{await require('../../domain/postgres-developer-accounts').assertAdmin(database,req.account.id);next();}));
   router.get('/commercial-admin/accounts',requireAccount,asyncRoute(async(req,res)=>{let review=null;if(req.query.email)review=await require('../../domain/postgres-developer-accounts').review(database,req.account.id,req.query.email);return res.page('commercial/developer-accounts',{title:'Developer test accounts',nav:'settings',review,searchEmail:String(req.query.email||'').slice(0,254)});}));

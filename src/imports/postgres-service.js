@@ -81,15 +81,18 @@ function problem(code, message) {
 
 async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null}={}) {
   const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
-  const scopedSkus="SELECT id FROM skus WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(code))=ANY($2::text[]))";
+  // Scoped pages need an index lookup even under force_generic_plan; a nullable
+  // OR forces every catalogue row through a large ANY array for every page.
+  const skuFilter=alias=>keys===null?'$2::text[] IS NULL':`lower(btrim(${alias}code))=ANY($2::text[])`;
+  const scopedSkus=`SELECT id FROM skus WHERE workspace_id=$1 AND ${skuFilter('')}`;
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
-    database.query(`SELECT s.id,s.code,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
+    database.query(`SELECT s.id,s.code,s.barcode,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
+      WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
-    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
-    database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
+    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ${skuFilter('s.')}`,[workspaceId,keys]),
+    database.query(`SELECT b.sku_id,b.location_id,b.on_hand,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
       FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]),
     database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]),
     database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
@@ -112,7 +115,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
     WHERE r.workspace_id=$1 AND p.source_hash=$2 AND r.status='IMPORTED' AND ($3::bigint[] IS NULL OR r.row_number=ANY($3::bigint[]))`,[workspaceId,sourceHash,rowNumbers])).rows:[];
   return { locations:locations.rows,locationByName,skuByCode,currentPrices:new Map(currentPrices.rows.map(r=>[JSON.stringify([r.sku_id,r.currency]),r.id])),
     importedSourceRows:new Set(importedSourceRows.map(r=>stable([Number(r.row_number),json(r.raw,[])]))),
-    positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value)}])),
+    positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value),hasHistory:r.has_history}])),
     suppliers:suppliers.rows,
     reorderPolicies:new Map(reorders.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),r])),
     serials:new Set(serials.rows.map(r=>JSON.stringify([r.code.toLowerCase(),r.serial]))),
@@ -175,8 +178,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     let unitCostMinor=null;
     if(costText){try{unitCostMinor=postgresPrices.toMinor(sourceMoney.clean(costText),'Unit cost',currency);}
       catch(error){problems.push(problem('bad_unit_cost',error.message));}}
-    if(unitCostMinor!==null&&quantityRead.ok&&quantity===null)
-      problems.push(problem('cost_without_stock','A source unit cost needs an explicit stock quantity, including zero. No cost will be silently discarded.'));
+    // A missing quantity supplies catalogue pricing, never a stock movement.
+    // Keep null distinct from zero so count imports cannot erase existing stock.
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
     if(unitCostMinor!==null&&quantity>0&&!Number.isSafeInteger(unitCostMinor*quantity))
@@ -197,19 +200,20 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(!name)problems.push(problem('no_product','A product name or SKU is required.'));
     if(name?.length>240||code?.length>240)problems.push(problem('invalid_identity','Product names and SKU codes must be 240 characters or fewer.'));
     if(quantity !== null && quantity > 0 && !location)problems.push(problem('no_location','Choose where this opening stock is held.'));
+    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     const serial=trimOrNull(textCell(row,mappings.serial));
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
     const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
     const serialFlag=flag('serialTracked'),lotFlag=flag('lotTracked');
     // Identifier columns can coexist in mixed catalogues. Their presence is
     // not a requirement on every product: use this row's identifiers/flags.
-    // A lone identifier column without requirement flags still describes a
-    // tracked source, so missing identifiers must continue to block stock.
+    // A lot column can be blank for ordinary products in the same file.
+    // Saved tracking requirements and explicit flags still require identifiers.
     const hasFlags=mappings.serialTracked!==undefined||mappings.lotTracked!==undefined;
     const serialRequired=Boolean(serial)||(serialFlag&&proposal.trackingReview?.serial!=='quantity')||
       (!hasFlags&&mappings.lotCode===undefined&&(mappings.serial!==undefined||proposal.detectedType==='serials'));
     const lotRequired=Boolean(lotCode)||(lotFlag&&proposal.trackingReview?.lot!=='quantity')||
-      (!hasFlags&&mappings.serial===undefined&&(mappings.lotCode!==undefined||proposal.detectedType==='lots'));
+      existingMatches.some(s=>s.tracking_mode==='lot');
     if(!hasFlags&&mappings.serial!==undefined&&mappings.lotCode!==undefined&&quantity>0&&!serial&&!lotCode)
       problems.push(problem('missing_tracking_identifier','This stock needs a serial number, a lot number, or an explicit tracking requirement for this product.'));
     if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
@@ -219,7 +223,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       if(quantity !== 1&&quantity!==0)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
     }
     if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
-    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
     if(existingMatches.some(s=>Number(s.sku_active)===0||Number(s.item_active)===0))problems.push(problem('archived_existing_code','This SKU belongs to an archived product or variant. Restore it before updating its stock; a duplicate product will not be created.'));
     if(existingMatches.length===1&&rawName){state.catalogueNames??=new Map();const key=existingMatches[0].item_id,previous=state.catalogueNames.get(key);if(previous&&previous!==rawName)problems.push(problem('conflicting_product_name','The source gives different names for variants of one saved product. Choose one product name before importing.'));state.catalogueNames.set(key,rawName);}
@@ -235,12 +238,12 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(quantity>0&&!aggregate)state.quantityTotal+=quantity;
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
     if(sellingPriceMinor!==null){const p=currency+':'+sellingPriceMinor;if(state.prices.has(priceKey)&&state.prices.get(priceKey)!==p)problems.push(problem('conflicting_price','The same SKU has conflicting source prices. Resolve the price before importing.'));state.prices.set(priceKey,p);}
-    const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','cost_without_stock','bad_selling_price',
+    const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     try{require('../domain/catalog-identity').unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
     const parsed={name,code,...(code!==sourceCode?{sourceCode,identityNote:'This code identifies a product with several option combinations. Each SKU includes its option values; review these derived codes before approval.'}:{}),description:trimOrNull(textCell(row,mappings.description)),
-      ...(existingMatches.length===1&&rawName?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
+      ...(existingMatches.length===1&&rawName&&rawName!==existingMatches[0].name?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
       unitCostMinor,sellingPriceMinor,currency,
       quantity,variants,locationId:location?.id || null,locationName:location?.name || null,locationText,
@@ -250,8 +253,10 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       trackingMode,
       ...(proposal.provenanceIndex!==undefined?{sourceRows:json(textCell(row,proposal.provenanceIndex),{})}:{}),
       existingSkuId:existingMatches.length===1?existingMatches[0].id:null,
+      ...(existingMatches.length===1?{existingBarcode:existingMatches[0].barcode||null}:{}),
       existingItemId:existingMatches.length===1?existingMatches[0].item_id:null,
       ...(existingMatches.length===1?{currentPriceId:context.currentPrices.get(JSON.stringify([existingMatches[0].id,currency]))||null}:{})};
+    if(parsed.barcode&&(parsed.barcode.length>240||/[\x00-\x1f\x7f]/.test(parsed.barcode)))problems.push(problem('invalid_identity','Use a barcode of at most 240 printable characters.'));
     const sourceFacts=Object.create(null);
     for(const field of ['category','subcategory','supplierName']){const value=trimOrNull(textCell(row,mappings[field]));if(value)sourceFacts[fields.FIELD_LABEL[field]]=value;}
     const claimed=new Set([...Object.values(mappings),proposal.provenanceIndex,proposal.problemsIndex]);
@@ -277,7 +282,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
     for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
     blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
-    if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0};}
+    if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
     if(quantity!==null&&!aggregate&&trackingMode==='quantity'){
       const key=JSON.stringify([code?.toLowerCase()||JSON.stringify([name?.toLowerCase(),variants]),location?.id||locationText||location?.name||null]);
       if(state.positions.has(key))problems.push(problem('duplicate_position','The source repeats this product and location. Combine the quantities or clarify the duplicate before importing.'));state.positions.add(key);
@@ -309,7 +314,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     valuedMinor:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor!==null)
       .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0),
     existingStockRows:rows.filter(row=>row.status==='VALID'&&row.parsed.existingSkuId&&row.parsed.quantity!==null).length,
-    sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&row.parsed.quantity===0&&row.parsed.unitCostMinor!==null).length},
+    sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&(row.parsed.quantity===null||row.parsed.quantity===0)&&row.parsed.unitCostMinor!==null).length},
     conflicts:[...unknownLocations].map(([text,count])=>({kind:'unknown_location',text,count})),
     defaultLocationId:defaultLocation?.id || null };
 }
@@ -327,7 +332,7 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
   if(!hasIdentity)warnings.push('StockChief could not safely identify which column names each product. Map a product name or SKU below, then recalculate the preview. Nothing can be imported until you do.');
   if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
   if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
-  if(summary.sourceCostWithoutStock)warnings.push(`${summary.sourceCostWithoutStock} zero-stock row(s) include a source unit cost. That evidence is retained with the imported row; it creates no stock, inventory value or purchase quote.`);
+  if(summary.sourceCostWithoutStock)warnings.push(`${summary.sourceCostWithoutStock} catalogue row(s) include a purchase cost without new stock. The cost is saved for future purchasing; existing stock and inventory value stay unchanged.`);
   if(!hasQuantity)warnings.push('No quantity column is mapped. This preview would create or match products without establishing opening stock.');
   if(unmappedNumeric.length)warnings.push(`Unmapped numeric column${unmappedNumeric.length===1?'':'s'}: ${unmappedNumeric.join(', ')}. Map any stock quantity before approval, or explicitly confirm this is catalog-only data.`);
   return warnings;
@@ -1036,9 +1041,12 @@ async function retryExecution(database,ctx,id,expectedHash,executionId){
     const plan=hydratePlan(row);if(plan.integrityHash!==expectedHash||plan.isExpired&&!(row.apply_checkpoint?.cataloguePrepared||row.apply_checkpoint?.catalogueStarted))throw new ValidationError('Review the current import preview before retrying.');
     await requireRolledBackExecution(client,ctx,plan,executionId);
     const scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};
-    return require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,
+    const jobs=require('../operations/postgres-job-queue');
+    const queued=await jobs.enqueue(scoped,{workspaceId:ctx.workspaceId,
       kind:'import.execute-approved',idempotencyKey:`retry-import:${id}:${expectedHash}:${executionId}`,
       payload:{planId:id,actorId:ctx.actorId,integrityHash:expectedHash,retryExecutionId:executionId},priority:30,maxAttempts:3});
+    if(!queued.created&&queued.job.status==='DEAD'){const resumed=await jobs.retryDead(scoped,queued.job.id,ctx.workspaceId,{by:ctx.actorId});if(resumed)return {created:true,job:resumed,resumed:true};}
+    return queued;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 

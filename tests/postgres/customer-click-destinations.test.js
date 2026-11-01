@@ -75,5 +75,10 @@ test('required customer click gate visits page routes and detail families, block
   }
   evidence.push({page:target,kind:'HTML page',links:links.length});save();if(failures.length>=3)assert.fail(JSON.stringify(failures));
  }
+ // The builder preview is debounced. Explicitly wait for its read-only POST
+ // before leaving the page; a fast link sweep can otherwise abort every timer.
+ const previewRequest=page.waitForRequest(request=>request.method()==='POST'&&new URL(request.url()).pathname==='/reports/preview');
+ await page.goto(origin+'/reports/builder?dataset=stock',{waitUntil:'domcontentloaded'});await previewRequest;
+ await page.waitForFunction(()=>document.querySelector('[data-report-preview-status]')?.textContent.includes('Preview unavailable'));
  assert.equal(forbidden.length,0,'A GET control attempted a mutation: '+JSON.stringify(forbidden));assert(readOnlyPreviewBlocked.length>0,'The read-only report preview was not exercised');save();assert.deepEqual(failures,[]);assert(details.every(route=>seen.has(new URL(route,origin).pathname)),'Missing detail family');t.diagnostic(JSON.stringify({pages:seen.size,linksClicked:clicked,buttons:buttonEvidence.length,nonGetBlocked:forbidden.length,paidCalls:0}));
 });

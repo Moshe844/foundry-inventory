@@ -26,6 +26,7 @@ const FIELDS = [
   { id: 'description', label: 'Description' },
   { id: 'unitLabel', label: 'Unit of measure' },
   ...VARIANT_FIELDS.map((id,index)=>({id,label:`Variant (${index+1})`})),
+  ...[1,2,3].map(n=>({id:'option'+n+'Name',label:'Option '+n+' name (paired with its value column)'})),
   { id: 'quantity', label: 'Quantity' },
   { id: 'sellingPrice', label: 'Selling price' },
   /*
@@ -77,6 +78,9 @@ const DETECTED_TYPES = [
  * even though both patterns match part of it.
  */
 const PATTERNS = {
+  option1Name:[/^option\s*1\s*name$/],
+  option2Name:[/^option\s*2\s*name$/],
+  option3Name:[/^option\s*3\s*name$/],
   category:[/^(?:product\s*)?categor(?:y|ies)$/],
   subcategory:[/^sub\s*categor(?:y|ies)$/],
   reorderPoint:[/^(?:reorder\s*(?:point|level)|low\s*stock\s*(?:threshold|level)|min(?:imum)?\s*stock)$/],

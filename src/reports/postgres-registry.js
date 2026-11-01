@@ -39,14 +39,14 @@ const datasets=Object.freeze({
     enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',category:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
-    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,l.name AS location,
+    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,
       b.on_hand::numeric AS on_hand,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
       LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
       JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    fields:{product:'text',category:'text',sku:'text',location:'text',on_hand:'number',as_of:'date'}},
+    fields:{product:'text',category:'text',sku:'text',variant:'text',location:'text',on_hand:'number',as_of:'date'}},
   stock_recency:{label:'Stock positions and recorded sales recency',permission:permissions.VIEW_SALES,
     source:`WITH recorded_sales AS (
       SELECT jl.workspace_id,jl.sku_id,MAX(e.posting_date) AS last_sold_on

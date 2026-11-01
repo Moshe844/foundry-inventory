@@ -32,7 +32,7 @@ const EXECUTORS=Object.freeze({
     verify:(client,ctx,result,payload)=>require('../accounting/postgres-inventory-costs').verify(client,ctx,result,payload)},
   'inventory.receive':{execute:(client,ctx,payload)=>inventory.receiveInTransaction(client,ctx,payload),
     verify:(client,ctx,result,payload)=>verifiedMovement(client,ctx,result,payload,'receive',1)},
-  'inventory.issue':{execute:(client,ctx,payload)=>inventory.issueInTransaction(client,ctx,payload),
+  'inventory.issue':{execute:(client,ctx,payload)=>require('../accounting/postgres-stock-removal').issueInTransaction(client,ctx,payload),
     verify:(client,ctx,result,payload)=>verifiedMovement(client,ctx,result,payload,'issue',-1)},
   'inventory.transfer':{execute:async(client,ctx,payload)=>{
     const requested=await transfers.requestInTransaction(client,ctx,{fromLocationId:payload.sourceLocationId,
@@ -43,7 +43,7 @@ const EXECUTORS=Object.freeze({
     return {transferId:approved.id,transferNumber:approved.transfer_number,status:approved.status,
       quantity:approved.totals.approved,physicalState:'Stock is reserved at the source; nothing has left yet.'};},
     verify:(client,ctx,result)=>exists(client,'inventory_transfers',ctx.workspaceId,result.transferId)},
-  'inventory.adjust':{execute:(client,ctx,payload)=>inventory.adjustInTransaction(client,ctx,payload),
+  'inventory.adjust':{execute:(client,ctx,payload)=>require('../accounting/postgres-physical-count').applyInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'adjustments',ctx.workspaceId,result.adjustmentId)},
   'catalog.create_item':{execute:(client,ctx,payload)=>catalog.createItemInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'items',ctx.workspaceId,result.itemId)},

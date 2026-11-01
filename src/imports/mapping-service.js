@@ -330,7 +330,7 @@ async function proposeMappings(sheet, options = {}) {
     if(['entitlement_required','validation_error'].includes(error.code))throw error;
     // The file is readable without the model. Losing it costs suggestions,
     // not the import.
-    return { ...base, aiError: error.message };
+    return { ...base, aiError: 'The AI column reader is unavailable right now. Review or change the column mapping below, then continue your import.' };
   }
 
   const result = validate(toWireSchema(MAPPING_SCHEMA), response.data, { key: 'import-mapping-wire' });

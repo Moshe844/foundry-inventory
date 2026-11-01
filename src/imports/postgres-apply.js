@@ -40,37 +40,44 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
       async function flushValues(){
         if(!pendingValues.length)return;
         const valued=pendingValues.filter(value=>value.totalCostMinor>0),posted=await ledger.postManyInTransaction(client,ctx,valued.map(value=>({
-          postingDate:value.postingDate,sourceKey:`import:${id}:row:${value.row.id}:opening-value`,sourceType:'opening_inventory',sourceRecordType:'import_row',sourceRecordId:value.row.id,
+          postingDate:value.postingDate,sourceKey:`import:${id}:row:${value.row.id}:opening-value`,sourceType:value.count?'import_stock_count':'opening_inventory',sourceRecordType:'import_row',sourceRecordId:value.row.id,
           description:`Opening inventory from ${plan.sourceName}, row ${value.row.rowNumber}`,currency:value.row.parsed.currency,
-          lines:[{accountKey:'INVENTORY_ASSET',debitMinor:value.totalCostMinor,skuId:value.skuId,locationId:value.row.parsed.locationId},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:value.totalCostMinor}]})));
+          lines:[{accountKey:'INVENTORY_ASSET',debitMinor:value.totalCostMinor,skuId:value.skuId,locationId:value.row.parsed.locationId},{accountKey:value.count&&!value.opening?'INVENTORY_ADJUSTMENTS':'OPENING_BALANCE_EQUITY',creditMinor:value.totalCostMinor}]})));
         let journalIndex=0;
         await costing.receiveManyInTransaction(client,ctx,pendingValues.map(value=>({movementId:value.movementId,totalCostMinor:value.totalCostMinor,unitCostMinor:value.row.parsed.unitCostMinor,
-          journalEntryId:value.totalCostMinor>0?posted[journalIndex++].entry.id:null,sourceType:'opening_inventory',sourceRecordId:value.row.id})));
+          journalEntryId:value.totalCostMinor>0?posted[journalIndex++].entry.id:null,sourceType:value.count?'import_stock_count':'opening_inventory',sourceRecordId:value.row.id})));
         pendingValues=[];
       }
 
       // Batch across product boundaries. Per-product chunks turn a large flat
       // catalogue into thousands of single-row stock/accounting round trips.
       for(let chunkStart=0;chunkStart<sourceRows.length;chunkStart+=500){
-        const chunk=sourceRows.slice(chunkStart,chunkStart+500),receiving=chunk.filter(row=>row.parsed.quantity>0&&!isCount(row));
+        const chunk=sourceRows.slice(chunkStart,chunkStart+500),receiving=chunk.filter(row=>isCount(row)?expectedDelta(row)>0:row.parsed.quantity>0);
+        const countPositions=receiving.filter(isCount).map(row=>({sku_id:row.parsed.existingSkuId,location_id:row.parsed.locationId}));
+        const priorCountHistory=countPositions.length?(await client.query(`SELECT p.sku_id,p.location_id FROM jsonb_to_recordset($2::jsonb) p(sku_id text,location_id text)
+          WHERE EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=$1 AND m.sku_id=p.sku_id AND m.location_id=p.location_id AND m.occurred_at<=$3)`,[ctx.workspaceId,JSON.stringify(countPositions),plan.createdAt])).rows:[];
+        const historic=new Set(priorCountHistory.map(p=>JSON.stringify([p.sku_id,p.location_id])));
         const newPrices=[],initialPrices=[];
         for(const row of chunk){if(row.parsed.sellingPriceMinor===null)continue;
           const skuId=row.parsed.existingSkuId||row.parsed.createdSkuId,saleKey=`${row.parsed.currency}:${row.parsed.sellingPriceMinor}`;
           if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
           if(!salePriceBySku.has(skuId)){(row.parsed.existingSkuId?newPrices:initialPrices).push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',...(Object.hasOwn(row.parsed,'currentPriceId')?{expectedCurrentId:row.parsed.currentPriceId}:{}),sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
         }
-        await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
-        await postgresPrices.setPricesInTransaction(client,ctx,initialPrices,{initialize:true});
+        await require('./postgres-barcodes').apply(client,ctx,chunk);
+        const catalogueCosts=chunk.filter(row=>row.parsed.unitCostMinor!==null&&(row.parsed.quantity===null||row.parsed.quantity===0)).map(row=>({skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,amountMinor:row.parsed.unitCostMinor,currency:row.parsed.currency,source:'catalogue_import',sourceDetail:{importId:id,importRowId:row.id}}));
+        if(catalogueCosts.length)await postgresPrices.setPurchaseCostsInTransaction(client,ctx,catalogueCosts);
+        if(newPrices.length)await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
+        if(initialPrices.length)await postgresPrices.setPricesInTransaction(client,ctx,initialPrices,{initialize:true});
         const receivedRows=await inventory.receiveManyInTransaction(client,ctx,receiving.map(row=>({
-          skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,locationId:row.parsed.locationId,quantity:row.parsed.quantity,
+          skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,locationId:row.parsed.locationId,quantity:expectedDelta(row),
           serials:row.parsed.serial?[row.parsed.serial]:undefined,lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
           notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,idempotencyKey:`import:${id}:row:${row.id}`})));
         const receiptByRow=new Map(receiving.map((row,index)=>[row.id,receivedRows[index]]));
         const countedByRow=new Map();
-        for(const row of chunk.filter(isCount)){
+        for(const row of chunk.filter(row=>isCount(row)&&expectedDelta(row)<0)){
           const value=await require('../accounting/postgres-physical-count').applyInTransaction(client,ctx,{
             skuId:row.parsed.existingSkuId,locationId:row.parsed.locationId,countedQuantity:row.parsed.quantity,
-            expectedBefore:row.parsed.inventoryBefore,expectedCostDeltaMinor:row.parsed.countCostDeltaMinor,
+            expectedBefore:row.parsed.inventoryBefore,preservePostPreviewMovements:true,expectedCostDeltaMinor:row.parsed.countCostDeltaMinor,
             unitCostMinor:row.parsed.unitCostMinor,currency:row.parsed.currency,reasonCode:'file_physical_count',
             description:'Physical count from '+plan.sourceName,reference:'Import '+id+' row '+row.rowNumber,
             sourceType:'import_stock_count',sourceRecordType:'import_row',sourceRecordId:row.id,
@@ -82,14 +89,14 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           const skuId=row.parsed.existingSkuId || row.parsed.createdSkuId;
           const itemId=row.parsed.existingItemId || row.parsed.createdItemId;
           const movementIds=[];
-          if(isCount(row)){
-            const counted=countedByRow.get(row.id);if(counted.movementId)movementIds.push(counted.movementId);units+=expectedDelta(row);
-          }else if(row.parsed.quantity>0){
+          if(isCount(row)&&expectedDelta(row)<=0){
+            const counted=countedByRow.get(row.id);if(counted?.movementId)movementIds.push(counted.movementId);units+=expectedDelta(row);
+          }else if(expectedDelta(row)>0){
             const received=receiptByRow.get(row.id);
-            movementIds.push(received.movementId);units+=row.parsed.quantity;
+            movementIds.push(received.movementId);units+=expectedDelta(row);
             if(row.parsed.unitCostMinor!==null){
-              const totalCostMinor=row.parsed.quantity*row.parsed.unitCostMinor;
-              pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:checkpoint.postingDate});
+              const totalCostMinor=expectedDelta(row)*row.parsed.unitCostMinor;
+              pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:checkpoint.postingDate,count:isCount(row),opening:row.parsed.inventoryBefore?.physical===0&&row.parsed.inventoryBefore?.costed===0&&(row.parsed.inventoryBefore.hasHistory===false||row.parsed.inventoryBefore.hasHistory===undefined&&!historic.has(JSON.stringify([skuId,row.parsed.locationId])))});
               if(pendingValues.length>=500)await flushValues();
             }
           }
@@ -116,9 +123,13 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             supplierLinks.push({supplierId,skuId,...(p.reorder?.leadTimeDays===undefined?{}:{leadTimeDays:p.reorder.leadTimeDays})});
           }
         }
-        await commerce.linkSupplierItemsInTransaction(client,ctx,supplierLinks);
-        await require('../domain/postgres-catalog-facts').saveManyInTransaction(client,ctx,facts);
-        await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,policies);
+        const categories=new Map();for(const row of chunk){const p=row.parsed,category=p.sourceFacts?.Category;if(category)categories.set(p.existingItemId||p.createdItemId,{item_id:p.existingItemId||p.createdItemId,category});}
+        if(categories.size)await client.query(`INSERT INTO catalogue_item_facts(workspace_id,item_id,category,facts,created_at,updated_at)
+          SELECT $1,x.item_id,x.category,'{}',$3,$3 FROM jsonb_to_recordset($2::jsonb) x(item_id text,category text)
+          ON CONFLICT(workspace_id,item_id) DO UPDATE SET category=EXCLUDED.category,updated_at=EXCLUDED.updated_at`,[ctx.workspaceId,JSON.stringify([...categories.values()]),nowIso()]);
+        if(supplierLinks.length)await commerce.linkSupplierItemsInTransaction(client,ctx,supplierLinks);
+        if(facts.length)await require('../domain/postgres-catalog-facts').saveManyInTransaction(client,ctx,facts);
+        if(policies.length)await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,policies);
       }
 
    const totals=await verification.totals(client,ctx.workspaceId,chunk.map(row=>row.id)),value=chunk.reduce((n,row)=>n+expectedCost(row),0),expectedUnits=chunk.reduce((n,row)=>n+expectedDelta(row),0),valued=chunk.filter(expectsCostRecord).length;
@@ -133,6 +144,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  await emit('verifying');
  const totals={value:{value:0n,movements:0},posted:{value:0n}};let expectedUnits=0,expectedValue=0,valued=0;
  await database.transaction(async client=>{
+  await deps.bulkPlanning(client);
   for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);

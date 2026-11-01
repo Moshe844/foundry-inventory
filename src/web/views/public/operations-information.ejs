@@ -1,0 +1,32 @@
+<section class="pub-simple-head"><span class="pub-eyebrow">StockChief</span><h1><%= title %></h1></section>
+<section class="pub-legal">
+<% if(kind==='/roadmap'){ %>
+<p>These are future development areas. They are not promises of current support or delivery dates.</p>
+<ul><li>Vendor-qualified ERP integrations, including NetSuite</li><li>QuickBooks and Xero accounting integrations</li><li>EDI trading-partner workflows</li><li>SAML single sign-on</li><li>Multi-currency operations</li><li>Multi-company administration and consolidation</li></ul>
+<p>Current work focuses on import reliability, inventory accuracy, plan limits, and everyday warehouse operations. <a href="/contact">Discuss a requirement</a> before relying on a roadmap feature.</p>
+<% }else if(kind==='/security'){ %>
+<h2>Encryption and credentials</h2><p>Hosted access uses HTTPS. Stored connection credentials use AES-256-GCM encryption. Passwords are stored as salted scrypt hashes; API tokens are stored as hashes. Database encryption and recovery settings depend on the deployed hosting configuration.</p>
+<h2>Access control</h2><p>Business records are scoped to an inventory and account. Team permissions, API scopes, plan checks, and approval rules limit operations. Stock movements and posted journal entries retain their history.</p>
+<h2>Backups and recovery</h2><p>Database recovery uses the hosting provider's configured backup facilities. Contact support for the retention period and latest restore-test evidence for your deployment; this page does not certify a recovery time.</p>
+<h2>Availability and data location</h2><p>See <a href="/status">service status</a> for a current web and database check. A measured uptime SLA is not published here. Deployment region and third-party processing locations must be confirmed for your account before agreeing to a residency requirement.</p>
+<h2>SOC 2</h2><p>StockChief does not claim SOC 2 certification or an available SOC 2 report on this page. Independent audit scope and completion dates have not been published. Ask support for current security evidence and contractual requirements.</p>
+<p><a href="/privacy">Privacy notice</a> · <a href="/control">Approvals and controls</a> · <a href="/contact">Security questions</a></p>
+<% }else if(kind==='/status'){ %>
+<h2><%= available?'Web and database responding':'Database connection unavailable' %></h2><p>Checked <%= checkedAt %>.</p><p>This checks the current web request and database connection. It does not certify background jobs, payment providers, AI availability, or historical uptime.</p><p><a href="/support">Report a problem</a> · <a href="/security">Security information</a></p>
+<% }else{ %>
+<p>Public API access requires an eligible plan and a key scoped to your inventory. Create and revoke keys in Settings. Send keys only over HTTPS and keep them out of browser code.</p>
+<h2>Authentication</h2><pre>Authorization: Bearer YOUR_API_KEY</pre><p>Supported scopes: <code>inventory:read</code> and <code>inventory:write</code>. Requests remain subject to plan and usage limits.</p>
+<h2>Read stock</h2><pre>GET /api/v1/public/inventory?limit=200</pre><p>The response contains <code>data</code> with <code>skuId</code>, <code>code</code>, <code>name</code>, <code>locationId</code>, <code>location</code>, and <code>onHand</code>. Request up to 500 positions per page. Pass the returned <code>nextCursor</code> as <code>cursor</code> until it is null. Preserve the cursor as returned; do not construct it.</p>
+<h2>Receive physical stock</h2><pre>POST /api/v1/public/commands/inventory/receive
+Content-Type: application/json
+Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY
+
+{"skuId":"YOUR_SKU_ID","locationId":"YOUR_LOCATION_ID","quantity":5,"reference":"Delivery reference"}</pre><p>Lot-tracked stock also needs its lot details; serialized stock needs the exact serials. A physical receipt alone does not establish purchase cost or create a supplier invoice. Use the purchasing workflow when recording a purchase.</p>
+<h2>Count physical stock</h2><pre>POST /api/v1/public/commands/inventory/adjust
+Content-Type: application/json
+Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY
+
+{"skuId":"YOUR_SKU_ID","locationId":"YOUR_LOCATION_ID","countedQuantity":5,"reasonCode":"physical_count"}</pre><p>The count command is for quantity-tracked products. Reducing fully costed stock also reduces its recorded value. Added units need purchase-cost evidence through the purchasing or opening-stock workflow; a count is not a supplier invoice.</p>
+<h2>Retries and errors</h2><p>Write commands require an idempotency key. Reuse the same key and identical body after an uncertain response. A successful first write returns 201; replay returns 200. Error responses use <code>{"error":{"code":"…","message":"…"}}</code>. Invalid input, expired keys, insufficient scopes, and plan limits must be resolved before retrying.</p>
+<% } %>
+</section>

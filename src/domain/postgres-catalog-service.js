@@ -197,18 +197,27 @@ async function listItems(database, workspaceId, input = {}) {
     if(!anchor)throw new ValidationError('That catalogue page has changed. Return to the first page.');
   }
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
-    anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null];
-  const result = await database.query(`WITH selected_items AS MATERIALIZED (
+    anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true];
+  const result = await database.query(`WITH matching_items AS NOT MATERIALIZED (
       SELECT i.* FROM items i
       WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
         AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
-          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND search_sku.code ILIKE '%'||$2||'%'))
+          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%')))
+        AND ($4::text IS NULL OR EXISTS(SELECT 1 FROM item_location_balances b WHERE b.workspace_id=$1 AND b.item_id=i.id AND b.location_id=$4 AND b.on_hand<>0))
+        AND ($13::text IS NULL OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=$1 AND f.item_id=i.id AND f.category ILIKE '%'||$13||'%'))
+        AND ($14::text IS NULL OR EXISTS(SELECT 1 FROM skus s JOIN supplier_items si ON si.workspace_id=s.workspace_id AND si.sku_id=s.id JOIN suppliers supplier ON supplier.workspace_id=si.workspace_id AND supplier.id=si.supplier_id WHERE s.workspace_id=$1 AND s.item_id=i.id AND si.is_active=1 AND supplier.name ILIKE '%'||$14||'%'))
+        AND (($15::text IS NULL AND $16::text IS NULL) OR EXISTS(SELECT 1 FROM skus s WHERE s.workspace_id=$1 AND s.item_id=i.id AND s.is_active=1
+          AND ($15::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name)='size' AND lower(v.value)=lower($15)))
+          AND ($16::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name) IN ('color','colour') AND lower(v.value)=lower($16)))))
+        AND (NOT $17::boolean OR i.id IN (SELECT record_id FROM (${require('../reports/postgres-registry').get('low_stock').source}) low))
+    ), selected_items AS MATERIALIZED (
+      SELECT i.* FROM matching_items i WHERE TRUE
         AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name,i.id)>($11::text,$10::text)'} )
         AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)
       ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}
     )
-    SELECT i.*,COALESCE(r.sku_count,0) AS sku_count,r.first_sku_code,
+    SELECT i.*,${pageFirst?'(SELECT count(*) FROM matching_items)':'count(*) OVER()'} AS matching_total,COALESCE(r.sku_count,0) AS sku_count,r.first_sku_code,
       COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed_item.quantity,0) AS committed,
       COALESCE(purchase_incoming.quantity,0) AS on_order,
       EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=$1 AND m.item_id=i.id LIMIT 1)::int AS has_history
@@ -237,7 +246,7 @@ async function listItems(database, workspaceId, input = {}) {
       available: Math.max(0, onHand - committed), onOrder: Number(row.on_order || 0),
       hasHistory: Boolean(Number(row.has_history)), is_active: Number(row.is_active) };
   });
-  return { items, page, pageSize, hasMore, nextAfterItemId:pageFirst&&hasMore?items.at(-1)?.id:null };
+  return { items, page, pageSize, hasMore,totalCount:Number(result.rows[0]?.matching_total||0), nextAfterItemId:pageFirst&&hasMore?items.at(-1)?.id:null };
 }
 
 async function getItem(database, workspaceId, itemId, input = {}) {
@@ -272,6 +281,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     ORDER BY s.position,s.id`,
   [workspaceId, itemId, pageSize, (page - 1) * pageSize]);
   const skuIds = skuResult.rows.map((row) => row.id);
+  const variantValues=skuIds.length?(await database.query('SELECT v.sku_id,o.name,v.value FROM sku_option_values v JOIN item_options o ON o.id=v.option_id WHERE o.workspace_id=$1 AND o.item_id=$2 AND v.sku_id=ANY($3::text[])',[workspaceId,itemId,skuIds])).rows:[];
   let positions = [];
   if (skuIds.length) {
     positions = (await database.query(`WITH committed AS (
@@ -287,7 +297,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const skus = skuResult.rows.map((row) => {
     const total = Number(row.on_hand || 0);
     const committed = Number(row.committed || 0);
-    return { ...row, total, committed, available: Math.max(0, total - committed),
+    return { ...row,optionValues:Object.fromEntries(variantValues.filter(v=>v.sku_id===row.id).map(v=>[v.name,v.value])), total, committed, available: Math.max(0, total - committed),
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
         locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),secondaryOnHand:position.secondary_on_hand==null?null:Number(position.secondary_on_hand),
@@ -421,6 +431,13 @@ async function addVariant(database,ctx,itemId,input){
       VALUES($1,$2,$3,$4,$5,0,$6,1,$7)`,[skuId,ctx.workspaceId,itemId,code,label,position,at]);
     for(const part of values)await client.query('INSERT INTO sku_option_values(sku_id,option_id,value) VALUES($1,$2,$3)',
       [skuId,part.optionId,part.value]);
+    const source=(await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=$2 AND id<>$3 AND is_active=1 AND ($4::text IS NULL OR id=$4) ORDER BY position,id LIMIT 1',[ctx.workspaceId,itemId,skuId,input.inheritFromSkuId||null])).rows[0];
+    if(input.inheritFromSkuId&&!source)throw new ValidationError('Choose an active variant from this product to copy price and cost.');
+    if(source){const prices=require('../pricing/postgres-service'),price=await prices.currentPrice(client,ctx.workspaceId,source.id),cost=await prices.purchaseCost(client,ctx.workspaceId,source.id);
+      if(price.isSet)await prices.setPricesInTransaction(client,ctx,[{skuId,amountMinor:price.amount_minor,currency:price.currency,source:'variant_copy',sourceDetail:{sourceSkuId:source.id}}],{initialize:true});
+      if(cost)await prices.setPurchaseCostsInTransaction(client,ctx,[{skuId,amountMinor:cost.amount_minor,currency:cost.currency,source:'variant_copy',sourceDetail:{sourceSkuId:source.id}}]);
+    }
+    await require('./postgres-sku-maintenance').history(client,ctx,{id:skuId,item_id:itemId},'add_variant',{}, {code,label,sourceSkuId:source?.id||null});
     return {skuId,code,label};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

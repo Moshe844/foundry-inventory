@@ -15,7 +15,7 @@ async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}
     COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=s.id),0)::text||' on hand' AS meta,
     '/inventory/'||i.id||'#sku-'||s.id AS href,120 AS score
     FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND lower(s.code)=lower($2)
+    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (lower(s.code)=lower($2) OR lower(s.barcode)=lower($2))
     ORDER BY s.id LIMIT $3`,[workspaceId,term,Math.max(2,boundedLimit)])).rows;
   if(exactRows.length){const results=exactRows.slice(0,boundedLimit).map(row=>({...row,typeLabel:TYPE_LABEL[row.type]}));
     return {term,results,total:results.length,exactSku:exactRows.length===1};}

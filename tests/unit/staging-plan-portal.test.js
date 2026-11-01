@@ -24,9 +24,10 @@ test('TEST portal only offers exact approved monthly and annual prices with end-
  assert.equal(config.get('features[subscription_update][products][0][prices][1]'),'price_starter_year');
  assert.equal(config.get('features[subscription_update][products][0][adjustable_quantity][enabled]'),'false');
  assert.equal(config.get('features[subscription_update][schedule_at_period_end][conditions][0][type]'),'decreasing_item_amount');
- assert.equal(config.get('features[subscription_update][proration_behavior]'),'always_invoice');
+ assert.equal(config.get('features[subscription_update][proration_behavior]'),'always_invoice');assert.equal(config.get('features[subscription_update][billing_cycle_anchor]'),'now');
  await assert.rejects(()=>portal.configure(plans,{...options,secretKey:'sk_live_refused'}),/TEST key/);assert.equal(requests,7);
  await assert.rejects(()=>portal.configure(plans,{...options,fetch:async()=>response({livemode:true})}),/does not match/);
+ await portal.configure(plans.slice(1),options);assert.equal(config.get('features[subscription_update][products][0][product]'),'prod_growth');assert.equal([...config.values()].some(v=>v.includes('starter')),false);
 });
 test('scheduled portal changes show the verified next date and reject another billing account',async t=>{
  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT','STOCKCHIEF_BILLING_STRIPE_SECRET_KEY'],prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));t.after(()=>{for(const k of keys)if(prior[k]===undefined)delete process.env[k];else process.env[k]=prior[k];});
