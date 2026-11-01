@@ -129,7 +129,7 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
   const item=providerSubscription.items?.data?.[0];if(!item?.id)throw new ValidationError(
     'Stripe did not return the subscription item required to change this plan.');
   const downgrade=Number(target.display_order)<Number(currentPlan.display_order)
-    ||current.billing_interval==='ANNUAL'&&interval==='MONTHLY';
+    ||target.id===current.plan_id&&current.billing_interval==='ANNUAL'&&interval==='MONTHLY';
   const excess=downgrade?await control.resourceExcess(database,{accountId,workspaceId:null},target.id):{};
   const prorationDate=Math.floor(Date.now()/1000);let preview=null;
   if(options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
