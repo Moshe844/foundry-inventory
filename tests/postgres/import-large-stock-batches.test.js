@@ -1,0 +1,17 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('large quantity imports save bounded 2,000-row batches and resume exactly around ordinary stock activity',{timeout:240000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,catalog=require('../../src/domain/postgres-catalog-service'),imports=require('../../src/imports/postgres-service');
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('large-stock-fixture',$1,'enterprise','COMP','ISOLATED_TEST')",[f.owner.accountId]);
+ const definitions=[];for(let n=0;n<5001;n+=10)definitions.push({name:'Stock family '+n,trackingMode:'quantity',variants:Array.from({length:Math.min(10,5001-n)},(_,v)=>({code:'LARGE-STOCK-'+(n+v)}))});
+ const created=await db.transaction(c=>catalog.createImportedItemsInTransaction(c,ctx,definitions)),ids=created.flatMap(p=>p.skus.map(s=>s.skuId));assert.equal(ids.length,5001);
+ let plan=await imports.analyse(db,ctx,{filename:'large-stock.csv',allowModel:false,text:'SKU,Location,Quantity,Unit cost\n'+Array.from({length:5001},(_,n)=>'LARGE-STOCK-'+n+',Dispatch,2,1.25').join('\n')});assert.equal(plan.recordsInvalid,0);plan=await imports.revise(db,ctx,plan.id,{expectedHash:plan.integrityHash,importMode:'add'});await imports.approve(db,ctx,plan.id,plan.integrityHash);
+ const state=async()=>(await db.query('SELECT (SELECT sum(on_hand) FROM balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]))::text units,(SELECT sum(total_cost_minor) FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]))::text value',[ctx.workspaceId,ids])).rows[0];
+ await assert.rejects(imports.execute(db,ctx,plan.id,{beforeRow:({rowsImported})=>{if(rowsImported===2500)throw Error('interrupt second stock batch');}}),/interrupt second stock batch/);const paused=await imports.report(db,ctx.workspaceId,plan.id);assert.equal(paused.rowsImported,2000);assert.deepEqual(await state(),{units:'4000',value:'500000'});
+ await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:ids.at(-1),locationId:f.location.id,quantity:3,unitCost:'2',idempotencyKey:'activity-between-large-batches'});
+ const result=await imports.execute(db,ctx,plan.id,{retryExecutionId:paused.id});assert(result.verified);assert.equal(result.rowsImported,5001);assert.deepEqual(await state(),{units:'10005',value:'1250850'});assert((await imports.execute(db,ctx,plan.id)).duplicate);assert.deepEqual(await state(),{units:'10005',value:'1250850'});
+ const total=(await db.query('SELECT missing_units::text FROM inventory_cost_coverage_totals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];assert.equal(total.missing_units,'0');
+ // Identity-bearing pages retain the smaller durable boundary, including a
+ // page mixing normal and tracked products; no source rows are skipped.
+ const store=require('../../src/imports/postgres-row-store'),sample=Array.from({length:2000},(_,n)=>({id:'row-'+n,row_number:n,parsed:{trackingMode:n===700?'lot':'quantity'},status:'VALID'}));let reads=0;const pages=[];for await(const page of store.executionPages({query:async()=>({rows:reads++?[]:sample})},ctx.workspaceId,'bounded-identity-fixture',{batchSize:2000}))pages.push(page);assert.deepEqual(pages.map(p=>p.length),[500,500,500,500]);assert.equal(new Set(pages.flat().map(r=>r.id)).size,2000);
+});

@@ -3,19 +3,23 @@ const CHUNK=500;
 // Read only the frozen execution inputs, in index order. Reading and sorting
 // every raw source row in one statement makes the first step grow with the
 // complete workbook and can time out before progress is published.
-async function* executionPages(client,workspaceId,importId,{includeImported=false,lock=true}={}){
+async function* executionPages(client,workspaceId,importId,{includeImported=false,lock=true,batchSize=CHUNK}={}){
+ if(!Number.isSafeInteger(batchSize)||batchSize<1||batchSize>2000)throw new TypeError('Import execution pages must contain one to 2,000 rows.');
  let lastRow=-1,lastId='';
  for(;;){
   const page=(await client.query(`SELECT id,row_number,parsed,item_id,sku_id,location_id,status FROM import_rows
    WHERE workspace_id=$1 AND import_id=$2 AND status IN (${includeImported?"'VALID','NEEDS_REVIEW','IMPORTED'":"'VALID','NEEDS_REVIEW'"})
     AND (row_number,id)>($3::bigint,$4::text)
-   ORDER BY row_number,id LIMIT ${CHUNK}${lock?' FOR UPDATE':''}`,[workspaceId,importId,lastRow,lastId])).rows;
+   ORDER BY row_number,id LIMIT ${batchSize}${lock?' FOR UPDATE':''}`,[workspaceId,importId,lastRow,lastId])).rows;
   if(!page.length)break;
   const rows=[];for(const row of page){const parsed=typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed;
     if(includeImported&&row.sku_id){if(!parsed.existingSkuId)parsed.createdSkuId=row.sku_id;if(!parsed.existingItemId)parsed.createdItemId=row.item_id;if(row.location_id)parsed.locationId=row.location_id;}
     rows.push({id:row.id,rowNumber:Number(row.row_number),parsed,imported:row.status==='IMPORTED'});}
   lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;
-  yield rows;
+  // Identity-bearing and measured receipts use their detailed per-unit path.
+  // Keep those lock windows small even when ordinary quantity stock is batched.
+  const size=rows.some(row=>row.parsed.trackingMode!=='quantity'||row.parsed.secondaryUnitLabel)?Math.min(CHUNK,batchSize):batchSize;
+  for(let start=0;start<rows.length;start+=size)yield rows.slice(start,start+size);
  }
 }
 async function executionRows(client,workspaceId,importId,onProgress,options={}){

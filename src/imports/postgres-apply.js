@@ -2,7 +2,7 @@
 const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),ledger=require('../accounting/postgres-ledger'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
 const key=value=>require('node:crypto').createHash('sha256').update(value).digest('hex');
 async function run(database,ctx,plan,executionId,inputOptions,deps){
- const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities');let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
+ const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities'),batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
  const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows})});
  async function phase(operation){return database.transaction(async client=>{
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
@@ -30,7 +30,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:(row.parsed.quantity||0)*(row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
- for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id)){
+ for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id,{batchSize})){
   await identities.hydrate(database,ctx,plan,chunk,checkpoint);const priorSaved=Number(checkpoint.savedRows||0);
   await emit('processing');
   const result=await phase(async(client,saved)=>{
@@ -55,8 +55,8 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
 
       // Batch across product boundaries. Per-product chunks turn a large flat
       // catalogue into thousands of single-row stock/accounting round trips.
-      for(let chunkStart=0;chunkStart<sourceRows.length;chunkStart+=500){
-        const chunk=sourceRows.slice(chunkStart,chunkStart+500),receiving=chunk.filter(row=>isCount(row)?expectedDelta(row)>0:row.parsed.quantity>0);
+      for(let chunkStart=0;chunkStart<sourceRows.length;chunkStart+=batchSize){
+        const chunk=sourceRows.slice(chunkStart,chunkStart+batchSize),receiving=chunk.filter(row=>isCount(row)?expectedDelta(row)>0:row.parsed.quantity>0);
         const countPositions=receiving.filter(isCount).map(row=>({sku_id:row.parsed.existingSkuId,location_id:row.parsed.locationId}));
         const priorCountHistory=countPositions.length?(await client.query(`SELECT p.sku_id,p.location_id FROM jsonb_to_recordset($2::jsonb) p(sku_id text,location_id text)
           WHERE EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=$1 AND m.sku_id=p.sku_id AND m.location_id=p.location_id AND m.occurred_at<=$3)`,[ctx.workspaceId,JSON.stringify(countPositions),plan.createdAt])).rows:[];
@@ -101,7 +101,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             if(row.parsed.unitCostMinor!==null){
               const totalCostMinor=expectedDelta(row)*row.parsed.unitCostMinor;
               pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:checkpoint.postingDate,count:isCount(row),opening:row.parsed.inventoryBefore?.physical===0&&row.parsed.inventoryBefore?.costed===0&&(row.parsed.inventoryBefore.hasHistory===false||row.parsed.inventoryBefore.hasHistory===undefined&&!historic.has(JSON.stringify([skuId,row.parsed.locationId])))});
-              if(pendingValues.length>=500)await flushValues();
+              if(pendingValues.length>=batchSize)await flushValues();
             }
           }
           savedRows.push({id:row.id,itemId,skuId,locationId:row.parsed.locationId,movementIds,quantity:row.parsed.quantity,at:nowIso()});
