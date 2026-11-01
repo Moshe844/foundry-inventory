@@ -65,6 +65,8 @@ projects:
             healthCheckPath: /healthz
             maxShutdownDelaySeconds: 120
             envVars:
+              - key: STOCKCHIEF_WEB_RECOVERY_PROXY
+                value: "1"
               - fromGroup: stockchief-staging-runtime
               - key: FOUNDRY_DATABASE_URL
                 fromDatabase:
