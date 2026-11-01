@@ -519,6 +519,8 @@ async function analyse(database, ctx, input) {
   if(trackingSummary&&!streaming){trackingSummary.add(validated.rows);plan.transformations.trackingSummary=trackingSummary.finish(plan);}
   plan.integrityHash=integrityFor(plan,validated.rows);
   await database.transaction(async(client)=>{
+    // Keep paged validation on bounded index plans even before fresh catalogue statistics settle.
+    await bulkPlanning(client);
     await client.query(`INSERT INTO import_plans(id,workspace_id,created_by_user_id,source_name,source_kind,source_hash,
       source_bytes,detected_type,sheet_name,sheet_index,source_columns,field_mappings,transformations,tracking_model,
       location_mappings,default_location_id,records_detected,records_valid,records_invalid,warnings,conflicts,assumptions,
