@@ -6,7 +6,7 @@
     <div class="rm-grid2" style="margin-top:16px">
   <section class="rm-provider">
     <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
-    <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
+    <p><%= postgresMode?'Read inventory or submit inventory commands. Use signed webhooks below to receive events.':'Read inventory/events or submit canonical inventory commands.' %> No client can write balance tables directly.</p>
     <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" aria-label="New API token" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
     <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
     <% if (currentUser.role === 'owner'&&locals.planGates?.['api.public']?.enabled!==false) { %>

@@ -9,6 +9,7 @@ const {newId}=require('../../lib/util');
 function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
+  router.get('/warehouse/batches',requirePermission(permissions.VIEW,'review batch stock'),asyncRoute(async(req,res)=>res.page('warehouse/batch-expiry',{title:'Batch expiry',nav:'inventory',...await require('../../domain/postgres-batch-expiry').page(database,req.ctx.workspaceId,req.query),locations:await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId)})));
   router.get('/warehouse/labels/sku/:id',asyncRoute(async(req,res)=>{
     const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.id);
     const labels=require('../../warehouse/labels'),label={kind:'sku',id:sku.id,title:sku.display_name,
