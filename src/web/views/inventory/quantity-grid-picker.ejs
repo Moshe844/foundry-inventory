@@ -1,0 +1,7 @@
+<section data-quantity-grid data-grid-kind="<%= gridKind %>" <% if(locals.gridSupplier){ %>data-grid-supplier="<%= gridSupplier %>"<% } %>>
+<button type="button" class="btn" data-grid-open>Enter variant quantities in a grid</button>
+<dialog class="modal" data-grid-dialog><div class="modal-head"><h2>Variant quantity grid</h2><button type="button" class="btn" data-grid-close aria-label="Close variant grid">×</button></div><div class="modal-body">
+<label class="field"><span>Find a product</span><input type="search" class="input" data-grid-search autocomplete="off"></label><label class="field"><span>Product</span><select data-grid-product><option value="">Choose a product</option></select></label>
+<div data-grid-extra-options></div><p data-grid-status role="status"></p><div class="table-scroll" data-grid-table></div><p><button type="button" class="btn" data-grid-previous hidden>Previous variants</button> <button type="button" class="btn" data-grid-next hidden>Next variants</button></p>
+<p>Quantities are copied to this form for review. This does not save an order, reserve stock or post a count.</p><button type="button" class="btn btn--primary" data-grid-apply disabled>Use these quantities</button>
+</div></dialog></section><script src="/variant-quantity-grid.js" defer></script>

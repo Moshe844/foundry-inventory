@@ -57,6 +57,7 @@
           so StockChief knows the pack size and price.
         </p>
       <% } else { %>
+        <%- include('../inventory/quantity-grid-picker',{gridKind:'purchase',gridSupplier:supplierId}) %>
         <p class="muted" style="margin-bottom:12px;">These are the products linked to this supplier. Enter a pack quantity for each product you want to order. <a href="/suppliers/<%= supplierId %>#link-product">Link another product</a>.</p>
         <table class="table table--tight">
           <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th><th class="num">Line total</th></tr></thead>

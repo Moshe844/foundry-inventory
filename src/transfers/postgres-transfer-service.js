@@ -109,6 +109,9 @@ async function list(database, workspaceId, { status = null } = {}) {
   if (status) { values.push(status); filter = ` AND t.status=$${values.length}`; }
   return (await database.query(`SELECT t.*,src.name AS source_name,dst.name AS destination_name,
       COALESCE((SELECT SUM(requested_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS requested_units,
+      COALESCE((SELECT SUM(received_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS received_units,
+      COALESCE((SELECT SUM(damaged_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS damaged_units,
+      COALESCE((SELECT SUM(lost_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS lost_units,
       COALESCE((SELECT SUM(shipped_quantity-received_quantity-lost_quantity-damaged_quantity)
         FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS in_transit_units
     FROM inventory_transfers t JOIN locations src ON src.id=t.source_location_id

@@ -18,6 +18,7 @@
  </div></section>
  <section class="rm-step-panel"><div class="rm-step-panel__h"><h2>Products</h2></div><div class="rm-step-panel__b">
  <div id="order-lines"><% for(let n=0;n<count;n++){ %><%- include('entry-line',{n,selected:ids[n]||'',quantity:form.quantity===undefined?'1':qty[n]??'',secondaryQuantity:list(form.secondaryQuantity)[n]||'',price:prices[n]??'',override:overrides[n]??(prices[n]?'1':'0'),catalogue}) %><% } %></div>
+ <%- include('../inventory/quantity-grid-picker',{gridKind:'sale'}) %>
  <button type="button" class="btn btn--ghost" id="add-order-line">+ Add another product</button>
  <p id="order-stock-check" role="status">Choose products to see available stock.</p>
  <p id="order-weight" class="hint"></p>

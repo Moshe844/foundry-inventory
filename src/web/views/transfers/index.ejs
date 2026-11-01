@@ -7,7 +7,7 @@
     if (['APPROVED', 'PICKED'].includes(transfer.status)) return { label: 'Ready to move', detail: 'Confirm once the goods leave ' + transfer.source_name + '.', tone: 'ready' };
     if (transfer.status === 'PARTIALLY_RECEIVED') return { label: 'Arrival needs settling', detail: transfer.in_transit_units + ' units are still in transit.', tone: 'attention' };
     if (['SHIPPED', 'IN_TRANSIT'].includes(transfer.status)) return { label: 'On the way', detail: transfer.in_transit_units + ' units are travelling to ' + transfer.destination_name + '.', tone: 'transit' };
-    if (transfer.status === 'RECEIVED') return { label: 'Complete', detail: transfer.requested_units + ' units received.', tone: 'done' };
+    if (transfer.status === 'RECEIVED') return { label: 'Complete', detail: transfer.received_units + ' received'+(Number(transfer.damaged_units)?' · '+transfer.damaged_units+' damaged':'')+(Number(transfer.lost_units)?' · '+transfer.lost_units+' lost':'')+'.', tone: 'done' };
     return { label: 'Cancelled', detail: 'No stock remains in transfer custody.', tone: 'muted' };
   }
 %>

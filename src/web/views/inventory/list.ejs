@@ -16,9 +16,10 @@
   </div>
 <% } %>
 
-<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="cost">Change purchase costs</option><option value="reorder">Change reorder levels</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
-<% if(locals.postgresNative){ %><p data-catalogue-total><%= Number(totalCount).toLocaleString('en-US') %> matching products</p><% } %>
+<% if(locals.postgresNative&&!locals.isFlat&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="cost">Change purchase costs</option><option value="reorder">Change reorder levels</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
+<% if(locals.postgresNative){ %><nav class="segmented" aria-label="Product grouping"><a class="segmented__item <%= !locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'grouped',page:null,after:null}) %>">Grouped by item</a><a class="segmented__item <%= locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'flat',page:null,after:null}) %>">Every variant</a></nav><p data-catalogue-total><%= Number(totalCount).toLocaleString('en-US') %> matching <%= locals.isFlat?'variants':'products' %></p><% } %>
 <form class="filters" method="get" action="<%= locals.postgresNative?'/inventory/table':'/inventory' %>">
+  <% if(locals.isFlat){ %><input type="hidden" name="view" value="flat"><% } %>
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
   <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>
     <option value="">All tracking types</option>
@@ -100,7 +101,7 @@
         %>
         <thead>
           <tr>
-            <% if(locals.postgresNative&&currentUser.role==='owner'){ %><th class="sc-stock-selection" scope="col"><span class="sr-only">Select products</span></th><% } %>
+            <% if(locals.postgresNative&&!locals.isFlat&&currentUser.role==='owner'){ %><th class="sc-stock-selection" scope="col"><span class="sr-only">Select products</span></th><% } %>
             <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: 'name', page: null, after: null }) %>" title="Sort by name">Product</a></th>
             <th>Status</th>
             <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null, after: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
@@ -133,7 +134,7 @@
               var tracksUnits = item.tracking_mode !== 'quantity';
             %>
             <tr>
-              <% if(locals.postgresNative&&currentUser.role==='owner'){ %><td class="sc-stock-selection"><input type="checkbox" name="itemIds" form="catalog-bulk-form" value="<%= item.id %>" aria-label="Select <%= item.name %>" data-product-selection></td><% } %><td class="cell-main">
+              <% if(locals.postgresNative&&!locals.isFlat&&currentUser.role==='owner'){ %><td class="sc-stock-selection"><input type="checkbox" name="itemIds" form="catalog-bulk-form" value="<%= item.id %>" aria-label="Select <%= item.name %>" data-product-selection></td><% } %><td class="cell-main">
                 <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
                 <span class="cell-sub">
                   <span class="mono"><%= item.base_code || item.first_sku_code %></span><%
@@ -141,6 +142,7 @@
                     %><% if (tracksUnits) { %> · <%= tracking.label %><% } %>
                 </span>
                 <% if(item.missingStockCostUnits>0){ %><small class="is-warn"><%= helpers.unitCount(helpers.qty(item.missingStockCostUnits),'unit') %> still need a purchase cost before completing a sale.</small><% } %>
+                <% if(locals.postgresNative&&!locals.isFlat&&item.has_variants){ %><details data-item-variants data-item-id="<%= item.id %>"><summary>View variants</summary><div data-variant-list></div></details><% } %>
               </td>
               <td data-label="Status">
                 <span class="badge badge--<%= status.tone %>"><%= status.label %></span>
@@ -178,3 +180,4 @@
     <% } %>
   <% } %>
 </div>
+<% if(locals.postgresNative){ %><script src="/inventory-variant-list.js" defer></script><% } %>

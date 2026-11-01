@@ -168,10 +168,10 @@ async function catalogue(database, workspaceId, {limit=null,search='',ids=null,t
       ON i.workspace_id=s.workspace_id AND i.is_active=1
     WHERE s.workspace_id=$1 AND s.is_active=1
       AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
-      AND ($3='' OR position(lower($3) in lower(s.code||' '||i.name||' '||coalesce(s.variant_label,'')))>0)
+      AND ($3='' OR position(lower($3) in lower(s.code||' '||i.name||' '||coalesce(s.variant_label,'')))>0 OR lower(s.barcode)=lower($3))
       AND ($5::text IS NULL OR i.tracking_mode=$5)
     ORDER BY lower(i.name),s.position,s.id LIMIT $4)
-    SELECT s.id,s.code,s.variant_label,s.item_name,s.weight_grams,s.tracking_mode,s.unit_label,s.quantity_precision,s.quantity_increment,s.secondary_unit_label,s.secondary_precision,s.secondary_increment,
+    SELECT s.id,s.item_id,s.code,s.barcode,s.variant_label,s.item_name,s.weight_grams,s.tracking_mode,s.unit_label,s.quantity_precision,s.quantity_increment,s.secondary_unit_label,s.secondary_precision,s.secondary_increment,
       CASE WHEN coalesce(s.variant_label,'')='' THEN s.item_name ELSE s.item_name||' / '||s.variant_label END AS display_name,
       p.amount_minor,p.currency,coalesce(b.on_hand,0)::numeric AS on_hand,coalesce(b.available_on_hand,0)::numeric AS available_on_hand,coalesce(a.committed,0)::numeric AS committed
     FROM selected s LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices p

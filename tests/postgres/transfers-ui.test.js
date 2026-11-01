@@ -168,6 +168,9 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
       { status: 'issued', location: null, condition: 'damaged' },
     ]);
     assert.equal((await transfers.verify(database, ctx.workspaceId, serialTransfer.id)).ok, true);
+    await page.goto(`${base}/transfers`);
+    const summary=page.locator('a').filter({hasText:(await transfers.get(database,ctx.workspaceId,serialTransfer.id)).transfer_number});
+    assert.match(await summary.first().innerText(),/1 received.*1 damaged/s);
     assert.deepEqual(errors, []);
   });
 

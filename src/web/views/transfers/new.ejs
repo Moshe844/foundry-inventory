@@ -18,6 +18,8 @@
 <form method="post" action="/transfers" class="card form-card" data-step-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <input type="hidden" name="idempotencyKey" value="transfer-request-<%= Date.now() %>">
+  <%- include('../inventory/quantity-grid-picker',{gridKind:'transfer'}) %>
+  <section class="section" data-transfer-grid-lines hidden><h2>Variants to transfer</h2><div data-transfer-grid-rows></div><button type="button" class="btn" data-transfer-single>Use single-product entry</button></section>
 
   <section class="rm-step-panel">
     <div class="rm-step-panel__h"><span class="rm-step-panel__n">1</span><h2>Where is it moving?</h2></div>
@@ -55,6 +57,7 @@
   </div>
 </form>
 <script src="/transfer-defaults.js?v=<%= assetVersion %>" defer></script>
+<script src="/variant-transfer-entry.js" defer></script>
 <p class="rm-note">The fastest path is usually to <a href="/actions">tell StockChief what needs moving</a>. Lot- and serial-tracked stock starts from the product page so StockChief can preserve the exact identity.</p>
 <% } %>
 </fieldset>

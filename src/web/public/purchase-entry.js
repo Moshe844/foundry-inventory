@@ -15,4 +15,14 @@
   const out=form.querySelector('[data-purchase-total]');if(out)out.textContent=valid?format(total):'Check the selected lines';
   if(date&&auto?.value==='1'&&days.length){const value=new Date(form.dataset.today+'T12:00:00Z');value.setUTCDate(value.getUTCDate()+Math.max(...days));date.value=value.toISOString().slice(0,10);}
  }
+ form.addEventListener('stockchief:variant-quantities',event=>{if(event.detail.kind!=='purchase')return;
+  for(const {product,quantity} of event.detail.rows){let input=form.elements.namedItem('quantity['+product.id+']');if(!input&&Number(quantity)>0){const row=document.createElement('tr');row.dataset.purchaseLine='';row.dataset.packUnits=String(product.packUnits||1);row.dataset.leadDays=product.leadTimeDays??'';
+    const cell=text=>{const td=document.createElement('td');if(text!==undefined)td.textContent=text;row.append(td);return td;};cell(product.display_name+' · '+product.code);cell(product.purchaseUnit+' of '+product.packUnits);
+    const cost=document.createElement('input');cost.name='unitCost['+product.id+']';cost.inputMode='decimal';cost.value=product.supplierUnitCost==null?'':Number(product.supplierUnitCost).toFixed(exponent);cost.setAttribute('aria-label','Unit cost for '+product.display_name);cell().append(cost);
+    input=document.createElement('input');input.name='quantity['+product.id+']';input.type='number';input.min='0';input.step='any';input.setAttribute('aria-label','Packs of '+product.display_name);cell().append(input);
+    if(product.secondary_unit_label){const weight=document.createElement('input');weight.name='secondaryQuantity['+product.id+']';weight.inputMode='decimal';weight.placeholder='Actual '+product.secondary_unit_label;weight.setAttribute('aria-label','Actual weight for '+product.display_name);input.parentElement.append(weight);}
+    const total=cell();total.dataset.lineTotal='';form.querySelector('tbody').append(row);
+   }if(input)input.value=quantity;
+  }update();event.preventDefault();
+ });
  form.addEventListener('input',update);update();})();
