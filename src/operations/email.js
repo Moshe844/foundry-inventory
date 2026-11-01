@@ -15,6 +15,8 @@ function unseal(payload) {
 
 async function sendResend(message, options = {}) {
   message=require('./system-email-layout').render(message);
+  const attachments=message.attachments===undefined?undefined:message.attachments;
+  if(attachments!==undefined&&(!Array.isArray(attachments)||attachments.length>10||attachments.some(a=>!a||typeof a.filename!=='string'||a.filename.length>150||/[\r\n\/\\]/.test(a.filename)||typeof a.content!=='string'||a.content.length>14000000||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.content)||a.path)))throw new Error('Email attachments must contain a safe filename and saved base64 content.');
   const apiKey = options.apiKey || config.email.apiKey;
   const from = options.from || config.email.from;
   if (!apiKey || !from) {
@@ -34,6 +36,7 @@ async function sendResend(message, options = {}) {
       ...(message.replyTo?{reply_to:message.replyTo}:{}),
       html: message.html,
       text: message.text,
+      ...(attachments?{attachments:attachments.map(a=>({filename:a.filename,content:a.content,...(a.content_type?{content_type:a.content_type}:{})}))}:{}),
     }),
     signal: options.signal,
   });

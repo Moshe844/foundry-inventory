@@ -490,7 +490,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return renderConnections(req,res,apiToken);
   }));
   router.post('/settings/connections/api-clients/:id/revoke',requireOwner,asyncRoute(async(req,res)=>{
-    await publicApi.revoke(database,req.ctx.workspaceId,req.params.id);
+    await publicApi.revoke(database,req.ctx.workspaceId,req.params.id,req.ctx.actorId);
     req.flash('success','API client revoked immediately. Its token no longer works.');
     return res.redirect(303,'/settings/connections?section=developers#developer-api');
   }));

@@ -175,7 +175,7 @@ function createPostgresInventoryRouter(database) {
     return res.redirect(303,`/inventory/${req.params.id}`);
   }));
   router.post('/inventory/:id/variants/review',requireOwner,asyncRoute(async(req,res)=>{const review=await require('../../domain/postgres-variant-changes').prepare(database,req.ctx,req.params.id,req.body);return res.redirect(303,'/inventory/variant-reviews/'+review.id);}));
-  router.get('/inventory/variant-reviews/:reviewId',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/variant-review',{title:'Review variant changes',nav:'inventory',review:await require('../../domain/postgres-variant-changes').get(database,req.ctx,req.params.reviewId)})));
+  router.get('/inventory/variant-reviews/:reviewId',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/variant-review',{title:'Review variant changes',nav:'inventory',review:await require('../../domain/postgres-variant-changes').get(database,req.ctx,req.params.reviewId),reviewValues:require('../../domain/postgres-variant-changes').auditValues})));
   router.post('/inventory/variant-reviews/:reviewId/approve',requireOwner,asyncRoute(async(req,res)=>{await require('../../domain/postgres-variant-changes').approve(database,req.ctx,req.params.reviewId,req.body.integrityHash);req.flash('success','All reviewed variant changes are complete.');return res.redirect(303,'/inventory/variant-reviews/'+req.params.reviewId);}));
   router.post('/inventory/:id/receive',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);

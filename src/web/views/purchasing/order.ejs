@@ -318,21 +318,19 @@
   </div>
 <% } %>
 
-<% if (locals.postgresPlacement && order.lines.some(function (line) { return line.quantityReceivedUnits > 0; })) { %>
+<% if (locals.postgresPlacement && order.lines.some(function (line) { return line.quantityUnbilledUnits > 0; })) { %>
   <div class="card section">
     <div class="card-head"><div><h2>Record supplier invoice</h2><p class="muted">This records what is owed without receiving stock again.</p></div></div>
     <div class="card-body">
-      <% var invoiceLine = order.lines.find(function (line) { return line.quantityReceivedUnits > 0; }); %>
       <details class="advanced-settings">
         <summary class="btn btn--secondary">Record a supplier invoice</summary>
         <form method="post" action="/purchasing/orders/<%= order.id %>/invoices" class="grid" style="margin-top:16px;">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="lineId" value="<%= invoiceLine.id %>">
+          <input type="hidden" name="idempotencyKey" value="<%= returnFormKey %>:invoice">
           <label class="field"><span class="field-label">Supplier invoice number</span><input class="input" name="supplierInvoiceNumber" required></label>
           <label class="field"><span class="field-label">Invoice date</span><input class="input" type="date" name="issueDate" value="<%= locals.today %>" required></label>
           <label class="field"><span class="field-label">Due date</span><input class="input" type="date" name="dueDate"></label>
-          <label class="field"><span class="field-label">Quantity billed</span><input class="input" type="number" name="quantity" min="1" max="<%= invoiceLine.quantityReceivedUnits %>" value="<%= invoiceLine.quantityReceivedUnits %>" required></label>
-          <label class="field"><span class="field-label">Cost per unit</span><input class="input" type="number" name="unitCost" min="0" step="0.01" value="<%= Number(invoiceLine.unitCost || 0).toFixed(2) %>" required></label>
+          <div class="table-wrap"><table class="table" aria-label="Received lines to bill"><thead><tr><th>Product / variant</th><th>Received</th><th>Already billed</th><th>Quantity on this invoice</th><th>Cost per unit (<%= order.currency %>)</th></tr></thead><tbody><% for(const invoiceLine of order.lines.filter(l=>l.quantityUnbilledUnits>0)){ %><tr><td><%= invoiceLine.displayName %><small><%= invoiceLine.skuCode %></small></td><td><%= helpers.qty(invoiceLine.quantityReceivedUnits) %></td><td><%= helpers.qty(invoiceLine.quantityBilledUnits) %></td><td><input class="input" type="number" name="invoiceQuantity[<%= invoiceLine.id %>]" min="0" step="any" max="<%= invoiceLine.quantityUnbilledUnits %>" value="<%= invoiceLine.quantityUnbilledUnits %>" aria-label="Billed quantity for <%= invoiceLine.displayName %>" required></td><td><input class="input" name="invoiceUnitCost[<%= invoiceLine.id %>]" inputmode="decimal" value="<%= Number(invoiceLine.unitCost||0).toFixed(2) %>" aria-label="Billed unit cost for <%= invoiceLine.displayName %>" required></td></tr><% } %></tbody></table></div>
           <label class="field"><span class="field-label">Tax</span><input class="input" type="number" name="tax" min="0" step="0.01" value="0.00"></label>
           <div><button class="btn btn--primary" type="submit">Record invoice, not receipt</button></div>
         </form>

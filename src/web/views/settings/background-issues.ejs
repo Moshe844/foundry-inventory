@@ -1,0 +1,4 @@
+<header class="page-head"><div><h1>Work needing attention</h1><p>Review work that could not finish. Your saved records remain available.</p></div></header>
+<% if(!issues.length){ %><section class="card"><div class="card-body"><h2>No failed background work</h2><p>There are no failed background tasks waiting in this inventory.</p></div></section><% } %>
+<% for(const issue of issues){ %><section class="card section"><div class="card-body"><h2><%= issue.title %></h2><p><%= issue.count %> <%= issue.count===1?'attempt needs':'attempts need' %> review. Open the relevant records to see what happened and continue, or contact support for help.</p><a class="btn" href="<%= issue.href %>"><%= issue.action %></a></div></section><% } %>
+<p><a href="/support">Get help from support</a></p>

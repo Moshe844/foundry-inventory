@@ -53,7 +53,7 @@ function jsonValue(value,fallback){
 
 async function purchaseOrderPage(database,workspaceId,id){
   const detail=await commerce.purchaseOrder(database,workspaceId,id);
-  const [receiptLines,charges,documents,communications,supplierRows]=await Promise.all([
+  const [receiptLines,charges,documents,communications,supplierRows,billedLines]=await Promise.all([
     database.query(`SELECT rl.*,i.name AS item_name,s.variant_label,l.name AS location_name
       FROM purchase_order_receipt_lines rl
       JOIN skus s ON s.id=rl.sku_id AND s.workspace_id=rl.workspace_id
@@ -70,13 +70,16 @@ async function purchaseOrderPage(database,workspaceId,id){
         ON wc.id=sc.connector_id AND wc.workspace_id=sc.workspace_id
       WHERE sc.workspace_id=$1 AND sc.purchase_order_id=$2 ORDER BY sc.created_at DESC,sc.id DESC`,[workspaceId,id]),
     database.query(`SELECT * FROM suppliers WHERE workspace_id=$1 AND id=$2`,[workspaceId,detail.order.supplier_id]),
+    database.query(`SELECT bl.purchase_order_line_id,sum(bl.quantity) AS quantity FROM accounting_supplier_bill_lines bl JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id WHERE bl.workspace_id=$1 AND b.purchase_order_id=$2 AND b.status IN ('OPEN','PARTIALLY_PAID','PAID') GROUP BY bl.purchase_order_line_id`,[workspaceId,id]),
   ]);
+  const billedByLine=new Map(billedLines.rows.map(l=>[l.purchase_order_line_id,Number(l.quantity)]));
   const lines=detail.lines.map((line)=>({
     ...line,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),skuCode:line.code,
     supplierSku:line.supplier_sku,unitLabel:line.unit_label||'unit',trackingMode:line.tracking_mode,
     purchaseUnit:line.purchase_unit||'unit',unitsPerPurchaseUnit:Number(line.units_per_purchase_unit||1),
     quantityPurchaseUnits:Number(line.quantity_purchase_units||line.quantity_units),quantityUnits:Number(line.quantity_units),
     quantityReceivedUnits:Number(line.quantity_received_units),outstandingUnits:Math.max(0,Number(line.quantity_units)-Number(line.quantity_received_units)),
+    quantityBilledUnits:billedByLine.get(line.id)||0,quantityUnbilledUnits:Math.max(0,Number(line.quantity_received_units)-(billedByLine.get(line.id)||0)),
     unitCost:line.unit_cost===null?null:Number(line.unit_cost),lineTotal:line.line_total===null?null:Number(line.line_total),
     destinationLocationName:line.location_name,isComplete:Number(line.quantity_received_units)>=Number(line.quantity_units),
   }));
@@ -730,14 +733,16 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/purchasing/orders/:id/invoices',requirePermission(permissions.MANAGE_ACCOUNTING,'record supplier invoices'),asyncRoute(async(req,res)=>{
     const detail=await commerce.purchaseOrder(database,req.ctx.workspaceId,req.params.id);
-    const line=detail.lines.find((candidate)=>candidate.id===req.body.lineId);
-    if(!line)throw new ValidationError('Choose a line from this purchase order.');
+    const quantities=req.body.invoiceQuantity,costs=req.body.invoiceUnitCost;let invoiceLines;
+    if(quantities&&typeof quantities==='object'&&!Array.isArray(quantities)){
+      invoiceLines=Object.entries(quantities).map(([id,value])=>{const line=detail.lines.find(l=>l.id===id);if(!line)throw new ValidationError('Choose received lines from this purchase order.');const quantity=require('../../domain/exact-quantity').safeNumber(value||'0',{label:'Quantity billed'});if(quantity<0)throw new ValidationError('Quantity billed cannot be negative.');return quantity===0?null:{purchaseOrderLineId:line.id,skuId:line.sku_id,description:line.description,quantity,unitCostMinor:minor(costs?.[id],'Unit cost',detail.order.currency)};}).filter(Boolean);
+    }else{const line=detail.lines.find((candidate)=>candidate.id===req.body.lineId);if(!line)throw new ValidationError('Choose received lines from this purchase order.');invoiceLines=[{purchaseOrderLineId:line.id,skuId:line.sku_id,description:line.description,quantity:req.body.quantity,unitCostMinor:minor(req.body.unitCost,'Unit cost',detail.order.currency)}];}
+    if(!invoiceLines.length)throw new ValidationError('Enter a billed quantity for at least one received line.');
     const result=await workflows.recordSupplierInvoice(database,req.ctx,{supplierId:detail.order.supplier_id,
       purchaseOrderId:detail.order.id,purchaseReceiptId:trimOrNull(req.body.purchaseReceiptId),
       supplierInvoiceNumber:trimOrNull(req.body.supplierInvoiceNumber),issueDate:req.body.issueDate||dateToday(req),
       dueDate:trimOrNull(req.body.dueDate),currency:detail.order.currency,taxMinor:minor(req.body.tax||'0','Tax',detail.order.currency),
-      idempotencyKey:key(req,'supplier-invoice'),lines:[{purchaseOrderLineId:line.id,skuId:line.sku_id,
-        description:line.description,quantity:req.body.quantity,unitCostMinor:minor(req.body.unitCost,'Unit cost',detail.order.currency)}]});
+      idempotencyKey:key(req,'supplier-invoice'),lines:invoiceLines});
     req.flash(result.status==='DISPUTED'?'warn':'success',result.status==='DISPUTED'
       ?'Invoice recorded as disputed. No accounting journal was invented.':'Supplier invoice recorded without receiving stock again.');
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
@@ -792,6 +797,7 @@ function createPostgresCommerceRouter(database,options={}){
   router.post('/quotes/:id/decision',requirePermission(permissions.OPERATE,'decide quotations'),asyncRoute(async(req,res)=>{if(!['accept','decline'].includes(req.body.decision))throw new ValidationError('Choose accept or decline.');const result=await quotations.decide(database,req.ctx,req.params.id,{accept:req.body.decision==='accept',expectedHash:req.body.expectedHash,today:entryToday(req)});req.flash('success',result.salesOrderId?'Quotation accepted as a draft order. Review and reserve its stock when ready.':'Quotation declined.');return res.redirect(303,result.salesOrderId?'/orders/'+result.salesOrderId:'/quotes/'+req.params.id);}));
   router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
     let form={customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'};
+    if(req.query.review){const review=req.session.orderPriceReviews?.[req.query.review];if(!review||review.workspaceId!==req.ctx.workspaceId||review.actorId!==req.ctx.actorId||!review.form)throw new ValidationError('That order draft is no longer available in this sign-in session.');form=review.form;delete req.session.orderPriceReviews[req.query.review];}
     if(req.query.duplicate){const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.query.duplicate),q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
       form={...entry.formFromOrder(d.order,d.lines,q),orderDate:entryToday(req),neededBy:'',reference:'',orderNumber:''};}
     return renderEntry(req,res,{form});
@@ -863,7 +869,7 @@ function createPostgresCommerceRouter(database,options={}){
       const quote=await entryPricing.prepareQuote(database,req.ctx,input);
       if(quote.policyVersions.length||quote.codes.length||quote.discountMinor||quote.taxMinor){
         const nextStep=req.body.nextStep||'draft';if(!['draft','confirm','fulfill'].includes(nextStep))throw new ValidationError('Choose a valid order action.');
-        const reviewId=newId('orderreview');req.session.orderPriceReviews={...(req.session.orderPriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,nextStep,quoteHash:entryPricing.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};
+        const reviewId=newId('orderreview');req.session.orderPriceReviews={...(req.session.orderPriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,form:entry.reviewForm(req.body),nextStep,quoteHash:entryPricing.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};
         for(const id of Object.keys(req.session.orderPriceReviews).slice(0,-5))delete req.session.orderPriceReviews[id];
         return res.page('sales/pricing-review',{title:'Review order pricing',nav:'sales',reviewId,nextStep,quote,products:await commerce.catalogue(database,req.ctx.workspaceId,{ids:input.lines.map(l=>l.skuId),limit:500}),customer:(await commerce.customers(database,req.ctx.workspaceId)).find(c=>c.id===input.customerId)});
       }

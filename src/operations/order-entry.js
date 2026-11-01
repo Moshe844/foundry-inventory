@@ -24,4 +24,5 @@ function formFromOrder(order,lines,quote){return {customerId:order.customer_id,c
  skuId:lines.map(l=>l.sku_id),quantity:lines.map(l=>l.quantity_ordered),secondaryQuantity:lines.map(l=>l.secondary_quantity_ordered??''),unitPrice:lines.map(l=>money.fromMinor(l.unit_price_minor||0,order.currency)),
  priceOverride:lines.map(l=>l.pricing_snapshot?.priceOverride?'1':'0'),discount:money.fromMinor(quote?.manualDiscountMinor??0,order.currency),
  taxRateId:quote?.taxRate?.id||'',tax:quote?.taxRate?'':money.fromMinor(order.tax_minor||0,order.currency),couponCodes:(quote?.codes||[]).join(', '),priceListId:quote?.priceListId||''};}
-module.exports={input,formFromOrder};
+function reviewForm(body){const keys=['customerId','customerEmail','customerPhone','customerShippingAddress','deliveryMethod','fulfillmentLocationId','orderDate','neededBy','orderNumber','notes','reference','allocationPriority','discount','tax','taxRateId','couponCodes','priceListId','skuId','quantity','secondaryQuantity','unitPrice','priceOverride','emailManual','phoneManual','addressManual'];return Object.fromEntries(keys.filter(k=>Object.hasOwn(body,k)).map(k=>[k,body[k]]));}
+module.exports={input,formFromOrder,reviewForm};

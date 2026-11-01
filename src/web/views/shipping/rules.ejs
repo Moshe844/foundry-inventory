@@ -605,7 +605,7 @@
           <% if (rule.requireByPromised) { %> · must arrive by the promised date<% } %>
           <% if (rule.maxDeliveryDays) { %> · within <%= rule.maxDeliveryDays %> days<% } %>
         </p>
-        <% if (rule.statedText) { %><p class="t-xs t-muted">You said: “<%= rule.statedText %>”</p><% } %>
+        <% if (rule.statedText) { %><p class="t-xs t-muted">Original instruction: “<%= rule.statedText %>”</p><% } %>
         <form method="post" action="/settings/shipping/<%= rule.id %>/remove" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn--sm btn--ghost" type="submit">Stop using this</button>

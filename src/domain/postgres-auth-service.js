@@ -222,11 +222,13 @@ async function rememberWorkspace(database, accountId, workspaceId) {
 
 async function renameWorkspace(database, ctx, nameInput) {
   const name = requireText(nameInput, 'Inventory name', { max:120 });
-  const result = await database.query(`UPDATE workspaces w SET name=$3 WHERE w.id=$1
+  return database.transaction(async client=>{const before=(await client.query('SELECT name FROM workspaces WHERE id=$1 FOR UPDATE',[ctx.workspaceId])).rows[0];
+  const result = await client.query(`UPDATE workspaces w SET name=$3 WHERE w.id=$1
     AND EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.workspace_id=w.id AND u.role='owner') RETURNING *`,
   [ctx.workspaceId,ctx.actorId,name]);
   if(!result.rows.length)throw new NotFoundError('That inventory could not be renamed.');
-  return result.rows[0];
+  if(before.name!==name)await require('../operations/postgres-security-audit').record(client,ctx,{action:'Inventory renamed',reference:name,before:{Name:before.name},after:{Name:name}});
+  return result.rows[0];});
 }
 
 module.exports = { authenticate,createBusiness,createPendingAccount,provisionFirstWorkspace,createWorkspace,getAccount,getMembership,getWorkspace,resolveForAccount,

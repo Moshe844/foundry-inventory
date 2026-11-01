@@ -20,7 +20,7 @@ async function register(page,base,business,email){
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 
-test('real Chromium operates tenant-scoped PostgreSQL release readiness and dead-letter recovery',
+test('customer issue summary hides release engineering details and recovery remains tenant-scoped',
   {timeout:180000},async(context)=>{
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-operations-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'operations-secret'});
@@ -46,26 +46,22 @@ test('real Chromium operates tenant-scoped PostgreSQL release readiness and dead
     await monitoring.raise(database,{workspaceId:secondWorkspace,severity:'ERROR',kind:'fixture.alert',
       title:'Second inventory alert',detail:'Must not cross inventories.',fingerprint:'fixture:second'});
     await page.goto(`${base}/settings/operations`);const text=await page.locator('main').innerText();
-    assert.match(text,/Production gate is blocked/);assert.match(text,/fixture\.failure/);assert.match(text,/First inventory alert/);
-    assert.match(text,/2 failed attempts from 1 distinct cause/);
-    assert.doesNotMatch(text,/Second inventory alert/);assert.match(text,/Inventory identity and journals reconcile/);
+    assert.match(text,/Work needing attention/);assert.match(text,/2 attempts need review/);
+    assert.doesNotMatch(text,/Production gate|fixture\.failure|First inventory alert|Second inventory alert|PostgreSQL|Release evidence|certification|adversarial/i);
     await page.goto(`${base}/needs-you`);
     assert.equal(await projections.needsCount(database,firstWorkspace),
       (await projections.needs(database,firstWorkspace)).length);
-    assert.match(await page.locator('main').innerText(),/2 failed background attempts need operator review/);
+    assert.match(await page.locator('main').innerText(),/Some background work could not finish/);
     assert.doesNotMatch(await page.locator('main').innerText(),/Automatic work stopped|Decision 1 of 2/);
     assert.equal(await page.locator('main a.page-back').count(),0,'Needs You must not link back to another Needs You cursor');
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').count(),0,
       'failed internal jobs must not inflate the human-decision badge');
-    await page.getByRole('link',{name:'Review the grouped failures and retry controls'}).click();
-    await page.locator('#dead-letters details').first().evaluate((element)=>{element.open=true;});
-    await Promise.all([page.waitForNavigation(),page.locator(`form[action="/settings/operations/jobs/${queued.job.id}/retry"] button`).click()]);
+    await page.getByRole('link',{name:'Review work needing attention'}).click();
+    const token=await page.locator('input[name=_csrf]').first().inputValue();
+    const retry=await page.request.post(base+'/settings/operations/jobs/'+queued.job.id+'/retry',{form:{_csrf:token},maxRedirects:0});assert.equal(retry.status(),303);
     assert.equal((await jobs.get(database,queued.job.id,firstWorkspace)).status,'RETRY');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Mark resolved'}).click()]);
-    assert.equal((await database.query('SELECT status FROM operational_alerts WHERE workspace_id=$1',[firstWorkspace])).rows[0].status,'RESOLVED');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record this certification result'}).click()]);
-    const run=(await database.query('SELECT * FROM production_certification_runs WHERE workspace_id=$1',[firstWorkspace])).rows[0];
-    assert.equal(run.status,'FAILED');
+    const forbidden=await page.request.post(base+'/settings/operations/certify',{form:{_csrf:token},maxRedirects:0});assert.equal(forbidden.status(),404);
+    assert.equal((await database.query('SELECT COUNT(*) AS count FROM production_certification_runs WHERE workspace_id=$1',[firstWorkspace])).rows[0].count,'0');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM production_certification_runs WHERE workspace_id=$1',[secondWorkspace])).rows[0].count,'0');
     const effectId=newId('peff');
     await database.query(`INSERT INTO stockchief_runtime.provider_effects

@@ -82,7 +82,7 @@ async function businessActivity(database,workspaceId){
   return events;
 }
 
-async function activityPage(database,workspaceId,query){const page=positivePage(query.page);const pageSize=50;
+async function activityPage(database,workspaceId,query,includeSecurity=false){const page=positivePage(query.page);const pageSize=50;
   const filters={operation:trimOrNull(query.operation)||'',itemId:trimOrNull(query.item)||'',
     locationId:trimOrNull(query.location)||'',actorId:trimOrNull(query.user)||'',
     dateFrom:trimOrNull(query.from)||'',dateTo:trimOrNull(query.to)||''};const search=trimOrNull(query.q)||'';
@@ -107,10 +107,11 @@ async function activityPage(database,workspaceId,query){const page=positivePage(
     occurredAt:row.occurred_at,reasonLabel:null,reference:row.reference,notes:row.notes}));
   const inventoryEvents=visible.map((row)=>({stream:'inventory',at:row.occurred_at,title:movementSentence(row),
     detail:[row.reference&&`Reference ${row.reference}`,row.notes].filter(Boolean).join(' · '),who:row.actor_name||'StockChief',href:`/inventory/${row.item_id}`}));
-  const streams=['inventory','sales','purchasing','foundry','exception'];
+  const streams=['inventory','sales','purchasing','foundry','exception',...(includeSecurity?['security']:[])];
   const stream=streams.includes(query.stream)?query.stream:'all';
   const stockOnly=Boolean(filters.operation||filters.itemId||filters.locationId||filters.actorId);
   const otherEvents=stockOnly?[]:await businessActivity(database,workspaceId);
+  if(includeSecurity&&!filters.operation&&!filters.itemId&&!filters.locationId){const security=(await database.query(`SELECT e.*,u.name AS actor_name FROM security_event_history e LEFT JOIN users u ON u.workspace_id=e.workspace_id AND u.id=e.actor_id WHERE e.workspace_id=$1 AND ($2::text='' OR e.actor_id=$2) AND ($3::text='' OR e.action ILIKE '%'||$3||'%' OR coalesce(e.reference,'') ILIKE '%'||$3||'%') AND ($4::timestamptz IS NULL OR e.created_at>=$4) AND ($5::timestamptz IS NULL OR e.created_at<$5) ORDER BY e.created_at DESC,e.id DESC LIMIT 100`,[workspaceId,filters.actorId,search,filters.dateFrom?clock.dayBoundary(filters.dateFrom,timeZone):null,filters.dateTo?clock.dayBoundary(filters.dateTo,timeZone,{nextDay:true}):null])).rows;for(const row of security)otherEvents.push({stream:'security',at:new Date(row.created_at).toISOString(),title:row.action,detail:row.reference||'',who:row.actor_name||'Account member',href:'/audit?q='+encodeURIComponent(row.reference||row.action)});}
   const needle=search.toLowerCase();
   const events=[...inventoryEvents,...otherEvents].filter((event)=>(stream==='all'||event.stream===stream)
     &&(!needle||`${event.title} ${event.detail} ${event.who}`.toLowerCase().includes(needle))
@@ -123,7 +124,7 @@ async function activityPage(database,workspaceId,query){const page=positivePage(
     database.query(`SELECT id,name FROM items WHERE workspace_id=$1 ORDER BY is_active DESC,name,id LIMIT 200`,[workspaceId])]);
   const total=Number(count.count);return {page,pageSize,hasMore,total,filters,groups,locations:locations.rows,users:users.rows,
     items:items.rows,stream,query:search,streams,
-    streamLabels:{all:'All activity',inventory:'Inventory',sales:'Sales orders',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',system:'System'},
+    streamLabels:{all:'All activity',inventory:'Inventory',sales:'Sales orders',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',security:'Access and settings',system:'System'},
     log:{events,counts:{},quietChecks:0}};}
 
 function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0,days31to60:0,days61to90:0,over90:0};let totalMinor=0;
@@ -172,7 +173,7 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     return res.page('activity/list',{title:'Activity',nav:'history',backToFallback:{href:'/everything',label:'Everything else'},
-      recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query))});
+      recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner'))});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
     const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];

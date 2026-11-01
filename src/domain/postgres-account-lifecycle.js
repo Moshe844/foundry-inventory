@@ -62,8 +62,8 @@ async function createInvitation(database,ctx,input,options={}){
     const known=(await client.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id JOIN accounts a ON a.id=u.account_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(a.email)=$2 UNION SELECT 1 FROM workspace_invitations i JOIN workspaces w ON w.id=i.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(i.email)=$2 AND i.status='PENDING' AND i.expires_at>now() LIMIT 1`,[scope.accountId,email])).rows.length>0;
     if((await client.query(`SELECT 1 FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND lower(a.email)=$2`,[ctx.workspaceId,email])).rows.length)throw new ValidationError('This person is already on your team.');
     await entitlements.assertMeterCapacity(client,scope,'members',known?0:1);
-    await client.query(`UPDATE workspace_invitations SET status='REVOKED'
-    WHERE workspace_id=$1 AND email=$2 AND status='PENDING'`,[ctx.workspaceId,email]);
+    const prior=(await client.query(`UPDATE workspace_invitations SET status='REVOKED'
+    WHERE workspace_id=$1 AND email=$2 AND status='PENDING' RETURNING email,name,role`,[ctx.workspaceId,email])).rows;
     await client.query(`INSERT INTO workspace_invitations
       (id,workspace_id,invited_by_user_id,email,name,role,token_hash,expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '7 days')`,[id,ctx.workspaceId,ctx.actorId,email,name,role,hash(token)]);
@@ -72,8 +72,15 @@ async function createInvitation(database,ctx,input,options={}){
     await queueEmail(client,{to:email,subject:`Join ${workspace.name} in StockChief`,messageType:'workspace_invitation',
       idempotencyKey:`workspace-invitation:${id}`,text:`You were invited to ${workspace.name} in StockChief:\n\n${link}`,
       html:`<p>You were invited to <strong>${require('../operations/system-email-layout').escape(workspace.name)}</strong> in StockChief.</p><p><a href="${link}">Accept invitation</a></p>`});
+    await require('../operations/postgres-security-audit').record(client,ctx,{action:prior.length?'Team invitation replaced':'Team invitation created',reference:email,before:prior.length?{Name:prior[0].name,Email:prior[0].email,Role:prior[0].role,Status:'Pending'}:{},after:{Name:name,Email:email,Role:role,Status:'Pending'}});
     return {id,email,role,token:options.includeToken?token:undefined};},{isolation:'SERIALIZABLE'});
 }
+
+async function cancelInvitation(database,ctx,id){return database.transaction(async client=>{
+ const row=(await client.query("UPDATE workspace_invitations SET status='REVOKED' WHERE workspace_id=$1 AND id=$2 AND status='PENDING' RETURNING email,name,role",[ctx.workspaceId,id])).rows[0];
+ if(!row)throw new ValidationError('This invitation is no longer pending.');
+ await require('../operations/postgres-security-audit').record(client,ctx,{action:'Team invitation cancelled',reference:row.email,before:{Name:row.name,Email:row.email,Role:row.role,Status:'Pending'},after:{Status:'Cancelled'}});
+});}
 
 async function inspectInvitation(database,token){const row=(await database.query(`SELECT invitation.*,workspace.name AS workspace_name,
     inviter.name AS inviter_name FROM workspace_invitations invitation JOIN workspaces workspace ON workspace.id=invitation.workspace_id
@@ -104,6 +111,8 @@ async function acceptInvitation(database,token,input={}){return database.transac
     input.name||invitation.name||account.name,invitation.role]);
   await client.query(`UPDATE workspace_invitations SET status='ACCEPTED',accepted_by_account_id=$2,accepted_at=now()
     WHERE id=$1`,[invitation.id,account.id]);
+  const actor=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2',[invitation.workspace_id,account.id])).rows[0];
+  await require('../operations/postgres-security-audit').record(client,{workspaceId:invitation.workspace_id,accountId:account.id,actorId:actor.id},{action:'Team invitation accepted',reference:invitation.email,before:{Status:'Pending'},after:{Status:'Accepted',Role:invitation.role}});
   return {accountId:account.id,workspaceId:invitation.workspace_id};},{isolation:'SERIALIZABLE'});}
 
-module.exports={hash,requestVerification,inspectVerification,consumeVerification,createInvitation,inspectInvitation,acceptInvitation};
+module.exports={hash,requestVerification,inspectVerification,consumeVerification,createInvitation,cancelInvitation,inspectInvitation,acceptInvitation};

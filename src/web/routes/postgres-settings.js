@@ -177,8 +177,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     return res.redirect(303,req.body.fromAsk==='1'?'/ask#latest':'/what-you-told-me');}));
   router.post('/settings/workspace',requireOwner,asyncRoute(async(req,res)=>{const name=String(req.body.name||'').trim();
     if(!name||name.length>120)throw new ValidationError('Inventory name must be between 1 and 120 characters.');
-    await database.query('UPDATE workspaces SET name=$3 WHERE id=$1 AND owner_account_id=$2',
-      [req.ctx.workspaceId,req.account.id,name]);req.flash('success','Inventory name updated.');
+    await require('../../domain/postgres-auth-service').renameWorkspace(database,req.ctx,name);req.flash('success','Inventory name updated.');
     return res.redirect(303,'/settings');
   }));
   router.post('/settings/team-roles',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').saveRole(database,req.ctx,req.body);req.flash('success','Role saved. Assigned team members now use these permissions.');return res.redirect(303,'/settings?section=team#team-authority');}));
@@ -191,7 +190,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     req.flash('success',`Invitation email queued for ${email}. They choose their own password.`);return res.redirect(303,'/settings?section=team');
   }));
   router.post('/settings/people/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{
-    await database.query("UPDATE workspace_invitations SET status='REVOKED' WHERE workspace_id=$1 AND id=$2 AND status='PENDING'",[req.ctx.workspaceId,req.params.id]);req.flash('success','Invitation cancelled.');return res.redirect(303,'/settings?section=team');
+    await accountLifecycle.cancelInvitation(database,req.ctx,req.params.id);req.flash('success','Invitation cancelled.');return res.redirect(303,'/settings?section=team');
   }));
   router.post('/settings/people/:id/resend',requireOwner,asyncRoute(async(req,res)=>{
     const invite=(await database.query("SELECT name,email,role FROM workspace_invitations WHERE workspace_id=$1 AND id=$2 AND status='PENDING' AND expires_at>now()",[req.ctx.workspaceId,req.params.id])).rows[0];
@@ -203,10 +202,12 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     const minimum=['critical','important','all'].includes(req.body.minimumSeverity)?req.body.minimumSeverity:'important';
     const recipients=[...new Set(String(req.body.recipients||'').split(/[\s,;]+/).map((value)=>value.trim().toLowerCase()).filter(Boolean))];
     if(recipients.some((email)=>!/^\S+@\S+\.\S+$/.test(email)))throw new ValidationError('Enter valid alert email addresses.');
-    const at=nowIso();await database.query(`INSERT INTO notification_email_settings
+    const at=nowIso();await database.transaction(async client=>{const before=(await client.query('SELECT enabled,minimum_severity,recipients FROM notification_email_settings WHERE workspace_id=$1 FOR UPDATE',[req.ctx.workspaceId])).rows[0];await client.query(`INSERT INTO notification_email_settings
       (workspace_id,enabled,minimum_severity,recipients,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
       ON CONFLICT(workspace_id) DO UPDATE SET enabled=EXCLUDED.enabled,minimum_severity=EXCLUDED.minimum_severity,
       recipients=EXCLUDED.recipients,updated_at=EXCLUDED.updated_at`,[req.ctx.workspaceId,enabled?1:0,minimum,JSON.stringify(recipients),at]);
+      await require('../../operations/postgres-security-audit').record(client,req.ctx,{action:'Notification settings changed',before:before?{Enabled:Boolean(Number(before.enabled)),Severity:before.minimum_severity,Recipients:JSON.parse(before.recipients).join(', ')}:{},after:{Enabled:enabled,Severity:minimum,Recipients:recipients.join(', ')}});
+    });
     req.flash(enabled&&!config.email.configured?'warn':'success',enabled&&!config.email.configured
       ?'Alert preferences are saved. Server email delivery still needs a verified sender.'
       :enabled?'Automatic email alerts are on.':'Automatic email alerts are off.');return res.redirect(303,'/settings?section=notifications#email-alerts');

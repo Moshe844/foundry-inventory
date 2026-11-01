@@ -37,7 +37,7 @@ async function migratePostgres(database) {
       applied.push(name);
     }
     return applied;
-  }, { isolation: 'READ COMMITTED', statementTimeoutMs: 120000 });
+  }, { isolation: 'READ COMMITTED', statementTimeoutMs: 120000, lockTimeoutMs:120000 });
 }
 
 module.exports = { migratePostgres };

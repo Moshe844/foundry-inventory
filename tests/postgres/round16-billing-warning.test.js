@@ -1,0 +1,12 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
+const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
+test('a stale scheduled downgrade shows its date and current excess instead of a contradictory renewal',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,locations=require('../../src/domain/postgres-location-service');
+ await locations.createLocation(db,ctx,{name:'Second',kind:'warehouse'});await locations.createLocation(db,ctx,{name:'Third',kind:'warehouse'});
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,current_period_end) SELECT 'scheduled-sub',$1,'pro',id,'ACTIVE','MONTHLY',now()+interval '28 days' FROM commercial_plan_versions WHERE plan_id='pro' AND status='ACTIVE'",[f.owner.accountId]);
+ await db.query("INSERT INTO commercial_subscription_changes(id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at) VALUES('stale-downgrade',$1,'scheduled-sub','pro','starter','PENDING',now()+interval '28 days')",[f.owner.accountId]);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'stale-plan-warning',commercialOptions:{loadInvoices:false}});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(login.text),email:f.email,password:f.password});
+ const page=await agent.get('/settings/billing');assert.equal(page.status,200);assert.match(page.text,/data-scheduled-plan-change/);assert.match(page.text,/Your plan changes to Starter on/);assert.match(page.text,/currently exceeds this plan/);assert.match(page.text,/3 used; 2 allowed/);assert.match(page.text,/Existing records will be preserved/);assert.doesNotMatch(page.text,/>Renews\s/);assert.equal((page.text.match(/Your plan changes to Starter on/g)||[]).length,1);
+ assert.equal((await db.query("SELECT status FROM commercial_subscription_changes WHERE id='stale-downgrade'")).rows[0].status,'PENDING','Viewing the warning does not silently change the billing contract');
+});

@@ -115,6 +115,7 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     assert.equal(await controlBalance(database, ctx.workspaceId, 'INVENTORY_ADJUSTMENTS'), 800);
 
     assert.match(await page.locator('main').innerText(), /Verified refund:\s*\$30\.00/);
+    await database.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status) SELECT 'manual-refund-starter',owner_account_id,'starter',(SELECT id FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE'),'ACTIVE' FROM workspaces WHERE id=$1",[ctx.workspaceId]);
     await page.getByLabel('Refund destination').selectOption('CASH');
     await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Approve exact refund' }).click()]);
     assert.match(await page.locator('main').innerText(), /is complete/i);
@@ -128,6 +129,7 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     assert.ok(finalState.inventory_journal_entry_id); assert.ok(finalState.journal_entry_id);
     assert.equal(await controlBalance(database, ctx.workspaceId, 'SALES_RETURNS'), 3000);
     assert.equal(await controlBalance(database, ctx.workspaceId, 'CASH'), 3000);
+    assert.equal(Number((await database.query('SELECT count(*) n FROM payment_refund_requests WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'A manual refund on Starter must not create an online provider refund');
     assert.equal(await controlBalance(database, ctx.workspaceId, 'COST_OF_GOODS_SOLD'), 1600);
     assert.equal(await controlBalance(database, ctx.workspaceId, 'INVENTORY_ASSET'), 5600);
 

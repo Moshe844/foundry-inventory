@@ -29,10 +29,12 @@ async function create(database,ctx,input={}){
   const selected=scopes(input.scopes);const visible=crypto.randomBytes(6).toString('hex');
   const token=`${PREFIX}${visible}.${crypto.randomBytes(32).toString('base64url')}`;
   const row={id:newId('apiclient'),prefix:`${PREFIX}${visible}`,name,scopes:selected};
-  await database.query(`INSERT INTO public_api_clients
+  await database.transaction(async client=>{await client.query(`INSERT INTO public_api_clients
     (id,workspace_id,name,scopes,token_prefix,token_hash,created_by_user_id,created_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[row.id,ctx.workspaceId,name,JSON.stringify(selected),row.prefix,
     hash(token),ctx.actorId,nowIso()]);
+    await require('../operations/postgres-security-audit').record(client,ctx,{action:'API token created',reference:name,after:{Name:name,Scopes:selected.join(', '),Revoked:false}});
+  });
   return {...row,token};
 }
 
@@ -42,10 +44,12 @@ async function list(database,workspaceId){
   return rows.map((row)=>({...row,scopes:parse(row.scopes)}));
 }
 
-async function revoke(database,workspaceId,id){
-  const result=await database.query(`UPDATE public_api_clients SET revoked_at=$3
-    WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL RETURNING id`,[workspaceId,id,nowIso()]);
+async function revoke(database,workspaceId,id,actorId=null){
+  return database.transaction(async client=>{const result=await client.query(`UPDATE public_api_clients SET revoked_at=$3
+    WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL RETURNING id,name,scopes`,[workspaceId,id,nowIso()]);
   if(!result.rows.length)throw new ValidationError('That API client is already revoked or does not exist.');
+  await require('../operations/postgres-security-audit').record(client,{workspaceId,actorId},{action:'API token revoked',reference:result.rows[0].name,before:{Revoked:false},after:{Revoked:true}});
+  });
 }
 
 async function authenticate(database,authorization,requiredScope){
