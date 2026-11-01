@@ -81,15 +81,18 @@ function problem(code, message) {
 
 async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null}={}) {
   const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
-  const scopedSkus="SELECT id FROM skus WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(code))=ANY($2::text[]))";
+  // Scoped pages need an index lookup even under force_generic_plan; a nullable
+  // OR forces every catalogue row through a large ANY array for every page.
+  const skuFilter=alias=>keys===null?'$2::text[] IS NULL':`lower(btrim(${alias}code))=ANY($2::text[])`;
+  const scopedSkus=`SELECT id FROM skus WHERE workspace_id=$1 AND ${skuFilter('')}`;
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT s.id,s.code,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
+      WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
-    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
-    database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
+    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ${skuFilter('s.')}`,[workspaceId,keys]),
+    database.query(`SELECT b.sku_id,b.location_id,b.on_hand,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
       FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]),
     database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]),
     database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
@@ -112,7 +115,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
     WHERE r.workspace_id=$1 AND p.source_hash=$2 AND r.status='IMPORTED' AND ($3::bigint[] IS NULL OR r.row_number=ANY($3::bigint[]))`,[workspaceId,sourceHash,rowNumbers])).rows:[];
   return { locations:locations.rows,locationByName,skuByCode,currentPrices:new Map(currentPrices.rows.map(r=>[JSON.stringify([r.sku_id,r.currency]),r.id])),
     importedSourceRows:new Set(importedSourceRows.map(r=>stable([Number(r.row_number),json(r.raw,[])]))),
-    positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value)}])),
+    positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value),hasHistory:r.has_history}])),
     suppliers:suppliers.rows,
     reorderPolicies:new Map(reorders.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),r])),
     serials:new Set(serials.rows.map(r=>JSON.stringify([r.code.toLowerCase(),r.serial]))),
@@ -277,7 +280,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
     for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
     blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
-    if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0};}
+    if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
     if(quantity!==null&&!aggregate&&trackingMode==='quantity'){
       const key=JSON.stringify([code?.toLowerCase()||JSON.stringify([name?.toLowerCase(),variants]),location?.id||locationText||location?.name||null]);
       if(state.positions.has(key))problems.push(problem('duplicate_position','The source repeats this product and location. Combine the quantities or clarify the duplicate before importing.'));state.positions.add(key);
@@ -1036,9 +1039,12 @@ async function retryExecution(database,ctx,id,expectedHash,executionId){
     const plan=hydratePlan(row);if(plan.integrityHash!==expectedHash||plan.isExpired&&!(row.apply_checkpoint?.cataloguePrepared||row.apply_checkpoint?.catalogueStarted))throw new ValidationError('Review the current import preview before retrying.');
     await requireRolledBackExecution(client,ctx,plan,executionId);
     const scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};
-    return require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,
+    const jobs=require('../operations/postgres-job-queue');
+    const queued=await jobs.enqueue(scoped,{workspaceId:ctx.workspaceId,
       kind:'import.execute-approved',idempotencyKey:`retry-import:${id}:${expectedHash}:${executionId}`,
       payload:{planId:id,actorId:ctx.actorId,integrityHash:expectedHash,retryExecutionId:executionId},priority:30,maxAttempts:3});
+    if(!queued.created&&queued.job.status==='DEAD'){const resumed=await jobs.retryDead(scoped,queued.job.id,ctx.workspaceId,{by:ctx.actorId});if(resumed)return {created:true,job:resumed,resumed:true};}
+    return queued;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 

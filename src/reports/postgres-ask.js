@@ -132,6 +132,14 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
 }
 
 async function prepare(database,ctx,message,{provider,priorReport=null}){
+  const standard=require('./builder-entry').standardDefinition(message,'USD');
+  if(standard){
+    const actor=await actorFor(database,ctx);
+    if(!actor)return {status:'CLARIFY',answer:'This inventory membership is unavailable.',rows:[],columns:[]};
+    const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
+    const spec=reports.normalize(require('./builder-entry').standardDefinition(message,currency),actor),result=await reports.run(database,ctx,actor,spec,{limit:51});
+    return {status:'ANSWERED',answer:result.rows.length?'Sales, cost and profit from posted sales records.':'No posted sales matched this report yet.',rows:result.displayRows.slice(0,50),columns:result.columns,columnLabels:result.columnLabels,reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:null,handoff:{href:'/reports/compose',label:'Customize this report'}};
+  }
   if(!provider?.complete)return {status:'CLARIFY',answer:'I cannot interpret a new report request while AI is unavailable. You can still build one under Reports.',
     rows:[],columns:[],handoff:{href:'/reports',label:'Open reports'}};
   const actor=await actorFor(database,ctx);

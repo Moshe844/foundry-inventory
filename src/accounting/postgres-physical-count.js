@@ -10,8 +10,12 @@ async function applyInTransaction(client,ctx,input){
  const before={physical:Number(state.physical),costed:Number(state.costed),value:Number(state.value)};
  const prior=(await client.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.adjust' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,input.idempotencyKey])).rows[0];
  if(prior){const cost=(await client.query('SELECT cost_delta_minor,journal_entry_id FROM accounting_inventory_cost_movements WHERE workspace_id=$1 AND inventory_movement_id=$2',[ctx.workspaceId,prior.result.movementId||null])).rows[0];return {...prior.result,costDeltaMinor:Number(cost?.cost_delta_minor||0),journalEntryId:cost?.journal_entry_id||null,replayed:true};}
- if(input.expectedBefore&&['physical','costed','value'].some(k=>Number(input.expectedBefore[k])!==before[k]))throw new ValidationError('This stock or its recorded cost changed after the preview. Recalculate before setting its count.');
- const counted=Number(input.countedQuantity),delta=counted-before.physical;
+ const preserveChanges=input.preservePostPreviewMovements===true&&input.expectedBefore;
+ if(!preserveChanges&&input.expectedBefore&&['physical','costed','value'].some(k=>Number(input.expectedBefore[k])!==before[k]))throw new ValidationError('This stock or its recorded cost changed after the preview. Recalculate before setting its count.');
+ // Apply the reviewed difference, preserving later receipts, sales and transfers.
+ const delta=Number(input.countedQuantity)-Number(preserveChanges?input.expectedBefore.physical:before.physical),counted=before.physical+delta;
+ if(counted<0)throw new ValidationError('Stock was used after this count was reviewed. The remaining count would make stock negative; review this product before continuing.');
+ const opening=input.sourceType==='import_stock_count'&&delta>0&&before.physical===0&&before.costed===0&&!(await client.query('SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 LIMIT 1',[ctx.workspaceId,input.skuId,input.locationId])).rows.length;
  if(delta<0&&before.costed>0&&before.costed!==before.physical)throw new ValidationError('This position mixes costed and uncosted stock. Establish its cost evidence before reducing it with a file count.');
  const physical=await inventory.adjustInTransaction(client,ctx,{...input,countedQuantity:counted});
  if(physical.unchanged)return {...physical,costDeltaMinor:0,journalEntryId:null};
@@ -24,10 +28,11 @@ async function applyInTransaction(client,ctx,input){
  if(costDeltaMinor&&(!settings||input.currency&&input.currency!==settings.base_currency))throw new ValidationError('Configure the matching accounting currency before changing valued inventory.');
  const postingDate=input.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId);let journal=null;
  if(costDeltaMinor)journal=await ledger.postInTransaction(client,ctx,{sourceKey:input.idempotencyKey,sourceType,sourceRecordType:input.sourceRecordType||'adjustment',sourceRecordId:sourceId,postingDate,currency:settings.base_currency,description:input.description||'Confirmed physical inventory count',
-   lines:costDeltaMinor>0?[{accountKey:'INVENTORY_ASSET',debitMinor:costDeltaMinor},{accountKey:'INVENTORY_ADJUSTMENTS',creditMinor:costDeltaMinor}]:[{accountKey:'INVENTORY_ADJUSTMENTS',debitMinor:-costDeltaMinor},{accountKey:'INVENTORY_ASSET',creditMinor:-costDeltaMinor}]});
+   lines:costDeltaMinor>0?[{accountKey:'INVENTORY_ASSET',debitMinor:costDeltaMinor},{accountKey:opening?'OPENING_BALANCE_EQUITY':'INVENTORY_ADJUSTMENTS',creditMinor:costDeltaMinor}]:[{accountKey:'INVENTORY_ADJUSTMENTS',debitMinor:-costDeltaMinor},{accountKey:'INVENTORY_ASSET',creditMinor:-costDeltaMinor}]});
  const costInput={journalEntryId:journal?.entry.id||null,sourceType,sourceRecordId:sourceId};
  if(prepared)await costing.commitIssueInTransaction(client,ctx,prepared,costInput);
  if(delta>0&&input.unitCostMinor!==undefined&&input.unitCostMinor!==null)await costing.receiveInTransaction(client,ctx,{...costInput,movementId:physical.movementId,unitCostMinor:input.unitCostMinor,totalCostMinor:costDeltaMinor});
  return {...physical,costDeltaMinor,journalEntryId:journal?.entry.id||null};
 }
-module.exports={applyInTransaction};
+async function apply(database,ctx,input){return database.transaction(client=>applyInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:Boolean(input.idempotencyKey)});}
+module.exports={applyInTransaction,apply};

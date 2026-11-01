@@ -202,7 +202,7 @@ function createPostgresInventoryRouter(database) {
     return res.redirect(303,`/transfers/${transfer.id}`);
   }));
   router.post('/inventory/:id/adjust',asyncRoute(async(req,res)=>{
-    const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,secondaryQuantity:req.body.secondaryCountedQuantity,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await inventory.adjust(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
+    const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,secondaryQuantity:req.body.secondaryCountedQuantity,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await require('../../accounting/postgres-physical-count').apply(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
       countedQuantity:req.body.countedQty,secondaryCountedQuantity:req.body.secondaryCountedQuantity,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'adjust')});
     req.flash('success',result.unchanged?'The count already matched.':`Count corrected to ${result.balanceAfter}.`);

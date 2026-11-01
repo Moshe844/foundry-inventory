@@ -27,5 +27,11 @@ test('mixed tracked stock uses row evidence without losing source requirements',
   const again=await preview('Product,SKU,Quantity,Location,Lot\nFood A,'+savedFood.code+',1,Cabinet,');
   assert.equal(again.recordsInvalid,1);assert((await imports.rowsFor(db,ctx.workspaceId,again.id))[0].problems.some(p=>p.code==='missing_lot'));
 
+  let choice=await preview('Product,SKU,Quantity,Location,Lot\nFood A,'+savedFood.code+',2,Cabinet,NEW-LOT');
+  choice=await imports.revise(db,ctx,choice.id,{expectedHash:choice.integrityHash,importMode:'set'});
+  assert.equal(choice.recordsInvalid,1);
+  assert((await imports.rowsFor(db,ctx.workspaceId,choice.id))[0].problems.some(p=>p.code==='set_tracking_unsupported'));
+  choice=await imports.revise(db,ctx,choice.id,{expectedHash:choice.integrityHash,importMode:'add'});
+  assert.equal(choice.recordsInvalid,0);await imports.approve(db,ctx,choice.id,choice.integrityHash);assert((await imports.execute(db,ctx,choice.id)).verified);
   await assert.rejects(imports.execute(db,ctx,p.id),/Approve/);
 });

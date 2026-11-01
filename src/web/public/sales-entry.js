@@ -8,7 +8,7 @@
  catalogue=new Map(JSON.parse(document.querySelector('#order-catalogue').textContent).map(s=>[s.id,s])),currency=form.elements.currency.value,
  format=n=>new Intl.NumberFormat(undefined,{style:'currency',currency}).format(n/10**new Intl.NumberFormat('en',{style:'currency',currency}).resolvedOptions().maximumFractionDigits),
  decimal=n=>(n/10**new Intl.NumberFormat('en',{style:'currency',currency}).resolvedOptions().maximumFractionDigits).toFixed(new Intl.NumberFormat('en',{style:'currency',currency}).resolvedOptions().maximumFractionDigits);
- let timer,sequence=0,controller,locationManual=false;
+ let timer,sequence=0,controller;
  const fields=[...form.querySelectorAll('[data-customer-field]')];
  fields.forEach(field=>{const key=field.dataset.customerField,hidden=form.querySelector('[data-contact-manual='+key+']'),saved=customer.selectedOptions[0]?.dataset[key]||'';field.dataset.manual=hidden.value||((field.value!==''||form.elements.editOrderId)&&field.value!==saved?'1':'0');hidden.value=field.dataset.manual;field.addEventListener('input',()=>{field.dataset.manual='1';hidden.value='1';});});
  function customerDefaults(){const option=customer.selectedOptions[0];fields.forEach(field=>{if(field.dataset.manual!=='1')field.value=option?.dataset[field.dataset.customerField]||'';});}
@@ -30,8 +30,8 @@
  }
  function schedule(){clearTimeout(timer);++sequence;controller?.abort();stock();timer=setTimeout(quote,160);}
  customer.addEventListener('change',()=>{customerDefaults();schedule();});
- location.addEventListener('change',()=>{locationManual=true;stock();});
- form.addEventListener('change',event=>{delivery();if(event.target.name==='skuId'){const row=event.target.closest('[data-order-line]');row.querySelector('[name=priceOverride]').value='0';row.querySelector('[name=unitPrice]').value='';const s=catalogue.get(event.target.value);if(s&&!locationManual&&lines.querySelectorAll('[data-order-line]').length===1){const current=s.positions.find(p=>p.location_id===location.value);if(!current||current.available<=0){const best=[...s.positions].sort((a,b)=>b.available-a.available)[0];if(best?.available>0)location.value=best.location_id;}}}if(event.target.name==='taxRateId')form.elements.tax.disabled=Boolean(form.elements.taxRateId.value);schedule();});
+ location.addEventListener('change',()=>{stock();});
+ form.addEventListener('change',event=>{delivery();if(event.target.name==='skuId'){const row=event.target.closest('[data-order-line]');row.querySelector('[name=priceOverride]').value='0';row.querySelector('[name=unitPrice]').value='';}if(event.target.name==='taxRateId')form.elements.tax.disabled=Boolean(form.elements.taxRateId.value);schedule();});
  form.addEventListener('input',event=>{if(event.target.name==='unitPrice')event.target.closest('[data-order-line]').querySelector('[name=priceOverride]').value=event.target.value.trim()===''?'0':'1';if(!event.target.matches('[data-product-search]'))schedule();});
  function measurement(row){const product=catalogue.get(row.querySelector('[name=skuId]').value),field=row.querySelector('[data-secondary-field]'),weight=row.querySelector('[name=secondaryQuantity]'),quantity=row.querySelector('[name=quantity]');quantity.step=product?.quantity_increment||'any';quantity.min=product?.quantity_increment||'0.000001';if(!field)return;field.hidden=!product?.secondary_unit_label;if(!product?.secondary_unit_label)weight.value='';weight.required=Boolean(product?.secondary_unit_label);row.querySelector('[data-secondary-label]').textContent='Actual '+(product?.secondary_unit_label||'weight');}
  form.addEventListener('change',event=>{if(event.target.name==='skuId')measurement(event.target.closest('[data-order-line]'));});

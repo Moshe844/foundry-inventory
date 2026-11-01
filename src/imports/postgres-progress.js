@@ -25,7 +25,7 @@ function present(row){
  const failure=row.job_error;let reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='53200'?'The database ran out of memory for its transaction safety checks. This attempt was rolled back. No stock or inventory value was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
  const checkpoint=row.apply_checkpoint||{},durable=(checkpoint.cataloguePrepared===true||checkpoint.catalogueStarted===true)&&checkpoint.hash===row.integrity_hash,savedRows=durable?Number(checkpoint.savedRows||0):0;
  const detailsPending=!durable&&state==='RUNNING'&&stage==='processing'&&known&&p.totalRows>0&&p.processedRows===p.totalRows&&row.dataset!=='suppliers';
- if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. The last batch stopped safely; continue the remaining approved rows without repeating saved ones.';
+ if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. '+(failure.code==='validation_error'?String(row.execution_error||failure.message||'The remaining rows need review.'):failure.code==='57014'?'The last batch exceeded the database time limit.':failure.code==='53200'?'The database ran out of memory for the last batch.':'The worker was interrupted during the last batch.')+' Continue resumes the approved rows without repeating saved ones.';
  const stageLabel=(known&&p.attempt>1?'Attempt '+p.attempt+' · restarting safely after rollback · ':'')+(detailsPending?'Applying imported details and reorder settings':{preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(revising?row.records_detected:row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,reason,active:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),working:state==='RUNNING',
@@ -56,7 +56,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
      p.records_invalid>0 AND (p.transformations::jsonb ? 'workbook' OR p.field_mappings::jsonb ? 'serialTracked' OR p.field_mappings::jsonb ? 'lotTracked'))) AS needs_source_review,
    r.status AS preview_status,r.result AS preview_result,r.updated_at AS preview_updated_at,
    j.status AS job_status,j.last_error AS job_error,j.lease_expires_at,
-   j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,e.stage AS execution_stage,
+   j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,e.stage AS execution_stage,e.error_message AS execution_error,
    e.finished_at,e.committed_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
   FROM import_plans p
   LEFT JOIN LATERAL(SELECT job.status,job.result,job.updated_at FROM stockchief_runtime.jobs job
@@ -65,7 +65,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
   LEFT JOIN LATERAL(SELECT job.status,job.last_error,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.execute-approved' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)j ON true
-  LEFT JOIN LATERAL(SELECT run.id,run.status,run.stage,run.started_at,run.finished_at,run.committed_at FROM import_executions run
+  LEFT JOIN LATERAL(SELECT run.id,run.status,run.stage,run.error_message,run.started_at,run.finished_at,run.committed_at FROM import_executions run
    WHERE run.workspace_id=p.workspace_id AND run.import_id=p.id ORDER BY run.started_at DESC,run.id DESC LIMIT 1)e ON true
   LEFT JOIN import_verifications v ON v.workspace_id=p.workspace_id AND v.execution_id=e.id
   WHERE p.workspace_id=$1 AND ($2::text IS NULL OR p.id=$2)

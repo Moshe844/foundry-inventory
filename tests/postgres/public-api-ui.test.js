@@ -34,6 +34,7 @@ test('real Chromium creates, exercises and revokes a scoped PostgreSQL inventory
     await page.getByLabel('Item code').fill('API-1');
     await Promise.all([page.waitForURL(/\/inventory\/item_/),page.getByRole('button',{name:'Create item'}).click()]);
     await page.goto(`${base}/settings/connections`);
+    await page.getByRole('link',{name:'For developers',exact:true}).click();
     await page.getByLabel('Client name').fill('Warehouse client');
     await page.getByLabel('Read inventory').check();
     await page.getByLabel(/Receive or correct inventory/).check();

@@ -70,7 +70,7 @@ function createPostgresPublicApi(database){
   router.post('/commands/inventory/adjust',route('inventory:write',async(auth,req,res)=>{
     const execution=await publicApi.executeCommand(database,auth,{idempotencyKey:req.get('idempotency-key'),
       commandType:'inventory.adjust',body:req.body},async(client,operationKey)=>{
-      const operation=await inventory.adjustInTransaction(client,auth,{...req.body,
+      const operation=await require('../../accounting/postgres-physical-count').applyInTransaction(client,auth,{skuId:req.body.skuId,locationId:req.body.locationId,countedQuantity:req.body.countedQuantity,secondaryCountedQuantity:req.body.secondaryCountedQuantity,reasonCode:req.body.reasonCode,notes:req.body.notes,
         reference:req.body.reference||`api:${auth.clientId}`,idempotencyKey:operationKey});
       const balance=(await client.query(`SELECT COALESCE(on_hand,0) AS on_hand FROM balances
         WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,[auth.workspaceId,req.body.skuId,req.body.locationId])).rows[0];

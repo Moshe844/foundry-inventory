@@ -43,7 +43,7 @@ const EXECUTORS=Object.freeze({
     return {transferId:approved.id,transferNumber:approved.transfer_number,status:approved.status,
       quantity:approved.totals.approved,physicalState:'Stock is reserved at the source; nothing has left yet.'};},
     verify:(client,ctx,result)=>exists(client,'inventory_transfers',ctx.workspaceId,result.transferId)},
-  'inventory.adjust':{execute:(client,ctx,payload)=>inventory.adjustInTransaction(client,ctx,payload),
+  'inventory.adjust':{execute:(client,ctx,payload)=>require('../accounting/postgres-physical-count').applyInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'adjustments',ctx.workspaceId,result.adjustmentId)},
   'catalog.create_item':{execute:(client,ctx,payload)=>catalog.createItemInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'items',ctx.workspaceId,result.itemId)},

@@ -69,6 +69,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
+  for(const [path,title] of [['/security','Security'],['/roadmap','Product roadmap'],['/api/docs','Public API documentation']])router.get(path,asyncRoute(async(req,res)=>renderPublic(req,res,'public/operations-information',{title,nav:'',kind:path,staging:require('../../config').operations.runtimeEnvironment==='staging'})));
+  router.get('/status',asyncRoute(async(req,res)=>{let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
