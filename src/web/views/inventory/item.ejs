@@ -50,6 +50,7 @@
 <% var canAct=locations.length>0&&item.is_active&&(locals.canOperate!==false); %>
 <% if(!canAct){ %><p class="notice notice--warn"><%= !locations.length?'Add a location first.':!item.is_active?'Restore this archived item before changing stock.':'Your role or plan does not allow stock changes.' %><% if(!locations.length){ %> <a class="btn" href="/locations#add-location">Add a location</a><% } %></p><% } %>
 <%- include('product-overview',{mode,canAct,policyBySku}) %>
+<% const returnHeld=skus.reduce((n,s)=>n+(s.returnHeld||0),0);if(returnHeld){ %><p class="notice"><%= returnHeld %> units are waiting for return inspection. Their stock and value are recorded; they become available after inspection. <a href="/returns">Review returns</a></p><% } %>
 <% if(locals.kitDefinitions){ %><%- include('kit-controls') %><% } %>
 <script type="application/json" id="item-data"><%- JSON.stringify(itemData) %></script>
 

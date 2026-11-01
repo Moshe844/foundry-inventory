@@ -297,6 +297,7 @@ async function issueInTransaction(client, rawContext, input) {
     let lot = null;
     if (row.tracking_mode === 'lot') lot = await resolveLot(client, ctx, row, input, at, false);
     assertLotEligible(lot,input);
+    await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:row.id,locationId:row.location_id,quantity,lotId:lot?.id,serialUnitIds:input.serialUnitIds||[]});
     let serialUnitIds = [];
     if (row.tracking_mode === 'serial') {
       const ids = [...new Set((input.serialUnitIds || []).map(String))];
@@ -342,6 +343,7 @@ async function transferInTransaction(client, rawContext, input) {
     const groupId = newId('grp');
     let lot = null;
     if (source.tracking_mode === 'lot') lot = await resolveLot(client, ctx, source, input, at, false);
+    await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:source.id,locationId:source.location_id,quantity,lotId:lot?.id,serialUnitIds:input.serialUnitIds||[]});
     const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
     const destinationAfter = await balanceDelta(client, ctx, destination, quantity, at);
     if (lot) {
@@ -407,6 +409,7 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
     serialUnitIds = ids;
     await serialBatchDeltas(client,ctx,ids,source.location_id,null,at);
   }
+  await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:source.id,locationId:source.location_id,quantity,lotId:lot?.id,serialUnitIds});
   const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, source.location_id, -quantity, at);
   const movementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
@@ -482,6 +485,7 @@ async function adjustInTransaction(client,rawContext,input){
     }
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
+    if(delta<0)await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:row.id,locationId:row.location_id,quantity:-delta});
     const balanceAfter = await balanceDelta(client, ctx, row, delta, at);
     const movementId = await movement(client, ctx, row, { groupId, operation: 'adjust', quantityDelta: delta,secondaryQuantityDelta:secondaryCountDelta,
       balanceAfter, reasonCode: input.reasonCode, notes: input.notes, reference: input.reference, occurredAt: at });

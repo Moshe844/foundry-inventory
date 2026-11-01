@@ -18,7 +18,8 @@ async function expandLines(client,ctx,lines,requested,at){
   if(request.lotStrategy!=='FEFO'){result.push(request);continue;}
   if(line.secondary_unit_label)throw new ValidationError(line.name+': choose the exact batch and measured weight before fulfilling it.');
   const lots=(await client.query(`SELECT l.id,b.quantity FROM lots l JOIN lot_balances b ON b.workspace_id=l.workspace_id AND b.lot_id=l.id WHERE l.workspace_id=$1 AND l.sku_id=$2 AND b.location_id=$3 AND b.quantity>0 AND (l.expires_at IS NULL OR l.expires_at::date>=$4::date) ORDER BY l.expires_at::date NULLS LAST,l.received_at,l.id FOR UPDATE OF l,b`,[ctx.workspaceId,line.sku_id,request.locationId,businessDay])).rows;
-  let remaining=quantity;for(const lot of lots){if(remaining<=0)break;const take=Math.min(remaining,Number(lot.quantity));result.push({...request,quantity:take,lotId:lot.id});remaining=exact.safeNumber(exact.subtract(remaining,take));}
+  const held=await require('./postgres-return-holds').heldLots(client,ctx.workspaceId,line.sku_id,request.locationId);
+  let remaining=quantity;for(const lot of lots){if(remaining<=0)break;const take=Math.min(remaining,Math.max(0,Number(lot.quantity)-(held.get(lot.id)||0)));if(take<=0)continue;result.push({...request,quantity:take,lotId:lot.id});remaining=exact.safeNumber(exact.subtract(remaining,take));}
   if(remaining>0)throw new ValidationError(line.name+': not enough unexpired batch stock is available at this location. Nothing was fulfilled.');
  }
  return result;

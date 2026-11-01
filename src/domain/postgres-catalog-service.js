@@ -301,14 +301,15 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand<>0 ORDER BY l.name`,
     [workspaceId, skuIds])).rows;
   }
+  const stockAvailability=require('./postgres-stock-availability'),availablePositions=await stockAvailability.readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id}))),availableTotal=await stockAvailability.total(database,workspaceId,{itemId});
   const skus = skuResult.rows.map((row) => {
     const total = Number(row.on_hand || 0);
     const committed = Number(row.committed || 0);
-    return { ...row,optionValues:Object.fromEntries(variantValues.filter(v=>v.sku_id===row.id).map(v=>[v.name,v.value])), total, committed, available: Math.max(0, total - committed),
+    return { ...row,optionValues:Object.fromEntries(variantValues.filter(v=>v.sku_id===row.id).map(v=>[v.name,v.value])), total, committed, available:positions.filter(p=>p.sku_id===row.id).reduce((n,p)=>n+(availablePositions.get(stockAvailability.key(p.sku_id,p.location_id))?.available||0),0),returnHeld:positions.filter(p=>p.sku_id===row.id).reduce((n,p)=>n+(availablePositions.get(stockAvailability.key(p.sku_id,p.location_id))?.returnHeld||0),0),
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
         locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),secondaryOnHand:position.secondary_on_hand==null?null:Number(position.secondary_on_hand),
-        committed:Number(position.committed||0),available:Number(position.on_hand)-Number(position.committed||0),
+        committed:Number(position.committed||0),available:availablePositions.get(stockAvailability.key(position.sku_id,position.location_id))?.available||0,
       })) };
   });
   const locations = (await database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1
@@ -381,7 +382,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const recent=recentRows.map((row)=>({...row,itemId:row.item_id,displayName:row.variant_label||item.name,
     sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
   return { item, skus, locations, recent, total,secondaryTotal:Number(totalResult.rows[0].secondary_on_hand||0),committed: committedTotal,
-    available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
+    available: availableTotal, onOrder: onOrderTotal,
     options:optionResult.rows,lots:[...lotsById.values()].slice(0,trackingLimit),units:unitResult.rows.slice(0,trackingLimit),
     trackingCoverage:{query:trackingQuery,limit:trackingLimit,
       nextLotId:lotsById.size>trackingLimit?[...lotsById.keys()][trackingLimit-1]:null,

@@ -414,7 +414,7 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
       for (const [chunkIndex, chunk] of chunks.entries()) {
         const exact = chunk.lotId ? { lotId: chunk.lotId } : chunk.serialUnitIds.length ? { serialUnitIds: chunk.serialUnitIds } : {};
         if (chunk.kind === 'scrap') {
-          const physical = await inventory.issueInTransaction(client, ctx, { skuId: line.sku_id,
+          const physical = await inventory.issueInTransaction(client, require('./postgres-return-holds').inspectionContext(ctx,id), { skuId: line.sku_id,
             locationId: row.quarantine_location_id, quantity: chunk.quantity, reasonCode: 'damaged',
             reference: row.return_number, idempotencyKey: `${operation.key}:${line.id}:scrap:${chunkIndex}`, ...exact });
           const prepared = await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
@@ -444,7 +444,7 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
             [ctx.workspaceId,chunk.destinationLocationId])).rows[0];
           if(!active)throw new ValidationError('Choose an active disposition location.');
         } else {
-          const physical = await inventory.transferInTransaction(client, ctx, { skuId: line.sku_id,
+          const physical = await inventory.transferInTransaction(client, require('./postgres-return-holds').inspectionContext(ctx,id), { skuId: line.sku_id,
             sourceLocationId: row.quarantine_location_id, destinationLocationId: chunk.destinationLocationId,
             quantity: chunk.quantity, reference: row.return_number,
             idempotencyKey: `${operation.key}:${line.id}:${chunk.kind}:${chunkIndex}`, ...exact });
