@@ -53,9 +53,9 @@ async function scheduledChange(database,subscription,options={}){
  if(!['active','not_started'].includes(schedule.status))return {checked:true,change:null};
  const next=(schedule.phases||[]).find(p=>Number(p.start_date)>Date.now()/1000);if(!next||next.items?.length!==1)return {checked:true,change:null};
  const price=typeof next.items[0].price==='string'?next.items[0].price:next.items[0].price?.id;
- const plan=(await database.query('SELECT public_name FROM commercial_plans WHERE stripe_monthly_price_id=$1 OR stripe_annual_price_id=$1',[price])).rows[0];
+ const plan=(await database.query('SELECT id,public_name FROM commercial_plans WHERE stripe_monthly_price_id=$1 OR stripe_annual_price_id=$1',[price])).rows[0];
  if(!plan)throw Error('This scheduled price is not a StockChief plan.');
- return {checked:true,change:{id:scheduleId,target_plan_name:plan.public_name,effective_at:new Date(next.start_date*1000).toISOString(),fromPortal:true}};
+ return {checked:true,change:{id:scheduleId,to_plan_id:plan.id,target_plan_name:plan.public_name,effective_at:new Date(next.start_date*1000).toISOString(),fromPortal:true}};
 }
 async function eligiblePlans(database,subscription){
  const plans=await require('./service').listPlans(database),current=plans.find(p=>p.id===subscription.plan_id);

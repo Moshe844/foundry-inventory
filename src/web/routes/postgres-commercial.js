@@ -118,6 +118,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(String(latest?.updated_at)!==String(summary.subscription?.updated_at)){
       summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     }
+    for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
