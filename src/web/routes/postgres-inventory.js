@@ -182,7 +182,7 @@ function createPostgresInventoryRouter(database) {
     }
     if(input.reference&&(await database.query(`SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND operation='receive' AND reference=$4 LIMIT 1`,[req.ctx.workspaceId,input.skuId,input.locationId,input.reference])).rows.length)
       throw new ValidationError(`Receipt reference ${input.reference} was already recorded for this product and location. Review Activity before receiving it again.`);
-    const result=await inventory.receive(database,req.ctx,input);
+    const result=await require('../../accounting/postgres-stock-receipt').receive(database,req.ctx,{...input,unitCost:req.body.unitCost});
     await onboarding.reconcileWithInventoryTruth(database,req.ctx.workspaceId);
     req.flash(result.replayed?'warning':'success',result.replayed?'This receipt was already recorded. No stock was added again.':`Received ${result.quantity} ${result.quantity===1?'unit':'units'}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
@@ -213,7 +213,7 @@ function createPostgresInventoryRouter(database) {
   }));
   router.post('/inventory/:id/adjust',asyncRoute(async(req,res)=>{
     const result=req.body.reasonCode==='opening'?await require('../../domain/postgres-opening-stock').receive(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.countedQty,secondaryQuantity:req.body.secondaryCountedQuantity,unitCost:req.body.unitCost,idempotencyKey:operationKey(req,'opening')}):await require('../../accounting/postgres-physical-count').apply(database,req.ctx,{skuId:req.body.skuId,locationId:req.body.locationId,
-      countedQuantity:req.body.countedQty,secondaryCountedQuantity:req.body.secondaryCountedQuantity,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
+      countedQuantity:req.body.countedQty,secondaryCountedQuantity:req.body.secondaryCountedQuantity,unitCost:req.body.unitCost,reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'adjust')});
     req.flash('success',result.unchanged?'The count already matched.':`Count corrected to ${result.balanceAfter}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
