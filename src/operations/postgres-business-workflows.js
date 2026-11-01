@@ -744,7 +744,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
     for (const [index, requested] of input.lines.entries()) {
-      const line = await requireRow(client, `SELECT sol.*,s.item_id FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id
+      const line = await requireRow(client, `SELECT sol.*,s.item_id,s.variant_label,i.name AS item_name FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id AND s.workspace_id=sol.workspace_id JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE sol.id=$1 AND sol.sales_order_id=$2 AND sol.workspace_id=$3 FOR UPDATE`,
       [requested.lineId, salesOrderId, ctx.workspaceId], `Fulfillment line ${index + 1} is not on this sales order.`);
       const quantity = await physicalQuantity(client,ctx,line.sku_id,requested.quantity,`Fulfillment line ${index + 1} quantity`);
@@ -770,7 +770,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         snapshot=legacy.lines[original.findIndex(r=>r.id===line.id)];
       }
       if(snapshot.quantity!==Number(line.quantity_ordered)||snapshot.unitPriceMinor!==Number(line.unit_price_minor))throw new ValidationError('The order pricing snapshot no longer matches its line. Review pricing before fulfillment.');
-      const actualWeight=stockQuantity.secondary(await stockQuantity.forSku(client,ctx,line.sku_id),requested.secondaryQuantity);
+      const stockProfile=await stockQuantity.forSku(client,ctx,line.sku_id),actualWeight=stockQuantity.secondary(stockProfile,requested.secondaryQuantity);
       if(actualWeight!==null){const remainingWeight=exact.safeNumber(exact.subtract(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled));if(actualWeight>remainingWeight||(quantity===remaining)!==(actualWeight===remainingWeight))throw new ValidationError('The fulfilled pieces and actual weight must match the confirmed remaining order. Review an order amendment if its weight changed.');}
       const before=actualWeight===null?Number(line.quantity_fulfilled):Number(line.secondary_quantity_fulfilled),allocationQuantity=actualWeight??quantity,orderedMeasure=snapshot.pricingQuantity??snapshot.quantity;
       if(before&&snapshot.allocationVersion!==2){
@@ -806,7 +806,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       }
       await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3,secondary_quantity_fulfilled=secondary_quantity_fulfilled+$4 WHERE id=$1`,
         [line.id, quantity, nowIso(),actualWeight??0]);
-      fulfilled.push({ lineId: line.id, quantity, locationId: requested.locationId,
+      fulfilled.push({ lineId: line.id, skuId:line.sku_id,description:line.item_name+(line.variant_label?' — '+line.variant_label:'')+(actualWeight===null?'':' ('+quantity+' '+stockProfile.unit_label+')'),quantity,secondaryQuantity:actualWeight,priceUnitLabel:stockProfile.secondary_unit_label||stockProfile.unit_label,locationId: requested.locationId,
         movementId: physical.movementId, revenueMinor,grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,unitPriceMinor:Number(line.unit_price_minor),costMinor: preparedCost.totalCostMinor,
         journalEntryId: posted.entry.id });
     }
@@ -841,10 +841,10 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         (id,workspace_id,invoice_id,line_number,description,quantity,unit_price_minor,line_total_minor,
          revenue_account_id,sku_id,sales_order_line_id,created_at,pricing_snapshot,charges_minor)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
-      [newId('arline'), ctx.workspaceId, invoice.id, lineNumber, `Fulfillment on ${order.order_number}`,
+      [newId('arline'), ctx.workspaceId, invoice.id, lineNumber, line.description,
         line.quantity, line.unitPriceMinor, line.revenueMinor, revenueAccount,
-        (await requireRow(client, 'SELECT sku_id FROM sales_order_lines WHERE id=$1', [line.lineId], 'Sales line missing.')).sku_id,
-        line.lineId, nowIso(),JSON.stringify({grossMinor:line.grossMinor,discountMinor:line.discountMinor,taxMinor:line.taxMinor,chargesMinor:line.chargesMinor,chargeTaxMinor:line.chargeTaxMinor,totalMinor:line.totalMinor}),line.chargesMinor]);
+        line.skuId,
+        line.lineId, nowIso(),JSON.stringify({grossMinor:line.grossMinor,discountMinor:line.discountMinor,taxMinor:line.taxMinor,chargesMinor:line.chargesMinor,chargeTaxMinor:line.chargeTaxMinor,totalMinor:line.totalMinor,quantity:line.quantity,secondaryQuantity:line.secondaryQuantity,priceUnitLabel:line.priceUnitLabel}),line.chargesMinor]);
     }
     await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=subtotal_minor+$4,discount_minor=discount_minor+$5,tax_minor=tax_minor+$6,total_minor=total_minor+$2,
       balance_minor=balance_minor+$2,charges_minor=charges_minor+$7,updated_at=$3 WHERE id=$1`, [invoice.id, fulfillmentTotal, nowIso(),fulfillmentGross,fulfillmentDiscount,fulfillmentTax,fulfillmentCharges]);
