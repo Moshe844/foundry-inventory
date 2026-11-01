@@ -1,6 +1,13 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
 const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
+
+test('automatic order-price previews are enforced read-only and never create business records',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'order-preview-readonly'});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app);let page=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(page.text),email:f.email,password:f.password});page=await agent.get('/orders/new');
+ const counts=async()=>Object.fromEntries(await Promise.all(['sales_orders','movements','accounting_journal_entries','stockchief_runtime.pricing_order_snapshots'].map(async table=>[table,(await db.query('SELECT count(*) n FROM '+table+' WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n]))),before=await counts(),settings=[],original=db.transaction;db.transaction=(fn,options)=>{settings.push(options);return original(fn,options);};
+ const form={_csrf:csrf(page.text),customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:f.location.id,skuId:f.item.skuIds[0],quantity:'2',unitPrice:'12.34',priceOverride:'1',discount:'1.00',tax:'0.25',orderDate:new Date().toISOString().slice(0,10)};
+ for(let i=0;i<2;i++){const quote=await agent.post('/sales/orders/quote').set('Accept','application/json').type('form').send(form).expect(200);assert.equal(quote.body.quote.totalMinor,2393);}assert.equal(settings.length,2);assert(settings.every(s=>s.readOnly===true&&s.isolation==='REPEATABLE READ'));assert.deepEqual(await counts(),before);
+});
 test('returning from a pricing review restores every order line, contact, discount and reference',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'round16-order-draft'});f.cleanup(()=>app.locals.sessionStore.close());

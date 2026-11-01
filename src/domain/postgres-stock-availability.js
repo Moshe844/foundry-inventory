@@ -32,6 +32,31 @@ async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=nu
 async function read(c,workspaceId,skuId,locationId,options={}){return (await readMany(c,workspaceId,[{skuId,locationId}],options)).get(key(skuId,locationId))||{onHand:0,committed:0,reserved:0,rentalReserved:0,available:0};}
 async function total(c,workspaceId){
  const holds=await require('../custody/postgres-bookings').heldMany(c,workspaceId,null),rows=[...holds].map(([key,quantity])=>{const [sku_id,location_id]=JSON.parse(key);return {sku_id,location_id,quantity};});
- const r=(await c.query(`WITH requested AS (SELECT sku_id,location_id FROM balances WHERE workspace_id=$1 AND on_hand>0),positions AS (${POSITION_SQL}),rental_holds AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(sku_id text,location_id text,quantity numeric)) SELECT coalesce(sum(greatest(p.on_hand::numeric-p.committed::numeric-p.transfer_quantity::numeric-coalesce(r.quantity,0),0)),0)::text quantity FROM positions p LEFT JOIN rental_holds r ON r.sku_id=p.sku_id AND r.location_id=p.location_id WHERE p.custody_agreement_id IS NULL`,[workspaceId,JSON.stringify(rows),null,null])).rows[0];return Number(r.quantity);
+ // Aggregate each commitment source once. Reusing the point lookup here ran
+ // its correlated sales/transfer subqueries for every stock position.
+ const r=(await c.query(`WITH sales AS (
+ SELECT l.sku_id,a.location_id,sum(a.quantity) quantity FROM sales_order_allocations a
+ JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
+ JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
+ WHERE a.workspace_id=$1 AND o.status NOT IN ('CANCELLED','FULFILLED') GROUP BY l.sku_id,a.location_id
+ ), transfers AS (
+ SELECT l.sku_id,t.source_location_id location_id,sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) quantity
+ FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
+ WHERE l.workspace_id=$1 AND t.status IN ('REQUESTED','APPROVED','PICKED') GROUP BY l.sku_id,t.source_location_id
+ ), rental_holds AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(sku_id text,location_id text,quantity numeric)),
+ active_skus AS MATERIALIZED (
+ SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1
+ AND s.item_id IN(SELECT id FROM items WHERE workspace_id=$1 AND is_active=1)
+ ), physical AS MATERIALIZED (
+ SELECT b.sku_id,b.location_id,b.on_hand FROM balances b WHERE b.workspace_id=$1 AND b.on_hand>0
+ AND b.sku_id IN(SELECT id FROM active_skus)
+ AND b.location_id IN(SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL)
+ )
+ SELECT coalesce(sum(greatest(b.on_hand-coalesce(sales.quantity,0)-coalesce(transfers.quantity,0)-coalesce(r.quantity,0),0)),0)::text quantity
+ FROM physical b
+ LEFT JOIN sales ON sales.sku_id=b.sku_id AND sales.location_id=b.location_id
+ LEFT JOIN transfers ON transfers.sku_id=b.sku_id AND transfers.location_id=b.location_id
+ LEFT JOIN rental_holds r ON r.sku_id=b.sku_id AND r.location_id=b.location_id
+ `,[workspaceId,JSON.stringify(rows)])).rows[0];return exact.safeNumber(r.quantity);
 }
 module.exports={read,readMany,key,total};
