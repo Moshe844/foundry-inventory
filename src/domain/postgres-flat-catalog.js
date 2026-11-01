@@ -1,6 +1,7 @@
 'use strict';
 const {ValidationError}=require('./errors');
-async function list(db,workspaceId,input={}){
+function list(db,workspaceId,input={}){return require('../lib/versioned-read-model').read(db,workspaceId,['catalogue-variants',input],()=>listUncached(db,workspaceId,input),{domain:'business'});}
+async function listUncached(db,workspaceId,input={}){
  const page=Math.max(1,Number.parseInt(input.page,10)||1),limit=25,values=[workspaceId],where=['s.workspace_id=$1'];if(page>100000)throw new ValidationError('Choose a valid variant page.');
  const add=(sql,value)=>{values.push(value);where.push(sql.replaceAll('?', '$'+values.length));};
  if(!input.includeArchived)where.push('s.is_active=1 AND i.is_active=1');else if(input.archivedOnly)where.push('(s.is_active=0 OR i.is_active=0)');
