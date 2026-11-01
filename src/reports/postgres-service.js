@@ -239,7 +239,7 @@ async function run(database,ctx,actor,spec,options={}){
   const dateContext=await require('../lib/request-read-cache').read(JSON.stringify(['report-clock',ctx.workspaceId]),()=>require('../lib/business-time').forWorkspace(database,ctx.workspaceId));
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext});
   const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows);
+    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
   const hasMore=fetched.length>allowed;
   const rows=fetched.slice(0,allowed);
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'

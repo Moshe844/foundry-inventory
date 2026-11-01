@@ -181,7 +181,8 @@ async function updateImportedNamesInTransaction(client,ctx,changes){
   await client.query('UPDATE items i SET name=x.name,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x("itemId" text,name text) WHERE i.workspace_id=$1 AND i.id=x."itemId" AND i.name IS DISTINCT FROM x.name',[ctx.workspaceId,JSON.stringify(changes),nowIso()]);
 }
 
-async function listItems(database, workspaceId, input = {}) {
+function listItems(database,workspaceId,input={}){return require('../lib/versioned-read-model').read(database,workspaceId,['catalogue-items',input],()=>listItemsUncached(database,workspaceId,input),{domain:'business'});}
+async function listItemsUncached(database, workspaceId, input = {}) {
   const page = Math.max(1, Number.parseInt(input.page, 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(input.pageSize, 10) || 25));
   const q = String(input.q || '').trim().slice(0, 160);
