@@ -1,6 +1,7 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
 const sources=[
+ {table:'team_access_history',time:'created_at',actor:'actor_id',action:'r.action',before:'r.before_state',after:'r.after_state'},
  {table:'movements',time:'occurred_at',actor:'actor_user_id',item:'item_id',sku:'sku_id',action:"'Stock '||r.operation",before:"jsonb_build_object('On hand',r.balance_after-r.quantity_delta)",after:"jsonb_build_object('On hand',r.balance_after,'Change',r.quantity_delta)",join:"LEFT JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id",location:'l.name',reference:'r.reference'},
  {table:'catalogue_change_history',time:'created_at',actor:'actor_id',item:'item_id',sku:'sku_id',action:"replace(r.action,'_',' ')",before:'r.before_state',after:'r.after_state'},
  ...['sku_prices','sku_purchase_costs'].map(table=>({table,time:'created_at',actor:'created_by_user_id',item:null,sku:'sku_id',action:table==='sku_prices'?"'Selling price'":"'Purchase cost'",before:"CASE WHEN prior.id IS NULL THEN NULL ELSE jsonb_build_object('Amount',prior.amount_minor,'Currency',prior.currency) END",after:"jsonb_build_object('Amount',r.amount_minor,'Currency',r.currency)",join:`LEFT JOIN LATERAL(SELECT id,amount_minor,currency FROM ${table} p WHERE p.workspace_id=r.workspace_id AND p.sku_id=r.sku_id AND (p.created_at,p.id)<(r.created_at,r.id) ORDER BY p.created_at DESC,p.id DESC LIMIT 1) prior ON true`})),
