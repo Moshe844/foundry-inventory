@@ -335,12 +335,14 @@ test('two good batches: "move 10" takes the earliest to expire and says so, inst
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
   const lot = makeLotItem(db, w.ctx);
-  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 60, lotCode: 'L-1', expiresAt: '2026-10-30' });
-  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 80, lotCode: 'L-2', expiresAt: '2027-01-15' });
+  const firstExpiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const secondExpiry = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 60, lotCode: 'L-1', expiresAt: firstExpiry });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 80, lotCode: 'L-2', expiresAt: secondExpiry });
   const proposals = require('../../src/actions/proposal-service');
   const built = proposals.build(db, w.ctx, { actionType: 'transfer', item: 'Trail Ration Pack', sourceLocation: w.main.name, destinationLocation: w.store.name, quantity: 10 });
   assert.ok(built.ok, JSON.stringify(built));
-  assert.match(built.proposal.assumptions.join(' '), /Taking it from batch L-1 \(expires 2026-10-30\), the earliest to expire of the 2 batches at Main Warehouse\. Say a batch code if you meant another\./);
+  assert.ok(built.proposal.assumptions.join(' ').includes(`Taking it from batch L-1 (expires ${firstExpiry}), the earliest to expire of the 2 batches at Main Warehouse. Say a batch code if you meant another.`));
 });
 
 // Round five.
