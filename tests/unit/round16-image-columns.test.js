@@ -1,0 +1,7 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict'),{createCanvas}=require('@napi-rs/canvas');
+test('packing-slip columns retain numbered names, codes, barcodes and neighbouring supplier costs',{timeout:120000},async()=>{
+ const canvas=createCanvas(2300,400),c=canvas.getContext('2d');c.fillStyle='white';c.fillRect(0,0,canvas.width,canvas.height);c.fillStyle='#111';c.font='24px Arial';
+ const x=[25,310,590,740,910,1300,1610,1880,2090],headings=['Product name','SKU','Quantity','Cost','Supplier','Barcode','Category','Location','Price'],rows=[['Sweep PNG Item 01','SWP-PNG-01','5','11.50','Supply Co','123456789012','Hardware','North','20.00'],['Sweep PNG Item 02','SWP-PNG-02','3','12.75','Supply Co','123456789029','Hardware','South','22.00']];
+ headings.forEach((v,i)=>c.fillText(v,x[i],50));rows.forEach((row,r)=>row.forEach((v,i)=>c.fillText(v,x[i],130+r*80)));
+ for(const format of ['image/png','image/jpeg']){const s=(await require('../../src/imports/image-table').parse(canvas.toBuffer(format))).sheets[0],mapping=require('../../src/imports/fields').guessMappings(s.columns,s.rows).mappings;assert.equal(s.rows.length,2);for(const [i,field]of ['name','code','quantity','unitCost','supplierName','barcode','category','location','sellingPrice'].entries()){assert.notEqual(mapping[field],undefined,field+' must have a column');for(let row=0;row<2;row++)assert.equal(s.rows[row].cells[mapping[field]],rows[row][i],format+' '+field);}}
+});

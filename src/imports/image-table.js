@@ -83,18 +83,22 @@ async function readDarkTable(canvas,worker){
       const y=(word.bbox.y0+word.bbox.y1)/2;let row=rows.find(r=>Math.abs(r.y-y)<typical*.7);
       if(!row){row={y,words:[]};rows.push(row);}row.words.push(word);
     }
-    const anchors=cells.map(c=>(c.x+c.right)/2);
-    const nearest=x=>{let closest=0;for(let i=1;i<anchors.length;i++)if(Math.abs(anchors[i]-x)<Math.abs(anchors[closest]-x))closest=i;return closest;};
+    // Business tables normally align column starts. The midpoint between
+    // heading centres cuts long product names in half and assigns their final
+    // number to SKU. Use the next heading's left edge, allowing half a glyph
+    // height for OCR jitter, and keep each recognized word intact.
+    const boundaries=cells.map((c,i)=>i?Math.max(0,c.x-typical*.5):0);boundaries.push(body.width);
+    const columnAt=word=>{let index=0;while(index+1<cells.length&&word.bbox.x0>=boundaries[index+1])index++;return index;};
     // A dense screenshot can mix pictures and codes in one OCR block. Read an
     // identified code column independently, using its actual glyph bounds,
     // rather than guessing missing identifiers from product names.
     const columnFields=cells.map(c=>require('./fields').bestFieldScores(c.text)[0]?.field),codeColumn=columnFields.indexOf('code');
     const integerFields=new Set(['quantity','reorderPoint','targetStock','safetyStock','leadTimeDays']);
-    for(const field of ['code',...integerFields,'unitCost','sellingPrice']){
+    for(const field of ['code','barcode',...integerFields,'unitCost','sellingPrice']){
       const index=columnFields.indexOf(field);if(index<0)continue;
-      const observed=bodyWords.filter(w=>nearest((w.bbox.x0+w.bbox.x1)/2)===index);
+      const observed=bodyWords.filter(w=>columnAt(w)===index);
       {
-        const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),padding=Math.max(12,Math.ceil(typical*.8)),column=createCanvas(right-left+padding*2,body.height),cx=column.getContext('2d');
+        const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(boundaries[index])),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(boundaries[index+1])),padding=Math.max(12,Math.ceil(typical*.8)),column=createCanvas(right-left+padding*2,body.height),cx=column.getContext('2d');
         cx.fillStyle='#fff';cx.fillRect(0,0,column.width,column.height);cx.drawImage(body,left,0,right-left,body.height,padding,0,right-left,body.height);
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:integerFields.has(field)?'0123456789,.-+':''});
         const reread=words(await worker.recognize(column.toBuffer('image/png'),{}, {blocks:true}));
@@ -104,7 +108,8 @@ async function readDarkTable(canvas,worker){
     }
     const grid=rows.sort((a,b)=>a.y-b.y).map(row=>{
       const values=Array(cells.length).fill('');for(const word of row.words.sort((a,b)=>a.bbox.x0-b.bbox.x0)){
-        const x=(word.bbox.x0+word.bbox.x1)/2,closest=nearest(x);
+        const closest=columnAt(word);
+        if(closest+1<cells.length&&word.bbox.x1>boundaries[closest+1]+typical*.5)(row.readingProblems||=[]).push({code:'image_column_uncertain',message:'Text crosses a column boundary in this image. Confirm the complete row against the original before approving.'});
         values[closest]+=(values[closest]?' ':'')+word.text;
       }row.originalValues=[...values];for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
     for(const field of integerFields){const index=columnFields.indexOf(field);if(index<0)continue;
@@ -113,7 +118,7 @@ async function readDarkTable(canvas,worker){
         // A narrow column can turn a digit into punctuation. Re-read that
         // actual cell with surrounding whitespace; never infer it from other
         // rows or replace an unreadable/empty source with zero.
-        const left=Math.max(0,Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
+        const left=Math.max(0,Math.floor(boundaries[index])),right=Math.min(body.width,Math.ceil(boundaries[index+1])),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
         cx.fillStyle='#fff';cx.fillRect(0,0,cell.width,cell.height);cx.drawImage(body,left,top,right-left,height,0,0,cell.width,cell.height);
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+'});
         const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
@@ -130,7 +135,7 @@ async function readDarkTable(canvas,worker){
         // An isolated high-resolution line provides independent evidence for
         // lost punctuation. Disagreement still requires owner review; never
         // manufacture a decimal from neighboring amounts or a selling price.
-        const left=Math.max(0,Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
+        const left=Math.max(0,Math.floor(boundaries[index])),right=Math.min(body.width,Math.ceil(boundaries[index+1])),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
         cx.fillStyle='#fff';cx.fillRect(0,0,cell.width,cell.height);cx.drawImage(body,left,top,right-left,height,0,0,cell.width,cell.height);
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+$£€¥'});
         const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
