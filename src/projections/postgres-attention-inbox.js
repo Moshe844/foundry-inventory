@@ -1,0 +1,20 @@
+'use strict';
+const source=`SELECT a.id,a.workspace_id,a.category,a.severity,a.priority_score,a.item_id,a.sku_id,a.first_detected_at,left(a.title,240) title,left(a.concise_summary,500) concise_summary,left(a.explanation,1000) explanation,left(a.recommendation,500) recommendation,
+ CASE WHEN jsonb_typeof(a.affected_location_ids::jsonb)='array' AND jsonb_array_length(a.affected_location_ids::jsonb)=1 THEN a.affected_location_ids::jsonb->>0 ELSE '' END AS location_id
+ FROM attention_items a WHERE a.workspace_id=$1 AND a.status='OPEN'`;
+const values=`SELECT sku_id,sum(total_cost_minor)::bigint AS stock_value FROM accounting_inventory_cost_balances WHERE workspace_id=$1 GROUP BY sku_id`;
+async function summary(db,workspaceId){
+ const groups=(await db.query(`WITH candidates AS(${source}) SELECT category,location_id,count(*)::int AS count,max(priority_score) AS priority,min(first_detected_at) AS first_detected_at,bool_or(severity='critical') AS critical,bool_or(bool_or(severity='critical')) OVER() AS any_critical,sum(count(*)) OVER()::int AS total FROM candidates GROUP BY category,location_id ORDER BY max(priority_score) DESC,category,location_id LIMIT 101`,[workspaceId])).rows;
+ const rows=(await db.query(`WITH candidates AS(${source}),costs AS(${values}) SELECT c.*,v.stock_value FROM candidates c LEFT JOIN costs v ON v.sku_id=c.sku_id ORDER BY v.stock_value DESC NULLS LAST,c.priority_score DESC,c.first_detected_at,c.id LIMIT 10`,[workspaceId])).rows;
+ if(!groups.length||groups[0].total<=10)return {rows};
+ const locations=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=ANY($2::text[])',[workspaceId,groups.slice(0,100).map(g=>g.location_id).filter(Boolean)])).rows;
+ const summaries=groups.length>100?[{category:'',location_id:'',count:groups[0].total,priority:Math.max(...groups.map(g=>Number(g.priority))),first_detected_at:groups[0].first_detected_at,critical:groups[0].any_critical,label:'inventory findings'}]:groups.map(g=>({...g,label:g.category.replaceAll('_',' ')+' findings'}));
+ for(const group of summaries){const location=locations.find(l=>l.id===group.location_id)?.name||'all locations';rows.unshift({summary:true,id:'attention-group:'+group.category+':'+group.location_id,severity:group.critical?'critical':'important',priority_score:group.priority,title:group.count.toLocaleString('en-US')+' '+group.label+' in '+location,concise_summary:'Review the group or start with the largest recorded stock values below.',explanation:'The complete list is searchable and paged. Recorded stock value indicates the stock involved; it is not an estimated purchase cost.',recommendation:'Review current stock before deciding what to do.',first_detected_at:group.first_detected_at,href:'/needs-you/findings?'+new URLSearchParams({category:group.category,location:group.location_id})});}
+ return {rows};
+}
+async function page(db,workspaceId,input={}){
+ const category=String(input.category||'').slice(0,100),location=String(input.location||'').slice(0,160),q=String(input.q||'').trim().slice(0,120),page=Math.min(10000,Math.max(1,Number.parseInt(input.page,10)||1));
+ const rows=(await db.query(`WITH candidates AS(${source}),costs AS(${values}) SELECT c.*,v.stock_value,s.code,s.variant_label,i.name AS product,count(*) OVER() AS total FROM candidates c LEFT JOIN costs v ON v.sku_id=c.sku_id LEFT JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id LEFT JOIN items i ON i.workspace_id=c.workspace_id AND i.id=c.item_id WHERE ($2='' OR c.category=$2) AND ($3='' OR c.location_id=$3) AND ($4='' OR c.title ILIKE '%'||$4||'%' OR s.code ILIKE '%'||$4||'%' OR i.name ILIKE '%'||$4||'%' OR s.variant_label ILIKE '%'||$4||'%') ORDER BY v.stock_value DESC NULLS LAST,c.priority_score DESC,c.first_detected_at,c.id LIMIT 51 OFFSET $5`,[workspaceId,category,location,q,(page-1)*50])).rows;
+ const currency=(await db.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[workspaceId])).rows[0]?.base_currency||'USD';return {rows:rows.slice(0,50),hasMore:rows.length>50,total:Number(rows[0]?.total||0),category,location,q,page,currency};
+}
+module.exports={summary,page};

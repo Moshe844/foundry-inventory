@@ -162,6 +162,7 @@ function createPostgresProjectionsRouter(database){
     permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
     return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,req.query)});
   }));
+  router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,req.query)})));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
