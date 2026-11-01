@@ -1,0 +1,5 @@
+'use strict';
+(()=>{const state=document.querySelector('[data-state]'),detail=document.querySelector('[data-detail]'),checked=document.querySelector('[data-checked]'),button=document.querySelector('[data-check]');let busy=false;
+ async function check(){if(busy)return;busy=true;button.disabled=true;try{const response=await fetch('https://stockchief-staging-web.onrender.com/healthz',{cache:'no-store',credentials:'omit',signal:AbortSignal.timeout(8000)}),health=await response.json();if(!response.ok||health.ok!==true)throw Error();state.textContent='Application responding';state.dataset.health='up';detail.textContent='The staging application and its database responded to this check.';}catch{state.textContent='Application could not be reached';state.dataset.health='down';detail.textContent='StockChief staging did not complete the availability check. Try again shortly, or contact support if this continues.';}finally{checked.textContent='Last checked '+new Date().toLocaleString();button.disabled=false;busy=false;}}
+ button.addEventListener('click',check);check();setInterval(check,30000);
+})();

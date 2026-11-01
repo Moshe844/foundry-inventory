@@ -243,7 +243,15 @@ function createPostgresInventoryRouter(database) {
       WHERE s.workspace_id=$1 AND s.item_id=$2 AND s.is_active=1 AND b.on_hand>0 ORDER BY s.position,s.code,l.name`,[req.ctx.workspaceId,req.params.id])).rows;
     const settings=(await database.query('SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
     return res.page('inventory/postgres-stock-cost',{title:'Record cost of existing stock',nav:'inventory',item:detail.item,positions,
-      settings:settings||null,today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
+      settings:settings||null,costRepairs:settings&&Number(settings.enabled)?await require('../../accounting/postgres-missing-issue-cost').candidates(database,req.ctx,detail.item.id):[],today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
+  }));
+  router.get('/inventory/:id/cost-repairs/:movementId',requirePermission(permissions.MANAGE_ACCOUNTING,'review stock cost corrections'),asyncRoute(async(req,res)=>{
+    if(!(await database.query('SELECT 1 FROM movements m JOIN skus s ON s.workspace_id=m.workspace_id AND s.id=m.sku_id WHERE m.workspace_id=$1 AND m.id=$2 AND s.item_id=$3',[req.ctx.workspaceId,req.params.movementId,req.params.id])).rows.length)throw new ValidationError('Choose a stock movement belonging to this product.');
+    return res.page('inventory/stock-cost-repair',{title:'Review stock value correction',nav:'inventory',itemId:req.params.id,review:await require('../../accounting/postgres-missing-issue-cost').preview(database,req.ctx,req.params.movementId)});
+  }));
+  router.post('/inventory/:id/cost-repairs/:movementId/approve',requirePermission(permissions.MANAGE_ACCOUNTING,'approve stock cost corrections'),asyncRoute(async(req,res)=>{
+    if(!(await database.query('SELECT 1 FROM movements m JOIN skus s ON s.workspace_id=m.workspace_id AND s.id=m.sku_id WHERE m.workspace_id=$1 AND m.id=$2 AND s.item_id=$3',[req.ctx.workspaceId,req.params.movementId,req.params.id])).rows.length)throw new ValidationError('Choose a stock movement belonging to this product.');
+    await require('../../accounting/postgres-missing-issue-cost').apply(database,req.ctx,req.params.movementId,req.body.integrityHash);req.flash('success','The missing write-off cost was corrected.');return res.redirect(303,'/inventory/'+req.params.id+'/cost-repairs/'+req.params.movementId);
   }));
   router.post('/inventory/:id/costs/proposals',requirePermission(permissions.MANAGE_ACCOUNTING,'establish inventory cost'),asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);
