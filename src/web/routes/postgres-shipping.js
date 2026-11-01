@@ -70,7 +70,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const shipmentProvider=s.provider||state.account?.provider;
   if(shipmentProvider&&providerRegistry.has(shipmentProvider))providerCapabilities=providerRegistry.capabilities(shipmentProvider);
   const packagePresets=await require('../../shipping/postgres-parcel-options').presets(database,workspaceId);
-  return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
+  const kitTracking=orderDetail.lines.filter(l=>l.isKit&&lineRows.rows.some(p=>p.sales_order_line_id===l.id)).flatMap(l=>l.kitComponents.flatMap(part=>part.allocations.filter(a=>a.location_id===s.ship_from_location_id).map(a=>({...part,locationId:a.location_id}))));
+  return {kitTracking,shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
     provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities},

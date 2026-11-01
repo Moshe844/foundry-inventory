@@ -114,6 +114,11 @@ function createPostgresInventoryRouter(database) {
     }
   }));
   router.get('/inventory/:id/photo',asyncRoute(async(req,res)=>{const image=(await database.query('SELECT image_bytes,content_hash FROM product_images WHERE workspace_id=$1 AND item_id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];if(!image)return res.sendStatus(404);res.set('Content-Type','image/png');res.set('Cache-Control','private, max-age=3600');res.set('ETag','"'+image.content_hash+'"');res.set('X-Content-Type-Options','nosniff');return res.send(image.image_bytes);}));
+  const kitAccess=require('../commercial-middleware').requireCapability(database,'inventory.kits');
+  router.get('/inventory/:id/kits/:skuId',requireOwner,kitAccess,asyncRoute(async(req,res)=>{const definition=await require('../../domain/postgres-kit-service').definition(database,req.ctx.workspaceId,req.params.skuId);if(definition.sku.item_id!==req.params.id)throw new ValidationError('Choose a variant of this item.');return res.page('inventory/kit-recipe',{title:'Kit recipe',nav:'inventory',itemId:req.params.id,definition,expectedVersion:require('../../domain/postgres-kit-reviews').version(definition)});}));
+  router.post('/inventory/:id/kits/:skuId',requireOwner,kitAccess,asyncRoute(async(req,res)=>{const review=await require('../../domain/postgres-kit-reviews').prepare(database,req.ctx,req.params.id,req.params.skuId,req.body);return res.redirect(303,'/inventory/kit-reviews/'+review.id);}));
+  router.get('/inventory/kit-reviews/:reviewId',requireOwner,kitAccess,asyncRoute(async(req,res)=>res.page('inventory/kit-review',{title:'Review kit recipe',nav:'inventory',review:await require('../../domain/postgres-kit-reviews').get(database,req.ctx,req.params.reviewId)})));
+  router.post('/inventory/kit-reviews/:reviewId/approve',requireOwner,kitAccess,asyncRoute(async(req,res)=>{const review=await require('../../domain/postgres-kit-reviews').approve(database,req.ctx,req.params.reviewId,req.body.integrityHash);req.flash('success','The reviewed kit recipe was saved.');return res.redirect(303,'/inventory/'+review.payload.itemId);}));
   router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page,
@@ -154,12 +159,14 @@ function createPostgresInventoryRouter(database) {
     const variantSuppliers=req.user.role==='owner'?(await database.query("SELECT id,name,currency FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name,id LIMIT 1000",[req.ctx.workspaceId])).rows:[];
     const stockPlaces=req.user.role==='owner'?await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId):[],variantStockLocations=req.query.stockLocationId?stockPlaces.filter(l=>l.id===req.query.stockLocationId):stockPlaces.slice(0,10);
     const variantStockSnapshots=req.user.role==='owner'&&detail.item.tracking_mode==='quantity'&&!detail.item.secondary_unit_label?await require('../../domain/postgres-variant-stock-counts').snapshots(database,req.ctx,detail.skus.filter(s=>s.is_active).map(s=>s.id),variantStockLocations):{};
+    const kitCounts=(await database.query('SELECT kit_sku_id,count(*) n FROM kit_components WHERE workspace_id=$1 AND kit_sku_id=ANY($2::text[]) GROUP BY kit_sku_id',[req.ctx.workspaceId,detail.skus.map(s=>s.id)])).rows;
+    const kitAvailability=kitCounts.length?Object.fromEntries(await require('../../domain/postgres-kit-availability').read(database,req.ctx.workspaceId,kitCounts.map(k=>k.kit_sku_id))):{};
     return res.page('inventory/item',{productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
       stockOpKeys:Object.fromEntries(['receive','issue','transfer','adjust'].map(kind=>[kind,newId('stockform')])),
-      kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});
+      kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:kitCounts.some(k=>k.kit_sku_id===sku.id),components:[]}])),kitAvailability});
   }));
   router.post('/inventory/:id/details',requirePermission(permissions.OPERATE,'edit products'),asyncRoute(async(req,res)=>{
     if(!req.body.expectedDetailsVersion)throw new (require('../../domain/errors').ValidationError)('Reload this product before saving its latest details. Nothing was overwritten.');

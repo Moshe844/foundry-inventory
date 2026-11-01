@@ -11,7 +11,7 @@ const CAPABILITIES = Object.freeze([
   ['inventory.lot_serial','Lot and serial tracking','inventory','SELLABLE',false],
   ['inventory.counts','Physical counts and reconciliation','inventory','SELLABLE',false],
   ['inventory.transfers','Inventory transfers','inventory','SELLABLE',false],
-  ['inventory.kits','Kits and bills of material','inventory','DISABLED',false],
+  ['inventory.kits','Kits and bills of material','inventory','SELLABLE',false],
   ['purchasing.core','Purchasing and purchase orders','purchasing','SELLABLE',false],
   ['purchasing.suppliers','Suppliers and supplier SKUs','purchasing','SELLABLE',false],
   ['purchasing.invoices','Supplier invoices and payables','purchasing','SELLABLE',true],

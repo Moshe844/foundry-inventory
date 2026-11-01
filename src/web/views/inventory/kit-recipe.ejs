@@ -1,0 +1,12 @@
+<a class="back-link" href="/inventory/<%= itemId %>">‹ Item</a>
+<h1>Kit recipe · <%= definition.sku.name %><%= definition.sku.variant_label?' — '+definition.sku.variant_label:'' %></h1>
+<p>A kit can contain any variants in this inventory. Review the exact components before saving. Existing orders retain their accepted recipes.</p>
+<form method="post" action="/inventory/<%= itemId %>/kits/<%= definition.sku.id %>" class="stack-form">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedVersion" value="<%= expectedVersion %>">
+ <label>How stock is used<select name="stockBasis"><option value="components" <%= definition.stockBasis!=='preassembled'?'selected':'' %>>Build from components when sold</option><option value="preassembled" <%= definition.stockBasis==='preassembled'?'selected':'' %>>Use separately received, already assembled kits</option></select></label>
+ <p>Enter the exact component SKU or barcode. Quantities use each component's stock unit, including fractional units where configured.</p>
+ <div class="table-wrap"><table><thead><tr><th>Component SKU or barcode</th><th>Quantity per kit</th></tr></thead><tbody data-kit-components>
+ <% const rows=definition.components.length?definition.components:[{code:'',quantity:''}];for(let n=0;n<Math.min(500,Math.max(rows.length+3,8));n++){const part=rows[n]||{}; %><tr><td><input aria-label="Component <%= n+1 %> SKU or barcode" name="components[<%= n %>][code]" maxlength="240" value="<%= part.code||'' %>"><% if(part.name){ %><small><%= part.name %><%= part.variant_label?' — '+part.variant_label:'' %></small><% } %></td><td><input aria-label="Component <%= n+1 %> quantity" name="components[<%= n %>][quantity]" inputmode="decimal" value="<%= part.quantity||'' %>"></td></tr><% } %>
+ </tbody></table></div><button class="btn" type="button" data-add-kit-component>Add component</button><button class="btn btn--primary" type="submit">Review kit recipe</button>
+</form>
+<script src="/kit-recipe.js?v=<%= assetVersion %>" defer></script>

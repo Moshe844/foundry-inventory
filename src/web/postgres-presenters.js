@@ -97,9 +97,8 @@ async function homeUncached(database,workspaceId,actorId=null){
 async function inventoryPosition(database,workspaceId){
   const result=await database.query(`WITH sku_position AS (
       SELECT s.id,s.item_id,COALESCE(SUM(b.on_hand),0)::numeric AS on_hand,
-        COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a
-          JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
-          WHERE a.workspace_id=s.workspace_id AND sol.sku_id=s.id),0)::numeric AS committed,
+        COALESCE((SELECT SUM(a.quantity) FROM sales_stock_commitments a
+          WHERE a.workspace_id=s.workspace_id AND a.sku_id=s.id),0)::numeric AS committed,
         COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id=pol.purchase_order_id
           WHERE pol.workspace_id=s.workspace_id AND pol.sku_id=s.id

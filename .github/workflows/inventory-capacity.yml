@@ -76,7 +76,7 @@ jobs:
       - name: Kit recipe snapshots and component reservations
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/round16-kit-recipes.test.js tests/postgres/round16-kit-reservations.test.js tests/postgres/round16-kit-cost-batches.test.js tests/postgres/round16-kit-consumption.test.js tests/postgres/round16-kit-order-lifecycle.test.js 2>&1 | tee output/inventory-ci/kits.log
+          node --test --test-concurrency=2 tests/postgres/round16-kit-recipes.test.js tests/postgres/round16-kit-reservations.test.js tests/postgres/round16-kit-cost-batches.test.js tests/postgres/round16-kit-consumption.test.js tests/postgres/round16-kit-order-lifecycle.test.js tests/postgres/round16-kit-reviews.test.js tests/postgres/round16-kit-parcels.test.js tests/postgres/round16-kit-browser.test.js 2>&1 | tee output/inventory-ci/kits.log
       - name: Variant answers and fresh replenishment
         run: |
           set -euo pipefail

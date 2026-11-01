@@ -26,7 +26,8 @@ async function submitOrder(database,ctx,input,nextStep){
     if(nextStep==='fulfill'){const prior=(await client.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='sales_order.fulfill' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,input.idempotencyKey+':fulfill'])).rows[0];if(prior&&prior.result.salesOrderId===created.salesOrderId)return {...created,...prior.result};}
     const confirmed=await workflows.confirmSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':confirm',requireFullAllocation:nextStep==='fulfill'});if(nextStep==='confirm')return {...created,status:confirmed.status};
     const allocations=(await client.query('SELECT a.sales_order_line_id,a.location_id,a.quantity,l.secondary_quantity_ordered,l.secondary_quantity_fulfilled,count(*) OVER(PARTITION BY a.sales_order_line_id) AS allocation_count FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,created.salesOrderId])).rows;
-    const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':fulfill',lines:allocations.map(a=>{if(a.secondary_quantity_ordered!=null&&Number(a.allocation_count)!==1)throw new ValidationError('This weighed line is reserved at multiple locations. Record the actual weight leaving each location from the order page.');return {lineId:a.sales_order_line_id,locationId:a.location_id,quantity:Number(a.quantity),secondaryQuantity:a.secondary_quantity_ordered==null?undefined:require('../../domain/exact-quantity').safeNumber(require('../../domain/exact-quantity').subtract(a.secondary_quantity_ordered,a.secondary_quantity_fulfilled||0))};})});return {...created,status:fulfilled.status,invoiceId:fulfilled.invoiceId};
+    const parts=await require('../../operations/postgres-kit-order-view').load(client,ctx.workspaceId,created.salesOrderId),kitLines=[...parts].map(([lineId,components])=>({lineId,kit:true,quantity:require('../../operations/postgres-kit-order-view').ready(components)})).filter(l=>l.quantity>0);
+    const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':fulfill',lines:[...allocations.map(a=>{if(a.secondary_quantity_ordered!=null&&Number(a.allocation_count)!==1)throw new ValidationError('This weighed line is reserved at multiple locations. Record the actual weight leaving each location from the order page.');return {lineId:a.sales_order_line_id,locationId:a.location_id,quantity:Number(a.quantity),secondaryQuantity:a.secondary_quantity_ordered==null?undefined:require('../../domain/exact-quantity').safeNumber(require('../../domain/exact-quantity').subtract(a.secondary_quantity_ordered,a.secondary_quantity_fulfilled||0))};}),...kitLines]});return {...created,status:fulfilled.status,invoiceId:fulfilled.invoiceId};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
@@ -148,7 +149,7 @@ async function salesOrderPage(database,workspaceId,id){
     const ordered=Number(line.quantity_ordered);const fulfilled=Number(line.quantity_fulfilled);const allocated=Number(line.allocated);
     return {...line,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),
       lineTotalMinor:line.pricing_snapshot?.grossMinor??(line.unit_price_minor===null?null:ordered*Number(line.unit_price_minor)),allocated,
-      backordered:detail.order.status==='CANCELLED'?0:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:false,
+      backordered:detail.order.status==='CANCELLED'?0:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:line.isKit,
       allocations:line.allocations.map((allocation)=>({...allocation,quantity:Number(allocation.quantity),
         location_name:allocation.location_name,kit_component_id:null}))};
   });
@@ -173,8 +174,8 @@ async function salesOrderPage(database,workspaceId,id){
     units:packed.reduce((sum,line)=>sum+Number(line.quantity),0),trackingUrl:shipment.tracking_url,
     wentBy:shipment.handover==='COLLECTED'?'Collected by the customer':shipment.handover==='DELIVERED_BY_US'
       ?'Delivered by us':shipment.carrier||'Carrier'};});
-  const pickable=lines.flatMap((line)=>line.allocations.map((allocation)=>({lineId:line.id,locationId:allocation.location_id,
-    available:Number(allocation.quantity),displayName:line.displayName,locationName:allocation.location_name})));
+  const pickable=lines.flatMap((line)=>[...line.allocations.map((allocation)=>({lineId:line.id,locationId:allocation.location_id,
+    available:Number(allocation.quantity),displayName:line.displayName,locationName:allocation.location_name})),...(line.kitReady>0?[{lineId:line.id,kit:true,available:line.kitReady,displayName:line.displayName}]:[])]);
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
   const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED' AND r.recognition_stage='ON_REFUND'",[workspaceId,id])).rows[0];const credits=(await database.query('SELECT coalesce(sum(c.revenue_minor+c.tax_minor),0)::bigint credited,coalesce(sum(c.cash_refunded_minor),0)::bigint repaid FROM accounting_return_receipt_credits c JOIN customer_returns r ON r.workspace_id=c.workspace_id AND r.id=c.customer_return_id WHERE c.workspace_id=$1 AND r.sales_order_id=$2',[workspaceId,id])).rows[0];const creditedMinor=Number(refunds.refunded_minor)+Number(credits.credited),refundedMinor=Number(refunds.cash_minor)+Number(credits.repaid),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor)-Number(credits.repaid);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-creditedMinor);order.pricing.creditedMinor=creditedMinor;}
@@ -1046,7 +1047,8 @@ function createPostgresCommerceRouter(database,options={}){
     const lineIds=Array.isArray(req.body.lineId)?req.body.lineId:[req.body.lineId];
     const locationIds=Array.isArray(req.body.locationId)?req.body.locationId:[req.body.locationId];
     const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity],weights=Array.isArray(req.body.secondaryQuantity)?req.body.secondaryQuantity:[req.body.secondaryQuantity];
-    const lines=lineIds.map((lineId,index)=>{const locationId=locationIds[index]||locationIds[0],field=lineId+'_'+locationId;return {lineId,locationId,quantity:quantities[index],secondaryQuantity:req.body['secondary_'+field]??weights[index],lotCode:trimOrNull(req.body['lot_'+field]),lotStrategy:req.body['lotStrategy_'+field],serials:req.body['serials_'+field]};})
+    const kitParts=await require('../../operations/postgres-kit-order-view').load(database,req.ctx.workspaceId,req.params.id);
+    const lines=lineIds.map((lineId,index)=>{const locationId=locationIds[index]||locationIds[0],field=lineId+'_'+locationId,kit=locationId==='__kit__',componentSelections={};if(kit)for(const part of kitParts.get(lineId)||[]){componentSelections[part.id]={};for(const a of part.allocations){const f='kit_'+part.id+'_'+a.location_id;componentSelections[part.id][a.location_id]={lotCode:trimOrNull(req.body['lot_'+f]),lotStrategy:req.body['lotStrategy_'+f],serials:req.body['serials_'+f],secondaryQuantity:req.body['secondary_'+f]};}}return {lineId,locationId:kit?undefined:locationId,kit,componentSelections,quantity:quantities[index],secondaryQuantity:req.body['secondary_'+field]??weights[index],lotCode:trimOrNull(req.body['lot_'+field]),lotStrategy:req.body['lotStrategy_'+field],serials:req.body['serials_'+field]};})
       .filter((line)=>Number(line.quantity)>0);
     const result=await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines,
       shipment:{handover:req.body.handover,carrier:req.body.carrier,trackingNumber:req.body.trackingNumber}});
@@ -1060,6 +1062,11 @@ function createPostgresCommerceRouter(database,options={}){
       'Pickup orders do not need a carrier parcel. Use “Record what physically left” when the customer collects it.');
     const lines=detail.lines.flatMap((line)=>line.allocations.map((allocation)=>({lineId:line.id,
       locationId:allocation.location_id,quantity:Number(allocation.quantity)})));
+    for(const line of detail.lines.filter(l=>l.kitReady>0)){
+      const places=[...new Set(line.kitComponents.flatMap(p=>p.allocations.map(a=>a.location_id)))],place=places.find(id=>line.kitComponents.every(p=>p.allocations.filter(a=>a.location_id===id).reduce((n,a)=>n+a.quantity,0)+1e-9>=line.kitReady*Number(p.quantity_per_kit)));
+      if(!place)throw new ValidationError('The kit components are reserved across locations. Move them to one dispatch location for a carrier parcel, or record the exact goods leaving each location below.');
+      lines.push({lineId:line.id,locationId:place,quantity:line.kitReady,kit:true});
+    }
     if(!lines.length)throw new ValidationError('There is no committed stock ready to pick.');
     const locationId=lines[0].locationId;
     if(lines.some((line)=>line.locationId!==locationId))throw new ValidationError(

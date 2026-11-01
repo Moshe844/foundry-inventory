@@ -21,6 +21,7 @@ const features=[
  ['automation.transfers','Automatic transfers within limits you approve.','pro'],
  ['automation.purchasing','Automatic purchasing within limits you approve.','pro'],
  ['warehouse.advanced','Warehouse picking and scan verification.','pro'],
+ ['inventory.kits','Kits and bundles made from your product variants.','pro'],
  ['authority.advanced','Up to 50 custom roles per inventory and per-person purchase approval limits.','pro'],
  ['api.public','Business API access, signed webhooks and an audit trail.','pro'],
  ['support.priority','Priority email support.','growth'],

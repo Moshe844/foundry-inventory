@@ -948,6 +948,7 @@ async function synchronizeSalesOrderInTransaction(client,rawContext,salesOrderId
   const order=await requireRow(client,`SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
     [salesOrderId,ctx.workspaceId],'That sales order was not found.');
   if(['FULFILLED','CANCELLED'].includes(order.status))throw new ValidationError('A completed sales order cannot be rewritten from a provider snapshot.');
+  if((await client.query('SELECT 1 FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2 LIMIT 1',[ctx.workspaceId,salesOrderId])).rows.length)throw new ValidationError('This order has an accepted kit recipe. Review its channel amendment manually so component commitments and fulfilled costs remain intact.');
   const current=(await client.query(`SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2
     ORDER BY created_at,id FOR UPDATE`,[ctx.workspaceId,salesOrderId])).rows;
   const promotions=require('../pricing/postgres-promotions');
@@ -1032,6 +1033,7 @@ async function reviseDraftSalesOrderLineInTransaction(client,rawContext,salesOrd
   await client.query(`UPDATE sales_order_lines SET quantity_ordered=$2,unit_price_minor=$3,updated_at=$4
     WHERE id=$1`,[line.id,quantity,unitPriceMinor,at]);
   await promotions.saveQuote(client,ctx,salesOrderId,revision.quote,revision.lineIds);
+  await client.query('UPDATE sales_order_kit_components SET quantity_required=quantity_per_kit*$3,updated_at=$4 WHERE workspace_id=$1 AND sales_order_line_id=$2',[ctx.workspaceId,line.id,quantity,at]);
   await client.query(`UPDATE sales_orders SET version=version+1,updated_at=$3
     WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,salesOrderId,at]);
   await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,

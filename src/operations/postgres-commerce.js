@@ -177,17 +177,20 @@ async function catalogue(database, workspaceId, {limit=null,search='',ids=null,t
     FROM selected s LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices p
       WHERE p.workspace_id=$1 AND p.sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1)p ON true
     LEFT JOIN LATERAL(SELECT sum(b.on_hand) AS on_hand,sum(CASE WHEN l.custody_agreement_id IS NULL THEN b.on_hand ELSE 0 END) AS available_on_hand FROM balances b JOIN locations l ON l.workspace_id=b.workspace_id AND l.id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id=s.id)b ON true
-    LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_order_allocations a JOIN sales_order_lines l
-      ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id WHERE l.workspace_id=$1 AND l.sku_id=s.id)a ON true`,
+    LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_stock_commitments a WHERE a.workspace_id=$1 AND a.sku_id=s.id)a ON true`,
     [workspaceId,ids,String(search).slice(0,120),limit,trackingMode]);
   const positions=(await database.query(`SELECT b.sku_id,b.location_id,b.on_hand,coalesce(a.committed,0) AS committed
-    FROM balances b JOIN locations loc ON loc.workspace_id=b.workspace_id AND loc.id=b.location_id AND loc.custody_agreement_id IS NULL LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_order_allocations a
-      JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
-      WHERE a.workspace_id=$1 AND l.sku_id=b.sku_id AND a.location_id=b.location_id)a ON true
+    FROM balances b JOIN locations loc ON loc.workspace_id=b.workspace_id AND loc.id=b.location_id AND loc.custody_agreement_id IS NULL LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_stock_commitments a
+      WHERE a.workspace_id=$1 AND a.sku_id=b.sku_id AND a.location_id=b.location_id)a ON true
     WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[])`,[workspaceId,result.rows.map(r=>r.id)])).rows,bySku=new Map();
   const availability=await require('../domain/postgres-stock-availability').readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id})));
   for(const r of positions){const a=availability.get(JSON.stringify([r.sku_id,r.location_id]));if(!bySku.has(r.sku_id))bySku.set(r.sku_id,[]);bySku.get(r.sku_id).push({location_id:r.location_id,onHand:Number(r.on_hand),committed:a?.committed||0,reserved:a?.reserved||0,available:a?.available||0});}
-  return result.rows.map(r=>({...r,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:(bySku.get(r.id)||[]).reduce((sum,p)=>sum+p.available,0),positions:bySku.get(r.id)||[]}));
+  const kits=await require('../domain/postgres-kit-availability').read(database,workspaceId,result.rows.map(r=>r.id));
+  return result.rows.map(r=>{
+    const kit=kits.get(r.id),positions=bySku.get(r.id)||[],physicalAvailable=positions.reduce((sum,p)=>sum+p.available,0);
+    for(const part of kit?.locations||[]){const existing=positions.find(p=>p.location_id===part.locationId);if(existing){existing.available+=part.buildable;existing.buildable=part.buildable;}else positions.push({location_id:part.locationId,onHand:0,committed:0,reserved:0,available:part.buildable,buildable:part.buildable});}
+    return {...r,isKit:Boolean(kit),buildable:kit?.buildable||0,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:physicalAvailable+(kit?.buildable||0),positions};
+  });
 }
 
 async function locations(database, workspaceId) {
@@ -281,8 +284,10 @@ async function salesOrder(database, workspaceId, id) {
     JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id JOIN locations l ON l.id=a.location_id
     WHERE a.workspace_id=$1 AND sol.sales_order_id=$2 ORDER BY sol.created_at,l.name`,[workspaceId,id])).rows;
   const byLine=new Map(); for(const row of allocations){if(!byLine.has(row.sales_order_line_id))byLine.set(row.sales_order_line_id,[]);byLine.get(row.sales_order_line_id).push(row);}
-  const mappedLines=lines.rows.map((row)=>({...row,allocated:Number(row.allocated),
-    quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]}));
+  const kitView=require('./postgres-kit-order-view'),kitParts=await kitView.load(database,workspaceId,id);
+  const mappedLines=lines.rows.map((row)=>{const kitComponents=kitParts.get(row.id)||[],kitReady=kitView.ready(kitComponents);return {...row,allocated:Number(row.allocated)+kitReady,
+    physicalAllocated:Number(row.allocated),kitReady,isKit:kitComponents.length>0,kitComponents,
+    quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]};});
   const terms=paymentTerms.rows[0]||null;
   const orderTotalMinor=header.rows[0].pricing_total_minor===null?Math.max(0,mappedLines.reduce((sum,row)=>sum+Number(row.quantity_ordered)*Number(row.unit_price_minor),0)
     -Number(header.rows[0].discount_minor||0)+Number(header.rows[0].tax_minor||0)):Number(header.rows[0].pricing_total_minor);
