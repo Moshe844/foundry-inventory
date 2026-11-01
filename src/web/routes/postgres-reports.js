@@ -149,7 +149,7 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,reportDescription:String(req.query.q||'').slice(0,1800)});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);

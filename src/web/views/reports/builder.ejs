@@ -2,6 +2,7 @@
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= saved?'Edit report':draft?'Customize report':'Build a report' %></h1>
   <p class="lede">Choose what you want to see. StockChief will use your business records.</p></div></div>
 <section class="report-start" aria-label="Start a custom report">
+  <% if(locals.reportBuildAvailability?.available===false){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
   <% if(selection){ %><details class="report-change-prompt"><summary>Ask StockChief to change this report</summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
     <textarea id="report-description" name="q" rows="3" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
     <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button><p data-report-build-status role="status" hidden></p></form><% if(selection){ %></details><% } %>

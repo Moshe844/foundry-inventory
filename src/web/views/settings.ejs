@@ -48,6 +48,7 @@
         Owners manage locations, people and settings. Staff do the day-to-day inventory work.
       </p>
     </section><% if (isOwner) { %>
+  <% if(locals.postgresMode){ %><%- include('settings/team-access') %><% } %>
   <dialog class="modal" id="modal-person">
     <form method="post" action="/settings/people">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">

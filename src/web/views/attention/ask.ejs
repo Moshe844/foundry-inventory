@@ -83,6 +83,7 @@
 
 </aside>
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
+<p class="notice notice--warn" role="status" data-ask-health hidden></p>
 <div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
   <% if(locals.showAgentDiagnostics===true&&locals.codexPilot){ %>
     <section class="rm-note" style="display:block" aria-label="Staging agent controls">
@@ -481,3 +482,6 @@
 
 </div>
 </div><% if(locals.adaptiveGoal&&!locals.agentInspection){ %><script src="/agent-answer.js?v=<%= assetVersion %>" defer></script><script src="/adaptive-goal.js?v=<%= assetVersion %>" defer></script><% } %>
+
+
+<script src="/ask-health.js?v=<%= locals.assetVersion || '' %>" defer></script>

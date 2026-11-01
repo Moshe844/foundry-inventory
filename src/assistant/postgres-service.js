@@ -1928,6 +1928,7 @@ async function askCapabilities(database,ctx,message,options={}){
 async function buildReportDefinition(database,ctx,message,{provider=null,priorReport=null,acceptReport=null}={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  if(!require('../reports/builder-entry').standardDefinition(message,'USD')){const availability=await require('../reports/build-availability').state(database,{provider:raw});if(!availability.available)return {status:'CLARIFY',answer:availability.message,creditsUsed:0,rows:[],columns:[]};}
   const prefix=newId('report-build'),funded=fundedAskProvider(database,ctx,raw,prefix),settlement=require('../reports/build-usage');
   try{const result=await require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
     // A generated definition is only useful once its permissions and draft storage succeed.

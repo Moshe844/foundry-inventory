@@ -16,17 +16,18 @@ test('plan-switching portal is confined to explicitly enabled staging TEST billi
 });
 test('TEST portal only offers exact approved monthly and annual prices with end-of-period downgrades',async()=>{
  const plans=['starter','growth','pro'].map((id,i)=>({id,currency:'USD',monthly_amount_minor:[19900,49900,99900][i],annual_amount_minor:[199000,499000,999000][i],stripe_monthly_price_id:`price_${id}_month`,stripe_annual_price_id:`price_${id}_year`}));
- let config,requests=0;const options={secretKey:'sk_test_portal',returnUrl:'https://stockchief.example.test/billing',fetch:async(url,o)=>{
+ let config,requests=0;const options={billingInterval:'MONTHLY',secretKey:'sk_test_portal',returnUrl:'https://stockchief.example.test/billing',fetch:async(url,o)=>{
   requests++;if(url.includes('/prices/')){const id=url.split('/').at(-1),p=plans.find(p=>[p.stripe_monthly_price_id,p.stripe_annual_price_id].includes(id)),year=id.endsWith('_year');return response({id,livemode:false,active:true,type:'recurring',currency:'usd',unit_amount:p[year?'annual_amount_minor':'monthly_amount_minor'],product:'prod_'+p.id,recurring:{interval:year?'year':'month',interval_count:1}});}
   config=new URLSearchParams(o.body);return response({id:'bpc_test',active:true,livemode:false,features:{subscription_update:{enabled:true}}});
  }};
- assert.equal((await portal.configure(plans,options)).id,'bpc_test');assert.equal(requests,7);
- assert.equal(config.get('features[subscription_update][products][0][prices][1]'),'price_starter_year');
+ assert.equal((await portal.configure(plans,options)).id,'bpc_test');assert.equal(requests,4);
+ assert.equal(config.get('features[subscription_update][products][0][prices][0]'),'price_starter_month');assert.equal(config.has('features[subscription_update][products][0][prices][1]'),false);
  assert.equal(config.get('features[subscription_update][products][0][adjustable_quantity][enabled]'),'false');
  assert.equal(config.get('features[subscription_update][schedule_at_period_end][conditions][0][type]'),'decreasing_item_amount');
  assert.equal(config.get('features[subscription_update][proration_behavior]'),'always_invoice');assert.equal(config.get('features[subscription_update][billing_cycle_anchor]'),'now');
- await assert.rejects(()=>portal.configure(plans,{...options,secretKey:'sk_live_refused'}),/TEST key/);assert.equal(requests,7);
+ await assert.rejects(()=>portal.configure(plans,{...options,secretKey:'sk_live_refused'}),/TEST key/);assert.equal(requests,4);
  await assert.rejects(()=>portal.configure(plans,{...options,fetch:async()=>response({livemode:true})}),/does not match/);
+ await portal.configure(plans,{...options,billingInterval:'ANNUAL'});assert.equal(config.get('features[subscription_update][products][0][prices][0]'),'price_starter_year');assert(![...config.values()].some(v=>v.endsWith('_month')));
  await portal.configure(plans.slice(1),options);assert.equal(config.get('features[subscription_update][products][0][product]'),'prod_growth');assert.equal([...config.values()].some(v=>v.includes('starter')),false);
 });
 test('scheduled portal changes show the verified next date and reject another billing account',async t=>{

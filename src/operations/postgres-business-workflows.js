@@ -281,6 +281,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
     const missing = await client.query(`SELECT COUNT(*) AS count FROM purchase_order_lines
       WHERE purchase_order_id=$1 AND workspace_id=$2 AND unit_cost IS NULL`, [purchaseOrderId, ctx.workspaceId]);
     if (Number(missing.rows[0].count)) throw new ValidationError('Every purchase-order line needs an approved cost.');
+    await require('./postgres-team-access').assertPurchaseApproval(client,ctx,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='APPROVED',approved_by_user_id=$3,
       approved_at=COALESCE(approved_at,$4),updated_at=$4 WHERE id=$1 AND workspace_id=$2`,

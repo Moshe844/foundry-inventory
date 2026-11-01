@@ -60,7 +60,7 @@ const sections=[
   {title:'This inventory',why:'Set once, changed rarely.',links:[
     {href:'/search',label:'Search every record'},{href:'/settings',label:'Settings, people and plan'},
     {href:'/what-you-told-me',label:'How this inventory is configured'},{href:'/inventories',label:'Your other inventories'},
-    {href:'/settings/export',label:'Export this inventory'},{href:'/guide',label:'How to use StockChief'},
+    {href:'/settings/export',label:'Export this inventory'},{href:'/audit',label:'Audit trail'},{href:'/guide',label:'How to use StockChief'},
     {href:'/support',label:'Support'}]},
 ];
 
@@ -95,7 +95,7 @@ async function emailAlertState(database,workspaceId){const [row,owners]=await Pr
     deliveryConfigured:config.email.configured,updatedAt:stored?.updated_at||null};}
 
 async function settingsPage(database,req,res){const [counts,users,instructions,emailAlerts,feedRows,events]=await Promise.all([
-  summary(database,req.ctx.workspaceId),database.query(`SELECT member.id,member.name,member.role,account.email
+  summary(database,req.ctx.workspaceId),database.query(`SELECT member.id,member.name,member.role,member.custom_role_id,member.po_approval_limit_minor,member.po_approval_currency,member.access_revision,account.email
     FROM users member JOIN accounts account ON account.id=member.account_id WHERE member.workspace_id=$1
     ORDER BY CASE member.role WHEN 'owner' THEN 0 ELSE 1 END,lower(member.name)`,[req.ctx.workspaceId]),
   database.query(`SELECT id,stated_as,status FROM operating_instruction_proposals
@@ -108,7 +108,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,pendingInvitations:(await database.query("SELECT id,name,email,role,expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='PENDING' AND expires_at>now() ORDER BY created_at",[req.ctx.workspaceId])).rows,workspace:req.workspace,
+  return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,customRoles:req.query.section==='team'?await require('../../operations/postgres-team-access').list(database,req.ctx.workspaceId):[],teamPermissionLabels:permissions.LABELS,teamMoney:require('../../domain/currency'),pendingInvitations:(await database.query("SELECT id,name,email,role,expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='PENDING' AND expires_at>now() ORDER BY created_at",[req.ctx.workspaceId])).rows,workspace:req.workspace,
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -119,6 +119,8 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
           unlimited:meter.hardLimit===null&&meter.included===null}))}});}
 
 function createPostgresSettingsRouter(database,options={}){const router=express.Router();
+  router.get('/audit',requireAuth,requireOwner,asyncRoute(async(req,res)=>{const audit=await require('../../operations/postgres-audit').page(database,req.ctx.workspaceId,req.query),users=(await database.query('SELECT id,name FROM users WHERE workspace_id=$1 ORDER BY name,id',[req.ctx.workspaceId])).rows;return res.page('activity/audit',{title:'Audit trail',nav:'history',...audit,users});}));
+  router.get('/audit/export',requireAuth,requireOwner,asyncRoute((req,res)=>require('../../operations/postgres-audit').download(database,req.ctx.workspaceId,res,req.query)));
   router.get('/what-you-told-me',requireAuth,asyncRoute(async(req,res)=>{const [instructionRows,policies,connectorRows]=await Promise.all([
     database.query(`SELECT id,stated_as,summary,status,approved_at,created_at FROM operating_instruction_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC`,[req.ctx.workspaceId]),
@@ -179,6 +181,8 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       [req.ctx.workspaceId,req.account.id,name]);req.flash('success','Inventory name updated.');
     return res.redirect(303,'/settings');
   }));
+  router.post('/settings/team-roles',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').saveRole(database,req.ctx,req.body);req.flash('success','Role saved. Assigned team members now use these permissions.');return res.redirect(303,'/settings?section=team#team-authority');}));
+  router.post('/settings/people/:id/access',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').assign(database,req.ctx,req.params.id,req.body);req.flash('success','Team access and purchase approval limit saved.');return res.redirect(303,'/settings?section=team#team-authority');}));
   router.post('/settings/people',requireOwner,asyncRoute(async(req,res)=>{const name=String(req.body.name||'').trim();
     const email=passwordAuth.normaliseEmail(req.body.email);const role=String(req.body.role||'staff');
     if(!name||name.length>120)throw new ValidationError('Enter a name up to 120 characters.');

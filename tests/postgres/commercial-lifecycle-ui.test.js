@@ -106,6 +106,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).billing_interval,'ANNUAL');
   assert.equal((await database.query('SELECT status FROM commercial_subscription_changes WHERE id=$1',[annualChange.changeId])).rows[0].status,'APPLIED');
   const monthlyQuote=await commercial.subscriptionChangeQuote(database,business.accountId,{planId:'starter',interval:'monthly'},{provider:billingProvider});assert.equal(monthlyQuote.downgrade,true);assert.equal(new Date(monthlyQuote.effectiveAt).getTime(),providerSubscription.current_period_end*1000);
+  const higherMonthly=await commercial.subscriptionChangeQuote(database,business.accountId,{planId:'pro',interval:'monthly'},{provider:billingProvider});assert.equal(higherMonthly.downgrade,false,'A higher plan unlocks now even when moving from annual to monthly billing');
   process.env.STOCKCHIEF_RUNTIME_ENV='production';const paused=await page.goto(base+'/billing/change?plan=pro&interval=monthly');assert.equal(paused.status(),409);assert.match(await page.locator('main').innerText(),/Plan changes are paused/);assert.doesNotMatch(await page.locator('main').innerText(),/Something went wrong|Commercial Readiness/);
   process.env.STOCKCHIEF_RUNTIME_ENV='staging';process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY='sk_live_refuse_round15';await assert.rejects(()=>commercial.subscriptionChangeQuote(database,business.accountId,{planId:'pro',interval:'monthly'},{provider:billingProvider}),/Plan changes are paused/);
 });

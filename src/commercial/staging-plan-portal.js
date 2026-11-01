@@ -2,13 +2,17 @@
 const crypto=require('node:crypto');
 const stripe=require('./stripe-billing');
 // Explicit TEST configuration only. Never modify a default/live portal.
+// Stripe schedules on price amount and interval conditions, not our plan rank.
+// Keep portal choices in the current interval; the app safely handles changes to both.
+// https://docs.stripe.com/api/customer_portal/configurations/create
 async function configure(plans,options={}){
  if(!/^sk_test_/.test(options.secretKey||''))throw Error('A Stripe TEST key is required.');
+ if(!['MONTHLY','ANNUAL'].includes(options.billingInterval))throw Error('The current billing interval is required for safe portal plan changes.');
  const products=new Map();
  for(const plan of plans){
   if(!['starter','growth','pro'].includes(plan.id))throw Error('Only public self-service plans belong in this portal.');
-  for(const interval of ['monthly','annual']){
-   const id=plan[`stripe_${interval}_price_id`];if(!id)throw Error('Every plan needs monthly and annual test prices.');
+  for(const interval of [options.billingInterval==='ANNUAL'?'annual':'monthly']){
+   const id=plan[`stripe_${interval}_price_id`];if(!id)throw Error('Every plan needs a test price for the current billing interval.');
    const price=await stripe.retrievePrice(id,options);
    if(price.livemode!==false||price.active!==true||price.type!=='recurring'||price.currency!==String(plan.currency).toLowerCase()
      ||price.unit_amount!==Number(plan[`${interval}_amount_minor`])||price.recurring?.interval!==(interval==='annual'?'year':'month')
@@ -66,6 +70,6 @@ async function eligiblePlans(database,subscription){
 }
 async function forAccount(database,subscription,options={}){
  const plans=await eligiblePlans(database,subscription);if(!plans.length)return null;
- return configure(plans,{...options,secretKey:options.secretKey||require('../config').commercial.stripeSecretKey});
+ return configure(plans,{...options,billingInterval:subscription.billing_interval,secretKey:options.secretKey||require('../config').commercial.stripeSecretKey});
 }
 module.exports={configure,scheduledChange,eligiblePlans,forAccount};

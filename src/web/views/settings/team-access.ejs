@@ -1,0 +1,25 @@
+<section class="rm-panel" id="team-authority">
+<h2>Custom roles and approval limits</h2>
+<%- include('../components/plan-lock',{capability:'authority.advanced',label:'Custom roles and approval limits'}) %>
+<p>Choose what each person can do. Purchase limits include tax and charges. Orders above a person’s limit need an owner or a manager with enough authority.</p>
+<% const canEditTeam=currentUser.role==='owner'&&locals.planGates?.['authority.advanced']?.enabled!==false; const teamRoles=locals.customRoles||[]; %>
+<% for(const person of users.filter(u=>u.role!=='owner')){ %>
+<details class="rm-work"><summary><%= person.name %> · <%= teamRoles.find(r=>r.id===person.custom_role_id)?.name||helpers.roleLabel(person.role) %></summary>
+<div class="rm-work__body">
+<p>Purchase approval limit: <%= person.po_approval_limit_minor===null||person.po_approval_limit_minor===undefined?'No amount limit (approval permission still required)':teamMoney.format(Number(person.po_approval_limit_minor),person.po_approval_currency) %></p>
+<% if(canEditTeam){ %><form method="post" action="/settings/people/<%= person.id %>/access" class="rm-form-grid">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= person.access_revision %>">
+<label>Role<select name="customRoleId"><option value="">Use standard role</option><% for(const role of teamRoles){ %><option value="<%= role.id %>" <%= person.custom_role_id===role.id?'selected':'' %>><%= role.name %></option><% } %></select></label>
+<label>Standard role<select name="baseRole"><option value="staff" <%= person.role==='staff'?'selected':'' %>>Staff</option><option value="accountant" <%= person.role==='accountant'?'selected':'' %>>Accountant</option></select><small>Used only when no custom role is selected.</small></label>
+<label>Purchase approval limit<input name="approvalLimit" inputmode="decimal" placeholder="No amount limit" value="<%= person.po_approval_limit_minor===null?'':teamMoney.fromMinor(Number(person.po_approval_limit_minor),person.po_approval_currency) %>"><small>Enter 0 to require someone else to approve any purchase with a positive total.</small></label>
+<label>Limit currency<input name="currency" maxlength="3" value="<%= person.po_approval_currency||'USD' %>" required><small>A purchase in another currency requires an owner or a manager with matching authority.</small></label>
+<button class="rm-btn" type="submit">Save access</button></form><% } %>
+</div></details><% } %>
+<% if(canEditTeam){ for(const role of [...teamRoles,{id:'',name:'',permissions:'[]',revision:0}]){ const grants=JSON.parse(role.permissions); %>
+<details class="rm-work"><summary><%= role.id?'Edit role: '+role.name:'Create a custom role' %></summary><div class="rm-work__body">
+<form method="post" action="/settings/team-roles" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= role.id %>"><input type="hidden" name="revision" value="<%= role.revision %>">
+<label>Role name<input name="name" required maxlength="80" value="<%= role.name %>"></label>
+<fieldset class="rm-span-2"><legend>Allowed actions</legend><% for(const [key,label] of Object.entries(teamPermissionLabels)){ %><label style="display:block"><input type="checkbox" name="permissions" value="<%= key %>" <%= grants.includes(key)?'checked':'' %>> <%= label %></label><% } %></fieldset>
+<p class="rm-span-2">Saving updates everyone assigned to this role. Owners always retain full authority. Plan limits still apply.</p><button class="rm-btn" type="submit"><%= role.id?'Save role':'Create role' %></button>
+</form></div></details><% }} %>
+</section>
