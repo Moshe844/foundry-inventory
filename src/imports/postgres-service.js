@@ -175,8 +175,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     let unitCostMinor=null;
     if(costText){try{unitCostMinor=postgresPrices.toMinor(sourceMoney.clean(costText),'Unit cost',currency);}
       catch(error){problems.push(problem('bad_unit_cost',error.message));}}
-    if(unitCostMinor!==null&&quantityRead.ok&&quantity===null)
-      problems.push(problem('cost_without_stock','A source unit cost needs an explicit stock quantity, including zero. No cost will be silently discarded.'));
+    // A missing quantity supplies catalogue pricing, never a stock movement.
+    // Keep null distinct from zero so count imports cannot erase existing stock.
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
     if(unitCostMinor!==null&&quantity>0&&!Number.isSafeInteger(unitCostMinor*quantity))
@@ -197,19 +197,20 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(!name)problems.push(problem('no_product','A product name or SKU is required.'));
     if(name?.length>240||code?.length>240)problems.push(problem('invalid_identity','Product names and SKU codes must be 240 characters or fewer.'));
     if(quantity !== null && quantity > 0 && !location)problems.push(problem('no_location','Choose where this opening stock is held.'));
+    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     const serial=trimOrNull(textCell(row,mappings.serial));
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
     const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
     const serialFlag=flag('serialTracked'),lotFlag=flag('lotTracked');
     // Identifier columns can coexist in mixed catalogues. Their presence is
     // not a requirement on every product: use this row's identifiers/flags.
-    // A lone identifier column without requirement flags still describes a
-    // tracked source, so missing identifiers must continue to block stock.
+    // A lot column can be blank for ordinary products in the same file.
+    // Saved tracking requirements and explicit flags still require identifiers.
     const hasFlags=mappings.serialTracked!==undefined||mappings.lotTracked!==undefined;
     const serialRequired=Boolean(serial)||(serialFlag&&proposal.trackingReview?.serial!=='quantity')||
       (!hasFlags&&mappings.lotCode===undefined&&(mappings.serial!==undefined||proposal.detectedType==='serials'));
     const lotRequired=Boolean(lotCode)||(lotFlag&&proposal.trackingReview?.lot!=='quantity')||
-      (!hasFlags&&mappings.serial===undefined&&(mappings.lotCode!==undefined||proposal.detectedType==='lots'));
+      existingMatches.some(s=>s.tracking_mode==='lot');
     if(!hasFlags&&mappings.serial!==undefined&&mappings.lotCode!==undefined&&quantity>0&&!serial&&!lotCode)
       problems.push(problem('missing_tracking_identifier','This stock needs a serial number, a lot number, or an explicit tracking requirement for this product.'));
     if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
@@ -219,7 +220,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       if(quantity !== 1&&quantity!==0)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
     }
     if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
-    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
     if(existingMatches.some(s=>Number(s.sku_active)===0||Number(s.item_active)===0))problems.push(problem('archived_existing_code','This SKU belongs to an archived product or variant. Restore it before updating its stock; a duplicate product will not be created.'));
     if(existingMatches.length===1&&rawName){state.catalogueNames??=new Map();const key=existingMatches[0].item_id,previous=state.catalogueNames.get(key);if(previous&&previous!==rawName)problems.push(problem('conflicting_product_name','The source gives different names for variants of one saved product. Choose one product name before importing.'));state.catalogueNames.set(key,rawName);}
@@ -235,7 +235,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(quantity>0&&!aggregate)state.quantityTotal+=quantity;
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
     if(sellingPriceMinor!==null){const p=currency+':'+sellingPriceMinor;if(state.prices.has(priceKey)&&state.prices.get(priceKey)!==p)problems.push(problem('conflicting_price','The same SKU has conflicting source prices. Resolve the price before importing.'));state.prices.set(priceKey,p);}
-    const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','cost_without_stock','bad_selling_price',
+    const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     try{require('../domain/catalog-identity').unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
@@ -309,7 +309,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     valuedMinor:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor!==null)
       .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0),
     existingStockRows:rows.filter(row=>row.status==='VALID'&&row.parsed.existingSkuId&&row.parsed.quantity!==null).length,
-    sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&row.parsed.quantity===0&&row.parsed.unitCostMinor!==null).length},
+    sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&(row.parsed.quantity===null||row.parsed.quantity===0)&&row.parsed.unitCostMinor!==null).length},
     conflicts:[...unknownLocations].map(([text,count])=>({kind:'unknown_location',text,count})),
     defaultLocationId:defaultLocation?.id || null };
 }
@@ -327,7 +327,7 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
   if(!hasIdentity)warnings.push('StockChief could not safely identify which column names each product. Map a product name or SKU below, then recalculate the preview. Nothing can be imported until you do.');
   if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
   if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
-  if(summary.sourceCostWithoutStock)warnings.push(`${summary.sourceCostWithoutStock} zero-stock row(s) include a source unit cost. That evidence is retained with the imported row; it creates no stock, inventory value or purchase quote.`);
+  if(summary.sourceCostWithoutStock)warnings.push(`${summary.sourceCostWithoutStock} catalogue row(s) include a purchase cost without new stock. The cost is saved for future purchasing; existing stock and inventory value stay unchanged.`);
   if(!hasQuantity)warnings.push('No quantity column is mapped. This preview would create or match products without establishing opening stock.');
   if(unmappedNumeric.length)warnings.push(`Unmapped numeric column${unmappedNumeric.length===1?'':'s'}: ${unmappedNumeric.join(', ')}. Map any stock quantity before approval, or explicitly confirm this is catalog-only data.`);
   return warnings;

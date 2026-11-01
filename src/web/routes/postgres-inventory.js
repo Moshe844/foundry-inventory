@@ -180,7 +180,7 @@ function createPostgresInventoryRouter(database) {
   router.post('/inventory/:id/issue',asyncRoute(async(req,res)=>{
     const serialUnitIds=values(req.body.serialUnitIds);
     const selected=await serialSelection(database,req.ctx.workspaceId,serialUnitIds);
-    const result=await inventory.issue(database,req.ctx,{skuId:selected?.skuId || req.body.skuId,
+    const result=await require('../../accounting/postgres-stock-removal').issue(database,req.ctx,{skuId:selected?.skuId || req.body.skuId,
       locationId:selected?.locationId || req.body.locationId,
       quantity:serialUnitIds.length || req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,lotId:trimOrNull(req.body.lotId),serialUnitIds,
       occurredAt:trimOrNull(req.body.occurredAt),reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),

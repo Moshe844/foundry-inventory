@@ -139,6 +139,7 @@ async function previewSubscriptionChange(input,options={}){
     'subscription_details[items][0][id]':input.itemId,'subscription_details[items][0][price]':input.priceId,
     'subscription_details[items][0][quantity]':1,
     'subscription_details[proration_behavior]':input.prorationBehavior||'create_prorations',
+    'subscription_details[billing_cycle_anchor]':input.billingCycleAnchor,
     'subscription_details[proration_date]':input.prorationBehavior==='none'?undefined:input.prorationDate}});
 }
 
@@ -166,7 +167,7 @@ async function updateSubscription(input,options={}){
     idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
       'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
       proration_behavior:input.prorationBehavior||'create_prorations',payment_behavior:input.paymentBehavior||'pending_if_incomplete',
-      proration_date:input.prorationDate,
+      proration_date:input.prorationDate,billing_cycle_anchor:input.billingCycleAnchor,
     }});
 }
 async function scheduleDowngrade(input,options={}){

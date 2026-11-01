@@ -134,9 +134,9 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
   const prorationDate=Math.floor(Date.now()/1000);let preview=null;
   if(options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
     customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,itemId:item.id,priceId,
-    prorationBehavior:downgrade?'none':'create_prorations',prorationDate},options.providerOptions||{});
+    prorationBehavior:downgrade?'none':'always_invoice',billingCycleAnchor:downgrade?undefined:'now',prorationDate},options.providerOptions||{});
   return {current,currentPlan,target,interval,priceId,itemId:item.id,downgrade,excess,preview,prorationDate,
-    prorationAmountMinor:prorationAmount(preview),effectiveAt:downgrade?current.current_period_end:new Date().toISOString()};
+    amountDueMinor:preview?.amount_due??null,prorationAmountMinor:prorationAmount(preview),effectiveAt:downgrade?current.current_period_end:new Date().toISOString()};
 }
 
 async function requestSubscriptionChange(database,accountId,input,options={}){
@@ -162,7 +162,7 @@ async function requestSubscriptionChange(database,accountId,input,options={}){
       periodEnd:Math.floor(new Date(quote.current.current_period_end).getTime()/1000),priceId:quote.priceId,interval:quote.interval},options.providerOptions||{}):
     await provider.updateSubscription({changeId,accountId,planId:quote.target.id,
       subscriptionId:quote.current.stripe_subscription_id,customerId:quote.current.stripe_customer_id,itemId:quote.itemId,priceId:quote.priceId,
-      prorationBehavior:quote.downgrade?'none':'always_invoice',paymentBehavior:'pending_if_incomplete',
+      prorationBehavior:'always_invoice',billingCycleAnchor:'now',paymentBehavior:'pending_if_incomplete',
       prorationDate:quote.downgrade?undefined:quote.prorationDate},options.providerOptions||{});
   }catch(error){await database.query(`UPDATE commercial_subscription_changes SET status='BLOCKED',updated_at=now()
       WHERE id=$1`,[changeId]);

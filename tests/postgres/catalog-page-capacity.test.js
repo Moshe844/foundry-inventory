@@ -25,6 +25,10 @@ test('catalogue pages preserve stock truth, stable continuation and variant tota
  let searches=0;const searchDb={query:(sql,values)=>{searches++;return db.query(sql,values);}};
  const exact=await require('../../src/domain/postgres-search-service').search(searchDb,ctx.workspaceId,'duplicate');
  assert.equal(exact.exactSku,true);assert.deepEqual(exact.results.map(r=>r.id),['page-sku-1200']);
+ await db.query("UPDATE skus SET barcode='001234567890',variant_label='Blue / XL' WHERE workspace_id=$1 AND id='page-sku-1200'",[ctx.workspaceId]);
+ const scanned=await require('../../src/domain/postgres-search-service').search(db,ctx.workspaceId,'001234567890');assert.equal(scanned.results.length,1);assert.equal(scanned.results[0].id,'page-sku-1200');assert.match(scanned.results[0].title,/Blue \/ XL/);
+ assert.deepEqual((await catalog.listItems(db,ctx.workspaceId,{q:'001234567890'})).items.map(r=>r.id),['page-item-1200']);
+ assert.equal((await require('../../src/domain/postgres-search-service').search(db,'another-workspace','001234567890')).results.length,0);
  assert.equal(searches,1,'Exact identity must not run the broad name-discovery query over 1,200 competing names');
  await db.query("UPDATE items SET name='Zy' || lpad(substring(id from '[0-9]+$'),8,'0') WHERE workspace_id=$1 AND id LIKE 'page-item-%'",[ctx.workspaceId]);
  await db.query("UPDATE items SET name='Zygomorph' WHERE workspace_id=$1 AND id='page-item-1200'",[ctx.workspaceId]);

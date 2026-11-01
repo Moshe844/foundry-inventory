@@ -59,6 +59,8 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
           if(!salePriceBySku.has(skuId)){(row.parsed.existingSkuId?newPrices:initialPrices).push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',...(Object.hasOwn(row.parsed,'currentPriceId')?{expectedCurrentId:row.parsed.currentPriceId}:{}),sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
         }
+        const catalogueCosts=chunk.filter(row=>row.parsed.unitCostMinor!==null&&(row.parsed.quantity===null||row.parsed.quantity===0)).map(row=>({skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,amountMinor:row.parsed.unitCostMinor,currency:row.parsed.currency,source:'catalogue_import',sourceDetail:{importId:id,importRowId:row.id}}));
+        await postgresPrices.setPurchaseCostsInTransaction(client,ctx,catalogueCosts);
         await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
         await postgresPrices.setPricesInTransaction(client,ctx,initialPrices,{initialize:true});
         const receivedRows=await inventory.receiveManyInTransaction(client,ctx,receiving.map(row=>({
@@ -116,6 +118,10 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             supplierLinks.push({supplierId,skuId,...(p.reorder?.leadTimeDays===undefined?{}:{leadTimeDays:p.reorder.leadTimeDays})});
           }
         }
+        const categories=new Map();for(const row of chunk){const p=row.parsed,category=p.sourceFacts?.Category;if(category)categories.set(p.existingItemId||p.createdItemId,{item_id:p.existingItemId||p.createdItemId,category});}
+        if(categories.size)await client.query(`INSERT INTO catalogue_item_facts(workspace_id,item_id,category,facts,created_at,updated_at)
+          SELECT $1,x.item_id,x.category,'{}',$3,$3 FROM jsonb_to_recordset($2::jsonb) x(item_id text,category text)
+          ON CONFLICT(workspace_id,item_id) DO UPDATE SET category=EXCLUDED.category,updated_at=EXCLUDED.updated_at`,[ctx.workspaceId,JSON.stringify([...categories.values()]),nowIso()]);
         await commerce.linkSupplierItemsInTransaction(client,ctx,supplierLinks);
         await require('../domain/postgres-catalog-facts').saveManyInTransaction(client,ctx,facts);
         await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,policies);

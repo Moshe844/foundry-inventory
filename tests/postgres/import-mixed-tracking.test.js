@@ -19,5 +19,13 @@ test('mixed tracked stock uses row evidence without losing source requirements',
   const lone=await preview('SKU,Product,Quantity,Location,Serial\nSN-1,Missing,1,Cabinet,\nSN-2,Present,1,Cabinet,VALUE-2');
   assert.equal(lone.recordsInvalid,1);assert((await imports.rowsFor(db,ctx.workspaceId,lone.id))[0].problems.some(p=>p.code==='missing_serial'));
   assert.equal((await db.query('SELECT count(*)::int n FROM skus WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+  const mixed=await preview('Product,Quantity,Location,Lot\nFood A,10,Cabinet,FOOD-A\nFood B,12,Cabinet,FOOD-B\nShirt,15,Cabinet,\nHat,20,Cabinet,');
+  assert.equal(mixed.recordsInvalid,0);assert.equal(mixed.recordsValid,4);
+  assert.deepEqual((await imports.rowsFor(db,ctx.workspaceId,mixed.id)).map(r=>r.parsed.trackingMode),['lot','lot','quantity','quantity']);
+  await imports.approve(db,ctx,mixed.id,mixed.integrityHash);assert((await imports.execute(db,ctx,mixed.id)).verified);
+  const savedFood=(await db.query("SELECT s.code FROM skus s JOIN items i ON i.id=s.item_id WHERE s.workspace_id=$1 AND i.name='Food A'",[ctx.workspaceId])).rows[0];
+  const again=await preview('Product,SKU,Quantity,Location,Lot\nFood A,'+savedFood.code+',1,Cabinet,');
+  assert.equal(again.recordsInvalid,1);assert((await imports.rowsFor(db,ctx.workspaceId,again.id))[0].problems.some(p=>p.code==='missing_lot'));
+
   await assert.rejects(imports.execute(db,ctx,p.id),/Approve/);
 });

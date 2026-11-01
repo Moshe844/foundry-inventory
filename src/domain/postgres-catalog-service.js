@@ -203,7 +203,7 @@ async function listItems(database, workspaceId, input = {}) {
       WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
         AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
-          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND search_sku.code ILIKE '%'||$2||'%'))
+          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%')))
         AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name,i.id)>($11::text,$10::text)'} )
         AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)
       ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}

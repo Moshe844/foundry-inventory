@@ -1,0 +1,23 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('manual damage updates stock value and expense atomically without counting opening stock as profit',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Damage accounting',email:randomUUID()+'@example.test',password:randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
+ await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});
+ const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Main',kind:'warehouse'});
+ const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Valued stock',trackingMode:'quantity',purchaseCost:'95',startingQuantity:10,startingLocationId:location.id});
+ const skuId=item.skuIds[0],removal=require('../../src/accounting/postgres-stock-removal'),reports=require('../../src/accounting/postgres-reports'),period={from:'2026-01-01',to:'2026-12-31'};
+ let pnl=await reports.profitAndLoss(db,ctx.workspaceId,period);assert.equal(pnl.netIncomeMinor,0);assert.equal(pnl.revenueMinor,0);
+ const input={skuId,locationId:location.id,quantity:2,reasonCode:'damaged',idempotencyKey:'damage-2'};
+ const result=await removal.issue(db,ctx,input);assert.equal(result.costRemovedMinor,19000);assert(result.journalEntryId);
+ assert.equal((await removal.issue(db,ctx,input)).replayed,true);
+ const state=(await db.query('SELECT b.on_hand,c.quantity_units,c.total_cost_minor FROM balances b JOIN accounting_inventory_cost_balances c USING(workspace_id,sku_id,location_id) WHERE b.workspace_id=$1 AND b.sku_id=$2',[ctx.workspaceId,skuId])).rows[0];
+ assert.equal(Number(state.on_hand),8);assert.equal(Number(state.quantity_units),8);assert.equal(Number(state.total_cost_minor),76000);
+ pnl=await reports.profitAndLoss(db,ctx.workspaceId,period);assert.equal(pnl.netIncomeMinor,-19000);assert.equal(pnl.revenueMinor,0);
+ await assert.rejects(removal.issue(db,ctx,{...input,quantity:9,idempotencyKey:'too-many'}));
+ assert.equal(Number((await db.query('SELECT total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].total_cost_minor),76000);
+ const second=await db.transaction(c=>require('../../src/assistant/postgres-action-executors').EXECUTORS['inventory.issue'].execute(c,ctx,{...input,quantity:1,idempotencyKey:'assistant-damage'}),{isolation:'SERIALIZABLE'});assert.equal(second.costRemovedMinor,9500);
+ await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId,locationId:location.id,quantity:1,idempotencyKey:'uncosted'});
+ await assert.rejects(removal.issue(db,ctx,{...input,quantity:1,idempotencyKey:'mixed-cost'}),/missing its purchase cost/);
+ assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].on_hand),8);
+});

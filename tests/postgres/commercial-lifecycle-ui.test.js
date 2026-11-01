@@ -33,8 +33,8 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   const envKeys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT','STOCKCHIEF_BILLING_STRIPE_SECRET_KEY'];const savedEnv=Object.fromEntries(envKeys.map(k=>[k,process.env[k]]));context.after(()=>{for(const k of envKeys)if(savedEnv[k]===undefined)delete process.env[k];else process.env[k]=savedEnv[k];});Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT:'1',STOCKCHIEF_BILLING_STRIPE_SECRET_KEY:'sk_test_round15'});
   const changes=[];const billingProvider={
     retrieveSubscription:async()=>structuredClone(providerSubscription),
-    previewSubscriptionChange:async(input)=>({id:'preview_lifecycle',subscription_proration_date:input.prorationDate,
-      lines:{data:[{amount:25000,parent:{subscription_item_details:{proration:true}}}]}}),
+    previewSubscriptionChange:async(input)=>{assert.equal(input.billingCycleAnchor,input.prorationBehavior==='none'?undefined:'now');return {id:'preview_lifecycle',amount_due:25000,subscription_proration_date:input.prorationDate,
+      lines:{data:[{amount:25000,parent:{subscription_item_details:{proration:true}}}]}};},
     updateSubscription:async(input)=>{changes.push(input);providerSubscription={...providerSubscription,cancel_at_period_end:false,
       metadata:{stockchief_account_id:business.accountId,stockchief_plan_id:input.planId},items:{data:[{id:'si_lifecycle',
         price:{id:input.priceId,recurring:{interval:input.priceId.includes('annual')?'year':'month'}}}]}};
@@ -60,11 +60,11 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   await commercial.handleBillingEvent(database,{id:'evt_verified_growth',created:now-1,type:'customer.subscription.updated',data:{object:structuredClone(providerSubscription)}});
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'growth');
   await page.reload();await page.getByRole('link',{name:'Pro',exact:true}).click();
-  assert.match(await page.locator('body').innerText(),/Growth → Pro[\s\S]*estimated proration is \$250\.00/i);
+  assert.match(await page.locator('body').innerText(),/Growth → Pro[\s\S]*estimated amount due now is \$250\.00/i);
   await Promise.all([page.waitForURL(`${base}/settings/billing`),page.getByRole('button',{name:'Confirm upgrade'}).click()]);
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'growth');
   await commercial.handleBillingEvent(database,{id:'evt_verified_upgrade',created:now,type:'customer.subscription.updated',data:{object:structuredClone(providerSubscription)}});
-  await page.reload();assert.match(await page.locator('body').innerText(),/Current plan[\s\S]*Pro/);assert.equal(changes[0].prorationBehavior,'always_invoice');
+  await page.reload();assert.match(await page.locator('body').innerText(),/Current plan[\s\S]*Pro/);assert.equal(changes[0].prorationBehavior,'always_invoice');assert.equal(changes[0].billingCycleAnchor,'now');
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'pro');assert.equal((await entitlements.capabilityState(database,{accountId:business.accountId,workspaceId:business.workspaceId},'api.public')).enabled,true);
   await commercial.handleBillingEvent(database,{id:'evt_old_growth_after_upgrade',created:now-2000,
     type:'customer.subscription.updated',data:{object:{...structuredClone(providerSubscription),

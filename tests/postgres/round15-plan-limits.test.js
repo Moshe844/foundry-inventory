@@ -29,6 +29,13 @@ test('Starter reserves pending seats, paid inventories have their own locations 
  assert.equal((await ent.meterState(db,extraScope,'locations')).used,1);assert.equal((await ent.meterState(db,scope,'locations')).used,2);assert.equal((await ent.meterState(db,{accountId:owner.accountId},'locations')).used,2,'account downgrade checks use the highest per-inventory count');
  assert.equal((await ent.meterState(db,scope,'members')).used,3,'owner in two inventories consumes one seat');
  await assert.rejects(ent.assertCapability(db,scope,'api.public'),/Pro/);
+ const portal=require('../../src/commercial/staging-plan-portal'),pro={account_id:owner.accountId,plan_id:'pro'};
+ assert((await portal.eligiblePlans(db,pro)).some(p=>p.id==='starter'));
+ await db.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id=NULL WHERE account_id=$1",[owner.accountId]);
+ await locations.createLocation(db,ctx,{name:'Pro third warehouse',kind:'warehouse'});
+ assert.deepEqual((await portal.eligiblePlans(db,pro)).map(p=>p.id),['growth','pro']);
+ await db.query("UPDATE locations SET is_active=0 WHERE workspace_id=$1 AND name='Pro third warehouse'",[owner.workspaceId]);
+ await db.query("UPDATE account_subscriptions SET plan_id='starter',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE') WHERE account_id=$1",[owner.accountId]);
  const {createPostgresApp}=require('../../src/postgres-app');const app=createPostgresApp({database:db,env:'test',sessionSecret:'round15-browser-long',commercialOptions:{loadInvoices:false}}),server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),browser=await chromium.launch();
  t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
  await db.query('UPDATE accounts SET last_workspace_id=$2 WHERE id=$1',[owner.accountId,owner.workspaceId]);

@@ -19,7 +19,7 @@ function classify(sheet,mappings,{precedingProducts=0,precedingStrongProducts=0,
   if(rowRoles[row.sourceRow]==='product'){if(identity)products++;tail=false;continue;}
   if(rowRoles[row.sourceRow]==='document'){tail=true;result.set(row.sourceRow,{kind:'note',label:identity||documentLabel||cells.filter(Boolean).join(' · ')});continue;}
   const separateCode=Boolean(code&&name&&code!==name),tracking=cell(row,'serial')||cell(row,'lotCode');
-  if(!products||separateCode||tracking){if(identity)products++;if(separateCode||tracking){strongProducts++;tail=false;}continue;}
+  if(!products||separateCode||tracking){if(identity)products++;if(separateCode)strongProducts++;if(separateCode||tracking)tail=false;continue;}
   // A PDF or merged spreadsheet cell can put a total outside identity columns.
   // A distinct product code/name or tracking evidence above takes precedence.
   const label=labelKind(identity)?identity:documentLabel||identity;

@@ -18,12 +18,13 @@ async function configure(plans,options={}){
    products.set(product,[...(products.get(product)||[]),id]);
   }
  }
- if(new Set(plans.map(p=>p.id)).size!==3)throw Error('Starter, Growth and Pro are required.');
+ if(!plans.length||new Set(plans.map(p=>p.id)).size!==plans.length)throw Error('Choose at least one distinct eligible plan.');
  const values={name:'StockChief staging plan changes',default_return_url:options.returnUrl,
   'features[payment_method_update][enabled]':'true','features[invoice_history][enabled]':'true',
   'features[subscription_cancel][enabled]':'true','features[subscription_cancel][mode]':'at_period_end',
   'features[subscription_update][enabled]':'true','features[subscription_update][default_allowed_updates][0]':'price',
   'features[subscription_update][proration_behavior]':'always_invoice',
+  'features[subscription_update][billing_cycle_anchor]':'now',
   'features[subscription_update][schedule_at_period_end][conditions][0][type]':'decreasing_item_amount',
   'features[subscription_update][schedule_at_period_end][conditions][1][type]':'shortening_interval',
   'metadata[stockchief_environment]':'staging'};
@@ -52,4 +53,19 @@ async function scheduledChange(database,subscription,options={}){
  if(!plan)throw Error('This scheduled price is not a StockChief plan.');
  return {checked:true,change:{id:scheduleId,target_plan_name:plan.public_name,effective_at:new Date(next.start_date*1000).toISOString(),fromPortal:true}};
 }
-module.exports={configure,scheduledChange};
+async function eligiblePlans(database,subscription){
+ const plans=await require('./service').listPlans(database),current=plans.find(p=>p.id===subscription.plan_id);
+ if(!current||current.sales_only)return [];
+ const eligible=[];
+ for(const plan of plans){
+  if(plan.sales_only||!['starter','growth','pro'].includes(plan.id))continue;
+  if(Number(plan.display_order)<Number(current.display_order)&&Object.keys(await require('./control-service').resourceExcess(database,{accountId:subscription.account_id,workspaceId:null},plan.id)).length)continue;
+  eligible.push(plan);
+ }
+ return eligible;
+}
+async function forAccount(database,subscription,options={}){
+ const plans=await eligiblePlans(database,subscription);if(!plans.length)return null;
+ return configure(plans,{...options,secretKey:options.secretKey||require('../config').commercial.stripeSecretKey});
+}
+module.exports={configure,scheduledChange,eligiblePlans,forAccount};

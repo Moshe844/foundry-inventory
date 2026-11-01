@@ -1,0 +1,16 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('catalogue costs and prices import without stock and never reset existing quantities or valuation',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Catalogue without stock',email:randomUUID()+'@example.test',password:randomUUID()+'!A'}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},imports=require('../../src/imports/postgres-service');
+ const text='Name,SKU,Cost,Selling price,Barcode\n'+Array.from({length:250},(_,i)=>`Catalog product ${i},CAT-${i},95,125,12345678${String(i).padStart(4,'0')}`).join('\n');
+ const plan=await imports.analyse(db,ctx,{text,allowModel:false});assert.equal(plan.recordsInvalid,0);assert.equal(plan.recordsValid,250);await imports.approve(db,ctx,plan.id,plan.integrityHash);assert((await imports.execute(db,ctx,plan.id)).verified);
+ assert.equal((await db.query('SELECT count(*)::int n FROM sku_purchase_costs WHERE workspace_id=$1 AND amount_minor=9500',[ctx.workspaceId])).rows[0].n,250);
+ assert.equal((await db.query('SELECT count(*)::int n FROM sku_prices WHERE workspace_id=$1 AND amount_minor=12500',[ctx.workspaceId])).rows[0].n,250);
+ for(const table of ['movements','accounting_journal_entries'])assert.equal((await db.query('SELECT count(*)::int n FROM '+table+' WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+ const sku=(await db.query("SELECT id FROM skus WHERE workspace_id=$1 AND code='CAT-0'",[ctx.workspaceId])).rows[0].id;
+ await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Main',kind:'warehouse'});await require('../../src/domain/postgres-opening-stock').receive(db,ctx,{skuId:sku,locationId:location.id,quantity:4,unitCost:'100',idempotencyKey:'opening'});
+ const update=await imports.analyse(db,ctx,{text:'Name,SKU,Cost,Selling price\nCatalog product 0,CAT-0,98,130',allowModel:false,importMode:'set'});assert.equal(update.recordsInvalid,0);await imports.approve(db,ctx,update.id,update.integrityHash);assert((await imports.execute(db,ctx,update.id)).verified);
+ const stock=(await db.query('SELECT b.on_hand,c.total_cost_minor FROM balances b JOIN accounting_inventory_cost_balances c USING(workspace_id,sku_id,location_id) WHERE b.workspace_id=$1 AND b.sku_id=$2',[ctx.workspaceId,sku])).rows[0];assert.equal(Number(stock.on_hand),4);assert.equal(Number(stock.total_cost_minor),40000);assert.equal((await require('../../src/pricing/postgres-service').purchaseCost(db,ctx.workspaceId,sku)).amount_minor,9800);
+ assert.equal((await imports.execute(db,ctx,update.id)).duplicate,true);assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
+});
