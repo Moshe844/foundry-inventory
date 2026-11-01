@@ -1,0 +1,28 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest'),totp=require('../../src/domain/totp');
+const csrf=html=>{const value=/name="_csrf" value="([^"]+)"/.exec(html)?.[1];assert(value);return value;};
+test('authenticator enrollment, login challenge, one-use recovery, team policy, rate limits and encrypted audit-safe secrets',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,accountCtx={...ctx,accountId:f.owner.accountId};
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'mfa-test'});f.cleanup(()=>app.locals.sessionStore.close());
+ async function signIn(){const agent=request.agent(app),page=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(page.text),email:f.email,password:f.password}).expect(302);return agent;}
+ const owner=await signIn();let page=await owner.get('/settings/security');assert.equal(page.status,200);assert.match(page.text,/available on every plan/);
+ const setup=await owner.post('/settings/security/setup').type('form').send({_csrf:csrf(page.text),currentPassword:f.password}).expect(200),secret=/data-authenticator-secret>([A-Z2-7]+)</.exec(setup.text)[1];
+ const code=totp.code(secret,Math.floor(Date.now()/30000)),confirmed=await owner.post('/settings/security/confirm').type('form').send({_csrf:csrf(setup.text),code}).expect(200),recovery=[...confirmed.text.matchAll(/data-recovery-code>([^<]+)</g)].map(m=>m[1]);assert.equal(recovery.length,8);
+ const stored=(await db.query('SELECT * FROM account_mfa WHERE account_id=$1',[f.owner.accountId])).rows[0];assert.equal(stored.enabled,true);assert(!JSON.stringify(stored).includes(secret));assert(!JSON.stringify(stored).includes(recovery[0]));await owner.get('/settings').expect(200);
+ const second=await signIn();await second.get('/settings').expect(303).expect('Location','/auth/mfa');page=await second.get('/auth/mfa');assert.match(page.text,/Authenticator or recovery code/);
+ const refused=await second.post('/settings/workspace').set('Accept','application/json').type('form').send({_csrf:csrf(page.text),name:'Unverified rename'});assert.equal(refused.status,403);assert.equal(refused.body.error.code,'mfa_required');
+ const replay=await second.post('/auth/mfa').set('Accept','application/json').type('form').send({_csrf:csrf(page.text),code});assert.equal(replay.status,400,'The enrollment code cannot be reused');
+ await second.post('/auth/mfa').type('form').send({_csrf:csrf(page.text),code:recovery[0]}).expect(303);await second.get('/settings').expect(200);
+ const third=await signIn();page=await third.get('/auth/mfa');assert.equal((await third.post('/auth/mfa').set('Accept','application/json').type('form').send({_csrf:csrf(page.text),code:recovery[0]})).status,400,'A used recovery code cannot sign in again');
+ page=await owner.get('/settings/security');await owner.post('/settings/security/team').type('form').send({_csrf:csrf(page.text),currentPassword:f.password,required:'1'}).expect(303);
+ await assert.rejects(require('../../src/domain/postgres-mfa').disable(db,accountCtx),/business you belong to requires/);
+ const member=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Member',businessName:'Member other business',email:'member-mfa@example.test',password:'Member-mfa-password!9'});await db.query("INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES('mfa-member',$1,$2,'Member','staff',now())",[ctx.workspaceId,member.accountId]);
+ const staff=request.agent(app);page=await staff.get('/login');await staff.post('/login').type('form').send({_csrf:csrf(page.text),email:'member-mfa@example.test',password:'Member-mfa-password!9'});page=await staff.get('/inventories');await staff.post('/inventories/switch').type('form').send({_csrf:csrf(page.text),workspaceId:ctx.workspaceId}).expect(303);await staff.get('/inventory').expect(303).expect('Location','/settings/security');assert.match((await staff.get('/settings/security')).text,/business requires two-step/);
+ const log=(await db.query('SELECT action,before_state,after_state FROM security_event_history WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert(log.some(r=>r.action==='Two-step sign-in enabled'));assert(log.some(r=>r.action==='Two-step sign-in recovery code used'));assert(!JSON.stringify(log).includes(secret));assert(!JSON.stringify(log).includes(recovery[0]));
+ page=await owner.get('/settings/security');await owner.post('/settings/security/team').type('form').send({_csrf:csrf(page.text),currentPassword:f.password}).expect(303);page=await owner.get('/settings/security');await owner.post('/settings/security/disable').type('form').send({_csrf:csrf(page.text),currentPassword:f.password,code:recovery[1]}).expect(303);assert.equal((await require('../../src/domain/postgres-mfa').state(db,f.owner.accountId)).enabled,false);
+ // A separate enrollment verifies persisted brute-force protection without
+ // blocking the owner's completed lifecycle test.
+ const memberCtx={accountId:member.accountId,workspaceId:member.workspaceId,actorId:member.userId},pending=await require('../../src/domain/postgres-mfa').begin(db,memberCtx);let bad='000000';while(totp.verify(pending.secret,bad)!==null)bad=String(Number(bad)+1).padStart(6,'0');
+ for(let n=0;n<8;n++)await assert.rejects(require('../../src/domain/postgres-mfa').check(db,memberCtx,bad,{enroll:true}),/incorrect/);
+ await assert.rejects(require('../../src/domain/postgres-mfa').check(db,memberCtx,bad,{enroll:true}),error=>error.code==='rate_limited');
+});
