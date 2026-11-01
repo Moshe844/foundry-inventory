@@ -59,14 +59,28 @@ async function receiveInTransaction(client,ctx,input){return (await receiveManyI
 async function prepareIssueInTransaction(client,ctx,input){
   const evidence=await movement(client,ctx,input.movementId,'out');
   if(evidence.prior)return {replayed:true,totalCostMinor:Math.abs(Number(evidence.prior.cost_delta_minor)),evidence};
-  const quantity=Math.abs(Number(evidence.row.quantity_delta));
   const before=await lockState(client,ctx,evidence.row.sku_id,evidence.row.location_id);
+  return calculateIssue(evidence,before);
+}
+function calculateIssue(evidence,before){
+  const quantity=Math.abs(Number(evidence.row.quantity_delta));
   const available=Number(before.quantity_units);
   if(available<quantity)throw new ValidationError('Inventory was issued before its receipt cost was established.');
   const secondaryQuantity=evidence.row.secondary_quantity_delta==null?null:Math.abs(Number(evidence.row.secondary_quantity_delta)),secondaryAvailable=before.secondary_quantity_units==null?null:Number(before.secondary_quantity_units);
   if(secondaryQuantity!==null&&(secondaryAvailable===null||secondaryQuantity>secondaryAvailable||(quantity===available)!==(secondaryQuantity===secondaryAvailable)))throw new ValidationError('The pieces and measured weight need an exact cost reconciliation.');
   const cost=quantity===available?Number(before.total_cost_minor):exact.ratioMinor(Number(before.total_cost_minor),secondaryQuantity??quantity,secondaryAvailable??available);
   return {replayed:false,totalCostMinor:cost,quantity,secondaryQuantity,secondaryAvailable,before,evidence};
+}
+
+async function prepareIssuesInTransaction(client,ctx,movementIds){
+ if(!Array.isArray(movementIds)||!movementIds.length||movementIds.length>1000||new Set(movementIds).size!==movementIds.length)throw new ValidationError('Cost one to 1,000 distinct stock movements at once.');
+ await client.query('SELECT b.sku_id,b.location_id FROM accounting_inventory_cost_balances b JOIN movements m ON m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id WHERE b.workspace_id=$1 AND m.id=ANY($2::text[]) ORDER BY b.sku_id,b.location_id FOR UPDATE OF b',[ctx.workspaceId,movementIds]);
+ const states=new Map(),prepared=[];
+ for(const movementId of movementIds){const evidence=await movement(client,ctx,movementId,'out');if(evidence.prior){prepared.push({replayed:true,totalCostMinor:Math.abs(Number(evidence.prior.cost_delta_minor)),evidence});continue;}
+  const key=JSON.stringify([evidence.row.sku_id,evidence.row.location_id]),before=states.get(key)||await lockState(client,ctx,evidence.row.sku_id,evidence.row.location_id),next=calculateIssue(evidence,before);prepared.push(next);
+  states.set(key,{...before,quantity_units:exact.subtract(before.quantity_units,next.quantity),total_cost_minor:Number(before.total_cost_minor)-next.totalCostMinor,secondary_quantity_units:next.secondaryQuantity===null?null:exact.subtract(next.secondaryAvailable,next.secondaryQuantity)});
+ }
+ return prepared;
 }
 
 async function commitIssueInTransaction(client,ctx,prepared,input){
@@ -102,4 +116,4 @@ async function transferInTransaction(client,ctx,input){
     destinationBalance:received.balance};
 }
 
-module.exports={receiveInTransaction,receiveManyInTransaction,prepareIssueInTransaction,commitIssueInTransaction,transferInTransaction};
+module.exports={receiveInTransaction,receiveManyInTransaction,prepareIssueInTransaction,prepareIssuesInTransaction,commitIssueInTransaction,transferInTransaction};

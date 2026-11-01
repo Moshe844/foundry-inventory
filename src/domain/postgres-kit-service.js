@@ -33,4 +33,5 @@ async function snapshotOrderLine(c,ctx,lineId,skuId,quantity){
  const components=await explode(c,ctx.workspaceId,skuId),at=nowIso();for(const part of components)await c.query('INSERT INTO sales_order_kit_components(id,workspace_id,sales_order_line_id,component_sku_id,quantity_per_kit,quantity_required,quantity_fulfilled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,0,$7,$7)',[newId('sokc'),ctx.workspaceId,lineId,part.skuId,part.quantity,exact.convert(quantity,{numerator:part.quantity,precision:6}),at]);
  return (await c.query('SELECT * FROM sales_order_kit_components WHERE workspace_id=$1 AND sales_order_line_id=$2 ORDER BY component_sku_id',[ctx.workspaceId,lineId])).rows;
 }
-module.exports={definition,define,explode,snapshotOrderLine};
+async function captureOrder(c,ctx,orderId){const lines=(await c.query("SELECT l.id,l.sku_id,l.quantity_ordered FROM sales_order_lines l WHERE l.workspace_id=$1 AND l.sales_order_id=$2 AND EXISTS(SELECT 1 FROM kit_components k WHERE k.workspace_id=l.workspace_id AND k.kit_sku_id=l.sku_id AND k.stock_basis='components')",[ctx.workspaceId,orderId])).rows;for(const line of lines)await snapshotOrderLine(c,ctx,line.id,line.sku_id,line.quantity_ordered);}
+module.exports={definition,define,explode,snapshotOrderLine,captureOrder};

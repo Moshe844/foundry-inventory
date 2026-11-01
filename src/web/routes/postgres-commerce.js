@@ -125,7 +125,7 @@ async function purchaseOrderPage(database,workspaceId,id){
 async function salesOrderPage(database,workspaceId,id){
   const detail=await commerce.salesOrder(database,workspaceId,id);
   const [shipmentLines,communications,receipts,accountingRows,catalogue,customers,paymentAccount]=await Promise.all([
-    database.query(`SELECT sl.*,l.name AS location_name FROM sales_shipment_lines sl
+    database.query(`SELECT sl.*,l.name AS location_name FROM sales_shipment_stock_lines sl
       JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
       JOIN sales_shipments sh ON sh.id=sl.shipment_id AND sh.workspace_id=sl.workspace_id
       WHERE sl.workspace_id=$1 AND sh.sales_order_id=$2 ORDER BY sl.created_at,sl.id`,[workspaceId,id]),

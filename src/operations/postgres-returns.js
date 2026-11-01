@@ -192,14 +192,16 @@ async function authorizeCustomerReturn(database, rawContext, id, input) {
 }
 
 async function fulfillmentEvidence(client, ctx, salesOrderLineId) {
-  const result = await client.query(`SELECT icm.inventory_movement_id,icm.journal_entry_id,
-      ABS(icm.quantity_delta)::numeric AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata
+  const result = await client.query(`WITH evidence AS(SELECT icm.inventory_movement_id,icm.journal_entry_id,
+      ABS(icm.quantity_delta)::numeric AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata,icm.created_at AS source_at,icm.id AS source_id
     FROM accounting_inventory_cost_movements icm
     JOIN accounting_journal_entries je ON je.id=icm.journal_entry_id AND je.workspace_id=icm.workspace_id
     JOIN movements m ON m.id=icm.inventory_movement_id AND m.workspace_id=icm.workspace_id
     WHERE icm.workspace_id=$1 AND je.source_type='sale_fulfillment'
       AND je.status='POSTED' AND je.metadata::jsonb->>'salesOrderLineId'=$2
-      AND icm.quantity_delta<0 ORDER BY je.posted_at,icm.created_at,icm.id`, [ctx.workspaceId, salesOrderLineId]);
+      AND icm.quantity_delta<0 AND NOT(je.metadata::jsonb?'kitComponents')
+    UNION ALL SELECT je.metadata::jsonb->>'movementId',je.id,(je.metadata::jsonb->>'quantity')::numeric,(je.metadata::jsonb->>'cogsMinor')::bigint,NULL::text,je.posted_at,je.metadata,je.created_at,je.id
+    FROM accounting_journal_entries je WHERE je.workspace_id=$1 AND je.source_type='sale_fulfillment' AND je.status='POSTED' AND je.metadata::jsonb->>'salesOrderLineId'=$2 AND je.metadata::jsonb?'kitComponents') SELECT * FROM evidence ORDER BY posted_at,source_at,source_id`, [ctx.workspaceId, salesOrderLineId]);
   return result.rows.map((row) => ({ inventoryMovementId: row.inventory_movement_id,
     originalJournalEntryId: row.journal_entry_id, quantity: Number(row.quantity), costMinor: Number(row.cost_minor),
     lotId: row.lot_id || null,pricing:parseJson(row.metadata,{}) }));
@@ -239,7 +241,7 @@ function allocateCost(evidence, used, quantity, preferredMovementIds = []) {
     if(amounts.chargeTaxMinor)amounts.taxMinor-=amounts.chargeTaxMinor;
     if(amounts.grossMinor!==undefined&&amounts.discountMinor!==undefined){amounts.chargesMinor=Math.min(0,amounts.chargesMinor||0);amounts.revenueMinor=amounts.grossMinor-amounts.discountMinor+amounts.chargesMinor;}
     allocations.push({ inventoryMovementId: source.inventoryMovementId,
-      originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor,...amounts });
+      originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor,...amounts,...(source.pricing?.kitComponents?{kitComponents:source.pricing.kitComponents}:{}) });
     remaining -= take;
   }
   if (remaining) throw new ValidationError('The return quantity exceeds the fulfilled inventory-cost evidence.');
