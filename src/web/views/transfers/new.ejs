@@ -1,6 +1,7 @@
 <%- include('../components/plan-lock',{capability:'inventory.transfers',label:'Stock transfers'}) %><fieldset <%= locals.planGates?.['inventory.transfers']?.enabled===false?'disabled':'' %> style="border:0;padding:0"><p class="rm-stamp">New inventory transfer</p>
 <div class="rm-titleline"><div><h1 class="rm-figure">Request stock to move.</h1>
   <p class="rm-sub">This prepares and reserves work. Nothing leaves inventory until dispatch is recorded.</p></div></div>
+<% if(currentUser.role==='owner'){ %><p>Moving several products in one transfer? <a href="/inventory">Select the products in Inventory</a>, then choose “Request stock to move”. You can enter a quantity for each variant before preparing one transfer.</p><% } %>
 <% if (locations.length < 2) { %>
 <section class="rm-panel">
   <h2>A transfer needs two locations.</h2>

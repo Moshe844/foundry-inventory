@@ -60,7 +60,7 @@ const sections=[
   {title:'This inventory',why:'Set once, changed rarely.',links:[
     {href:'/search',label:'Search every record'},{href:'/settings',label:'Settings, people and plan'},
     {href:'/what-you-told-me',label:'How this inventory is configured'},{href:'/inventories',label:'Your other inventories'},
-    {href:'/settings/export',label:'Export this inventory'},{href:'/guide',label:'How to use StockChief'},
+    {href:'/settings/export',label:'Export this inventory'},{href:'/audit',label:'Audit trail'},{href:'/guide',label:'How to use StockChief'},
     {href:'/support',label:'Support'}]},
 ];
 
@@ -119,6 +119,8 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
           unlimited:meter.hardLimit===null&&meter.included===null}))}});}
 
 function createPostgresSettingsRouter(database,options={}){const router=express.Router();
+  router.get('/audit',requireAuth,requireOwner,asyncRoute(async(req,res)=>{const audit=await require('../../operations/postgres-audit').page(database,req.ctx.workspaceId,req.query),users=(await database.query('SELECT id,name FROM users WHERE workspace_id=$1 ORDER BY name,id',[req.ctx.workspaceId])).rows;return res.page('activity/audit',{title:'Audit trail',nav:'history',...audit,users});}));
+  router.get('/audit/export',requireAuth,requireOwner,asyncRoute((req,res)=>require('../../operations/postgres-audit').download(database,req.ctx.workspaceId,res,req.query)));
   router.get('/what-you-told-me',requireAuth,asyncRoute(async(req,res)=>{const [instructionRows,policies,connectorRows]=await Promise.all([
     database.query(`SELECT id,stated_as,summary,status,approved_at,created_at FROM operating_instruction_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC`,[req.ctx.workspaceId]),

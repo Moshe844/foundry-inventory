@@ -36,3 +36,8 @@ test('an unresolved source question remains pending input rather than requesting
  const question=present(row);assert.equal(question.state,'NEEDS_INPUT');assert.equal(question.label,'Needs your answer');assert.equal(question.stageLabel,'Resolve the preview questions');assert.equal(question.active,false);assert.equal(question.verified,false);
  assert.equal(present({...row,needs_source_review:false}).state,'AWAITING_APPROVAL');assert.equal(present({...row,approval_status:'APPROVED'}).state,'APPROVED');
 });
+
+test('import estimates use only rows saved in this attempt and show per-inventory queue position',()=>{
+ const base={id:'timing',records_valid:10000,records_detected:10000,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',lease_expires_at:2000,database_now:1000,job_result:{importProgress:{stage:'processing',processedRows:5500,totalRows:10000,attemptStartRows:5000,elapsedMs:10000}}};
+ const state=present(base);assert.equal(state.estimatedSeconds,90);assert.match(state.estimateLabel,/About 2 minutes/);assert.equal(present({...base,job_status:'PENDING',queue_ahead:2}).queuePosition,3);assert.match(present({...base,job_status:'PENDING',queue_ahead:2}).queueLabel,/Earlier imports/);assert.equal(present({...base,job_result:{importProgress:{...base.job_result.importProgress,attemptStartRows:5500}}}).estimatedSeconds,null);assert.equal(present({...base,job_status:'PAUSED'}).estimatedSeconds,null);
+});

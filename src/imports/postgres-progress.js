@@ -26,13 +26,18 @@ function present(row){
  const checkpoint=row.apply_checkpoint||{},durable=(checkpoint.cataloguePrepared===true||checkpoint.catalogueStarted===true)&&checkpoint.hash===row.integrity_hash,savedRows=durable?Number(checkpoint.savedRows||0):0;
  const detailsPending=!durable&&state==='RUNNING'&&stage==='processing'&&known&&p.totalRows>0&&p.processedRows===p.totalRows&&row.dataset!=='suppliers';
  if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. '+(failure.code==='validation_error'?String(row.execution_error||failure.message||'The remaining rows need review.'):failure.code==='57014'?'The last batch exceeded the database time limit.':failure.code==='53200'?'The database ran out of memory for the last batch.':'The worker was interrupted during the last batch.')+' Continue resumes the approved rows without repeating saved ones.';
+ const applied=Number(p?.processedRows)-Number(p?.attemptStartRows),elapsedMs=Number(p?.elapsedMs),remaining=Number(row.records_valid)-Number(p?.processedRows);
+ const estimatedSeconds=state==='RUNNING'&&known&&stage==='processing'&&Number.isSafeInteger(applied)&&applied>=500&&Number.isSafeInteger(elapsedMs)&&elapsedMs>=5000&&remaining>0?Math.ceil(remaining/applied*elapsedMs/1000):null;
+ const queuePosition=state==='QUEUED'?Math.max(1,Number(row.queue_ahead||0)+1):null;
+ const estimateLabel=estimatedSeconds===null?'Estimating time remaining after the next saved batch.':'About '+Math.max(1,Math.ceil(estimatedSeconds/60))+' minute'+(Math.ceil(estimatedSeconds/60)===1?'':'s')+' remaining at the current speed, plus final checks.';
+ const queueLabel=queuePosition===null?'':'Queue position '+queuePosition+' in this inventory. '+(queuePosition===1?'Waiting for an available worker.':'Earlier imports must finish first; the wait depends on their size.');
  const stageLabel=(known&&p.attempt>1?'Attempt '+p.attempt+' · restarting safely after rollback · ':'')+(detailsPending?'Applying imported details and reorder settings':{preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(revising?row.records_detected:row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,reason,active:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,detailsPending,durable,savedRows,cataloguePrepared:checkpoint.cataloguePrepared===true,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
+  stage,stageLabel,estimatedSeconds,estimateLabel,queuePosition,queueLabel,detailsPending,durable,savedRows,cataloguePrepared:checkpoint.cataloguePrepared===true,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
   progressPercent:verified?100:durable&&Number(row.records_valid)?Math.min(99,Math.floor(savedRows/Number(row.records_valid)*100)):known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(revising?row.preview_updated_at:row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
@@ -44,6 +49,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
    p.status AS plan_status,p.approval_status,p.created_at,p.apply_checkpoint,p.integrity_hash,COALESCE(p.transformations::jsonb->>'dataset','inventory') AS dataset,
    EXISTS(SELECT 1 FROM stockchief_runtime.jobs other WHERE other.workspace_id=p.workspace_id AND other.kind='import.execute-approved'
      AND other.status='RUNNING' AND other.payload->>'planId'<>p.id) AS waiting_for_import,
+   (SELECT count(*)::int FROM stockchief_runtime.jobs other WHERE other.workspace_id=p.workspace_id AND other.kind='import.execute-approved' AND other.status IN ('PENDING','RETRY','RUNNING') AND other.payload->>'planId'<>p.id AND (other.status='RUNNING' OR other.available_at<=floor(extract(epoch FROM clock_timestamp())*1000)) AND (other.status='RUNNING' OR (other.priority,other.created_at,other.id)<(j.priority,j.created_at,j.id))) AS queue_ahead,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
      p.records_valid=0 OR
      NOT (p.transformations::jsonb ? 'workbook') AND (p.transformations::jsonb->>'sheetCount')::int>1 AND COALESCE(p.transformations::jsonb#>>'{worksheetScope,confirmed}','false')<>'true' OR
@@ -62,7 +68,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
   LEFT JOIN LATERAL(SELECT job.status,job.result,job.updated_at FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.revise-preview' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)r ON true
-  LEFT JOIN LATERAL(SELECT job.status,job.last_error,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
+  LEFT JOIN LATERAL(SELECT job.id,job.priority,job.status,job.last_error,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.execute-approved' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)j ON true
   LEFT JOIN LATERAL(SELECT run.id,run.status,run.stage,run.error_message,run.started_at,run.finished_at,run.committed_at FROM import_executions run
@@ -82,12 +88,13 @@ async function get(database,workspaceId,id){
 
 async function record(database,job,value){
  if(!job.workspaceId||!job.leaseToken||!['preparing','processing','verifying'].includes(value.stage)||!Number.isSafeInteger(value.processedRows)||!Number.isSafeInteger(value.totalRows)||value.processedRows<0||value.processedRows>value.totalRows)throw new TypeError('Invalid import progress.');
+ if(value.elapsedMs!==undefined&&(!Number.isSafeInteger(value.elapsedMs)||value.elapsedMs<0)||value.attemptStartRows!==undefined&&(!Number.isSafeInteger(value.attemptStartRows)||value.attemptStartRows<0||value.attemptStartRows>value.processedRows))throw new TypeError('Invalid import timing.');
  if(value.preparedRows!==undefined&&(!Number.isSafeInteger(value.preparedRows)||value.preparedRows<0||value.preparedRows>value.totalRows))throw new TypeError('Invalid prepared import progress.');
  return (await database.query(`UPDATE stockchief_runtime.jobs SET result=CASE WHEN
    result->'importProgress' IS NULL OR COALESCE((result->'importProgress'->>'attempt')::int,1)<$5
    OR COALESCE((result->'importProgress'->>'attempt')::int,1)=$5 AND COALESCE((result->'importProgress'->>'processedRows')::int,0)<=$6
    THEN jsonb_build_object('importProgress',$4::jsonb) ELSE result END
   WHERE workspace_id=$1 AND id=$2 AND lease_token=$3 AND kind='import.execute-approved' AND status='RUNNING'
-   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1,durable:value.durable===true,...(value.preparedRows===undefined?{}:{preparedRows:value.preparedRows})}),value.attempt||1,value.processedRows])).rowCount===1;
+   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1,durable:value.durable===true,...(value.elapsedMs===undefined?{}:{elapsedMs:value.elapsedMs,attemptStartRows:value.attemptStartRows}),...(value.preparedRows===undefined?{}:{preparedRows:value.preparedRows})}),value.attempt||1,value.processedRows])).rowCount===1;
 }
 module.exports={list,get,present,record};

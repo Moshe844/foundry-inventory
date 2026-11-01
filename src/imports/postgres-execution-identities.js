@@ -25,9 +25,10 @@ async function counts(client,ctx,plan){return (await client.query(`SELECT count(
  count(DISTINCT (product_key,variant_key)) FILTER(WHERE existing_sku_id IS NULL)::int skus,
  count(DISTINCT existing_item_id)::int updated FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2`,[ctx.workspaceId,plan.id])).rows[0];}
 async function hydrate(client,ctx,plan,page,checkpoint){
- const bindings=(await client.query(`SELECT e.row_id,b.item_id,b.sku_id FROM import_execution_identities e
+ const missing=page.filter(row=>!row.parsed.existingSkuId);
+ const bindings=missing.length?(await client.query(`SELECT e.row_id,b.item_id,b.sku_id FROM import_execution_identities e
  LEFT JOIN import_catalogue_bindings b ON b.workspace_id=e.workspace_id AND b.import_id=e.import_id AND b.product_key=e.product_key AND b.variant_key=e.variant_key
- WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.row_id=ANY($3::text[])`,[ctx.workspaceId,plan.id,page.map(r=>r.id)])).rows;
+ WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.row_id=ANY($3::text[])`,[ctx.workspaceId,plan.id,missing.map(r=>r.id)])).rows:[];
  const byId=new Map(bindings.map(r=>[r.row_id,r]));
  for(const row of page){const p=row.parsed;if(!p.existingSkuId){const b=byId.get(row.id);if(!b?.sku_id)throw new ValidationError('A prepared imported product is missing. Saved stock remains recorded.');p.createdSkuId=b.sku_id;p.createdItemId=b.item_id;}
   if(p.proposedLocationName){p.locationId=checkpoint.locations?.[p.proposedLocationName];if(!p.locationId)throw new ValidationError('A prepared source location is missing.');}}

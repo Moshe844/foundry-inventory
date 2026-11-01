@@ -2,8 +2,8 @@
 const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),ledger=require('../accounting/postgres-ledger'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
 const key=value=>require('node:crypto').createHash('sha256').update(value).digest('hex');
 async function run(database,ctx,plan,executionId,inputOptions,deps){
- const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities');let checkpoint;
- const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,...(preparedRows===undefined?{}:{preparedRows})});
+ const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities');let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
+ const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows})});
  async function phase(operation){return database.transaction(async client=>{
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
   if(!locked||locked.approval_status!=='APPROVED'||locked.integrity_hash!==plan.integrityHash)throw new ValidationError('The approved import changed. Its saved batches remain recorded.');
@@ -24,6 +24,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   return save(client,{...saved,version:3,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
  });await emit('preparing',checkpoint.skusCreated);
  }while(!checkpoint.cataloguePrepared);
+ attemptStartRows=Number(checkpoint.savedRows||0);
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:(row.parsed.quantity||0)*(row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
