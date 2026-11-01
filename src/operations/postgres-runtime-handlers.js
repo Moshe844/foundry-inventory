@@ -528,7 +528,7 @@ async function systemEmail(job,database,options={}){
   return accepted(result);
 }
 
-function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
+function create(providers=defaultProviders,options={}){return {'webhook.deliver':external((job,database)=>require('../connections/postgres-outbound-webhooks').deliver(database,job,options.webhookDelivery||{})),'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);

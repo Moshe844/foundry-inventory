@@ -55,7 +55,7 @@ function createPostgresConnectionsRouter(database,options={}){
     res.redirect(303,`/upgrade?capability=${encodeURIComponent(capability)}&return=${encodeURIComponent('/settings/connections')}`);return false;
   }
 
-  async function renderConnections(req,res,apiToken=null){
+  async function renderConnections(req,res,apiToken=null,webhookSecret=null){
     const inventorySetup=req.query.setup==='inventory';
     const providerContext=await require('../../connections/launch-policy').resolveWorkspaceContext(database,req.ctx);
     const connectionRuntime=process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV;
@@ -74,7 +74,7 @@ function createPostgresConnectionsRouter(database,options={}){
     ]);
     const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status!=='disconnected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
     const developerAccounts=req.query.section==='developers'&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length);
-    return res.page('connections/index',{connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken?'developers':'connections',
+    return res.page('connections/index',{connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken||webhookSecret?'developers':'connections',
       connectionRuntime,title:inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,inventorySetup,connections:connectionRows.filter(c=>require('../presentation/connections').availableForCustomer(registry.get(c.provider_type)?.metadata?.()||{},connectionRuntime)&&(!inventorySetup||providerCatalog.some(p=>p.type===c.provider_type))),
       providerCatalog,
@@ -91,7 +91,7 @@ function createPostgresConnectionsRouter(database,options={}){
       shippingAccount:inventorySetup?null:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
       connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
-      workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],
+      workspaceName:req.workspace?.name||'',webhookSecret,outboundWebhooks:await require('../../connections/postgres-outbound-webhooks').list(database,req.ctx.workspaceId),
       paymentWebhookUrl:`${requestOrigin}/webhooks/payments/stripe`,
       // Render the same current entitlement decision used by authorization,
       // including scoped overrides, rather than the plan's static summary.
@@ -474,6 +474,14 @@ function createPostgresConnectionsRouter(database,options={}){
     req.session.newConnectionToken=created.token;
     req.flash('success','Connection created. Copy its token now; StockChief will not show it again.');
     return res.redirect(303,`/settings/connections/${created.connection.id}`);
+  }));
+  router.post('/settings/connections/outbound-webhooks',requireOwner,asyncRoute(async(req,res)=>{
+    const secret=await require('../../connections/postgres-outbound-webhooks').create(database,req.ctx,req.body);
+    res.set('Cache-Control','no-store');return renderConnections(req,res,null,secret);
+  }));
+  router.post('/settings/connections/outbound-webhooks/:id/revoke',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../connections/postgres-outbound-webhooks').revoke(database,req.ctx.workspaceId,req.params.id);
+    req.flash('success','Webhook revoked. Queued deliveries will be skipped.');return res.redirect(303,'/settings/connections?section=developers#developer-api');
   }));
   router.post('/settings/connections/api-clients',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'api.public');
