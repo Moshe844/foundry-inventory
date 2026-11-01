@@ -68,7 +68,7 @@ jobs:
       - name: Historical stock costs and availability protection
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
+          node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
       - name: Generic variant grids, list filters and count approvals
         run: |
           set -euo pipefail
