@@ -122,7 +122,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             if(!supplierId){const existing=(await client.query("SELECT id,status FROM suppliers WHERE workspace_id=$1 AND lower(name)=lower($2)",[ctx.workspaceId,p.supplierName])).rows;
               if(existing.length>1||existing[0]&&existing[0].status!=='active')throw new ValidationError('The source supplier is ambiguous or archived. Review its saved record before importing.');
               supplierId=existing[0]?.id||(await commerce.createSupplierInTransaction(client,ctx,{name:p.supplierName,currency:p.currency})).id;suppliersByName.set(name,supplierId);}
-            supplierLinks.push({supplierId,skuId,...(p.reorder?.leadTimeDays===undefined?{}:{leadTimeDays:p.reorder.leadTimeDays})});
+            supplierLinks.push({supplierId,skuId,...(p.unitCostMinor==null?{}:{lastUnitCost:require('../domain/currency').fromMinor(p.unitCostMinor,p.currency)}),...(p.reorder?.leadTimeDays===undefined?{}:{leadTimeDays:p.reorder.leadTimeDays})});
           }
         }
         const categories=new Map();for(const row of chunk){const p=row.parsed,category=p.sourceFacts?.Category;if(category)categories.set(p.existingItemId||p.createdItemId,{item_id:p.existingItemId||p.createdItemId,category});}

@@ -32,7 +32,7 @@
       <option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option>
     <% }) %>
   </select>
-  <% if(locals.postgresNative){ %><input class="input" name="category" value="<%= filters.category||'' %>" placeholder="Category" aria-label="Category"><input class="input" name="supplier" value="<%= filters.supplier||'' %>" placeholder="Supplier" aria-label="Supplier"><input class="input" name="size" value="<%= filters.size||'' %>" placeholder="Size" aria-label="Size"><input class="input" name="color" value="<%= filters.color||'' %>" placeholder="Color" aria-label="Color"><label><input type="checkbox" name="lowStock" value="1" <%= filters.lowStock?'checked':'' %>> Low stock</label><% } %>
+  <% if(locals.postgresNative){ %><input class="input" name="category" value="<%= filters.category||'' %>" placeholder="Category" aria-label="Category"><input class="input" name="supplier" value="<%= filters.supplier||'' %>" placeholder="Supplier" aria-label="Supplier"><input class="input" name="optionName" value="<%= filters.optionName||'' %>" placeholder="Option name" aria-label="Option name"><input class="input" name="optionValue" value="<%= filters.optionValue||'' %>" placeholder="Option value" aria-label="Option value"><label><input type="checkbox" name="lowStock" value="1" <%= filters.lowStock?'checked':'' %>> Low stock</label><% } %>
   <select class="select" name="sort" aria-label="Sort" data-auto-submit>
     <option value="name" <%= filters.sort === 'name' ? 'selected' : '' %>>Name A–Z</option>
     <option value="stock_desc" <%= filters.sort === 'stock_desc' ? 'selected' : '' %>>Most stock</option>
@@ -57,7 +57,7 @@
       <% if (activeGroup && !filters.q && !filters.trackingMode && !filters.locationId) { %>
         <h3>No products match “<%= activeGroup.name %>” right now</h3>
         <p><a href="/inventory/table">See all products</a> or <a href="/inventory">go back to the stock overview</a>.</p>
-      <% } else if (filters.q || filters.trackingMode || filters.locationId) { %>
+      <% } else if (filters.q || filters.trackingMode || filters.locationId || filters.category || filters.supplier || filters.size || filters.color || filters.optionName || filters.optionValue || filters.lowStock || locals.hasProducts&&!filters.archivedOnly) { %>
         <h3><% if (filters.q) { %>Nothing called “<%= filters.q %>”<% } else { %>Nothing matches those filters<% } %></h3>
         <p><% if (filters.q) { %>Check the spelling, try part of the name or the code, or add it if it is new.<% } else { %>Clear the filters to see everything you track.<% } %></p>
         <a class="btn" href="/inventory/table">Clear filters</a>

@@ -220,6 +220,8 @@ module.exports = {
   icon,
   qty,
   money,
+  moneyInput:(value,currency='USD')=>require('../domain/currency').fromMinor(value,currency),
+  moneyDecimal:(value,currency='USD')=>{const m=require('../domain/currency');return m.format(m.toMinor(value,currency),currency);},
   plural,
   columnLabel,
   figures,

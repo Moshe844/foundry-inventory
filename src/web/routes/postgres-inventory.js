@@ -43,7 +43,9 @@ function createPostgresInventoryRouter(database) {
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||'',category:String(req.query.category||'').slice(0,160),supplier:String(req.query.supplier||'').slice(0,160),size:String(req.query.size||'').slice(0,120),color:String(req.query.color||'').slice(0,120),lowStock:req.query.lowStock==='1'};
+    filters.optionName=String(req.query.optionName||'').slice(0,120);filters.optionValue=String(req.query.optionValue||'').slice(0,120);
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
+    const hasProducts=result.items.length>0||(await database.query('SELECT 1 FROM items WHERE workspace_id=$1 LIMIT 1',[req.ctx.workspaceId])).rows.length>0;
     if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
@@ -56,7 +58,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      hasProducts,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
@@ -145,7 +147,10 @@ function createPostgresInventoryRouter(database) {
         policy:policies[0]||null,policies,suppliers:supplierRows.filter((row)=>row.sku_id===sku.id)
           .map((row)=>({supplierName:row.supplier_name}))};});
     const productView=await require('../../domain/postgres-product-overview').overview(database,req.ctx,detail.item.id,req.query);
-    return res.page('inventory/item',{productView,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    productView.money=await require('../../domain/postgres-product-money').summary(database,req.ctx.workspaceId,detail.item.id);
+    const variantStates=req.user.role==='owner'?await require('../../domain/postgres-variant-changes').rows(database,req.ctx,detail.item.id,detail.skus.map(s=>s.id)):[];
+    const variantSuppliers=req.user.role==='owner'?(await database.query("SELECT id,name,currency FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name,id LIMIT 1000",[req.ctx.workspaceId])).rows:[];
+    return res.page('inventory/item',{productView,variantStates,variantSuppliers,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
@@ -169,6 +174,9 @@ function createPostgresInventoryRouter(database) {
     req.flash('success',`${created.label} was added as ${created.code}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
   }));
+  router.post('/inventory/:id/variants/review',requireOwner,asyncRoute(async(req,res)=>{const review=await require('../../domain/postgres-variant-changes').prepare(database,req.ctx,req.params.id,req.body);return res.redirect(303,'/inventory/variant-reviews/'+review.id);}));
+  router.get('/inventory/variant-reviews/:reviewId',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/variant-review',{title:'Review variant changes',nav:'inventory',review:await require('../../domain/postgres-variant-changes').get(database,req.ctx,req.params.reviewId)})));
+  router.post('/inventory/variant-reviews/:reviewId/approve',requireOwner,asyncRoute(async(req,res)=>{await require('../../domain/postgres-variant-changes').approve(database,req.ctx,req.params.reviewId,req.body.integrityHash);req.flash('success','All reviewed variant changes are complete.');return res.redirect(303,'/inventory/variant-reviews/'+req.params.reviewId);}));
   router.post('/inventory/:id/receive',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);
     const input={skuId:req.body.skuId,locationId:req.body.locationId,quantity:req.body.quantity,secondaryQuantity:req.body.secondaryQuantity,serialWeights:require('../../domain/stock-quantity').parseSerialWeights(req.body.serialWeights),
