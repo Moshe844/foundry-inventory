@@ -9,6 +9,7 @@ test('derived stock totals match canonical balances through concurrent receipts,
  await Promise.all(product.skus.slice(0,8).map((s,i)=>inventory.receive(db,ctx,{skuId:s.skuId,locationId:first.id,quantity:i+2,idempotencyKey:'opening-'+i})));await verify();
  await Promise.all(Array.from({length:8},(_,i)=>inventory.receive(db,ctx,{skuId:product.skus[0].skuId,locationId:first.id,quantity:1,idempotencyKey:'concurrent-'+i})));await verify();
  await inventory.transfer(db,ctx,{skuId:product.skus[0].skuId,sourceLocationId:first.id,destinationLocationId:second.id,quantity:3,idempotencyKey:'move'});await verify();
+ await db.transaction(c=>inventory.receiveManyInTransaction(c,ctx,product.skus.map((sku,i)=>({skuId:sku.skuId,locationId:i%2?second.id:first.id,quantity:3,idempotencyKey:'same-family-batch-'+i}))),{retrySafe:true});await verify();await db.query('UPDATE balances SET on_hand=on_hand+2 WHERE workspace_id=$1',[ctx.workspaceId]);await verify();
  await assert.rejects(db.transaction(async c=>{await inventory.receiveInTransaction(c,ctx,{skuId:product.skus[0].skuId,locationId:first.id,quantity:7,idempotencyKey:'rolled-back'});throw new Error('fixture rollback');}),/fixture rollback/);await verify();
  const movements=(await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
  await db.query('UPDATE item_location_balances SET on_hand=on_hand+999 WHERE workspace_id=$1',[ctx.workspaceId]);
