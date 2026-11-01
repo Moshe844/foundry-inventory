@@ -120,7 +120,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       missingLocationRows:missingLocation.rows.length>0,missingAccountingSetup:missingAccounting.rows.length>0,
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
-      {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
+      {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,

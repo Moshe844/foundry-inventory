@@ -1,0 +1,13 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),XLSX=require('xlsx'),request=require('supertest');
+test('business Excel retains merged titles, a second-sheet table, formula results and dates without requiring AI',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,book=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([['Monthly inventory export'],['Prepared for review']]),'Cover');
+ const sheet=XLSX.utils.aoa_to_sheet([['Coffee catalogue for November'],[],['Product','SKU','Cost','Price','Category','Option1 Name','Option1 Value','Option2 Name','Option2 Value','Barcode','Export date'],['Coffee','COFFEE-XLSX',4,12,'Grocery','Flavor','Vanilla','Bag size','250g','0012345678901',new Date('2026-11-01T12:00:00Z')]]);sheet['!merges']=[{s:{r:0,c:0},e:{r:0,c:10}}];sheet.D4={t:'n',f:'C4*3',v:12};XLSX.utils.book_append_sheet(book,sheet,'Products');
+ const bytes=XLSX.write(book,{type:'buffer',bookType:'xlsx',cellDates:true}),service=require('../../src/imports/postgres-service');
+ const plan=await service.analyse(db,ctx,{filename:'business-export.xlsx',buffer:bytes,sheetIndex:1,allowModel:false});assert.equal(plan.sheetName,'Products');const rows=await service.rowsFor(db,ctx.workspaceId,plan.id);assert.equal(rows.length,1);assert.equal(rows[0].parsed.code,'COFFEE-XLSX');assert.equal(rows[0].parsed.unitCostMinor,400);assert.equal(rows[0].parsed.sellingPriceMinor,1200);assert.equal(rows[0].parsed.sourceFacts.Category,'Grocery');assert.equal(rows[0].parsed.barcode,'0012345678901');assert.equal(rows[0].problems.length,0,JSON.stringify(rows[0].problems));
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'business-workbook'});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:/name="_csrf" value="([^"]+)"/.exec(login.text)[1],email:f.email,password:f.password});
+ // Previously saved notices must also stop exposing the internal guard code.
+ await db.query("UPDATE import_plans SET transformations=jsonb_set(transformations::jsonb,'{analysisNotice}',$3::jsonb)::text WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,plan.id,JSON.stringify({code:'CERTIFICATION_WINDOW_CLOSED',message:'CERTIFICATION_WINDOW_CLOSED'})]);
+ const preview=await agent.get('/imports/'+plan.id);assert.equal(preview.status,200);assert.doesNotMatch(preview.text,/CERTIFICATION_WINDOW_CLOSED/);assert.match(preview.text,/map its columns manually/);
+});

@@ -462,8 +462,8 @@ async function analyse(database, ctx, input) {
       // A denied model admission is not an unreadable file. Preserve a
       // conservative, unapproved worksheet preview with explicit scope review.
       // Never catch a started/unknown paid attempt or a bad source contract.
-      if(error.code!=='rate_limited'||error.modelStarted!==false)throw error;
-      analysisNotice={code:error.limitKind||error.code,message:error.message,modelCalled:false};
+      if(!require('./analysis-notice').admissionPause(error))throw error;
+      analysisNotice=require('./analysis-notice').fromError(error);
     }
   }
   if(workbook)sheet=workbook.sheet;
