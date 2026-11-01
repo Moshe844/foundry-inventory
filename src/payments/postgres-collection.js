@@ -279,6 +279,7 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
       if(original)throw new ValidationError('The original provider payments need review before this refund. A cash refund will not be substituted.');
       return {queued:false,replayed:false,noProviderPayment:true,amountMinor};}
     const providerName=paid.provider;
+    await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'payments.customer');
     await accountFor(scopedDatabase(client),ctx.workspaceId,providerName);
     const id=newId('payrefund');const at=nowIso();
     await client.query(`INSERT INTO payment_refund_requests
@@ -345,4 +346,4 @@ async function availableProviders(database,workspaceId){return (await database.q
 module.exports={hydrate,get,listForOrder,accountFor,providerContext,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
   queueCustomerReturnRefund,executeRefundEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
-  executeRequestEffect:'payments.customer',queueCustomerReturnRefund:'payments.customer',executeRefundEffect:'payments.customer'});
+  executeRequestEffect:'payments.customer',executeRefundEffect:'payments.customer'});
