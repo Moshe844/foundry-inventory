@@ -148,7 +148,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});
     }
-    if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?null:result.skus[0].code,
+    if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?'PRODUCT-'+itemId.toUpperCase():result.skus[0].code,
       description:trimOrNull(input.description),unit_label:measurement.unitLabel,tracking_mode:input.trackingMode,has_variants:optionNames.length||input.variants.length>1?1:0,quantity_precision:measurement.quantityPrecision,quantity_increment:measurement.quantityIncrement,secondary_unit_label:measurement.secondaryUnitLabel,secondary_precision:measurement.secondaryPrecision,secondary_increment:measurement.secondaryIncrement});
     created.push(result);
   }
@@ -191,19 +191,24 @@ async function listItems(database, workspaceId, input = {}) {
   const includeArchived = archivedOnly || input.includeArchived === true;
   const group = ['shortage','empty','incoming','healthy'].includes(input.group) ? input.group : null;
   const pageFirst = !group && !['stock_desc','stock_asc'].includes(input.sort);
+  const optionFilters=Object.entries(input.optionFilters||{}).filter(([,value])=>String(value).trim()).map(([name,value])=>[requireText(name,'Option name',{max:120}),requireText(value,'Option value',{max:120})]);
+  if(input.optionName&&input.optionValue)optionFilters.push([requireText(input.optionName,'Option name',{max:120}),requireText(input.optionValue,'Option value',{max:120})]);
+  if(optionFilters.length>3)throw new ValidationError('Filter by up to three option values.');
   let anchor=null;
   if(pageFirst && input.afterItemId){
     anchor=(await database.query('SELECT id,name,created_at FROM items WHERE workspace_id=$1 AND id=$2',[workspaceId,String(input.afterItemId).slice(0,160)])).rows[0];
     if(!anchor)throw new ValidationError('That catalogue page has changed. Return to the first page.');
   }
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
-    anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true];
+    anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true,JSON.stringify(Object.fromEntries(optionFilters))];
   const result = await database.query(`WITH matching_items AS NOT MATERIALIZED (
       SELECT i.* FROM items i
       WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
         AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
-          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%')))
+          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND ($5 OR search_sku.is_active=1) AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%'))
+          OR EXISTS(SELECT 1 FROM serial_units unit JOIN skus s ON s.id=unit.sku_id AND s.workspace_id=unit.workspace_id WHERE unit.workspace_id=$1 AND s.item_id=i.id AND unit.serial ILIKE '%'||$2||'%')
+          OR EXISTS(SELECT 1 FROM lots lot JOIN skus s ON s.id=lot.sku_id AND s.workspace_id=lot.workspace_id WHERE lot.workspace_id=$1 AND s.item_id=i.id AND lot.code ILIKE '%'||$2||'%'))
         AND ($4::text IS NULL OR EXISTS(SELECT 1 FROM item_location_balances b WHERE b.workspace_id=$1 AND b.item_id=i.id AND b.location_id=$4 AND b.on_hand<>0))
         AND ($13::text IS NULL OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=$1 AND f.item_id=i.id AND f.category ILIKE '%'||$13||'%'))
         AND ($14::text IS NULL OR EXISTS(SELECT 1 FROM skus s JOIN supplier_items si ON si.workspace_id=s.workspace_id AND si.sku_id=s.id JOIN suppliers supplier ON supplier.workspace_id=si.workspace_id AND supplier.id=si.supplier_id WHERE s.workspace_id=$1 AND s.item_id=i.id AND si.is_active=1 AND supplier.name ILIKE '%'||$14||'%'))
@@ -211,6 +216,9 @@ async function listItems(database, workspaceId, input = {}) {
           AND ($15::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name)='size' AND lower(v.value)=lower($15)))
           AND ($16::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name) IN ('color','colour') AND lower(v.value)=lower($16)))))
         AND (NOT $17::boolean OR i.id IN (SELECT record_id FROM (${require('../reports/postgres-registry').get('low_stock').source}) low))
+        AND ($18::jsonb='{}'::jsonb OR EXISTS(SELECT 1 FROM skus candidate WHERE candidate.workspace_id=$1 AND candidate.item_id=i.id AND candidate.is_active=1
+          AND NOT EXISTS(SELECT 1 FROM jsonb_each_text($18::jsonb) wanted WHERE NOT EXISTS(
+            SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))
     ), selected_items AS MATERIALIZED (
       SELECT i.* FROM matching_items i WHERE TRUE
         AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name,i.id)>($11::text,$10::text)'} )
@@ -436,6 +444,14 @@ async function addVariant(database,ctx,itemId,input){
     if(source){const prices=require('../pricing/postgres-service'),price=await prices.currentPrice(client,ctx.workspaceId,source.id),cost=await prices.purchaseCost(client,ctx.workspaceId,source.id);
       if(price.isSet)await prices.setPricesInTransaction(client,ctx,[{skuId,amountMinor:price.amount_minor,currency:price.currency,source:'variant_copy',sourceDetail:{sourceSkuId:source.id}}],{initialize:true});
       if(cost)await prices.setPurchaseCostsInTransaction(client,ctx,[{skuId,amountMinor:cost.amount_minor,currency:cost.currency,source:'variant_copy',sourceDetail:{sourceSkuId:source.id}}]);
+      // Defaults belong to this product's existing configuration. Copy them
+      // to the new variant without changing its source or creating stock.
+      const supplierLinks=(await client.query('SELECT p.* FROM supplier_items p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id WHERE p.workspace_id=$1 AND p.sku_id=$2 AND p.is_active=1 AND s.status=\'active\'',[ctx.workspaceId,source.id])).rows;
+      for(const link of supplierLinks)await client.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,units_per_purchase_unit,last_unit_cost,last_cost_at,is_preferred,is_active,lead_time_days,minimum_order_quantity,order_multiple,notes,created_at,updated_at)
+        VALUES($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,1,$10,$11,$12,$13,$14,$14)`,[newId('supitem'),ctx.workspaceId,link.supplier_id,skuId,link.purchase_unit,link.units_per_purchase_unit,link.last_unit_cost,link.last_cost_at,link.is_preferred,link.lead_time_days,link.minimum_order_quantity,link.order_multiple,link.notes,at]);
+      const reorder=(await client.query('SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,source.id])).rows;
+      for(const policy of reorder)await client.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,lead_time_days,preferred_supplier_id,source,notes,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,[newId('rpol'),ctx.workspaceId,skuId,policy.location_id,policy.reorder_point,policy.target_stock,policy.safety_stock,policy.lead_time_days,policy.preferred_supplier_id,policy.source,policy.notes,at]);
     }
     await require('./postgres-sku-maintenance').history(client,ctx,{id:skuId,item_id:itemId},'add_variant',{}, {code,label,sourceSkuId:source?.id||null});
     return {skuId,code,label};

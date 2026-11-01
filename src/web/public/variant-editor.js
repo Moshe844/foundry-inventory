@@ -1,0 +1,11 @@
+'use strict';
+document.addEventListener('DOMContentLoaded',()=>{const form=document.querySelector('[data-variant-editor]');if(!form)return;
+ const rows=[...form.querySelectorAll('[data-variant-row]')],all=form.querySelector('[data-variant-all]'),filter=form.querySelector('[data-variant-filter]'),field=form.querySelector('[data-variant-bulk-field]'),status=form.querySelector('[data-variant-selection-status]');
+ const selected=()=>rows.filter(row=>row.querySelector('[data-variant-select]').checked);
+ const update=()=>{status.textContent=selected().length+' variants selected.';};
+ all.addEventListener('change',()=>{for(const row of rows){const box=row.querySelector('[data-variant-select]');if(!box.disabled)box.checked=all.checked;}update();});
+ filter.addEventListener('change',()=>{const match=filter.value?JSON.parse(filter.value):null;for(const row of rows){const box=row.querySelector('[data-variant-select]');if(!box.disabled)box.checked=!match||JSON.parse(row.dataset.optionValues)[match[0]]===match[1];}update();});
+ for(const row of rows)row.querySelector('[data-variant-select]').addEventListener('change',update);
+ field.addEventListener('change',()=>{form.querySelector('[data-variant-bulk-amount]').hidden=field.value==='supplierId';form.querySelector('[data-variant-bulk-supplier]').hidden=field.value!=='supplierId';});
+ form.querySelector('[data-variant-bulk-apply]').addEventListener('click',()=>{const value=form.querySelector(field.value==='supplierId'?'[data-variant-bulk-supplier-value]':'[data-variant-bulk-value]').value;if(!selected().length){status.textContent='Select at least one variant first.';return;}if(value===''){status.textContent='Enter a value first.';return;}for(const row of selected()){const input=row.querySelector('[data-variant-field="'+field.value+'"]');input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}));}status.textContent='Applied to '+selected().length+' variants. Review all changes below before approval.';});
+});

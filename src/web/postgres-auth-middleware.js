@@ -48,6 +48,8 @@ function loadUser(database,{readonly=false}={}) {
       if(req.session.sso&&!memberships.some(w=>w.id===workspaceId))workspaceId=memberships[0]?.id;
       let resolved = await auth.resolveForAccount(database, account.id, workspaceId);
       if (!resolved) {
+        if(!['GET','HEAD','OPTIONS'].includes(req.method)&&workspaceId)
+          throw new (require('../domain/errors').InvariantError)('This inventory is no longer available. Reload the page and choose an inventory before saving.','inventory_context_changed');
         workspaceId = req.session.sso?memberships[0]?.id:await auth.defaultWorkspaceFor(database, account.id);
         resolved = await auth.resolveForAccount(database, account.id, workspaceId);
         if (resolved) req.session.workspaceId = workspaceId;
@@ -65,6 +67,7 @@ function loadUser(database,{readonly=false}={}) {
       const businessClock=await require('../lib/business-time').forWorkspace(database,workspace.id);req.businessTimeZone=businessClock.timeZone;req.ctx = { workspaceId:workspace.id,actorId:membership.id,accountId:account.id,businessTimeZone:businessClock.timeZone };res.locals.account.timeZone=businessClock.timeZone;const businessFormatting=require('./presentation/formatting').forTimeZone(businessClock.timeZone);res.locals.helpers={...res.locals.helpers,shortDate:businessFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,businessClock.timeZone),dateTime:businessFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(businessClock.timeZone,value).calendarDate:require('./view-helpers').dateInputValue(value)};
       res.locals.currentUser = { id:membership.id,name:membership.name,email:account.email,role:membership.role };
       res.locals.workspace = workspace;
+      res.locals.csrfToken=require('./middleware').scopedCsrfToken(req.session);
       return next();
     } catch (error) {
       return next(error);

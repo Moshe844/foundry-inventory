@@ -15,9 +15,10 @@ test('background requests cannot consume a confirmation before the next rendered
   const request={session,path:'/settings',originalUrl:'/settings',get:()=> 'localhost'};
   let rendered=null;
   const response={locals:{},render(view,data,callback){
+    if(view==='layout')rendered={view,data};
     if(callback)return callback(null,'settings body');
     rendered={view,data};
-  }};
+  },send(body){this.body=body;}};
   flash(request,response,()=>{});
   postgresPageRenderer(request,response,()=>{});
   response.page('settings',{title:'Settings',suppressBack:true});

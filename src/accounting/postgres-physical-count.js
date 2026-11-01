@@ -2,7 +2,14 @@
 const {ValidationError}=require('../domain/errors'),inventory=require('../domain/postgres-inventory-engine'),costing=require('./postgres-costing'),ledger=require('./postgres-ledger');
 const {nowIso}=require('../lib/util');
 async function applyInTransaction(client,ctx,input){
- const state=(await client.query(`SELECT COALESCE(b.on_hand,0) AS physical,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
+ let settings=null;
+ if(input.unitCost!=null&&String(input.unitCost).trim()!==''){
+  settings=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+  if(!settings)throw new ValidationError('Set up the inventory currency before recording a stock cost.');
+  input={...input,unitCostMinor:require('../domain/currency').toMinor(input.unitCost,settings.base_currency,{label:'Unit cost'})};
+ }
+ if(input.unitCostMinor!=null&&(!Number.isSafeInteger(input.unitCostMinor)||input.unitCostMinor<0))throw new ValidationError('Enter a valid non-negative unit cost.');
+ const state=(await client.query(`SELECT COALESCE(b.on_hand,0) AS physical,b.secondary_on_hand AS secondary_physical,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
    FROM skus s LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=$3
    LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=s.workspace_id AND c.sku_id=s.id AND c.location_id=$3
    WHERE s.workspace_id=$1 AND s.id=$2`,[ctx.workspaceId,input.skuId,input.locationId])).rows[0];
@@ -19,11 +26,11 @@ async function applyInTransaction(client,ctx,input){
  if(delta<0&&before.costed>0&&before.costed!==before.physical)throw new ValidationError('This position mixes costed and uncosted stock. Establish its cost evidence before reducing it with a file count.');
  const physical=await inventory.adjustInTransaction(client,ctx,{...input,countedQuantity:counted});
  if(physical.unchanged)return {...physical,costDeltaMinor:0,journalEntryId:null};
- const settings=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+ settings=settings||(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
  const sourceType=input.sourceType||'inventory_count',sourceId=input.sourceRecordId||physical.adjustmentId;
  let costDeltaMinor=0,prepared=null;
  if(delta<0&&before.costed>0){prepared=await costing.prepareIssueInTransaction(client,ctx,{movementId:physical.movementId});costDeltaMinor=-prepared.totalCostMinor;}
- if(delta>0&&input.unitCostMinor!==undefined&&input.unitCostMinor!==null){if(!Number.isSafeInteger(input.unitCostMinor)||input.unitCostMinor<0||!Number.isSafeInteger(delta*input.unitCostMinor))throw new ValidationError('The count cost exceeds the exact supported range.');costDeltaMinor=delta*input.unitCostMinor;}
+ if(delta>0&&input.unitCostMinor!==undefined&&input.unitCostMinor!==null){const exact=require('../domain/exact-quantity'),basis=input.secondaryCountedQuantity!=null&&String(input.secondaryCountedQuantity).trim()!==''?exact.safeNumber(exact.subtract(input.secondaryCountedQuantity,state.secondary_physical??0)):delta;if(basis<0)throw new ValidationError('The counted weight cannot fall while adding valued units.');costDeltaMinor=exact.costMinor(basis,input.unitCostMinor);}
  if(input.expectedCostDeltaMinor!==undefined&&costDeltaMinor!==input.expectedCostDeltaMinor)throw new ValidationError('The count value changed after the preview. Review its current cost.');
  if(costDeltaMinor&&(!settings||input.currency&&input.currency!==settings.base_currency))throw new ValidationError('Configure the matching accounting currency before changing valued inventory.');
  const postingDate=input.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId);let journal=null;

@@ -26,7 +26,7 @@
       </form>
     <% } %>
     <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify StockChief as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
-    <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
+    <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
   </section>
   <section class="rm-provider">
     <div class="rm-provider__top"><span class="rm-provider__mark is-word">WEB</span><span class="rm-provider__n">Signed outbound webhooks</span></div>

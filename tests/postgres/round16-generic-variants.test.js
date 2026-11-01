@@ -1,0 +1,14 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
+test('any option names produce the same grid and item-wide price, cost and profit ranges',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,catalog=require('../../src/domain/postgres-catalog-service');
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'generic-variants'});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app);
+ const login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:/name="_csrf" value="([^"]+)"/.exec(login.text)[1],email:f.email,password:f.password});
+ for(const [name,options] of [['Shoes',[{name:'Size',values:'7,8,9,10'},{name:'Color',values:'Black,White'}]],['Coffee',[{name:'Flavor',values:'Original,Vanilla'},{name:'Bag size',values:'250g,1kg'}]],['Phone case',[{name:'Model',values:'Model A,Model B'},{name:'Color',values:'Red,Blue'}]],['Lotion',[{name:'Scent',values:'Rose,Unscented'},{name:'Size',values:'100ml,500ml'}]],['Cable',[{name:'Length',values:'1m,2m'},{name:'Voltage',values:'12V,24V'},{name:'Material',values:'Copper,Steel'}]]]){
+  const item=await catalog.createItem(db,ctx,{name,baseCode:name,trackingMode:'quantity',hasVariants:true,options,sellingPrice:'100',purchaseCost:'40',currency:'USD'});
+  const same=await require('../../src/domain/postgres-product-money').summary(db,ctx.workspaceId,item.itemId);assert.deepEqual(same,{priceLabel:'$100.00',costLabel:'$40.00',profitLabel:'$60.00'});
+  const page=await agent.get('/inventory/'+item.itemId);assert.equal(page.status,200);assert(page.text.includes(options[0].name+' × '+options[1].name+' grid'));assert.doesNotMatch(page.text,/Varies by variant|Needs price and cost/);assert.match(page.text,/Add variant/);
+  await require('../../src/pricing/postgres-service').setPrice(db,ctx,{skuId:item.skuIds.at(-1),amountMinor:12000,currency:'USD'});
+  const ranged=await require('../../src/domain/postgres-product-money').summary(db,ctx.workspaceId,item.itemId);assert.equal(ranged.priceLabel,'$100.00–$120.00');assert.equal(ranged.profitLabel,'$60.00–$80.00');
+ }
+});

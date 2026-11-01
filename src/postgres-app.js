@@ -63,6 +63,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
   app.disable('x-powered-by');
+  app.use(require('./web/security-headers'));
   // The private console is dispatched before ALL customer authentication,
   // tenant selection, subscription checks, API routes and application rendering.
   const ownerModule=require('./platform-owner/app');

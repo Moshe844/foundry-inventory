@@ -27,6 +27,6 @@ test('owners add a priced variant, edit its searchable barcode and archive just 
 
  const options=(await catalog.getItem(db,ctx.workspaceId,item.itemId)).options;await catalog.addVariant(db,ctx,item.itemId,{optionValues:Object.fromEntries(options.map(o=>[o.id,o.name==='Size'?'M':'Red'])),inheritFromSkuId:small});
  assert.equal((await catalog.listItems(db,ctx.workspaceId,{size:'S',color:'Red'})).totalCount,0);assert.equal((await catalog.listItems(db,ctx.workspaceId,{size:'M',color:'Red'})).totalCount,1);assert.equal((await catalog.listItems(db,ctx.workspaceId,{})).totalCount,2);assert.equal((await catalog.listItems(db,ctx.workspaceId,{locationId:f.location.id})).totalCount,1);
- await page.goto(base+'/inventory/'+item.itemId);assert.match(await page.locator('main').innerText(),/Size × color grid/);await page.goto(base+'/inventory/table?size=M&color=Red');assert.match(await page.locator('[data-catalogue-total]').innerText(),/1 matching products/);assert.match(await page.locator('main').innerText(),/Size test coat/);
+ await page.goto(base+'/inventory/'+item.itemId);assert.match(await page.locator('main').innerText(),/Size × Color grid/);await page.goto(base+'/inventory/table?size=M&color=Red');assert.match(await page.locator('[data-catalogue-total]').innerText(),/1 matching products/);assert.match(await page.locator('main').innerText(),/Size test coat/);
 
 });
