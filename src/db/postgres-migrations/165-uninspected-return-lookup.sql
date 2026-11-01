@@ -1,0 +1,2 @@
+CREATE INDEX customer_return_lines_pending_stock ON customer_return_lines(workspace_id,sku_id,customer_return_id)
+ WHERE quantity_received>quantity_restocked+quantity_scrapped+quantity_repair;
