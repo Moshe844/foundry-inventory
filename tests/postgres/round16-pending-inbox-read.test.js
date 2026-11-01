@@ -1,0 +1,12 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('a general decision inbox reads its pending decisions without scanning closed history',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,inbox=require('../../src/projections/postgres-work-inbox'),at=new Date().toISOString();
+ await db.query(`INSERT INTO work_items(id,workspace_id,category,source,recommended_action,priority,idempotency_key,execution_status,created_at)
+ SELECT 'closed-history-'||n,$1,'owner_decision','postgres_workflow_owner',jsonb_build_object('type','review','detail',repeat(md5(n::text),40))::text,50,'closed-history-key-'||n,'COMPLETED',$2 FROM generate_series(1,50000)n`,[ctx.workspaceId,at]);
+ for(const [id,priority,status,approval]of [['pending-owner',99,'PENDING','REQUIRED'],['pending-manual',20,'PENDING','REQUIRED'],['automatic',90,'PENDING','NONE'],['failed',100,'FAILED','REQUIRED'],['cancelled',100,'CANCELLED','REQUIRED']])await db.query(`INSERT INTO work_items(id,workspace_id,category,source,recommended_action,priority,idempotency_key,execution_status,approval_requirement,created_at) VALUES($1,$2,'owner_decision','postgres_workflow_owner','{"type":"review"}',$3,$1,$4,$5,$6)`,[id,ctx.workspaceId,priority,status,approval,at]);
+ await db.query('ANALYZE work_items');assert.deepEqual((await inbox.summary(db,ctx.workspaceId)).rows.map(r=>r.id),['pending-owner','pending-manual']);assert.deepEqual((await inbox.summary(db,'another-inventory')).rows,[]);
+ const sql="SELECT * FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE' AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED') ORDER BY priority DESC,created_at";
+ for(const workspace of [ctx.workspaceId,'another-inventory']){const plan=(await db.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+sql,[workspace])).rows[0]['QUERY PLAN'][0].Plan;assert((plan['Shared Hit Blocks']||0)+(plan['Shared Read Blocks']||0)<100,'A small or empty inbox must not read the closed-history heap');}
+ await assert.rejects(db.transaction(async c=>{await c.query("UPDATE work_items SET execution_status='COMPLETED' WHERE workspace_id=$1 AND id='pending-owner'",[ctx.workspaceId]);assert.deepEqual((await inbox.summary(c,ctx.workspaceId)).rows.map(r=>r.id),['pending-manual']);throw Error('rollback decision completion');}),/rollback decision completion/);assert.deepEqual((await inbox.summary(db,ctx.workspaceId)).rows.map(r=>r.id),['pending-owner','pending-manual']);
+});

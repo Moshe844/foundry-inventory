@@ -89,7 +89,7 @@ jobs:
       - name: Variant answers and fresh replenishment
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/round16-ask-variants.test.js tests/postgres/round16-ask-sales-period.test.js tests/postgres/round16-replenishment-freshness.test.js tests/postgres/round16-attention-capacity.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/replenishment-global-scope.test.js 2>&1 | tee output/inventory-ci/variant-answers-freshness.log
+          node --test --test-concurrency=2 tests/postgres/round16-ask-variants.test.js tests/postgres/round16-ask-sales-period.test.js tests/postgres/round16-replenishment-freshness.test.js tests/postgres/round16-attention-capacity.test.js tests/postgres/round16-pending-inbox-read.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/replenishment-global-scope.test.js 2>&1 | tee output/inventory-ci/variant-answers-freshness.log
       - name: Variant report totals and visible supplier linking
         run: |
           set -euo pipefail
