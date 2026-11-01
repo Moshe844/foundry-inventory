@@ -783,7 +783,6 @@ async function revise(database,ctx,id,input={},options={}){
     }
     revised.transformations.variantBases=variantBases;
     const executionIdentities=require('./postgres-execution-identities'),sourceIdentity=require('./source-identity');
-    await client.query('DELETE FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,id]);
     const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0,existingStockRows:0},conflicts=new Map(),trackingSummary=require('./tracking-review').tracker(fieldMappings);
     let lastRow=0,lastId='';
     for(;;){
@@ -804,7 +803,7 @@ async function revise(database,ctx,id,input={},options={}){
       for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
       await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
       const savedIds=new Map(current.map(r=>[r.rowNumber,r.id]));
-      await executionIdentities.insertPage(client,ctx,revised,validated.rows.map(r=>({...r,id:savedIds.get(r.rowNumber)})),{productKey,variantKey});
+      await executionIdentities.insertPage(client,ctx,revised,validated.rows.map(r=>({...r,id:savedIds.get(r.rowNumber)})),{productKey,variantKey},{replace:true});
       lastRow=current.at(-1).rowNumber;lastId=current.at(-1).id;
       await options.onProgress?.({processedRows:summary.total,totalRows:plan.recordsDetected,stage:'checking'});
     }

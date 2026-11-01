@@ -13,12 +13,19 @@ async function stage(client,ctx,plan,deps,onProgress){
  if(count!==plan.recordsValid)throw new ValidationError('The frozen approved row count changed.');
  await mark(client,ctx,plan);
 }
-async function insertPage(client,ctx,plan,page,deps){
+async function insertPage(client,ctx,plan,page,deps,{replace=false}={}){
  const values=page.filter(r=>!r.status||['VALID','NEEDS_REVIEW','IMPORTED'].includes(r.status)).map(r=>({row_id:r.id,row_number:r.rowNumber,product_key:hash(deps.productKey(r.parsed)),variant_key:hash(deps.variantKey(r.parsed)),existing_sku_id:r.parsed.existingSkuId||null,existing_item_id:r.parsed.existingItemId||null,selling_price_minor:r.parsed.sellingPriceMinor??null,currency:r.parsed.currency||null,catalogue_update:r.parsed.catalogueUpdate||null}));
+ if(replace){const valid=new Set(values.map(v=>v.row_id)),removed=page.filter(r=>!valid.has(r.id)).map(r=>r.id);
+  if(removed.length)await client.query('DELETE FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND row_id=ANY($3::text[])',[ctx.workspaceId,plan.id,removed]);}
  if(!values.length)return;
- await client.query(`INSERT INTO import_execution_identities(workspace_id,import_id,row_id,row_number,product_key,variant_key,existing_sku_id,existing_item_id,selling_price_minor,currency,catalogue_update)
+ await client.query(`INSERT INTO import_execution_identities AS saved(workspace_id,import_id,row_id,row_number,product_key,variant_key,existing_sku_id,existing_item_id,selling_price_minor,currency,catalogue_update)
  SELECT $1,$2,x.row_id,x.row_number,x.product_key,x.variant_key,x.existing_sku_id,x.existing_item_id,x.selling_price_minor,x.currency,x.catalogue_update
- FROM jsonb_to_recordset($3::jsonb) x(row_id text,row_number bigint,product_key text,variant_key text,existing_sku_id text,existing_item_id text,selling_price_minor bigint,currency text,catalogue_update jsonb)`,[ctx.workspaceId,plan.id,JSON.stringify(values)]);
+ FROM jsonb_to_recordset($3::jsonb) x(row_id text,row_number bigint,product_key text,variant_key text,existing_sku_id text,existing_item_id text,selling_price_minor bigint,currency text,catalogue_update jsonb)
+ ${replace?`ON CONFLICT(row_id) DO UPDATE SET row_number=EXCLUDED.row_number,product_key=EXCLUDED.product_key,variant_key=EXCLUDED.variant_key,
+  existing_sku_id=EXCLUDED.existing_sku_id,existing_item_id=EXCLUDED.existing_item_id,selling_price_minor=EXCLUDED.selling_price_minor,currency=EXCLUDED.currency,catalogue_update=EXCLUDED.catalogue_update
+  WHERE saved.workspace_id=EXCLUDED.workspace_id AND saved.import_id=EXCLUDED.import_id AND
+   (saved.row_number,saved.product_key,saved.variant_key,saved.existing_sku_id,saved.existing_item_id,saved.selling_price_minor,saved.currency,saved.catalogue_update) IS DISTINCT FROM
+   (EXCLUDED.row_number,EXCLUDED.product_key,EXCLUDED.variant_key,EXCLUDED.existing_sku_id,EXCLUDED.existing_item_id,EXCLUDED.selling_price_minor,EXCLUDED.currency,EXCLUDED.catalogue_update)`:''}`,[ctx.workspaceId,plan.id,JSON.stringify(values)]);
 }
 async function mark(client,ctx,plan){await client.query('UPDATE import_plans SET execution_identity_hash=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id,plan.integrityHash]);}
 async function counts(client,ctx,plan){return (await client.query(`SELECT count(DISTINCT product_key) FILTER(WHERE existing_sku_id IS NULL)::int products,
