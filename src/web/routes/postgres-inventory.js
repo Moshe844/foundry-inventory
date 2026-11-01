@@ -44,9 +44,9 @@ function createPostgresInventoryRouter(database) {
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||'',category:String(req.query.category||'').slice(0,160),supplier:String(req.query.supplier||'').slice(0,160),size:String(req.query.size||'').slice(0,120),color:String(req.query.color||'').slice(0,120),lowStock:req.query.lowStock==='1'};
     filters.optionName=String(req.query.optionName||'').slice(0,120);filters.optionValue=String(req.query.optionValue||'').slice(0,120);
-    const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
+    const isFlat=req.query.view==='flat',result=await (isFlat?require('../../domain/postgres-flat-catalog').list:catalog.listItems)(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
     const hasProducts=result.items.length>0||(await database.query('SELECT 1 FROM items WHERE workspace_id=$1 LIMIT 1',[req.ctx.workspaceId])).rows.length>0;
-    if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
+    if(!isFlat&&result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
       WHERE s.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND b.on_hand>0 GROUP BY s.item_id`,[req.ctx.workspaceId,result.items.map(i=>i.id)])).rows;
@@ -58,7 +58,7 @@ function createPostgresInventoryRouter(database) {
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
-      hasProducts,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
+      hasProducts,isFlat,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
@@ -67,6 +67,8 @@ function createPostgresInventoryRouter(database) {
   router.get('/inventory/overview',asyncRoute(async(req,res)=>res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,
     ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))})));
   router.get('/inventory/table',asyncRoute(renderList));
+  router.get('/inventory/variant-products',requirePermission(permissions.VIEW,'see products'),asyncRoute(async(req,res)=>res.json({products:await require('../../domain/postgres-variant-data').products(database,req.ctx.workspaceId,req.query)})));
+  router.get('/inventory/:id/variants/data',requirePermission(permissions.VIEW,'see variants'),asyncRoute(async(req,res)=>res.json(await require('../../domain/postgres-variant-data').load(database,req.ctx.workspaceId,req.params.id,req.query))));
   router.post('/inventory/bulk',requireOwner,asyncRoute(async(req,res)=>{
     const bulk=require('../../domain/postgres-catalog-bulk'),items=await bulk.selected(database,req.ctx,values(req.body.itemIds));
     if(req.body.kind==='export'){
