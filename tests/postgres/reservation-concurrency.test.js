@@ -72,6 +72,15 @@ test('competing PostgreSQL reservations and fulfillments never oversell or corru
         customerId: 'customer', deliveryMethod: 'PICKUP', idempotencyKey: `stress:order:${index}`,
         lines: [{ skuId: 'sku', quantity: 7, unitPriceMinor: 1500 }],
       })));
+    const replayedOrders = await Promise.all(orders.map((order, index) =>
+      workflows.createSalesOrder(database, ctx, {
+        customerId: 'customer', deliveryMethod: 'PICKUP', idempotencyKey: `stress:order:${index}`,
+        lines: [{ skuId: 'sku', quantity: 7, unitPriceMinor: 1500 }],
+      })));
+    assert.deepEqual(replayedOrders.map(order => order.salesOrderId), orders.map(order => order.salesOrderId),
+      'Concurrent retried submissions retain the original orders');
+    assert.equal(Number((await database.query("SELECT count(*) AS count FROM sales_orders WHERE workspace_id='workspace'")).rows[0].count), 24,
+      'Serialization retries never create duplicate orders');
     const confirmations = await Promise.all(orders.map((order, index) =>
       workflows.confirmSalesOrder(database, ctx, order.salesOrderId,
         { idempotencyKey: `stress:confirm:${index}` })));

@@ -147,12 +147,12 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  const totals={value:{value:0n,movements:0},posted:{value:0n}};let expectedUnits=0,expectedValue=0,valued=0;
  await database.transaction(async client=>{
   await deps.bulkPlanning(client);
-  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true})){
+  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);
    for(const row of page){expectedUnits+=expectedDelta(row);expectedValue+=expectedCost(row);if(expectsCostRecord(row))valued++;}
   }
- },{isolation:'REPEATABLE READ'});
+ },{isolation:'REPEATABLE READ',readOnly:true});
  const checks=[{name:'Rows imported',expected:plan.recordsValid,observed:checkpoint.savedRows,ok:checkpoint.savedRows===plan.recordsValid},{name:'Net stock change',expected:expectedUnits,observed:checkpoint.units,ok:checkpoint.units===expectedUnits},{name:'Valued receipt records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost change in minor units',expected:expectedValue,observed:Number(totals.value.value),ok:expectedValue===Number(totals.value.value)},{name:'Inventory asset posted in minor units',expected:expectedValue,observed:Number(totals.posted.value),ok:expectedValue===Number(totals.posted.value)}];
  if(!checks.every(check=>check.ok))throw new ValidationError('Saved import records need reconciliation. Verified batches remain recorded.',{checks});
  return phase(async client=>{const count=Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);if(count!==plan.recordsValid)throw new ValidationError('Some approved rows remain unsaved. Continue the import.');

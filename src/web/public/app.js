@@ -576,6 +576,8 @@
 
   function initConfirms() {
     document.addEventListener('submit', (event) => {
+      // Async form handlers own their pending state until their response arrives.
+      if (event.defaultPrevented) return;
       const form = event.target;
       const message = form.getAttribute('data-confirm');
       /*

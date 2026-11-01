@@ -106,8 +106,11 @@ function openPostgres(connectionString, options = {}) {
         if(!leasedClient)client.release(discard);
       }
       const backoff = Math.min(1000, retryBaseDelayMs * (2 ** Math.min(attempt, 6)));
-      const jitter = Math.floor(Math.random() * retryBaseDelayMs);
-      await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
+      // Spread retries across the growing window. A fixed 15ms jitter keeps
+      // contending transactions synchronized once the backoff reaches 1s,
+      // so a hot order counter can exhaust every retry despite making progress.
+      const delay = Math.ceil(backoff / 2) + Math.floor(Math.random() * Math.ceil(backoff / 2));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
   return { query, transaction, listen, withSessionLock, close: () => pool.end(), connectionErrors: errors,
