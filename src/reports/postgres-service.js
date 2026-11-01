@@ -227,8 +227,8 @@ async function run(database,ctx,actor,spec,options={}){
   const config=normalize(spec,actor);const limit=Math.min(20001,Math.max(2,Number(options.limit)||201));
   const dataset=registry.get(config.dataset);
   if(dataset.commercialCapability){const entitlements=require('../commercial/entitlements');
-    const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
-    await entitlements.assertCapability(database,scope,dataset.commercialCapability,{allowReadOnly:true});}
+    const requestCache=require('../lib/request-read-cache'),scope=await requestCache.read(JSON.stringify(['report-owner',ctx.workspaceId]),()=>entitlements.ownerScopeForWorkspace(database,ctx.workspaceId));
+    await requestCache.read(JSON.stringify(['report-permit',ctx.workspaceId,dataset.commercialCapability]),()=>entitlements.assertCapability(database,scope,dataset.commercialCapability,{allowReadOnly:true}));}
   const suppliedOffset=Number(options.offset)||0;
   if(!Number.isSafeInteger(suppliedOffset)||suppliedOffset<0||suppliedOffset>1000000)
     invalid('That report page is unavailable. Narrow the filters before browsing further.');
@@ -236,9 +236,10 @@ async function run(database,ctx,actor,spec,options={}){
   const pageSize=limit-1;
   const allowed=config.topN===null?pageSize:Math.max(0,Math.min(pageSize,config.topN-offset));
   const queryLimit=allowed+((config.topN===null||offset+allowed<config.topN)?1:0);
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
-  const fetched=(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
+  const dateContext=await require('../lib/request-read-cache').read(JSON.stringify(['report-clock',ctx.workspaceId]),()=>require('../lib/business-time').forWorkspace(database,ctx.workspaceId));
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext});
+  const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction((client)=>client.query(sql,values),
+    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows);
   const hasMore=fetched.length>allowed;
   const rows=fetched.slice(0,allowed);
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'

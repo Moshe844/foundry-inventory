@@ -20,7 +20,7 @@ async function runtimeFailures(database,workspaceId){
   return {attempts:rows.reduce((sum,row)=>sum+number(row.attempts),0),causes:rows};
 }
 
-function needs(database,workspaceId,actorId=null){return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),()=>needsUncached(database,workspaceId,actorId));}
+function needs(database,workspaceId,actorId=null){return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),()=>require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)));}
 async function needsUncached(database,workspaceId,actorId=null){
   const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,

@@ -27,7 +27,8 @@ const STOCK_GROUPS=Object.freeze([
   Object.freeze({key:'healthy',name:'Available now',detail:'Physical stock covers the units promised to customers.',tone:'ok',icon:'check'}),
 ]);
 
-async function home(database,workspaceId,actorId=null){
+function home(database,workspaceId,actorId=null){return require('../lib/versioned-read-model').read(database,workspaceId,['home',actorId,new Date().toISOString().slice(0,10)],()=>homeUncached(database,workspaceId,actorId));}
+async function homeUncached(database,workspaceId,actorId=null){
   const clock=await require('../lib/business-time').forWorkspace(database,workspaceId);
   const dayStart=require('../lib/business-time').dayBoundary(clock.calendarDate,clock.timeZone);
   const [brief,state,completed,executing,upcoming]=await Promise.all([

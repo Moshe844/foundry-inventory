@@ -6,6 +6,12 @@ const request=require('supertest');
 const session=require('express-session');
 const { createPostgresApp }=require('../../src/postgres-app');
 
+test('health and readiness remain reachable while the customer request pool is saturated',async()=>{
+ let probes=0;const database={query:async()=>{throw Error('Customer pool is busy');}},probeDatabase={query:async sql=>{probes++;return {rows:[sql.includes('stale_jobs')?{migrations:155,dead_jobs:0,stale_jobs:0}:{count:155}]};}};
+ const app=createPostgresApp({database,probeDatabase,sessionStore:new session.MemoryStore(),env:'test',sessionSecret:'isolated-probes'});
+ await request(app).get('/healthz').expect(200);await request(app).get('/readyz').expect(200);assert.equal(probes,2);
+});
+
 test('concurrent PostgreSQL health probes share bounded database checks',async()=>{
   let now=0;
   let healthQueries=0;let readinessQueries=0;

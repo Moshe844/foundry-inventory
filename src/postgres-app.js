@@ -48,7 +48,7 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
-function createPostgresApp({database,resourceDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
+function createPostgresApp({database,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
   commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
@@ -127,7 +127,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.get('/healthz',async(req,res)=>{
     if(req.get('origin')==='https://stockchief-staging-status.onrender.com'){res.set('Access-Control-Allow-Origin',req.get('origin'));res.vary('Origin');}
     try {
-      const result=await probe('health',probeCacheMs.health,()=>database.query(
+      const result=await probe('health',probeCacheMs.health,()=>probeDatabase.query(
         'SELECT COUNT(*) AS count FROM stockchief_postgres_migrations'));
       return res.json({ok:true,database:'postgresql',migrations:Number(result.rows[0].count),
         releaseRef:config.operations.releaseRef});
@@ -135,7 +135,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   });
   app.get('/readyz',async(req,res)=>{
     try{
-      const result=await probe('readiness',probeCacheMs.readiness,()=>database.query(`SELECT
+      const result=await probe('readiness',probeCacheMs.readiness,()=>probeDatabase.query(`SELECT
         (SELECT COUNT(*) FROM stockchief_postgres_migrations) AS migrations,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status='DEAD') AS dead_jobs,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
