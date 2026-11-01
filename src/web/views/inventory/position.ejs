@@ -14,7 +14,7 @@
   var totals = position.totals || {};
   var value = locals.stockValue;
   var knownCostUnits = value ? Number(value.totalUnits || 0) : 0;
-  var missingCostUnits = Math.max(0, Number(totals.onHand || 0) - knownCostUnits);
+  var missingCostUnits = value && value.missingCostUnits != null ? Number(value.missingCostUnits) : Math.max(0, Number(totals.onHand || 0) - knownCostUnits);
 %>
 
 
