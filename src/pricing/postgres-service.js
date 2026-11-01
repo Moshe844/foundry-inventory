@@ -72,8 +72,8 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   // Drive bounded validation from the requested keys. A growing import can
   // otherwise make PostgreSQL repeatedly scan the entire tenant catalogue.
   const active=(await client.query(`SELECT s.id,s.created_here FROM unnest($2::text[]) wanted(id)
-    JOIN LATERAL(SELECT id,item_id,workspace_id,xmin=pg_current_xact_id()::text::xid AS created_here FROM skus
-      WHERE workspace_id=$1 AND id=wanted.id AND is_active=1 OFFSET 0) s ON true
+    JOIN LATERAL(SELECT id,item_id,workspace_id,is_active,xmin=pg_current_xact_id()::text::xid AS created_here FROM skus
+      WHERE id=wanted.id OFFSET 0) s ON s.workspace_id=$1 AND s.is_active=1
     JOIN LATERAL(SELECT workspace_id,is_active FROM items WHERE id=s.item_id OFFSET 0) i ON i.workspace_id=s.workspace_id
     WHERE i.is_active=1`,[ctx.workspaceId,skuIds])).rows;
   if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');

@@ -11,7 +11,7 @@ async function saveManyInTransaction(client,ctx,inputs){
  const rows=[...grouped.values()];
  for(let start=0;start<rows.length;start+=500){const batch=rows.slice(start,start+500),keys=JSON.stringify(batch),skus=[...new Set(batch.map(row=>row.sku_id))];
   const allowed=await client.query(`SELECT x.source_row FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,source_import_id text,source_row bigint)
-   JOIN LATERAL(SELECT id FROM skus WHERE workspace_id=$1 AND id=x.sku_id AND id=ANY($3::text[]) OFFSET 0) s ON true
+   JOIN LATERAL(SELECT id,workspace_id FROM skus WHERE id=x.sku_id OFFSET 0) s ON s.workspace_id=$1 AND s.id=ANY($3::text[])
    JOIN import_plans p ON p.workspace_id=$1 AND p.id=x.source_import_id
    WHERE x.location_id IS NULL OR EXISTS(SELECT 1 FROM locations l WHERE l.workspace_id=$1 AND l.id=x.location_id)`,[ctx.workspaceId,keys,skus]);
   if(allowed.rowCount!==batch.length)throw new ValidationError('Imported product details and their source must belong to this inventory.');
