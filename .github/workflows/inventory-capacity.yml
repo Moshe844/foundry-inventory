@@ -68,7 +68,7 @@ jobs:
       - name: Generic variant grids, list filters and count approvals
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/round16-quantity-grid.test.js tests/postgres/round16-variant-views.test.js tests/postgres/round16-count-reviews.test.js 2>&1 | tee output/inventory-ci/variant-grids.log
+          node --test --test-concurrency=2 tests/postgres/round16-quantity-grid.test.js tests/postgres/round16-variant-views.test.js tests/postgres/round16-count-reviews.test.js tests/postgres/round16-inline-variant-stock.test.js 2>&1 | tee output/inventory-ci/variant-grids.log
       - name: Variant answers and fresh replenishment
         run: |
           set -euo pipefail
@@ -80,7 +80,7 @@ jobs:
       - name: Tracked product pages in the browser
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/tracked-product-pages.test.js tests/postgres/round16-tracked-variant-sales.test.js tests/postgres/round16-batch-expiry-alerts.test.js 2>&1 | tee output/inventory-ci/tracked-products.log
+          node --test --test-concurrency=2 tests/postgres/tracked-product-pages.test.js tests/postgres/round16-tracked-variant-sales.test.js tests/postgres/round16-batch-expiry-alerts.test.js tests/postgres/round16-business-variant-qualification.test.js 2>&1 | tee output/inventory-ci/tracked-products.log
       - name: Provider automatic import and owner approval
         run: |
           set -euo pipefail

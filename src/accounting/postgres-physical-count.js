@@ -22,7 +22,7 @@ async function applyInTransaction(client,ctx,input){
  // Apply the reviewed difference, preserving later receipts, sales and transfers.
  const delta=Number(input.countedQuantity)-Number(preserveChanges?input.expectedBefore.physical:before.physical),counted=before.physical+delta;
  if(counted<0)throw new ValidationError('Stock was used after this count was reviewed. The remaining count would make stock negative; review this product before continuing.');
- const opening=input.sourceType==='import_stock_count'&&delta>0&&before.physical===0&&before.costed===0&&!(await client.query('SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 LIMIT 1',[ctx.workspaceId,input.skuId,input.locationId])).rows.length;
+ const opening=['import_stock_count','physical_count_review'].includes(input.sourceType)&&delta>0&&before.physical===0&&before.costed===0&&!(await client.query('SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 LIMIT 1',[ctx.workspaceId,input.skuId,input.locationId])).rows.length;
  if(delta<0&&before.costed>0&&before.costed!==before.physical)throw new ValidationError('This position mixes costed and uncosted stock. Establish its cost evidence before reducing it with a file count.');
  const physical=await inventory.adjustInTransaction(client,ctx,{...input,countedQuantity:counted});
  if(physical.unchanged)return {...physical,costDeltaMinor:0,journalEntryId:null};

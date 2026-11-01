@@ -3,6 +3,7 @@ const {createHash}=require('crypto'),{ValidationError,NotFoundError}=require('./
 const stable=v=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(stable).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}':JSON.stringify(v);
 const hash=v=>createHash('sha256').update(stable(v)).digest('hex');
 function auditValues(change,after){const values={},state=change.before;for(const [field,value] of Object.entries(change.after)){
+ if(field==='stock'){for(const position of value){values['Stock count at '+position.locationName]=String(after?position.quantity:position.beforeQuantity);values['Stock value change at '+position.locationName]=after?money.format(position.costDeltaMinor,position.currency):'No change';}continue;}
  const label={code:'SKU',barcode:'Barcode',price:'Selling price',cost:'Purchase cost',reorder:'Reorder point',supplier:'Supplier',options:'Option values'}[field];
  if(field==='options'){values[label]=(after?value:state.options).map(o=>o.name+': '+o.value).join(' / ');continue;}
  if(['price','cost'].includes(field)){const amount=after?value:state[field];values[label]=amount?.amountMinor!==undefined?money.format(amount.amountMinor,amount.currency):amount?.amount_minor!=null?money.format(Number(amount.amount_minor),amount.currency):'Not set';}
@@ -27,8 +28,9 @@ async function prepare(db,ctx,itemId,input){return db.transaction(async c=>{
  if(!supplied.length||supplied.length>1000||new Set(supplied.map(r=>r.skuId)).size!==supplied.length)throw new ValidationError('Choose up to 1,000 different variants.');
  const current=await rows(c,ctx,itemId,supplied.map(r=>r.skuId));if(current.length!==supplied.length)throw new NotFoundError('Every variant must belong to this product and inventory.');
  const currency=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD',changes=[];
+ const stockChanges=await require('./postgres-variant-stock-counts').prepare(c,ctx,supplied);
  for(const raw of supplied){const before=current.find(r=>r.id===raw.skuId);if(before.version!==raw.version)throw new ValidationError('A variant changed while this page was open. Reload before preparing changes.');
-  const after={};
+  const after={};if(stockChanges.has(raw.skuId))after.stock=stockChanges.get(raw.skuId);
   if(raw.optionValues!==undefined){if(!raw.optionValues||typeof raw.optionValues!=='object'||Array.isArray(raw.optionValues)||Object.keys(raw.optionValues).some(id=>!before.options.some(o=>o.id===id)))throw new ValidationError('Choose option values belonging to this product.');const options=before.options.map(o=>({...o,value:Object.hasOwn(raw.optionValues,o.id)?requireText(raw.optionValues[o.id],o.name,{max:120}):o.value}));if(options.some((o,i)=>o.value!==before.options[i].value))after.options=options;}
   if(raw.code!==undefined&&raw.code!==before.code)after.code=requireText(raw.code,'SKU',{max:120});
   if(raw.barcode!==undefined&&String(raw.barcode||'')!==String(before.barcode||'')){after.barcode=String(raw.barcode||'').trim();if(after.barcode.length>240||/[\x00-\x1f\x7f]/.test(after.barcode))throw new ValidationError('Use a printable barcode of at most 240 characters.');}
@@ -50,6 +52,7 @@ async function approve(db,ctx,id,integrityHash){return db.transaction(async c=>{
  if(!review||review.integrity_hash!==integrityHash||hash(review.payload)!==integrityHash)throw new ValidationError('This review changed. Open the current variant changes.');if(review.status==='COMPLETED')return {...review,replayed:true};if(review.status!=='PENDING')throw new ValidationError('This review is no longer awaiting approval.');
  const current=await rows(c,ctx,review.item_id,review.payload.changes.map(r=>r.skuId));for(const change of review.payload.changes)if(current.find(r=>r.id===change.skuId)?.version!==change.version)throw new ValidationError('A variant changed after review. Prepare a new batch before approving.');
  await validateCombinations(c,ctx,review.item_id,review.payload.changes);
+ await require('./postgres-variant-stock-counts').approve(c,ctx,review.payload.changes);
  const prices=[],costs=[],reorder=[],suppliers=[];
  for(const change of review.payload.changes){const {after,before}=change;
   if(after.options){for(const option of after.options)await c.query('UPDATE sku_option_values SET value=$3 WHERE sku_id=$1 AND option_id=$2',[change.skuId,option.id,option.value]);await c.query('UPDATE skus SET variant_label=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,change.skuId,after.options.map(o=>o.value).join(' / ')]);}

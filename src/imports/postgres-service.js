@@ -210,7 +210,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     // A lot column can be blank for ordinary products in the same file.
     // Saved tracking requirements and explicit flags still require identifiers.
     const hasFlags=mappings.serialTracked!==undefined||mappings.lotTracked!==undefined;
-    const serialRequired=Boolean(serial)||(serialFlag&&proposal.trackingReview?.serial!=='quantity')||
+    const serialRequired=Boolean(serial)||existingMatches.some(s=>s.tracking_mode==='serial')||(serialFlag&&proposal.trackingReview?.serial!=='quantity')||
       (!hasFlags&&mappings.lotCode===undefined&&(mappings.serial!==undefined||proposal.detectedType==='serials'));
     const lotRequired=Boolean(lotCode)||(lotFlag&&proposal.trackingReview?.lot!=='quantity')||
       existingMatches.some(s=>s.tracking_mode==='lot');
@@ -218,9 +218,11 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       problems.push(problem('missing_tracking_identifier','This stock needs a serial number, a lot number, or an explicit tracking requirement for this product.'));
     if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
     if(serialRequired){
-      if(!serial&&quantity!==0)problems.push(problem('missing_serial','A serial number is required for this row.'));
-      if(quantity === null)quantity=1;
-      if(quantity !== 1&&quantity!==0)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
+      // A tracking flag describes the catalogue. Only an actual serial number
+      // implies one physical unit when the file has no stock column.
+      if(serial&&quantity===null)quantity=1;
+      if(!serial&&quantity!==null&&quantity!==0)problems.push(problem('missing_serial','A serial number is required for this row.'));
+      if(quantity!==null&&quantity!==1&&quantity!==0)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
     }
     if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));

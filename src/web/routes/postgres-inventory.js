@@ -152,7 +152,9 @@ function createPostgresInventoryRouter(database) {
     productView.money=await require('../../domain/postgres-product-money').summary(database,req.ctx.workspaceId,detail.item.id);
     const variantStates=req.user.role==='owner'?await require('../../domain/postgres-variant-changes').rows(database,req.ctx,detail.item.id,detail.skus.map(s=>s.id)):[];
     const variantSuppliers=req.user.role==='owner'?(await database.query("SELECT id,name,currency FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name,id LIMIT 1000",[req.ctx.workspaceId])).rows:[];
-    return res.page('inventory/item',{productView,variantStates,variantSuppliers,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    const stockPlaces=req.user.role==='owner'?await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId):[],variantStockLocations=req.query.stockLocationId?stockPlaces.filter(l=>l.id===req.query.stockLocationId):stockPlaces.slice(0,10);
+    const variantStockSnapshots=req.user.role==='owner'&&detail.item.tracking_mode==='quantity'&&!detail.item.secondary_unit_label?await require('../../domain/postgres-variant-stock-counts').snapshots(database,req.ctx,detail.skus.filter(s=>s.is_active).map(s=>s.id),variantStockLocations):{};
+    return res.page('inventory/item',{productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
