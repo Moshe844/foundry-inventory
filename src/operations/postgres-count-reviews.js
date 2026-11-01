@@ -55,4 +55,4 @@ async function approve(db,ctx,id,integrityHash){return db.transaction(async c=>{
  const result={lines:results.length,changed:results.filter(r=>!r.unchanged).length};
  await c.query("UPDATE physical_count_reviews SET status='COMPLETED',approved_at=now(),approved_by_user_id=$3,result=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,ctx.actorId,result]);return {replayed:false,...result};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
-module.exports={prepare,get,approve};
+module.exports={prepare,get,approve,positions,snapshotHash:digest};
