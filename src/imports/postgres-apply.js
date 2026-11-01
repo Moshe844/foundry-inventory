@@ -1,5 +1,5 @@
 'use strict';
-const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),ledger=require('../accounting/postgres-ledger'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
+const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
 const key=value=>require('node:crypto').createHash('sha256').update(value).digest('hex');
 async function run(database,ctx,plan,executionId,inputOptions,deps){
  const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities'),batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
@@ -43,13 +43,9 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    let savedRows=[],pendingValues=[],units=0,rowsImported=0;
       async function flushValues(){
         if(!pendingValues.length)return;
-        const valued=pendingValues.filter(value=>value.totalCostMinor>0),posted=await ledger.postManyInTransaction(client,ctx,valued.map(value=>({
-          postingDate:value.postingDate,sourceKey:`import:${id}:row:${value.row.id}:opening-value`,sourceType:value.count?'import_stock_count':'opening_inventory',sourceRecordType:'import_row',sourceRecordId:value.row.id,
-          description:`Opening inventory from ${plan.sourceName}, row ${value.row.rowNumber}`,currency:value.row.parsed.currency,
-          lines:[{accountKey:'INVENTORY_ASSET',debitMinor:value.totalCostMinor,skuId:value.skuId,locationId:value.row.parsed.locationId},{accountKey:value.count&&!value.opening?'INVENTORY_ADJUSTMENTS':'OPENING_BALANCE_EQUITY',creditMinor:value.totalCostMinor}]})));
-        let journalIndex=0;
+        const journalByRow=await require('./postgres-opening-values').post(client,ctx,plan,pendingValues);
         await costing.receiveManyInTransaction(client,ctx,pendingValues.map(value=>({movementId:value.movementId,totalCostMinor:value.totalCostMinor,unitCostMinor:value.row.parsed.unitCostMinor,
-          journalEntryId:value.totalCostMinor>0?posted[journalIndex++].entry.id:null,sourceType:value.count?'import_stock_count':'opening_inventory',sourceRecordId:value.row.id})));
+          journalEntryId:journalByRow.get(value.row.id)||null,sourceType:value.count?'import_stock_count':'opening_inventory',sourceRecordId:value.row.id})));
         pendingValues=[];
       }
 
