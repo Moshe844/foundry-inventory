@@ -12,7 +12,7 @@ function decodeCursor(value){
     const parsed=JSON.parse(Buffer.from(String(value),'base64url').toString('utf8'));
     if(!parsed||typeof parsed.skuId!=='string'||typeof parsed.locationId!=='string')throw new Error('invalid');
     return parsed;
-  }catch{throw new ValidationError('That inventory cursor is invalid.');}
+  }catch{throw new DomainError('That inventory cursor is invalid.',{code:'invalid_cursor',status:400});}
 }
 
 function encodeCursor(row){
@@ -32,7 +32,7 @@ function route(scope,handler){
     try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
       if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
       await entitlements.assertCapability(req.app.locals.database,auth,'api.public');
-      if(scope.endsWith(':read'))return require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
+      if(scope.endsWith(':read'))return await require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
         {capability:'api.public',key:require('../../lib/util').newId('api-read'),provider:'stockchief_api',
           operation:'inventory_read',unit:'request'},()=>handler(auth,req,res));
       return await handler(auth,req,res);}
@@ -42,6 +42,7 @@ function route(scope,handler){
 
 function createPostgresPublicApi(database){
   const router=express.Router();
+  router.use(require('../middleware').rateLimit({max:600,key:req=>req.get('authorization')||req.ip}));
   router.get('/inventory',route('inventory:read',async(auth,req,res)=>{
     const pageLimit=limit(req.query.limit);const cursor=decodeCursor(req.query.cursor);
     const values=[auth.workspaceId,pageLimit+1];let after='';

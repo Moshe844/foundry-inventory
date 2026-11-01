@@ -12,6 +12,8 @@ function postgresPageRenderer(req,res,next){
     return render(view,data,(error,body)=>{
       if(!error&&res.statusCode===200&&req.ctx?.workspaceId)res.set('X-StockChief-Page','1');
       if(!error&&typeof body==='string')body=require('./presentation/link-destinations').declare(body);
+      if(!error&&view.startsWith('auth/')&&req.session)
+        req.session.flash=(req.session.flash||[]).filter(m=>m.scope&&m.scope!==req.path);
       if(callback)return callback(error,body);
       if(error)return next(error);
       return res.send(body);
@@ -22,8 +24,8 @@ function postgresPageRenderer(req,res,next){
     return res.render(view,{...data,onboardingEntry,pageSection:require('./presentation/navigation').sectionFor(req.path)},(error,body)=>{
     if(error)return next(error);
     if(data.layout===false)return res.send(body);
-    const flashMessages=req.session?.flash||res.locals.flash||[];
-    if(req.session)req.session.flash=[];
+    const flashMessages=(req.session?.flash||res.locals.flash||[]).filter(m=>!m.scope||m.scope===req.path);
+    if(req.session)req.session.flash=(req.session.flash||[]).filter(m=>m.scope&&m.scope!==req.path);
     const currentHref=(()=>{try{const parsed=new URL(req.originalUrl||req.path||'/',`http://${req.get('host')}`);
       return `${parsed.pathname}${parsed.search}`;}catch{return req.path||'/';}})();
     // Only successful authenticated application pages can acknowledge delivery.

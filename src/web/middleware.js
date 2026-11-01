@@ -44,20 +44,26 @@ function flash(req, res, next) {
   req.flash = (type, message, options={}) => {
     if (!req.session) return;
     req.session.flash = req.session.flash || [];
-    req.session.flash.push({ type, message, id:crypto.randomBytes(12).toString('hex'),...(options.upgrade===true?{upgrade:true}:{}) });
+    const scope=options.scope||(req.path?.startsWith('/auth/company')?'/auth/company':null);
+    if(!req.session.flash.some(m=>m.type===type&&m.message===message&&(m.scope||null)===scope))
+      req.session.flash.push({ type, message, id:crypto.randomBytes(12).toString('hex'),...(scope?{scope}:{}),...(options.upgrade===true?{upgrade:true}:{}) });
   };
   const messages = (req.session && req.session.flash) || [];
-  res.locals.flash = messages;
+  res.locals.flash = messages.filter(m=>!m.scope||m.scope===req.path);
   next();
 }
 
 /** Synchroniser-token CSRF protection for every state-changing request. */
+function scopedCsrfToken(session) {
+  if(!session.workspaceId)return session.csrfToken;
+  return session.csrfToken+'.'+crypto.createHmac('sha256',session.csrfToken).update(String(session.workspaceId)).digest('base64url');
+}
 function csrf(req, res, next) {
   if (!req.session) return next();
   if (!req.session.csrfToken) {
     req.session.csrfToken = crypto.randomBytes(24).toString('base64url');
   }
-  res.locals.csrfToken = req.session.csrfToken;
+  res.locals.csrfToken = scopedCsrfToken(req.session);
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   // A form that accidentally carries the field twice arrives as an array.
@@ -65,10 +71,11 @@ function csrf(req, res, next) {
   // baffling thing to show someone who did nothing wrong.
   const field = req.body && req.body._csrf;
   const supplied = (Array.isArray(field) ? field[0] : field) || req.get('x-csrf-token');
-  if (!supplied || supplied !== req.session.csrfToken) {
-    const err = new DomainError('Your session expired. Please try that again.', {
-      code: 'invalid_csrf',
-      status: 403,
+  if (typeof supplied!=='string' || supplied !== res.locals.csrfToken) {
+    const inventoryChanged=typeof supplied==='string'&&supplied.startsWith(req.session.csrfToken+'.');
+    const err = new DomainError(inventoryChanged?'The selected inventory changed in another tab. Reload this page and check the inventory before saving. Your changes were not saved.':'Your session expired. Please reload this page and try again.', {
+      code: inventoryChanged?'inventory_context_changed':'invalid_csrf',
+      status: inventoryChanged?409:403,
     });
     return next(err);
   }
@@ -593,6 +600,7 @@ module.exports = { clearPendingWork, PENDING_KEYS,
   rateLimit,
   flash,
   csrf,
+  scopedCsrfToken,
   loadUser,
   foundryContext,
   requireConfigured,
