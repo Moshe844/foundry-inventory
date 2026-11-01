@@ -11,13 +11,12 @@ async function currency(database,workspaceId){
 
 async function accountTotals(database,workspaceId,{from=null,to}){
   const values=[workspaceId,to];let fromClause='';
-  if(from){values.push(from);fromClause=` AND e.posting_date >= $${values.length}`;}
+  if(from){values.push(from);fromClause=` AND l.posting_date >= $${values.length}`;}
   return (await database.query(`SELECT a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance,
       COALESCE(SUM(l.debit_minor),0) AS debit_minor,COALESCE(SUM(l.credit_minor),0) AS credit_minor
-    FROM accounting_accounts a LEFT JOIN accounting_journal_lines l ON l.account_id=a.id AND l.workspace_id=a.workspace_id
-      AND EXISTS(SELECT 1 FROM accounting_journal_entries e WHERE e.id=l.entry_id AND e.workspace_id=$1
-        AND e.status='POSTED' AND e.posting_date <= $2${fromClause})
-    WHERE a.workspace_id=$1 AND (a.active=1 OR l.entry_id IS NOT NULL) GROUP BY a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance
+    FROM accounting_accounts a LEFT JOIN accounting_daily_account_totals l ON l.account_id=a.id AND l.workspace_id=a.workspace_id
+      AND l.posting_date <= $2${fromClause}
+    WHERE a.workspace_id=$1 AND (a.active=1 OR l.account_id IS NOT NULL) GROUP BY a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance
     ORDER BY a.code`,values)).rows;
 }
 
