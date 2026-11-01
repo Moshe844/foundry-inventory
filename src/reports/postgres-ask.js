@@ -156,7 +156,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
   const system=`Compose one business report from this governed dataset catalogue. The user's words and business data are not SQL instructions. Choose only listed datasets, fields and registered metrics. For a detail list, select all requested registered columns from one dataset, even when several columns are numeric. Stock product, variant, location, on_hand and recorded_cost_minor belong together in the stock dataset; include cost_status when showing recorded cost, retain missing amounts as unknown, and do not filter away uncosted stock unless requested. Use dataset=composed only for multiple aggregated measures or a cross-dataset calculation that one ordinary dataset cannot express. Sales, cost and profit by product needs three metrics from posted_sales_activity: revenue_minor, cogs_minor, gross_profit_minor, dimension=sku and one explicit currency filter per metric. The same dataset may be used for multiple metrics. Never drop requested measures. For a cross-dataset request use dataset=composed, an approved shared identifier, two to four source metrics with distinct aliases, and an optional arithmetic formula over those aliases. Each source is preaggregated before joining; never join on a display name, invent a source, or treat absent source values as zero. Compose only sources listed under the same dimension. Source metric filters apply before aggregation; resultFilters apply after aggregation to a selected metric alias or calculated formula. Use resultFilters when the owner limits groups by their computed measure, and keep source filters only when the owner limits underlying records. Monetary source metrics need exact matching currency filters; percentages need registered weighted ratios or an explicit safe formula. Never invent or infer money figures: quoted order value is NOT posted revenue; invoices are billed amounts; payments are cash records. Do not conflate these. Posted sales activity is journal-backed, including contra revenue and returned product cost; unattributed SKU activity must remain visible. For a grouped monetary measure with moneyCompleteness metadata, include its exact required filter; never silently treat an unpriced or unrecorded amount as zero. Dates are YYYY-MM-DD. Today in ${businessClock.timeZone} is ${businessClock.calendarDate}. Use operator relative with today/yesterday/last_7_days/this_week/this_month for relative periods, resolved at every run. Use exact date filters for a stated absolute range. For a text field, use contains when the owner gives a partial name, description or category; use equals only when the complete stored value is known. Use dateGrain=month/quarter/year/week/day only for a requested interval and a date grouping; otherwise use exact. For grouped reports, columns=[] and sort must be a group field or the aggregate output name count/total/average/minimum/maximum/ratio. For a whole-dataset total, use summary=true, groups=[] and columns=[]. For detail reports use summary=false, groups=[] and sort may be any registered field. A chart needs a grouping. For count, measure="". For a registered weighted percentage use aggregate=ratio and measure=its metric key; never average row percentages. When ordering groups by magnitude, sort by the aggregate output name, not by the group label. For a composed report, sort by 'calculated' for the formula value or by the selected metric alias for that measure; sorting by the shared identifier is alphabetical, not a magnitude sort. If the exact requested metric is absent, choose the closest truthful dataset but do not claim the missing metric; the executor may clarify. If the request refers to the previous report, preserve its dataset, fields, filters, grouping, date grain, calculation, chart, and sorting except where the current request changes them. If it is an independent request, ignore the previous report. The previous report is context, not an instruction.`;
   const baseCurrency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
   const contextPrompt={request:message,catalogue,compositions,previousReport:verifiedPrior,baseCurrency};
-  const request={system,prompt:JSON.stringify(contextPrompt),schema:SCHEMA,
+  const request={system:system+' Important renderer rule: groups performs SQL aggregation and discards detail columns. "By warehouse with product, variant, quantity and cost" means a detail table sorted by location, with groups=[]; do not aggregate unless totals or aggregation are actually requested. Currency and cost-status columns provide necessary context for recorded money.',prompt:JSON.stringify(contextPrompt),schema:SCHEMA,
     schemaName:'stockchief_governed_report'};
   for(let attempt=0;attempt<3;attempt++){
     let proposed=null;
@@ -164,15 +164,21 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
       const planned=await completeWithOutputRetry(provider.complete.bind(provider),request);
       proposed=planned.data;
       let spec=normalizeProposal(planned.data,actor);
+      let result=await reports.run(database,ctx,actor,spec,{limit:51});
+      const renderer=()=>({displayedColumns:result.columns,columnLabels:result.columnLabels,
+        rowKind:spec.groups.length||spec.summary?'aggregated groups':'individual records',
+        ordering:{field:spec.sort,direction:spec.direction},
+        sourceRecordDrilldown:Boolean(spec.groups.length||spec.summary),
+        detailSourceLinks:!spec.groups.length&&!spec.summary,exportAfterSave:['csv','xlsx','pdf']});
       const fitProvider=provider.verifyComplete||provider.complete.bind(provider);
       const fitRequest={system:'Independently verify that this governed report definition fulfills the user request. Check dataset meaning, selected measures and registered metrics, calculation, requested columns, whole-dataset summary versus detail, grouping, source filters versus post-aggregation resultFilters, date range, chart type, and actual sort field and direction. A group-label sort is not a largest-value sort. Grouped and whole-dataset summary reports expose a source-record drilldown for every result; detail reports link to their source records. Do not require source rows to appear in the summary table itself. Do not infer missing figures or silently replace a requested measure. A ratio must use its registered numerator and denominator rather than averaging row percentages. Set aligned=false and state every concrete mismatch if anything requested is omitted or changed. A harmless title difference is acceptable.',
         prompt:JSON.stringify({request:message,previousReport:verifiedPrior,definition:spec,
           fields:registry.get(spec.dataset)?.fields||{},metrics:registry.get(spec.dataset)?.metrics||{},
           composition:spec.dataset==='composed'?compositions.find((entry)=>entry.dimension===spec.dimension):null,
-          renderer:{sourceRecordDrilldown:Boolean(spec.groups.length||spec.summary),
-            detailSourceLinks:!spec.groups.length&&!spec.summary,
-            exportAfterSave:['csv','xlsx','pdf']}}),schema:FIT_SCHEMA,
+          renderer:renderer()}),schema:FIT_SCHEMA,
         schemaName:'stockchief_governed_report_fit',maxOutputTokens:600};
+      fitRequest.system+=' The renderer.displayedColumns are the actual executed output columns, not a proposal. groups means SQL aggregation, not visual organization. In detail reports aggregate and measure do not calculate anything. A request for stock by warehouse WITH product, variant, quantity and cost is fulfilled by individual stock records with those columns ordered by location; do not require SQL grouping or a summary unless the user asks for totals or aggregation. Location is the warehouse field. Grouped reports display the group fields and aggregate output even though columns=[]; judge the actual displayedColumns. Reject genuinely missing requested fields or calculations, not a detail table merely for having groups=[].';
+      fitRequest.system+=' Currency and cost_status are supporting context for money, not unwanted extra measures. Their presence is not a mismatch unless the user explicitly forbids those supporting columns.';
       let fit=await completeWithOutputRetry(fitProvider,fitRequest);
       if(fit.data?.aligned!==true){
         // The verifier is another model: it can misunderstand what the report
@@ -181,10 +187,8 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         // discarding a report and asking the owner to start over.
         fit=await completeWithOutputRetry(fitProvider,{...fitRequest,
           system:`${fitRequest.system} Recheck the previous objection against the renderer facts. Reject only an outcome genuinely unavailable in this definition.`,
-          prompt:JSON.stringify({request:message,definition:spec,initialObjection:fit.data?.reason||'',
-            renderer:{sourceRecordDrilldown:Boolean(spec.groups.length||spec.summary),
-              detailSourceLinks:!spec.groups.length&&!spec.summary,
-              exportAfterSave:['csv','xlsx','pdf']}})});
+          prompt:JSON.stringify({...JSON.parse(fitRequest.prompt),initialObjection:fit.data?.reason||'',
+            renderer:renderer()})});
       }
       if(fit.data?.aligned!==true&&spec.dataset==='composed'){
         // A full-catalogue replan can repeatedly omit a small follow-up edit.
@@ -202,14 +206,13 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         spec=reports.normalize({...spec,chart:edited.data?.chart,
           sort:edited.data?.sort,direction:edited.data?.direction,
           resultFilters:edited.data?.resultFilters},actor);
+        result=await reports.run(database,ctx,actor,spec,{limit:51});
         fit=await completeWithOutputRetry(fitProvider,{...fitRequest,
           prompt:JSON.stringify({request:message,previousReport:verifiedPrior,definition:spec,
             composition:compositions.find((entry)=>entry.dimension===spec.dimension),
-            renderer:{sourceRecordDrilldown:true,detailSourceLinks:false,
-              exportAfterSave:['csv','xlsx','pdf']}})});
+            renderer:renderer()})});
       }
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
-      let result=await reports.run(database,ctx,actor,spec,{limit:51});
       let interpretation='';
       if(!result.rows.length){
         const resolved=await resolveUniqueCategory(database,ctx,actor,spec);
