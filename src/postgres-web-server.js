@@ -3,10 +3,10 @@
 const config=require('./config');
 const { openPostgres }=require('./db/postgres');
 const { migratePostgres }=require('./db/migrate-postgres');
-const { createPostgresApp }=require('./postgres-app');
 const { validateProductionEnvironment }=require('./operations/postgres-production-environment');
 
 async function startPostgresWeb(options={}){
+  const { createPostgresApp }=require('./postgres-app');
   const connectionString=options.connectionString||process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
   if(!connectionString)throw new Error('FOUNDRY_DATABASE_URL is required for the PostgreSQL web process.');
   validateProductionEnvironment(options);
@@ -50,7 +50,12 @@ async function startPostgresWeb(options={}){
 }
 
 async function main(){
-  try{await startPostgresWeb();}
+  try{
+    if((process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||process.env.STOCKCHIEF_WEB_RECOVERY_PROXY==='1')&&process.env.STOCKCHIEF_WEB_BACKEND!=='1'){
+      const guardian=await require('./operations/web-restart-guardian').start({entrypoint:__filename,port:config.port,logger:event=>console.error(JSON.stringify(event))});
+      let closing=false;const stop=()=>{if(closing)return;closing=true;guardian.close().then(()=>process.exit(0),()=>process.exit(1));};process.on('SIGTERM',stop);process.on('SIGINT',stop);
+    }else{const running=await startPostgresWeb(process.env.STOCKCHIEF_WEB_BACKEND==='1'?{port:0,host:'127.0.0.1'}:{});if(process.env.STOCKCHIEF_WEB_BACKEND==='1'&&process.send)process.send({type:'stockchief.web.ready',port:running.server.address().port});}
+  }
   catch(error){console.error(error);process.exitCode=1;}
 }
 
