@@ -21,7 +21,7 @@ const features=[
  ['automation.transfers','Automatic transfers within limits you approve.','pro'],
  ['automation.purchasing','Automatic purchasing within limits you approve.','pro'],
  ['warehouse.advanced','Warehouse picking and scan verification.','pro'],
- ['authority.advanced','Custom team roles and per-person purchase approval limits.','pro'],
+ ['authority.advanced','Up to 50 custom roles per inventory and per-person purchase approval limits.','pro'],
  ['api.public','Business API access, signed webhooks and an audit trail.','pro'],
  ['support.priority','Priority email support.','growth'],
  ['support.chat','Priority support conversations inside StockChief.','pro'],
