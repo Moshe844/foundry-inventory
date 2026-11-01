@@ -14,6 +14,10 @@ on:
         description: Run the full synthetic import with query profiling; normal release checks stay unchanged
         type: boolean
         default: false
+      stock_only:
+        description: Profile stock receipts against an existing catalogue; requires profile_only
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -121,3 +125,4 @@ jobs:
     uses: ./.github/workflows/import-query-profile.yml
     with:
       rows: ${{ inputs.large_rows }}
+      stock_only: ${{ inputs.stock_only || false }}

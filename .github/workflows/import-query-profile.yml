@@ -5,12 +5,19 @@ on:
       rows:
         type: string
         required: true
+      stock_only:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       rows:
         description: Synthetic import rows (1000 to 2000000)
         default: '150000'
         required: true
+      stock_only:
+        description: Measure stock import against an existing catalogue
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -23,6 +30,7 @@ jobs:
       STOCKCHIEF_RUN_LARGE_IMPORT: '1'
       STOCKCHIEF_IMPORT_PROFILE: '1'
       STOCKCHIEF_IMPORT_CERTIFICATION_ROWS: ${{ inputs.rows }}
+      STOCKCHIEF_IMPORT_STOCK_ONLY: ${{ inputs.stock_only && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,7 +54,12 @@ jobs:
         run: |
           mkdir -p output/import-profile
           set -euo pipefail
-          node --max-old-space-size=1024 --test tests/certification/inventory-million-rows.test.js 2>&1 | tee output/import-profile/certification.log
+          if [ "$STOCKCHIEF_IMPORT_STOCK_ONLY" = "1" ]; then
+            certificate=tests/certification/inventory-stock-throughput.test.js
+          else
+            certificate=tests/certification/inventory-million-rows.test.js
+          fi
+          node --max-old-space-size=1024 --test "$certificate" 2>&1 | tee output/import-profile/certification.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
