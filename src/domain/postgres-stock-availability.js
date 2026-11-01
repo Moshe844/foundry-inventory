@@ -11,10 +11,8 @@ const POSITION_SQL=` SELECT p.sku_id,p.location_id,loc.custody_agreement_id,coal
  LEFT JOIN balances b ON b.workspace_id=$1 AND b.sku_id=s.id AND b.location_id=loc.id
  LEFT JOIN lots chosen_lot ON chosen_lot.workspace_id=$1 AND chosen_lot.sku_id=s.id AND chosen_lot.id=$3
  LEFT JOIN lot_balances lb ON lb.workspace_id=$1 AND lb.lot_id=chosen_lot.id AND lb.location_id=loc.id
- LEFT JOIN LATERAL(SELECT sum(a.quantity) quantity FROM sales_order_allocations a
-  JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
-  JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
-  WHERE a.workspace_id=$1 AND l.sku_id=s.id AND a.location_id=loc.id AND o.status NOT IN ('CANCELLED','FULFILLED'))sales ON true
+ LEFT JOIN LATERAL(SELECT sum(a.quantity) quantity FROM sales_stock_commitments a
+  WHERE a.workspace_id=$1 AND a.sku_id=s.id AND a.location_id=loc.id)sales ON true
  LEFT JOIN LATERAL(SELECT sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) quantity,
   sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) FILTER(WHERE $3::text IS NULL OR l.lot_id=$3) lot_quantity
   FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
@@ -35,10 +33,8 @@ async function total(c,workspaceId){
  // Aggregate each commitment source once. Reusing the point lookup here ran
  // its correlated sales/transfer subqueries for every stock position.
  const r=(await c.query(`WITH sales AS (
- SELECT l.sku_id,a.location_id,sum(a.quantity) quantity FROM sales_order_allocations a
- JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
- JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
- WHERE a.workspace_id=$1 AND o.status NOT IN ('CANCELLED','FULFILLED') GROUP BY l.sku_id,a.location_id
+ SELECT a.sku_id,a.location_id,sum(a.quantity) quantity FROM sales_stock_commitments a
+ WHERE a.workspace_id=$1 GROUP BY a.sku_id,a.location_id
  ), transfers AS (
  SELECT l.sku_id,t.source_location_id location_id,sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) quantity
  FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
