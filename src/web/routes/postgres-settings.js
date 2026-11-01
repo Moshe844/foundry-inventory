@@ -104,6 +104,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
     WHERE workspace_id=$1 AND provider_type='reference_webhook' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId]),
   database.query(`SELECT external_event_id,event_type,status,error_message,processed_at FROM connector_feed_events
     WHERE workspace_id=$1 ORDER BY received_at DESC LIMIT 6`,[req.ctx.workspaceId])]);
+  const commercialMeters=await Promise.all(['workspaces','members','locations','connections'].map(meter=>require('../../commercial/entitlements').meterState(database,{accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId},meter,{subscription:res.locals.commercial?.subscription})));
   const integrity=require('../../operations/postgres-integrity-check').current(database,req.ctx.workspaceId);
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
@@ -114,7 +115,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
     stockGuards:[],emailAlerts,aiUsage:null,answerPreferences:await require('../../assistant/postgres-answer-preferences').read(database,req.ctx),recordAliases:permissions.can(req.user,permissions.ADMIN)?await require('../../assistant/postgres-record-aliases').list(database,req.ctx):[],aiCost:await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
       (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
-      limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
+      limits:commercialMeters
         .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,
           unlimited:meter.hardLimit===null&&meter.included===null}))}});}
 

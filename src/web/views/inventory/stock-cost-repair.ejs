@@ -1,0 +1,7 @@
+<a href="/inventory/<%= itemId %>/costs">Back to stock costs</a><h1>Review a missing write-off cost</h1>
+<p><%= review.target.name %><%= review.target.variant_label?' — '+review.target.variant_label:'' %> · <%= review.target.code %> · <%= review.target.location_name %></p>
+<% if(review.completed){ %><p class="notice notice--ok">This stock cost correction is complete.</p><% }else{const e=review.evidence; %>
+<p>The original receipt costs show that the earlier write-off was missing <strong><%= helpers.money(e.costRemovedMinor,e.currency) %></strong> of stock cost.</p>
+<dl><dt>Physical stock</dt><dd><%= e.state.physical %> units</dd><dt>Currently recorded stock value</dt><dd><%= helpers.money(Number(e.state.value),e.currency) %></dd><dt>Corrected stock value</dt><dd><%= helpers.money(e.valueAfterMinor,e.currency) %></dd><dt>Accounting date</dt><dd><%= helpers.shortDate(e.postingDate) %></dd></dl>
+<p><%= e.existingJournalId?'The write-off expense was already recorded. This correction updates the stock cost record without charging it again.':'Approval records the missing write-off expense on the date above.' %> Physical quantities and earlier sales remain unchanged.</p>
+<form method="post" action="/inventory/<%= itemId %>/cost-repairs/<%= review.target.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= review.integrityHash %>"><button type="submit" class="btn btn--primary">Approve stock value correction</button></form><% } %>

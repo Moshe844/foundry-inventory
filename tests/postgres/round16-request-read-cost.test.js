@@ -1,0 +1,11 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
+test('ordinary pages avoid billing-meter fan-out and JSON search avoids the HTML shell',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) SELECT 'read-cost-sub',$1,'enterprise',id,'COMP','CUSTOM','ISOLATED_TEST' FROM commercial_plan_versions WHERE plan_id='enterprise' AND status='ACTIVE' ORDER BY created_at DESC LIMIT 1",[f.owner.accountId]);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'request-read-cost'});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app),csrf=html=>/name="_csrf"[^>]*value="([^"]+)"/.exec(html)[1];let page=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(page.text),email:f.email,password:f.password}).expect(302);
+ let queries=null;const original=db.query;db.query=(sql,...args)=>{if(queries)queries.push(String(sql));return original(sql,...args);};
+ queries=[];await agent.get('/api/search?q='+f.item.skuIds[0]).set('Accept','*/*').expect(200);const api=queries;queries=null;assert(api.length<25,'API search made '+api.length+' database queries');assert(!api.some(sql=>sql.includes('commercial_plan_meters')||sql.includes('FROM attention_items')||sql.includes('workspace_sample_explorations')),'Search loaded unrelated billing or HTML navigation data');
+ queries=[];await agent.get('/inventory/table').set('Accept','text/html').expect(200);const inventory=queries;queries=null;assert(inventory.length<65,'Inventory page made '+inventory.length+' database queries');assert(!inventory.some(sql=>sql.includes('FROM commercial_plan_meters')),'Inventory loaded the full billing usage dashboard');
+ queries=[];page=await agent.get('/settings').set('Accept','text/html').expect(200);queries=null;assert.match(page.text,/Settings/);assert.match(page.text,/People|Team/);t.diagnostic(JSON.stringify({apiQueries:api.length,inventoryQueries:inventory.length,accountScope:ctx.workspaceId}));
+});

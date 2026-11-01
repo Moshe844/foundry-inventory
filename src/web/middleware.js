@@ -13,11 +13,14 @@ function rateLimit(options = {}) {
   const windowMs = Math.max(1000, Number(options.windowMs || 60_000));
   const max = Math.max(1, Number(options.max || 120));
   const buckets = new Map();
+  const maxBuckets=Math.max(1,Number(options.maxBuckets||10000));let lastCleanup=0;
   let seen = 0;
   return (req, res, next) => {
     const raw = options.key ? options.key(req) : (req.ip || req.socket.remoteAddress || 'unknown');
     const key = crypto.createHash('sha256').update(String(raw)).digest('hex');
     const now = Date.now();
+    if(buckets.size>=maxBuckets&&now-lastCleanup>=1000){for(const [candidate,value]of buckets)if(value.resetAt<=now)buckets.delete(candidate);lastCleanup=now;}
+    if(!buckets.has(key)&&buckets.size>=maxBuckets){res.set('Retry-After','1');return res.status(429).json({error:{code:'rate_limited',message:'Too many requests. Please wait a moment and try again.'}});}
     let bucket = buckets.get(key);
     if (!bucket || bucket.resetAt <= now) bucket = { count: 0, resetAt: now + windowMs };
     bucket.count += 1;

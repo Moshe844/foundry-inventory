@@ -125,6 +125,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     return state.promise;
   };
   app.get('/healthz',async(req,res)=>{
+    if(req.get('origin')==='https://stockchief-staging-status.onrender.com'){res.set('Access-Control-Allow-Origin',req.get('origin'));res.vary('Origin');}
     try {
       const result=await probe('health',probeCacheMs.health,()=>database.query(
         'SELECT COUNT(*) AS count FROM stockchief_postgres_migrations'));
@@ -147,6 +148,9 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
         deadJobs:Number(state.dead_jobs),staleJobs:Number(state.stale_jobs)});
     }catch{return res.status(503).json({ok:false,database:'unavailable'});}
   });
+  // Static assets, provider callbacks and health probes have their own
+  // boundaries above. Limit dynamic browser requests before session reads.
+  app.use(commonMiddleware.rateLimit({windowMs:60000,max:3000,maxBuckets:10000}));
   app.use(session({name:'foundry.sid',secret:sessionSecret,store,resave:false,saveUninitialized:false,rolling:true,
     cookie:{httpOnly:true,sameSite:'lax',secure:env==='production',maxAge:14*86400000}}));
   app.use((req,res,next)=>{
@@ -170,16 +174,16 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account
-      ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId},{includePresentation:Boolean(req.accepts('html'))})
+      ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId},{includePresentation:false})
       :{subscription:null,access:postgresEntitlements.operationalAccess(null),capabilities:[],meters:[]};
-    res.locals.planGates=req.ctx&&req.accepts('html')?await require('./web/presentation/plan-gates').read(database,{accountId:commercialAccountId,workspaceId:req.ctx.workspaceId}):{};
+    res.locals.planGates=req.ctx&&!req.path.startsWith('/api/')&&req.accepts('html')?await require('./web/presentation/plan-gates').read(database,{accountId:commercialAccountId,workspaceId:req.ctx.workspaceId}):{};
     return next();}catch(error){return next(error);}});
   app.use(requireOperationalSubscription);
   app.use(require('./commercial/enforcement').middleware(database));
   app.use(async(req,res,next)=>{
     // JSON endpoints retain authentication, subscription access and canonical
     // enforcement above. They do not render navigation, onboarding or banners.
-    if(!req.ctx||!req.accepts('html'))return next();
+    if(!req.ctx||req.path.startsWith('/api/')||!req.accepts('html'))return next();
     try {
       const [attentionCount,entry,importActivity,sourceUploads]=await Promise.all([
         postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),

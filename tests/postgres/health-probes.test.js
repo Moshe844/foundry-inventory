@@ -30,6 +30,8 @@ test('concurrent PostgreSQL health probes share bounded database checks',async()
   await request(app).get('/readyz').expect(200);
   assert.equal(healthQueries,2);
   assert.equal(readinessQueries,2);
+  await request(app).get('/healthz').set('Origin','https://stockchief-staging-status.onrender.com').expect('Access-Control-Allow-Origin','https://stockchief-staging-status.onrender.com').expect(200);
+  const other=await request(app).get('/healthz').set('Origin','https://another.example.test');assert.equal(other.headers['access-control-allow-origin'],undefined);assert.equal(other.headers['access-control-allow-credentials'],undefined);
 });
 
 test('a slow health check stays shared even after its nominal cache window passes',async()=>{
