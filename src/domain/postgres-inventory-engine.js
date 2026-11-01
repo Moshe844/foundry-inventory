@@ -258,7 +258,18 @@ async function receiveManyInTransaction(client,rawContext,inputs){
    FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position FOR SHARE OF i`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
   if(targets.length!==values.length)throw new ValidationError('That item variant or location is not in this inventory.');
   for(const row of targets){assertActiveTarget(row);if(!require('../custody/authority').allows(ctx,row.custody_agreement_id))throw new ValidationError('Use the agreement to receive stock into a protected custody location.');}
-  if(targets.some(row=>row.tracking_mode!=='quantity'||row.secondary_unit_label)||values.some(({input})=>input.lotId||input.lotCode||input.expiresAt||input.serials?.length))return sequential();
+  const detailed=values.filter(({input,index})=>targets[index].tracking_mode!=='quantity'||targets[index].secondary_unit_label||input.lotId||input.lotCode||input.expiresAt||input.serials?.length);
+  if(detailed.length){
+    if(detailed.length===values.length)return sequential();
+    // A batch can mix ordinary stock with lots, serials and measured units.
+    // Keep the ordinary receipts batched; each tracked identity still follows
+    // its canonical validation and recording path in this same transaction.
+    const detailIndexes=new Set(detailed.map(value=>value.index)),ordinary=values.filter(value=>!detailIndexes.has(value.index)),out=new Array(values.length);
+    const received=await receiveManyInTransaction(client,ctx,ordinary.map(value=>({...value.input,idempotencyKey:value.key})));
+    ordinary.forEach((value,index)=>{out[value.index]=received[index];});
+    for(const value of detailed)out[value.index]=await receiveInTransaction(client,ctx,{...value.input,idempotencyKey:value.key});
+    return out;
+  }
   const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
   await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);
   const positionSkus=[...new Set(positions.map(p=>p.sku_id))];
