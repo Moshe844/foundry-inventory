@@ -60,6 +60,12 @@ async function prepare(database,ctx,salesOrderId,input={}){
     for(const [index,line] of input.lines.entries()){
       const quantity=Number(line.quantity);
       if(!Number.isSafeInteger(quantity)||quantity<=0)throw new ValidationError(`Parcel line ${index+1} quantity must be a whole number above zero.`);
+      if(line.kit===true){
+        const parts=await require('../operations/postgres-kit-order-view').load(client,ctx.workspaceId,salesOrderId),components=parts.get(line.lineId)||[];
+        if(!components.length||components.some(p=>p.allocations.filter(a=>a.location_id===line.locationId).reduce((n,a)=>n+a.quantity,0)+1e-9<quantity*Number(p.quantity_per_kit)))throw new ValidationError('Reserve every kit component at this dispatch location before packing it.');
+        const sku=(await client.query('SELECT sku_id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 AND id=$3',[ctx.workspaceId,salesOrderId,line.lineId])).rows[0];
+        await client.query(`INSERT INTO sales_shipment_lines(id,workspace_id,shipment_id,sales_order_line_id,sku_id,location_id,quantity,uses_kit_components,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,true,$8,$8)`,[newId('shpl'),ctx.workspaceId,shipmentId,line.lineId,sku.sku_id,line.locationId,quantity,at]);continue;
+      }
       const allocation=(await client.query(`SELECT allocation.*,order_line.sku_id
         FROM sales_order_allocations allocation JOIN sales_order_lines order_line ON order_line.id=allocation.sales_order_line_id
         WHERE allocation.workspace_id=$1 AND allocation.sales_order_line_id=$2 AND allocation.location_id=$3
@@ -494,11 +500,16 @@ async function handoff(database,ctx,shipmentId,input={}){
     throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
     throw new ValidationError('Enter the carrier tracking number, or buy and verify a label, before recording carrier handoff.');
-  const lines=(await client.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity
+  const lines=(await client.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity,uses_kit_components AS kit
     FROM sales_shipment_lines WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY id`,[ctx.workspaceId,shipmentId])).rows;
-  for(const line of lines){const field=line.lineId+'_'+line.locationId;line.lotCode=input['lot_'+field];line.lotStrategy=input['lotStrategy_'+field];line.serials=input['serials_'+field];line.secondaryQuantity=input['secondary_'+field];}
+  const kitParts=await require('../operations/postgres-kit-order-view').load(client,ctx.workspaceId,shipment.sales_order_id);
+  for(const line of lines){const field=line.lineId+'_'+line.locationId;line.lotCode=input['lot_'+field];line.lotStrategy=input['lotStrategy_'+field];line.serials=input['serials_'+field];line.secondaryQuantity=input['secondary_'+field];if(line.kit){line.kitLocationId=line.locationId;line.componentSelections={};for(const part of kitParts.get(line.lineId)||[]){const f='kit_'+part.id+'_'+line.locationId;line.componentSelections[part.id]={[line.locationId]:{lotCode:input['lot_'+f],lotStrategy:input['lotStrategy_'+f],serials:input['serials_'+f],secondaryQuantity:input['secondary_'+f]}};}}}
   const result=await workflows.fulfillSalesOrderInTransaction(client,ctx,shipment.sales_order_id,{lines,
     idempotencyKey:`shipment-handoff:${shipmentId}`});
+  for(const line of result.lines.filter(l=>l.kitComponents)){
+    const parts=new Map();for(const part of line.kitComponents){const before=parts.get(part.componentId);parts.set(part.componentId,{...part,quantity:require('../domain/exact-quantity').safeNumber(require('../domain/exact-quantity').add(before?.quantity||0,part.quantity)),movementIds:[...(before?.movementIds||[]),part.movementId]});}
+    for(const part of parts.values())await client.query('INSERT INTO sales_shipment_kit_lines(id,workspace_id,shipment_id,kit_component_id,sales_order_line_id,sku_id,location_id,quantity,movement_ids,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$10)',[newId('shpk'),ctx.workspaceId,shipmentId,part.componentId,line.lineId,part.skuId,part.locationId,part.quantity,JSON.stringify(part.movementIds),nowIso()]);
+  }
   const at=nowIso();
   await client.query(`UPDATE sales_shipments SET status=CASE WHEN tracking_status='DELIVERED' THEN 'DELIVERED' ELSE 'SHIPPED' END,handover=$3,carrier=COALESCE($4,carrier),
     service=COALESCE($5,service),tracking_number=COALESCE($6,tracking_number),

@@ -264,7 +264,7 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   const positionSkus=[...new Set(positions.map(p=>p.sku_id))];
   const balances=(await client.query(`SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON b.sku_id=x.sku_id AND b.location_id=x.location_id WHERE b.workspace_id=$1 AND b.sku_id=ANY($3::text[]) ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,[ctx.workspaceId,positionJSON,positionSkus])).rows;
   const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before:Number(row.on_hand),after:Number(row.on_hand)}])),operations=[],movements=[],results=[];
-  for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:Boolean(Number(row.allow_negative_stock)),total:true});
+  for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:true,total:true});
     if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
     const result={movementId:newId('mv'),groupId:newId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:null,serials:[],serialUnitIds:[]};
     operations.push({id:newId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
@@ -297,6 +297,7 @@ async function issueInTransaction(client, rawContext, input) {
     let lot = null;
     if (row.tracking_mode === 'lot') lot = await resolveLot(client, ctx, row, input, at, false);
     assertLotEligible(lot,input);
+    await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:row.id,locationId:row.location_id,quantity,lotId:lot?.id,serialUnitIds:input.serialUnitIds||[]});
     let serialUnitIds = [];
     if (row.tracking_mode === 'serial') {
       const ids = [...new Set((input.serialUnitIds || []).map(String))];
@@ -342,6 +343,7 @@ async function transferInTransaction(client, rawContext, input) {
     const groupId = newId('grp');
     let lot = null;
     if (source.tracking_mode === 'lot') lot = await resolveLot(client, ctx, source, input, at, false);
+    await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:source.id,locationId:source.location_id,quantity,lotId:lot?.id,serialUnitIds:input.serialUnitIds||[]});
     const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
     const destinationAfter = await balanceDelta(client, ctx, destination, quantity, at);
     if (lot) {
@@ -407,6 +409,7 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
     serialUnitIds = ids;
     await serialBatchDeltas(client,ctx,ids,source.location_id,null,at);
   }
+  await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:source.id,locationId:source.location_id,quantity,lotId:lot?.id,serialUnitIds});
   const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
   if (lot) await lotDelta(client, ctx, lot.id, source.location_id, -quantity, at);
   const movementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
@@ -482,6 +485,7 @@ async function adjustInTransaction(client,rawContext,input){
     }
     const at = input.occurredAt || nowIso();
     const groupId = newId('grp');
+    if(delta<0)await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:row.id,locationId:row.location_id,quantity:-delta});
     const balanceAfter = await balanceDelta(client, ctx, row, delta, at);
     const movementId = await movement(client, ctx, row, { groupId, operation: 'adjust', quantityDelta: delta,secondaryQuantityDelta:secondaryCountDelta,
       balanceAfter, reasonCode: input.reasonCode, notes: input.notes, reference: input.reference, occurredAt: at });

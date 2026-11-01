@@ -25,7 +25,10 @@ async function requireLocation(client,workspaceId,id,label='location'){
   return result.rows[0];
 }
 
-async function listHierarchy(database,workspaceId,{includeInactive=false}={}){
+async function listHierarchy(database,workspaceId,{includeInactive=false,includeStock=true}={}){
+  const stockColumns=includeStock?`,COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=tree.workspace_id
+      AND b.location_id=tree.id),0) AS on_hand,COALESCE((SELECT COUNT(DISTINCT b.sku_id) FROM balances b
+      WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND b.on_hand<>0),0) AS sku_count`:'';
   const result=await database.query(`WITH RECURSIVE tree AS (
     SELECT l.*,0 AS depth,LPAD(l.pick_sequence::text,8,'0') || ':' || l.name AS sort_path,l.name AS display_path
       FROM locations l WHERE l.workspace_id=$1 AND l.parent_location_id IS NULL
@@ -33,9 +36,7 @@ async function listHierarchy(database,workspaceId,{includeInactive=false}={}){
     SELECT child.*,tree.depth+1,tree.sort_path || '/' || LPAD(child.pick_sequence::text,8,'0') || ':' || child.name,
       tree.display_path || ' / ' || child.name
       FROM locations child JOIN tree ON child.parent_location_id=tree.id WHERE child.workspace_id=$1)
-    SELECT tree.*,COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=tree.workspace_id
-      AND b.location_id=tree.id),0) AS on_hand,COALESCE((SELECT COUNT(DISTINCT b.sku_id) FROM balances b
-      WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND b.on_hand<>0),0) AS sku_count
+    SELECT tree.*${stockColumns}
     FROM tree WHERE ($2::boolean OR is_active=1) ORDER BY sort_path`,[workspaceId,includeInactive]);
   return result.rows;
 }

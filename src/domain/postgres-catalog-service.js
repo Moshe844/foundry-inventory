@@ -234,9 +234,8 @@ async function listItemsUncached(database, workspaceId, input = {}) {
     LEFT JOIN LATERAL (SELECT SUM(b.on_hand) AS on_hand FROM item_location_balances b
       WHERE b.workspace_id=$1 AND b.item_id=i.id AND ($4::text IS NULL OR b.location_id=$4)) stock ON TRUE
     LEFT JOIN LATERAL (SELECT SUM(a.quantity) AS quantity FROM skus s
-      JOIN sales_order_lines sol ON sol.sku_id=s.id AND sol.workspace_id=s.workspace_id
-      JOIN sales_order_allocations a ON a.sales_order_line_id=sol.id AND a.workspace_id=sol.workspace_id
-      WHERE s.workspace_id=$1 AND s.item_id=i.id) committed_item ON TRUE
+      JOIN sales_stock_commitments a ON a.sku_id=s.id AND a.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1 AND s.item_id=i.id AND ($4::text IS NULL OR a.location_id=$4)) committed_item ON TRUE
     LEFT JOIN LATERAL (SELECT SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM skus s
       JOIN purchase_order_lines pol ON pol.sku_id=s.id AND pol.workspace_id=s.workspace_id
       JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
@@ -273,9 +272,8 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const skuResult = await database.query(`WITH selected_skus AS MATERIALIZED (
       SELECT * FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id LIMIT $3 OFFSET $4
     ), committed AS (
-      SELECT sol.sku_id,COALESCE(SUM(a.quantity),0) AS quantity FROM sales_order_allocations a
-      JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id
-      WHERE a.workspace_id=$1 AND sol.sku_id IN (SELECT id FROM selected_skus) GROUP BY sol.sku_id
+      SELECT a.sku_id,COALESCE(SUM(a.quantity),0) AS quantity FROM sales_stock_commitments a
+      WHERE a.workspace_id=$1 AND a.sku_id IN (SELECT id FROM selected_skus) GROUP BY a.sku_id
     ), purchase_incoming AS (
       SELECT pol.sku_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
@@ -294,23 +292,24 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   let positions = [];
   if (skuIds.length) {
     positions = (await database.query(`WITH committed AS (
-      SELECT sol.sku_id,a.location_id,COALESCE(SUM(a.quantity),0) AS quantity
-      FROM sales_order_allocations a JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
-      WHERE a.workspace_id=$1 AND sol.sku_id=ANY($2::text[]) GROUP BY sol.sku_id,a.location_id
+      SELECT a.sku_id,a.location_id,COALESCE(SUM(a.quantity),0) AS quantity
+      FROM sales_stock_commitments a
+      WHERE a.workspace_id=$1 AND a.sku_id=ANY($2::text[]) GROUP BY a.sku_id,a.location_id
     ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,b.secondary_on_hand,COALESCE(committed.quantity,0) AS committed
       FROM balances b JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       LEFT JOIN committed ON committed.sku_id=b.sku_id AND committed.location_id=b.location_id
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand<>0 ORDER BY l.name`,
     [workspaceId, skuIds])).rows;
   }
+  const stockAvailability=require('./postgres-stock-availability'),availablePositions=await stockAvailability.readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id}))),availableTotal=await stockAvailability.total(database,workspaceId,{itemId});
   const skus = skuResult.rows.map((row) => {
     const total = Number(row.on_hand || 0);
     const committed = Number(row.committed || 0);
-    return { ...row,optionValues:Object.fromEntries(variantValues.filter(v=>v.sku_id===row.id).map(v=>[v.name,v.value])), total, committed, available: Math.max(0, total - committed),
+    return { ...row,optionValues:Object.fromEntries(variantValues.filter(v=>v.sku_id===row.id).map(v=>[v.name,v.value])), total, committed, available:positions.filter(p=>p.sku_id===row.id).reduce((n,p)=>n+(availablePositions.get(stockAvailability.key(p.sku_id,p.location_id))?.available||0),0),returnHeld:positions.filter(p=>p.sku_id===row.id).reduce((n,p)=>n+(availablePositions.get(stockAvailability.key(p.sku_id,p.location_id))?.returnHeld||0),0),
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
         locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),secondaryOnHand:position.secondary_on_hand==null?null:Number(position.secondary_on_hand),
-        committed:Number(position.committed||0),available:Number(position.on_hand)-Number(position.committed||0),
+        committed:Number(position.committed||0),available:availablePositions.get(stockAvailability.key(position.sku_id,position.location_id))?.available||0,
       })) };
   });
   const locations = (await database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1
@@ -322,9 +321,8 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     WHERE m.workspace_id=$1 AND m.item_id=$2 ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 20`,
   [workspaceId, itemId])).rows;
   const positionTotal = (await database.query(`SELECT
-      COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a
-        JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
-        JOIN skus s ON s.id=sol.sku_id WHERE a.workspace_id=$1 AND s.item_id=$2),0) AS committed,
+      COALESCE((SELECT SUM(a.quantity) FROM sales_stock_commitments a
+        JOIN skus s ON s.id=a.sku_id AND s.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND s.item_id=$2),0) AS committed,
       COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id JOIN skus s ON s.id=pol.sku_id
         WHERE pol.workspace_id=$1 AND s.item_id=$2 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)
@@ -384,7 +382,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const recent=recentRows.map((row)=>({...row,itemId:row.item_id,displayName:row.variant_label||item.name,
     sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
   return { item, skus, locations, recent, total,secondaryTotal:Number(totalResult.rows[0].secondary_on_hand||0),committed: committedTotal,
-    available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
+    available: availableTotal, onOrder: onOrderTotal,
     options:optionResult.rows,lots:[...lotsById.values()].slice(0,trackingLimit),units:unitResult.rows.slice(0,trackingLimit),
     trackingCoverage:{query:trackingQuery,limit:trackingLimit,
       nextLotId:lotsById.size>trackingLimit?[...lotsById.keys()][trackingLimit-1]:null,

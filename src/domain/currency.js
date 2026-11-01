@@ -3,6 +3,13 @@ const {ValidationError}=require('./errors');
 // ISO units of account are omitted from CLDR's circulating-currency list.
 const supported=new Set([...Intl.supportedValuesOf('currency'),'CLF','UYW']);
 const exponents=new Map();
+const formatters=new Map(),symbolTokens=new Map();
+function formatter(currency,locale='en-US'){
+ if(typeof locale!=='string')return new Intl.NumberFormat(locale,{style:'currency',currency});
+ const key=locale+':'+currency;let value=formatters.get(key);
+ if(!value){value=new Intl.NumberFormat(locale,{style:'currency',currency});if(formatters.size>=64)formatters.delete(formatters.keys().next().value);formatters.set(key,value);}
+ return value;
+}
 function code(value){
   const text=String(value??'').trim().toUpperCase();
   if(!/^[A-Z]{3}$/.test(text)||!supported.has(text))throw new ValidationError('Choose a recognized ISO currency.');
@@ -33,8 +40,8 @@ function fromMinor(value,currency){
 }
 function userToMinor(value,currency,options={}){
  const c=code(currency);let text=String(value??'').trim();if(!text&&options.optional)return null;
- const symbols=new Set([c,new Intl.NumberFormat('en-US',{style:'currency',currency:c}).formatToParts(1).find(p=>p.type==='currency')?.value,...(c==='USD'?['US$']:[])]);
- for(const token of [...symbols].filter(Boolean).sort((a,b)=>b.length-a.length)){
+ if(!symbolTokens.has(c))symbolTokens.set(c,[...new Set([c,formatter(c).formatToParts(1).find(p=>p.type==='currency')?.value,...(c==='USD'?['US$']:[])])].filter(Boolean).sort((a,b)=>b.length-a.length));
+ for(const token of symbolTokens.get(c)){
   if(text.toUpperCase().startsWith(token.toUpperCase())){text=text.slice(token.length).trim();break;}
   if(text.toUpperCase().endsWith(token.toUpperCase())){text=text.slice(0,-token.length).trim();break;}
  }
@@ -43,7 +50,7 @@ function userToMinor(value,currency,options={}){
 }
 function format(value,currency='USD',locale='en-US'){
  const n=integer(value,'Amount',{signed:true}),c=code(currency);
- return new Intl.NumberFormat(locale,{style:'currency',currency:c}).format(n/10**exponent(c));
+ return formatter(c,locale).format(n/10**exponent(c));
 }
 function sum(values,label='Amount'){const total=values.reduce((n,v)=>n+BigInt(integer(v,label,{signed:true})),0n),number=Number(total);if(!Number.isSafeInteger(number))throw new ValidationError(label+' exceeds the exact supported range.');return number;}
 module.exports={code,exponent,integer,toMinor,userToMinor,fromMinor,format,sum};

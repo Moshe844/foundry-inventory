@@ -339,6 +339,16 @@
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>">
     <p>Only use this when the items physically leave. StockChief will reduce on-hand once and update Accounting automatically.</p>
+    <% if(locals.postgresPlacement){for(const line of order.lines.filter(l=>l.kitReady>0)){ %>
+      <fieldset><legend><%= line.displayName %> · build from reserved components</legend>
+        <input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="__kit__">
+        <label class="field"><span>Kits leaving · maximum <%= line.kitReady %></span><input type="number" name="quantity" min="0" step="1" max="<%= line.kitReady %>" value="<%= line.kitReady %>"></label>
+        <% for(const part of line.kitComponents){for(const a of part.allocations){ %>
+          <p><%= part.displayName %> · <%= part.quantity_per_kit %> per kit · reserved at <%= a.location_name %></p>
+          <%- include('../partials/tracked-fulfillment-fields',{trackingMode:part.tracking_mode,secondaryUnit:part.secondary_unit_label,field:'kit_'+part.id+'_'+a.location_id,label:part.displayName}) %>
+        <% }} %>
+      </fieldset>
+    <% }} %>
     <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><input type="hidden" name="kitComponentId" value="<%= a.kit_component_id || '' %>"><label class="field"><span><%= line.isKit ? line.displayName + ' → ' + a.component_name : line.displayName %> from <%= a.location_name %> (maximum <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label><% if(locals.postgresPlacement){ %><%- include('../partials/tracked-fulfillment-fields',{trackingMode:line.tracking_mode,secondaryUnit:line.secondary_unit_label,field:line.id+'_'+a.location_id,label:line.displayName}) %><% } %></div><% }) }) %>
     <%#
       Where it is going, and how.

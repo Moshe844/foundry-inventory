@@ -1,0 +1,5 @@
+<a class="back-link" href="/inventory/<%= review.payload.itemId %>">‹ Item</a>
+<h1>Review kit recipe · <%= review.payload.label %></h1>
+<p><%= review.payload.definition.stockBasis==='components'?'Selling a kit uses these component quantities.':'Selling a kit uses its separately recorded assembled stock.' %> Existing orders keep their accepted recipes.</p>
+<table><thead><tr><th>Component</th><th>SKU</th><th>Quantity per kit</th></tr></thead><tbody><% for(const part of review.payload.definition.components){ %><tr><td><%= part.name %></td><td><%= part.code %></td><td><%= part.quantity %></td></tr><% } %></tbody></table>
+<% if(review.status==='COMPLETED'){ %><p class="notice">This kit recipe is saved.</p><% }else{ %><form method="post" action="/inventory/kit-reviews/<%= review.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= review.integrity_hash %>"><button class="btn btn--primary" type="submit">Approve this kit recipe</button></form><% } %>

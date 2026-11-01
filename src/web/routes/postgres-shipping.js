@@ -19,7 +19,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const state=await shipping.state(database,workspaceId,shipmentId);
   const [lineRows,orderDetail,noticeRows,mailboxRows,transactionRows,policyRows,ruleRows]=await Promise.all([
     database.query(`SELECT sl.*,l.name AS location_name,i.name AS item_name,i.unit_label,i.tracking_mode,i.secondary_unit_label,s.code AS sku_code,s.variant_label
-      FROM sales_shipment_lines sl JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
+      FROM sales_shipment_stock_lines sl JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
       JOIN skus s ON s.id=sl.sku_id AND s.workspace_id=sl.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE sl.workspace_id=$1 AND sl.shipment_id=$2 ORDER BY l.name,i.name,sl.id`,[workspaceId,shipmentId]),
@@ -37,7 +37,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
   for(const line of lineRows.rows){
     if(!stopMap.has(line.location_id)){const stop={locationId:line.location_id,locationName:line.location_name,lines:[]};
       stopMap.set(line.location_id,stop);stops.push(stop);}
-    stopMap.get(line.location_id).lines.push({...line,quantity:Number(line.quantity),kit_component_id:null});
+    stopMap.get(line.location_id).lines.push({...line,quantity:Number(line.quantity),kit_component_id:line.kit_component_id||null});
   }
   const units=lineRows.rows.reduce((sum,line)=>sum+Number(line.quantity),0);
   const s={...state.shipment,units,ship_from_location_name:state.shipment.location_name,
@@ -70,7 +70,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const shipmentProvider=s.provider||state.account?.provider;
   if(shipmentProvider&&providerRegistry.has(shipmentProvider))providerCapabilities=providerRegistry.capabilities(shipmentProvider);
   const packagePresets=await require('../../shipping/postgres-parcel-options').presets(database,workspaceId);
-  return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
+  const kitTracking=orderDetail.lines.filter(l=>l.isKit&&lineRows.rows.some(p=>p.sales_order_line_id===l.id)).flatMap(l=>l.kitComponents.flatMap(part=>part.allocations.filter(a=>a.location_id===s.ship_from_location_id).map(a=>({...part,locationId:a.location_id}))));
+  return {kitTracking,shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
     provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities},
