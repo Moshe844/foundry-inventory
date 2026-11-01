@@ -21,7 +21,7 @@
   var timingRisks = plan.blocked.filter(function (line) { return line.reason === 'incoming_timing_risk'; });
   var stuck = short.length > 0;
   var hasPlan = plan.recommendations.length > 0;
-  var catalogueCount = (locals.catalogue || []).length;
+  var catalogueCount = locals.reorderOverview?reorderOverview.totalSkus:(locals.catalogue || []).length;
 
   // One list of what is on its way. `late` and `arriving` are both slices of
   // `open`, so the lateness is carried onto the row rather than into its own
@@ -178,7 +178,7 @@
     <% } %>
   </div>
 
-  <% if (hasPlan) { %>
+  <% if (locals.reorderOverview) { %><%- include('variant-shortages',{reorderOverview}) %><% } else if (hasPlan) { %>
     <% plan.bySupplier.forEach(function (group) { %>
       <div class="panel supplier-order">
         <div class="panel-head">

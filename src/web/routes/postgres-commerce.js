@@ -439,9 +439,19 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const result=await presenters.purchasing(database,req.ctx.workspaceId);
-    return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,postgresQuickEntry:true,
+    const reorderOverview=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,req.query);
+    return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,reorderOverview,postgresQuickEntry:true,
       permissions:{create:permissions.can(req.user,permissions.CREATE_PO),
         receive:permissions.can(req.user,permissions.RECEIVE_PO)}});
+  }));
+
+  router.get(['/purchasing/supplier-for/:skuId','/suppliers/for/:skuId'],requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
+    const sku=(await database.query('SELECT s.id,s.item_id,s.code,s.variant_label,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1',[req.ctx.workspaceId,req.params.skuId])).rows[0];if(!sku)throw new NotFoundError('Choose an active variant in this inventory.');
+    const supplierQuery=String(req.query.q||'').trim().slice(0,120),suppliers=(await database.query("SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY lower(name),id LIMIT 50",[req.ctx.workspaceId,supplierQuery])).rows;
+    return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers,supplierQuery});
+  }));
+  router.post('/purchasing/supplier-for/:skuId',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
+    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true});req.flash('success','Supplier linked to this variant.');return res.redirect(303,'/purchasing');
   }));
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
