@@ -73,7 +73,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-ask-variants.test.js tests/postgres/round16-ask-sales-period.test.js tests/postgres/round16-replenishment-freshness.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/replenishment-global-scope.test.js 2>&1 | tee output/inventory-ci/variant-answers-freshness.log
-      - name: Tracked product page navigation
+      - name: Variant report totals and visible supplier linking
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/round16-variant-reports.test.js tests/postgres/round16-variant-reordering.test.js 2>&1 | tee output/inventory-ci/variant-reports-reordering.log
+      - name: Tracked product pages in the browser
         run: |
           set -euo pipefail
           node --test tests/postgres/tracked-product-pages.test.js 2>&1 | tee output/inventory-ci/tracked-products.log
