@@ -89,7 +89,7 @@ const datasets=Object.freeze({
   inventory_valuation:{label:'Recorded inventory book value',permission:permissions.VIEW,
     aggregateProjections:[{fields:['sku','costed_units','book_cost_minor','currency'],source:`SELECT s.code AS sku,b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`}],
     aggregateProjection:{fields:['costed_units','book_cost_minor','currency'],source:`SELECT b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`},
-    source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
+    source:`SELECT i.id AS record_id,i.name AS product,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product_variant,s.code AS sku,l.name AS location,
       b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,
       a.base_currency AS currency,to_char(b.updated_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS as_of
       FROM accounting_inventory_cost_balances b
@@ -98,7 +98,7 @@ const datasets=Object.freeze({
       JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
       JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    fields:{product:'text',sku:'text',location:'text',costed_units:'number',
+    fields:{product:'text',variant:'text',product_variant:'text',sku:'text',location:'text',costed_units:'number',
       book_cost_minor:'money_minor',currency:'text',as_of:'date'}},
   inventory_receipt_age:{label:'Recorded inventory value and receipt recency',permission:permissions.VIEW,
     source:`WITH receipts AS (SELECT workspace_id,sku_id,location_id,MAX(created_at) AS last_received_at
@@ -162,7 +162,7 @@ const datasets=Object.freeze({
       ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text',quoted_charges_minor:'money_minor'}},
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
-      o.order_date,o.needed_by,i.name AS product,s.code AS sku,
+      o.order_date,o.needed_by,i.name AS product,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product_variant,s.code AS sku,
       l.quantity_ordered::numeric AS ordered_units,l.quantity_fulfilled::numeric AS fulfilled_units,
       (l.quantity_ordered-l.quantity_fulfilled)::bigint AS open_units
       FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
@@ -173,7 +173,7 @@ const datasets=Object.freeze({
     metrics:{fulfillment_percent:{label:'Fulfilled units %',kind:'ratio',numerator:'fulfilled_units',
       denominator:'ordered_units'}},
     fields:{order_number:'text',customer:'text',status:'text',order_date:'date',needed_by:'date',
-      product:'text',sku:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
+      product:'text',variant:'text',product_variant:'text',sku:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
   suppliers:{label:'Supplier directory',permission:permissions.VIEW_PURCHASING,
     source:`SELECT s.id AS record_id,s.name AS supplier,COALESCE(s.code,'') AS supplier_code,
       COALESCE(s.email,'') AS email,s.status,s.currency,
@@ -388,7 +388,7 @@ const datasets=Object.freeze({
     // remain visible instead of being silently attributed to a product.
     source:`SELECT e.id AS record_id,e.entry_number::text AS entry_number,e.posting_date,
       e.source_type,COALESCE(s.code,'Unattributed') AS sku,
-      COALESCE(i.name,'Unattributed') AS product,COALESCE(f.category,'Uncategorized') AS category,
+      COALESCE(i.name,'Unattributed') AS product,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',coalesce(i.name,'Unattributed'),nullif(s.variant_label,'')) AS product_variant,COALESCE(f.category,'Uncategorized') AS category,
       COALESCE(c.name,'Unattributed') AS customer,
       l.currency,
       SUM(CASE WHEN a.system_key IN ('SALES_REVENUE','SALES_RETURNS')
@@ -408,11 +408,11 @@ const datasets=Object.freeze({
       LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id
       WHERE e.workspace_id=$1 AND e.status='POSTED'
         AND a.system_key IN ('SALES_REVENUE','SALES_RETURNS','COST_OF_GOODS_SOLD')
-      GROUP BY e.id,e.entry_number,e.posting_date,e.source_type,s.code,i.name,f.category,c.name,l.currency`,
+      GROUP BY e.id,e.entry_number,e.posting_date,e.source_type,s.code,s.variant_label,i.name,f.category,c.name,l.currency`,
     recordHref:(row)=>`/accounting/entries/${row.record_id}`,
     metrics:{gross_margin_percent:{label:'Gross margin %',kind:'ratio',numerator:'gross_profit_minor',
       denominator:'revenue_minor',currencySensitive:true}},
-    fields:{entry_number:'text',posting_date:'date',source_type:'text',sku:'text',product:'text',category:'text',
+    fields:{entry_number:'text',posting_date:'date',source_type:'text',sku:'text',product:'text',variant:'text',product_variant:'text',category:'text',
       customer:'text',currency:'text',revenue_minor:'money_minor',cogs_minor:'money_minor',
       gross_profit_minor:'money_minor'}},
   imports:{label:'Import history',permission:permissions.VIEW,

@@ -351,7 +351,7 @@ async function runtimeSweep(job,client,options={}){
         OR (subscription.status='TRIALING' AND (subscription.trial_ends_at IS NULL OR subscription.trial_ends_at>now()))
         OR (subscription.status='GRACE' AND (subscription.grace_ends_at IS NULL OR subscription.grace_ends_at>now()))
         OR (subscription.status='CANCELLED' AND subscription.current_period_end>now())))`:'';
-  const autonomyDue=(await client.query(`SELECT w.id AS workspace_id,u.id AS actor_id
+  const autonomyDue=(await client.query(`SELECT w.id AS workspace_id,u.id AS actor_id,a.next_evaluation_at AS evaluation_version
     FROM workspaces w JOIN LATERAL (SELECT id FROM users WHERE workspace_id=w.id AND role='owner' ORDER BY created_at,id LIMIT 1) u ON true
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
     WHERE w.deletion_requested_at IS NULL AND COALESCE(a.paused,0)=0 AND COALESCE(a.suspended,0)=0
@@ -363,7 +363,7 @@ async function runtimeSweep(job,client,options={}){
   for(const due of autonomyDue){
     const bucket=Math.floor(now/(15*60_000));
     const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:due.workspace_id,kind:'autopilot.evaluate',
-      idempotencyKey:`autopilot-evaluate:${due.workspace_id}:${bucket}`,payload:{actorId:due.actor_id},priority:40,
+      idempotencyKey:`autopilot-evaluate:${due.workspace_id}:${bucket}:${due.evaluation_version||'initial'}`,payload:{actorId:due.actor_id},priority:40,
       maxAttempts:3,availableAt:now,now});
     if(scheduled.created)scheduledAutopilotChecks+=1;
   }
@@ -415,10 +415,10 @@ async function autopilotEvaluate(job,client){
     .refreshRecommendations(scopedDatabase(client),job.workspaceId,{afterSkuId:job.payload.afterSkuId||null,limitSkus:250});
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
   const result=await autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId},
-   {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0)});
+   {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0),refreshRequested:job.payload.refreshRequested===true,planningRevision:job.payload.planningRevision??null});
   if(result.partial)await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'autopilot.evaluate',
    idempotencyKey:'autopilot-cycle:'+cycleId+':'+result.nextAfterSkuId,payload:{actorId:job.payload.actorId,cycleId,cycleStartedAt,
-    afterSkuId:result.nextAfterSkuId,processedSkus:result.processedSkus},priority:39,maxAttempts:3});
+    afterSkuId:result.nextAfterSkuId,processedSkus:result.processedSkus,refreshRequested:result.refreshRequested,planningRevision:result.planningRevision},priority:39,maxAttempts:3});
   return {...result,cycleId,cycleStartedAt};
 }
 

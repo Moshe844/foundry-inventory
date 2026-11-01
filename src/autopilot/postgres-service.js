@@ -33,7 +33,7 @@ function scopedDatabase(client){return {query:(statement,values=[])=>client.quer
 function stateFrom(row){return {workspaceId:row.workspace_id,mode:row.mode,paused:Boolean(Number(row.paused)),pausedAt:row.paused_at,
   pausedReason:row.paused_reason,suspended:Boolean(Number(row.suspended)),suspendedScope:row.suspended_scope,
   suspendedReason:row.suspended_reason,lastEvaluatedAt:row.last_evaluated_at,nextEvaluationAt:row.next_evaluation_at,
-  canAct:row.mode!==MODES.OBSERVE&&!Number(row.paused)&&!Number(row.suspended),
+  replenishmentRevision:String(row.replenishment_revision||0),canAct:row.mode!==MODES.OBSERVE&&!Number(row.paused)&&!Number(row.suspended),
   canAutomate:row.mode===MODES.POLICY_AUTOMATED&&!Number(row.paused)&&!Number(row.suspended)};}
 
 async function ensure(database,workspaceId){const at=nowIso();
@@ -246,7 +246,7 @@ function workFrom(row){return {...row,sourceEvidence:parse(row.source_evidence,[
 async function getWork(database,workspaceId,id){const row=(await database.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2',[workspaceId,id])).rows[0];
   if(!row)throw new NotFoundError('That prepared work is not in this inventory.');return workFrom(row);}
 async function persistPlannedWork(database,workspaceId,entries){
- const created=[];
+ const created=[];let stale=0;
  // Bound each SQL payload rather than performing four network round trips per
  // suggestion. The unique idempotency key and its audit event commit together.
  for(let offset=0;offset<entries.length;offset+=250){const batch=entries.slice(offset,offset+250).map(({candidate,evaluation})=>{
@@ -258,7 +258,10 @@ async function persistPlannedWork(database,workspaceId,entries){
    approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
    idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming}).slice(0,40),
    event_detail:{automatic,reason:evaluation.reason}};});
-  const result=await database.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
+  const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query('INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version) SELECT $1,id,0 FROM unnest($2::text[]) id ORDER BY id ON CONFLICT DO NOTHING',[workspaceId,ids]);
+   const versions=(await client.query('SELECT sku_id,version::text FROM stockchief_runtime.replenishment_source_versions WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id FOR SHARE',[workspaceId,ids])).rows;
+   const current=batch.filter(row=>versions.find(v=>v.sku_id===row.recommended_action.skuId)?.version===row.recommended_action.sourceVersion);stale+=batch.length-current.length;
+   return client.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
    AS d(id text,event_id text,category text,source_evidence jsonb,affected_entities jsonb,recommended_action jsonb,
     priority integer,urgency text,policy_id text,policy_evaluation jsonb,approval_requirement text,execution_status text,idempotency_key text,event_detail jsonb)),
    saved AS (INSERT INTO work_items(id,workspace_id,category,source,source_evidence,affected_entities,recommended_action,
@@ -267,12 +270,13 @@ async function persistPlannedWork(database,workspaceId,entries){
     ON CONFLICT DO NOTHING RETURNING *),
    events AS (INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,created_at)
     SELECT d.event_id,$1,saved.id,'planned',d.event_detail,$3 FROM saved JOIN supplied d ON d.id=saved.id RETURNING id)
-   SELECT saved.* FROM saved CROSS JOIN (SELECT count(*) FROM events) audit`,[workspaceId,JSON.stringify(batch),nowIso()]);
+   SELECT saved.* FROM saved CROSS JOIN (SELECT count(*) FROM events) audit`,[workspaceId,JSON.stringify(current),nowIso()]);};
+  const result=typeof database.transaction==='function'?await database.transaction(save,{isolation:'SERIALIZABLE',retrySafe:true}):await save(database);
   const byId=new Map(result.rows.map(row=>[row.id,row]));for(const entry of batch)if(byId.has(entry.id))created.push(workFrom(byId.get(entry.id)));
- }return created;
+ }return {created,stale};
 }
 
-async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');const state=await ensure(database,workspaceId);const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus})).map(position);
+async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');const state=await ensure(database,workspaceId);planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
@@ -281,7 +285,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
     const needed=require('../purchasing/replenishment-decision').requiredUnits(shortage);if(!needed&&!shortage.default_order_quantity){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'replenishment_quantity_required'});continue;}
     const transfer=transferChoices.get(shortage.sku_id+':'+shortage.location_id),source=transfer?.source;let candidate;
     if(transfer){const quantity=transfer.quantity;
-      candidate={type:'transfer',skuId:shortage.sku_id,displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
+      candidate={type:'transfer',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity,sourceLocationId:source.location_id,sourceLocationName:source.location_name,
         destinationLocationId:shortage.location_id,destinationLocationName:shortage.location_name,destinationAvailable:shortage.available,
         incoming:shortage.incoming,reorderPoint:shortage.reorder,targetStock:shortage.target,sourceAvailable:source.available,
@@ -289,7 +293,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           {fact:'destination_available',value:shortage.available},{fact:'destination_reorder_point',value:shortage.reorder},
           {fact:'source_available',value:source.available},{fact:'source_safety_stock',value:source.safety}]};
     }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},suppliers);if(!supplier){considered.push({skuId:shortage.sku_id,reason:'no_supplier'});continue;}
-      candidate={type:'purchase',skuId:shortage.sku_id,displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
+      candidate={type:'purchase',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
@@ -299,8 +303,8 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)}]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
-  }}const created=await persistPlannedWork(database,workspaceId,prepared);if(!partial)await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=$3,updated_at=$2 WHERE workspace_id=$1`,
-    [workspaceId,nowIso(),new Date(Date.now()+15*60000).toISOString()]);return {state,created,considered,partial,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
+  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial)await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $2 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
+    [workspaceId,nowIso(),new Date(Date.now()+(refreshRequested?0:15*60000)).toISOString(),planningRevision]);return {state,created,considered,partial,refreshRequested,planningRevision,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
 
 async function revalidate(database,workspaceId,action){
  const rows=(await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{onlySkuIds:[action.skuId]})).map(position);
@@ -450,7 +454,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
     const completed=await execute(database,ctx,item.id);if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
   }
   return {planned:planned.created.length,executed,waiting:planned.created.length-executed,
-    considered:planned.considered.length,followThrough,partial:planned.partial,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
+    considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
  if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
  return execute(database,ctx,id,{approvedBy:ctx.actorId});}
