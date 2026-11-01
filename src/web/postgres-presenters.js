@@ -118,11 +118,12 @@ async function inventoryPosition(database,workspaceId){
       COUNT(*) FILTER (WHERE incoming>0)::bigint AS incoming_count,
       COUNT(*) FILTER (WHERE on_hand>0 AND committed<=on_hand)::bigint AS healthy_count
     FROM item_position`,[workspaceId]);
-  const [locations,cost,names]=await Promise.all([
+  const [locations,cost,names,coverage]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
     database.query(`SELECT COALESCE(SUM(quantity_units),0)::numeric AS units,
       COALESCE(SUM(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
+    require('../accounting/customer-money').inventoryCoverage(database,workspaceId),
   ]);
   const row=result.rows[0];const groups=STOCK_GROUPS.flatMap((group)=>{
     const count=number(row[`${group.key}_count`]);
@@ -130,7 +131,7 @@ async function inventoryPosition(database,workspaceId){
   });
   return {position:{tooLarge:number(row.products)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
     products:number(row.products),skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},
-    stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost)}};
+    stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost),missingCostUnits:coverage.missingCostUnits}};
 }
 
 async function purchasing(database,workspaceId){
@@ -185,9 +186,9 @@ async function money(database,workspaceId,input={},actorId=null){
     database.query(`SELECT id,bill_number,due_date,balance_minor,currency FROM accounting_supplier_bills
       WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID','DISPUTED') ORDER BY due_date NULLS LAST,id`,[workspaceId]),
     database.query(`SELECT COALESCE(SUM(b.on_hand),0)::numeric AS units,
-      COALESCE((SELECT SUM(quantity_units) FROM accounting_inventory_cost_balances WHERE workspace_id=$1),0)::bigint AS cost_units,
+      COALESCE(SUM(GREATEST(b.on_hand-COALESCE(c.quantity_units,0),0)),0)::numeric AS missing_units,
       COALESCE((SELECT SUM(total_cost_minor) FROM accounting_inventory_cost_balances WHERE workspace_id=$1),0)::bigint AS cost_minor
-      FROM balances b WHERE b.workspace_id=$1`,[workspaceId]),
+      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1`,[workspaceId]),
     database.query(`SELECT id,order_number FROM sales_orders WHERE workspace_id=$1
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED') ORDER BY needed_by NULLS LAST,created_at LIMIT 20`,[workspaceId]),
     database.query(`SELECT posting_date AS at,description AS what FROM accounting_journal_entries
@@ -212,8 +213,7 @@ async function money(database,workspaceId,input={},actorId=null){
       why:[`${amount(pnl.revenueMinor)} revenue, ${amount(pnl.cogsMinor)} stock sold, ${amount(pnl.operatingExpenseMinor)} other costs, and ${amount(pnl.netIncomeMinor)} net income this period.`]},
     position:{suppliersCommittedMinor:payableMinor,billPayableMinor,receivedNotBilledMinor,receivableCount:receivables.rows.length,payableCount:payables.rows.length,customersOweMinor:receivableMinor,cashMinor,
       inventoryMinor:number(inventory.rows[0].cost_minor),inventoryUnits:number(inventory.rows[0].units),
-      confirmedCustomerOrders:confirmed.rows},inventory:{missingCostUnits:Math.max(0,
-        number(inventory.rows[0].units)-number(inventory.rows[0].cost_units))},comingUp,
+      confirmedCustomerOrders:confirmed.rows},inventory:{missingCostUnits:number(inventory.rows[0].missing_units)},comingUp,
     attention:needItems.filter((item)=>['accounting','provider'].includes(item.kind)).map((item)=>({title:item.title,
       why:item.why,href:item.href,actionLabel:item.actionLabel})),changed:changed.rows,noticed:[],
     fees:{totalMinor:0,needsPlacingMinor:0,documents:[]}}};
