@@ -47,7 +47,7 @@ async function sample(database,options={}){
   httpErrors5m:Number(row.http_errors_5m),httpP95Ms:row.http_p95_micros_5m===null?null:Number(row.http_p95_micros_5m)/1000,
   databaseConnections:Number(row.database_connections),databaseConnectionLimit:Number(row.database_connection_limit),
   databaseBytes:Number(row.database_bytes),diskCapacityBytes,pool,
-  processMemoryBytes:process.memoryUsage().rss,memoryLimitBytes,cpuFraction:options.cpuFraction??null};
+  processMemoryBytes:process.memoryUsage().rss,memoryLimitBytes,cpuFraction:options.cpuFraction??null,readModels:require('../lib/versioned-read-model').status(database)};
 }
 function evaluate(snapshot,thresholds=DEFAULTS){
  const alerts=[];const assess=(kind,value,warn,critical,unit)=>{
