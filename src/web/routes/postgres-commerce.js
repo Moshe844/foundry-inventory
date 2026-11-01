@@ -1046,7 +1046,7 @@ function createPostgresCommerceRouter(database,options={}){
     const lineIds=Array.isArray(req.body.lineId)?req.body.lineId:[req.body.lineId];
     const locationIds=Array.isArray(req.body.locationId)?req.body.locationId:[req.body.locationId];
     const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity],weights=Array.isArray(req.body.secondaryQuantity)?req.body.secondaryQuantity:[req.body.secondaryQuantity];
-    const lines=lineIds.map((lineId,index)=>({lineId,locationId:locationIds[index]||locationIds[0],quantity:quantities[index],secondaryQuantity:weights[index]}))
+    const lines=lineIds.map((lineId,index)=>{const locationId=locationIds[index]||locationIds[0],field=lineId+'_'+locationId;return {lineId,locationId,quantity:quantities[index],secondaryQuantity:req.body['secondary_'+field]??weights[index],lotCode:trimOrNull(req.body['lot_'+field]),lotStrategy:req.body['lotStrategy_'+field],serials:req.body['serials_'+field]};})
       .filter((line)=>Number(line.quantity)>0);
     const result=await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines,
       shipment:{handover:req.body.handover,carrier:req.body.carrier,trackingNumber:req.body.trackingNumber}});

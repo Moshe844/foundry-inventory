@@ -743,7 +743,8 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     }
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
-    for (const [index, requested] of input.lines.entries()) {
+    const trackedLines=await require('./postgres-tracked-sales').expand(client,ctx,salesOrderId,input.lines,at);
+    for (const [index, requested] of trackedLines.entries()) {
       const line = await requireRow(client, `SELECT sol.*,s.item_id,s.variant_label,i.name AS item_name FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id AND s.workspace_id=sol.workspace_id JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE sol.id=$1 AND sol.sales_order_id=$2 AND sol.workspace_id=$3 FOR UPDATE`,
       [requested.lineId, salesOrderId, ctx.workspaceId], `Fulfillment line ${index + 1} is not on this sales order.`);
@@ -758,7 +759,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         skuId: line.sku_id, locationId: requested.locationId, quantity,secondaryQuantity:requested.secondaryQuantity,
         lotId: requested.lotId, serialUnitIds: requested.serialUnitIds,
         reasonCode: 'sale', reference: order.order_number, occurredAt: at,
-        idempotencyKey: `${input.idempotencyKey}:line:${line.id}:${requested.locationId}`,
+        idempotencyKey: `${input.idempotencyKey}:line:${line.id}:${requested.locationId}${requested.lotId?':lot:'+requested.lotId:''}`,
       });
       const preparedCost = await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
       let snapshot=line.pricing_snapshot;
@@ -779,7 +780,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       }
       const {grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,revenueMinor,totalMinor}=priceCalculator.monetaryPortion(snapshot,orderedMeasure,before,allocationQuantity);
       const posted = await ledger.postInTransaction(client, ctx, {
-        postingInstant:at, sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}`,
+        postingInstant:at, sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}${requested.lotId?':lot:'+requested.lotId:''}`,
         description: `Fulfill ${quantity} units on ${order.order_number}`, sourceType: 'sale_fulfillment',
         sourceRecordType: 'sales_order', sourceRecordId: salesOrderId, currency: order.currency,
         metadata: { movementId: physical.movementId, salesOrderId, salesOrderLineId: line.id,

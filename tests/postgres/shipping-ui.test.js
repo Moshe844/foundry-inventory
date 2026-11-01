@@ -147,8 +147,12 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       {owner:'shipping-ui-worker',leaseMs:30000});
     assert.equal(handled.status,'COMPLETED');
     assert.equal(buyCalls,1);
-    assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
-      {owner:'shipping-ui-worker',leaseMs:30000}),null);
+    let idle=false;for(let attempt=0;attempt<10;attempt++){
+      const followThrough=await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
+        {owner:'shipping-ui-worker',leaseMs:30000});
+      if(!followThrough){idle=true;break;}
+      assert.equal(followThrough.kind,'workflow.follow-through');assert.equal(followThrough.status,'COMPLETED');
+    }assert(idle,'Follow-through queue must reach idle without buying another label');
     assert.equal(buyCalls,1);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events
       WHERE workspace_id=$1 AND operation='label_purchase'`,[ctx.workspaceId])).rows[0].count,'1');
@@ -210,8 +214,12 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     const stopped=await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
       {owner:'shipping-ui-worker',leaseMs:30000});
     assert.equal(stopped.status,'DEAD');assert.equal(buyCalls,2);
-    assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
-      {owner:'shipping-ui-worker',leaseMs:30000}),null);
+    let trackingIdle=false;for(let attempt=0;attempt<10;attempt++){
+      const followThrough=await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
+        {owner:'shipping-ui-worker',leaseMs:30000});
+      if(!followThrough){trackingIdle=true;break;}
+      assert.equal(followThrough.kind,'workflow.follow-through');assert.equal(followThrough.status,'COMPLETED');
+    }assert(trackingIdle,'An ambiguous label must not be automatically purchased again');
     assert.equal(buyCalls,2);
     const uncertainEffect=(await database.query(`SELECT status FROM stockchief_runtime.provider_effects
       WHERE workspace_id=$1 AND aggregate_id=$2`,[ctx.workspaceId,uncertainParcel.shipmentId])).rows[0];
@@ -238,11 +246,13 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       [{weightGrams:650,lengthMm:210,widthMm:160,heightMm:110}]);
     const shipmentNumber=(await database.query(`SELECT shipment_number FROM sales_shipments
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,askParcel.shipmentId])).rows[0].shipment_number;
+    await require('../helpers/postgres-model-fixture').fundWorkspace(database,ctx.workspaceId);
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(`Get fresh carrier rates for shipment ${shipmentNumber}`);
+    await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(`Get fresh carrier rates for shipment ${shipmentNumber}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     const quoteProposal=(await database.query(`SELECT id,action_type,status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    assert(quoteProposal,await page.locator('main').innerText());
     assert.equal(quoteProposal.action_type,'shipping.quote');
     assert.equal(quoteProposal.status,'PENDING');
     await page.goto(`${base}/actions/${quoteProposal.id}`);
@@ -256,7 +266,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM shipment_rates
       WHERE workspace_id=$1 AND shipment_id=$2`,[ctx.workspaceId,askParcel.shipmentId])).rows[0].count,3);
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(`Refresh carrier rates for shipment ${shipmentNumber}`);
+    await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(`Refresh carrier rates for shipment ${shipmentNumber}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     const staleProposal=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
@@ -280,7 +290,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.doesNotMatch(await page.locator('main').innerText(),/EZTK_fixture|TEST_fixture|shippo_test_fixture/);
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,'shipping settings fit a phone viewport');
-    await page.locator('details#existing-carrier-connection > summary').click();
+    if(!await page.getByLabel('Shipping platform',{exact:true}).isVisible())await page.locator('details#existing-carrier-connection > summary').click();
     assert.equal(await page.getByLabel('Shipping platform',{exact:true}).isVisible(),true);
     await page.goto(`${base}/fulfilment/${askParcel.shipmentId}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);

@@ -18,7 +18,7 @@ const {ValidationError}=require('../../domain/errors');
 async function shipmentPage(database,workspaceId,shipmentId){
   const state=await shipping.state(database,workspaceId,shipmentId);
   const [lineRows,orderDetail,noticeRows,mailboxRows,transactionRows,policyRows,ruleRows]=await Promise.all([
-    database.query(`SELECT sl.*,l.name AS location_name,i.name AS item_name,i.unit_label,s.code AS sku_code,s.variant_label
+    database.query(`SELECT sl.*,l.name AS location_name,i.name AS item_name,i.unit_label,i.tracking_mode,i.secondary_unit_label,s.code AS sku_code,s.variant_label
       FROM sales_shipment_lines sl JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
       JOIN skus s ON s.id=sl.sku_id AND s.workspace_id=sl.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
