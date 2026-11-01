@@ -211,11 +211,11 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
   const stableOrder=[`${quote(config.sort)} ${direction} NULLS LAST`,
     ...tieBreakers.filter((field)=>field!==quote(config.sort)).map((field)=>`${field} ASC NULLS LAST`)];
   values.push(limit,offset);
-  // Only a reviewed, row-preserving projection may omit display joins. Any
-  // product/location filter or grouping outside its declared fields uses the
-  // full source, so the optimization cannot silently broaden a population.
+  // A reviewed projection declares its fields and, when its row population
+  // differs, its valid additive aggregates. Other counts, averages, filters
+  // and groupings retain the full contributing-record source.
   const metric=dataset.metrics?.[config.measure],needed=[...config.groups,...config.filters.map(f=>f.field),...(config.aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[config.measure])];
-  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>needed.every(f=>p.fields.includes(f)));
+  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||p.aggregates.includes(config.aggregate))&&needed.every(f=>p.fields.includes(f)));
   const source=reduced?reduced.source:dataset.source;
   const sql=`WITH source AS (${source}) SELECT ${select} FROM source ${where} ${group}
     ORDER BY ${stableOrder.join(',')}
