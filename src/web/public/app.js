@@ -1324,8 +1324,10 @@
     const connectorId = marker.dataset.connectorId;
     let signature = marker.dataset.signature || '';
     let reloading = false;
+    let submitting = false;
+    document.addEventListener('submit', () => { submitting = true; });
     const tick = () => {
-      if (document.hidden || reloading) return;
+      if (document.hidden || reloading || submitting) return;
       const active = document.activeElement;
       if (active && active.matches('input, select, textarea')) return;
       fetch(`/settings/connections/${encodeURIComponent(connectorId)}/state`, {
@@ -1333,7 +1335,7 @@
       })
         .then((response) => response.ok ? response.json() : null)
         .then((state) => {
-          if (!state || !state.signature || state.signature === signature) return;
+          if (submitting || !state || !state.signature || state.signature === signature) return;
           reloading = true;
           window.location.reload();
         })

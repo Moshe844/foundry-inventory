@@ -69,7 +69,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   if(!Array.isArray(inputs))throw new ValidationError('Selling prices must be a list.');if(!inputs.length)return [];
   const skuIds=inputs.map(input=>input.skuId);
   if(new Set(skuIds).size!==skuIds.length){if(initialize)throw new ValidationError('Initial prices require one price per new variant.');const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
-  const active=(await client.query('SELECT s.id,s.xmin=pg_current_xact_id()::text::xid AS created_here FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,skuIds])).rows;
+  const active=(await client.query('SELECT s.id,s.xmin=pg_current_xact_id()::text::xid AS created_here FROM skus s JOIN LATERAL(SELECT workspace_id,is_active FROM items WHERE id=s.item_id OFFSET 0) i ON i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,skuIds])).rows;
   if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
   if(initialize&&(active.some(row=>!row.created_here)||inputs.some(input=>Object.hasOwn(input,'expectedCurrentId'))))throw new ValidationError('Initial prices require unpublished variants created by this transaction. Existing prices must use the normal change and conflict checks.');
   async function readPrices(){return new Map((await client.query(`SELECT sp.*,u.name AS actor_name FROM unnest($2::text[]) AS target(sku_id)
