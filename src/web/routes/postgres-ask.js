@@ -170,6 +170,11 @@ function createPostgresAskRouter(database,options={}){
     res.locals.agentApprovalPresentation=require('../proposal-presentation').cardPresentation;
     next();
   });
+  router.get('/ask/health',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    if(await pilot.selected(database,req.ctx)){const health=await require('../../assistant/postgres-ask-health').read(database,req.ctx);return res.status(health.ok?200:503).json(health);}
+    const ok=Boolean(options.aiProvider||config.ai.configured);return res.status(ok?200:503).json({ok,message:ok?'Ask is ready.':'Ask is temporarily offline. You can keep using inventory, orders and reports.'});
+  }));
   async function deliveredGoal(req,id=req.params.id){
     await pilot.access(database,req.ctx);
     const goal=await goalStore.get(database,req.ctx,id);

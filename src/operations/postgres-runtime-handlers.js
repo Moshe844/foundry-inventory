@@ -337,6 +337,7 @@ async function runtimeSweep(job,client,options={}){
       }
     }
   }
+  await require('../assistant/postgres-ask-health').sweep(client,{now});
   let scheduledAlertDeliveries=0;
   const alertWebhookUrl=options.alertWebhookUrl===undefined?config.operations.alertWebhookUrl:options.alertWebhookUrl;
   if(alertWebhookUrl){const alerts=(await client.query(`SELECT id,workspace_id,occurrence_count FROM operational_alerts

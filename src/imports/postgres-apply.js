@@ -34,7 +34,8 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    const sourceRows=chunk,options={...inputOptions,beforeRow:value=>inputOptions.beforeRow?.({...value,rowsImported:priorSaved+value.rowsImported})},publishProgress=()=>{};
    const salePriceBySku=new Map();
    for(const row of chunk)if(!row.parsed.existingSkuId&&checkpoint.initialPricesPrepared&&row.parsed.sellingPriceMinor!==null)salePriceBySku.set(row.parsed.createdSkuId,row.parsed.currency+':'+row.parsed.sellingPriceMinor);
-   const priorPrices=(await client.query("SELECT DISTINCT r.sku_id,r.parsed::jsonb->>'currency' currency,r.parsed::jsonb->>'sellingPriceMinor' amount FROM import_execution_identities e JOIN import_rows r ON r.id=e.row_id WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.existing_sku_id=ANY($3::text[]) AND r.status='IMPORTED' AND r.parsed::jsonb->>'sellingPriceMinor' IS NOT NULL",[ctx.workspaceId,id,chunk.map(r=>r.parsed.existingSkuId).filter(Boolean)])).rows;
+   const pricedExisting=[...new Set(chunk.filter(r=>r.parsed.existingSkuId&&r.parsed.sellingPriceMinor!==null).map(r=>r.parsed.existingSkuId))];
+   const priorPrices=pricedExisting.length?(await client.query("SELECT DISTINCT e.existing_sku_id AS sku_id,e.currency,e.selling_price_minor AS amount FROM import_execution_identities e JOIN import_rows r ON r.id=e.row_id AND r.workspace_id=e.workspace_id AND r.import_id=e.import_id WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.existing_sku_id=ANY($3::text[]) AND e.selling_price_minor IS NOT NULL AND r.status='IMPORTED'",[ctx.workspaceId,id,pricedExisting])).rows:[];
    for(const row of priorPrices)salePriceBySku.set(row.sku_id,row.currency+':'+row.amount);
    let savedRows=[],pendingValues=[],units=0,rowsImported=0;
       async function flushValues(){

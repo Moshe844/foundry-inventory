@@ -20,8 +20,10 @@
   <div class="card section">
     <div class="card-head"><h2>Which supplier?</h2></div>
     <div class="card-body">
+      <form method="get" action="/purchasing/orders/new"><label>Search suppliers <input class="input" type="search" name="q" value="<%= locals.supplierQuery||'' %>" placeholder="Name, email or supplier code"></label><button class="btn" type="submit">Search</button></form>
+      <p class="muted"><%= locals.supplierTotal??suppliers.length %> matching suppliers</p>
       <% if (suppliers.length === 0) { %>
-        <p class="muted">No suppliers yet. <a href="/suppliers">Add one first.</a></p>
+        <p class="muted">No suppliers match. <a href="/suppliers">Add one first.</a></p>
       <% } else { %>
         <div class="list-rows">
           <% suppliers.forEach(function (supplier) { %>
@@ -34,6 +36,7 @@
             </a>
           <% }) %>
         </div>
+        <nav aria-label="Supplier pages"><% if((locals.supplierPage||1)>1){ %><a href="/purchasing/orders/new?<%= new URLSearchParams({q:locals.supplierQuery||'',page:locals.supplierPage-1}) %>">Previous suppliers</a><% } %><% if(locals.supplierHasMore){ %><a href="/purchasing/orders/new?<%= new URLSearchParams({q:locals.supplierQuery||'',page:(locals.supplierPage||1)+1}) %>">More suppliers</a><% } %></nav>
       <% } %>
     </div>
   </div>

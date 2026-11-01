@@ -161,6 +161,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   });
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
+  app.use(require('./lib/request-read-cache').middleware);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
   app.use(require('./web/routes/postgres-company-sign-in').scopeProtection(database));
   app.use(require('./commercial/enforcement').contextMiddleware(database));

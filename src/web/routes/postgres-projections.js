@@ -157,6 +157,10 @@ function createPostgresProjectionsRouter(database){
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get('/needs-you/questions/:id',requireAuth,asyncRoute(async(req,res)=>{const entries=await require('../../assistant/postgres-approval-projection').pending(database,req.ctx.workspaceId,req.ctx.actorId);const entry=entries.find(e=>e.question?.goalId===req.params.id);if(!entry){req.flash('info','That question is no longer waiting for an answer.');return res.redirect(303,'/needs-you');}return res.page('manager/question',{title:'Answer a question',nav:'home',entry});}));
+  router.get('/needs-you/work',requireAuth,asyncRoute(async(req,res)=>{
+    permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
+    return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,req.query)});
+  }));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);

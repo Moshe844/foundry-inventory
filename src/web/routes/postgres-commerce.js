@@ -554,7 +554,8 @@ function createPostgresCommerceRouter(database,options={}){
       permissions:purchasingPermissions(req),screenGuide:null});
   }));
   async function purchaseEntry(req,res,{submitted=null,errors=[],status=200}={}){
-    const supplierId=trimOrNull(submitted?.supplierId||req.query.supplier),supplierRows=await commerce.suppliers(database,req.ctx.workspaceId);
+    const supplierId=trimOrNull(submitted?.supplierId||req.query.supplier),supplierQuery=String(req.query.q||'').trim().slice(0,200),supplierPage=Math.max(1,Math.min(1000000,Number.parseInt(req.query.page,10)||1));
+    const matches=(await database.query(`SELECT *,count(*) OVER() AS matching_count FROM suppliers WHERE workspace_id=$1 AND status='active' AND ($2::text IS NULL OR id=$2) AND ($2::text IS NOT NULL OR $3::text='' OR name ILIKE '%'||$3||'%' OR coalesce(email,'') ILIKE '%'||$3||'%' OR coalesce(code,'') ILIKE '%'||$3||'%') ORDER BY lower(name),id LIMIT 51 OFFSET $4`,[req.ctx.workspaceId,supplierId,supplierQuery,supplierId?0:(supplierPage-1)*50])).rows,supplierHasMore=matches.length>50,supplierRows=matches.slice(0,50),supplierTotal=Number(matches[0]?.matching_count||0);
     if(supplierId&&!supplierRows.some(s=>s.id===supplierId))throw new ValidationError('Choose a supplier from this inventory.');
     const supplierItems=supplierId?(await database.query(`SELECT si.sku_id AS "skuId",i.name||coalesce(' / '||s.variant_label,'') AS "displayName",
       si.supplier_sku AS "supplierSku",si.units_per_purchase_unit AS "unitsPerPurchaseUnit",si.purchase_unit AS "purchaseUnit",
@@ -568,7 +569,7 @@ function createPostgresCommerceRouter(database,options={}){
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
     const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
-    return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
+    return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
   }
   router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute((req,res)=>purchaseEntry(req,res)));
 
