@@ -8,7 +8,7 @@ function createRouter(db){const router=express.Router();
  const ctx=req=>({...req.ctx,accountId:req.account.id});
  router.get('/settings/security',requireAccount,asyncRoute(async(req,res)=>render(req,res,'settings')));
  router.get('/auth/mfa',requireAccount,asyncRoute(async(req,res)=>{if(!req.mfaState.enabled)return res.redirect(303,'/settings/security');return render(req,res,'challenge');}));
- router.post('/settings/security/setup',requireAccount,asyncRoute(async(req,res)=>{await password(db,req);const setup=await mfa.begin(db,ctx(req));return render(req,res,'setup',setup);}));
+ router.post('/settings/security/setup',requireAccount,asyncRoute(async(req,res)=>{await password(db,req);const setup=await mfa.begin(db,ctx(req));return render(req,res,'setup',{...setup,qrDataUrl:await require('../../domain/totp-provisioning').dataUrl(setup.secret,req.account.email)});}));
  router.post('/settings/security/confirm',requireAccount,asyncRoute(async(req,res)=>{const result=await mfa.check(db,ctx(req),req.body.code,{enroll:true});await stamp(req,result.revision);res.locals.csrfToken=require('../middleware').scopedCsrfToken(req.session);return render(req,res,'recovery',{recoveryCodes:result.recoveryCodes});}));
  router.post('/auth/mfa',requireAccount,asyncRoute(async(req,res)=>{const result=await mfa.check(db,ctx(req),req.body.code);await stamp(req,result.revision);return res.redirect(303,'/');}));
  router.post('/settings/security/disable',requireAccount,asyncRoute(async(req,res)=>{await password(db,req);await mfa.check(db,ctx(req),req.body.code);await mfa.disable(db,ctx(req));await stamp(req,0);req.flash('success','Two-step sign-in is disabled.');return res.redirect(303,'/settings/security');}));
