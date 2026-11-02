@@ -74,17 +74,20 @@
       if (/^Secure customer payment$/.test(h2.textContent.trim())) h2.closest('.card').id = 'secure-payment';
     });
     var collect = $('#ox-collect');
+    // The links navigate as written (their destination is the contract); the
+    // page opens the form on arrival. Opening also on click covers a click on
+    // the hash that is already in the address bar.
     $$('[data-ox-collect-open]').forEach(function (link) {
       if (collect && link.getAttribute('href') === '#ox-collect') {
         link.setAttribute('aria-controls', 'ox-collect');
         // Always opens: the page may already have restored it open.
-        link.addEventListener('click', function (event) { event.preventDefault(); openCollect(true); });
-        return;
+        link.addEventListener('click', function () { openCollect(true); });
+      } else {
+        // Same address as now: the browser only scrolls, so open the form here.
+        link.addEventListener('click', function () {
+          if (link.pathname === window.location.pathname && link.search === window.location.search) openMoney();
+        });
       }
-      // Invoiced: the page's own payments panel is the place; open its form.
-      var money = $('details#money');
-      if (!money) return;
-      link.addEventListener('click', function (event) { event.preventDefault(); openMoney(); });
     });
     var linkOpen = $('[data-ox-link-open]');
     if (linkOpen && !$('#secure-payment')) linkOpen.hidden = true;
