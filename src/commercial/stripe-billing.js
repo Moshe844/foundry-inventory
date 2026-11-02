@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const config = require('../config');
 const { providerFetch } = require('../lib/provider-http');
-const { ValidationError, AuthenticationError } = require('../domain/errors');
+const { DomainError, ValidationError, AuthenticationError } = require('../domain/errors');
 
 const API = 'https://api.stripe.com/v1';
 const API_VERSION='2026-09-30.endive';
@@ -26,6 +26,11 @@ async function call(path, options = {}) {
     method:options.method || 'POST', headers, body:options.values ? form(options.values) : undefined,
   }, { provider:'StockChief Billing', fetch:options.fetch });
   const payload = await response.json().catch(() => ({}));
+  if(!response.ok&&payload?.error?.type==='invalid_request_error'){
+    const diagnostic={providerStatus:response.status,operation:path.replace(/\/(?:sub|cus|si|price|sub_sched)_[A-Za-z0-9]+/g,'/:record'),parameter:payload.error.param||null,providerCode:payload.error.code||null,requestId:response.headers.get('request-id')};
+    console.warn('SUBSCRIPTION_BILLING_CONTRACT_ERROR',JSON.stringify(diagnostic));
+    throw new DomainError('Billing could not confirm this request. Please try again shortly or contact support.',{code:'billing_unavailable',status:503,details:diagnostic});
+  }
   if (!response.ok) throw new ValidationError(payload?.error?.message || `Stripe Billing refused the request (${response.status}).`);
   return payload;
 }
@@ -139,8 +144,10 @@ async function previewSubscriptionChange(input,options={}){
     'subscription_details[items][0][id]':input.itemId,'subscription_details[items][0][price]':input.priceId,
     'subscription_details[items][0][quantity]':1,
     'subscription_details[proration_behavior]':input.prorationBehavior||'create_prorations',
-    'subscription_details[billing_cycle_anchor]':input.billingCycleAnchor,
-    'subscription_details[proration_date]':input.prorationBehavior==='none'?undefined:input.prorationDate}});
+    // The pinned Endive API uses an object here and on subscription updates.
+    // The portal configuration deliberately retains its separate enum shape.
+    'subscription_details[billing_cycle_anchor][type]':input.billingCycleAnchor,
+    'subscription_details[proration_date]':input.prorationBehavior==='none'||input.billingCycleAnchor==='now'?undefined:input.prorationDate}});
 }
 
 async function activeSubscriptionSchedule(input,options={}){
@@ -167,7 +174,7 @@ async function updateSubscription(input,options={}){
     idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
       'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
       proration_behavior:input.prorationBehavior||'create_prorations',payment_behavior:input.paymentBehavior||'pending_if_incomplete',
-      proration_date:input.prorationDate,billing_cycle_anchor:input.billingCycleAnchor,
+      proration_date:input.billingCycleAnchor==='now'?undefined:input.prorationDate,'billing_cycle_anchor[type]':input.billingCycleAnchor,
     }});
 }
 async function scheduleDowngrade(input,options={}){

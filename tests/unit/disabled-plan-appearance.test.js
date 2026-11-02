@@ -7,5 +7,6 @@ test('current and selected plan buttons stay gray under every plan theme, includ
  for(const plan of ['starter','growth','pro','enterprise']){
   for(const state of ['current','selected']){const button=page.locator('[data-plan="'+plan+'"] [data-plan-state="'+state+'"]');await button.hover();assert.equal(await button.isDisabled(),true);const style=await button.evaluate(el=>{const s=getComputedStyle(el);return {image:s.backgroundImage,background:s.backgroundColor,color:s.color,shadow:s.boxShadow};});assert.deepEqual(style,{image:'none',background:'rgb(232, 235, 238)',color:'rgb(89, 99, 109)',shadow:'none'},plan+' '+state);}
   assert.equal(await page.locator('[data-plan="'+plan+'"] a').isEnabled(),true);assert.notEqual(await page.locator('[data-plan="'+plan+'"] a').evaluate(el=>getComputedStyle(el).backgroundImage),'none',plan+' review links keep their theme');
+  const widths=await page.locator('[data-plan="'+plan+'"] .plan-card__action').evaluate(el=>[...el.querySelectorAll('.pub-btn')].map(button=>button.getBoundingClientRect().width));assert(widths.every(width=>Math.abs(width-widths.at(-1))<1),plan+' current/selected buttons retain the full review-button width');
  }
 });
