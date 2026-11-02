@@ -57,10 +57,15 @@ const datasets=Object.freeze({
   stock:{label:'Stock by product, variant and location, with recorded inventory cost',permission:permissions.VIEW,
     // Counting positions needs neither cost history nor accounting settings.
     // Cost/category/date filters fall back to the canonical detailed source.
-    aggregateProjections:[{aggregates:['count','count_distinct'],fields:['product','sku','variant','location','stock_unit','on_hand'],source:`SELECT i.name AS product,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,b.on_hand::numeric AS on_hand
-      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
-      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
-      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id WHERE b.workspace_id=$1`}],
+    // Materialize each inventory-scoped population once: repeated workspace
+    // join estimates otherwise turn a full count into one index probe per row.
+    aggregateProjections:[{aggregates:['count','count_distinct'],fields:['product','sku','variant','location','stock_unit','on_hand'],source:`WITH counted_skus AS MATERIALIZED(SELECT id,item_id,code,variant_label FROM skus WHERE workspace_id=$1),
+      counted_items AS MATERIALIZED(SELECT id,name,unit_label FROM items WHERE workspace_id=$1),
+      counted_locations AS MATERIALIZED(SELECT id,name FROM locations WHERE workspace_id=$1),
+      counted_positions AS MATERIALIZED(SELECT sku_id,location_id,on_hand FROM balances WHERE workspace_id=$1)
+      SELECT i.name AS product,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,b.on_hand::numeric AS on_hand
+      FROM counted_positions b JOIN counted_skus s ON s.id=b.sku_id
+      JOIN counted_items i ON i.id=s.item_id JOIN counted_locations l ON l.id=b.location_id`}],
     source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,
       b.on_hand::numeric AS on_hand,cost.quantity_units::numeric AS costed_units,
       CASE WHEN settings.enabled=1 THEN cost.total_cost_minor::bigint END AS recorded_cost_minor,
