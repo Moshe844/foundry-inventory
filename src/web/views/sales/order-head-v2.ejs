@@ -33,7 +33,8 @@
     <% if (oxCollect) { %><a class="ox-btn <%= oxNext ? 'ox-btn--secondary' : 'ox-btn--primary' %>" href="<%= oxMoney.invoiced ? '/orders/' + order.id + '?open=money#money' : '#ox-collect' %>" data-ox-collect-open>Collect payment</a><% } %>
     <% if (oxNext) { %><a class="ox-btn ox-btn--primary" href="<%= oxNext.href %>"><%= oxNext.label %></a><% } %>
   </div>
-  <% if (oxTotal > 0) { %>
+  <%# Once invoiced, the page's own Payment card shows these figures; one is enough. %>
+  <% if (oxTotal > 0 && !oxMoney.invoiced) { %>
   <section class="ox ox-money" data-ox-order-money aria-label="Payment">
     <div class="ox-money__cells">
       <div><span>Order total</span><b class="ox-num"><%= helpers.money(oxTotal, oxCurrency) %></b></div>
@@ -44,7 +45,7 @@
     <% if (oxCollect && !oxMoney.invoiced) { %>
     <details class="ox-collect" id="ox-collect">
       <summary class="ox-sr">Collect payment</summary>
-      <div class="ox-collect__body">
+      <div class="ox-collect__body<%= oxOnline ? '' : ' ox-collect__body--one' %>">
         <form method="post" action="/sales/orders/<%= order.id %>/payment" class="ox-collect__record" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <h3>Record a payment</h3>
@@ -55,19 +56,15 @@
           </div>
           <p class="ox-help">A full or part payment. Nothing has to have shipped; it is applied to the invoice when the goods leave.</p>
           <button class="ox-btn ox-btn--primary" type="submit">Record payment</button>
+          <% if (!oxOnline) { %><p class="ox-help ox-collect__connect"><% if (locals.canManagePaymentAccount) { %>To take cards or send payment links, <a href="/settings/connections?only=payments&amp;return=/orders/<%= order.id %>">connect a payment gateway</a>.<% } else { %>Cards and payment links need a payment gateway; a workspace owner can connect one.<% } %></p><% } %>
         </form>
+        <% if (oxOnline) { %>
         <div class="ox-collect__online">
           <h3>Card or payment link</h3>
-          <% if (oxOnline) { %>
-            <p class="ox-help">The connected processor hosts the payment page; StockChief never sees the card.</p>
-            <a class="ox-btn ox-btn--secondary" href="#secure-payment" data-ox-link-open>Send a payment link</a>
-          <% } else if (locals.canManagePaymentAccount) { %>
-            <p class="ox-help">No payment processor is connected, so cards and payment links aren't available yet.</p>
-            <a class="ox-btn ox-btn--secondary" href="/settings/connections#payments">Connect payments</a>
-          <% } else { %>
-            <p class="ox-help">No payment processor is connected yet. A workspace owner can connect one under Settings → Connections.</p>
-          <% } %>
+          <p class="ox-help">The connected gateway hosts the payment page; StockChief never sees the card.</p>
+          <a class="ox-btn ox-btn--secondary" href="#secure-payment" data-ox-link-open>Send a payment link</a>
         </div>
+        <% } %>
       </div>
     </details>
     <% } %>

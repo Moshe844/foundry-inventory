@@ -130,9 +130,9 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await page.waitForFunction(()=>document.querySelector('[data-total=totalMinor]').textContent.includes('260.00'));
     assert.match(await page.locator('#order-stock-check').innerText(),/All in stock\. Ready to create\./);
     assert.equal(await page.locator('.ox-side').evaluate((side)=>getComputedStyle(side).position),'sticky');
-    // No processor is connected here: the link option says so and offers the connection.
-    assert.equal(await page.locator('input[name=oxPayment][value=link]').isDisabled(),true);
-    assert.equal(await page.locator('.ox-paychoice').getByRole('link',{name:'Connect payments'}).getAttribute('href'),'/settings/connections#payments');
+    // No gateway is connected here: no link option, and the form does not send people away to connect.
+    assert.equal(await page.locator('input[name=oxPayment][value=link]').count(),0);
+    assert.equal(await page.locator('#sales-entry').getByRole('link',{name:/connect/i}).count(),0);
     await page.locator('input[name=oxPayment][value=collect]').check();
     await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Create order and reserve stock',exact:true}).click()]);
     const createdId=page.url().split('/').pop();
@@ -147,7 +147,18 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     const strip=page.locator('[data-ox-order-money]');
     assert.match(await strip.innerText(),/Order total\s+\$260\.00\s+Paid\s+\$0\.00\s+Balance due\s+\$260\.00\s+Payment\s+Unpaid/);
     assert.equal(await page.locator('#ox-collect').evaluate((details)=>details.open),true);
-    assert.equal(await page.locator('#ox-collect').getByRole('link',{name:'Connect payments'}).getAttribute('href'),'/settings/connections#payments');
+    // One connect prompt on the page, and it opens just the payment gateways, with a way back.
+    const gateway=page.locator('#ox-collect').getByRole('link',{name:'connect a payment gateway'});
+    assert.equal(await gateway.getAttribute('href'),`/settings/connections?only=payments&return=/orders/${createdId}`);
+    assert.equal(await page.locator('main').getByRole('link',{name:/connect/i}).count(),1);
+    await Promise.all([page.waitForURL(/only=payments/),gateway.click()]);
+    assert.equal(await page.locator('main h1').innerText(),'Payment gateways');
+    assert.ok((await page.locator('[data-integration-card]').evaluateAll((cards)=>cards.map((card)=>card.dataset.integrationCard)))
+      .every((type)=>['stripe','cardknox'].includes(type)),'Only payment gateways are shown');
+    assert.equal(await page.locator('#shipping, .sc-connected-section').count(),0);
+    assert.equal(await page.locator('main a',{hasText:/^\s*←/}).count(),1);
+    await Promise.all([page.waitForURL(new RegExp(`/orders/${createdId}$`)),page.getByRole('link',{name:'Back to the order'}).click()]);
+    await page.getByRole('link',{name:'Collect payment'}).click();
     await page.locator('[data-ox-collect-amount]').fill('100.00');
     await page.locator('#ox-collect select[name=method]').selectOption('cash');
     await Promise.all([page.waitForURL(new RegExp(`/orders/${createdId}`)),page.getByRole('button',{name:'Record payment',exact:true}).click()]);

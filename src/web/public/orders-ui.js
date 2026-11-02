@@ -53,7 +53,7 @@
     flash.classList.add('ox-toast');
     setTimeout(function () { flash.classList.add('is-gone'); }, 5000);
     // The payment choice made on the order form: take them straight to it.
-    if (info.pay === 'collect') openCollect(true);
+    if (info.pay === 'collect') { if (!openCollect(true)) openMoney(); }
     else if (info.pay === 'link') {
       var secure = $('#secure-payment');
       if (secure) { secure.scrollIntoView({ block: 'center' }); var go = $('button, a.btn', secure); if (go) go.focus(); }
@@ -75,12 +75,32 @@
     });
     var collect = $('#ox-collect');
     $$('[data-ox-collect-open]').forEach(function (link) {
-      if (!collect || link.getAttribute('href') !== '#ox-collect') return;
-      link.setAttribute('aria-controls', 'ox-collect');
-      link.addEventListener('click', function (event) { event.preventDefault(); openCollect(!collect.open); });
+      if (collect && link.getAttribute('href') === '#ox-collect') {
+        link.setAttribute('aria-controls', 'ox-collect');
+        // Always opens: the page may already have restored it open.
+        link.addEventListener('click', function (event) { event.preventDefault(); openCollect(true); });
+        return;
+      }
+      // Invoiced: the page's own payments panel is the place; open its form.
+      var money = $('details#money');
+      if (!money) return;
+      link.addEventListener('click', function (event) { event.preventDefault(); openMoney(); });
     });
     var linkOpen = $('[data-ox-link-open]');
     if (linkOpen && !$('#secure-payment')) linkOpen.hidden = true;
+  }
+
+  function openMoney() {
+    var money = $('details#money');
+    if (!money) return false;
+    money.open = true;
+    var take = $('details.take-payment', money);
+    var online = $('#pay-online button, #pay-online a.btn', money);
+    if (take && !online) take.open = true;
+    money.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    var focus = take && take.open ? $('input[name="amount"]', take) : online;
+    if (focus) focus.focus({ preventScroll: true });
+    return true;
   }
 
   function openCollect(open) {
@@ -97,6 +117,11 @@
 
   function start() {
     orderHeader();
+    // "Record payment" on the Orders list lands here: open the form, not just the panel.
+    if (window.location.hash === '#money' && /[?&]open=money/.test(window.location.search)) openMoney();
+    // A click on "Collect payment" before this script ran only changed the hash.
+    if (window.location.hash === '#ox-collect') openCollect(true);
+    window.addEventListener('hashchange', function () { if (window.location.hash === '#ox-collect') openCollect(true); });
     var page = $('[data-ox-page]');
     if (page && page.getAttribute('data-ox-page') === 'orders') ordersList();
     afterCreate();

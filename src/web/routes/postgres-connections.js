@@ -75,8 +75,10 @@ function createPostgresConnectionsRouter(database,options={}){
     ]);
     const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status!=='disconnected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
     const developerAccounts=req.query.section==='developers'&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length);
-    return res.page('connections/index',{connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken||webhookSecret?'developers':'connections',
-      connectionRuntime,title:inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
+    // ?only=payments shows just the payment gateways, for links from an order.
+    const paymentsFocus=req.query.only==='payments',paymentsReturn=/^\/orders\/[A-Za-z0-9_-]+$/.test(String(req.query.return||''))?String(req.query.return):null;
+    return res.page('connections/index',{paymentsFocus,paymentsReturn,connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken||webhookSecret?'developers':'connections',
+      connectionRuntime,title:paymentsFocus?'Payment gateways':inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:paymentsFocus&&paymentsReturn?{href:paymentsReturn,label:'the order'}:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,inventorySetup,connections:connectionRows.filter(c=>require('../presentation/connections').availableForCustomer(registry.get(c.provider_type)?.metadata?.()||{},connectionRuntime)&&(!inventorySetup||providerCatalog.some(p=>p.type===c.provider_type))),
       providerCatalog,
       apiToken,apiClients:clients,

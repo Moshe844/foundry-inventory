@@ -842,7 +842,7 @@
             <strong>Online payment is not set up for this business yet.</strong><br>
             <% if (locals.canManagePaymentAccount) { %>
               Connect this business's Stripe account before taking a card here.
-              <a href="/settings/connections#payments">Set up Stripe payments</a>.
+              <a href="/settings/connections?only=payments&amp;return=/orders/<%= order.id %>">Connect a payment gateway</a>.
             <% } else { %>
               A workspace owner needs to connect the business's Stripe account first.
             <% } %>

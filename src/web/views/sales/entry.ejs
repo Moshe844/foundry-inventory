@@ -143,7 +143,7 @@
      <span>Payment</span>
      <label><input type="radio" name="oxPayment" value="later" form="ox-not-posted" checked><span>Collect later<small>Send an invoice or take payment any time.</small></span></label>
      <label><input type="radio" name="oxPayment" value="collect" form="ox-not-posted"><span>Collect payment now<small>Cash, card machine, transfer, or a deposit.</small></span></label>
-     <label><input type="radio" name="oxPayment" value="link" form="ox-not-posted" <%= locals.paymentsReady?'':'disabled' %>><span>Send a payment link<small><% if(locals.paymentsReady){ %>The customer pays on a secure page.<% }else if(locals.canManagePaymentAccount){ %>No payment processor connected. <a href="/settings/connections#payments">Connect payments</a><% }else{ %>Needs a payment processor. A workspace owner can connect one.<% } %></small></span></label>
+     <% if(locals.paymentsReady){ %><label><input type="radio" name="oxPayment" value="link" form="ox-not-posted"><span>Send a payment link<small>The customer pays on a secure page.</small></span></label><% } %>
     </div>
     <% } %>
     <div class="ox-sum__btns">

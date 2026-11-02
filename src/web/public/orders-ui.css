@@ -311,6 +311,8 @@ main:has(> .ox), main:has(.ox[data-ox-page]) { background: #F4F6FB; }
 .ox-collect > summary { list-style: none; }
 .ox-collect__body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; padding: 18px; }
 .ox-collect h3 { margin: 0 0 10px; font-size: 14px; font-weight: 650; }
+.ox-collect__body--one { grid-template-columns: minmax(0, 640px); }
+.ox-collect .ox-collect__connect { margin: 12px 0 0; }
 .ox-collect__row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 8px; }
 .ox-collect__online { border-left: 1px solid var(--ox-divider); padding-left: 20px; }
 .ox-collect .ox-help { display: block; margin: 0 0 12px; }
