@@ -75,6 +75,10 @@ jobs:
           # Keep a bounded file deadline with room for four concurrent files;
           # stock throughput and page latency have separate strict assertions.
           node --test --test-concurrency=4 --test-timeout=180000 --test-force-exit tests/unit/*.test.js tests/integration/*.test.js 2>&1 | tee output/inventory-ci/full-regressions.log
+      - name: Indexed source history and cross-inventory duplicate protection
+        run: |
+          set -euo pipefail
+          node --test tests/postgres/import-source-history.test.js 2>&1 | tee output/inventory-ci/source-history.log
       - name: Mixed business dataset at 50000 SKUs and 150000 opening-stock rows
         timeout-minutes: 15
         env:

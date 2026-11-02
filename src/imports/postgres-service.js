@@ -113,9 +113,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
     const matches=skuByCode.get(key) || [];
     matches.push(row);skuByCode.set(key,matches);
   }
-  const importedSourceRows=sourceHash?(await database.query(`SELECT r.row_number,r.raw FROM import_rows r
-    JOIN import_plans p ON p.workspace_id=r.workspace_id AND p.id=r.import_id
-    WHERE r.workspace_id=$1 AND p.source_hash=$2 AND r.status='IMPORTED' AND ($3::bigint[] IS NULL OR r.row_number=ANY($3::bigint[]))`,[workspaceId,sourceHash,rowNumbers])).rows:[];
+  const importedSourceRows=await require('./postgres-source-history').read(database,workspaceId,sourceHash,rowNumbers);
   return { locations:locations.rows,locationByName,skuByCode,currentPrices:new Map(currentPrices.rows.map(r=>[JSON.stringify([r.sku_id,r.currency]),r.id])),
     importedSourceRows:new Set(importedSourceRows.map(r=>stable([Number(r.row_number),json(r.raw,[])]))),
     positions:new Map(positions.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),{physical:Number(r.on_hand),costed:Number(r.costed),value:Number(r.value),hasHistory:r.has_history}])),
