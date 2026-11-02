@@ -10,7 +10,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('C13 opening stock is an asset, never profit',async()=>{const pnl=await require('../../src/accounting/postgres-reports').profitAndLoss(db,ctx.workspaceId,{});assert.equal(pnl.revenueMinor,0);assert.equal(pnl.netIncomeMinor,0);});
  await t.test('Ask one interpretation and one bounded database batch count all 50,000 SKUs and 150,000 positions without a browser',async()=>{
   const reads=require('../../src/assistant/bounded-business-read'),actor={role:'owner',permissions:{}};let models=0;
-  const plan=await reads.interpret({complete:async()=>{models++;return {data:{status:'read',question:'',queries:[{dataset:'catalogue',summary:true,aggregate:'count'},{dataset:'stock',summary:true,aggregate:'count'}]}};}},actor,'Compare the number of catalogue SKUs and stock positions');
+  const plan=await reads.interpret(require('../../src/commercial/relay-provider').register({complete:async()=>{models++;return {data:{status:'read',question:'',queries:[{dataset:'catalogue',summary:true,aggregate:'count'},{dataset:'stock',summary:true,aggregate:'count'}]}};}}),actor,'Compare the number of catalogue SKUs and stock positions');
   const began=performance.now(),sections=await reads.execute(db,ctx,actor,plan);
   assert.equal(models,1);assert.equal(sections.length,2);assert.equal(Number(sections[0].rows[0].count),50000);assert.equal(Number(sections[1].rows[0].count),150000);assert(sections.every(s=>!s.hasMore));assert(performance.now()-began<1500,'Bounded database reads must remain below 1.5 seconds on the full dataset');
  });

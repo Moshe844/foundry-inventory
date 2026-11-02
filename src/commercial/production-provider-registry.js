@@ -6,6 +6,9 @@ const classification=Object.freeze({
  'actions/second-read.js':'NOT_PG_ENABLED',
  'ai/deadline.js':'NOT_PG_ENABLED',
  'ai/providers/anthropic.js':'METERED',
+ // The data-only Ask interpreter rejects providers that are not host-branded
+ // by the native relay, which owns reservations and exact cost settlement.
+ 'assistant/bounded-business-read.js':'METERED',
  'assistant/calls.js':'NOT_PG_ENABLED',
  'assistant/mail-draft.js':'NOT_PG_ENABLED',
  // Ask receives a per-call commercial/model wrapper in postgres-service;

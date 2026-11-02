@@ -41,6 +41,7 @@ function validate(value,actor){
  return {status:'read',queries,question:''};
 }
 async function interpret(provider,actor,message,{clock,conversation=[]}={}){
+ if(!require('../commercial/relay-provider').ownsAccounting(provider))throw Error('BOUNDED_READ_REQUIRES_GOVERNED_PROVIDER');
  const response=await provider.complete({system,prompt:JSON.stringify({request:String(message),clock,conversation,datasets:contracts(actor),syntax:reports.querySyntax}),schema,schemaName:'bounded_business_read',maxOutputTokens:1800});
  return validate(response.data,actor);
 }

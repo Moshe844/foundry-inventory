@@ -6,11 +6,12 @@ test('read-only requests select a browser-free bounded lane across business doma
  for(const text of ['Receive 12 cases of Coffee','Transfer 3 Black variants to NJ','Create a purchase order'])assert.equal(reads.selected(text),false,text);
 });
 test('one model interpretation exposes registered reads and cannot supply SQL, execution or a browser',async()=>{
- let calls=0;const provider={complete:async request=>{calls++;assert.match(request.system,/No browser/);assert.match(request.prompt,/on_hand/);assert.equal(request.schemaName,'bounded_business_read');return {data:{status:'read',queries:[{dataset:'stock',summary:true,aggregate:'count'}],question:''}};}};
+ let calls=0;const provider=require('../../src/commercial/relay-provider').register({complete:async request=>{calls++;assert.match(request.system,/No browser/);assert.match(request.prompt,/on_hand/);assert.equal(request.schemaName,'bounded_business_read');return {data:{status:'read',queries:[{dataset:'stock',summary:true,aggregate:'count'}],question:''}};}});
  const plan=await reads.interpret(provider,actor,'Count stock positions');assert.equal(calls,1);assert.equal(plan.queries.length,1);
  for(const spec of [{dataset:'stock',sql:'DROP TABLE items',summary:true},{dataset:'environment_browser',summary:true},{dataset:'stock',summary:true,topN:1000000},{dataset:'stock',columns:['password_hash']}])assert.throws(()=>reads.validate({status:'read',queries:[spec],question:''},actor));
  assert.throws(()=>reads.validate({status:'read',queries:[{dataset:'journal_lines',summary:true,aggregate:'count'}],question:''},{role:'viewer',permissions:[]}));
  const mixed=reads.validate({status:'read',queries:[{dataset:'stock',summary:true,aggregate:'sum',measure:'on_hand'}],question:''},actor);assert.deepEqual(mixed.queries[0].groups,['stock_unit']);assert.equal(mixed.queries[0].summary,false);
+ for(const raw of [{complete:provider.complete},{...provider,ownsAccounting:true,commercial:true}])await assert.rejects(reads.interpret(raw,actor,'Count stock positions'),/REQUIRES_GOVERNED_PROVIDER/);assert.equal(calls,1,'Unfunded and forged provider objects cannot make a request');
 });
 test('answers render exact database values, explicit filters and truncation without another model or review loop',()=>{
  const sections=[{label:'Stock by product',config:{filters:[{field:'location',operator:'equals',value:'NJ-Main'}]},columns:['variant','on_hand'],columnLabels:{variant:'Variant','on_hand':'On hand'},rows:[{variant:'Vanilla / 500g',on_hand:'3.75'}],hasMore:true}];
