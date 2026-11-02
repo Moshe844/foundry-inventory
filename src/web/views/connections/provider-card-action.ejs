@@ -1,0 +1,8 @@
+<% const canConnect=provider.available&&includedOnPlan&&!capped&&currentUser.role==='owner',storeForm=['shopify','woocommerce','bigcommerce'].includes(provider.type); %>
+<% if(card.connection){ %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix':'Manage' %> <%= provider.name %></a><% } %>
+<% if(canConnect&&storeForm){ %>
+ <button type="button" class="btn <%= card.connection?'':'btn--primary' %>" data-modal-open="connect-<%= provider.type %>"><%= card.connection?'Connect another ':'Connect ' %><%= provider.name %></button>
+ <dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2><%= card.connection?'Connect another ':'Connect ' %><%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog>
+<% }else if(card.connection&&canConnect){ %>
+ <details><summary>Connect another <%= provider.name %> account</summary><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></details>
+<% }else if(!card.connection){ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %>

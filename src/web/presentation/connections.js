@@ -13,6 +13,15 @@ function description(provider){return descriptions[provider.type]||'Connect your
 function logo(type){return type==='shipstation_custom_store'?'shipstation':['shopify','woocommerce','bigcommerce','square','clover','gmail','microsoft365','quickbooks','xero','stripe','cardknox','shipstation'].includes(type)?type:null;}
 function issue(connection){if(status(connection)!=='Error')return null;if(['AUTHORIZATION_FAILED','REAUTHORIZATION_REQUIRED'].includes(connection.setup_status))return 'Sign in again to restore access.';if(connection.itemsNeedingMapping||connection.locationsNeedingMapping)return 'Match your products and locations to finish setup.';if(connection.openIssues)return 'Review the unresolved connection issues.';if(connection.last_error)return 'The last update failed. Review the connection to continue.';return 'Updates are behind. Check and resume the connection.';}
 function availableForCustomer(provider,runtime){return runtime!=='production'||!provider.sandboxMode;}
+function access(provider={}){
+ const type=provider.type,category=['gmail','microsoft365'].includes(type)?'email':['quickbooks','xero'].includes(type)?'accounting':type==='stripe'?'payments':provider.category==='accounting'?'accounting':['email','communication'].includes(provider.category)?'email':'commerce';
+ return ({email:{capability:'communications.email_ingestion',commercial:'connection.email'},accounting:{capability:'connections.accounting',commercial:'connection.accounting'},payments:{capability:'payments.customer',commercial:'payments.customer'},commerce:{capability:'connections.commerce',commercial:'connection.commerce'}})[category];
+}
+function groups(catalog){
+ const result=[{title:'Sales channels',types:['shopify','woocommerce','bigcommerce','square','clover']},{title:'Email',types:['gmail','microsoft365']},{title:'Accounting',types:['quickbooks','xero']},{title:'Other business systems',types:[]}],known=new Set(result.flatMap(g=>g.types));
+ for(const provider of catalog){if(known.has(provider.type)||['reference_webhook','erp_future'].includes(provider.type)||provider.integrationMode==='custom_contract')continue;const entitlement=access(provider).commercial,index=entitlement==='connection.accounting'?2:entitlement==='connection.email'?1:provider.category==='selling'?0:3;result[index].types.push(provider.type);known.add(provider.type);}
+ return result;
+}
 function cards(catalog,connections){
   return catalog.map(provider=>{
     const records=connections.filter(c=>c.provider_type===provider.type&&c.status!=='disconnected');
@@ -23,4 +32,4 @@ function cards(catalog,connections){
       needsMatching:Number(connection?.itemsNeedingMapping||0)+Number(connection?.locationsNeedingMapping||0)};
   });
 }
-module.exports={status,cards,name,historyLabel,description,logo,issue,availableForCustomer};
+module.exports={status,cards,name,historyLabel,description,logo,issue,availableForCustomer,access,groups};

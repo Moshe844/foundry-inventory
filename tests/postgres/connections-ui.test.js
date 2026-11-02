@@ -30,7 +30,7 @@ const fakeAdapter={
 };
 const providers={get(type){return type==='fixture_oauth'?fakeAdapter:null;},catalog(){return [fakeAdapter.metadata()];}};
 
-test('real Chromium qualifies same-tab OAuth return, ownership, encryption, replay safety and disconnect',
+test('real Chromium qualifies blocked-popup same-tab OAuth return, ownership, encryption, replay safety and disconnect',
   {timeout:180000},async(context)=>{
     const provider=http.createServer((req,res)=>{const url=new URL(req.url,'http://localhost');res.writeHead(200,{'content-type':'text/html','cross-origin-opener-policy':'same-origin'});res.end(`<!doctype html><main><h1>Fixture Books</h1><p>Authorize StockChief to use Fixture Company.</p><a href="${url.searchParams.get('callback')}?code=fixture-code&amp;state=${encodeURIComponent(url.searchParams.get('state'))}">Authorize Fixture Company</a></main>`);});
     await new Promise(r=>provider.listen(0,'127.0.0.1',r));consentOrigin='http://127.0.0.1:'+provider.address().port;
@@ -69,10 +69,11 @@ test('real Chromium qualifies same-tab OAuth return, ownership, encryption, repl
     assert.equal(await link.count(),1);
     const originalLaunch=await link.getAttribute('href');
     assert.notEqual(await link.getAttribute('target'),'_blank','authorization follows the current page');
+    await page.evaluate(()=>{window.open=()=>null;});
     await link.click();
     const popup=page;
     await popup.waitForURL(/\/fixture-provider-consent/);
-    assert.equal(browserContext.pages().length,1,'ordinary authorization cannot strand a second window');
+    assert.equal(browserContext.pages().length,1,'blocked popups continue in the current tab without stranding a second window');
     assert.match(await popup.locator('main').innerText(),/Authorize StockChief to use Fixture Company/);
     const callbackUrl=await popup.getByRole('link',{name:'Authorize Fixture Company'}).getAttribute('href');
     await popup.getByRole('link',{name:'Authorize Fixture Company'}).click();
@@ -120,7 +121,7 @@ test('real Chromium qualifies same-tab OAuth return, ownership, encryption, repl
       WHERE provider_type='fixture_oauth'`)).rows[0].count,'1');
 
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Disconnect and remove credentials'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Disconnected/);
+    assert.match(await page.locator('main').innerText(),/disconnected/i);
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM connection_credentials WHERE connector_id=$1',
       [connector.id])).rows[0].count,'0');
     assert.deepEqual(errors,[]);

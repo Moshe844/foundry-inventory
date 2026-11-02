@@ -1,0 +1,10 @@
+<% if(grant?.testMode){ %><p>Stripe is in test mode on this installation. No real customer card is charged.</p><% } %>
+<% if(grant?.lastAttemptError&&!stripeConnected){ %><p class="notice">Stripe was not connected. The last Stripe attempt for <%= workspaceName %> did not complete. Try connecting again when you are ready.</p><% } %>
+<div class="sc-provider-action">
+<% if(grant?.unfinished){ %><p><strong>Unfinished Stripe setup</strong></p><p>Your new-account onboarding has not finished. Continue it or discard this unfinished setup; existing payment history stays saved.</p><a class="btn" href="<%= stripeLaunch %>" data-provider-connect data-provider-type="stripe" data-provider-name="Stripe">Continue Stripe setup</a><form method="post" action="<%= stripeDisconnect %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Discard unfinished setup</button></form>
+<% }else if(stripeConnected){ %><button type="button" class="btn btn--primary" data-modal-open="payments">Manage Stripe</button>
+<% if(!pay.chargesEnabled&&/^acct_[A-Za-z0-9_]+$/.test(pay.accountId||'')){ %><a class="btn" href="https://dashboard.stripe.com/<%= pay.accountId %>/<%= pay.liveMode?'':'test/' %>account/status" target="_blank" rel="noopener">Finish Stripe <%= pay.liveMode?'':'sandbox ' %>setup</a><% } %>
+<% }else if(!locals.commercialDevelopment&&!included.has('payments.customer')){ %><a class="btn" href="/upgrade?capability=payments.customer&amp;return=%2Fsettings%2Fconnections">View plan options</a>
+<% }else if(!capped&&grant?.available){ %><p><%= grant.flow==='hosted'?'Create a sandbox merchant account to try payment collection.':'Connect and choose the account this business already uses.' %></p><a class="btn btn--primary" href="<%= stripeLaunch %>" data-provider-connect data-provider-type="stripe" data-provider-name="Stripe"><%= grant.flow==='hosted'?'Create sandbox merchant account':'Connect Stripe' %></a>
+<% }else{ %><a class="btn" href="<%= capped?'/billing':'/support' %>"><%= capped?'Review plan':'Get help connecting' %></a><% } %>
+</div>
