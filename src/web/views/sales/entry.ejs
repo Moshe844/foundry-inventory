@@ -11,8 +11,9 @@
    * Totals come from the server's pricing quote, as before.
    */
   const list=v=>Array.isArray(v)?v:[v??''];const ids=list(form.skuId),qty=list(form.quantity),prices=list(form.unitPrice),overrides=list(form.priceOverride);const count=Math.max(1,ids.length);
-  const quotation=Boolean(locals.quotation),back=quotation?{href:'/quotes',label:'Quotes'}:{href:'/orders',label:'Orders'};
-  const heading=quotation?'New quote':editOrder?'Edit draft order':'New order';
+  const quotation=Boolean(locals.quotation),back=quotation?{href:'/quotes',label:'Quotes'}:editOrder?{href:'/orders/'+editOrder.id,label:editOrder.order_number||'Order'}:{href:'/orders',label:'Orders'};
+  const editingOpen=Boolean(editOrder&&editOrder.status&&editOrder.status!=='DRAFT');
+  const heading=quotation?'New quote':editingOpen?'Edit order '+(editOrder.order_number||''):editOrder?'Edit draft order':'New order';
   // The Hendels demo inventory carries records left by automated sweeps; they
   // stay in the books but are kept out of its pickers. Chosen records always show.
   const demo=/hendel/i.test((locals.workspace&&workspace.name)||''),sweep=name=>demo&&(/^\s*(sweep|r18|rt-|qa)\b/i.test(String(name||''))||/<\/?[a-z][^>]*>/i.test(String(name||'')));
@@ -148,12 +149,12 @@
     <% } %>
     <div class="ox-sum__btns">
      <% if(quotation){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save quotation</button>
-     <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save draft changes</button>
+     <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit"><%= editingOpen?'Save changes':'Save draft changes' %></button>
      <% }else{ %><button class="ox-btn ox-btn--primary ox-btn--block" id="order-confirm-button" name="nextStep" value="confirm" aria-label="Create order and reserve stock">Create order</button>
      <button class="ox-btn ox-btn--secondary ox-btn--block" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button>
      <button class="ox-btn ox-btn--secondary ox-btn--block" name="nextStep" value="draft">Save as draft</button><% } %>
     </div>
-    <p class="ox-fine"><%= quotation?'Saving a quote holds no stock and sends nothing to the customer.':editOrder?'Saving changes keeps this a draft. No stock moves.':'Create order holds the stock for this customer. Nothing ships and nothing is invoiced until you say so.' %></p>
+    <p class="ox-fine"><%= quotation?'Saving a quote holds no stock and sends nothing to the customer.':editingOpen?'Saving releases the stock held for this order and holds it again for what it contains now.':editOrder?'Saving changes keeps this a draft. No stock moves.':'Create order holds the stock for this customer. Nothing ships and nothing is invoiced until you say so.' %></p>
    </section>
   </aside>
  </div>

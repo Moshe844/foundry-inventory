@@ -389,3 +389,79 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
   .ox-mbar__t b { display: block; font-size: 17px; color: var(--ox-text); font-variant-numeric: tabular-nums; }
   .ox-mbar .ox-btn { height: 44px; }
 }
+
+/* ---------- Order page: two columns, one money card ---------- */
+.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.ox-order__main { grid-column: 1; grid-row: 1; min-width: 0; }
+.ox-order__side { grid-column: 2; grid-row: 1; position: sticky; top: 76px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ox-order__side > .card { margin: 0; border-radius: 14px; border: 1px solid #E5E8F1; box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.04); }
+.ox-order__side > .card h2 { font-size: 15px; margin: 0 0 8px; }
+.ox-order__side > .card p { margin: 0 0 6px; color: #475069; font-size: 14px; overflow-wrap: anywhere; }
+.ox-order__side > .card .form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ox-order .stats-row { display: none; }
+.ox-order__main > .card, .ox-order__main > details, .ox-order__main > section, .ox-order__main > form.card { border-radius: 14px; }
+.ox-order__main > details.card[data-order-lines] > summary h2::after { content: ""; }
+
+.ox.ox-paycard { max-width: none; padding: 18px; margin: 0; }
+.ox-paycard__h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.ox-paycard__h h2 { margin: 0; font-size: 15px; font-weight: 650; }
+.ox-paycard__rows { margin: 0 0 12px; }
+.ox-paycard__rows > div { display: flex; justify-content: space-between; padding: 5px 0; color: var(--ox-text-2); }
+.ox-paycard__rows dd { margin: 0; color: var(--ox-text); font-weight: 500; }
+.ox-paycard__due { border-top: 1px solid var(--ox-divider); margin-top: 6px; padding-top: 10px !important; font-size: 16px; }
+.ox-paycard__due dt { color: var(--ox-text); font-weight: 650; }
+.ox-paycard__due dd { font-weight: 700 !important; }
+.ox-paycard .ox-receipts { padding: 4px 0; margin: 0 0 12px; border-top: 1px solid var(--ox-divider); }
+.ox-paycard .ox-receipts li { flex-wrap: wrap; gap: 2px 10px; }
+.ox-paycard .ox-receipts span { flex-basis: 100%; order: 3; font-size: 12px; color: var(--ox-text-3); }
+.ox-paycard__note { font-size: 13px; color: var(--ox-text-2); background: var(--ox-blue-bg); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; }
+.ox-paycard__docs { font-size: 13px; margin: 0 0 12px; }
+.ox-paycard__docs p { margin: 0 0 4px; }
+
+.ox-btn--danger { background: #E11D48; color: #fff !important; }
+.ox-btn--danger:hover { background: #BE123C; }
+.ox-modal p { margin: 0 0 8px; color: #475069; font-size: 14px; }
+.ox-modal--pay { width: min(520px, calc(100vw - 32px)); }
+.ox-pay__due { font-size: 15px; color: #0F172A !important; }
+.ox-pay__tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; background: #F1F3F8; border-radius: 12px; margin: 4px 0 14px; }
+.ox-pay__tabs button { height: 38px; border: 0; border-radius: 9px; background: transparent; font: inherit; font-weight: 600; font-size: 14px; color: #475069; cursor: pointer; }
+.ox-pay__tabs button[aria-selected="true"] { background: #fff; color: #0F172A; box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+.ox-pay__tabs button:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(79,70,229,.18); }
+.ox-pay__panel { display: flex; flex-direction: column; gap: 12px; }
+.ox-pay__panel[hidden] { display: none; }
+.ox-pay__calc { margin: 0; border: 1px solid #EEF0F6; border-radius: 12px; padding: 4px 14px; }
+.ox-pay__calc > div { display: flex; justify-content: space-between; padding: 7px 0; font-size: 14px; color: #475069; }
+.ox-pay__calc > div + div { border-top: 1px solid #EEF0F6; }
+.ox-pay__calc dd { margin: 0; color: #0F172A; font-weight: 600; }
+.ox-pay__change.is-on dd { color: #059669; font-size: 17px; font-weight: 700; }
+.ox-pay__note > summary { cursor: pointer; color: #4F46E5; font-size: 13px; font-weight: 600; list-style: none; }
+.ox-pay__note > summary::-webkit-details-marker { display: none; }
+.ox-pay__note input { margin-top: 8px; }
+.ox-pay__step { font-weight: 600; color: #0F172A !important; margin: 4px 0 0 !important; }
+.ox-bank { border: 1px solid #E5E8F1; border-radius: 12px; padding: 12px 14px; background: #FBFCFE; }
+.ox-bank__h { font-size: 12px !important; color: #7A839C !important; margin-bottom: 6px !important; }
+.ox-bank dl { margin: 0 0 10px; }
+.ox-bank dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; }
+.ox-bank dt { color: #7A839C; }
+.ox-bank dd { margin: 0; font-weight: 600; color: #0F172A; text-align: right; overflow-wrap: anywhere; }
+.ox-bank-edit > summary { cursor: pointer; color: #4F46E5; font-size: 13px; font-weight: 600; }
+.ox-bank-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.ox-modal input:not([type="hidden"]), .ox-modal select { width: 100%; height: 40px; padding: 0 12px; border: 1px solid #E5E8F1; border-radius: 10px; font: inherit; font-size: 15px; background: #fff; }
+.ox-modal input:focus, .ox-modal select:focus { outline: none; border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,.18); }
+.ox-modal .ox-field > span:first-child { font-size: 13px; font-weight: 600; color: #475069; }
+.ox-modal .ox-field { display: flex; flex-direction: column; gap: 6px; }
+.ox-modal .ox-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+@media (max-width: 1100px) { .ox-order { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 819px) {
+  .ox-order { grid-template-columns: minmax(0, 1fr); }
+  .ox-order__side { grid-column: 1; grid-row: 2; position: static; }
+  .ox-order__main { grid-row: 3; }
+  .ox-pay__tabs { grid-template-columns: 1fr 1fr; }
+  .ox-modal input:not([type="hidden"]), .ox-modal select { font-size: 16px; }
+}
+.ox.ox-modal { max-width: none; margin: auto; padding: 0; font-size: 14px; }
+.ox-order__side > .card p, .ox-order__side > .card .card-body { white-space: normal; overflow-wrap: anywhere; }
+.ox-order__side > .card .card-body { padding: 16px 18px; }
+.ox-order__main p, .ox-order__main .notice, .ox-order__main .card-body, .ox-order__main summary { white-space: normal; overflow-wrap: anywhere; }
+.ox-order__main > * { max-width: 100%; }

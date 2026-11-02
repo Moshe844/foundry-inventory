@@ -1,0 +1,38 @@
+<details class="card fold" open data-order-lines>
+  <summary class="card-head">
+    <h2>Order lines</h2>
+    <span class="spacer"></span>
+    <span class="fold-note">
+      <%= order.lines.length %> <%= order.lines.length === 1 ? 'order line' : 'order lines' %>
+      · <%= helpers.money(order.pricing.totalMinor, order.currency) %>
+      <% if (order.lines.length === 1 && order.lines[0].unit_price_minor !== null) { %>
+        · <%= helpers.money(order.lines[0].unit_price_minor, order.currency) %> each
+      <% } %>
+    </span>
+  </summary>
+  <%
+    /*
+     * Eight columns, minus the ones that are empty for every line.
+     *
+     * On a shipped order "Committed", "Short" and "Held at" are a zero, a zero
+     * and a dash, repeated down the page — three columns of width spent saying
+     * that nothing is outstanding, which the "Shipped" column already says.
+     * A column earns its place by having something in it.
+     */
+    var showCommitted = order.lines.some(function (line) { return Number(line.allocated) > 0; });
+    var showShort = order.status !== 'DRAFT' && order.lines.some(function (line) { return Number(line.backordered) > 0; });
+    var showShipped = order.lines.some(function (line) { return Number(line.quantity_fulfilled) > 0; });
+    var showHeldAt = order.lines.some(function (line) { return line.allocations.length > 0; });
+  %>
+  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><% if (showCommitted) { %><th class="num">Committed</th><% } %><% if (showShort) { %><th class="num">Short</th><% } %><% if (showShipped) { %><th class="num"><%= (locals.goneWord || 'gone').replace(/^./, function (c) { return c.toUpperCase(); }) %></th><% } %><% if (showHeldAt) { %><th>Held at</th><% } %></tr></thead><tbody>
+    <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td data-label="Ordered"><%= line.quantity_ordered %></td><td data-label="Unit price"><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td data-label="Line total"><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><% if (showCommitted) { %><td class="num" data-label="Committed"><%= line.allocated %></td><% } %><% if (showShort) { %><td class="num" data-label="Short"><% if (line.backordered) { %><strong class="is-warn"><%= line.backordered %></strong><% } else { %><span class="t-muted">—</span><% } %></td><% } %><% if (showShipped) { %><td class="num" data-label="Shipped"><%= line.quantity_fulfilled %></td><% } %><% if (showHeldAt) { %><td data-label="Held at"><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td><% } %></tr><% }) %>
+  </tbody></table></div>
+  <div class="sales-total-block">
+    <div><span>Subtotal</span><strong><%= helpers.money(order.pricing.subtotalMinor, order.currency) %></strong></div>
+    <% if (order.pricing.discountMinor) { %><div><span>Discount</span><strong>−<%= helpers.money(order.pricing.discountMinor, order.currency) %></strong></div><% } %>
+    <% if (order.pricing.chargesMinor) { %><div><span>Shipping and other charges</span><strong><%= helpers.money(order.pricing.chargesMinor, order.currency) %></strong></div><% } %>
+    <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
+    <% if(order.pricing.cancelledUnbilledMinor){ %><div><span>Cancelled, never invoiced</span><strong>−<%= helpers.money(order.pricing.cancelledUnbilledMinor,order.currency) %></strong></div><% } %><% if(order.pricing.cancelledRemainder&&order.pricing.creditedMinor){ %><div><span>Refunds and credits</span><strong>−<%= helpers.money(order.pricing.creditedMinor,order.currency) %></strong></div><% } %><div class="sales-total"><span><%= order.pricing.cancelledRemainder?'Net invoiced after cancellation':'Order total' %></span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
+  </div>
+  <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>Enter the selling price in the confirm box above, or on the product.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
+</details>

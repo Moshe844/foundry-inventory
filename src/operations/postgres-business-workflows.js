@@ -636,6 +636,60 @@ async function createSalesOrder(database, rawContext, input) {
   return transaction(database, (client) => createSalesOrderInTransaction(client, rawContext, input));
 }
 
+// The order's customer, delivery and lines replaced in place, priced by the
+// same quote as entry. Shared by draft edits and open-order edits.
+async function replaceDraftContents(client,ctx,id,order,input,eventType,eventKey){
+  const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input),at=nowIso(),promotions=require('../pricing/postgres-promotions');
+  const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});
+  if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost.');
+  await client.query('DELETE FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,id]);
+  const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,await physicalQuantity(client,ctx,line.skuId,line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
+  await client.query(`UPDATE sales_orders SET customer_id=$3,contact_email=$4,contact_phone=$5,order_date=$6,needed_by=$7,fulfillment_location_id=$8,
+    delivery_method=$9,ship_to_address=$10,ship_to_source=$11,notes=$12,reference=$13,currency=$14,version=version+1,updated_at=$15
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
+  await promotions.saveQuote(client,ctx,id,quote,lineIds);
+  await require('../domain/postgres-kit-service').captureOrder(client,ctx,id);
+  await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:id,type:eventType,detail:{previousVersion:order.version},actorId:ctx.actorId,key:eventKey+':'+id+':'+order.version,at:nowIso()});
+  return quote;
+}
+
+/*
+ * Editing an order that already holds stock, until anything ships.
+ *
+ * The held stock is released, the order is edited exactly as a draft is, and
+ * stock is held again for what it now contains, in one transaction. What the
+ * draft-only rule protects still holds: nothing invoiced, nothing shipped or
+ * being picked, and no prices fixed by an approved pricing review. Payments
+ * already taken stay; the new total cannot drop below them.
+ */
+async function editOpenSalesOrder(database,ctx,id,input){
+ return transaction(database,async client=>{
+  await requirePermission(client,ctx,access.OPERATE,'edit sales orders');
+  const order=await requireRow(client,'SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id],'That order is not in this inventory.');
+  if(!['CONFIRMED','BACKORDERED'].includes(order.status))throw new ValidationError('Only an order that has not started shipping can be edited.');
+  if(Number(input.expectedVersion)!==Number(order.version))throw new ValidationError('This order changed in another tab. Reload it before editing.');
+  const history=(await client.query(`SELECT
+    EXISTS(SELECT 1 FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'VOID') AS invoiced,
+    EXISTS(SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'CANCELLED') AS shipping,
+    EXISTS(SELECT 1 FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 AND quantity_fulfilled>0) AS fulfilled,
+    EXISTS(SELECT 1 FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$3 AND quote->>'recordedAmounts'='true') AS reviewed,
+    COALESCE((SELECT SUM(amount_minor) FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2 AND direction='CUSTOMER_RECEIPT' AND status='POSTED'),0)::bigint AS paid`,
+  [ctx.workspaceId,id,order.pricing_quote_id])).rows[0];
+  if(history.invoiced||history.fulfilled)throw new ValidationError('Part of this order has already left. Use a return or cancel the rest instead of editing it.');
+  if(history.shipping)throw new ValidationError('A pick list is open for this order. Finish or cancel the shipment before editing the order.');
+  if(history.reviewed)throw new ValidationError('The prices on this order were approved in a pricing review. Duplicate the order to change it.');
+  await client.query(`DELETE FROM sales_order_allocations WHERE workspace_id=$1 AND sales_order_line_id IN
+    (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2)`,[ctx.workspaceId,id]);
+  await require('./postgres-kit-allocations').release(client,ctx,id);
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
+  await client.query('UPDATE stockchief_runtime.pricing_redemptions SET released_at=now() WHERE workspace_id=$1 AND sales_order_id=$2 AND released_at IS NULL',[ctx.workspaceId,id]);
+  await client.query(`UPDATE sales_orders SET status='DRAFT' WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);
+  const quote=await replaceDraftContents(client,ctx,id,order,input,'order_edited','order-edit');
+  if(Number(quote.totalMinor)<Number(history.paid))throw new ValidationError('The new total is less than the customer has already paid. Lower the payment first or keep the total at least that high.');
+  const confirmed=await confirmSalesOrderInTransaction(client,ctx,id,{idempotencyKey:'order-edit-confirm:'+id+':'+order.version});
+  return {salesOrderId:id,orderNumber:order.order_number,status:confirmed.status};
+ });
+}
 async function editDraftSalesOrder(database,ctx,id,input){
  return transaction(database,async client=>{
   await requirePermission(client,ctx,access.OPERATE,'edit draft sales orders');
@@ -650,17 +704,7 @@ async function editDraftSalesOrder(database,ctx,id,input){
   [ctx.workspaceId,id,order.pricing_quote_id])).rows[0];
   if(history.protected)throw new ValidationError('This order has recorded financial or shipment history. Use a governed amendment or duplicate the order instead of replacing its draft lines.');
   if((await client.query('SELECT 1 FROM sales_order_allocations a JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,id])).rows.length)throw new ValidationError('This draft has stock commitments and cannot be replaced.');
-  const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input),at=nowIso(),promotions=require('../pricing/postgres-promotions');
-  const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});
-  if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost.');
-  await client.query('DELETE FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,id]);
-  const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,await physicalQuantity(client,ctx,line.skuId,line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
-  await client.query(`UPDATE sales_orders SET customer_id=$3,contact_email=$4,contact_phone=$5,order_date=$6,needed_by=$7,fulfillment_location_id=$8,
-    delivery_method=$9,ship_to_address=$10,ship_to_source=$11,notes=$12,reference=$13,currency=$14,version=version+1,updated_at=$15
-    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
-  await promotions.saveQuote(client,ctx,id,quote,lineIds);
-  await require('../domain/postgres-kit-service').captureOrder(client,ctx,id);
-  await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:id,type:'draft_edited',detail:{previousVersion:order.version},actorId:ctx.actorId,key:'draft-edit:'+id+':'+order.version,at:nowIso()});
+  await replaceDraftContents(client,ctx,id,order,input,'draft_edited','draft-edit');
   return {salesOrderId:id,orderNumber:order.order_number};
  });
 }
@@ -1207,6 +1251,7 @@ module.exports = {
   recordSupplierInvoice,
   previewSupplierInvoice:(database,ctx,input)=>recordSupplierInvoice(database,ctx,input,{preview:true}),
   editDraftSalesOrder,
+  editOpenSalesOrder,
   createSalesOrder,
   createSalesOrderInTransaction,
   confirmSalesOrder,

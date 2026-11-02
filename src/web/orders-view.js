@@ -73,7 +73,7 @@ function rowAction(order, tab) {
   if (order.status === 'CONFIRMED' || order.status === 'PARTIALLY_FULFILLED') {
     return { label: 'Ship', href: `${href}?open=fulfilment#fulfilment`, kind: 'secondary' };
   }
-  if (tab === 'unpaid') return { label: 'Record payment', href: `${href}?open=money#money`, kind: 'ghost' };
+  if (tab === 'unpaid') return { label: 'Record payment', href: `${href}?pay=cash`, kind: 'ghost' };
   return null;
 }
 

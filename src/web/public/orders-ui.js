@@ -52,49 +52,27 @@
     flash.setAttribute('data-ox-title', text);
     flash.classList.add('ox-toast');
     setTimeout(function () { flash.classList.add('is-gone'); }, 5000);
-    // The payment choice made on the order form: take them straight to it.
-    if (info.pay === 'collect') { if (!openCollect(true)) openMoney(); }
-    else if (info.pay === 'link') {
-      var secure = $('#secure-payment');
-      if (secure) { secure.scrollIntoView({ block: 'center' }); var go = $('button, a.btn', secure); if (go) go.focus(); }
-      else openCollect(true);
-    }
+    // The payment choice made on the order form opens that payment.
+    if (info.pay === 'collect') openPay('cash');
+    else if (info.pay === 'link') openPay('card');
   }
 
-  /* Order page: put the action buttons on the header row. */
+  /* ---------------- Order page ---------------- */
   function orderHeader() {
     var actions = $('[data-ox-order-actions]');
     var head = $('.ox-ohead-wrap ~ .page-head');
-    if (!actions) return;
-    if (head) head.appendChild(actions);
-    var strip = $('[data-ox-order-money]');
-    if (strip && head) head.insertAdjacentElement('afterend', strip);
-    // The provider's own payment card lower down is where a link is made.
-    $$('.card-head h2').forEach(function (h2) {
-      if (/^Secure customer payment$/.test(h2.textContent.trim())) h2.closest('.card').id = 'secure-payment';
-    });
-    var collect = $('#ox-collect');
-    // The links navigate as written (their destination is the contract); the
-    // page opens the form on arrival. Opening also on click covers a click on
-    // the hash that is already in the address bar.
-    $$('[data-ox-collect-open]').forEach(function (link) {
-      if (collect && link.getAttribute('href') === '#ox-collect') {
-        link.setAttribute('aria-controls', 'ox-collect');
-        // Always opens: the page may already have restored it open.
-        link.addEventListener('click', function () { openCollect(true); });
-      } else {
-        // Same address as now: the browser only scrolls, so open the form here.
-        link.addEventListener('click', function () {
-          if (link.pathname === window.location.pathname && link.search === window.location.search) openMoney();
-        });
-      }
-    });
-    var linkOpen = $('[data-ox-link-open]');
-    if (linkOpen && !$('#secure-payment')) linkOpen.hidden = true;
+    if (actions && head) head.appendChild(actions);
+    // One "Start picking": the Fulfilment panel has it, so the separate
+    // "Do this next" copy of the same button is not shown as well.
+    if ($('#fulfilment form[action$="/pick"]')) {
+      $$('.sales-primary-action').forEach(function (card) {
+        if (card.tagName !== 'DETAILS' && $('form[action$="/pick"]', card)) card.hidden = true;
+      });
+    }
   }
 
-  /* Sections the header points at by name. */
-  var SECTIONS = { 'record-left': /^Record what physically left/, 'change-order': /^Change or cancel this order/ };
+  // Sections the header points at by name.
+  var SECTIONS = { 'record-left': /^Record what physically left/ };
   function nameSections() {
     $$('details > summary').forEach(function (summary) {
       var text = summary.textContent.replace(/\s+/g, ' ').trim();
@@ -114,122 +92,84 @@
   }
 
   /*
-   * How the customer paid. A dropdown that changed nothing became a choice
-   * that asks for what that kind of payment needs (the transfer reference,
-   * the cheque number, the card approval code) and says what it records.
-   * The select stays as the posted field.
+   * Collect payment. Each tab is its own small form; cash works out the
+   * change from what was handed over and records only what the order is owed.
    */
-  var METHODS = [
-    { value: 'cash', label: 'Cash', ref: null, hint: 'Cash in hand.', button: 'Record cash payment' },
-    { value: 'card', label: 'Card', ref: 'Approval code or last 4 digits', hint: 'Already charged on your own card machine.', button: 'Record card payment' },
-    { value: 'bank transfer', label: 'Bank transfer', ref: 'Transfer reference', placeholder: 'What the transfer said', hint: 'Record it once the money is in your bank account.', button: 'Record bank transfer' },
-    { value: 'cheque', label: 'Cheque', ref: 'Cheque number', hint: 'Record it when you have the cheque.', button: 'Record cheque' },
-    { value: 'other', label: 'Other', ref: 'What was it?', required: true, hint: '', button: 'Record payment' },
-  ];
-  function paymentMethods(form, online, renameSubmit) {
-    var select = $('select[name="method"]', form);
-    if (!select || select.dataset.oxMethods) return;
-    select.dataset.oxMethods = '1';
-    var ref = $('input[name="reference"]', form);
-    var refField = ref && (ref.closest('label') || ref.parentElement);
-    var refLabel = refField && $('span', refField);
-    var submit = $('button[type="submit"], button:not([type])', form);
-    var group = document.createElement('div');
-    group.className = 'ox-methods';
-    group.setAttribute('role', 'radiogroup');
-    group.setAttribute('aria-label', 'How did they pay?');
-    var hint = document.createElement('p');
-    hint.className = 'ox-help ox-method-hint';
-    METHODS.forEach(function (method) {
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'ox-method';
-      button.setAttribute('role', 'radio');
-      button.dataset.value = method.value;
-      button.textContent = method.label;
-      button.addEventListener('click', function () { choose(method.value); button.focus(); });
-      group.appendChild(button);
-    });
-    group.addEventListener('keydown', function (event) {
-      var index = METHODS.findIndex(function (m) { return m.value === select.value; });
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') index = (index + 1) % METHODS.length;
-      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') index = (index + METHODS.length - 1) % METHODS.length;
-      else return;
-      event.preventDefault();
-      choose(METHODS[index].value);
-      $('[data-value="' + METHODS[index].value + '"]', group).focus();
-    });
-    select.classList.add('ox-native');
-    select.tabIndex = -1;
-    // Not inside the select's <label>: buttons there would also activate it.
-    (select.closest('label') || select).insertAdjacentElement('afterend', group);
-    group.insertAdjacentElement('afterend', hint);
-    function choose(value) {
-      var method = METHODS.filter(function (m) { return m.value === value; })[0] || METHODS[0];
-      if (select.value !== method.value) { select.value = method.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
-      $$('.ox-method', group).forEach(function (b) {
-        var on = b.dataset.value === method.value;
-        b.setAttribute('aria-checked', String(on));
-        b.tabIndex = on ? 0 : -1;
+  var money = function (minor, currency) {
+    try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(minor / 100); }
+    catch (e) { return (minor / 100).toFixed(2); }
+  };
+  function payDialog() {
+    var dialog = $('[data-ox-pay]');
+    if (!dialog) return;
+    var owed = Number(dialog.getAttribute('data-owed')) || 0;
+    var currency = dialog.getAttribute('data-currency') || 'USD';
+    var tabs = $$('[data-ox-pay-tab]', dialog);
+    function show(name) {
+      tabs.forEach(function (tab) {
+        var on = tab.getAttribute('data-ox-pay-tab') === name;
+        tab.setAttribute('aria-selected', String(on));
+        tab.tabIndex = on ? 0 : -1;
       });
-      if (refField) {
-        refField.hidden = !method.ref;
-        if (refLabel && method.ref) refLabel.textContent = method.ref + (method.required ? '' : ' (optional)');
-        ref.placeholder = method.placeholder || '';
-        ref.required = Boolean(method.required);
-        if (!method.ref) ref.value = '';
+      $$('[data-ox-pay-panel]', dialog).forEach(function (panel) { panel.hidden = panel.getAttribute('data-ox-pay-panel') !== name; });
+    }
+    tabs.forEach(function (tab, index) {
+      tab.addEventListener('click', function () { show(tab.getAttribute('data-ox-pay-tab')); });
+      tab.addEventListener('keydown', function (event) {
+        var step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        var next = tabs[(index + step + tabs.length) % tabs.length];
+        show(next.getAttribute('data-ox-pay-tab'));
+        next.focus();
+      });
+    });
+    dialog.oxShow = show;
+    var cash = $('[data-ox-cash]', dialog);
+    if (cash) {
+      var received = $('[data-ox-cash-received]', cash);
+      var amount = $('[data-ox-cash-amount]', cash);
+      var note = $('[data-ox-cash-note]', cash);
+      var extra = $('[data-ox-cash-extra]', cash);
+      function calc() {
+        var given = Math.round((Number(received.value) || 0) * 100);
+        var applied = Math.max(0, Math.min(given, owed));
+        var change = Math.max(0, given - owed);
+        amount.value = (applied / 100).toFixed(2);
+        $('[data-ox-cash-applied]', cash).textContent = money(applied, currency);
+        $('[data-ox-cash-change]', cash).textContent = money(change, currency);
+        $('[data-ox-cash-change]', cash).closest('div').classList.toggle('is-on', change > 0);
+        $('[data-ox-cash-left]', cash).textContent = money(owed - applied, currency);
+        $('[data-ox-cash-submit]', cash).textContent = applied ? 'Record ' + money(applied, currency) + ' cash' : 'Enter the cash received';
+        $('[data-ox-cash-submit]', cash).disabled = !applied;
+        var parts = [];
+        if (change > 0) parts.push('Cash received ' + money(given, currency) + ', change ' + money(change, currency));
+        if (extra && extra.value.trim()) parts.push(extra.value.trim());
+        note.value = parts.join(' · ').slice(0, 160);
       }
-      hint.textContent = method.hint + (method.value === 'card' && online ? ' To charge the card from here instead, use the secure payment page.' : '');
-      hint.hidden = !hint.textContent;
-      // The page's own form keeps its button wording; other code clicks it by name.
-      if (submit && renameSubmit) submit.textContent = method.button;
+      received.addEventListener('input', calc);
+      if (extra) extra.addEventListener('input', calc);
+      calc();
     }
-    select.addEventListener('change', function () { choose(select.value); });
-    choose(select.value || 'cash');
   }
-
-  function openMoney() {
-    var money = $('details#money');
-    if (!money) return false;
-    money.open = true;
-    var take = $('details.take-payment', money);
-    var online = $('#pay-online button, #pay-online a.btn', money);
-    if (take && !online) take.open = true;
-    money.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    var focus = take && take.open ? $('input[name="amount"]', take) : online;
-    if (focus) focus.focus({ preventScroll: true });
-    return true;
-  }
-
-  function openCollect(open) {
-    var collect = $('#ox-collect');
-    if (!collect) return false;
-    collect.open = open !== false;
-    if (collect.open) {
-      collect.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      var amount = $('[data-ox-collect-amount]');
-      if (amount) amount.focus();
-    }
+  function openPay(tab) {
+    var dialog = $('[data-ox-pay]');
+    if (!dialog) return false;
+    if (dialog.oxShow) dialog.oxShow(tab || 'cash');
+    if (!dialog.open && dialog.showModal) dialog.showModal();
+    var field = $('[data-ox-pay-panel]:not([hidden]) input:not([type="hidden"])', dialog);
+    if (field) field.focus();
     return true;
   }
 
   function start() {
     orderHeader();
     nameSections();
-    var online = Boolean($('#secure-payment, #pay-online .pay-buttons, #pay-online .pay-live'));
-    var early = $('#ox-collect form');
-    if (early) paymentMethods(early, online, true);
-    var late = $('details.take-payment form');
-    if (late) paymentMethods(late, online, false);
-    ['record-left', 'change-order'].forEach(function (id) {
-      if (window.location.hash === '#' + id) openSection(id);
-      $$('a[href="#' + id + '"]').forEach(function (link) { link.addEventListener('click', function () { openSection(id); }); });
-    });
-    // "Record payment" on the Orders list lands here: open the form, not just the panel.
-    if (window.location.hash === '#money' && /[?&]open=money/.test(window.location.search)) openMoney();
-    // A click on "Collect payment" before this script ran only changed the hash.
-    if (window.location.hash === '#ox-collect') openCollect(true);
-    window.addEventListener('hashchange', function () { if (window.location.hash === '#ox-collect') openCollect(true); });
+    payDialog();
+    if (window.location.hash === '#record-left') openSection('record-left');
+    $$('a[href="#record-left"]').forEach(function (link) { link.addEventListener('click', function () { openSection('record-left'); }); });
+    // Back from saving bank details: carry on with the transfer.
+    var pay = (window.location.search.match(/[?&]pay=(cash|card|transfer|cheque)/) || [])[1];
+    if (pay) openPay(pay);
     var page = $('[data-ox-page]');
     if (page && page.getAttribute('data-ox-page') === 'orders') ordersList();
     afterCreate();

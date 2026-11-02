@@ -44,6 +44,7 @@
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= helpers.shortDate(order.order_date) %><%= order.needed_by ? ' · needed by ' + helpers.shortDate(order.needed_by) : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : helpers.orderStatus(order.status,order.totals.fulfilled,order.delivery_method) %></span></div>
 <% if(order.reference){ %><p class="t-muted">Reference: <%= order.reference %></p><% } %>
+<% if (locals.postgresPlacement) { %><div class="ox-order"><aside class="ox-order__side"><%- include('order-side-v2') %><%- include('order-contact') %></aside><div class="ox-order__main"><%- include('order-lines') %><% } %>
 
 
 
@@ -163,8 +164,7 @@
   </details>
 <% } %>
 
-<% if(locals.postgresPlacement){ %><section class="card section"><div class="card-body"><h2>Order contact and destination</h2><p><%= order.customer.name %> · <%= order.customer.email||'No email' %> · <%= order.customer.phone||'No phone' %></p><p><%= order.delivery_method==='PICKUP'?'Customer pickup':order.ship_to_address||'Delivery address missing' %></p><div class="form-actions"><% if(order.status==='DRAFT'){ %><a class="btn" href="/orders/<%= order.id %>/edit">Edit draft order</a><% } %><a class="btn btn--ghost" href="/orders/new?duplicate=<%= order.id %>">Duplicate order</a></div></div></section><% } %>
-<% if(money.invoiced){ %><%- include('../components/payment-summary',{money,currency:order.currency}) %><% } %>
+<% if(money.invoiced && !locals.postgresPlacement){ %><%- include('../components/payment-summary',{money,currency:order.currency}) %><% } %>
 <% if(locals.postgresPlacement&&shipments.some(s=>['SHIPPED','DELIVERED'].includes(s.status))){ %><section class="card section" aria-label="Shipment tracking"><div class="card-body"><h2>Shipment tracking</h2><% shipments.filter(s=>['SHIPPED','DELIVERED'].includes(s.status)).forEach(s=>{const url=s.tracking_url||s.trackingUrl; %><p><a href="/fulfilment/<%= s.id %>"><%= s.shipment_number %></a> · <%= s.carrier_name||s.carrier||s.handover||'Shipped' %><% if(s.tracking_number){ %> · <% if(url){ %><a href="<%= url %>" target="_blank" rel="noopener noreferrer"><%= s.tracking_number %></a><% }else{ %><%= s.tracking_number %><% } %><% } %></p><% }); %></div></section><% } %>
 <% if (order.customer_decision_required) { %>
   <div class="card sales-action-card sales-primary-action" id="customer-decision">
@@ -667,7 +667,7 @@
       </div>
     </div>
   <% } %>
-  <details class="panel section fold" id="money" open>
+  <details class="panel section fold" id="money"<% if (!locals.postgresPlacement || locals.openSection === 'money' || locals.paymentCompleted) { %> open<% } %>>
     <summary class="panel-head">
       <div>
         <h2>Payments and receipts<%= money.outstandingMinor
@@ -917,46 +917,9 @@
   </details>
 <% } %>
 
-<details class="card fold" open data-order-lines>
-  <summary class="card-head">
-    <h2>Order lines</h2>
-    <span class="spacer"></span>
-    <span class="fold-note">
-      <%= order.lines.length %> <%= order.lines.length === 1 ? 'order line' : 'order lines' %>
-      · <%= helpers.money(order.pricing.totalMinor, order.currency) %>
-      <% if (order.lines.length === 1 && order.lines[0].unit_price_minor !== null) { %>
-        · <%= helpers.money(order.lines[0].unit_price_minor, order.currency) %> each
-      <% } %>
-    </span>
-  </summary>
-  <%
-    /*
-     * Eight columns, minus the ones that are empty for every line.
-     *
-     * On a shipped order "Committed", "Short" and "Held at" are a zero, a zero
-     * and a dash, repeated down the page — three columns of width spent saying
-     * that nothing is outstanding, which the "Shipped" column already says.
-     * A column earns its place by having something in it.
-     */
-    var showCommitted = order.lines.some(function (line) { return Number(line.allocated) > 0; });
-    var showShort = order.status !== 'DRAFT' && order.lines.some(function (line) { return Number(line.backordered) > 0; });
-    var showShipped = order.lines.some(function (line) { return Number(line.quantity_fulfilled) > 0; });
-    var showHeldAt = order.lines.some(function (line) { return line.allocations.length > 0; });
-  %>
-  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><% if (showCommitted) { %><th class="num">Committed</th><% } %><% if (showShort) { %><th class="num">Short</th><% } %><% if (showShipped) { %><th class="num"><%= (locals.goneWord || 'gone').replace(/^./, function (c) { return c.toUpperCase(); }) %></th><% } %><% if (showHeldAt) { %><th>Held at</th><% } %></tr></thead><tbody>
-    <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td data-label="Ordered"><%= line.quantity_ordered %></td><td data-label="Unit price"><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td data-label="Line total"><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><% if (showCommitted) { %><td class="num" data-label="Committed"><%= line.allocated %></td><% } %><% if (showShort) { %><td class="num" data-label="Short"><% if (line.backordered) { %><strong class="is-warn"><%= line.backordered %></strong><% } else { %><span class="t-muted">—</span><% } %></td><% } %><% if (showShipped) { %><td class="num" data-label="Shipped"><%= line.quantity_fulfilled %></td><% } %><% if (showHeldAt) { %><td data-label="Held at"><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td><% } %></tr><% }) %>
-  </tbody></table></div>
-  <div class="sales-total-block">
-    <div><span>Subtotal</span><strong><%= helpers.money(order.pricing.subtotalMinor, order.currency) %></strong></div>
-    <% if (order.pricing.discountMinor) { %><div><span>Discount</span><strong>−<%= helpers.money(order.pricing.discountMinor, order.currency) %></strong></div><% } %>
-    <% if (order.pricing.chargesMinor) { %><div><span>Shipping and other charges</span><strong><%= helpers.money(order.pricing.chargesMinor, order.currency) %></strong></div><% } %>
-    <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
-    <% if(order.pricing.cancelledUnbilledMinor){ %><div><span>Cancelled, never invoiced</span><strong>−<%= helpers.money(order.pricing.cancelledUnbilledMinor,order.currency) %></strong></div><% } %><% if(order.pricing.cancelledRemainder&&order.pricing.creditedMinor){ %><div><span>Refunds and credits</span><strong>−<%= helpers.money(order.pricing.creditedMinor,order.currency) %></strong></div><% } %><div class="sales-total"><span><%= order.pricing.cancelledRemainder?'Net invoiced after cancellation':'Order total' %></span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
-  </div>
-  <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>Enter the selling price in the confirm box above, or on the product.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
-</details>
+<% if (!locals.postgresPlacement) { %><%- include('order-lines') %><% } %>
 
-<% if (locals.returnFormKey) { %>
+<% if (locals.returnFormKey && (!locals.postgresPlacement || shipped > 0)) { %>
   <%
     var returnableLines = order.lines.filter(function (line) {
       return Number(line.quantity_fulfilled) > Number(line.quantity_returned || 0);
@@ -1081,3 +1044,5 @@
 <script>document.querySelectorAll('form#delivery-decision').forEach(function(form){function display(){var pickup=form.querySelector('[name="deliveryMethod"]:checked')?.value==='PICKUP';var address=form.querySelector('[name="shippingAddress"]');if(address){address.closest('label').hidden=pickup;address.required=!pickup;}}form.addEventListener('change',display);display();});</script>
 
 <script src="/sales-entry.js?v=<%= assetVersion %>" defer></script>
+
+<% if (locals.postgresPlacement) { %></div></div><% } %>

@@ -819,7 +819,7 @@ function createPostgresCommerceRouter(database,options={}){
     return renderEntry(req,res,{form});
   }));
   router.get('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
-    const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);if(d.order.status!=='DRAFT')throw new ValidationError('Only draft orders can be edited.');
+    const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);if(!['DRAFT','CONFIRMED','BACKORDERED'].includes(d.order.status))throw new ValidationError('Only an order that has not started shipping can be edited.');
     const q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
     return renderEntry(req,res,{form:entry.formFromOrder(d.order,d.lines,q),editOrder:d.order});
   }));
@@ -829,7 +829,12 @@ function createPostgresCommerceRouter(database,options={}){
     catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).json({error:error.message});}
   }));
   router.post('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
-    try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)});await workflows.editDraftSalesOrder(database,req.ctx,req.params.id,{...input,expectedVersion:req.body.expectedVersion});req.flash('success','Draft updated. No stock moved.');return res.redirect(303,'/orders/'+req.params.id);}
+    try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)});
+      // A confirmed order is edited by releasing and re-holding its stock; a draft as before.
+      const current=(await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];
+      if(current&&current.status!=='DRAFT'){const edited=await workflows.editOpenSalesOrder(database,req.ctx,req.params.id,{...input,expectedVersion:req.body.expectedVersion});
+        req.flash('success',edited.status==='BACKORDERED'?'Order updated. Available stock is held again; the rest waits for stock.':'Order updated. Stock is held for the new items.');return res.redirect(303,'/orders/'+req.params.id);}
+      await workflows.editDraftSalesOrder(database,req.ctx,req.params.id,{...input,expectedVersion:req.body.expectedVersion});req.flash('success','Draft updated. No stock moved.');return res.redirect(303,'/orders/'+req.params.id);}
     catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,editOrder:{id:req.params.id,version:req.body.expectedVersion},status:400});}
   }));
 
@@ -935,7 +940,9 @@ function createPostgresCommerceRouter(database,options={}){
       returns.listCustomerReturns(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
     ]);
-    return res.page('sales/order',{title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
+    const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
+    return res.page('sales/order',{bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+      canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
@@ -945,6 +952,14 @@ function createPostgresCommerceRouter(database,options={}){
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
       customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(req),
       returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form')});
+  }));
+
+  // Bank details customers use to pay by transfer; saved from the order page.
+  router.post('/settings/bank-transfer-details',requirePermission(permissions.MANAGE_ACCOUNTING,'set bank transfer details'),asyncRoute(async(req,res)=>{
+    await require('../../sales/postgres-bank-transfer-details').save(database,req.ctx,req.body);
+    const back=/^\/orders\/[A-Za-z0-9_-]+$/.test(String(req.body.returnTo||''))?String(req.body.returnTo):'/orders';
+    req.flash('success','Bank details saved. They show whenever a customer pays by bank transfer.');
+    return res.redirect(303,back+'?pay=transfer');
   }));
 
   router.post(['/orders/:id/returns','/sales/orders/:id/returns'],
