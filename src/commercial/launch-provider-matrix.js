@@ -29,7 +29,7 @@ const rows=Object.freeze([
       provider==='shipstation'?['https://docs.shipstation.com/create-labels']:
       provider==='easypost'?['https://docs.easypost.com/docs/users/billing','https://docs.easypost.com/docs/fees']:
       ['https://docs.goshippo.com/docs/guides_general/authentication/']})),
-  ...['quickbooks','xero','shopify','clover','microsoft365','supplier_email','stripe','stripe_connect','erp_future','stockchief_shipping_partner'].map(provider=>({
+  ...['quickbooks','xero','shopify','bigcommerce','clover','microsoft365','supplier_email','stripe','stripe_connect','erp_future','stockchief_shipping_partner'].map(provider=>({
     provider,status:STATUS.EXCLUDED,launch:false,
     scope:'Not an initial self-service advertised entitlement; adapters or existing records remain intact, and any reactivation requires fee/contract review.',
     evidence:provider==='quickbooks'?['https://static.developer.intuit.com/resources/Intuit_App_Partner_Program_Guide.pdf']:

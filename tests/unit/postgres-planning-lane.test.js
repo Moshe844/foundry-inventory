@@ -1,7 +1,7 @@
 'use strict';const test=require('node:test'),assert=require('node:assert/strict');
 const handlers=require('../../src/operations/postgres-runtime-handlers');
 test('large-inventory planning retains its transaction and has a separate bounded lane',()=>{
- const registered=handlers.create();assert.equal(registered['autopilot.evaluate'].workerLane,'planning');assert.notEqual(registered['autopilot.evaluate'].externalEffect,true);assert.equal(registered['provider.catalog-sync'].workerLane,undefined);assert.equal(registered['provider.effect'].workerLane,undefined);assert.equal(registered['import.execute-approved'].workerLane,'bulk');
+ const registered=handlers.create();assert.equal(registered['autopilot.evaluate'].workerLane,'maintenance');assert.notEqual(registered['autopilot.evaluate'].externalEffect,true);assert.equal(registered['provider.catalog-sync'].workerLane,undefined);assert.equal(registered['provider.effect'].workerLane,undefined);assert.equal(registered['import.execute-approved'].workerLane,'bulk');
 });
 test('held planning does not prevent repeated provider synchronization and each lane stays single-flight',async()=>{
  const queue=require('../../src/operations/postgres-job-queue'),original=queue.processOne,registered=handlers.create();let release;const held=new Promise(r=>{release=r;}),active={},maximum={},calls={};

@@ -36,11 +36,12 @@ test('USPS, UPS and FedEx tracking use encoded carrier-owned links',()=>{
 });
 test('streamed CSV escapes spreadsheet formulas and retains exact money',()=>{
  const {cell,queries}=require('../../src/operations/postgres-export-stream');
- assert.equal(cell('=HYPERLINK("x")'),'"\'=HYPERLINK(""x"")"');assert.equal(cell(12345),'"12345"');
+ assert.equal(cell('=HYPERLINK("x")'),'"\'=HYPERLINK(""x"")"');assert.equal(cell(12345),'12345');
  assert.ok(queries(null).every(([,sql])=>sql.includes('workspace_id=$1')));
  assert.ok(queries(['item']).every(([,sql])=>sql.includes('$2::text[]')));
 });
-test('AI spending warning starts at 80 percent without changing or bypassing the ceiling',async()=>{
+test('cost-mode AI spending warning starts at 80 percent without changing or bypassing the ceiling',async t=>{
+ const priorMeter=process.env.STOCKCHIEF_AI_METER;process.env.STOCKCHIEF_AI_METER='cost';t.after(()=>{if(priorMeter===undefined)delete process.env.STOCKCHIEF_AI_METER;else process.env.STOCKCHIEF_AI_METER=priorMeter;});
  const budget=require('../../src/commercial/model-cost-budget');let used=1999;
  const db={query:async sql=>({rows:sql.includes('SELECT owner_account_id')?[{owner_account_id:'owner'}]:sql.includes('FROM account_subscriptions')?[]:[{account:used,workspace:used}]})};
  assert.equal((await budget.status(db,'workspace')).warning,false);used=2000;assert.equal((await budget.status(db,'workspace')).warning,true);

@@ -5,7 +5,7 @@ test('recorded shared-budget stop is a saved funding pause, not an unexplained i
   checkpoint:{harness:{interruption:{code:'SHARED_SPENDING_CEILING'},calls:{}}}};
  const state=contract.state(goal);assert.equal(state.phase,'funding');assert.equal(state.label,'Spending limit reached');
  assert.equal(state.canReply,false);assert.equal(state.active,false);assert.equal(state.terminal,false);assert.equal(state.input,null);
- assert.match(state.message,/approved spending allowance/);assert.match(state.message,/request is saved/);assert(!state.message.includes('SHARED_SPENDING_CEILING'));
+ assert.match(state.message,/AI spending limit/);assert.match(state.message,/request is saved/);assert.match(state.message,/credits and a temporary test allowance are shown separately/);assert(!state.message.includes('SHARED_SPENDING_CEILING'));
  assert(!state.message.includes('business effects'));assert.match(state.recovery,/approved/);
  contract.sync(goal);assert.equal(contract.state(JSON.parse(JSON.stringify(goal))).phase,'funding','survives persisted context and restart');
  goal.checkpoint.harness.completionSource='partial_verified_receipt';goal.answer='The approved receipt is recorded; the report is unfinished.';

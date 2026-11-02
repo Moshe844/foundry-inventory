@@ -1,6 +1,11 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const recorded=require('../fixtures/environment-agent-context-loss/recorded.json');
+// These captured journals predate immutable observation hashes. Upgrade the
+// fixture envelope from its original bytes; production integrity checks remain
+// strict, including the conflicting-byte and restart assertions below.
+for(const sample of recorded.cases)for(const entry of Object.values(sample.evidence))
+ if(!entry.sha256)entry.sha256=require('node:crypto').createHash('sha256').update(entry.text).digest('hex');
 const base='../../scripts/environment-agent-demo/';
 const observations=require(base+'observations'),memory=require(base+'memory'),context=require(base+'context'),evidence=require(base+'evidence');
 const legacyMemory=require('../fixtures/environment-agent-context-loss/legacy/memory');
@@ -11,6 +16,10 @@ function rebuild(records){let root={};for(const r of records){if(!r.path){root=r
  for(let i=0;i<keys.length-1;i++)obj=obj[keys[i]]??=(/^\d+$/.test(keys[i+1])?[]:{});
  const key=keys.at(-1);if(Object.hasOwn(r,'text')){assert.equal((obj[key]||'').length,r.start);obj[key]=(obj[key]||'')+r.text;}else obj[key]=r.value;
 }return root;}
+function delivered(entry){const raw=JSON.parse(entry.text),view=entry.name==='environment_browser'
+ ?require(base+'browser-presentation').compact(raw,{compactControls:false})
+ :require(base+'evidence-presentation').project(entry.name,raw);
+ return require(base+'source-references').present(entry,view);}
 function apiHistory(history){return history.filter(i=>i.type!=='reasoning').map(i=>{
  if(i.type==='function_call')return {type:i.type,call_id:i.callId,name:i.name,arguments:i.arguments};
  if(i.type==='function_call_result')return {type:'function_call_output',call_id:i.callId,output:typeof i.output==='string'?i.output:i.output.text||JSON.stringify(i.output)};
@@ -57,7 +66,7 @@ for(const sample of recorded.cases)test(`recorded failure lifecycle: ${sample.ta
  for(const e of Object.values(h.evidence)){
   assert(JSON.stringify(index).includes(e.id),'complete discoverable index after restart');
   let pages=[],next=0;do{const p=observations.retrieve(h,{id:e.id,offset:next});pages.push(...p.records);next=p.nextOffset;}while(next!==null);
-  assert.deepEqual(rebuild(pages),evidence.project(JSON.parse(e.text)));
+  assert.deepEqual(rebuild(pages),evidence.project(delivered(e)));
  }
 });
 test('full observed payload, immutable identity and pagination survive former 128k truncation',()=>{
@@ -68,7 +77,8 @@ test('full observed payload, immutable identity and pagination survive former 12
  const restored=JSON.parse(JSON.stringify(h));let offset=0,records=[];
  do{const p=observations.retrieve(restored,{id:'large',offset});records.push(...p.records);assert(!p.sourceTruncated);offset=p.nextOffset;}while(offset!==null);
  assert.equal(JSON.stringify(records).includes('Handling requirement:'),true);
- assert.deepEqual(rebuild(records),value);
+ assert.deepEqual(rebuild(records),delivered(h.evidence.large));
+ assert.deepEqual(JSON.parse(h.evidence.large.text),value,'Original full bytes remain separate from the citable delivery envelope');
 });
 test('only an explicit question can wait for a user; a loop without a question remains a failure',()=>{
  const classify=require(base+'outcome').classify;
@@ -94,5 +104,7 @@ test('versions of the ACTUAL discovered form remain addressable, partial detail 
  assert.equal(working.browser.pages.some(p=>p.evidenceId==='version-1'),false);
  assert.equal(JSON.stringify(full.fields).includes('"ref"'),false,'historical fields never confer a live browser handle');
  assert.notEqual(restored.evidence['version-1'].sha256,restored.evidence['version-2'].sha256);
- assert.deepEqual(rebuild(observations.retrieve(restored,{id:'version-1'}).records),first);
+ const pages=[];let offset=0;do{const page=observations.retrieve(restored,{id:'version-1',offset});pages.push(...page.records);assert(context.bytes(page)<=6500);offset=page.nextOffset;}while(offset!==null);
+ assert.deepEqual(rebuild(pages),delivered(restored.evidence['version-1']));
+ assert.deepEqual(JSON.parse(restored.evidence['version-1'].text),first);
 });

@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
-const raw=require('../../data/commercial-real-cost-simulation.json');
+const raw=require('../fixtures/commercial-measurement-costs.json');
 const {summarize,quantiles}=require('../../src/commercial/model-cost-distribution');
 test('nearest-rank tails require enough real priced samples',()=>{
  assert.equal(quantiles([1,2,3]).p95Usd,null);

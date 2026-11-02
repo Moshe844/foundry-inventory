@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
 const measurement=require('../../docs/commercial-model-cost-distribution-2026-10-05.json');
-const render=require('../../data/commercial-render-cost-evidence-2026-10-05.json');
+const render=require('../fixtures/commercial-render-forecast.json');
 const {build,MAILBOX_POLLS_PER_MONTH}=require('../../src/commercial/readiness-simulation');
 test('seven workflow profiles retain five-minute mailbox duty cycle and separate projections from actual cash',()=>{
  const result=build({measurement,renderEvidence:render});
