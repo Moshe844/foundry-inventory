@@ -87,6 +87,16 @@ const OVERPROMISING = [
 const numbersOf = (text) => (String(text || '').match(/\d+(?:[.,]\d+)?/g) || [])
   .map((value) => value.replace(/,/g, ''));
 
+// References may contain digits without establishing a quantity. A cited
+// order number, tracking code, date or URL is valid only as that whole token.
+const REFERENCE = /https?:\/\/[^\s]+|\b\d{4}-\d{2}-\d{2}\b|\b(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*\b/g;
+function withoutReferences(text, allowed) {
+  return String(text || '').replace(REFERENCE, token => !allowed || allowed.has(token) ? ' ' : token);
+}
+function referenceTokens(facts) {
+  return new Set(facts.flatMap(value => String(value || '').match(REFERENCE) || []));
+}
+
 /**
  * Who this sender is, and everything StockChief holds about them.
  *
@@ -209,14 +219,14 @@ function withoutModel(message, facts) {
 function permittedFrom(message, facts) {
   const permitted = new Set();
   for (const value of facts) {
-    for (const number of numbersOf(value)) permitted.add(number);
+    for (const number of numbersOf(withoutReferences(value))) permitted.add(number);
   }
   return permitted;
 }
 
 function datesAreGrounded(text, message, facts) {
   const source = `${message.subject || ''} ${message.body_text || ''} ${facts.join(' ')}`.toLowerCase();
-  for (const named of String(text).match(WHEN) || []) {
+  for (const named of [...(String(text).match(WHEN) || []), ...(String(text).match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])]) {
     if (!source.includes(named.toLowerCase())) return false;
   }
   return true;
@@ -232,8 +242,8 @@ function datesAreGrounded(text, message, facts) {
 function faultIn(draft, message, facts) {
   const text = `${draft.subject} ${draft.body}`;
   const subjectNumbers=permittedFrom(message,[message.subject||'',...facts]);
-  if (!interpretation.numbersAreGrounded(draft.subject,subjectNumbers) ||
-      !interpretation.numbersAreGrounded(draft.body,permittedFrom(message,facts))) {
+  if (!interpretation.numbersAreGrounded(withoutReferences(draft.subject,referenceTokens([message.subject||'',...facts])),subjectNumbers) ||
+      !interpretation.numbersAreGrounded(withoutReferences(draft.body,referenceTokens(facts)),permittedFrom(message,facts))) {
     return 'it used a figure that is not in your records';
   }
   if (!datesAreGrounded(draft.subject,message,facts) ||
