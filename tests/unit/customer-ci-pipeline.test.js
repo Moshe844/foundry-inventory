@@ -14,6 +14,8 @@ test('the inventory regression pipeline retains every piped verdict and its fina
  // Node force-exit can discard child-to-parent verdicts on nonblocking pipes.
  // Do not allow a green build with an incomplete test inventory (nodejs/node#64833).
  assert.doesNotMatch(workflow,/node [^\r\n]*--test-force-exit/);
+ const commands=workflow.split(/\r?\n/).filter(line=>line.trimStart().startsWith('node --test '));
+ assert(commands.length>0);assert(commands.every(line=>line.startsWith('          node ')),'Every test command belongs to its YAML run block');
  const blocks=[...workflow.matchAll(/      - (?:name: [^\r\n]+\r?\n        )?run: \|\r?\n((?:          [^\n]*\r?\n)+)/g)].map(m=>m[1].replace(/^          /gm,''));
  const block=blocks.find(s=>s.includes('tee output/inventory-ci/full-regressions.log'));
  assert(block,'The full unit/integration gate remains required');
