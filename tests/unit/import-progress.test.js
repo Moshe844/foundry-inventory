@@ -1,6 +1,16 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{present}=require('../../src/imports/postgres-progress');
 
+test('recovered workers show their live attempt without presenting the previous failure as a new pause',()=>{
+ const base={id:'recovery',records_detected:10000,records_valid:10000,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',job_attempt_count:2,lease_expires_at:2000,database_now:1000,job_error:{code:'lease_expired'},integrity_hash:'approved',apply_checkpoint:{hash:'approved',cataloguePrepared:true,savedRows:4000},job_result:{importProgress:{stage:'processing',processedRows:4000,totalRows:10000,attempt:1}}};
+ const running=present(base);assert.equal(running.state,'RUNNING');assert.equal(running.reason,null);assert.equal(running.attempt,2);assert.match(running.stageLabel,/Attempt 2 · resuming saved rows/);assert.equal(running.savedRows,4000);
+ const queued=present({...base,job_status:'RETRY'});assert.equal(queued.state,'QUEUED');assert.equal(queued.reason,null);assert.doesNotMatch(queued.stageLabel,/restarting|resuming/);
+ const paused=present({...base,lease_expires_at:999});assert.equal(paused.state,'PAUSED');assert.match(paused.reason,/4,000 rows are already saved/);assert.match(paused.reason,/Continue resumes/);
+ const stopped=present({...base,job_status:'DEAD',job_error:{code:'validation_error',message:'A row needs review.'}});assert.equal(stopped.state,'NEEDS_REVIEW');assert.match(stopped.reason,/A row needs review/);
+ const complete=present({...base,plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:1});assert.equal(complete.reason,null);assert.equal(complete.stageLabel,'Inventory saved and verified');
+ const preview=present({...base,preview_status:'RUNNING',preview_result:{previewProgress:{stage:'checking',processedRows:0,totalRows:10000,attempt:1}}});assert.equal(preview.attempt,1);assert.doesNotMatch(preview.stageLabel,/Attempt 2/);
+});
+
 test('prepared row counts survive the durable progress boundary without claiming stock was saved',async()=>{
  const job={workspaceId:'fixture',id:'job',leaseToken:'lease'},progress=require('../../src/imports/postgres-progress');let stored;
  const database={query:async(sql,values)=>{stored=JSON.parse(values[3]);return {rowCount:1};}};
