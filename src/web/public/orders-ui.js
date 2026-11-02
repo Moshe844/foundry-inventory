@@ -93,6 +93,101 @@
     if (linkOpen && !$('#secure-payment')) linkOpen.hidden = true;
   }
 
+  /* Sections the header points at by name. */
+  var SECTIONS = { 'record-left': /^Record what physically left/, 'change-order': /^Change or cancel this order/ };
+  function nameSections() {
+    $$('details > summary').forEach(function (summary) {
+      var text = summary.textContent.replace(/\s+/g, ' ').trim();
+      Object.keys(SECTIONS).forEach(function (id) {
+        if (SECTIONS[id].test(text) && !document.getElementById(id)) summary.parentElement.id = id;
+      });
+    });
+  }
+  function openSection(id) {
+    var section = document.getElementById(id);
+    if (!section || section.tagName !== 'DETAILS') return false;
+    section.open = true;
+    section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    var first = $('input:not([type="hidden"]), select, textarea, button[type="submit"]', section);
+    if (first) first.focus({ preventScroll: true });
+    return true;
+  }
+
+  /*
+   * How the customer paid. A dropdown that changed nothing became a choice
+   * that asks for what that kind of payment needs (the transfer reference,
+   * the cheque number, the card approval code) and says what it records.
+   * The select stays as the posted field.
+   */
+  var METHODS = [
+    { value: 'cash', label: 'Cash', ref: null, hint: 'Cash in hand.', button: 'Record cash payment' },
+    { value: 'card', label: 'Card', ref: 'Approval code or last 4 digits', hint: 'Already charged on your own card machine.', button: 'Record card payment' },
+    { value: 'bank transfer', label: 'Bank transfer', ref: 'Transfer reference', placeholder: 'What the transfer said', hint: 'Record it once the money is in your bank account.', button: 'Record bank transfer' },
+    { value: 'cheque', label: 'Cheque', ref: 'Cheque number', hint: 'Record it when you have the cheque.', button: 'Record cheque' },
+    { value: 'other', label: 'Other', ref: 'What was it?', required: true, hint: '', button: 'Record payment' },
+  ];
+  function paymentMethods(form, online, renameSubmit) {
+    var select = $('select[name="method"]', form);
+    if (!select || select.dataset.oxMethods) return;
+    select.dataset.oxMethods = '1';
+    var ref = $('input[name="reference"]', form);
+    var refField = ref && (ref.closest('label') || ref.parentElement);
+    var refLabel = refField && $('span', refField);
+    var submit = $('button[type="submit"], button:not([type])', form);
+    var group = document.createElement('div');
+    group.className = 'ox-methods';
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'How did they pay?');
+    var hint = document.createElement('p');
+    hint.className = 'ox-help ox-method-hint';
+    METHODS.forEach(function (method) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ox-method';
+      button.setAttribute('role', 'radio');
+      button.dataset.value = method.value;
+      button.textContent = method.label;
+      button.addEventListener('click', function () { choose(method.value); button.focus(); });
+      group.appendChild(button);
+    });
+    group.addEventListener('keydown', function (event) {
+      var index = METHODS.findIndex(function (m) { return m.value === select.value; });
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') index = (index + 1) % METHODS.length;
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') index = (index + METHODS.length - 1) % METHODS.length;
+      else return;
+      event.preventDefault();
+      choose(METHODS[index].value);
+      $('[data-value="' + METHODS[index].value + '"]', group).focus();
+    });
+    select.classList.add('ox-native');
+    select.tabIndex = -1;
+    // Not inside the select's <label>: buttons there would also activate it.
+    (select.closest('label') || select).insertAdjacentElement('afterend', group);
+    group.insertAdjacentElement('afterend', hint);
+    function choose(value) {
+      var method = METHODS.filter(function (m) { return m.value === value; })[0] || METHODS[0];
+      if (select.value !== method.value) { select.value = method.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+      $$('.ox-method', group).forEach(function (b) {
+        var on = b.dataset.value === method.value;
+        b.setAttribute('aria-checked', String(on));
+        b.tabIndex = on ? 0 : -1;
+      });
+      if (refField) {
+        refField.hidden = !method.ref;
+        if (refLabel && method.ref) refLabel.textContent = method.ref + (method.required ? '' : ' (optional)');
+        ref.placeholder = method.placeholder || '';
+        ref.required = Boolean(method.required);
+        if (!method.ref) ref.value = '';
+      }
+      hint.textContent = method.hint + (method.value === 'card' && online ? ' To charge the card from here instead, use the secure payment page.' : '');
+      hint.hidden = !hint.textContent;
+      // The page's own form keeps its button wording; other code clicks it by name.
+      if (submit && renameSubmit) submit.textContent = method.button;
+    }
+    select.addEventListener('change', function () { choose(select.value); });
+    choose(select.value || 'cash');
+  }
+
   function openMoney() {
     var money = $('details#money');
     if (!money) return false;
@@ -120,6 +215,16 @@
 
   function start() {
     orderHeader();
+    nameSections();
+    var online = Boolean($('#secure-payment, #pay-online .pay-buttons, #pay-online .pay-live'));
+    var early = $('#ox-collect form');
+    if (early) paymentMethods(early, online, true);
+    var late = $('details.take-payment form');
+    if (late) paymentMethods(late, online, false);
+    ['record-left', 'change-order'].forEach(function (id) {
+      if (window.location.hash === '#' + id) openSection(id);
+      $$('a[href="#' + id + '"]').forEach(function (link) { link.addEventListener('click', function () { openSection(id); }); });
+    });
     // "Record payment" on the Orders list lands here: open the form, not just the panel.
     if (window.location.hash === '#money' && /[?&]open=money/.test(window.location.search)) openMoney();
     // A click on "Collect payment" before this script ran only changed the hash.

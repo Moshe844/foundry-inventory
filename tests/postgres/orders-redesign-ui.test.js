@@ -160,17 +160,33 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await Promise.all([page.waitForURL(new RegExp(`/orders/${createdId}$`)),page.getByRole('link',{name:'Back to the order'}).click()]);
     await page.getByRole('link',{name:'Collect payment'}).click();
     await page.locator('[data-ox-collect-amount]').fill('100.00');
-    await page.locator('#ox-collect select[name=method]').selectOption('cash');
-    await Promise.all([page.waitForURL(new RegExp(`/orders/${createdId}`)),page.getByRole('button',{name:'Record payment',exact:true}).click()]);
+    // The method changes what is asked for and what is recorded.
+    const collectForm=page.locator('#ox-collect form');
+    assert.equal(await collectForm.locator('input[name=reference]').isVisible(),false,'Cash needs no reference');
+    await collectForm.getByRole('radio',{name:'Bank transfer'}).click();
+    assert.equal(await collectForm.getByLabel('Transfer reference (optional)').isVisible(),true);
+    await collectForm.getByLabel('Transfer reference (optional)').fill('TRF-2291');
+    await collectForm.getByRole('radio',{name:'Cheque'}).click();
+    assert.equal(await collectForm.getByLabel('Cheque number (optional)').inputValue(),'TRF-2291');
+    await collectForm.getByRole('radio',{name:'Bank transfer'}).click();
+    await Promise.all([page.waitForURL(new RegExp(`/orders/${createdId}`)),collectForm.getByRole('button',{name:'Record bank transfer',exact:true}).click()]);
     assert.match(await page.locator('[data-ox-order-money]').innerText(),/Paid\s+\$100\.00\s+Balance due\s+\$160\.00\s+Payment\s+Partly paid/);
-    const deposit=(await database.query(`SELECT amount_minor,sales_order_id FROM accounting_payments WHERE sales_order_id=$1`,[createdId])).rows;
-    assert.deepEqual(deposit.map((row)=>Number(row.amount_minor)),[10000]);
+    assert.match(await page.locator('.ox-receipts').innerText(),/\$100\.00\s+bank transfer · TRF-2291/);
+    const deposit=(await database.query(`SELECT amount_minor,method,reference FROM accounting_payments WHERE sales_order_id=$1`,[createdId])).rows;
+    assert.deepEqual(deposit.map((row)=>[Number(row.amount_minor),row.method,row.reference]),[[10000,'bank transfer','TRF-2291']]);
+    assert.equal((await page.goto(`${base}${await page.locator('.ox-receipts a').getAttribute('href')}`)).status(),200);
+    await page.goto(`${base}/orders/${createdId}`);
+    // A shipped (carrier) order: Ship order and Change order; nothing about pickup.
+    assert.equal(await page.locator('[data-ox-order-actions]').getByRole('link',{name:'Ship order'}).count(),1);
+    assert.equal(await page.locator('[data-ox-order-actions]').getByRole('link',{name:'Mark picked up'}).count(),0);
+    await page.locator('[data-ox-order-actions]').getByRole('link',{name:'Change order'}).click();
+    assert.equal(await page.locator('#change-order').evaluate((details)=>details.open),true);
     assert.equal(Number((await database.query(`SELECT COUNT(*) AS n FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id
       WHERE l.sales_order_id=$1`,[createdId])).rows[0].n)>0,true,'Paying moved no stock and the reservation stands');
     await page.locator('[data-ox-collect-amount]').evaluate((input)=>{input.max='';});
     await page.getByRole('link',{name:'Collect payment'}).click();
     await page.locator('[data-ox-collect-amount]').fill('500.00');
-    await page.getByRole('button',{name:'Record payment',exact:true}).click();
+    await page.locator('#ox-collect form button[type=submit]').click();
     assert.match(await page.locator('main').innerText(),/more than this order still owes/);
     await page.goto(`${base}/orders?q=SO-00004`);
     assert.match(await page.locator('tbody').innerText(),/Partly paid/);
@@ -181,6 +197,20 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Save draft',exact:true}).click()]);
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE id=$1',[page.url().split('/').pop()])).rows[0].status,'DRAFT');
     assert.match(await page.locator('.ox-toast').innerText(),/draft/i);
+    // A draft can be edited from the header.
+    await Promise.all([page.waitForURL(/\/edit$/),page.locator('[data-ox-order-actions]').getByRole('link',{name:'Edit order'}).click()]);
+    assert.equal(await page.locator('main h1').innerText(),'Edit draft order');
+    assert.equal(await page.locator('[data-order-line] [name=quantity]').first().inputValue(),'1');
+
+    // 6b. A pickup order's next step is the hand-over, not shipping.
+    await page.goto(`${base}/orders/new?customer=${sarah.id}`);
+    await productSearch.fill('air max');await productSearch.press('Enter');
+    await page.getByText('Customer pickup',{exact:true}).click();
+    await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Create order and reserve stock',exact:true}).click()]);
+    const pickupActions=page.locator('[data-ox-order-actions]');
+    assert.equal(await pickupActions.getByRole('link',{name:'Ship order'}).count(),0);
+    await pickupActions.getByRole('link',{name:'Mark picked up'}).click();
+    assert.equal(await page.locator('#record-left').evaluate((details)=>details.open),true);
 
     // 7. New customer from the search list is created and selected; pickup hides Ship to and completes.
     await page.goto(`${base}/orders/new`);
