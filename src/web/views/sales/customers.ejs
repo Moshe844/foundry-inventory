@@ -24,7 +24,7 @@
             <td><a href="/sales/customers/<%= customer.id %>"><%= customer.name %></a><% if (customer.company) { %><span class="cell-sub"><%= customer.company %></span><% } %></td>
             <td class="muted"><%= customer.email || customer.phone || '—' %></td>
             <td class="num"><%= customer.order_count %></td>
-            <td class="num"><a href="/sales/customers/<%= customer.id %>">Open</a></td>
+            <td class="num"><% if (canAddCustomer) { %><a class="btn btn--ghost btn--sm" href="/orders/new?customer=<%= customer.id %>" aria-label="New order for <%= customer.name %>">New order</a> <% } %><a href="/sales/customers/<%= customer.id %>">Open</a></td>
           </tr>
         <% }) %>
       </tbody>

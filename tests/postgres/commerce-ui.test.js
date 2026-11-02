@@ -41,12 +41,12 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     const addressCustomer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name=$2`,
       [ctx.workspaceId,'Address Required Customer'])).rows[0];
     await page.goto(`${base}/orders/new?customer=${addressCustomer.id}`);
-    const destination=page.getByLabel('Delivery address for this order');
+    const destination=page.locator('[name=customerShippingAddress]');
     assert.match(await destination.inputValue(),/20 Default Road/);
     await destination.fill('');
     await page.getByLabel('Product or variant').selectOption(item.skuIds[0]);
     await page.getByLabel('Quantity').fill('1');
-    await page.getByLabel('Price editable selling price').fill('15.00');
+    await page.getByLabel('Price',{exact:true}).fill('15.00');
     await page.locator('#order-confirm-button').click();
     assert.equal(page.url(),`${base}/orders/new?customer=${addressCustomer.id}`);
     assert.equal(await destination.evaluate((element)=>element.validity.valueMissing),true);
@@ -126,17 +126,14 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/Set up purchasing/);
     assert.match(await page.locator('main').innerText(),/Commerce Boot/);
 
-    await page.goto(`${base}/orders`);await page.locator('#customers > summary').click();
-    const customerForm=page.locator('#customers');
-    const customerInputWidths=await customerForm.locator('input[name="name"], input[name="email"]').evaluateAll(
-      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
-    assert.equal(customerInputWidths.length,2);
-    assert.ok(customerInputWidths.every((width)=>width>300),`Customer form controls were ${customerInputWidths.join(', ')}px wide.`);
-    assert.ok(Math.abs(customerInputWidths[0]-customerInputWidths[1])<=2,'Customer form columns must align.');
-    await customerForm.getByLabel('Name').fill('Pickup Customer');await customerForm.getByLabel('Email').fill('pickup@example.test');
-    await Promise.all([page.waitForNavigation(),customerForm.getByRole('button',{name:'Add customer'}).click()]);
+    // Customers are added from the New order form's dialog, not a form under the Orders list.
     await page.goto(`${base}/orders`);
-    await page.goto(base+'/orders/new');await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});
+    await Promise.all([page.waitForURL(`${base}/orders/new`),page.getByRole('link',{name:'New order',exact:true}).click()]);
+    const customerDialog=page.locator('#new-order-customer');
+    await page.getByRole('button',{name:'+ New customer',exact:true}).click();
+    await customerDialog.locator('[name=name]').fill('Pickup Customer');await customerDialog.locator('[name=email]').fill('pickup@example.test');
+    await customerDialog.getByRole('button',{name:'Save customer'}).click();await customerDialog.waitFor({state:'hidden'});
+    assert.equal(await page.locator('#order-customer option:checked').innerText(),'Pickup Customer');
     await page.getByLabel('Product or variant').selectOption(item.skuIds[0]);await page.getByLabel('Quantity',{exact:true}).fill('4');
     await page.locator('input[name="unitPrice"]').fill('15.00');await page.locator('[name="deliveryMethod"][value="PICKUP"]').check();
     await page.locator('[name="fulfillmentLocationId"]').selectOption(location.id);
