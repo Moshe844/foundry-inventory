@@ -6,6 +6,15 @@ const {randomBytes}=require('node:crypto');
 const signature=require('cookie-signature');
 const {Pool}=require('pg');
 
+// pg-pool removes a broken idle client before emitting this event. Listening
+// keeps a transient disconnect from terminating every tenant's agent worker;
+// the next query obtains a fresh client with the same restricted credentials.
+function observePoolErrors(pool,errors){
+  pool.on('error',error=>{const code=typeof error?.code==='string'&&/^[a-z0-9_]{1,64}$/i.test(error.code)?error.code:'connection_error';
+    errors.push({code,at:new Date().toISOString()});if(errors.length>20)errors.shift();});
+  return pool;
+}
+
 // This function accepts only the private, ephemeral cluster returned by the
 // test helper, never DATABASE_URL. RLS is added only inside that disposable DB.
 async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
@@ -39,11 +48,14 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   const scopes=require('./inspection-scopes'),scopeView='stockchief_runtime.codex_pilot_workspace_access';
   const view=(await admin.query("SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='stockchief_runtime' AND c.relname='codex_pilot_workspace_access' AND c.relkind='v'")).rows[0];
   if(!view?.reloptions?.includes('security_invoker=true'))throw Error('UNSAFE_INSPECTION_ACCESS_VIEW');
+  const stockView=(await admin.query("SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='sales_stock_commitments' AND c.relkind='v'")).rows[0];
+  if(!stockView?.reloptions?.includes('security_invoker=true'))throw Error('UNSAFE_INSPECTION_STOCK_VIEW');
   await scopes.ensure(admin,tables,foreignKeys);
   await scopes.createRole(admin,{role,password,ctx,accountId,kind:'read',scopeView,tables});
   connection.username=role;connection.password=password;
-  const pool=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:4,idleTimeoutMillis:4*60000});
+  const connectionErrors=[];
+  const pool=observePoolErrors(new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:4,idleTimeoutMillis:4*60000}),connectionErrors);
   const query=(sql,values=[])=>pool.query(sql,values);
   async function transaction(operation){const client=await pool.connect();
     try{await client.query('BEGIN READ ONLY');const result=await operation({query:(sql,values=[])=>client.query(sql,values)});
@@ -51,7 +63,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   let poolClosed=false,roleCleaned=false;
-  return {query,transaction,renewLease:()=>scopes.renew(admin,role),close:async()=>{if(!poolClosed){await pool.end();poolClosed=true;}if(stagingAuthorization&&!roleCleaned){await scopes.drop(admin,[role]);roleCleaned=true;}},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
+  return {query,transaction,connectionErrors,renewLease:()=>scopes.renew(admin,role),close:async()=>{if(!poolClosed){await pool.end();poolClosed=true;}if(stagingAuthorization&&!roleCleaned){await scopes.drop(admin,[role]);roleCleaned=true;}},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 
 async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},stagingAuthorization=null}){
@@ -66,8 +78,9 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   try{await require('./inspection-scopes').createRole(database,{role,password,ctx,accountId:readonly.accountId,kind:'metrics'});}
   catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
-  const telemetry=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:2,idleTimeoutMillis:4*60000});
+  const telemetryErrors=[];
+  const telemetry=observePoolErrors(new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:2,idleTimeoutMillis:4*60000}),telemetryErrors);
   // Preparing the renderer alone left both TLS pools cold on the first page.
   // Open their existing bounded capacity before publishing the ready server.
   // No record, permission result or page content is cached by this warm-up.
@@ -76,7 +89,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   try{await Promise.all([...Array.from({length:4},()=>readonly.query('SELECT 1')),
     ...Array.from({length:2},()=>telemetry.query('SELECT 1'))]);}
   catch(error){await Promise.allSettled([readonly.close(),closeTelemetry()]);throw error;}
-  const telemetryErrors=[];const pendingTelemetry=new Set();
+  const pendingTelemetry=new Set();
   const resourceDatabase={query(sql,values){const call=telemetry.query(sql,values).catch(error=>{
     telemetryErrors.push({code:error.code,message:error.message});throw error;});
     pendingTelemetry.add(call);call.finally(()=>pendingTelemetry.delete(call)).catch(()=>{});return call;}};
@@ -106,4 +119,4 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
       const results=await Promise.allSettled([readonly.close(),closeTelemetry()]);
       const failed=results.find(result=>result.status==='rejected');if(failed)throw failed.reason;}};
 }
-module.exports={inspectionDatabase,createInspectionServer};
+module.exports={inspectionDatabase,createInspectionServer,observePoolErrors};
