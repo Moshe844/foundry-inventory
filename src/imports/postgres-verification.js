@@ -1,34 +1,44 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
-
-// Reconcile the exact frozen source identities in bounded key batches. A final
-// whole-import join can otherwise sort or rescan every freshly written record
-// while its committed statistics still describe an empty inventory.
+// Reconcile a bounded source batch in one statement. Materialized canonical
+// rows are shared by the cost, posted-value and per-row identity checks. The
+// final whole-import pass still runs independently after all durable commits.
+const SQL=`WITH costs AS MATERIALIZED (
+ SELECT cost_source_record_id AS row_id,sku_id,location_id,journal_entry_id,cost_delta_minor
+ FROM accounting_inventory_cost_movements WHERE workspace_id=$1
+ AND cost_source_type IN('opening_inventory','import_stock_count') AND cost_source_record_id=ANY($2::text[])
+), entries AS MATERIALIZED (
+ SELECT id,source_record_type FROM accounting_journal_entries WHERE workspace_id=$1
+ AND id=ANY(ARRAY(SELECT DISTINCT journal_entry_id FROM costs WHERE journal_entry_id IS NOT NULL))
+ AND source_type IN('opening_inventory','import_stock_count')
+ AND ((source_record_type='import_row' AND source_record_id=ANY($2::text[])) OR source_record_type='import_batch')
+), lines AS MATERIALIZED (
+ SELECT l.entry_id,l.sku_id,l.location_id,l.metadata::jsonb->>'importRowId' AS row_id,
+ l.debit_minor-l.credit_minor AS amount,e.source_record_type
+ FROM accounting_journal_lines l JOIN entries e ON e.id=l.entry_id
+ WHERE l.workspace_id=$1 AND l.entry_id=ANY(ARRAY(SELECT id FROM entries))
+ AND l.account_id=ANY(ARRAY(SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='INVENTORY_ASSET'))
+), expected AS (
+ SELECT row_id,sku_id,location_id,journal_entry_id AS entry_id,sum(cost_delta_minor) AS amount
+ FROM costs WHERE journal_entry_id=ANY(ARRAY(SELECT id FROM entries WHERE source_record_type='import_batch'))
+ GROUP BY row_id,sku_id,location_id,journal_entry_id
+), actual AS (
+ SELECT row_id,sku_id,location_id,entry_id,sum(amount) AS amount,count(*) AS lines
+ FROM lines WHERE source_record_type='import_batch' AND row_id=ANY($2::text[])
+ GROUP BY row_id,sku_id,location_id,entry_id
+)
+SELECT (SELECT coalesce(sum(cost_delta_minor),0)::text FROM costs) AS value,
+ (SELECT count(*)::int FROM costs) AS movements,
+ (SELECT coalesce(sum(amount),0)::text FROM lines WHERE source_record_type='import_row' OR row_id=ANY($2::text[])) AS posted,
+ (SELECT count(*)::int FROM expected e FULL JOIN actual a USING(row_id,sku_id,location_id,entry_id)
+ WHERE e.amount IS NULL OR a.amount IS NULL OR e.amount<>a.amount OR a.lines<>1) AS mismatches
+`;
 async function totals(client,workspaceId,rowIds){
  let value=0n,posted=0n,movements=0;
- const accounts=(await client.query("SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='INVENTORY_ASSET'",[workspaceId])).rows.map(row=>row.id);
- for(let start=0;start<rowIds.length;start+=2000){const ids=rowIds.slice(start,start+2000);
-  const cost=(await client.query(`SELECT COALESCE(sum(cost_delta_minor),0)::text AS value,count(*)::int AS movements,array_remove(array_agg(DISTINCT journal_entry_id),NULL) AS journal_ids
-   FROM accounting_inventory_cost_movements WHERE workspace_id=$1
-    AND cost_source_type IN ('opening_inventory','import_stock_count') AND cost_source_record_id=ANY($2::text[])`,[workspaceId,ids])).rows[0];
-  value+=BigInt(cost.value);movements+=Number(cost.movements);
-  const entries=cost.journal_ids?.length?(await client.query(`SELECT id,source_record_type FROM accounting_journal_entries WHERE workspace_id=$1
-   AND id=ANY($2::text[]) AND source_type IN ('opening_inventory','import_stock_count')
-   AND ((source_record_type='import_row' AND source_record_id=ANY($3::text[])) OR source_record_type='import_batch')`,[workspaceId,cost.journal_ids,ids])).rows:[];
-  for(let offset=0;offset<entries.length;offset+=500){const page=entries.slice(offset,offset+500),legacy=page.filter(e=>e.source_record_type==='import_row').map(e=>e.id),batches=page.filter(e=>e.source_record_type==='import_batch').map(e=>e.id),lines=(await client.query(`SELECT COALESCE(sum(debit_minor-credit_minor),0)::text AS value
-   FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($2::text[]) AND account_id=ANY($3::text[])
-   AND (entry_id=ANY($4::text[]) OR (entry_id=ANY($5::text[]) AND metadata::jsonb->>'importRowId'=ANY($6::text[])))`,[workspaceId,page.map(e=>e.id),accounts,legacy,batches,ids])).rows[0];posted+=BigInt(lines.value);
-   if(batches.length){const mismatch=(await client.query(`WITH expected AS(
-    SELECT cost_source_record_id row_id,sku_id,location_id,journal_entry_id entry_id,sum(cost_delta_minor) amount
-    FROM accounting_inventory_cost_movements WHERE workspace_id=$1 AND cost_source_record_id=ANY($2::text[]) AND journal_entry_id=ANY($3::text[])
-     AND cost_source_type IN('opening_inventory','import_stock_count') GROUP BY cost_source_record_id,sku_id,location_id,journal_entry_id
-   ),actual AS(
-    SELECT metadata::jsonb->>'importRowId' row_id,sku_id,location_id,entry_id,sum(debit_minor-credit_minor) amount,count(*) lines
-    FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($3::text[]) AND account_id=ANY($4::text[]) AND metadata::jsonb->>'importRowId'=ANY($2::text[])
-    GROUP BY metadata::jsonb->>'importRowId',sku_id,location_id,entry_id
-   ) SELECT count(*)::int n FROM expected e FULL JOIN actual a USING(row_id,sku_id,location_id,entry_id)
-   WHERE e.amount IS NULL OR a.amount IS NULL OR e.amount<>a.amount OR a.lines<>1`,[workspaceId,ids,batches,accounts])).rows[0];if(mismatch.n)throw new ValidationError('The imported source rows and their recorded receipt values do not match. The current batch was not saved.');}
-  }
+ for(let start=0;start<rowIds.length;start+=2000){
+  const row=(await client.query(SQL,[workspaceId,rowIds.slice(start,start+2000)])).rows[0];
+  if(row.mismatches)throw new ValidationError('The imported source rows and their recorded receipt values do not match. The current batch was not saved.');
+  value+=BigInt(row.value);posted+=BigInt(row.posted);movements+=Number(row.movements);
  }
  return {value:{value:value.toString(),movements},posted:{value:posted.toString()}};
 }
