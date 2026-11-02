@@ -1,6 +1,7 @@
 'use strict';
 
 const { newId, nowIso } = require('../lib/util');
+const {newAppendId}=require('../lib/append-id');
 const { ValidationError, InsufficientStockError, InvariantError } = require('./errors');
 const permissions = require('../actions/permissions');
 const physicalInput=require('./physical-stock-input');
@@ -278,8 +279,8 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before:Number(row.on_hand),after:Number(row.on_hand)}])),operations=[],movements=[],results=[];
   for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:true,total:true});
     if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
-    const result={movementId:newId('mv'),groupId:newId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:receiptLots.get(value.index)?.id||null,serials:[],serialUnitIds:[]};
-    operations.push({id:newId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,lot_id:result.lotId,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
+    const result={movementId:newAppendId('mv'),groupId:newAppendId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:receiptLots.get(value.index)?.id||null,serials:[],serialUnitIds:[]};
+    operations.push({id:newAppendId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,lot_id:result.lotId,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
   }
   // Results and movement identities are already known. Save their final receipt
   // once in this same transaction; a later failure rolls it back with the stock.
