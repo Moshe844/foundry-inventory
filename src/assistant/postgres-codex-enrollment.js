@@ -3,9 +3,11 @@ const {AuthorizationError,ValidationError}=require('../domain/errors');
 const entitlements=require('../commercial/entitlements'),scopePolicy=require('./codex-pilot-scope');
 async function policy(db,ctx){
  if(!scopePolicy.customerAccess())throw new AuthorizationError('The customer agent rollout is not enabled.');
- const row=(await db.query(`SELECT w.owner_account_id,a.email_verified_at,actor.email_verified_at AS actor_verified,u.role FROM workspaces w
+ const row=(await db.query(`SELECT w.owner_account_id,a.email_verified_at,actor.email_verified_at AS actor_verified,actor_access.disabled_at AS actor_disabled_at,u.role FROM workspaces w
   JOIN users u ON u.workspace_id=w.id AND u.id=$2 JOIN accounts a ON a.id=w.owner_account_id JOIN accounts actor ON actor.id=u.account_id
+  LEFT JOIN platform_account_access actor_access ON actor_access.account_id=actor.id
   WHERE w.id=$1 AND w.deletion_requested_at IS NULL`,[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(row?.actor_disabled_at)throw new AuthorizationError('Account access has been disabled by StockChief. Contact support@stockchiefhq.com for help.');
  if(!row||!row.email_verified_at||!row.actor_verified)throw new AuthorizationError('A verified account and current business membership are required.');
  const scope={accountId:row.owner_account_id,workspaceId:ctx.workspaceId};
  const subscription=await entitlements.subscriptionFor(db,scope.accountId);

@@ -1,0 +1,20 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('disabled owners or staff cannot warm or acquire a renderer while another authorized account stays available',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);let pool;
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_CUSTOMER_ACCESS','FOUNDRY_DATABASE_URL'],previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ t.after(async()=>{await pool?.close();await db.close();await cluster.stop();for(const k of keys)if(previous[k]===undefined)delete process.env[k];else process.env[k]=previous[k];});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_CODEX_CUSTOMER_ACCESS:'1',FOUNDRY_DATABASE_URL:cluster.connectionString});
+ const auth=require('../../src/domain/postgres-auth-service'),actors=[];for(const name of ['First owner','Other owner','Staff account'])actors.push(await auth.createBusiness(db,{name,businessName:name+' business',email:randomUUID()+'@example.test',password:'Warm-denial!'+randomUUID()}));
+ for(const actor of actors.slice(0,2))await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_TEST')",[randomUUID(),actor.accountId]);
+ const first={workspaceId:actors[0].workspaceId,actorId:actors[0].userId},other={workspaceId:actors[1].workspaceId,actorId:actors[1].userId},staff={workspaceId:first.workspaceId,actorId:'warm-staff-'+randomUUID()};
+ await db.query("INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,'Staff fixture','staff',now())",[staff.actorId,staff.workspaceId,actors[2].accountId]);
+ const enroll=require('../../src/assistant/postgres-codex-enrollment'),pilot=require('../../src/assistant/postgres-codex-pilot');await enroll.ensure(db,first);await enroll.ensure(db,other);
+ pool=require('../../scripts/environment-agent-demo/inspection-pool').createPool({maxEntries:3});const options=ctx=>({database:db,ctx,connectionString:cluster.connectionString});
+ assert.equal(await pool.warm(options(first)),true);assert.equal(await pool.warm(options(staff)),true);
+ const disable=accountId=>db.query("INSERT INTO platform_account_access(account_id,disabled_at,reason,changed_by) VALUES($1,now(),'Isolated account denial qualification',$2)",[accountId,actors[0].accountId]);
+ await disable(actors[1].accountId);assert.equal(await pool.warm(options(other)),false);await assert.rejects(pool.acquire(options(other)),e=>e.code==='forbidden');
+ await disable(actors[2].accountId);assert.equal(await pool.warm(options(staff)),false);await assert.rejects(pool.acquire(options(staff)),e=>e.code==='forbidden');await assert.rejects(enroll.policy(db,staff),e=>e.code==='forbidden');
+ const allowed=await pool.acquire(options(first));assert.equal((await fetch(allowed.server.origin+'/inventory')).status,200);await allowed.release();
+ await assert.rejects(pilot.access(db,staff,{enabled:true}),e=>e.code==='forbidden');assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n,0);
+});
