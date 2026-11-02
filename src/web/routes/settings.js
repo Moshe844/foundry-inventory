@@ -205,6 +205,10 @@ router.get(
     const newFeedToken = req.session.newFeedToken || null;
     delete req.session.newFeedToken;
     res.page('settings', {
+      searchableSettingsSections: require('../presentation/search-pages').settingsSections,
+      settingsSectionHashes: require('../presentation/navigation').settingsSectionHashes,
+      settingsSection: ['general','team','notifications','ai','data','advanced'].includes(req.query.section)
+        ? req.query.section : newFeedToken ? 'advanced' : 'general',
       title: 'Settings',
       nav: 'settings',
       room: true,

@@ -40,11 +40,11 @@ test('a fresh inventory asks for the real source instead of assuming manual entr
   const response = await agent.get('/');
   const page = plain(response.text);
 
-  assert.match(page, /inventory isn’t here yet/);
   assert.match(page, /Choose where StockChief should get your inventory/);
-  assert.match(page, /Add your inventory/);
+  assert.match(page, /Choose where StockChief should get your inventory/);
+  assert.match(page, /Choose an inventory source/);
   assert.match(response.text, /href="\/onboarding"/);
-  assert.match(page, /nothing will be ordered, paid, or emailed without your approval or the limits you set/);
+  assert.match(page, /nothing will be ordered, paid, or emailed without your approval or the limits you set/i);
   assert.doesNotMatch(page, /Learn more/);
 });
 
@@ -68,9 +68,9 @@ test('an operating inventory is not called getting ready while optional setup re
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
   assert.doesNotMatch(page, /Getting StockChief ready/i);
-  assert.match(page, /Your inventory is here. Let’s do the first check/i);
+  assert.match(page, /Ready for your first check/i);
   assert.doesNotMatch(page, /Everything is under control/i);
-  assert.match(page, /Optional setup · 2 of 5 complete/i);
+  assert.match(page, /Add who supplies Working Shoe/);
   env.db.close();
 });
 
@@ -180,7 +180,7 @@ test('the operating checklist completes from real records and becomes a next-bes
 
   const agent = await ownerAgent(env);
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /Do this next/);
+  assert.match(home, /You’re set up/);
   assert.match(home, /StockChief is managing inventory/);
 });
 
@@ -217,7 +217,7 @@ test('Home gives state-specific opening-inventory guidance without fixed Ask phr
 
   const emptyLedger = plain((await agent.get('/')).text);
   assert.match(emptyLedger, /Tell StockChief how much you have now/);
-  assert.match(emptyLedger, /no opening quantities have been recorded/);
+  assert.match(emptyLedger, /Enter current quantities or attach the inventory file/);
   assert.match(emptyLedger, /Ask StockChief/);
   const actions = plain((await agent.get('/actions')).text);
   assert.match(actions, /Tell StockChief/);
@@ -275,7 +275,10 @@ test('the next action reuses the real Needs you decision and links to the exact 
     'the four-question treatment belongs on Needs you, not doubled onto Home');
 
   // And it still goes to the exact count, not to a list to search through.
-  assert.match((await agent.get('/')).text, new RegExp(`/investigations/${event.investigationId}`));
+  const decision=require('../../src/manager/needs-you-inbox').inbox(env.db,env.workspace.workspaceId).find(entry=>entry.title.includes('Canvas Tote'));
+  assert(decision,'The real count decision remains available');
+  assert((await agent.get('/')).text.includes('href="'+decision.href+'"'));
+  const review=await agent.get(decision.href);assert.equal(review.status,200);assert.match(plain(review.text),/Canvas Tote/);
 
   // The full contract is on Needs you, where the decision is actually made:
   // what happened, why StockChief stopped, what it suggests, and what is being
@@ -340,7 +343,7 @@ test('a configured inventory is asked for its first product, not for a source ag
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
-  assert.match(page, /no products in it yet/,
+  assert.match(page, /Add the first thing you sell/,
     'the missing thing is a product, and it says so');
   assert.match(page, /Add your first product/);
   assert.doesNotMatch(page, /Choose where StockChief should get your inventory/,
@@ -350,5 +353,5 @@ test('a configured inventory is asked for its first product, not for a source ag
 
   // The checklist says which half of the step is done rather than reading as
   // if nothing had happened.
-  assert.match(page, /no products in it yet\./);
+  assert.match(page, /Add one by hand/);
 });

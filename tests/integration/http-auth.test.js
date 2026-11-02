@@ -51,7 +51,7 @@ test('sign in fails for a wrong password and succeeds for the right one', async 
   const home = await agent.get('/');
   assert.equal(home.status, 200);
   // Signing in lands on the brief, which is what "/" is now.
-  assert.match(home.text, /class="rm-tab is-on" href="\/"/);
+  assert.match(home.text, /href="\/" aria-current="page"/);
 });
 
 test('registration creates an account and its first real inventory before source selection', async () => {
@@ -100,6 +100,7 @@ test('registration creates an account and its first real inventory before source
 
 test('adding the first location resumes the blocked stock receipt and opens its review', async () => {
   const store = makeApp();
+  store.app.locals.aiProvider=require('../helpers/receipt-intent')({item:'Shoes',quantity:50,location:'Main Warehouse'});
   const workspace = seedWorkspace(store.db);
   const shoes = makeQuantityItem(store.db, workspace.ctx, { name: 'Shoes', baseCode: 'SHOE-1' });
   store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
@@ -313,8 +314,8 @@ test('every main nav destination renders where it says, even when empty', async 
 
   // And Overview says what is actually true about this inventory.
   const overview = plain((await agent.get('/')).text);
-  assert.match(overview, /inventory isn’t here yet/);
-  assert.match(overview, /Add your inventory/);
+  assert.match(overview, /Add the first place you keep stock/);
+  assert.match(overview, /Choose an inventory source/);
   assert.ok(!overview.includes("Today's briefing"), 'no briefing about nothing');
 });
 
@@ -326,8 +327,8 @@ test('the entry screens say what StockChief is to somebody who has never seen it
 
   for (const path of ['/login', '/register']) {
     const page = plain((await request(app).get(path)).text);
-    assert.match(page, /StockChief runs your inventory/, `${path} says what it does`);
-    assert.match(page, /handle the exceptions/, `${path} says what is left to you`);
-    assert.match(page, /reorder|receiving|transfers/i, `${path} names real work`);
+    assert.match(page, /StockChief runs your inventory|manage stock, orders, purchasing and Money/, `${path} says what it does`);
+    assert.match(page, /handle the exceptions|prepare work for your approval/, `${path} says what is left to you`);
+    assert.match(page, /reorder|receiving|transfers|purchasing/i, `${path} names real work`);
   }
 });

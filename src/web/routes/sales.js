@@ -484,7 +484,8 @@ router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/or
       const found = askedFor.find((row) => row.id === wanted && row.hostedUrl && row.status === 'OPEN');
       return found ? found.hostedUrl : null;
     }()),
-    paymentProviders: require('../../payments/provider').list(),
+    // Cardknox uses PostgreSQL payment sessions, not this local reference adapter.
+    paymentProviders: require('../../payments/provider').list().filter(name=>name!=='cardknox'),
     paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
     canManagePaymentAccount: req.user && req.user.role === 'owner',
     customers: sales.listCustomers(req.db, req.ctx.workspaceId),

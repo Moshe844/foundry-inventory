@@ -8,6 +8,7 @@ const { makeApp, cleanupAll, seedWorkspace, signIn } = require('../helpers');
 const { configure } = require('../helpers/scenarios');
 const workItems = require('../../src/autopilot/work-items');
 const supplierService = require('../../src/purchasing/supplier-service');
+const navigationHtml=require('../helpers/navigation-html');
 
 test.after(cleanupAll);
 
@@ -48,7 +49,7 @@ test('the line is one address, and the box it promises is on it', async () => {
 
   const support = (await agent.get('/support')).text;
   assert.match(support, /Help and support/);
-  assert.match(support, /Never send passwords, OAuth secrets, or API keys/);
+  assert.match(support, /Leave out passwords, API keys and card details/);
 });
 
 /**
@@ -75,10 +76,7 @@ test('the rail marks the state you are in, and only that one', async () => {
   /** The labels of every rail entry currently marked current. */
   const activeOn = async (path) => {
     const html = (await agent.get(path)).text;
-    const rail = html.split('<header class="rm-rail"')[1].split('</header>')[0];
-    return (rail.match(/<a[^>]*class="rm-tab is-on"[\s\S]*?<\/a>/g) || [])
-      .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
-      .filter(Boolean);
+    return navigationHtml.anchors(navigationHtml.sidebar(html)).filter(a=>a.current).map(a=>a.label);
   };
 
   // Unconfigured: "/" is still the brief, whichever view it renders underneath.
@@ -88,8 +86,8 @@ test('the rail marks the state you are in, and only that one', async () => {
   configure(db, workspace.workspaceId);
   assert.deepEqual(await activeOn('/'), ['Home']);
 
-  assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
-  assert.deepEqual(await activeOn('/ask'), ['Ask StockChief']);
+  assert.deepEqual(await activeOn('/needs-you'), []);
+  assert.deepEqual(await activeOn('/ask'), []);
 
   /*
    * Everything that used to be a department marks nothing, and that is the
@@ -98,12 +96,13 @@ test('the rail marks the state you are in, and only that one', async () => {
    */
   for (const path of ['/inventory', '/orders', '/purchasing', '/money', '/activity',
     '/fulfilment', '/mail', '/settings', '/settings/connections']) {
-    assert.deepEqual(await activeOn(path), [], `${path} claims no state`);
+    const expected={'/inventory':'Stock','/orders':'Orders','/purchasing':'Buy','/money':'Money','/fulfilment':'Orders','/settings':'Settings','/settings/connections':'Settings'}[path];
+    assert.deepEqual(await activeOn(path), expected?[expected]:[], `${path} marks its current section`);
     assert.equal((await agent.get(path)).status, 200, `${path} must still work`);
   }
 });
 
-test('the chrome offers three states, not a directory of departments', async () => {
+test('the chrome offers five business sections with Reports and Settings separately', async () => {
   const { db, app } = makeApp();
   const workspace = seedWorkspace(db);
   const agent = request.agent(app);
@@ -111,12 +110,11 @@ test('the chrome offers three states, not a directory of departments', async () 
   configure(db, workspace.workspaceId);
 
   const html = (await agent.get('/')).text;
-  const rail = html.split('<header class="rm-rail"')[1].split('</header>')[0];
-  const labels = (rail.match(/<a[^>]*class="rm-tab[^"]*"[\s\S]*?<\/a>/g) || [])
-    .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
-    .filter(Boolean);
-
-  assert.deepEqual(labels, ['Home', 'Needs you', 'Ask StockChief']);
+  const rail = navigationHtml.sidebar(html);
+  const primary=/<nav class="sc-primary"[^>]*>([\s\S]*?)<\/nav>/.exec(rail)[1];
+  assert.deepEqual(navigationHtml.anchors(primary).map(a=>a.label), ['Home','Orders','Stock','Buy','Money']);
+  assert.match(rail,/aria-label="Account navigation"/);
+  assert.match(rail,/>Reports<\/span>/);assert.match(rail,/>Settings<\/span>/);
 
   /*
    * Consolidating is not removing. Every department that came off the rail is
@@ -171,8 +169,8 @@ test('what was folded into a section is reachable from inside it', async () => {
   const orders = await bodyOf('/orders');
   assert.match(orders, /href="\/fulfilment"/, 'picking and shipping live under Orders');
 
-  assert.match(await bodyOf('/inventory'), /href="\/purchasing/,
-    'ordering and suppliers live under what you hold');
+  assert.match((await agent.get('/inventory')).text, /href="\/purchasing\/orders"/,
+    'the Buy section stays accessible from Stock');
 
   /*
    * Mail is no longer a department, and no longer something Orders links to as
@@ -212,7 +210,7 @@ test('a page opened from Settings offers the way back, and one opened elsewhere 
   const origin = `${base}/settings`;
   for (const path of ['/locations', '/suppliers', '/imports', '/foundry', '/purchasing/setup']) {
     const opened = (await agent.get(path).set('Referer', origin)).text;
-    assert.match(opened, /class="page-back" href="\/settings"/,
+    assert.match(opened, /class="page-back"[^>]*href="\/settings"/,
       `${path} opened from Settings should lead back to Settings`);
     assert.match(opened, /Back to Settings/);
   }
@@ -220,13 +218,13 @@ test('a page opened from Settings offers the way back, and one opened elsewhere 
   // Reached from Purchasing instead, it must replace the older Settings trail
   // with the journey the person is actually on now.
   const elsewhere = (await agent.get('/suppliers').set('Referer', `${base}/purchasing`)).text;
-  assert.match(elsewhere, /class="page-back" href="\/purchasing"/);
+  assert.match(elsewhere, /class="page-back"[^>]*href="\/purchasing"/);
   assert.match(elsewhere, /Back to Purchasing/,
     'the most recent real hub replaces an older remembered origin');
 
   // Settings itself never offers to go back to itself.
   const settings = (await agent.get('/settings').set('Referer', origin)).text;
-  assert.ok(!/class="page-back" href="\/settings"/.test(settings));
+  assert.ok(!/class="page-back"[^>]*href="\/settings"/.test(settings));
   server.close();
 });
 
@@ -246,7 +244,7 @@ test('saving on a page opened from Settings keeps the way back', async () => {
 
   await agent.get('/locations').set('Referer', `${base}/settings`);
   const afterSaving = (await agent.get('/locations').set('Referer', `${base}/locations`)).text;
-  assert.match(afterSaving, /class="page-back" href="\/settings"/);
+  assert.match(afterSaving, /class="page-back"[^>]*href="\/settings"/);
   server.close();
 });
 
@@ -264,7 +262,7 @@ test('every StockChief destination returns to its exact same-origin origin witho
   // is preserved so Back restores the exact working context.
   const destination = (await agent.get('/locations')
     .set('Referer', `${base}/inventory/table?q=acrylic`)).text;
-  assert.match(destination, /class="page-back" href="\/inventory\/table\?q=acrylic"/);
+  assert.match(destination, /class="page-back"[^>]*href="\/inventory\/table\?q=acrylic"/);
   assert.match(destination, /Back to Inventory/,
     'registered origins use their canonical area label without a route-specific exception');
 
@@ -275,7 +273,7 @@ test('every StockChief destination returns to its exact same-origin origin witho
   // Top-level product surfaces follow the same rule; they are not special
   // dead ends when opened from a working record.
   const ask = (await agent.get('/ask').set('Referer', `${base}/locations`)).text;
-  assert.match(ask, /class="page-back" href="\/locations"/);
+  assert.match(ask, /class="page-back"[^>]*href="\/locations"/);
   assert.match(ask, /Back to Locations/,
     'a rendered page contributes its own title to the universal trail');
 
@@ -318,14 +316,14 @@ test('a decision opened from Needs you returns to the decision inbox', async () 
 
   const fromInbox = (await agent.get(`/autopilot/work/${item.id}`)
     .set('Referer', `${base}/needs-you`)).text;
-  assert.match(fromInbox, /class="page-back" href="\/needs-you"/);
+  assert.match(fromInbox, /class="page-back"[^>]*href="\/needs-you"/);
   assert.match(fromInbox, /Back to Needs you/);
 
   const briefAgent = request.agent(server);
   await signIn(briefAgent, workspace.account.email, workspace.account.password);
   const fromBrief = (await briefAgent.get(`/autopilot/work/${item.id}`)
     .set('Referer', `${base}/`)).text;
-  assert.match(fromBrief, /class="page-back" href="\/"/);
+  assert.match(fromBrief, /class="page-back"[^>]*href="\/"/);
   assert.match(fromBrief, /Back to Brief/,
     'a decision opened from the owner brief returns to the owner brief');
 
@@ -333,7 +331,7 @@ test('a decision opened from Needs you returns to the decision inbox', async () 
   await signIn(purchasingAgent, workspace.account.email, workspace.account.password);
   const fromPurchasing = (await purchasingAgent.get(`/autopilot/work/${item.id}`)
     .set('Referer', `${base}/purchasing`)).text;
-  assert.match(fromPurchasing, /class="page-back" href="\/purchasing"/);
+  assert.match(fromPurchasing, /class="page-back"[^>]*href="\/purchasing"/);
   assert.match(fromPurchasing, /Back to Purchasing/,
     'a decision opened from the purchasing plan returns to that plan');
 
@@ -341,14 +339,14 @@ test('a decision opened from Needs you returns to the decision inbox', async () 
   await signIn(fromPurchaseOrderAgent, workspace.account.email, workspace.account.password);
   const fromPurchaseOrder = (await fromPurchaseOrderAgent.get(`/autopilot/work/${item.id}`)
     .set('Referer', `${base}/purchasing/orders/po_exact_record`)).text;
-  assert.match(fromPurchaseOrder, /class="page-back" href="\/purchasing\/orders\/po_exact_record"/);
+  assert.match(fromPurchaseOrder, /class="page-back"[^>]*href="\/purchasing\/orders\/po_exact_record"/);
   assert.match(fromPurchaseOrder, /Back to Purchase order/,
     'a decision opened from an exact PO returns to that exact record');
 
   const directAgent = request.agent(server);
   await signIn(directAgent, workspace.account.email, workspace.account.password);
   const direct = (await directAgent.get(`/autopilot/work/${item.id}`)).text;
-  assert.match(direct, /class="page-back" href="\/autopilot"/,
+  assert.match(direct, /class="page-back"[^>]*href="\/autopilot"/,
     'a direct/bookmarked decision keeps the safe Automatic work fallback');
   server.close();
 });

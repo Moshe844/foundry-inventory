@@ -24,10 +24,10 @@ test('an owner can configure automatic actionable email alerts from Settings', a
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const page = await agent.get('/settings');
+  const page = await agent.get('/settings?section=notifications');
   assert.equal(page.status, 200);
   assert.match(page.text, /Automatic email alerts/);
-  assert.match(page.text, /Delivery is not configured on this server yet/);
+  assert.match(page.text, /Email delivery is temporarily unavailable/);
 
   const saved = await agent.post('/settings/email-alerts').type('form').send({
     _csrf: csrfFrom(page.text), enabled: '1', minimumSeverity: 'critical',
@@ -43,7 +43,7 @@ test('an owner can configure automatic actionable email alerts from Settings', a
     'inventory@alert-settings.example', 'owner@alert-settings.example',
   ]);
 
-  const rendered = await agent.get('/settings');
+  const rendered = await agent.get('/settings?section=notifications');
   assert.match(rendered.text, /waiting for sender/);
   assert.match(rendered.text, /Email alert rules are saved/);
   assert.match(rendered.text, /inventory@alert-settings\.example/);

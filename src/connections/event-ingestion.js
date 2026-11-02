@@ -25,6 +25,7 @@ const TYPES = Object.freeze({
   order_snapshot: 'sales_order.snapshot', 'sales_order.snapshot': 'sales_order.snapshot',
   order_cancelled: 'sales_order.cancelled', 'sales_order.cancelled': 'sales_order.cancelled',
   fulfillment: 'sales_order.fulfilled', 'sales_order.fulfilled': 'sales_order.fulfilled',
+  'payment.reported': 'payment.reported', 'fulfillment.reported': 'fulfillment.reported',
   'product.changed': 'product.changed', 'location.changed': 'location.changed',
   return_reported: 'return.reported', 'return.reported': 'return.reported',
   supplier_document: 'supplier_document.received', 'supplier_document.received': 'supplier_document.received',
@@ -280,7 +281,10 @@ function apply(db, auth, event) {
         const skuId = skuFor(db, auth, externalLine).id;
         const orderLine = order.lines.find((line) => line.sku_id === skuId);
         if (!orderLine) throw new ValidationError('The provider fulfillment contains a product that is not on this Sales Order.');
-        let remaining = positive(externalLine.quantity);
+        const requestedQuantity = positive(externalLine.quantity);
+        let remaining = data.fulfillmentMode === 'cumulative'
+          ? requestedQuantity - Number(orderLine.quantity_fulfilled) : requestedQuantity;
+        if (remaining <= 0) continue;
         let allocations = orderLine.allocations;
         if (externalLine.externalLocationId || externalLine.locationName || externalLine.locationId) {
           const locationId = locationFor(db, auth, externalLine).id;
@@ -295,6 +299,9 @@ function apply(db, auth, event) {
         if (remaining) throw new ValidationError('The provider fulfillment exceeds stock committed to this Sales Order.');
       }
       fulfillmentLines = requested;
+      if (!fulfillmentLines.length && data.fulfillmentMode === 'cumulative') {
+        return { actionType: 'evidence.recorded', actionRecordId: order.id, movementIds: [], skuIds: [] };
+      }
     }
     const fulfilled = sales.fulfill(db, ctx, order.id, { lines: fulfillmentLines },
       { idempotencyKey: `external:${auth.connectorId}:${event.eventId}:fulfill` });
@@ -360,7 +367,9 @@ function apply(db, auth, event) {
     });
     return { actionType: 'return.review_required', actionRecordId: null, movementIds: [], skuIds: [] };
   }
-  if (event.type === 'product.changed' || event.type === 'location.changed') {
+  if (['product.changed', 'location.changed', 'payment.reported', 'fulfillment.reported'].includes(event.type)) {
+    // Provider payment/aggregate notices are evidence only. Neither proves a
+    // physical handoff or authorizes a second accounting/payment operation.
     return { actionType: 'evidence.recorded', actionRecordId: null, movementIds: [], skuIds: [] };
   }
   if (event.type === 'supplier_document.received') {

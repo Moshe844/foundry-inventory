@@ -83,6 +83,7 @@ test('a proposal that has not run is withdrawn; one that ran is reversed as a ne
   assert.equal(settled.status, 'withdrawn');
 
   // A receipt that ran is reversed as an issue back out, for approval.
+  app.locals.aiProvider=require('../helpers/receipt-intent')({item:'Copper Elbow',quantity:7,location:'Downtown Store'});
   const receipt = await chat(agent, 'receive 7 Copper Elbow into Downtown Store');
   assert.match(receipt, /^\/actions\/act_/);
   const rid = receipt.split('/').pop();

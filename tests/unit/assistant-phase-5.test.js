@@ -198,7 +198,7 @@ test('the settings page says what the model reads have cost this inventory, from
   const app = createApp({ db, env: 'test', sessionSecret: 'usage' });
   const agent = request.agent(app);
   await signIn(agent, w.account.email, w.account.password);
-  const page = await agent.get('/settings');
+  const page = await agent.get('/settings?section=ai');
   assert.match(page.text, /AI reading/);
   assert.match(page.text, /2 reads today/);
   assert.match(page.text, /3k of 3\.0M tokens/);

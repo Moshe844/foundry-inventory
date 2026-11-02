@@ -328,8 +328,8 @@ test('the item page says what StockChief has noticed about that item', async () 
   // the views reached for did not exist. It names the decision now.
   assert.match(page, /Decide what to order/);
   assert.doesNotMatch(page, /Why this\?/, 'no generic label survives');
-  assert.match(page, /Reorder settings/);
-  assert.match(page, /Configure/);
+  assert.match(page, /Reorder point/);
+  assert.match(page, /Review reordering/);
 
   // A different item says nothing, rather than everything.
   const other = scenarios.staleScenario(db, workspace);
@@ -552,16 +552,14 @@ test('Home, the sidebar and Needs you agree on how much needs a person', async (
 
   // The badge beside "Needs you" in the rail counts the same thing. The
   // sidebar it used to sit in is gone; the invariant it protected is not.
-  const chrome = home.text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const chrome = /<div class="sc-toolbar-actions">([\s\S]*?)<\/div>/.exec(home.text)[1];
   const badge = /<span[^>]*class="[^"]*nav-count[^"]*"[^>]*>(\d+)<\/span>/.exec(chrome);
   assert.equal(badge ? Number(badge[1]) : 0, inbox.length, 'the rail agrees');
 
   // And the desk it links to is a stack of exactly that many decisions.
   const desk = (await agent.get('/needs-you')).text;
   if (inbox.length) {
-    const of = /Decision \d+ of (\d+)/.exec(desk);
-    assert.ok(of, 'the desk states the size of the stack');
-    assert.equal(Number(of[1]), inbox.length);
+    const of=/Decision \d+ of (\d+)/.exec(desk);assert(of,'The decision stack states its size');assert.equal(Number(of[1]),inbox.length);
 
     // Home must expose the records behind the number. Previously it showed
     // only the count and sometimes suppressed even the first decision because

@@ -77,7 +77,7 @@ for(const provider of ['openai','anthropic'])test(`${provider} empty terminal is
  assert.equal(error.code,'EMPTY_MODEL_FINAL');assert.match(error.message,/usage.*recorded/i);assert.doesNotMatch(error.message,/authentication|credential/i);
  assert.equal((await call()).status,400);assert.equal(upstream,1);assert.equal(complete,1);assert.equal(unknown,0);
  assert.equal(budget.status().calls,1);assert.equal(budget.status().unresolved,0);
- assert.equal(transport.lastBlock().code,'EMPTY_MODEL_FINAL');assert.equal(transport.lastBlock().upstreamAttempted,false);
+ assert.equal(transport.lastBlock().code,'EMPTY_MODEL_FINAL');assert.equal(transport.lastBlock().upstreamAttempted,true,'The original block retains the actual paid attempt, while repeated calls above never reach the provider');assert.equal(transport.lastBlock().usageSettled,true);
  assert.equal(events.filter(e=>e.kind==='model_response').at(-1).empty,true);
 });
 

@@ -240,5 +240,5 @@ test('one customer order is one page: the whole story without leaving it', async
   assert.match(story, /Order activity/, 'and everything that happened to it');
   assert.match(story, /12 units left stock/i, 'the inventory effect');
   assert.match(story, /Accounting still needs one decision/i, 'the accounting result');
-  assert.match(story, /Money — \$300\.00 still owed/i, 'the payment position');
+  assert.match(story, /Payments and receipts — \$300\.00 still owed/i, 'the payment position');
 });

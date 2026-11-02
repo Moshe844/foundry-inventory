@@ -23,14 +23,14 @@ test('presentation formatting keeps real zero prices, negative credits and plura
 });
 test('canonical page aliases preserve filters and direct each old destination to one working local page',async()=>{
  const app=express();app.use(require('../../src/web/presentation/navigation').createAliasRouter());app.use((req,res)=>res.status(404).end());
- const cases=[['/signup?plan=growth','/register?plan=growth'],['/receive?po=PO-42','/purchasing/receive?po=PO-42'],['/help','/guide'],['/settings/billing?section=usage','/billing?section=usage'],['/sales?q=blue%20widget&view=unpaid','/orders?q=blue%20widget&view=unpaid'],['/sales/new?customer=someone','/orders/new?customer=someone'],['/sales/orders/so_random?open=money','/orders/so_random?open=money'],['/accounting/books?from=2026-01-01','/money?from=2026-01-01'],['/accounting/accounts','/accounting/chart']];
+ const cases=[['/signup?plan=growth','/register?plan=growth'],['/receive?po=PO-42','/purchasing/receive?po=PO-42'],['/help','/guide'],['/billing?section=usage','/settings/billing?section=usage'],['/sales?q=blue%20widget&view=unpaid','/orders?q=blue%20widget&view=unpaid'],['/sales/new?customer=someone','/orders/new?customer=someone'],['/sales/orders/so_random?open=money','/orders/so_random?open=money'],['/accounting?from=2026-01-01','/accounting/books?from=2026-01-01'],['/accounting/accounts','/accounting/chart']];
  for(const [from,to] of cases){const response=await request(app).get(from);assert.equal(response.status,301,from);assert.equal(response.headers.location,to,from);}
  const command=await request(app).post('/sales').send({anything:true});assert.equal(command.status,404,'GET aliases never redirect commands');
  const unknown=await request(app).get('/random-unregistered-destination');assert.equal(unknown.status,404);
 });
 test('section navigation has the requested five sections, separate footer destinations and no More item',()=>{
  const nav=require('../../src/web/presentation/navigation');assert.deepEqual(nav.sections.map(x=>x.label),['Home','Orders','Stock','Buy','Money']);assert.deepEqual(nav.footer.map(x=>x.label),['Reports','Settings']);
- assert.deepEqual(nav.sections.find(x=>x.label==='Orders').tabs.map(x=>x.label),['Orders','Returns','Customers']);
+ assert.deepEqual(nav.sections.find(x=>x.label==='Orders').tabs.map(x=>x.label),['Orders','Returns','Customers','Customer quotes']);
  assert.deepEqual(nav.sections.find(x=>x.label==='Stock').tabs.map(x=>x.label),['Products','Locations','Transfers','Counts']);
  assert(!JSON.stringify(nav.sections).includes('More'));
 });

@@ -562,16 +562,24 @@ test('the overview brief gives the correct purchasing next step and mentions an 
   const overview = plain((await agent.get('/')).text);
   assert.match(overview, /Decide when to reorder Navy Oxford/);
 
-  // An overdue order is mentioned too.
+  // An approved order must be sent before it can genuinely be overdue.
   const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
     supplierId: env.supplier.id,
     expectedDate: addLocalDays(Date.now(), -3),
     lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 2 }],
   });
   poService.approve(env.db, env.workspace.ctx, env.membership, order.id);
-
-  const after = plain((await agent.get('/')).text);
-  assert.match(after, new RegExp(`ABC Footwear's delivery on ${order.poNumber} was expected .* and has not arrived`));
+  const unsent = plain((await agent.get('/')).text);
+  assert.match(unsent, new RegExp(`${order.poNumber} needs a sending mailbox`));
+  poService.markOrderedFromSupplierSend(env.db, env.workspace.ctx, order.id, {
+    id: 'offline-delivery-evidence', purchaseOrderId: order.id, status: 'SENT',
+    externalMessageId: 'offline-provider-message', recipient: 'supplier@example.test',
+  });
+  const after = plain((await agent.get(`/purchasing/orders/${order.id}`)).text);
+  assert.match(after, new RegExp(order.poNumber));
+  assert.match(after, new RegExp(require('../../src/web/view-helpers').shortDate(addLocalDays(Date.now(), -3))));
+  const next = require('../../src/attention/whats-next').build(env.db, env.workspace.workspaceId);
+  assert.ok(next.some(line => line.text.includes(order.poNumber) && line.text.includes('has not arrived')));
 });
 
 test('a delivery that matches the order is booked in with one click', async () => {

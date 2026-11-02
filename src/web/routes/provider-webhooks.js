@@ -42,7 +42,8 @@ function createProviderWebhooks(db) {
       const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
       const webhookUrl = `${providerService.providerOrigin(`${req.protocol}://${req.get('host')}`)}${req.originalUrl}`;
       adapter.verifyWebhook({ headers: req.headers, rawBody, webhookUrl, credentials: context.credentials,
-        connection: context.connection });
+        connection: context.connection,body:req.body||{} });
+      if(adapter.hydrateWebhook)await adapter.hydrateWebhook({headers:req.headers,body:req.body||{},credentials:context.credentials,connection:context.connection});
       const events = await adapter.normalizeWebhook({ headers: req.headers, body: req.body || {}, rawBody,
         credentials: context.credentials, connection: context.connection });
       const result = await processEvents(db, context, events);

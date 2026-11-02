@@ -71,7 +71,7 @@ test('"add a new supplier called Bright Tools, email …" fills the supplier for
   assert.equal(posted.status, 303);
   assert.equal(posted.headers.location, '/suppliers?name=Bright+Tools&email=sales%40brighttools.com#add-supplier');
   const page = await agent.get('/suppliers?name=Bright+Tools&email=sales%40brighttools.com');
-  assert.match(page.text, /name="name" required maxlength="160" placeholder="ABC Footwear" value="Bright Tools"/);
+  assert.match(page.text, /name="name" required maxlength="160" value="Bright Tools"/);
   assert.match(page.text, /name="email" maxlength="160" value="sales@brighttools.com"/);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM suppliers WHERE name = 'Bright Tools'").get().n, 0, 'nothing is saved until Add is pressed');
   assert.equal(db.prepare('SELECT COUNT(*) n FROM action_proposals').get().n, before, 'no replenishment work was prepared from it');

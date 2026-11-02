@@ -111,7 +111,7 @@ test('a deposit shows what is due now, and clears once it is paid', async () => 
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
   let text = plain((await agent.get(`/orders/${order.id}`)).text);
-  assert.match(text, /\$450\.00\s*due now/);
+  assert.match(text, /Agreed deposit: \$450\.00.*Still due: \$450\.00/);
   assert.match(text, /deposit of \$450\.00 is due before this is picked/);
 
   payments.record(env.db, env.ctx, env.membership, {

@@ -89,7 +89,7 @@ test('switching changes what every page shows', async () => {
 
   // The switcher itself names the one that is open.
   const shell = (await agent.get('/')).text;
-  assert.match(shell, /rm-switch__btn[\s\S]{0,200}Equipment Company/);
+  assert.match(shell, /sc-workspace__btn[\s\S]{0,300}Equipment Company/);
 });
 
 test('the chosen inventory survives a refresh and a restart', async () => {

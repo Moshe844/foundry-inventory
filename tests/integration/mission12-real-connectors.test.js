@@ -33,6 +33,28 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfF
 
 test.after(cleanupAll);
 
+// All provider traffic in this suite is an explicit offline fixture. In
+// particular, a shared app signature does not replace store-token ownership.
+const originalSuiteFetch = global.fetch;
+test.beforeEach(() => {
+  global.fetch = async (url, options = {}) => {
+    const body = options.body && JSON.parse(options.body);
+    assert.equal(String(url), 'https://mission12.myshopify.com/admin/api/2026-07/graphql.json');
+    assert.match(body.query, /query WebhookOwnership/);
+    assert.equal(options.headers['x-shopify-access-token'], 'encrypted-token');
+    const id = body.variables.id;
+    const ownership = {
+      'gid://shopify/Order/9001': {}, 'gid://shopify/Order/9100': {}, 'gid://shopify/Order/9200': {},
+      'gid://shopify/Fulfillment/501': { order: { id: 'gid://shopify/Order/9001' } },
+      'gid://shopify/Fulfillment/502': { order: { id: 'gid://shopify/Order/9001' } },
+      'gid://shopify/Refund/701': { order: { id: 'gid://shopify/Order/9001', displayFinancialStatus: 'PAID' } },
+    };
+    assert.ok(Object.hasOwn(ownership, id), `Unexpected provider record: ${id}`);
+    return Response.json({ data: { node: { id, ...ownership[id] } } });
+  };
+});
+test.afterEach(() => { global.fetch = originalSuiteFetch; });
+
 function setup() {
   const store = makeDatabase();
   const workspace = seedWorkspace(store.db, { workspaceName: 'Mission 12 Business' });
@@ -50,7 +72,8 @@ function addProvider(env, type, config = {}) {
     VALUES (?, ?, ?, ?, ?, 'connected', '[]', '[]', ?, 360, 'CONNECTED', ?, ?, ?, ?)`)
     .run(id, env.workspace.workspaceId, `${type}:${id}`, type === 'shopify' ? 'Shopify Store'
       : type === 'square' ? 'Square POS' : type === 'clover' ? 'Clover POS' : 'WooCommerce Store',
-      type, JSON.stringify(config), env.workspace.ownerId, `${type}-account`, now, now);
+      type, JSON.stringify(config), env.workspace.ownerId,
+      type === 'shopify' ? config.shop || 'mission12.myshopify.com' : `${type}-account`, now, now);
   return connections.get(env.db, env.workspace.workspaceId, id);
 }
 
@@ -61,10 +84,12 @@ test('Connections UI offers real business providers and does not instruct owners
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get('/settings/connections'); const text = plain(page.text);
   assert.equal(page.status, 200);
-  assert.match(text, /Selling/); assert.match(text, /Business systems/); assert.match(text, /Supplier communication/);
+  assert.match(text, /Sales channels/); assert.match(text, /Accounting/); assert.match(text, /Email/);
   assert.match(text, /Shopify/); assert.match(text, /Square/); assert.match(text, /Clover/); assert.match(text, /WooCommerce/);
   assert.match(page.text, /data-oauth-connect="woocommerce"/);
-  assert.match(text, /Your own software/); assert.match(text, /asks you when something cannot be matched/);
+  const developer = plain((await agent.get('/settings/connections?section=developers')).text);
+  assert.match(developer, /Your own software/);
+  assert.match(developer, /canonical inventory commands/);
   assert.doesNotMatch(text, /PowerShell|curl/i);
   env.db.close();
 });
@@ -87,7 +112,7 @@ test('invalid commerce store details fail in the popup without leaving false set
   });
   assert.equal(invalidWoo.status, 400);
   assert.match(plain(invalidWoo.text), /WooCommerce was not connected/);
-  assert.match(plain(invalidWoo.text), /Enter a valid store URL/);
+  assert.match(plain(invalidWoo.text), /Enter a valid HTTPS store address/);
 
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM workspace_connectors
     WHERE workspace_id = ? AND provider_type IN ('shopify', 'woocommerce')`)
@@ -122,11 +147,10 @@ test('a disconnected duplicate with preserved credentials is not presented as wo
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get('/settings/connections');
-  assert.match(plain(page.text), /Nothing is connected yet/);
-  assert.match(plain(page.text), /disconnected or incomplete connection.*history retained/);
+  assert.match(plain(page.text), /Connection history.*Shopify · Not connected/);
   assert.match(page.text, new RegExp(`/settings/connections/${duplicate.id}`),
     'the disconnected record remains reachable from retained history');
-  const workingNow=page.text.split('disconnected or incomplete connection')[0];
+  const workingNow=page.text.split('sc-connection-history')[0];
   assert.doesNotMatch(workingNow, new RegExp(duplicate.id),
     'a disconnected duplicate must never appear in Working now');
   env.db.close();
@@ -379,7 +403,7 @@ test('Shopify uses client credentials for an installed same-organization store a
       assert.equal(options.headers['content-type'], 'application/x-www-form-urlencoded');
       assert.equal(new URLSearchParams(options.body).get('grant_type'), 'client_credentials');
       return new Response(JSON.stringify({ access_token: 'same-org-token', expires_in: 3600,
-        scope: 'read_orders,read_products,read_locations,read_inventory' }), {
+        scope: 'read_orders,read_products,read_locations,read_inventory,read_fulfillments,write_products,write_inventory' }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
     };
@@ -399,7 +423,7 @@ test('Shopify uses client credentials for an installed same-organization store a
       status: 400, headers: { 'content-type': 'text/html' },
     });
     await assert.rejects(adapter.tryDirectAuthorization({ input: { shop: 'internal-test' } }),
-      /not installed on internal-test\.myshopify\.com/);
+      /Shopify did not authorize this connection/);
   } finally { global.fetch = originalFetch; }
 });
 
@@ -423,7 +447,7 @@ test('Square Sandbox personal token connects directly and creates a signed webho
       if (String(url).endsWith('/v2/merchants/me')) return new Response(JSON.stringify({
         merchant: { id: 'merchant-1', business_name: 'Sandbox Shop' },
       }), { status: 200, headers: { 'content-type': 'application/json' } });
-      if (String(url).endsWith('/v2/webhooks/subscriptions') && !options.method) {
+      if (String(url).endsWith('/v2/webhooks/subscriptions?include_disabled=true&limit=100') && !options.method) {
         return new Response(JSON.stringify({ subscriptions: [] }), {
           status: 200, headers: { 'content-type': 'application/json' },
         });
@@ -431,8 +455,9 @@ test('Square Sandbox personal token connects directly and creates a signed webho
       if (String(url).endsWith('/v2/webhooks/subscriptions') && options.method === 'POST') {
         const body = JSON.parse(options.body);
         assert.deepEqual(body.subscription.event_types, ['payment.created', 'payment.updated',
-          'refund.created', 'refund.updated', 'catalog.version.updated', 'location.created', 'location.updated']);
-        return new Response(JSON.stringify({ subscription: { id: 'square-hook-1',
+          'refund.created', 'refund.updated', 'order.created', 'order.updated', 'order.fulfillment.updated',
+          'catalog.version.updated', 'inventory.count.updated', 'location.created', 'location.updated']);
+        return new Response(JSON.stringify({ subscription: { ...body.subscription, id: 'square-hook-1',
           signature_key: 'square-generated-signature' } }), {
           status: 200, headers: { 'content-type': 'application/json' },
         });
@@ -462,7 +487,7 @@ test('Square Sandbox personal token connects directly and creates a signed webho
 test('Square Sandbox hands the owner an unpaid Square checkout and never records a sale before payment', async () => {
   const env = setup(); const connection = addProvider(env, 'square');
   credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', {
-    environment: 'sandbox', accessToken: 'encrypted',
+    environment: 'sandbox', authMode: 'sandbox_personal', accessToken: 'encrypted',
   });
   await providerService.sync(env.db, env.workspace.workspaceId, connection.id, env.workspace.ownerId, { adapter: {
     discover: async () => ({
@@ -619,8 +644,11 @@ test('Shopify Dev Dashboard launch continues into OAuth instead of stopping on t
   assert.equal(response.status, 303);
   assert.match(response.headers.location, /^https:\/\/dashboard-launch\.myshopify\.com\/admin\/oauth\/authorize\?/);
   const url = new URL(response.headers.location);
-  assert.equal(url.searchParams.get('redirect_uri'),
-    `${providerService.providerOrigin('http://127.0.0.1')}/settings/connections/shopify/callback`);
+  const callback = new URL(url.searchParams.get('redirect_uri'));
+  assert.equal(callback.hostname, '127.0.0.1');
+  assert.equal(callback.protocol, 'http:');
+  assert.ok(Number(callback.port) > 0, 'the callback must return to this running test server');
+  assert.equal(callback.pathname, '/settings/connections/shopify/callback');
   assert.ok(url.searchParams.get('state'));
   env.db.close();
 });
@@ -645,7 +673,7 @@ test('Shopify signed order and fulfillment use Mission 10 exactly once', async (
     shipping_address: { address1: '7 Example Lane', city: 'Albany', province: 'NY', zip: '12207', country_code: 'US' },
     line_items: [{ variant_id: 481729, sku: 'TS-BLK-S', quantity: 3, price: '12.00' }] };
   const raw = JSON.stringify(order); const endpoint = `/api/v1/connections/shopify/webhooks/${connection.id}`;
-  const first = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'orders/create')
+  const first = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'orders/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-1').set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
     .set('Content-Type', 'application/json').send(raw);
   assert.equal(first.status, 200); assert.equal(first.body.accepted, 1);
@@ -656,20 +684,20 @@ test('Shopify signed order and fulfillment use Mission 10 exactly once', async (
   assert.equal(foundryOrder.customer.email, 'ari@example.test');
   assert.equal(foundryOrder.lines[0].unit_price_minor, 1200, 'provider order price is snapshotted without changing the catalog price');
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 30);
-  const replay = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'orders/create')
+  const replay = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'orders/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-1').set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
     .set('Content-Type', 'application/json').send(raw);
   assert.equal(replay.body.replayed, 1);
   const fulfilledRaw = JSON.stringify({ id: 501, order_id: 9001, location_id: 123,
     updated_at: '2026-08-27T11:00:00Z', line_items: [{ variant_id: 481729, sku: 'TS-BLK-S', quantity: 1 }] });
-  const fulfilled = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'fulfillments/create')
+  const fulfilled = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'fulfillments/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-2').set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, fulfilledRaw))
     .set('Content-Type', 'application/json').send(fulfilledRaw);
   assert.equal(fulfilled.body.accepted, 1);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 29);
   const finalRaw = JSON.stringify({ id: 502, order_id: 9001, location_id: 123,
     updated_at: '2026-08-27T12:00:00Z', line_items: [{ variant_id: 481729, sku: 'TS-BLK-S', quantity: 2 }] });
-  const final = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'fulfillments/create')
+  const final = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'fulfillments/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-3').set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, finalRaw))
     .set('Content-Type', 'application/json').send(finalRaw);
   assert.equal(final.body.accepted, 1);
@@ -677,19 +705,21 @@ test('Shopify signed order and fulfillment use Mission 10 exactly once', async (
   const refundRaw = JSON.stringify({ id: 701, order_id: 9001, created_at: '2026-08-27T13:00:00Z',
     refund_line_items: [{ quantity: 1, restock_type: 'return', location_id: 123,
       line_item: { variant_id: 481729, product_id: 100, sku: 'TS-BLK-S' } }] });
-  const returned = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'refunds/create')
+  const returned = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'refunds/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-refund-1')
     .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, refundRaw))
     .set('Content-Type', 'application/json').send(refundRaw);
   assert.equal(returned.body.accepted, 1);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 28,
-    'Shopify restock evidence uses the existing return movement path');
-  const returnReplay = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'refunds/create')
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 27,
+    'a refund instruction is review evidence, not proof of a physical return');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues WHERE connector_id = ?
+    AND issue_type = 'RETURN_REVIEW_REQUIRED' AND status = 'OPEN'`).get(connection.id).n, 1);
+  const returnReplay = await request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'refunds/create')
     .set('X-Shopify-Webhook-Id', 'shop-delivery-refund-1')
     .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, refundRaw))
     .set('Content-Type', 'application/json').send(refundRaw);
   assert.equal(returnReplay.body.replayed, 1);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 28);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 27);
   env.db.close();
 });
 
@@ -704,7 +734,7 @@ test('Shopify absolute order updates increase and release commitments without re
   const endpoint = `/api/v1/connections/shopify/webhooks/${connection.id}`;
   const send = (topic, delivery, payload) => {
     const raw = JSON.stringify(payload);
-    return request(env.app).post(endpoint).set('X-Shopify-Topic', topic)
+    return request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', topic)
       .set('X-Shopify-Webhook-Id', delivery)
       .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
       .set('Content-Type', 'application/json').send(raw);
@@ -747,7 +777,7 @@ test('Shopify out-of-order order updates retry and clear their false mapping exc
   const endpoint = `/api/v1/connections/shopify/webhooks/${connection.id}`;
   const send = (topic, delivery, payload) => {
     const raw = JSON.stringify(payload);
-    return request(env.app).post(endpoint).set('X-Shopify-Topic', topic)
+    return request(env.app).post(endpoint).set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', topic)
       .set('X-Shopify-Webhook-Id', delivery)
       .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
       .set('Content-Type', 'application/json').send(raw);
@@ -778,44 +808,54 @@ test('Shopify out-of-order order updates retry and clear their false mapping exc
   env.db.close();
 });
 
-test('Square signed completed payment becomes one existing inventory issue', async () => {
+test('Square completed order issues once; repeated paid notices do not create another physical handoff', async () => {
   const env = setup(); const connection = addProvider(env, 'square');
   const signatureKey = 'square-signature-key';
-  credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', { environment: 'sandbox', accessToken: 'encrypted', webhookSignatureKey: signatureKey });
+  credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', { environment: 'sandbox', authMode: 'sandbox_personal', accessToken: 'encrypted', webhookSignatureKey: signatureKey });
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'sku', externalId: 'variation-1', foundryRecordId: env.item.skuId });
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'location', externalId: 'location-1', foundryRecordId: env.workspace.store.id });
   const body = { event_id: 'square-event-1', type: 'payment.updated', created_at: '2026-08-27T12:00:00Z',
-    merchant_id: 'square-account', data: { object: { payment: { id: 'payment-1', status: 'COMPLETED', order_id: 'order-1', location_id: 'location-1', created_at: '2026-08-27T12:00:00Z', updated_at: '2026-08-27T12:00:00Z' },
-      order: { id: 'order-1', location_id: 'location-1', line_items: [{ catalog_object_id: 'variation-1', quantity: '2' }] } } } };
+    merchant_id: 'square-account', data: { object: { payment: { id: 'payment-1', status: 'COMPLETED', order_id: 'order-1', location_id: 'location-1', created_at: '2026-08-27T12:00:00Z', updated_at: '2026-08-27T12:00:00Z', amount_money: {amount:2400,currency:'USD'} },
+      order: { id: 'order-1', location_id: 'location-1', state: 'COMPLETED', version: 2,
+        updated_at: '2026-08-27T12:00:00Z', total_money: {amount:2400,currency:'USD'},
+        line_items: [{ uid:'line-1', catalog_object_id: 'variation-1', quantity: '2', total_money: {amount:2400,currency:'USD'} }] } } } };
+  const auth = (await providerService.webhookContext(env.db, 'square', connection.id, 'square-account')).auth;
+  const created = require('../../src/connections/event-ingestion').ingestBatch(env.db, auth, {events:[{
+    eventId:'offline-order-before-payment', type:'sales_order.created',
+    occurredAt:'2026-08-27T11:00:00Z', aggregateId:'order-1', version:'1',
+    data:{externalOrderId:'order-1',customerName:'Square counter customer',deliveryMethod:'PICKUP',currency:'USD',
+      lines:[{externalSku:'variation-1',quantity:2,unitPriceMinor:1200}]},
+  }]});
+  assert.equal(created.accepted,1);
   const raw = JSON.stringify(body); const endpoint = `/api/v1/connections/square/webhooks/${connection.id}`;
   const url = `${providerService.providerOrigin('http://localhost')}${endpoint}`;
   const signature = crypto.createHmac('sha256', signatureKey).update(`${url}${raw}`).digest('base64');
   const result = await request(env.app).post(endpoint).set('Host', 'localhost').set('X-Square-HmacSha256-Signature', signature)
     .set('Content-Type', 'application/json').send(raw);
-  assert.equal(result.status, 200); assert.equal(result.body.accepted, 1);
+  assert.equal(result.status, 200, JSON.stringify(result.body)); assert.equal(result.body.accepted, 3);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 28);
   const replayBody = { ...body, event_id: 'square-event-2', type: 'payment.updated' };
   const replayRaw = JSON.stringify(replayBody);
   const replaySignature = crypto.createHmac('sha256', signatureKey).update(`${url}${replayRaw}`).digest('base64');
   const replay = await request(env.app).post(endpoint).set('Host', 'localhost')
     .set('X-Square-HmacSha256-Signature', replaySignature).set('Content-Type', 'application/json').send(replayRaw);
-  assert.equal(replay.status, 200); assert.equal(replay.body.replayed, 1);
+  assert.equal(replay.status, 200); assert.equal(replay.body.failed, 0);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 28,
     'payment.created and payment.updated for one Square payment must issue stock once');
   const agent = request.agent(env.app); await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const salesPage = await agent.get('/sales'); const salesText = plain(salesPage.text);
   assert.equal(salesPage.status, 200);
-  assert.match(salesText, /Completed sales/);
-  assert.match(salesText, /Square POS/);
-  assert.match(salesText, /Black T-shirt Small/);
+  assert.match(salesText, /Square counter customer/);
   assert.match(salesText, /2 units/);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'`)
+    .get(env.workspace.workspaceId).n,1,'only the completed order owns the physical issue');
   env.db.close();
 });
 
 test('Square completed refund is durable review evidence and never invents a physical return', async () => {
   const env = setup(); const connection = addProvider(env, 'square'); const signatureKey = 'square-refund-signature';
   credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', {
-    environment: 'sandbox', accessToken: 'encrypted', webhookSignatureKey: signatureKey,
+    environment: 'sandbox', authMode: 'sandbox_personal', accessToken: 'encrypted', webhookSignatureKey: signatureKey,
   });
   const endpoint = `/api/v1/connections/square/webhooks/${connection.id}`;
   const webhookUrl = `${providerService.providerOrigin('http://localhost')}${endpoint}`;
@@ -1136,7 +1176,7 @@ test('commerce catalog webhooks follow each provider catalog contract without st
       const payload = { id: 500, title: 'New Shopify product', updated_at: '2026-08-27T16:00:00Z', variants: [] };
       const raw = JSON.stringify(payload);
       const response = await request(env.app).post(`/api/v1/connections/shopify/webhooks/${connection.id}`)
-        .set('X-Shopify-Topic', 'products/update').set('X-Shopify-Webhook-Id', 'shop-catalog-new')
+        .set('X-Shopify-Shop-Domain', 'mission12.myshopify.com').set('X-Shopify-Topic', 'products/update').set('X-Shopify-Webhook-Id', 'shop-catalog-new')
         .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
         .set('Content-Type', 'application/json').send(raw);
       assert.equal(response.status, 200); assert.equal(response.body.accepted, 1);
@@ -1152,7 +1192,7 @@ test('commerce catalog webhooks follow each provider catalog contract without st
     const env = setup(); const connection = addProvider(env, 'square'); const adapter = providers.get('square');
     const signatureKey = 'square-catalog-signature';
     credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', {
-      environment: 'sandbox', accessToken: 'encrypted-token', webhookSignatureKey: signatureKey,
+      environment: 'sandbox', authMode: 'sandbox_personal', accessToken: 'encrypted-token', webhookSignatureKey: signatureKey,
     });
     const originalDiscover = adapter.discover;
     adapter.discover = async () => ({ products: [{ entityType: 'sku', externalId: 'square-new-variation',
@@ -1230,7 +1270,7 @@ test('empty inventory can bootstrap Shopify catalogue, prices, mappings and open
 
 test('adding Clover and WooCommerce leaves the normalized engine provider-neutral', () => {
   const catalog = providers.catalog().map((row) => row.type);
-  assert.deepEqual(catalog, ['shopify', 'square', 'clover', 'woocommerce', 'reference_webhook',
+  assert.deepEqual(catalog, ['shopify', 'square', 'clover', 'woocommerce', 'bigcommerce', 'reference_webhook',
     'erp_future', 'gmail', 'microsoft365', 'quickbooks', 'xero']);
   const source = require('node:fs').readFileSync(require.resolve('../../src/connections/event-ingestion'), 'utf8');
   assert.doesNotMatch(source, /shopify|square|clover|woocommerce/i);
@@ -1288,8 +1328,10 @@ test('Shopify webhook setup reuses current subscriptions and removes stale Stock
   } finally { global.fetch = originalFetch; }
 });
 
-test('WooCommerce webhook setup updates the current endpoint and removes stale StockChief endpoints', async () => {
+test('WooCommerce webhook setup removes duplicate hooks for its destination and preserves other tenants', async () => {
   const adapter = providers.get('woocommerce'); const originalFetch = global.fetch;
+  const network = require('../../src/connections/providers/store-network');
+  const originalStoreFetch = network.fetchStore;
   const calls = []; let created = 10;
   try {
     global.fetch = async (url, options = {}) => {
@@ -1297,24 +1339,28 @@ test('WooCommerce webhook setup updates the current endpoint and removes stale S
       if (target.includes('/webhooks?per_page=100&page=1')) return new Response(JSON.stringify([
         { id: 1, topic: 'order.created', delivery_url: 'https://current.test/api/v1/connections/woocommerce/webhooks/con_current' },
         { id: 2, topic: 'order.updated', delivery_url: 'https://old.test/api/v1/connections/woocommerce/webhooks/con_old' },
+        { id: 3, topic: 'order.created', delivery_url: 'https://current.test/api/v1/connections/woocommerce/webhooks/con_current' },
       ]), { status: 200, headers: { 'content-type': 'application/json', 'x-wp-totalpages': '1' } });
-      if (options.method === 'DELETE' && target.includes('/webhooks/2?force=true')) {
-        return new Response(JSON.stringify({ id: 2 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (options.method === 'DELETE' && target.includes('/webhooks/3?force=true')) {
+        return new Response(JSON.stringify({ id: 3 }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       if (options.method === 'PUT' || options.method === 'POST') {
-        return new Response(JSON.stringify({ id: options.method === 'PUT' ? 1 : ++created }),
+        return new Response(JSON.stringify({ ...JSON.parse(options.body), id: options.method === 'PUT' ? 1 : ++created }),
           { status: 200, headers: { 'content-type': 'application/json' } });
       }
       throw new Error(`Unexpected WooCommerce request: ${target}`);
     };
+    network.fetchStore = global.fetch;
     const result = await adapter.registerWebhooks({
       credentials: { storeUrl: 'https://shop.test', consumerKey: 'key', consumerSecret: 'secret', webhookSecret: 'hook-secret' },
       webhookUrl: 'https://current.test/api/v1/connections/woocommerce/webhooks/con_current',
     });
     assert.ok(calls.some((call) => call.method === 'PUT' && call.target.endsWith('/webhooks/1')));
-    assert.ok(calls.some((call) => call.method === 'DELETE' && call.target.endsWith('/webhooks/2?force=true')));
-    assert.ok(result.some((row) => row.id === 2 && row.removedStale));
-  } finally { global.fetch = originalFetch; }
+    assert.ok(calls.some((call) => call.method === 'DELETE' && call.target.endsWith('/webhooks/3?force=true')));
+    assert.ok(result.some((row) => row.id === 3 && row.removedStale));
+    assert.ok(!calls.some(call => call.method === 'DELETE' && call.target.includes('/webhooks/2?')),
+      'another business destination must never be deleted');
+  } finally { global.fetch = originalFetch; network.fetchStore = originalStoreFetch; }
 });
 
 test('a zero-event history match never claims a commerce connection is proven', async () => {

@@ -130,8 +130,8 @@ test('a new account is handed to StockChief, not an empty dashboard', async () =
   // points at StockChief, rather than silently sending you there.
   const home = await agent.get('/');
   assert.equal(home.status, 200);
-  assert.match(plain(home.text), /inventory isn’t here yet/);
-  assert.match(plain(home.text), /Add your inventory/);
+  assert.match(plain(home.text), /Add the first place you keep stock/);
+  assert.match(plain(home.text), /Choose an inventory source/);
   assert.match(home.text, /href="\/onboarding"/);
 
   // The first decision is now how they manage inventory today. Sending someone
@@ -145,7 +145,7 @@ test('a new account is handed to StockChief, not an empty dashboard', async () =
   assert.match(chooser, /Add your inventory/);
   assert.match(chooser, /Enter it manually/);
   assert.match(chooser, /Move from files/);
-  assert.match(chooser, /review imported records before they become live/i);
+  assert.match(chooser, /Nothing is imported until you review and approve it/i);
   assert.match(chooser, /Connect another system/);
   assert.doesNotMatch(chooser, /Use several sources|Use email attachments/);
 

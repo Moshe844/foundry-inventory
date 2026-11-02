@@ -57,12 +57,12 @@ test('Connections UI exposes accounting safety stages and developer integrations
   let page = await agent.get('/settings/connections');
   assert.equal(page.status, 200); const listing = plain(page.text);
   assert.match(listing, /Accounting/); assert.match(listing, /QuickBooks Online/); assert.match(listing, /Xero/);
-  assert.match(listing, /An ERP not listed here/);
+  assert.match(listing, /For developers/);
   assert.doesNotMatch(listing, /Start verified ERP connection/);
-  assert.match(listing, /Custom ERP connections require a qualified contract/);
-  assert.match(listing, /Advanced: connect custom software with APIs and webhooks/);
-  assert.match(listing, /How to prove this API works/);
-  assert.match(listing, /How to prove this webhook works/);
+  const developer=plain((await agent.get('/settings/connections?section=developers')).text);
+  assert.match(developer, /Advanced: connect custom software with APIs and webhooks/);
+  assert.match(developer, /How to prove this API works/);
+  assert.match(developer, /How to prove this webhook works/);
   assert.doesNotMatch(listing, /PowerShell|curl/i);
   page = await agent.get(`/settings/connections/${id}`); const detail = plain(page.text);
   assert.equal(page.status, 200); assert.match(detail, /Connected without changing the books/);
@@ -129,8 +129,8 @@ test('accounting authorization stays in a popup and its HTTPS callback does not 
     });
     assert.equal(returned.status, 200);
     assert.match(returned.text, /QuickBooks Online is connected/);
-    assert.match(returned.text, /foundry:connection-return/);
-    assert.match(returned.text, /window\.close/);
+    assert.match(returned.text, /data-connection-return/);const returnScript=await agent.get('/connection-return.js');assert.match(returnScript.text,/foundry:connection-return/);
+    assert.match(returnScript.text, /window\.close/);
     assert.match(returned.text, /http:\/\/127\.0\.0\.1/);
   } finally {
     if (previous.clientId === undefined) delete process.env.QUICKBOOKS_CLIENT_ID;
