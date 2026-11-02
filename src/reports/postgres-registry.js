@@ -358,17 +358,7 @@ const datasets=Object.freeze({
     fields:{return_number:'text',supplier:'text',status:'text',expected_credit_minor:'money_minor',
       actual_credit_minor:'money_minor',requested_on:'date'}},
   low_stock:{label:'Stock at or below its reorder point',permission:permissions.VIEW_PURCHASING,
-    source:`WITH stock_positions AS MATERIALIZED(
-      SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN locations l ON l.workspace_id=b.workspace_id AND l.id=b.location_id
-      WHERE b.workspace_id=$1 AND l.is_active=1
-      ), stock_totals AS MATERIALIZED(SELECT sku_id,sum(on_hand) AS on_hand FROM stock_positions GROUP BY sku_id)
-      SELECT i.id AS record_id,s.code AS sku,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product,coalesce(l.name,'Whole business') AS location,
-      coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)::numeric AS on_hand,p.reorder_point::numeric AS reorder_point,p.target_stock::numeric AS target_stock
-      FROM reorder_policies p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id LEFT JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
-      LEFT JOIN stock_positions stock ON stock.sku_id=p.sku_id AND stock.location_id=p.location_id
-      LEFT JOIN stock_totals total ON total.sku_id=p.sku_id
-      WHERE p.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (p.location_id IS NULL OR l.is_active=1) AND p.reorder_point IS NOT NULL
-      AND coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)<=p.reorder_point`,recordHref:row=>'/inventory/'+row.record_id,
+    source:require('./low-stock-source').source(),recordHref:row=>'/inventory/'+row.record_id,
     fields:{sku:'text',product:'text',location:'text',on_hand:'number',reorder_point:'number',target_stock:'number'}},
   replenishment_rules:{label:'Replenishment settings',permission:permissions.VIEW_PURCHASING,
     source:`SELECT p.id AS record_id,s.code AS sku,i.name AS product,

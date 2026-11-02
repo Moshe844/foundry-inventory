@@ -52,6 +52,9 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
   assert.equal((await catalog.listItems(db,ctx.workspaceId,{supplier:'Supplier 199'})).totalCount,25);assert.equal((await catalog.listItems(db,ctx.workspaceId,{locationId:f.locations[4].id})).totalCount,5000);
   assert.equal((await catalog.listItems(db,ctx.workspaceId,{lowStock:true})).totalCount,5000);assert.equal((await catalog.listItems(db,ctx.workspaceId,{optionFilters:{Flavor:'Option 1','Bag size':'Value 4'}})).totalCount,1250);
   assert.equal((await catalog.listItems(db,ctx.workspaceId,{category:'No such category'})).totalCount,0);assert.equal((await catalog.listItems(db,'foreign-inventory',{category:'Grocery'})).totalCount,0);
+  const ids=(await catalog.listItems(db,ctx.workspaceId,{})).items.map(i=>i.id),source=require('../../src/reports/low-stock-source');
+  const bounded=(await db.query('SELECT DISTINCT record_id FROM ('+source.source({scopeItems:true})+') flags ORDER BY record_id',[ctx.workspaceId,ids])).rows,complete=(await db.query('SELECT DISTINCT record_id FROM ('+source.source()+') flags WHERE record_id=ANY($2::text[]) ORDER BY record_id',[ctx.workspaceId,ids])).rows;
+  assert.deepEqual(bounded,complete);assert.deepEqual((await db.query('SELECT * FROM ('+source.source({scopeItems:true})+') flags',['foreign-inventory',ids])).rows,[]);
  });
  await t.test('D18 report labels retain generic variant values on the 50,000 SKU source',async()=>{const result=await require('../../src/reports/postgres-service').run(db,ctx,{role:'owner'},{dataset:'stock',columns:['sku','product','location','on_hand'],chart:'table'},{limit:101});assert(result.rows.length>=100);assert(result.rows.every(r=>/Option [01].*Value [0-4]/.test(r.product)));});
  await t.test('E21 audit filters and CSV identify the last SKU, actor and before/after values among 150,000 movements',async()=>{
