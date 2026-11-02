@@ -1,0 +1,24 @@
+<%
+  /*
+   * Order page header, PostgreSQL order page only.
+   *
+   * The page's own breadcrumb and .page-head stay exactly as rendered — other
+   * code reads their text (the status wording, the badge) — and are restyled
+   * here. This adds the back link and the action buttons, which the script
+   * moves into the header row.
+   */
+  var oxOwed = locals.money && Number(locals.money.outstandingMinor || 0) > 0;
+  var oxNext = order.status === 'DRAFT' ? { label: 'Confirm order', href: '#approve-order' }
+    : ['CONFIRMED', 'PARTIALLY_FULFILLED'].includes(order.status) ? { label: 'Ship order', href: '/orders/' + order.id + '?open=fulfilment#fulfilment' }
+    : order.status === 'FULFILLED' && oxOwed ? { label: 'Record payment', href: '/orders/' + order.id + '?open=money#money' } : null;
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-ohead-wrap">
+  <a class="ox-back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
+  <div class="ox ox-oactions ox-head__actions" data-ox-order-actions>
+    <button class="ox-btn ox-btn--ghost" type="button" data-ox-print>Print</button>
+    <% if (order.status !== 'DRAFT' && order.status !== 'CANCELLED') { %><a class="ox-btn ox-btn--secondary" href="/orders/<%= order.id %>?open=money#money">Invoice and payment</a><% } %>
+    <% if (oxNext) { %><a class="ox-btn ox-btn--primary" href="<%= oxNext.href %>"><%= oxNext.label %></a><% } %>
+  </div>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

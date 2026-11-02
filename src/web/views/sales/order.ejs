@@ -40,6 +40,7 @@
    */
   var shipped = order.totals.fulfilled || 0;
 %>
+<% if (locals.postgresPlacement) { %><%- include('order-head-v2') %><% } %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= helpers.shortDate(order.order_date) %><%= order.needed_by ? ' · needed by ' + helpers.shortDate(order.needed_by) : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : helpers.orderStatus(order.status,order.totals.fulfilled,order.delivery_method) %></span></div>
 <% if(order.reference){ %><p class="t-muted">Reference: <%= order.reference %></p><% } %>
