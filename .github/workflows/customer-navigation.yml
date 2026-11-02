@@ -43,6 +43,11 @@ jobs:
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           npx playwright install --with-deps chromium firefox
+      - name: Private authentication persists before redirects
+        run: |
+          mkdir -p output/customer-navigation-ci
+          set -euo pipefail
+          node --test tests/postgres/owner-session-redirect.test.js 2>&1 | tee output/customer-navigation-ci/owner-session-redirect.log
       - run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
