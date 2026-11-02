@@ -119,6 +119,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     }
     for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id);}
+    // Billing and downgrade checks describe the whole subscription. Locations
+    // are capped per inventory: show the highest use across owned inventories,
+    // rather than comparing an account-wide warning to this tab's local count.
+    const localLocations=summary.meters.find(m=>m.meter==='locations');
+    if(localLocations&&scope.workspaceId){const accountLocations=await entitlements.meterState(database,{accountId:scope.accountId,workspaceId:null},'locations',{subscription:summary.subscription});
+      summary.meters=summary.meters.map(m=>m.meter==='locations'?{...accountLocations,currentInventoryUsed:localLocations.used}:m);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),

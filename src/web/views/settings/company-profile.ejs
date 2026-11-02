@@ -1,0 +1,8 @@
+<section class="rm-panel" id="company"><div class="rm-panel__head"><h2>Company</h2></div>
+<form data-settings-form method="post" action="/settings/company" style="padding:16px">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= companyProfile.revision %>">
+ <p>Your company name and address appear on invoice PDFs, printouts and emails for this inventory.</p>
+ <% for(const [key,label,max,autocomplete] of [['legalName','Company name',160,'organization'],['addressLine1','Address line 1',160,'address-line1'],['addressLine2','Address line 2',160,'address-line2'],['city','City',100,'address-level2'],['region','State or region',100,'address-level1'],['postalCode','Postal code',30,'postal-code'],['country','Country',80,'country-name']]){ %>
+ <label class="rm-field"><span><%= label %></span><input name="<%= key %>" value="<%= companyProfile[key] %>" maxlength="<%= max %>" autocomplete="<%= autocomplete %>" <%= key==='legalName'?'required':'' %> <%= isOwner?'':'disabled' %>></label>
+ <% } %><% if(isOwner){ %><button class="rm-btn" type="submit">Save company details</button><% } %>
+</form></section>

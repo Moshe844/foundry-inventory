@@ -9,4 +9,12 @@ test('a stale scheduled downgrade shows its date and current excess instead of a
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'stale-plan-warning',commercialOptions:{loadInvoices:false}});f.cleanup(()=>app.locals.sessionStore.close());const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(login.text),email:f.email,password:f.password});
  const page=await agent.get('/settings/billing');assert.equal(page.status,200);assert.match(page.text,/data-scheduled-plan-change/);assert.match(page.text,/Your plan changes to Starter on/);assert.match(page.text,/currently exceeds this plan/);assert.match(page.text,/3 used; 2 allowed/);assert.match(page.text,/Existing records will be preserved/);assert.doesNotMatch(page.text,/>Renews\s/);assert.equal((page.text.match(/Your plan changes to Starter on/g)||[]).length,1);
  assert.equal((await db.query("SELECT status FROM commercial_subscription_changes WHERE id='stale-downgrade'")).rows[0].status,'PENDING','Viewing the warning does not silently change the billing contract');
+ const second=await require('../../src/domain/postgres-auth-service').createWorkspace(db,f.owner.accountId,{name:'Five-location business'}),otherCtx={workspaceId:second.workspaceId,actorId:second.userId};
+ for(let n=0;n<5;n++)await locations.createLocation(db,otherCtx,{name:'Other warehouse '+n,kind:'warehouse'});
+ const accountPage=await agent.get('/settings/billing').expect(200);
+ assert.match(accountPage.text,/5 used; 2 allowed/);
+ const capacity=accountPage.text.split('data-plan-capacity')[1].split('</section>')[0];
+ assert.match(capacity,/5 used in your busiest inventory/);assert.match(capacity,/3 in this inventory/);
+ const locationEntry=/<dt>Locations<\/dt><dd>([\s\S]*?)<\/dd>/.exec(capacity);
+ assert(locationEntry,'The location limit has its own row');assert.match(locationEntry[1],/5 used in your busiest inventory/);assert.doesNotMatch(locationEntry[1],/2 used/);
 });
