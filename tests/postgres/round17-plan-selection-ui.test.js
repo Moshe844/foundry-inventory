@@ -1,0 +1,11 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
+const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1],card=(html,id)=>new RegExp('<article[^>]*id="'+id+'"[\\s\\S]*?</article>').exec(html)?.[0];
+test('pricing disables current and unpaid selected plans, preserves the interval and offers a safe way to continue',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db}=f;
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source,stripe_subscription_id) VALUES('plan-button-current',$1,'pro','ACTIVE','MONTHLY','ISOLATED_TEST','sub_plan_button_test')",[f.owner.accountId]);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'plan-button-ui',commercialOptions:{loadInvoices:false}});f.cleanup(()=>app.locals.sessionStore.close());const owner=request.agent(app),login=await owner.get('/login');await owner.post('/login').type('form').send({_csrf:csrf(login.text),email:f.email,password:f.password}).expect(302);
+ const current=await owner.get('/pricing');assert.equal(current.status,200);assert.equal(current.headers['cache-control'],'no-store');assert.match(card(current.text,'pro'),/button[^>]*disabled[^>]*data-plan-state="current">Current plan/);assert.doesNotMatch(card(current.text,'pro'),/data-plan-link/);assert.match(card((await owner.get('/pricing?interval=annual')).text,'pro'),/data-plan-link/);
+ const anonymous=request.agent(app);await anonymous.get('/register?plan=growth&interval=annual').expect(200);const selected=await anonymous.get('/pricing?interval=annual');assert.equal(selected.status,200);assert.match(card(selected.text,'growth'),/data-plan-state="selected">Selected plan/);assert.doesNotMatch(card(selected.text,'growth'),/data-plan-link|Current plan/);assert.match(selected.text,/Continue with Growth/);assert.match(card((await anonymous.get('/pricing?interval=monthly')).text,'growth'),/data-plan-link/);
+ assert.equal((await db.query('SELECT count(*)::int n FROM account_subscriptions')).rows[0].n,1,'A choice must not create a subscription or unlock a plan');
+});

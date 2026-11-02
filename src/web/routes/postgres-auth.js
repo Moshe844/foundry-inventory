@@ -86,6 +86,7 @@ function createPostgresAuthRouter(database,options={}) {
     }
     const plans=await commercial.listPlans(database);const requested=String(req.query.plan||'').trim();
     const selected=selfServiceSelection(plans,requested);
+    if(req.query.plan&&selected){req.session.commercialSelection={planId:selected.id,interval:req.query.interval==='annual'?'annual':'monthly',promoCode:String(req.query.promo||'').trim().toUpperCase()};await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));}
     await commercial.track(database,{eventName:'signup_started',anonymousId:req.sessionID,planId:selected?.id||null,sourcePath:'/register'});
     if(req.query.plan)await commercial.track(database,{eventName:'plan_selected',anonymousId:req.sessionID,planId:selected?.id||null,
       sourcePath:'/pricing'});

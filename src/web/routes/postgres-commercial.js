@@ -62,10 +62,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     groups:require('../presentation/public-integrations').groups(),title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
   router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
-  router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
+  router.get('/pricing',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
     title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
-    checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),
+    checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),planSelection:req.session.commercialSelection||null,
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
