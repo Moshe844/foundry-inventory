@@ -10,6 +10,7 @@ const read=name=>fs.readFileSync(path.join(src,name),'utf8');
 // The runtime guards make legacy model/HTTP paths fail closed if invoked.
 const expected={
  'actions/second-read.js':1,'ai/deadline.js':1,'ai/providers/anthropic.js':1,
+ 'assistant/bounded-business-read.js':1,
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,
  'assistant/postgres-control-plane.js':3,'assistant/postgres-service.js':1,
  'assistant/postgres-evidence-answer.js':1,
@@ -52,6 +53,8 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  const identity=require('../../src/commercial/relay-provider');
  assert.equal(identity.ownsAccounting({ownsAccounting:true,commercial:true}),false,
   'a caller-supplied property must never bypass the commercial hold');
+ assert.match(read('assistant/bounded-business-read.js'),/relay-provider'\)\.ownsAccounting\(provider\)/,
+  'the direct database interpreter accepts only a host-branded funded relay');
  assert.match(read('assistant/postgres-control-plane.js'),/reportProvider:contract\.name==='report\.template\.create'\?provider:null/,
   'report scheduling must receive the funded Ask provider');
  assert.match(read('assistant/postgres-service.js'),/const provider=fundedAskProvider\(/,

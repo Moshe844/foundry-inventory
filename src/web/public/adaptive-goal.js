@@ -57,12 +57,7 @@
   }
   elapsed();
   if(panel.dataset.goalLatest!=='true'&&!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))continue;
-  async function poll(){
-   try{
-    const result=await fetch(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}`,{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
-    if(!result.ok)throw Error('Progress unavailable');
-    if(result.ok){
-     const goal=await result.json();
+  function applyGoal(goal){
      const conversation=goal.conversation;
      const changed=goal.status!==status;
      disconnected=false;
@@ -188,10 +183,21 @@
       if(!(draft?.value||'').trim()){const current=new URL(window.location.href);if(current.pathname==='/ask'&&current.searchParams.get('goal')===goal.id)window.location.reload();else window.location.assign('/ask?goal='+encodeURIComponent(goal.id)+'#focused-goal');return;}
       hint.textContent='A change is ready for review. Your draft is preserved; reload when you are ready to review the approval.';
      }
-    }
-   }catch{disconnected=true;hint.textContent='Connection lost. Current progress is unknown; your request is saved.';}
-   if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))window.setTimeout(poll,['READY','RUNNING'].includes(status)?1000:3000);
   }
-  poll();
+  async function poll(){
+   try{const result=await fetch(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}`,{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
+    if(!result.ok)throw Error('Progress unavailable');applyGoal(await result.json());
+   }catch{disconnected=true;hint.textContent='Connection lost. Current progress is unknown; your request is saved.';}
+   if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))window.setTimeout(poll,3000);
+  }
+  if(typeof window.EventSource==='function'){
+   const stream=new window.EventSource(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}/stream`);
+   stream.addEventListener('goal',event=>{
+    try{applyGoal(JSON.parse(event.data));if(!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))stream.close();}
+    catch{stream.close();poll();}
+   });
+   stream.onerror=()=>{stream.close();if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))poll();};
+   window.addEventListener('pagehide',()=>stream.close(),{once:true});
+  }else poll();
  }
 })();

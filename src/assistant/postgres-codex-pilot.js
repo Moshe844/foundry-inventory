@@ -74,7 +74,8 @@ async function start(db,ctx,message,options={}){
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
   [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1,...(chatId?{chatId}:{})}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision,
-   ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{})})]);
+   ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{}),
+   ...(!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message)?{boundedRead:true}:{})})]);
  goal.checkpoint.runtime='codex-staging';
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }
