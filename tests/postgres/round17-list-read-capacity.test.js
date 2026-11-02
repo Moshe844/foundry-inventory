@@ -1,0 +1,22 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('visible-item low-stock flags match complete reports and failed-job totals exclude healthy and foreign history',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES('read-capacity-plan',$1,'pro','COMP','CUSTOM','ISOLATED_TEST')",[f.owner.accountId]);
+ const catalog=require('../../src/domain/postgres-catalog-service'),locations=require('../../src/domain/postgres-location-service'),engine=require('../../src/domain/postgres-inventory-engine');
+ const coffee=await catalog.createItem(db,ctx,{name:'Ground coffee',baseCode:'LIST-KG',trackingMode:'quantity',unitLabel:'kg',quantityPrecision:3,quantityIncrement:'0.001'}),cocoa=await catalog.createItem(db,ctx,{name:'Cocoa',baseCode:'LIST-COCOA',trackingMode:'quantity'}),other=await locations.createLocation(db,ctx,{name:'Other warehouse',kind:'warehouse'}),old=await locations.createLocation(db,ctx,{name:'Archived warehouse',kind:'warehouse'});
+ for(const [location,quantity]of [[f.location,'2.5'],[other,'3'],[old,'100']])await engine.receive(db,ctx,{skuId:coffee.skuIds[0],locationId:location.id,quantity,idempotencyKey:'list-opening:'+location.id});
+ await db.query('UPDATE locations SET is_active=0 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,old.id]);
+ for(const [skuId,locationId,point]of [[coffee.skuIds[0],null,6],[coffee.skuIds[0],f.location.id,2],[coffee.skuIds[0],other.id,3],[coffee.skuIds[0],old.id,1000],[cocoa.skuIds[0],null,10]])await db.query('INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,created_at,updated_at) VALUES($1,$2,$3,$4,$5,2000,now(),now())',[randomUUID(),ctx.workspaceId,skuId,locationId,point]);
+ const foreign=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Foreign owner',businessName:'Foreign history fixture',email:randomUUID()+'@example.test',password:'Foreign-history!'+randomUUID()}),foreignItem=await catalog.createItem(db,{workspaceId:foreign.workspaceId,actorId:foreign.userId},{name:'Foreign product',baseCode:'FOREIGN-LIST',trackingMode:'quantity'});
+ const source=require('../../src/reports/low-stock-source'),read=(sql,args)=>db.query('SELECT * FROM ('+sql+') report ORDER BY sku,location',args).then(r=>r.rows);
+ const complete=await read(require('../../src/reports/postgres-registry').get('low_stock').source,[ctx.workspaceId]),selected=await read(source.source({scopeItems:true}),[ctx.workspaceId,[coffee.itemId]]);
+ assert.equal(selected.length,2);assert.deepEqual(selected,complete.filter(r=>r.record_id===coffee.itemId));assert.deepEqual(await read(source.source({scopeItems:true}),[ctx.workspaceId,[]]),[]);assert.deepEqual(await read(source.source({scopeItems:true}),[ctx.workspaceId,[foreignItem.itemId]]),[]);
+ await engine.receive(db,ctx,{skuId:coffee.skuIds[0],locationId:f.location.id,quantity:2,idempotencyKey:'list-restock-main'});await engine.receive(db,ctx,{skuId:coffee.skuIds[0],locationId:other.id,quantity:2,idempotencyKey:'list-restock-other'});
+ assert.deepEqual(await read(source.source({scopeItems:true}),[ctx.workspaceId,[coffee.itemId]]),[]);assert.equal((await read(source.source(),[ctx.workspaceId])).filter(r=>r.record_id===cocoa.itemId).length,1);
+ await db.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,status,available_at,idempotency_key,created_at,updated_at)
+ SELECT 'healthy-history-'||n,$1,'qualification.history','COMPLETED',0,'healthy-history-'||n,now(),now() FROM generate_series(1,20000)n`,[ctx.workspaceId]);
+ for(const [workspace,n]of [[ctx.workspaceId,2],[foreign.workspaceId,3]])await db.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,status,available_at,idempotency_key,last_error,created_at,updated_at)
+ SELECT $1||'-failure-'||n,$1,'import.execute-approved','DEAD',0,$1||'-failure-'||n,'{"code":"PAUSED","message":"Review this import"}'::jsonb,now(),now() FROM generate_series(1,$2::int)n`,[workspace,n]);
+ await db.query('ANALYZE stockchief_runtime.jobs');assert.deepEqual(await require('../../src/projections/postgres-service').runtimeFailures(db,ctx.workspaceId),{attempts:2,causes:[{kind:'import.execute-approved',error_code:'PAUSED',error_message:'Review this import',attempts:2}]});
+});
