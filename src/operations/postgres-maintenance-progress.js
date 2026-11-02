@@ -1,25 +1,29 @@
 'use strict';
 
 async function read(database,workspaceId){
-  const rows=(await database.query(`SELECT id,kind,status,payload,result,updated_at FROM stockchief_runtime.jobs
+  const rows=(await database.query(`SELECT id,kind,status,payload->>'processedSkus' AS processed_skus,
+    payload->>'runId' AS run_id,updated_at FROM stockchief_runtime.jobs
     WHERE workspace_id=$1 AND kind IN ('autopilot.evaluate','system.reconcile-business')
     AND status IN ('PENDING','RETRY','RUNNING') ORDER BY priority,created_at,id LIMIT 4`,[workspaceId])).rows;
   const checks=[];
   for(const kind of ['autopilot.evaluate','system.reconcile-business']){
     const row=rows.find(r=>r.kind===kind);if(!row)continue;
-    let checked=Number(row.payload?.processedSkus||0);
-    if(kind==='system.reconcile-business'&&row.payload?.runId){const run=(await database.query(`SELECT summary
+    let checked=Number(row.processed_skus||0);
+    if(kind==='system.reconcile-business'&&row.run_id){const run=(await database.query(`SELECT summary->>'checkedRecords' AS checked_records
       FROM stockchief_runtime.business_reconciliation_runs WHERE workspace_id=$1 AND id=$2`,
-      [workspaceId,row.payload.runId])).rows[0];checked=Number(run?.summary.checkedRecords||0);}
+      [workspaceId,row.run_id])).rows[0];checked=Number(run?.checked_records||0);}
     checks.push({kind,status:row.status,checked,updatedAt:row.updated_at,
       text:(kind==='autopilot.evaluate'?'Business review':'Stock and accounting check')+
         (row.status==='RUNNING'?' is running':' is waiting for its next batch')+
         (checked?' · '+checked.toLocaleString('en-US')+(kind==='autopilot.evaluate'?' products reviewed.':' records checked.')+'.':'.')});
   }
-  const latest=(await database.query(`SELECT DISTINCT ON(kind) kind,status,result FROM stockchief_runtime.jobs
-    WHERE workspace_id=$1 AND kind IN ('autopilot.evaluate','system.reconcile-business')
-    ORDER BY kind,updated_at DESC,id DESC`,[workspaceId])).rows;
-  const stopped=latest.some(r=>r.status==='DEAD'),differences=latest.some(r=>r.result?.status==='FAILED');
+  const latest=(await database.query(`SELECT latest.kind,latest.status,latest.result_status
+    FROM (VALUES('autopilot.evaluate'),('system.reconcile-business')) wanted(kind)
+    CROSS JOIN LATERAL(SELECT job.kind,job.status,job.result->>'status' AS result_status
+      FROM stockchief_runtime.jobs job WHERE job.workspace_id=$1 AND job.kind=wanted.kind
+       AND job.kind IN('autopilot.evaluate','system.reconcile-business')
+      ORDER BY job.updated_at DESC,job.id DESC LIMIT 1) latest`,[workspaceId])).rows;
+  const stopped=latest.some(r=>r.status==='DEAD'),differences=latest.some(r=>r.result_status==='FAILED');
   return {active:checks.length>0,checks,message:stopped?
     'A background check stopped before completion. Review Needs you for the saved error.':differences?
     'A background check found differences. Review Needs you before automatic work continues.':

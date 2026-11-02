@@ -105,7 +105,7 @@ jobs:
       - name: Maintenance fairness and worker isolation
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/maintenance-claims.test.js tests/postgres/maintenance-batches.test.js tests/postgres/maintenance-progress.test.js tests/postgres/worker-lane-isolation.test.js tests/postgres/round16-maintenance-bulk-budget.test.js 2>&1 | tee output/inventory-ci/maintenance.log
+          node --test --test-concurrency=2 tests/postgres/maintenance-claims.test.js tests/postgres/maintenance-batches.test.js tests/postgres/maintenance-progress.test.js tests/postgres/worker-lane-isolation.test.js tests/postgres/round16-maintenance-bulk-budget.test.js tests/postgres/round16-maintenance-read-capacity.test.js 2>&1 | tee output/inventory-ci/maintenance.log
       - name: Atomic bulk receipt operation writes
         run: node --test tests/postgres/round16-receipt-operation-writes.test.js
       - name: Full large-import certification
