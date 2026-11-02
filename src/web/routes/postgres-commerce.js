@@ -772,9 +772,10 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   const renderOrders=async(req,res)=>{
-    const result=await presenters.sales(database,req.ctx.workspaceId,{q:req.query.q});result.q=String(req.query.q||'').slice(0,120);
-    result.view=['stuck','ready','moving','unpaid','done'].includes(req.query.view)?req.query.view:'all';
-    return res.page('sales/orders',{title:'Orders',nav:'sales',room:true,...result,postgresQuickEntry:true});
+    const result=await presenters.sales(database,req.ctx.workspaceId);
+    const list=await require('../orders-view').ordersList(database,req.ctx.workspaceId,result,req.query);
+    return res.page('sales/orders-v2',{title:'Orders',nav:'sales',room:true,list,suppressBack:true,screenGuide:null,
+      sellingConnectionCount:result.sellingConnectionCount,canCreate:permissions.can(req.user,permissions.OPERATE)});
   };
   router.get(['/orders','/sales'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(renderOrders));
 
