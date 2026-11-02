@@ -1,6 +1,8 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
 const key=value=>require('node:crypto').createHash('sha256').update(value).digest('hex');
+const exact=require('../domain/exact-quantity');
+const addExact=(a,b)=>exact.safeNumber(exact.add(a,b),{signed:true});
 async function run(database,ctx,plan,executionId,inputOptions,deps){
  const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities'),batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
  const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows})});
@@ -29,7 +31,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  attemptStartRows=Number(checkpoint.savedRows||0);
  await emit('preparing',plan.recordsValid);
 
- const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:(row.parsed.quantity||0)*(row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
+ const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:exact.costMinor(row.parsed.quantity||0,row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
  for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id,{batchSize})){
   await identities.hydrate(database,ctx,plan,chunk,checkpoint);const priorSaved=Number(checkpoint.savedRows||0);
   await emit('processing');
@@ -90,12 +92,12 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           const itemId=row.parsed.existingItemId || row.parsed.createdItemId;
           const movementIds=[];
           if(isCount(row)&&expectedDelta(row)<=0){
-            const counted=countedByRow.get(row.id);if(counted?.movementId)movementIds.push(counted.movementId);units+=expectedDelta(row);
+            const counted=countedByRow.get(row.id);if(counted?.movementId)movementIds.push(counted.movementId);units=addExact(units,expectedDelta(row));
           }else if(expectedDelta(row)>0){
             const received=receiptByRow.get(row.id);
-            movementIds.push(received.movementId);units+=expectedDelta(row);
+            movementIds.push(received.movementId);units=addExact(units,expectedDelta(row));
             if(row.parsed.unitCostMinor!==null){
-              const totalCostMinor=expectedDelta(row)*row.parsed.unitCostMinor;
+              const totalCostMinor=exact.costMinor(expectedDelta(row),row.parsed.unitCostMinor);
               pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:checkpoint.postingDate,count:isCount(row),opening:row.parsed.inventoryBefore?.physical===0&&row.parsed.inventoryBefore?.costed===0&&(row.parsed.inventoryBefore.hasHistory===false||row.parsed.inventoryBefore.hasHistory===undefined&&!historic.has(JSON.stringify([skuId,row.parsed.locationId])))});
               if(pendingValues.length>=batchSize)await flushValues();
             }
@@ -132,10 +134,10 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
         if(policies.length)await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,policies);
       }
 
-   const totals=await verification.totals(client,ctx.workspaceId,chunk.map(row=>row.id)),value=chunk.reduce((n,row)=>n+expectedCost(row),0),expectedUnits=chunk.reduce((n,row)=>n+expectedDelta(row),0),valued=chunk.filter(expectsCostRecord).length;
+   const totals=await verification.totals(client,ctx.workspaceId,chunk.map(row=>row.id)),value=chunk.reduce((n,row)=>addExact(n,expectedCost(row)),0),expectedUnits=chunk.reduce((n,row)=>addExact(n,expectedDelta(row)),0),valued=chunk.filter(expectsCostRecord).length;
    const checks=[{name:'Rows saved',expected:chunk.length,observed:rowsImported,ok:rowsImported===chunk.length},{name:'Stock movement units',expected:expectedUnits,observed:units,ok:units===expectedUnits},{name:'Cost records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost',expected:value,observed:Number(totals.value.value),ok:value===Number(totals.value.value)},{name:'Inventory asset',expected:value,observed:Number(totals.posted.value),ok:value===Number(totals.posted.value)}];
    if(!checks.every(check=>check.ok))throw new ValidationError('The imported stock and accounting evidence did not reconcile. The current batch was not saved.',{checks});
-   const next=await save(client,{...saved,savedRows:priorSaved+chunk.length,units:Number(saved.units||0)+units,lastBatch:{executionId,firstRow:chunk[0].rowNumber,lastRow:chunk.at(-1).rowNumber,checks}});
+   const next=await save(client,{...saved,savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:chunk[0].rowNumber,lastRow:chunk.at(-1).rowNumber,checks}});
    await client.query('UPDATE import_executions SET items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,stage=$7 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,executionId,next.itemsCreated,next.skusCreated,next.savedRows,next.units,'processing']);
    return {checkpoint:next,prices:[...salePriceBySku]};
   });
@@ -148,7 +150,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);
-   for(const row of page){expectedUnits+=expectedDelta(row);expectedValue+=expectedCost(row);if(expectsCostRecord(row))valued++;}
+   for(const row of page){expectedUnits=addExact(expectedUnits,expectedDelta(row));expectedValue=addExact(expectedValue,expectedCost(row));if(expectsCostRecord(row))valued++;}
   }
  },{isolation:'REPEATABLE READ',readOnly:true});
  const checks=[{name:'Rows imported',expected:plan.recordsValid,observed:checkpoint.savedRows,ok:checkpoint.savedRows===plan.recordsValid},{name:'Net stock change',expected:expectedUnits,observed:checkpoint.units,ok:checkpoint.units===expectedUnits},{name:'Valued receipt records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost change in minor units',expected:expectedValue,observed:Number(totals.value.value),ok:expectedValue===Number(totals.value.value)},{name:'Inventory asset posted in minor units',expected:expectedValue,observed:Number(totals.posted.value),ok:expectedValue===Number(totals.posted.value)}];
