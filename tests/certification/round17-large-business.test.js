@@ -108,5 +108,15 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
   assert.equal((await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory_valuation'})).totals.missingCostUnits,0.25);
   for(const route of ['/money','/money/invoices','/money/bills','/money/profit','/reports','/inventory/overview']){const page=await agent.get(route);assert.equal(page.status,200,route);assert.doesNotMatch(page.text,/exceeds the exact reporting range/);}
  });
+ await t.test('Fractional receipt and set-count imports retain exact units and cents in the 50,000-SKU inventory',async()=>{
+  const c=db; // Final scenario uses the real session lock and durable commits.
+  const sku=(await c.query("SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND i.quantity_precision=3 ORDER BY s.code LIMIT 1",[ctx.workspaceId])).rows[0],location=f.locations[0],exact=require('../../src/domain/exact-quantity');
+  const state=async()=>{const r=(await c.query('SELECT b.on_hand,c.quantity_units,c.total_cost_minor FROM balances b JOIN accounting_inventory_cost_balances c USING(workspace_id,sku_id,location_id) WHERE b.workspace_id=$1 AND b.sku_id=$2 AND b.location_id=$3',[ctx.workspaceId,sku.id,location.id])).rows[0];return {physical:Number(r.on_hand),costed:Number(r.quantity_units),value:Number(r.total_cost_minor)};};
+  const before=await state();
+  for(const [mode,quantity]of [['add','0.3'],['set',exact.add(before.physical,'0.5')]]){
+   const plan=await f.imports.analyse(c,ctx,{text:`Product,SKU,Location,Quantity,Unit cost\n${sku.name},${sku.code},${location.name},${quantity},1.01`,filename:'round17-scale-fraction-'+mode+'.csv',importMode:mode,allowModel:false});assert.equal(plan.recordsInvalid,0);await f.imports.approve(c,ctx,plan.id,plan.integrityHash);assert.equal((await f.imports.execute(c,ctx,plan.id)).verified,true);
+  }
+  assert.deepEqual(await state(),{physical:exact.safeNumber(exact.add(before.physical,'0.5')),costed:exact.safeNumber(exact.add(before.costed,'0.5')),value:before.value+50});
+ });
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });

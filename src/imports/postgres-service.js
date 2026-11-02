@@ -19,6 +19,8 @@ const rowStore = require('./postgres-row-store');
 const permissions = require('../actions/permissions');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
+const exactQuantity=require('../domain/exact-quantity');
+const addExact=(a,b)=>exactQuantity.safeNumber(exactQuantity.add(a,b),{signed:true});
 
 const PLAN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -87,7 +89,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
   const scopedSkus=`SELECT id FROM skus WHERE workspace_id=$1 AND ${skuFilter('')}`;
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
-    database.query(`SELECT s.id,s.code,s.barcode,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
+    database.query(`SELECT s.id,s.code,s.barcode,s.item_id,i.name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
@@ -148,7 +150,14 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const state=aggregate?{serials:new Set(),prices:new Map(),positions:new Set(),reorders:new Map(),quantityTotal:0}:context.validationState;
     const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
       ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
-    const quantityRead=rowValues.readQuantity(quantitySource);
+    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
+    let quantityRead=rowValues.readQuantity(quantitySource);
+    // A source cannot invent a fractional stocking unit. A saved item's
+    // precision and increment are the authority for its imported counts.
+    if(existingMatches.length===1&&(quantityRead.ok&&quantityRead.value!==null||quantityRead.problem==='fractional_quantity')){
+      try{const cleaned=String(quantitySource).trim().replace(/[\s,](?=\d{3}\b)/g,'').replace(/^\+/,'');quantityRead={ok:true,value:require('../domain/stock-quantity').validate(existingMatches[0],cleaned,{positive:false})};}
+      catch(error){quantityRead={ok:false,problem:'bad_quantity',message:error.message};}
+    }
     let quantity=quantityRead.ok ? quantityRead.value : null;
     if(input.imageSource&&quantityRead.ok&&quantity===null&&!input.confirmCatalogOnly)
       problems.push(problem('image_quantity_uncertain','Read and confirm the physical quantity from the image; a blank cell is not zero.'));
@@ -182,8 +191,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     // Keep null distinct from zero so count imports cannot erase existing stock.
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
-    if(unitCostMinor!==null&&quantity>0&&!Number.isSafeInteger(unitCostMinor*quantity))
-      problems.push(problem('cost_overflow','This row’s total inventory cost exceeds the supported range.'));
+    if(unitCostMinor!==null&&quantity>0){try{exactQuantity.costMinor(quantity,unitCostMinor);}catch(error){problems.push(problem('cost_overflow',error.message));}}
     const locationText=trimOrNull(textCell(row,mappings.location));
     let location=defaultLocation;
     if(locationText){
@@ -200,7 +208,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(!name)problems.push(problem('no_product','A product name or SKU is required.'));
     if(name?.length>240||code?.length>240)problems.push(problem('invalid_identity','Product names and SKU codes must be 240 characters or fewer.'));
     if(quantity !== null && quantity > 0 && !location)problems.push(problem('no_location','Choose where this opening stock is held.'));
-    const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     const serial=trimOrNull(textCell(row,mappings.serial));
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
     const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
@@ -237,7 +244,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     }
     try{require('../domain/physical-stock-input').validate({lotReceivedAt:trimOrNull(textCell(row,mappings.receivedAt))||(lotRequired?nowIso():null),expiresAt:trimOrNull(textCell(row,mappings.expiresAt))});}
     catch(error){problems.push(problem('invalid_stock_date',error.message));}
-    if(quantity>0&&!aggregate)state.quantityTotal+=quantity;
+    if(quantity>0&&!aggregate)state.quantityTotal=addExact(state.quantityTotal,quantity);
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
     if(sellingPriceMinor!==null){const p=currency+':'+sellingPriceMinor;if(state.prices.has(priceKey)&&state.prices.get(priceKey)!==p)problems.push(problem('conflicting_price','The same SKU has conflicting source prices. Resolve the price before importing.'));state.prices.set(priceKey,p);}
     const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
@@ -294,10 +301,10 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       if(mappings.location===undefined){const elsewhere=[...context.positions].filter(([key,p])=>{const [sku,loc]=JSON.parse(key);return sku===parsed.existingSkuId&&loc!==parsed.locationId&&p.physical!==0;});
         if(elsewhere.length)problems.push(problem('stock_elsewhere','This SKU also has stock at another location. This file has no location column, so setting this location would not set its total stock. Include the actual location counts before approval.'));}
       if(trackingMode!=='quantity')problems.push(problem('set_tracking_unsupported','Setting a tracked count requires the exact serial or lot movements. Use an evidenced receipt/return instead of overwriting tracked stock.'));
-      const before=parsed.inventoryBefore,delta=quantity-before.physical;
+      const before=parsed.inventoryBefore,delta=exactQuantity.safeNumber(exactQuantity.subtract(quantity,before.physical),{signed:true});
       if(delta<0&&before.costed>0&&before.costed!==before.physical)problems.push(problem('uncertain_count_cost','This position mixes costed and uncosted stock. Establish its cost before reducing the count from a file.'));
       parsed.countQuantityDelta=delta;
-      parsed.countCostDeltaMinor=delta<0&&before.costed>0?-(Math.abs(delta)===before.costed?before.value:Math.round(before.value*Math.abs(delta)/before.costed)):delta>0&&unitCostMinor!==null?delta*unitCostMinor:0;
+      parsed.countCostDeltaMinor=delta<0&&before.costed>0?-exactQuantity.ratioMinor(before.value,Math.abs(delta),before.costed):delta>0&&unitCostMinor!==null?exactQuantity.costMinor(delta,unitCostMinor):0;
     }
     const blocked=problems.some((entry)=>blocking.has(entry.code));
     const alreadyImported=context.importedSourceRows.has(stable([Number(row.sourceRow),row.cells]));
@@ -310,11 +317,11 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   }
   return { rows,summary:{total:rows.length,valid:rows.filter((row)=>row.status==='VALID').length,
     invalid:rows.filter((row)=>row.status==='INVALID').length,
-    units:rows.filter((row)=>row.status==='VALID').reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),
+    units:rows.filter((row)=>row.status==='VALID').reduce((sum,row)=>addExact(sum,row.parsed.quantity || 0),0),
     unvaluedUnits:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor===null)
-      .reduce((sum,row)=>sum+(row.parsed.quantity||0),0),
+      .reduce((sum,row)=>addExact(sum,row.parsed.quantity||0),0),
     valuedMinor:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor!==null)
-      .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0),
+      .reduce((sum,row)=>addExact(sum,exactQuantity.costMinor(row.parsed.quantity||0,row.parsed.unitCostMinor)),0),
     existingStockRows:rows.filter(row=>row.status==='VALID'&&row.parsed.existingSkuId&&row.parsed.quantity!==null).length,
     sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&(row.parsed.quantity===null||row.parsed.quantity===0)&&row.parsed.unitCostMinor!==null).length},
     conflicts:[...unknownLocations].map(([text,count])=>({kind:'unknown_location',text,count})),
@@ -546,7 +553,7 @@ async function analyse(database, ctx, input) {
         {...batchContext,locations:validationContext.locations,locationByName:validationContext.locationByName,validationState:validationContext.validationState},input);
       trackingSummary?.add(batch.rows);
       for(const row of batch.rows)hash.append(row);
-      for(const key of Object.keys(summary))summary[key]+=batch.summary[key];
+      for(const key of Object.keys(summary))summary[key]=addExact(summary[key],batch.summary[key]);
       for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
       await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
       await executionIdentities.insertPage(client,ctx,plan,batch.rows,{productKey,variantKey});
@@ -802,7 +809,7 @@ async function revise(database,ctx,id,input={},options={}){
           {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,imageReviewedRows,confirmCatalogOnly,importMode:revised.transformations.importMode});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
-      for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
+      for(const key of Object.keys(summary))summary[key]=addExact(summary[key],validated.summary[key]);
       for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
       await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
       const savedIds=new Map(current.map(r=>[r.rowNumber,r.id]));
