@@ -59,22 +59,24 @@ jobs:
         run: |
           mkdir -p output/inventory-ci
           set -euo pipefail
-          node --test --test-concurrency=2 --test-timeout=240000 --test-force-exit tests/unit/append-id.test.js tests/unit/disabled-plan-appearance.test.js tests/postgres/accounting-ledger.test.js tests/postgres/accounting-bulk-locks.test.js tests/unit/template-engine-security.test.js tests/unit/inspection-pool-errors.test.js tests/postgres/inspection-idle-recovery.test.js tests/postgres/inspection-warm-denial.test.js tests/postgres/round17-list-read-capacity.test.js tests/postgres/inspection-scoped-concurrency.test.js tests/unit/totp-provisioning.test.js tests/unit/round17-plan-selection.test.js tests/postgres/round17-decimal-reporting.test.js tests/postgres/round17-decimal-counts.test.js tests/postgres/round17-measured-imports.test.js tests/postgres/round17-company-invoice.test.js tests/postgres/round16-billing-warning.test.js tests/postgres/connection-popup-return.test.js tests/postgres/connections-ui.test.js tests/postgres/provider-webhook-verification.test.js tests/postgres/provider-operational-integrity.test.js tests/postgres/round17-lot-bulk-receipts.test.js tests/postgres/round17-mixed-import-journals.test.js tests/postgres/round17-report-variant-labels.test.js tests/postgres/round17-billing-preview-contract.test.js tests/postgres/round17-plan-selection-ui.test.js tests/postgres/native-complete-read-evidence.test.js 2>&1 | tee output/inventory-ci/round17-regressions.log
+node --test --test-concurrency=2 --test-timeout=240000 tests/unit/append-id.test.js tests/unit/disabled-plan-appearance.test.js tests/postgres/accounting-ledger.test.js tests/postgres/accounting-bulk-locks.test.js tests/unit/template-engine-security.test.js tests/unit/inspection-pool-errors.test.js tests/postgres/inspection-idle-recovery.test.js tests/postgres/inspection-warm-denial.test.js tests/postgres/round17-list-read-capacity.test.js tests/postgres/inspection-scoped-concurrency.test.js tests/unit/totp-provisioning.test.js tests/unit/round17-plan-selection.test.js tests/postgres/round17-decimal-reporting.test.js tests/postgres/round17-decimal-counts.test.js tests/postgres/round17-measured-imports.test.js tests/postgres/round17-company-invoice.test.js tests/postgres/round16-billing-warning.test.js tests/postgres/connection-popup-return.test.js tests/postgres/connections-ui.test.js tests/postgres/provider-webhook-verification.test.js tests/postgres/provider-operational-integrity.test.js tests/postgres/round17-lot-bulk-receipts.test.js tests/postgres/round17-mixed-import-journals.test.js tests/postgres/round17-report-variant-labels.test.js tests/postgres/round17-billing-preview-contract.test.js tests/postgres/round17-plan-selection-ui.test.js tests/postgres/native-complete-read-evidence.test.js 2>&1 | tee output/inventory-ci/round17-regressions.log
       - name: Parallel Ask admission and exact spending protection
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 --test-force-exit tests/postgres/round17-ask-concurrency.test.js tests/postgres/round17-parallel-ai-budget.test.js tests/postgres/codex-staging-budget.test.js tests/postgres/codex-account-access.test.js tests/postgres/staging-installation-budget.test.js tests/postgres/maintenance-claims.test.js tests/postgres/worker-lane-isolation.test.js 2>&1 | tee output/inventory-ci/ask-parallel-budget.log
+          node --test --test-concurrency=2 tests/postgres/round17-ask-concurrency.test.js tests/postgres/round17-parallel-ai-budget.test.js tests/postgres/codex-staging-budget.test.js tests/postgres/codex-account-access.test.js tests/postgres/staging-installation-budget.test.js tests/postgres/maintenance-claims.test.js tests/postgres/worker-lane-isolation.test.js 2>&1 | tee output/inventory-ci/ask-parallel-budget.log
       - name: Browser-free Ask and streamed answer delivery
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 --test-force-exit tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail
           # The 117-case actions file creates independent on-disk databases.
           # Keep a bounded file deadline with room for four concurrent files;
           # stock throughput and page latency have separate strict assertions.
-          node --test --test-concurrency=4 --test-timeout=180000 --test-force-exit tests/unit/*.test.js tests/integration/*.test.js 2>&1 | tee output/inventory-ci/full-regressions.log
+          # Let test streams drain naturally: forced exit can drop child verdicts
+          # on Linux pipes (nodejs/node#64833), including the summary count.
+          node --test --test-concurrency=4 --test-timeout=180000 tests/unit/*.test.js tests/integration/*.test.js 2>&1 | tee output/inventory-ci/full-regressions.log
       - name: Indexed source history and cross-inventory duplicate protection
         run: |
           set -euo pipefail
@@ -86,7 +88,7 @@ jobs:
           STOCKCHIEF_IMPORT_PROFILE: '1'
         run: |
           set -euo pipefail
-          node --test --test-concurrency=1 --test-force-exit tests/certification/round17-large-business.test.js 2>&1 | tee output/inventory-ci/round17-large-business.log
+          node --test --test-concurrency=1 tests/certification/round17-large-business.test.js 2>&1 | tee output/inventory-ci/round17-large-business.log
       - name: Parser, source identity and provider contracts
         run: |
           mkdir -p output/inventory-ci
