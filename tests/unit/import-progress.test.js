@@ -1,6 +1,15 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{present}=require('../../src/imports/postgres-progress');
 
+test('interrupted direct executions and lost job errors never produce a silent pause',()=>{
+ const base={id:'direct',records_detected:2001,records_valid:2001,plan_status:'READY',approval_status:'APPROVED',execution_status:'FAILED',execution_stage:'paused',execution_error:'SECRET_DETAIL from internal worker',integrity_hash:'approved',apply_checkpoint:{hash:'approved',cataloguePrepared:true,savedRows:2000}};
+ for(const job_status of [undefined,'PAUSED','DEAD']){const view=present({...base,job_status});assert(view.reason);assert.match(view.reason,/2,000 rows are already saved/);assert.match(view.reason,/Continue resumes/);assert.doesNotMatch(view.reason,/SECRET_DETAIL/);assert.equal(view.active,false);assert.equal(view.savedRows,2000);}
+ const failed=present({...base,execution_stage:'rolled_back',apply_checkpoint:null});assert(failed.reason);assert.equal(failed.savedRows,0);assert.doesNotMatch(failed.reason,/2,000|SECRET_DETAIL/);
+ const unfinished=present({...base,plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:0});assert.match(unfinished.reason,/Final checks have not confirmed/);assert(!unfinished.verified);
+ assert.equal(present({...base,plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:1}).reason,null);
+ const legacy=present({...base,job_result:'A historical worker returned text rather than structured progress'});assert(legacy.reason);assert.equal(legacy.savedRows,2000);
+});
+
 test('recovered workers show their live attempt without presenting the previous failure as a new pause',()=>{
  const base={id:'recovery',records_detected:10000,records_valid:10000,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',job_attempt_count:2,lease_expires_at:2000,database_now:1000,job_error:{code:'lease_expired'},integrity_hash:'approved',apply_checkpoint:{hash:'approved',cataloguePrepared:true,savedRows:4000},job_result:{importProgress:{stage:'processing',processedRows:4000,totalRows:10000,attempt:1}}};
  const running=present(base);assert.equal(running.state,'RUNNING');assert.equal(running.reason,null);assert.equal(running.attempt,2);assert.match(running.stageLabel,/Attempt 2 · resuming saved rows/);assert.equal(running.savedRows,4000);
