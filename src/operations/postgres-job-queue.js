@@ -107,7 +107,7 @@ async function claim(database, options = {}) {
         AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
           AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
       AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
-      AND (kind<>'import.execute-approved' OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
+      AND (kind NOT IN('import.execute-approved','assistant.run-codex-goal') OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=jobs.kind AND active.status='RUNNING'))
       AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
@@ -120,11 +120,11 @@ async function claim(database, options = {}) {
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
     const maintenance=MAINTENANCE_KINDS.includes(selected.kind);
-    if(selected.kind==='import.execute-approved'||maintenance){
+    if(['import.execute-approved','assistant.run-codex-goal'].includes(selected.kind)||maintenance){
       // The transaction lock closes the race between independent workers
       // that both observed an inventory with no running import.
       const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
-        ['jobs:'+(maintenance?'maintenance:':'import:')+selected.workspace_id])).rows[0].acquired;
+        ['jobs:'+(maintenance?'maintenance:':selected.kind==='assistant.run-codex-goal'?'ask:':'import:')+selected.workspace_id])).rows[0].acquired;
       if(!locked)return null;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs
         WHERE workspace_id=$1 AND kind=ANY($2::text[]) AND status='RUNNING' LIMIT 1`,
@@ -136,7 +136,8 @@ async function claim(database, options = {}) {
       attempt_count = attempt_count + 1, lease_owner = $2, lease_token = $3, lease_expires_at = $4,
       started_at = COALESCE(started_at, $5), updated_at = $5 WHERE id = $1 RETURNING *`,
     [candidate.rows[0].id, String(options.owner), token, expires, new Date(now).toISOString()]);
-    await event(client, result.rows[0].id, 'CLAIMED', { owner: options.owner, leaseExpiresAt: expires }, now);
+    await event(client, result.rows[0].id, 'CLAIMED', { owner: options.owner, leaseExpiresAt: expires,
+      queueWaitMs:Math.max(0,now-Math.max(Number(result.rows[0].available_at),new Date(result.rows[0].created_at).getTime())) }, now);
     return hydrate(result.rows[0]);
   }, { isolation: 'READ COMMITTED' });
 }

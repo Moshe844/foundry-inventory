@@ -30,7 +30,8 @@ test('Stripe subscription lifecycle requests are idempotent and carry the exact 
   assert.equal(calls[0].body.get('subscription_details[items][0][price]'),'price_pro');
   assert.match(calls[1].url,/\/subscriptions\/sub_1$/);assert.equal(calls[1].body.get('items[0][id]'),'si_1');
   assert.equal(calls[1].body.get('items[0][price]'),'price_pro');assert.equal(calls[1].body.get('proration_behavior'),'always_invoice');
-  assert.equal(calls[0].body.get('subscription_details[billing_cycle_anchor]'),'now');assert.equal(calls[1].body.get('billing_cycle_anchor'),'now');
+  assert.equal(calls[0].body.get('subscription_details[billing_cycle_anchor][type]'),'now');assert.equal(calls[1].body.get('billing_cycle_anchor[type]'),'now');
+  assert.equal(calls[0].body.has('subscription_details[proration_date]'),false);assert.equal(calls[1].body.has('proration_date'),false);
   assert.equal(calls[1].options.headers['Idempotency-Key'],'stockchief-subscription-change:change_1');
   assert.equal(calls[2].body.get('cancel_at_period_end'),'true');
   assert.equal(calls[2].options.headers['Idempotency-Key'],'stockchief-subscription-cancellation:sub_1:cancel_1');

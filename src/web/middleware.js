@@ -585,8 +585,8 @@ function errorHandler(isProduction) {
       res.status(status);
       if (res.page) {
         return res.page('error', {
-          title: err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
-          errorTitle:err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
+          title: err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
+          errorTitle:err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
           status,
           message,
           detail: null,

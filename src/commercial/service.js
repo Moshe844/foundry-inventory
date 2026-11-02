@@ -132,7 +132,9 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
     ||target.id===current.plan_id&&current.billing_interval==='ANNUAL'&&interval==='MONTHLY';
   const excess=downgrade?await control.resourceExcess(database,{accountId,workspaceId:null},target.id):{};
   const prorationDate=Math.floor(Date.now()/1000);let preview=null;
-  if(options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
+  // A downgrade starts at the paid-period boundary; there is no immediate
+  // invoice to preview, particularly for a subscription ending at renewal.
+  if(!downgrade&&options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
     customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,itemId:item.id,priceId,
     prorationBehavior:downgrade?'none':'always_invoice',billingCycleAnchor:downgrade?undefined:'now',prorationDate},options.providerOptions||{});
   return {current,currentPlan,target,interval,priceId,itemId:item.id,downgrade,excess,preview,prorationDate,
