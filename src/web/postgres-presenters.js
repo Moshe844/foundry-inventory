@@ -130,7 +130,7 @@ async function inventoryPosition(database,workspaceId){
   });
   return {position:{tooLarge:number(row.products)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
     products:number(row.products),skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},
-    stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost),missingCostUnits:coverage.missingCostUnits}};
+    stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost),...coverage}};
 }
 
 async function purchasing(database,workspaceId){

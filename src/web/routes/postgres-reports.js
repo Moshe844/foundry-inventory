@@ -62,7 +62,7 @@ function createPostgresReportsRouter(database){
   const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
   router.get('/reports',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
-    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,req.query),businessCards=await business.cards(database,req.ctx,actor,req.query);
+    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,req.query,{coverage:true}),businessCards=await business.cards(database,req.ctx,actor,req.query);
     return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,
       compositions:composed.dimensions(actor)});
   }));
