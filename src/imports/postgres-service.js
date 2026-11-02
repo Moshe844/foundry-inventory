@@ -19,6 +19,7 @@ const rowStore = require('./postgres-row-store');
 const permissions = require('../actions/permissions');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
+const {newAppendId}=require('../lib/append-id');
 const exactQuantity=require('../domain/exact-quantity');
 const addExact=(a,b)=>exactQuantity.safeNumber(exactQuantity.add(a,b),{signed:true});
 
@@ -312,7 +313,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(role)parsed.documentEvidence=role;
     if(aggregate)problems.push(problem('document_trailer','This is a document total, charge or note without a separate product identity; it is retained as document evidence and excluded from stock.'));
     for(let i=problems.length-1;i>=0;i--)if(problems.findIndex(p=>p.code===problems[i].code)<i)problems.splice(i,1);
-    rows.push({id:newId('improw'),rowNumber:row.sourceRow,position,raw:row.cells,parsed,problems,
+    rows.push({id:newAppendId('improw'),rowNumber:row.sourceRow,position,raw:row.cells,parsed,problems,
       status:alreadyImported?'SKIPPED':aggregate?'EXCLUDED':blocked?'INVALID':'VALID'});
   }
   return { rows,summary:{total:rows.length,valid:rows.filter((row)=>row.status==='VALID').length,

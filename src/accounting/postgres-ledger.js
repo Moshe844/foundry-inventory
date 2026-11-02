@@ -2,6 +2,7 @@
 
 const { DEFAULT_ACCOUNTS } = require('./chart');
 const { newId, nowIso } = require('../lib/util');
+const {newAppendId}=require('../lib/append-id');
 const { ValidationError, AuthorizationError } = require('../domain/errors');
 
 function dateOnly(value) {
@@ -145,9 +146,9 @@ async function postManyInTransaction(client,ctx,inputs){
     if(keys.some(key=>!byKey.has(key))||ids.some(id=>!byId.has(id))||allLines.some(line=>!line.accountKey&&!line.accountId))throw new ValidationError('One or more accounting control accounts are missing or inactive.');
     const firstNumber=Number((await client.query('SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].next),at=nowIso(),journalRows=[],journalLines=[];
     for(const [index,row]of rows.entries()){
-      const input=row.input,id=newId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
+      const input=row.input,id=newAppendId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
       journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify({...input.metadata,postingCalendar:{basis:input.postingDate?'EXPLICIT_DATE':input.postingInstant?'BUSINESS_EVENT_INSTANT':'BUSINESS_CURRENT_DATE',timeZone:calendar?.timeZone||ctx.businessTimeZone||null,instant:input.postingInstant||(!input.postingDate?at:null)}}),reversal_of_entry_id:input.reversalOfEntryId||null});
-      for(const [position,line]of row.normalized.entries())journalLines.push({id:newId('jel'),entry_id:id,line_number:position+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,currency:row.currency,customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})});
+      for(const [position,line]of row.normalized.entries())journalLines.push({id:newAppendId('jel'),entry_id:id,line_number:position+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,currency:row.currency,customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})});
     }
     await client.query(`INSERT INTO accounting_journal_entries(id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,reversal_of_entry_id,created_at,posted_at)
       SELECT x.id,$1,x.entry_number,x.posting_date,x.period_id,x.description,'POSTED',x.source_type,x.source_record_type,x.source_record_id,x.source_event_id,x.source_key,x.created_by_type,$2,'accounting-postgres-v1',x.metadata,x.reversal_of_entry_id,$3,$3
