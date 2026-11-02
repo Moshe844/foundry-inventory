@@ -58,7 +58,16 @@ function createPool({idleMs=4*60000,maxEntries=4}={}){
    clearTimeout(entry.expiry);entry.leases++;entry.lastUsed=++usageSequence;let released=false;
    return {async release(){if(released)return;released=true;entry.leases--;if(!entry.leases){if(closed)return retire(key,entry);entry.expiry=setTimeout(()=>retire(key,entry).catch(()=>{}),idleMs);entry.expiry.unref();}}};
   },
-  async warm(options){const lease=await acquire({...options,warmOnly:true});if(!lease)return false;await lease.release();return true;},
+  async warm(options){
+   let lease;try{lease=await acquire({...options,warmOnly:true});}
+   catch(error){
+    // Speculative preparation grants no access. A disabled or unentitled
+    // account must not stop the shared worker; real acquire still rejects it.
+    if(error.code==='forbidden'&&error.status===403||error.code==='entitlement_required'&&error.status===402)return false;
+    throw error;
+   }
+   if(!lease)return false;await lease.release();return true;
+  },
   async close(){
    closed=true;
    await Promise.allSettled([...entries].map(([key,entry])=>retire(key,entry)));

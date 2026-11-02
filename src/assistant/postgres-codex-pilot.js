@@ -7,11 +7,13 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
  // One fresh identity/pilot snapshot for this boundary. No authority is cached
  // between reads, model requests or operations.
- const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,a.id AS account_id,w.owner_account_id,w.name AS business_name,p.pilot
+ const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,a.id AS account_id,actor_access.disabled_at AS actor_disabled_at,w.owner_account_id,w.name AS business_name,p.pilot
   FROM users u JOIN accounts a ON a.id=u.account_id JOIN workspaces w ON w.id=u.workspace_id
+  LEFT JOIN platform_account_access actor_access ON actor_access.account_id=a.id
   LEFT JOIN stockchief_runtime.codex_pilot_workspace_access p ON p.workspace_id=u.workspace_id
     AND (p.funding_workspace_id=ANY($3::text[]) OR $4 AND p.pilot->>'admission_kind'='COMMERCIAL')
   WHERE u.workspace_id=$1 AND u.id=$2 AND w.deletion_requested_at IS NULL`,[ctx.workspaceId,ctx.actorId,fundingWorkspaces(),customerAccess()])).rows[0];
+ if(row?.actor_disabled_at)throw new AuthorizationError('Account access has been disabled by StockChief. Contact support@stockchiefhq.com for help.');
  const actor=row&&{id:row.id,role:row.role,permissions:row.permissions,email:row.email};
  if(customerAccess()&&actor&&(!row.pilot||row.pilot.admission_kind==='COMMERCIAL')){
   if(owner&&actor.role!=='owner')throw new AuthorizationError('Only an owner can change agent availability.');

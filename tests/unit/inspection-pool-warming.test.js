@@ -1,4 +1,14 @@
 'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+test('a denied speculative warm-up leaves authorized accounts available and real acquisitions still reject it',async t=>{
+ const pilot=require('../../src/assistant/postgres-codex-pilot'),inspection=require('../../scripts/environment-agent-demo/inspection'),{AuthorizationError}=require('../../src/domain/errors'),{EntitlementError}=require('../../src/commercial/entitlements');
+ const denied=new AuthorizationError('Disabled account fixture'),unentitled=new EntitlementError('No active entitlement fixture'),unsafe=Object.assign(Error('Unreviewed schema fixture'),{code:'UNSAFE_INSPECTION_STOCK_VIEW'}),created=[];
+ t.mock.method(pilot,'access',async(db,ctx)=>{if(ctx.actorId==='disabled')throw denied;if(ctx.actorId==='unentitled')throw unentitled;if(ctx.actorId==='unsafe')throw unsafe;});
+ t.mock.method(pilot,'readAuthorization',async()=>({hostOnly:true}));t.mock.method(inspection,'createInspectionServer',async({ctx})=>{created.push(ctx.actorId);return {actor:ctx.actorId,close:async()=>{}};});
+ const pool=require('../../scripts/environment-agent-demo/inspection-pool').createPool({maxEntries:2});t.after(()=>pool.close());const options=actorId=>({database:{},ctx:{workspaceId:'tenant-'+actorId,actorId},connectionString:'fixture-host'});
+ assert.equal(await pool.warm(options('first')),true);assert.equal(await pool.warm(options('disabled')),false);assert.equal(await pool.warm(options('unentitled')),false);assert.equal(await pool.warm(options('second')),true);assert.deepEqual(created,['first','second']);
+ await assert.rejects(pool.acquire(options('disabled')),e=>e===denied);await assert.rejects(pool.acquire(options('unentitled')),e=>e===unentitled);await assert.rejects(pool.warm(options('unsafe')),e=>e===unsafe);
+ const permitted=await pool.acquire(options('second'));assert.equal(permitted.server.actor,'second');await permitted.release();assert.deepEqual(created,['first','second']);
+});
 test('background warming cannot evict a recent business renderer and real acquisitions retain fresh authorization',async t=>{
  const pilot=require('../../src/assistant/postgres-codex-pilot'),inspection=require('../../scripts/environment-agent-demo/inspection'),created=[],closed=[],accesses=[];let revoked=false;
  t.mock.method(pilot,'access',async(db,ctx)=>{accesses.push(ctx.actorId);if(revoked&&ctx.actorId==='actor-a')throw Error('revoked');});t.mock.method(pilot,'readAuthorization',async()=>({hostOnly:true}));t.mock.method(inspection,'createInspectionServer',async({ctx})=>{const server={actor:ctx.actorId,async close(){closed.push(ctx.actorId);}};created.push(server);return server;});
