@@ -10,6 +10,8 @@ test('large quantity imports save bounded 2,000-row batches and resume exactly a
  const postings=require('../../src/imports/postgres-opening-values'),originalPosting=postings.post;postings.post=(client,context,source,values)=>originalPosting(client,context,{...source,recordsValid:4999},values);
  try{await assert.rejects(imports.execute(db,ctx,plan.id,{beforeRow:({rowsImported})=>{if(rowsImported===2500)throw Error('interrupt second stock batch');}}),/interrupt second stock batch/);}finally{postings.post=originalPosting;}
  let paused=await imports.report(db,ctx.workspaceId,plan.id);assert.equal(paused.rowsImported,2000);assert.deepEqual(await state(),{units:'4000',value:'500000'});
+ const sourceHistory=require('../../src/imports/postgres-source-history'),recorded=(await db.query("SELECT row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED' ORDER BY row_number",[ctx.workspaceId,plan.id])).rows;
+ const partial=await db.transaction(async c=>{await c.query("SET LOCAL plan_cache_mode='force_generic_plan'");return sourceHistory.read(c,ctx.workspaceId,plan.sourceHash);},{readOnly:true,isolation:'REPEATABLE READ'});assert.deepEqual(partial.sort((a,b)=>Number(a.row_number)-Number(b.row_number)),recorded);assert.equal(partial.length,2000,'Committed rows of a paused import remain protected from duplicate receipt');
  await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:ids.at(-1),locationId:f.location.id,quantity:3,unitCost:'2',idempotencyKey:'activity-between-large-batches'});
  const ledger=require('../../src/accounting/postgres-ledger'),originalPostMany=ledger.postManyInTransaction;
  for(const tamperedLine of [0,1500]){
