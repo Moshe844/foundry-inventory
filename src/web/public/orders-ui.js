@@ -52,6 +52,13 @@
     flash.setAttribute('data-ox-title', text);
     flash.classList.add('ox-toast');
     setTimeout(function () { flash.classList.add('is-gone'); }, 5000);
+    // The payment choice made on the order form: take them straight to it.
+    if (info.pay === 'collect') openCollect(true);
+    else if (info.pay === 'link') {
+      var secure = $('#secure-payment');
+      if (secure) { secure.scrollIntoView({ block: 'center' }); var go = $('button, a.btn', secure); if (go) go.focus(); }
+      else openCollect(true);
+    }
   }
 
   /* Order page: put the action buttons on the header row. */
@@ -60,6 +67,32 @@
     var head = $('.ox-ohead-wrap ~ .page-head');
     if (!actions) return;
     if (head) head.appendChild(actions);
+    var strip = $('[data-ox-order-money]');
+    if (strip && head) head.insertAdjacentElement('afterend', strip);
+    // The provider's own payment card lower down is where a link is made.
+    $$('.card-head h2').forEach(function (h2) {
+      if (/^Secure customer payment$/.test(h2.textContent.trim())) h2.closest('.card').id = 'secure-payment';
+    });
+    var collect = $('#ox-collect');
+    $$('[data-ox-collect-open]').forEach(function (link) {
+      if (!collect || link.getAttribute('href') !== '#ox-collect') return;
+      link.setAttribute('aria-controls', 'ox-collect');
+      link.addEventListener('click', function (event) { event.preventDefault(); openCollect(!collect.open); });
+    });
+    var linkOpen = $('[data-ox-link-open]');
+    if (linkOpen && !$('#secure-payment')) linkOpen.hidden = true;
+  }
+
+  function openCollect(open) {
+    var collect = $('#ox-collect');
+    if (!collect) return false;
+    collect.open = open !== false;
+    if (collect.open) {
+      collect.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      var amount = $('[data-ox-collect-amount]');
+      if (amount) amount.focus();
+    }
+    return true;
   }
 
   function start() {

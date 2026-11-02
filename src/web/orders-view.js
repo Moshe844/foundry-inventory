@@ -56,11 +56,15 @@ function statusBadge(order) {
   }
 }
 
-function paymentBadge(order, invoiced) {
-  if (order.status === 'DRAFT' || (order.status === 'CANCELLED' && !shippedSome(order))) return null;
-  if (Number(order.balance_minor) > 0) return { text: 'Unpaid', tone: 'rose' };
-  if (invoiced) return { text: 'Paid', tone: 'green' };
-  return { text: 'Not invoiced', tone: 'grey' };
+// Payment is read from money actually received, not from whether an invoice
+// exists yet: an order paid upfront is paid before anything has shipped.
+function paymentBadge(order, invoiced, paidMinor) {
+  const total = Number(order.pricing.totalMinor || 0);
+  const quiet = order.status === 'DRAFT' || (order.status === 'CANCELLED' && !shippedSome(order));
+  if (quiet && !paidMinor) return null;
+  if ((invoiced && Number(order.balance_minor) === 0) || (total > 0 && paidMinor >= total)) return { text: 'Paid', tone: 'green' };
+  if (paidMinor > 0) return { text: 'Partly paid', tone: 'amber' };
+  return { text: 'Unpaid', tone: invoiced ? 'rose' : 'grey' };
 }
 
 function rowAction(order, tab) {
@@ -93,6 +97,10 @@ async function ordersList(database, workspaceId, result, query = {}) {
   const invoicedRows = (await database.query(`SELECT DISTINCT sales_order_id FROM accounting_customer_invoices
     WHERE workspace_id=$1 AND sales_order_id IS NOT NULL AND status<>'VOID'`, [workspaceId])).rows;
   const invoiced = new Set(invoicedRows.map((row) => row.sales_order_id));
+  const paidRows = (await database.query(`SELECT sales_order_id,SUM(amount_minor)::bigint AS minor FROM accounting_payments
+    WHERE workspace_id=$1 AND direction='CUSTOMER_RECEIPT' AND status='POSTED' AND sales_order_id IS NOT NULL
+    GROUP BY sales_order_id`, [workspaceId])).rows;
+  const paid = new Map(paidRows.map((row) => [row.sales_order_id, Number(row.minor)]));
 
   const all = result.orders.map((order) => {
     const tabKey = bucket(order);
@@ -101,7 +109,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
       customer: order.customer.name, initials: initials(order.customer.name),
       date: shortDay(order.order_date || order.created_at), day: isoDay(order.order_date || order.created_at),
       totalMinor: Number(order.pricing.totalMinor || 0), balanceMinor: Number(order.balance_minor || 0),
-      currency: order.currency || 'USD', badge: statusBadge(order), payment: paymentBadge(order, invoiced.has(order.id)),
+      currency: order.currency || 'USD', badge: statusBadge(order), payment: paymentBadge(order, invoiced.has(order.id), paid.get(order.id) || 0),
       action: rowAction(order, tabKey), attention: tabKey === 'needs', muted: order.status === 'CANCELLED' && tabKey === 'done',
     };
   });

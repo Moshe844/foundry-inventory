@@ -4,21 +4,74 @@
    *
    * The page's own breadcrumb and .page-head stay exactly as rendered — other
    * code reads their text (the status wording, the badge) — and are restyled
-   * here. This adds the back link and the action buttons, which the script
-   * moves into the header row.
+   * here. This adds the back link, the action buttons and the money strip,
+   * which the script moves onto and under the header row.
+   *
+   * Payment is its own act, separate from creating and from fulfilling. Before
+   * any invoice exists the full payments panel further down does not render,
+   * so collecting is offered here: a payment recorded now is a customer
+   * deposit, applied to the invoice when the goods leave.
    */
-  var oxOwed = locals.money && Number(locals.money.outstandingMinor || 0) > 0;
+  var oxMoney = locals.money || {};
+  var oxCurrency = oxMoney.currency || order.currency || 'USD';
+  var oxTotal = Number(oxMoney.totalMinor || 0), oxPaid = Number(oxMoney.paidMinor || 0), oxOwed = Number(oxMoney.outstandingMinor || 0);
+  var oxCancelled = order.status === 'CANCELLED';
+  var oxState = oxTotal > 0 && oxOwed === 0 && oxPaid > 0 ? ['Paid', 'green'] : oxPaid > 0 ? ['Partly paid', 'amber'] : ['Unpaid', oxMoney.invoiced ? 'rose' : 'grey'];
+  var oxProviders = locals.paymentProviders || [];
+  var oxOnline = oxProviders.some(function (name) { return name !== 'stripe'; }) || Boolean(locals.paymentAccount && locals.paymentAccount.connected);
+  var oxCollect = !oxCancelled && oxOwed > 0;
   var oxNext = order.status === 'DRAFT' ? { label: 'Confirm order', href: '#approve-order' }
-    : ['CONFIRMED', 'PARTIALLY_FULFILLED'].includes(order.status) ? { label: 'Ship order', href: '/orders/' + order.id + '?open=fulfilment#fulfilment' }
-    : order.status === 'FULFILLED' && oxOwed ? { label: 'Record payment', href: '/orders/' + order.id + '?open=money#money' } : null;
+    : ['CONFIRMED', 'PARTIALLY_FULFILLED', 'BACKORDERED'].includes(order.status) ? { label: 'Ship order', href: '/orders/' + order.id + '?open=fulfilment#fulfilment' }
+    : null;
+  var oxAsk = Number(oxMoney.dueNowMinor || 0) > 0 && Number(oxMoney.dueNowMinor) < oxOwed ? Number(oxMoney.dueNowMinor) : oxOwed;
 %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
 <div class="ox ox-ohead-wrap">
   <a class="ox-back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
   <div class="ox ox-oactions ox-head__actions" data-ox-order-actions>
     <button class="ox-btn ox-btn--ghost" type="button" onclick="window.print()">Print</button>
-    <% if (order.status !== 'DRAFT' && order.status !== 'CANCELLED') { %><a class="ox-btn ox-btn--secondary" href="/orders/<%= order.id %>?open=money#money">Invoice and payment</a><% } %>
+    <% if (oxCollect) { %><a class="ox-btn <%= oxNext ? 'ox-btn--secondary' : 'ox-btn--primary' %>" href="<%= oxMoney.invoiced ? '/orders/' + order.id + '?open=money#money' : '#ox-collect' %>" data-ox-collect-open>Collect payment</a><% } %>
     <% if (oxNext) { %><a class="ox-btn ox-btn--primary" href="<%= oxNext.href %>"><%= oxNext.label %></a><% } %>
   </div>
+  <% if (oxTotal > 0) { %>
+  <section class="ox ox-money" data-ox-order-money aria-label="Payment">
+    <div class="ox-money__cells">
+      <div><span>Order total</span><b class="ox-num"><%= helpers.money(oxTotal, oxCurrency) %></b></div>
+      <div><span>Paid</span><b class="ox-num"><%= helpers.money(oxPaid, oxCurrency) %></b></div>
+      <div><span>Balance due</span><b class="ox-num ox-money__due"><%= helpers.money(oxOwed, oxCurrency) %></b></div>
+      <div><span>Payment</span><span class="ox-badge ox-badge--<%= oxState[1] %>"><%= oxState[0] %></span></div>
+    </div>
+    <% if (oxCollect && !oxMoney.invoiced) { %>
+    <details class="ox-collect" id="ox-collect">
+      <summary class="ox-sr">Collect payment</summary>
+      <div class="ox-collect__body">
+        <form method="post" action="/sales/orders/<%= order.id %>/payment" class="ox-collect__record" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <h3>Record a payment</h3>
+          <div class="ox-collect__row">
+            <label class="ox-field"><span>Amount</span><input type="number" name="amount" step="0.01" min="0.01" max="<%= (oxOwed / 100).toFixed(2) %>" value="<%= (oxAsk / 100).toFixed(2) %>" required data-ox-collect-amount></label>
+            <label class="ox-field"><span>How</span><select name="method"><option value="cash">Cash</option><option value="card">Card machine</option><option value="bank transfer">Bank transfer</option><option value="cheque">Cheque</option><option value="other">Something else</option></select></label>
+            <label class="ox-field"><span>When</span><input type="date" name="paymentDate" value="<%= helpers.dateInputValue(new Date()) %>"></label>
+          </div>
+          <p class="ox-help">A full or part payment. Nothing has to have shipped; it is applied to the invoice when the goods leave.</p>
+          <button class="ox-btn ox-btn--primary" type="submit">Record payment</button>
+        </form>
+        <div class="ox-collect__online">
+          <h3>Card or payment link</h3>
+          <% if (oxOnline) { %>
+            <p class="ox-help">The connected processor hosts the payment page; StockChief never sees the card.</p>
+            <a class="ox-btn ox-btn--secondary" href="#secure-payment" data-ox-link-open>Send a payment link</a>
+          <% } else if (locals.canManagePaymentAccount) { %>
+            <p class="ox-help">No payment processor is connected, so cards and payment links aren't available yet.</p>
+            <a class="ox-btn ox-btn--secondary" href="/settings/connections#payments">Connect payments</a>
+          <% } else { %>
+            <p class="ox-help">No payment processor is connected yet. A workspace owner can connect one under Settings → Connections.</p>
+          <% } %>
+        </div>
+      </div>
+    </details>
+    <% } %>
+  </section>
+  <% } %>
 </div>
 <script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

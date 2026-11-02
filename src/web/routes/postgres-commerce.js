@@ -797,7 +797,11 @@ function createPostgresCommerceRouter(database,options={}){
         CASE WHEN l.kind='warehouse' THEN 0 ELSE 1 END,l.created_at,l.id`,[req.ctx.workspaceId]),
       database.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND active=1 AND applies_to IN ('SALES','BOTH') AND effective_from<=$2 AND (effective_to IS NULL OR effective_to>=$2) ORDER BY name",[req.ctx.workspaceId,form.orderDate||entryToday(req)]),entryCurrency(req)]);
     const catalogue=[...new Map([...first,...chosen].map(s=>[s.id,s])).values()];
-    return res.status(status).page('sales/entry',{title:quotation?'New quotation':editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,quotation,operationKey:newId('order-form')});
+    // Same readiness the order page uses before it offers a card or a link.
+    const paymentsReady=(await payments.availableProviders(database,req.ctx.workspaceId)).length>0
+      ||Boolean((await paymentConnect.describe(database,req.ctx.workspaceId))?.connected);
+    return res.status(status).page('sales/entry',{title:quotation?'New quotation':editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,quotation,operationKey:newId('order-form'),
+      paymentsReady,canManagePaymentAccount:req.user?.role==='owner'});
   }
   const quotations=require('../../sales/postgres-quotes');
   router.get('/quotes',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quotes',{title:'Quotes',nav:'sales',quotes:await quotations.list(database,req.ctx)})));
@@ -1136,6 +1140,19 @@ function createPostgresCommerceRouter(database,options={}){
   router.post('/sales/orders/:id/payment',requirePermission(permissions.RECORD_PAYMENTS,'record customer payments'),asyncRoute(async(req,res)=>{
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const invoice=detail.invoices.find((candidate)=>['OPEN','PARTIALLY_PAID'].includes(candidate.status));
+    if(!invoice&&!detail.invoices.length&&detail.order.status!=='CANCELLED'){
+      // Paid before anything left: a customer deposit, which the existing
+      // engine applies to the invoice when the goods go.
+      const amountMinor=minor(req.body.amount,'Payment amount',detail.order.currency);
+      const paid=Number((await database.query(`SELECT coalesce(sum(amount_minor),0)::bigint AS minor FROM accounting_payments
+        WHERE workspace_id=$1 AND sales_order_id=$2 AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,[req.ctx.workspaceId,detail.order.id])).rows[0].minor);
+      if(amountMinor>Math.max(0,detail.orderTotalMinor-paid))throw new ValidationError('That is more than this order still owes.');
+      await workflows.recordCustomerDeposit(database,req.ctx,{customerId:detail.order.customer_id,salesOrderId:detail.order.id,amountMinor,
+        paymentDate:req.body.paymentDate||dateToday(req),currency:detail.order.currency,method:trimOrNull(req.body.method),
+        reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-deposit')});
+      req.flash('success','Payment recorded as a customer deposit. It is applied to the invoice when the goods leave.');
+      return res.redirect(303,`/orders/${req.params.id}?open=money`);
+    }
     if(!invoice)throw new ValidationError('This order has no open customer invoice to pay.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
       customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount',invoice.currency),

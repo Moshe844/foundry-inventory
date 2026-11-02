@@ -177,7 +177,8 @@
  /* After create: remember what to say on the order page. */
  form.addEventListener('submit',event=>{if(form.action.indexOf('/sales/orders')<0)return;
   try{const count=rows().reduce((s,r)=>s+(r.querySelector('[name=skuId]').value?Number(r.querySelector('[name=quantity]').value)||0:0),0);
-   sessionStorage.setItem('ox-created',JSON.stringify({next:event.submitter?.value||'confirm',count,where:location.value?location.selectedOptions[0].text:''}));}catch{}});
+   const pay=document.querySelector('input[name=oxPayment]:checked')?.value||'later';
+   sessionStorage.setItem('ox-created',JSON.stringify({next:event.submitter?.value||'confirm',count,pay,where:location.value?location.selectedOptions[0].text:''}));}catch{}});
 
  rows().forEach(measurement);customerDefaults();fields.forEach(field=>field.dataset.auto=field.value);showCustomer();delivery();
  if(form.elements.tax&&form.elements.taxRateId)form.elements.tax.disabled=Boolean(form.elements.taxRateId.value);schedule();

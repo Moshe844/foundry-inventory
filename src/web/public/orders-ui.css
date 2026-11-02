@@ -300,6 +300,32 @@ main:has(> .ox), main:has(.ox[data-ox-page]) { background: #F4F6FB; }
 .ox-ohead-wrap ~ .page-head > .badge.badge--success { color: #059669; background: #E8FBF3; }
 .ox.ox-oactions { max-width: none; padding: 0; margin: 8px 0 12px; }
 .ox-ohead-wrap ~ .page-head > .ox-oactions { margin: 0 0 0 auto; align-self: flex-start; }
+.ox.ox-money { max-width: none; padding: 0; margin: 0 0 16px; background: var(--ox-card); border: 1px solid var(--ox-border); border-radius: var(--ox-r-card); box-shadow: var(--ox-shadow); }
+.ox-money__cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ox-money__cells > div { padding: 14px 18px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ox-money__cells > div + div { border-left: 1px solid var(--ox-divider); }
+.ox-money__cells span:first-child { font-size: 12px; color: var(--ox-text-3); }
+.ox-money__cells b { font-size: 18px; font-weight: 700; color: var(--ox-text); }
+.ox-money__cells .ox-badge { align-self: flex-start; }
+.ox-collect { border-top: 1px solid var(--ox-divider); }
+.ox-collect > summary { list-style: none; }
+.ox-collect__body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; padding: 18px; }
+.ox-collect h3 { margin: 0 0 10px; font-size: 14px; font-weight: 650; }
+.ox-collect__row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.ox-collect__online { border-left: 1px solid var(--ox-divider); padding-left: 20px; }
+.ox-collect .ox-help { display: block; margin: 0 0 12px; }
+@media (max-width: 819px) {
+  .ox-money__cells { grid-template-columns: 1fr 1fr; }
+  .ox-money__cells > div:nth-child(3) { border-left: 0; }
+  .ox-money__cells > div:nth-child(n+3) { border-top: 1px solid var(--ox-divider); }
+  .ox-collect__body, .ox-collect__row { grid-template-columns: 1fr; }
+  .ox-collect__online { border-left: 0; padding-left: 0; border-top: 1px solid var(--ox-divider); padding-top: 16px; }
+}
+.ox-paychoice { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--ox-divider); }
+.ox-paychoice > span { display: block; font-size: 13px; font-weight: 600; color: var(--ox-text-2); margin-bottom: 6px; }
+.ox-paychoice label { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; font-size: 14px; cursor: pointer; }
+.ox-paychoice input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--ox-primary); flex-shrink: 0; min-height: 0; }
+.ox-paychoice small { display: block; color: var(--ox-text-3); font-size: 12px; }
 @media print { .ox-head__actions, .ox-back, .ox-toast { display: none !important; } }
 
 @media (max-width: 1100px) {

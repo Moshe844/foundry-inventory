@@ -135,6 +135,17 @@
      <p class="ox-quote-status" id="order-quote-status">Choose a customer and product to calculate totals.</p>
     </div>
     <p class="ox-sum__stock" role="status" id="order-stock-check"><span class="ox-dot ox-dot--grey" aria-hidden="true"></span><span>Pick a customer and add items</span></p>
+    <% if(!quotation&&!editOrder){ %>
+    <%# Where to go after Create order. Not a form field (form="ox-not-posted"
+        names no form, so it is never posted): creating and paying stay separate
+        acts on the server, and the order page opens the chosen one. %>
+    <div class="ox-paychoice" role="radiogroup" aria-label="Payment">
+     <span>Payment</span>
+     <label><input type="radio" name="oxPayment" value="later" form="ox-not-posted" checked><span>Collect later<small>Send an invoice or take payment any time.</small></span></label>
+     <label><input type="radio" name="oxPayment" value="collect" form="ox-not-posted"><span>Collect payment now<small>Cash, card machine, transfer, or a deposit.</small></span></label>
+     <label><input type="radio" name="oxPayment" value="link" form="ox-not-posted" <%= locals.paymentsReady?'':'disabled' %>><span>Send a payment link<small><% if(locals.paymentsReady){ %>The customer pays on a secure page.<% }else if(locals.canManagePaymentAccount){ %>No payment processor connected. <a href="/settings/connections#payments">Connect payments</a><% }else{ %>Needs a payment processor. A workspace owner can connect one.<% } %></small></span></label>
+    </div>
+    <% } %>
     <div class="ox-sum__btns">
      <% if(quotation){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save quotation</button>
      <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save draft changes</button>
