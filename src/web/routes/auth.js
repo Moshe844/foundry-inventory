@@ -58,7 +58,7 @@ router.post(
 
 router.get('/register', (req, res) => {
   if (req.account) return res.redirect(req.user ? '/' : '/inventories');
-  return res.render('auth/register', {
+  return res.render('auth/reference-register', {
     title: 'Create your account',
     csrfToken: res.locals.csrfToken,
     flash: res.locals.flash,
@@ -83,7 +83,7 @@ router.post(
         return { ...account, ...inventory };
       });
     } catch (err) {
-      return res.status(err.status || 400).render('auth/register', {
+      return res.status(err.status || 400).render('auth/reference-register', {
         title: 'Create your account',
         csrfToken: res.locals.csrfToken,
         flash: [{ type: 'error', message: err.message }],

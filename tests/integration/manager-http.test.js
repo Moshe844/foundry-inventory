@@ -699,7 +699,7 @@ test('Home confirms a selected attachment and a file-only Tell StockChief reques
      VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
   ).run(env.workspace.workspaceId);
   const home = await env.agent.get('/');
-  assert.match(plain(home.text), /Add your inventory/);
+  assert.match(plain(home.text), /Add your first product/);
   const ask = await env.agent.get('/ask');
   assert.match(ask.text, /data-operator-attachment/);
   assert.match(ask.text, /data-operator-attachment-status/);
@@ -1084,7 +1084,7 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   // screen still showing the old figure, so the screen is asserted, not just
   // the row underneath it.
   const itemPage = plain((await env.agent.get(`/inventory/${item.itemId}`)).text);
-  assert.match(itemPage, /Downtown Store\s*5/,
+  assert.match(itemPage, /Downtown Store:\s*5/,
     'the item page must show the corrected quantity at that location');
   assert.match(itemPage, /Corrected|Adjusted/i, 'and the correction appears in its recent activity');
 

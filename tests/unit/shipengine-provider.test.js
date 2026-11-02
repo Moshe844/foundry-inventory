@@ -49,7 +49,7 @@ test('ShipEngine translates carrier rates and labels without leaking provider sh
       packages: [{ weightGrams: 500 }],
     });
     assert.deepEqual(quoted, { providerShipmentIds: ['se-shipment'], rates: [{
-      rateId: 'se-rate', carrier: 'stamps_com', service: 'USPS Ground Advantage',
+      rateId: 'se-rate', carrier: 'stamps_com', carrierAccount: null, service: 'USPS Ground Advantage',
       amountMinor: 842, currency: 'USD', deliveryDays: 3,
       deliveryDate: '2026-09-10', guaranteed: false,
     }] });

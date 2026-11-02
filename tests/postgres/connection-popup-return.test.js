@@ -46,15 +46,18 @@ test('native OAuth returns to the original browser window after the provider sev
   c.close();
  },owner.workspace_id);
  await page.waitForTimeout(250);assert.equal(page.url(),base+'/settings/connections');
+ await page.getByRole('button',{name:'Connect Shopify',exact:true}).click();
  const form=page.locator('form[data-oauth-connect="shopify"]');await form.locator('[name=shop]').fill('popup-fixture.myshopify.com');
  const popupPromise=context.waitForEvent('page');await form.locator('button[type=submit]').click();const popup=await popupPromise;
  await popup.waitForURL('http://localhost:'+provider.address().port+'/**');await popup.waitForLoadState('domcontentloaded');
  assert.equal(await popup.evaluate(()=>window.opener),null,'Real COOP provider must sever the opener');
- const state=(await db.query('SELECT * FROM connection_authorization_states WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1',[owner.workspace_id])).rows[0];
+ let state=(await db.query('SELECT * FROM connection_authorization_states WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1',[owner.workspace_id])).rows[0];
  assert.equal(JSON.parse(state.metadata).popup,true);assert.equal(state.actor_id,owner.id);
+ assert.equal(state.connector_id,null,'An unfinished consent creates no placeholder business connection');
  const completionRequests=[];popup.on('request',r=>{if(r.url().includes('/complete'))completionRequests.push(r.url());});
  const closed=popup.waitForEvent('close');await popup.getByRole('link',{name:'Approve fixture connection'}).click();
- await Promise.all([closed,page.waitForURL(base+'/settings/connections/'+state.connector_id)]);
+ await Promise.all([closed,page.waitForURL(/\/settings\/connections\/con_[a-z0-9]+$/)]);
+ state=(await db.query('SELECT * FROM connection_authorization_states WHERE id=$1',[state.id])).rows[0];assert(state.connector_id);
  assert(completionRequests.some(u=>u.endsWith('/complete?popup=1')),'Persisted popup intent must survive the callback redirect');
  const saved=(await db.query('SELECT status,authorized_by_user_id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[owner.workspace_id,state.connector_id])).rows[0];
  assert.equal(saved.status,'connected');assert.equal(saved.authorized_by_user_id,owner.id);assert.equal(exchanges,1);
@@ -67,7 +70,7 @@ test('native OAuth returns to the original browser window after the provider sev
  await page.waitForURL(base+'/settings/connections/'+state.connector_id);await fallback.waitForTimeout(2100);
  assert(fallback.url().endsWith('/complete?popup=1'));assert.match(await fallback.locator('[role=status]').innerText(),/You can close this window/);await fallback.close();
  // Declined authorization must stay visible, without redirecting or marking it connected.
- rejectConsent=true;await page.goto(base+'/settings/connections');await form.locator('[name=shop]').fill('popup-fixture.myshopify.com');
+ rejectConsent=true;await page.goto(base+'/settings/connections');await page.getByRole('button',{name:'Connect another Shopify',exact:true}).click();await form.locator('[name=shop]').fill('popup-fixture.myshopify.com');
  const declinedPromise=context.waitForEvent('page');await form.locator('button[type=submit]').click();const declined=await declinedPromise;
  await declined.waitForURL('http://localhost:'+provider.address().port+'/**');await declined.getByRole('link',{name:'Approve fixture connection'}).click();
  await declined.locator('[data-connected="false"]').waitFor();await declined.waitForTimeout(800);

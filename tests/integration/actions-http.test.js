@@ -898,7 +898,6 @@ test('a question is rendered where it can be answered, not as a message you dism
   const view = path.join(__dirname, '..', '..', 'src', 'web', 'views', 'actions', 'list.ejs');
 
   const html = ejs.render(fs.readFileSync(view, 'utf8'), {
-    filename: view,
     helpers: require('../../src/web/view-helpers'),
     csrfToken: 'test-token',
     pending: [],
@@ -911,7 +910,7 @@ test('a question is rendered where it can be answered, not as a message you dism
     choices: null,
     flash: [],
     term: (word) => word,
-  });
+  }, { filename: view });
 
   assert.match(html, /Which location should the Boys Dress Oxford be moved to\?/);
   assert.match(html, /action="\/actions\/ask"/, 'the question has an endpoint to answer to');

@@ -62,15 +62,15 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     groups:require('../presentation/public-integrations').groups(),title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
   router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
-  router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
+  router.get('/pricing',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
     title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
-    checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),
+    checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),planSelection:req.session.commercialSelection||null,
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   for(const [path,title] of [['/security','Security'],['/roadmap','Product roadmap'],['/api/docs','Public API documentation']])router.get(path,asyncRoute(async(req,res)=>renderPublic(req,res,'public/operations-information',{title,nav:'',kind:path,staging:require('../../config').operations.runtimeEnvironment==='staging'})));
-  router.get('/status',asyncRoute(async(req,res)=>{if(req.hostname==='stockchief-staging-web.onrender.com')return res.redirect(302,'https://stockchief-staging-status.onrender.com/');let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
+  router.get('/status',asyncRoute(async(req,res)=>{if(req.hostname==='stockchief-staging-web.onrender.com')return res.redirect(302,'https://moshe844.github.io/stockchief-status/');let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
@@ -119,6 +119,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     }
     for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id);}
+    // Billing and downgrade checks describe the whole subscription. Locations
+    // are capped per inventory: show the highest use across owned inventories,
+    // rather than comparing an account-wide warning to this tab's local count.
+    const localLocations=summary.meters.find(m=>m.meter==='locations');
+    if(localLocations&&scope.workspaceId){const accountLocations=await entitlements.meterState(database,{accountId:scope.accountId,workspaceId:null},'locations',{subscription:summary.subscription});
+      summary.meters=summary.meters.map(m=>m.meter==='locations'?{...accountLocations,currentInventoryUsed:localLocations.used}:m);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),

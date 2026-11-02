@@ -18,7 +18,7 @@ async function* executionPages(client,workspaceId,importId,{includeImported=fals
   lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;
   // Identity-bearing and measured receipts use their detailed per-unit path.
   // Keep those lock windows small even when ordinary quantity stock is batched.
-  const size=rows.some(row=>row.parsed.trackingMode!=='quantity'||row.parsed.secondaryUnitLabel)?Math.min(CHUNK,batchSize):batchSize;
+  const size=rows.some(row=>!['quantity','lot'].includes(row.parsed.trackingMode)||row.parsed.secondaryUnitLabel)?Math.min(CHUNK,batchSize):batchSize;
   for(let start=0;start<rows.length;start+=size)yield rows.slice(start,start+size);
  }
 }

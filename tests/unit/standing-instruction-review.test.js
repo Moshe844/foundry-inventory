@@ -5,7 +5,7 @@ test('approved instruction review offers an editable Ask handoff without claimin
  const statedAs='An unfamiliar instruction <script>alert(1)</script> & "quoted text"',proposal={id:'local-rule',status:'APPROVED',summary:'Approved instruction',statedAs,approvedAt:'2026-10-15T15:04:22.247Z',questions:[]};
  const data={proposal,nativeGoal:null,descriptions:['Previously approved effect'],helpers:{dateTime:x=>x},fromAsk:false,csrfToken:'TEST',usageKey:'TEST'},html=render('postgres-operating-instruction.ejs',data);
  assert.match(html,/Approved changes/);assert.doesNotMatch(html,/<h2>In force<\/h2>|<script>/);
- const href=/href="(\/ask\?about=[^"]+)">Request a change/.exec(html)?.[1];assert(href);assert.equal(new URL(href,'http://localhost').searchParams.get('about'),'Standing instruction: '+statedAs);
+ const href=/href="(\/ask\?from=[^"]+)">Request a change/.exec(html)?.[1];assert(href);assert.equal(new URL(href,'http://localhost').searchParams.get('from'),'/operating-instructions/'+proposal.id);assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/,'Original instruction remains visible and escaped; the link carries its authorized record context');
  assert.doesNotMatch(html,/<form/,'Review cannot silently submit a request, approve a change, or spend model funds');
  const pending=render('postgres-operating-instruction.ejs',{...data,proposal:{...proposal,status:'PENDING',integrityHash:'frozen'}});assert.match(pending,/Approve standing rule/);assert.doesNotMatch(pending,/Request a change/);
 });

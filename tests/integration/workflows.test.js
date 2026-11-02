@@ -78,7 +78,7 @@ test('a quantity item creates a transfer request before warehouse execution', as
 
   const page = plain((await agent.get(itemPage)).text);
   assert.match(page, /Copper Elbow/);
-  assert.match(page, /Adjusted Copper Elbow at Main Warehouse from 95 to 72\./);
+  assert.match(page, /Adjusted from 95 to 72\./);
   assert.equal(engine.verifyIntegrity(db, workspace.workspaceId).ok, true);
 });
 
@@ -354,7 +354,7 @@ test('the settings page reports inventory integrity', async () => {
   const sku = repo.listSkusForItem(db, workspace.workspaceId, itemId)[0];
   await post(agent, `/inventory/${itemId}/receive`, { skuId: sku.id, locationId: workspace.main.id, quantity: 5 }, `/inventory/${itemId}`);
 
-  const page = await agent.get('/settings');
+  const page = await agent.get('/settings?section=data');
   assert.equal(page.status, 200);
   assert.match(page.text, /Every balance matches its movement history/);
 });

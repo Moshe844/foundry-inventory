@@ -1,13 +1,11 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
+const test=require('node:test'),assert=require('node:assert/strict');
 const base='../../scripts/environment-agent-demo/',native=require(base+'codex-wire'),legacy=require(base+'wire-policy');
-test('recorded Sol request plus recorded Home observation crosses byte estimate but admits exact native counting',()=>{
- const dir='data/environment-agent-demo/codex-sdk-sol-high/attempt/';
- const last=JSON.parse(fs.readFileSync(dir+'native-count-request-13.json'));
- const goal=JSON.parse(fs.readFileSync(dir+'goal.json')),journal=goal.checkpoint.harness.evidence;
- const home=Object.values(journal).filter(e=>e.name==='environment_browser').at(-1);
- // The blocked #14 packet was not recorded. This is an explicit reconstruction
- // of the observed growth, NOT a claim to possess that missing provider packet.
+function countPacket(){return {model:native.MODEL,input:[{role:'user',content:'Portable native counting fixture. '.repeat(6000)}],reasoning:{effort:native.EFFORT}};}
+test('large Sol request plus a Home observation crosses byte estimate but admits exact native counting',()=>{
+ const last=countPacket(),home={text:'Additional observed Home page. '.repeat(3000)};
+ // An offline boundary fixture, independent of ignored local certification
+ // transcripts. It never invokes a provider or fabricates a provider receipt.
  const grown={...last,input:[...last.input,{role:'user',content:home.text}]};
  assert.throws(()=>legacy.normalize('openai',grown),/INPUT_LIMIT/);
  const n=native.normalize(grown);assert.equal(n.inputTokens,null);
@@ -29,7 +27,7 @@ test('native custom tool rounds are validated, and economic compaction precedes 
  assert.throws(()=>validate('openai',{input:[call]}),/unfinished/);
  assert.throws(()=>validate('openai',{input:[{type:'custom_tool_call_output',call_id:'absent',output:'1'}]}),/orphan/);
  assert.equal(native.nativeCompactionTokenLimit,75600);
- assert(native.counted(native.normalize({...JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-sol-high/attempt/native-count-request-13.json'))}),
+ assert(native.counted(native.normalize(countPacket()),
   {object:'response.input_tokens',input_tokens:108000}).upperBoundMicroUsd<=300000);
 });
 test('native usage requires correct model, tier and non-overlapping cache totals',()=>{

@@ -7,7 +7,7 @@ const {ValidationError}=require('../domain/errors');
 async function totals(client,workspaceId,rowIds){
  let value=0n,posted=0n,movements=0;
  const accounts=(await client.query("SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='INVENTORY_ASSET'",[workspaceId])).rows.map(row=>row.id);
- for(let start=0;start<rowIds.length;start+=500){const ids=rowIds.slice(start,start+500);
+ for(let start=0;start<rowIds.length;start+=2000){const ids=rowIds.slice(start,start+2000);
   const cost=(await client.query(`SELECT COALESCE(sum(cost_delta_minor),0)::text AS value,count(*)::int AS movements,array_remove(array_agg(DISTINCT journal_entry_id),NULL) AS journal_ids
    FROM accounting_inventory_cost_movements WHERE workspace_id=$1
     AND cost_source_type IN ('opening_inventory','import_stock_count') AND cost_source_record_id=ANY($2::text[])`,[workspaceId,ids])).rows[0];

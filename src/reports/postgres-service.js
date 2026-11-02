@@ -204,7 +204,13 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
           config.aggregate==='minimum'?`MIN(${quote(config.measure)})`:`MAX(${quote(config.measure)})`;
     select=`${selectGroups.length?`${selectGroups.join(',')},`:''}${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
     group=groupFields.length?`GROUP BY ${groupFields.join(',')}`:'';
-  }else select=`record_id,${config.columns.map(quote).join(',')}`;
+  }else{
+    // SKU-level rows need a distinguishable product label even when the
+    // author omitted the optional variant column. Product grouping and filters
+    // still use the parent identity, so item totals never split by variant.
+    const variantLabel=dataset.fields.variant&&config.columns.includes('sku')&&config.columns.includes('product')&&!config.columns.includes('variant');
+    select=`record_id,${config.columns.map(field=>field==='product'&&variantLabel?`concat_ws(' — ',product,nullif(variant,'')) AS product`:quote(field)).join(',')}`;
+  }
   const direction=config.direction==='asc'?'ASC':'DESC';
   const tieBreakers=config.groups.length?config.groups.map(quote):config.summary?[]:
     ['record_id',...Object.keys(dataset.fields)].map(quote);

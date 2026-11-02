@@ -52,7 +52,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - run: npm ci
+      - name: Audit runtime and development dependencies
+        run: npm audit --audit-level=moderate
       - run: npx playwright install --with-deps chromium
+      - name: Decimal reporting, lot batching and account state regressions
+        run: |
+          mkdir -p output/inventory-ci
+          set -euo pipefail
+          node --test --test-concurrency=2 --test-timeout=240000 --test-force-exit tests/unit/template-engine-security.test.js tests/unit/inspection-pool-errors.test.js tests/postgres/inspection-idle-recovery.test.js tests/postgres/inspection-scoped-concurrency.test.js tests/unit/totp-provisioning.test.js tests/unit/round17-plan-selection.test.js tests/postgres/round17-decimal-reporting.test.js tests/postgres/round17-decimal-counts.test.js tests/postgres/round17-company-invoice.test.js tests/postgres/round16-billing-warning.test.js tests/postgres/connection-popup-return.test.js tests/postgres/connections-ui.test.js tests/postgres/provider-webhook-verification.test.js tests/postgres/provider-operational-integrity.test.js tests/postgres/round17-lot-bulk-receipts.test.js tests/postgres/round17-mixed-import-journals.test.js tests/postgres/round17-report-variant-labels.test.js tests/postgres/round17-plan-selection-ui.test.js tests/postgres/native-complete-read-evidence.test.js 2>&1 | tee output/inventory-ci/round17-regressions.log
+      - name: Full unit and integration regression audit
+        run: |
+          set -euo pipefail
+          # The 117-case actions file creates independent on-disk databases.
+          # Keep a bounded file deadline with room for four concurrent files;
+          # stock throughput and page latency have separate strict assertions.
+          node --test --test-concurrency=4 --test-timeout=180000 --test-force-exit tests/unit/*.test.js tests/integration/*.test.js 2>&1 | tee output/inventory-ci/full-regressions.log
+      - name: Mixed business dataset at 50000 SKUs and 150000 opening-stock rows
+        timeout-minutes: 15
+        env:
+          STOCKCHIEF_ROUND17_LARGE: '1'
+          STOCKCHIEF_IMPORT_PROFILE: '1'
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=1 --test-force-exit tests/certification/round17-large-business.test.js 2>&1 | tee output/inventory-ci/round17-large-business.log
       - name: Parser, source identity and provider contracts
         run: |
           mkdir -p output/inventory-ci

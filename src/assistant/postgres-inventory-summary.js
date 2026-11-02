@@ -12,9 +12,9 @@ async function read(database,workspaceId){
    JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
    JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
    WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[workspaceId])).rows[0];
- const value={products:Number(row.products),productsEver:Number(row.products_ever),skus:Number(row.skus),onHand:Number(row.on_hand)};
- if(!Object.values(value).every(Number.isSafeInteger))throw Error('INVENTORY_SUMMARY_PRECISION_REQUIRED');
- return value;
+ const counts={products:Number(row.products),productsEver:Number(row.products_ever),skus:Number(row.skus)};
+ if(!Object.values(counts).every(Number.isSafeInteger))throw Error('INVENTORY_SUMMARY_PRECISION_REQUIRED');
+ return {...counts,onHand:require('../domain/exact-quantity').safeNumber(row.on_hand,{signed:true,label:'On-hand quantity'})};
 }
 const scope='Active products and active SKUs; physical units across all locations. productsEver includes inactive product records. On-hand units do not establish sellable or costed units.';
 async function context(database,workspaceId,actor){

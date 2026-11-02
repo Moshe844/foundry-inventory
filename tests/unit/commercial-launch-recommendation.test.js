@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
 const measurement=require('../../docs/commercial-model-cost-distribution-2026-10-05.json');
-const render=require('../../data/commercial-render-cost-evidence-2026-10-05.json');
+const render=require('../fixtures/commercial-render-forecast.json');
 const {build,PLAN,PACKS,STRIPE_PUBLIC_US_STANDARD}=require('../../src/commercial/launch-recommendation-simulation');
 const {entries,classified,CATEGORY}=require('../../src/commercial/provider-cost-responsibility');
 const registry=require('../../src/connections/providers/registry');

@@ -101,7 +101,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             }
           }
           savedRows.push({id:row.id,itemId,skuId,locationId:row.parsed.locationId,movementIds,quantity:row.parsed.quantity,at:nowIso()});
-          if(savedRows.length>=500){await rowStore.markImported(client,ctx.workspaceId,id,savedRows);savedRows=[];}
+          if(savedRows.length>=batchSize){await rowStore.markImported(client,ctx.workspaceId,id,savedRows);savedRows=[];}
           rowsImported+=1;
           if(!pendingValues.length)publishProgress('processing',rowsImported);
         }
@@ -145,7 +145,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  const totals={value:{value:0n,movements:0},posted:{value:0n}};let expectedUnits=0,expectedValue=0,valued=0;
  await database.transaction(async client=>{
   await deps.bulkPlanning(client);
-  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false})){
+  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);
    for(const row of page){expectedUnits+=expectedDelta(row);expectedValue+=expectedCost(row);if(expectsCostRecord(row))valued++;}

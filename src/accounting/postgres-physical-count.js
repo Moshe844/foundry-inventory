@@ -1,6 +1,7 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),inventory=require('../domain/postgres-inventory-engine'),costing=require('./postgres-costing'),ledger=require('./postgres-ledger');
 const {nowIso}=require('../lib/util');
+const exact=require('../domain/exact-quantity');
 async function applyInTransaction(client,ctx,input){
  let settings=null;
  if(input.unitCost!=null&&String(input.unitCost).trim()!==''){
@@ -20,7 +21,7 @@ async function applyInTransaction(client,ctx,input){
  const preserveChanges=input.preservePostPreviewMovements===true&&input.expectedBefore;
  if(!preserveChanges&&input.expectedBefore&&['physical','costed','value'].some(k=>Number(input.expectedBefore[k])!==before[k]))throw new ValidationError('This stock or its recorded cost changed after the preview. Recalculate before setting its count.');
  // Apply the reviewed difference, preserving later receipts, sales and transfers.
- const delta=Number(input.countedQuantity)-Number(preserveChanges?input.expectedBefore.physical:before.physical),counted=before.physical+delta;
+ const delta=exact.safeNumber(exact.subtract(input.countedQuantity,preserveChanges?input.expectedBefore.physical:before.physical),{signed:true}),counted=exact.safeNumber(exact.add(before.physical,delta),{signed:true});
  if(counted<0)throw new ValidationError('Stock was used after this count was reviewed. The remaining count would make stock negative; review this product before continuing.');
  const opening=['import_stock_count','physical_count_review'].includes(input.sourceType)&&delta>0&&before.physical===0&&before.costed===0&&!(await client.query('SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 LIMIT 1',[ctx.workspaceId,input.skuId,input.locationId])).rows.length;
  if(delta<0&&before.costed>0&&before.costed!==before.physical)throw new ValidationError('This position mixes costed and uncosted stock. Establish its cost evidence before reducing it with a file count.');

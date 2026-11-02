@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),http=require('node:http'),{randomUUID}=require('node:crypto');
 
-test('an observed open dialog survives fresh verification and restart without restoring inputs or submitting',{timeout:45000},async t=>{
+test('an observed dialog and explicit local draft survive fresh verification without submitting or concealing changed defaults',{timeout:45000},async t=>{
  // Recorded browser-013 failure: the model opened a native dialog and cited
  // its heading and required/default fields. Verification fetched the same
  // URL with the dialog closed, then rejected those correct claims.
@@ -26,8 +26,9 @@ test('an observed open dialog survives fresh verification and restart without re
  await tools.act({action:'fill',ref:(await tools.inspect()).controls.find(c=>c.name===field).ref,value:'Unsaved input'});
  const edited=await tools.inspect();await tools.close();tools=await create();
  const restarted=await tools.verifyObservation(edited.url,edited);
- assert.equal(restarted.controls.find(c=>c.name===field).value,'','Restoration must not replay form inputs');
- assert.equal(compare(edited,restarted,'/controls/'+edited.controls.findIndex(c=>c.name===field)+'/value').matched,false);
+ assert.equal(restarted.controls.find(c=>c.name===field).value,'Unsaved input','Only an explicitly recorded local edit is restored against the identical fresh form baseline');
+ assert.equal(compare(edited,restarted,'/controls/'+edited.controls.findIndex(c=>c.name===field)+'/value').matched,true);
+ changed=true;await assert.rejects(tools.verifyObservation(edited.url,edited),/CURRENT_FORM_BASELINE_CHANGED/);changed=false;
  changed=true;assert.equal(compare(opened,await tools.verifyObservation(opened.url,opened),'/controls/'+controlIndex+'/required').matched,false,'Changed constraints cannot be hidden by presentation restoration');
  const legacyChanged=await tools.verifyObservation(legacy.url,legacy);
  assert.equal(compare(legacy,legacyChanged,'/controls/'+controlIndex+'/required').matched,false);

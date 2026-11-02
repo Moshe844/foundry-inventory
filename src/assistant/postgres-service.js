@@ -405,8 +405,9 @@ async function lookupRecords(database,ctx,request,options={}) {
     JOIN items i ON i.workspace_id=$1 AND i.id=s.item_id JOIN locations l ON l.workspace_id=$1 AND l.id=p.location_id
     WHERE ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')`,[ctx.workspaceId,search])).rows[0];
     const exact=value=>{const n=Number(value);if(!Number.isSafeInteger(n))throw new ValidationError('This inventory total exceeds the exact reporting range. Choose a narrower scope.');return n;};
-    const totals={physicalUnits:exact(summary.physical_units),costedUnits:exact(summary.costed_units),
-      inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:exact(summary.missing_cost_units),complete:true};
+    const quantity=value=>require('../domain/exact-quantity').safeNumber(value,{signed:true,label:'Stock quantity'});
+    const totals={physicalUnits:quantity(summary.physical_units),costedUnits:quantity(summary.costed_units),
+      inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:quantity(summary.missing_cost_units),complete:true};
     totals.inventoryBookCost=pricing.formatMinor(totals.inventoryBookCostMinor,currency);
     return {answer:totals.inventoryBookCost+' at recorded cost. '+(totals.missingCostUnits?require('../lib/units').unitCount(totals.missingCostUnits,'unit')+' still need actual cost, so this value is incomplete. ':'')+(Number(summary.positions)?'This total covers every matching stock position.':'There are no recorded stock positions.'),totals,
       coverage:{scope:search?'All positions matching the literal name or code filter':'All inventory positions in this business',

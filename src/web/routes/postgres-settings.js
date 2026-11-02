@@ -108,9 +108,10 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const integrity=require('../../operations/postgres-integrity-check').current(database,req.ctx.workspaceId);
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
+  const companyProfile=!req.query.section||req.query.section==='general'?await require('../../operations/postgres-company-profile').get(database,req.ctx.workspaceId):null;
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
   return res.page('settings',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,settingsSectionHashes:require('../presentation/navigation').settingsSectionHashes,title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,customRoles:req.query.section==='team'?await require('../../operations/postgres-team-access').list(database,req.ctx.workspaceId):[],teamPermissionLabels:permissions.LABELS,teamMoney:require('../../domain/currency'),pendingInvitations:(await database.query("SELECT id,name,email,role,expires_at FROM workspace_invitations WHERE workspace_id=$1 AND status='PENDING' AND expires_at>now() ORDER BY created_at",[req.ctx.workspaceId])).rows,workspace:req.workspace,
-    integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
+    companyProfile,integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
     stockGuards:[],emailAlerts,aiUsage:null,answerPreferences:await require('../../assistant/postgres-answer-preferences').read(database,req.ctx),recordAliases:permissions.can(req.user,permissions.ADMIN)?await require('../../assistant/postgres-record-aliases').list(database,req.ctx):[],aiCost:await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
@@ -180,6 +181,11 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     if(!name||name.length>120)throw new ValidationError('Inventory name must be between 1 and 120 characters.');
     await require('../../domain/postgres-auth-service').renameWorkspace(database,req.ctx,name);req.flash('success','Inventory name updated.');
     return res.redirect(303,'/settings');
+  }));
+  router.post('/settings/company',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../operations/postgres-company-profile').save(database,req.ctx,req.body);
+    req.flash('success','Company details saved. Invoice documents now use this name and address.');
+    return res.redirect(303,'/settings?section=general#company');
   }));
   router.post('/settings/team-roles',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').saveRole(database,req.ctx,req.body);req.flash('success','Role saved. Assigned team members now use these permissions.');return res.redirect(303,'/settings?section=team#team-authority');}));
   router.post('/settings/people/:id/access',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').assign(database,req.ctx,req.params.id,req.body);req.flash('success','Team access and purchase approval limit saved.');return res.redirect(303,'/settings?section=team#team-authority');}));

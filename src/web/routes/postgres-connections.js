@@ -44,7 +44,8 @@ function createPostgresConnectionsRouter(database,options={}){
     }
     const capability={gmail:'connection.email',microsoft365:'connection.email',
       shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',bigcommerce:'connection.commerce',
-      quickbooks:'connection.accounting',xero:'connection.accounting',stripe:'payments.customer'}[type];
+      quickbooks:'connection.accounting',xero:'connection.accounting',stripe:'payments.customer'}[type]
+      ||(registry.get(type)?.metadata?.().category?require('../presentation/connections').access({type,...registry.get(type).metadata()}).commercial:null);
     if(!capability)return true;
     const state=await entitlements.capabilityState(database,commercialScope(req),capability);
     if(state.enabled)return true;
@@ -213,6 +214,8 @@ function createPostgresConnectionsRouter(database,options={}){
       req.flash('warn','That connection link expired. Choose Connect again to start a fresh authorization.');
       return res.redirect(303,'/settings/connections');
     }
+    delete req.session.connectionLaunch;
+    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,popup:req.query.popup==='1',
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin,
@@ -235,8 +238,6 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,'/settings/connections#payments');
   }));
   router.get('/settings/connections/:provider/launch',requireOwner,asyncRoute(async(req,res)=>{
-    if(!await connectionAllowed(req,res,req.params.provider))return;
-    if(registry.get(req.params.provider)?.oauthSessionBound)require('../../connections/oauth-session-intent').assertCanStart(req.session,req.params.provider);
     const launch=req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
         ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
@@ -244,8 +245,12 @@ function createPostgresConnectionsRouter(database,options={}){
       req.flash('warn','That connection link expired. Choose Connect again to start a fresh authorization.');
       return res.redirect(303,'/settings/connections');
     }
+    if(!await connectionAllowed(req,res,req.params.provider))return;
+    if(registry.get(req.params.provider)?.oauthSessionBound)require('../../connections/oauth-session-intent').assertCanStart(req.session,req.params.provider);
     const provider=registry.get(req.params.provider)?.metadata?.(),prerequisite=provider?.authorizationPrerequisite;
     if(prerequisite&&req.query.providerSetupReady!=='1')return res.page('connections/provider-prerequisite',{layout:false,provider,prerequisite,launchPath:req.path,ticket:req.query.ticket});
+    delete req.session.connectionLaunch;
+    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{providerType:req.params.provider,
       popup:req.query.popup==='1'?'1':''},requestOrigin,{providers:registry,

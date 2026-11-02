@@ -1,0 +1,1 @@
+<% for(const warning of warnings){ %><div class="flash flash--warn" role="alert" data-quantity-warning><p><%= warning.message %></p><% if(warning.href){ %><a href="<%= warning.href %>">Review product</a><% } %></div><% } %>

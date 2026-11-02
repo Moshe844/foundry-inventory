@@ -44,7 +44,7 @@ function arrive(env, { sender = 'jo@abcschool.test', subject = null, body = null
   sequence += 1;
   const result = ingestion.capture(env.db,
     { workspaceId: env.workspace.workspaceId, connectorId: env.connectorId },
-    { occurredAt: '2026-08-20T09:00:00.000Z',
+    { occurredAt: new Date().toISOString(),
       data: { messageId: `http-${sequence}`, sender, subject, bodyText: body, attachments } });
   return result.actionRecordId;
 }
@@ -167,7 +167,7 @@ test('unanswered mail is counted by Needs you, not by a mail badge of its own', 
    * and is now stronger: mail is not a state you live in, so it appears
    * nowhere in the chrome, and what needs a person reaches them on the desk.
    */
-  const chrome = (await agent.get('/mail')).text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const chrome = require('../helpers/navigation-html').sidebar((await agent.get('/mail')).text);
   assert.ok(!chrome.includes('href="/mail"'),
     'Mail is not a department; it reaches the owner through Needs you');
 
@@ -186,9 +186,9 @@ test('unanswered mail is counted by Needs you, not by a mail badge of its own', 
   const needsYou = require('../../src/manager/needs-you-inbox').inbox(env.db, env.workspace.workspaceId);
   const mailEntries = needsYou.filter((entry) => entry.id.startsWith('unanswered-mail:'));
   assert.equal(mailEntries.length, 2, 'both unanswered messages are decisions waiting on the owner');
-  const chromeOnHome = home.text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const chromeOnHome = /<div class="sc-toolbar-actions">([\s\S]*?)<\/div>/.exec(home.text)[1];
   const badge = chromeOnHome.slice(chromeOnHome.indexOf('href="/needs-you"'));
-  assert.match(badge.slice(0, 600), new RegExp(`aria-label="${needsYou.length} waiting"`),
+  assert.match(badge.slice(0, 1200), new RegExp(`<span class="nav-count">${needsYou.length}</span>`),
     'the Needs you badge is the one number, and it counts the mail too');
 });
 

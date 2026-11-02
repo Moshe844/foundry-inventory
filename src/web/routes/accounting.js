@@ -346,7 +346,7 @@ router.get('/accounting/migration', permit(permissions.MANAGE_ACCOUNTING, 'revie
         ? (Number(row.on_hand) * Number(staged.unitCostMinor) / 100).toFixed(2)
         : '',
     }));
-  return res.page('accounting/setup', {
+  return res.page('accounting/reference-opening-setup', {
     title: 'Earlier balances', nav: 'accounting', configured: automatic.configured,
     positions, latestOpeningId: latest?.id || null,
     today: today(), automatic, focusInventoryCost,

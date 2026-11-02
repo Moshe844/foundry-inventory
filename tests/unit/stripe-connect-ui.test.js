@@ -6,9 +6,22 @@ const path = require('node:path');
 const ejs = require('ejs');
 
 const views = path.join(__dirname, '..', '..', 'src', 'web', 'views', 'connections');
+function renderConnections(data) {
+  return ejs.renderFile(path.join(views,'index.ejs'),{
+    assetVersion:'test',launchTicket:'test-launch-ticket',postgresMode:true,
+    commercialCapabilities:['payments.customer'],...data,
+    helpers:{...require('../../src/web/view-helpers'),...data.helpers},
+  });
+}
+
+test('another provider account stays available after connection, within owner and capacity limits',async()=>{
+ const data={connections:[{id:'connected-store',provider_type:'shopify',status:'connected',setup_status:'CONNECTED',provider_account_name:'Existing store'}],providerCatalog:[{type:'shopify',name:'Shopify',category:'selling',authMode:'oauth',available:true}],commercialCapabilities:['connection.commerce'],currentUser:{role:'owner'},csrfToken:'fixture-csrf',currentWorkspaceId:'fixture-workspace',helpers:{}};
+ const allowed=await renderConnections(data);assert.match(allowed,/>Manage Shopify</);assert.match(allowed,/>Connect another Shopify</);assert.equal((allowed.match(/id="connect-shopify"/g)||[]).length,1);assert.equal((allowed.match(/data-oauth-connect="shopify"/g)||[]).length,1);
+ for(const input of [{connectionCapacity:{remaining:0,hardLimit:1}},{currentUser:{role:'staff'}},{commercialCapabilities:[]},{providerCatalog:[{...data.providerCatalog[0],available:false}]}]){const locked=await renderConnections({...data,...input});assert.doesNotMatch(locked,/>Connect another Shopify</);assert.match(locked,/>Manage Shopify</);}
+});
 
 test('Connections presents Stripe as one top-level OAuth flow when configured', async () => {
-  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+  const html = await renderConnections({
     connections: [],
     paymentAccount: { connected: false, source: null, because: 'No payment account is connected.' },
     paymentConnect: { connected: false, available: true, flow: 'oauth', embedded: true, testMode: true },
@@ -24,21 +37,21 @@ test('Connections presents Stripe as one top-level OAuth flow when configured', 
   });
 
   assert.match(html, />Connect Stripe</);
-  assert.match(html, /href="\/settings\/connections\/payments\/start"/);
-  assert.match(html, /target="_blank"/);
-  assert.match(html, /data-stripe-connect/);
-  assert.match(html, /window\.open\(link\.href, 'foundry-stripe-connect'/);
-  assert.match(html, /popup=yes,width=620,height=760/);
-  assert.match(html, /showPopupBlocked\(link, 'Stripe'\)/);
-  assert.match(html, /Allow pop-ups for this site and try again/);
-  assert.doesNotMatch(html, /window\.location\.assign\(link\.href\)/);
+  assert.match(html, /href="\/settings\/connections\/payments\/launch\?ticket=test-launch-ticket"/);
+  assert.doesNotMatch(html, /target="_blank"/);
+  assert.match(html, /data-provider-connect data-provider-type="stripe"/);
+  assert.match(html, /src="\/provider-connect.js\?v=test"/);
+  const popup=require('node:fs').readFileSync(require.resolve('../../src/web/public/provider-connect.js'),'utf8');
+  assert.match(popup,/window\.open\(url.href/);
+  assert.match(popup,/popup=yes,width=680,height=780/);
+  assert.match(popup,/if\(!popup\)\{blocked\(link,name\)/);
+  assert.match(popup,/Continuing in this tab/);
+  assert.match(popup,/location.assign\(url.href\)/);
   assert.match(html, /Stripe is in test mode on this installation/);
-  assert.match(html, /fetch\('\/settings\/connections\/payments\/state'/);
-  assert.match(html, /window\.setInterval/);
   assert.match(html, /choose the account this business already uses/);
-  assert.match(html, /foundry:stripe-return/);
-  assert.match(html, /trustedStripeReturnOrigins/);
-  assert.match(html, /https:\/\/foundry\.example\.test/);
+  assert.match(popup, /foundry:stripe-return/);
+  assert.match(popup, /event.origin!==location.origin/);
+  assert.match(popup, /event.data.workspaceId!==host\?\.dataset.workspaceId/);
   assert.doesNotMatch(html, /id="stripe-onboarding"/);
   assert.doesNotMatch(html, /connect-js\.stripe\.com/);
   assert.doesNotMatch(html, /Stripe secret key/);
@@ -46,7 +59,7 @@ test('Connections presents Stripe as one top-level OAuth flow when configured', 
 });
 
 test('Connections presents hosted onboarding as business-owned Stripe setup', async () => {
-  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+  const html = await renderConnections({
     connections: [],
     paymentAccount: { connected: false, source: null, because: 'No payment account is connected.' },
     paymentConnect: { connected: false, available: true, flow: 'hosted', embedded: true, testMode: true },
@@ -61,12 +74,12 @@ test('Connections presents hosted onboarding as business-owned Stripe setup', as
   assert.match(html, /Create sandbox merchant account/);
   assert.match(html, /account belongs to the business/);
   assert.match(html, /pays out to its bank/);
-  assert.match(html, /href="\/settings\/connections\/payments\/start"/);
+  assert.match(html, /href="\/settings\/connections\/payments\/launch\?ticket=test-launch-ticket"/);
   assert.doesNotMatch(html, /name="secretKey"/);
 });
 
 test('an unfinished hosted attempt is not presented as a connected Stripe account', async () => {
-  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+  const html = await renderConnections({
     connections: [],
     paymentAccount: { connected: true, source: 'connect', chargesEnabled: false,
       liveMode: false, displayName: 'Example', accountId: 'acct_example',
@@ -86,7 +99,7 @@ test('an unfinished hosted attempt is not presented as a connected Stripe accoun
 });
 
 test('a connected test account that cannot take charges can resume Stripe setup', async () => {
-  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+  const html = await renderConnections({
     connections: [],
     paymentAccount: { connected: true, source: 'connect', chargesEnabled: false,
       liveMode: false, displayName: 'Example', accountId: 'acct_example',
@@ -102,8 +115,7 @@ test('a connected test account that cannot take charges can resume Stripe setup'
   assert.match(html, /Connected to Example/);
   assert.match(html, /Finish Stripe sandbox setup/);
   assert.match(html, /href="https:\/\/dashboard\.stripe\.com\/acct_example\/test\/account\/status"/);
-  assert.match(html, /data-stripe-require-charges/);
-  assert.match(html, /requireCharges \? !status\.chargesEnabled : !status\.connected/);
+  assert.match(html, /Check Stripe status/);
   assert.doesNotMatch(html, /Discard unfinished setup/);
 });
 
@@ -136,7 +148,7 @@ test('Stripe return page updates the Connections window and closes the popup', a
 });
 
 test('a denied Stripe attempt is not counted as a working connection', async () => {
-  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+  const html = await renderConnections({
     connections: [{ id: 'conn_failed', provider_type: 'stripe', status: 'disconnected',
       setup_status: 'AUTHORIZATION_FAILED', provider_account_id: 'acct_old',
       provider_account_name: 'Old sandbox', credential_ref: null, capabilities: [],

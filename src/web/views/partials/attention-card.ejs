@@ -43,7 +43,7 @@
   </div>
 
   <div class="att-card-side">
-    <a class="btn btn--sm" href="/attention/<%= item.attentionId %>">Why this?</a>
+    <a class="btn btn--sm" href="<%= item.actionHref||'/attention/'+item.attentionId %>"><%= item.actionLabel||'See the evidence' %></a>
     <% if (item.status === 'OPEN') { %>
       <form method="post" action="/attention/<%= item.attentionId %>/acknowledge">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">

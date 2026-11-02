@@ -62,7 +62,7 @@ test('a definite Shippo label refusal retains its transaction and explains the p
 });
 
 test('Shippo requests a missing sender contact before making a rate request',async()=>{
- await assert.rejects(shippo.quote({shippoApiKey:'shippo_test_contact_fixture'},{from:{},to:{},packages:[]}),/shipping contact email.*ship-from location/i);
+ await assert.rejects(shippo.quote({shippoApiKey:'shippo_test_contact_fixture'},{from:{},to:{},packages:[]}),/shipping contact email.*shipping location/i);
 });
 
 test('Shippo forwards the explicit location contact to its address contract',async()=>{

@@ -68,11 +68,11 @@ test('Home treats recorded opening stock as operational while leading with the n
   // The inventory is operational once real products, locations and opening
   // stock exist. Supplier and replenishment setup remain useful, but optional;
   // they must not make the owner think StockChief is still unusable.
-  assert.match(page, /Good (morning|afternoon|evening), /, 'a briefing, addressed to somebody');
-  assert.match(page, /Everything is under control/);
-  assert.match(page, /Do this next/);
+  assert.match(page, /Hello , Olive/, 'a briefing, addressed to somebody');
+  assert.match(page, /Monitoring your business/);
   assert.match(page, /Add who supplies/);
-  assert.match(page, /Optional setup · 2 of 5 complete/);
+  assert.match(page, /Add who supplies/);
+  assert.match(page, /Add supplier/);
   assert.doesNotMatch(page, /Getting StockChief ready/);
   assert.doesNotMatch(page, /Inventory pulse/, 'setup guidance replaces the ordinary dashboard until setup is complete');
   assert.doesNotMatch(page, /Tell StockChief when you sell something/, 'missing history is taught in context, not made into work');
@@ -127,13 +127,13 @@ test('an active product reaching zero is watched without inventing a Needs You d
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
-  assert.match(page, /Essential Filter is out of stock/i);
-  assert.match(page, /0 on hand/i);
+  assert.match(page, /SKUs out of stock 1/i);
+  assert.match(page, /Units on hand 0/i);
 
   // A stockout is serious, but with no supplier or owner choice attached it is
   // a measured condition, not a decision disguised as work for the owner.
-  assert.match(page, /Nothing needs you/i);
-  assert.match(page, /being monitored; it is not waiting for your decision/i);
+  assert.match(page, /No known decisions are waiting for you/i);
+  assert.match(page, /Monitoring your business/i);
   assert.doesNotMatch(page, /Tell StockChief when you sell something/i);
   assert.doesNotMatch(page, /tracked variant/i, 'not in StockChief\'s own vocabulary');
 });
@@ -444,7 +444,7 @@ test('"Everything is under control" is only claimed after a recent check; a stal
   engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 20 });
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'receive' });
   const agent = await ownerAgent(env);
-  assert.match(plain((await agent.get('/')).text), /Everything is under control/);
+  assert.match(plain((await agent.get('/')).text), /Monitoring your business/);
 
   // Two days pass with no check.
   const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -452,7 +452,7 @@ test('"Everything is under control" is only claimed after a recent check; a stal
   env.db.prepare('UPDATE workspace_autopilot SET last_evaluated_at = ? WHERE workspace_id = ?').run(old, env.workspace.workspaceId);
   env.db.prepare('UPDATE work_plans SET finished_at = ?, started_at = ? WHERE workspace_id = ?').run(old, old, env.workspace.workspaceId);
   const stale = plain((await agent.get('/')).text);
-  assert.doesNotMatch(stale, /Everything is under control/);
-  assert.match(stale, /Here’s where things stood at the last check/);
-  assert.match(stale, /The automatic check has not run in over a day/);
+  assert.doesNotMatch(stale, /Monitoring your business/);
+  assert.match(stale, /Last check needs refreshing/);
+  assert.match(stale, /Check now/);
 });

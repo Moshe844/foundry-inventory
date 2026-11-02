@@ -7,3 +7,9 @@ test('connection cards separate account authorization, matching work and actual 
 test('reauthorization failures are errors while retained disconnected history is not an active account',()=>{
  assert.equal(status({status:'connected',setup_status:'REAUTHORIZATION_REQUIRED'}),'Error');assert.equal(status({status:'error'}),'Error');assert.equal(status({status:'disconnected'}),'Not connected');const catalog=[{type:'neutral'}];assert.equal(cards(catalog,[{id:'old',provider_type:'neutral',status:'disconnected'}])[0].href,null);
 });
+
+test('registered providers use their declared category without hiding unfamiliar names or bypassing the category entitlement',()=>{
+ const cp=require('../../src/web/presentation/connections'),providers=[{type:'fixture_oauth',name:'Unfamiliar Books',category:'accounting'},{type:'unfamiliar_mail',category:'communication'},{type:'stock_feed',category:'business'},{type:'contract_erp',category:'business',integrationMode:'custom_contract'}],groups=cp.groups(providers);
+ assert(groups.find(g=>g.title==='Accounting').types.includes('fixture_oauth'));assert(groups.find(g=>g.title==='Email').types.includes('unfamiliar_mail'));assert(groups.find(g=>g.title==='Other business systems').types.includes('stock_feed'));assert(!groups.some(g=>g.types.includes('contract_erp')));
+ assert.deepEqual(cp.access(providers[0]),{capability:'connections.accounting',commercial:'connection.accounting'});assert.equal(cp.access(providers[1]).commercial,'connection.email');assert.equal(cp.access({type:'stripe'}).commercial,'payments.customer');
+});

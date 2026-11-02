@@ -19,15 +19,21 @@ function present(row){
  else if(row.needs_source_review===true){state='NEEDS_INPUT';label='Needs your answer';}
  else{state='AWAITING_APPROVAL';label='Waiting for your approval';}
  const iso=value=>value?new Date(value).toISOString():null;
- const detail=typeof row.job_result==='string'?JSON.parse(row.job_result):row.job_result;
+ let detail=row.job_result;if(typeof detail==='string'){try{detail=JSON.parse(detail);}catch{detail=null;}}
  const p=revising?row.preview_result?.previewProgress:detail?.importProgress,known=Boolean(p&&(revising?p.stage==='checking':['preparing','processing','verifying'].includes(p.stage))&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(revising?row.records_detected:row.records_valid));
  const stage=verified?'complete':revising?'preview':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
  // Job history retains the previous error while an automatic retry runs. Only
  // stopped attempts need review; a healthy retry must not ask users to resume it.
- const failure=['PAUSED','NEEDS_REVIEW'].includes(state)?row.job_error:null;let reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='53200'?'The database ran out of memory for its transaction safety checks. This attempt was rolled back. No stock or inventory value was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
+ const stopped=['PAUSED','NEEDS_REVIEW'].includes(state);
+ // Direct executions and recovered historical attempts may have an execution
+ // error without a queue error. A stopped attempt must still explain the pause;
+ // do not expose an unclassified database/worker exception to the customer.
+ const failure=stopped?(row.job_error||{code:row.execution_status==='SUCCEEDED'?'import_verification_incomplete':'import_execution_interrupted'}):null;
+ let reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='53200'?'The database ran out of memory for its transaction safety checks. This attempt was rolled back. No stock or inventory value was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
  const checkpoint=row.apply_checkpoint||{},durable=(checkpoint.cataloguePrepared===true||checkpoint.catalogueStarted===true)&&checkpoint.hash===row.integrity_hash,savedRows=durable?Number(checkpoint.savedRows||0):0;
  const detailsPending=!durable&&state==='RUNNING'&&stage==='processing'&&known&&p.totalRows>0&&p.processedRows===p.totalRows&&row.dataset!=='suppliers';
  if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. '+(failure.code==='validation_error'?String(row.execution_error||failure.message||'The remaining rows need review.'):failure.code==='57014'?'The last batch exceeded the database time limit.':failure.code==='53200'?'The database ran out of memory for the last batch.':'The worker was interrupted during the last batch.')+' Continue resumes the approved rows without repeating saved ones.';
+ if(failure?.code==='import_verification_incomplete')reason='Final checks have not confirmed this import. Review the saved result or contact support before applying it again.';
  const applied=Number(p?.processedRows)-Number(p?.attemptStartRows),elapsedMs=Number(p?.elapsedMs),remaining=Number(row.records_valid)-Number(p?.processedRows);
  const estimatedSeconds=state==='RUNNING'&&known&&stage==='processing'&&Number.isSafeInteger(applied)&&applied>=500&&Number.isSafeInteger(elapsedMs)&&elapsedMs>=5000&&remaining>0?Math.ceil(remaining/applied*elapsedMs/1000):null;
  const queuePosition=state==='QUEUED'?Math.max(1,Number(row.queue_ahead||0)+1):null;

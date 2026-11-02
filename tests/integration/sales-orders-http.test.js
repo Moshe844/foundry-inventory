@@ -53,11 +53,11 @@ test('a pickup order stays pickup on the visible pick list', async () => {
 
   shipments.ship(env.db, env.workspace.ctx, box.id, { handover: 'COLLECTED' });
   const story = plain((await agent.get(`/sales/orders/${order.id}`)).text);
-  assert.match(story, /Collected.*Money — \$[\d,.]+ still owed/is);
+  assert.match(story, /Collected.*Payments and receipts — \$[\d,.]+ still owed/is);
   assert.match(story, /Fulfilment.*Collected.*Collected by the customer/is);
   assert.doesNotMatch(story, /Shipped — \$[\d,.]+ still owed/i);
   const list = plain((await agent.get('/orders')).text);
-  assert.match(list, /0 fulfilment exceptions.*1 unpaid.*Collected/is);
+  assert.match(list, /Completed, unpaid · 1.*Collected/is);
   assert.match(list, /1 completed order is still unpaid/i);
   assert.match(list, /2 units.*Collected/is);
   assert.doesNotMatch(list, /on their way|1 shipped|2 units shipped/i);
@@ -110,7 +110,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(page.text, /class="card sales-action-card sales-primary-action"/);
   assert.match(text, /Do this next.*Record what physically left/i);
   assert.match(page.text, /<details class="card advanced-settings sales-secondary-actions"/);
-  assert.match(text, /30 committed/);
+  assert.match(text, /30 Reserved/);
   assert.match(text, /Only use this when the items physically leave.*reduce on-hand once/i);
   assert.match(text, /Planned: Collected by the customer.*came from the delivery choice on the order/i);
   assert.match(page.text, /value="COLLECTED" required checked/,
@@ -139,16 +139,16 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   page = await agent.get(created.headers.location);
   text = plain(page.text);
   assert.match(text, /partly shipped|partly fulfilled|partly gone/i);
-  assert.match(text, /20 committed/);
+  assert.match(text, /20 Reserved/);
   // The stat is labelled 'shipped' now: the word an owner uses, without the
   // 'fulfilled (shipped)' gloss that was explaining StockChief's vocabulary to them.
   assert.match(text, /10 collected/);
 
   const itemPage = plain((await agent.get(`/inventory/${env.item.itemId}`)).text);
-  assert.match(itemPage, /40\s+units on hand/i);
-  assert.match(itemPage, /20\s+committed to customer orders/i);
-  assert.match(itemPage, /20\s+units available/i);
-  assert.match(itemPage, /0\s+on order from suppliers/i);
+  assert.match(itemPage, /On hand\s+40/i);
+  assert.match(itemPage, /20\s+committed to orders/i);
+  assert.match(itemPage, /Available\s+20/i);
+  assert.match(itemPage, /Incoming\s+0/i);
 
   const cancelled = await agent.post(`${created.headers.location}/cancel`).type('form').send({
     _csrf: csrfFrom(page.text), reason: 'Customer changed plans.',
@@ -172,7 +172,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   const salesPage = plain((await agent.get('/orders')).text);
   assert.match(salesPage, /Nothing is waiting on you/i,
     'a cancelled order leaves nothing waiting for anybody');
-  assert.match(salesPage, /Cancelled/,
+  assert.match(salesPage, /remainder cancelled/i,
     'and it is still listed, saying what became of it');
   env.db.close();
 });
@@ -774,7 +774,7 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
   assert.equal(invoice.total_minor, 100_000);
 
   let text = plain((await agent.get(created.headers.location)).text);
-  assert.match(text, /\$1,000\.00 invoiced/, 'the amount invoiced appears on the order');
+  assert.match(text, /Invoiced \$1,000\.00/, 'the amount invoiced appears on the order');
   assert.match(text, /still owed/);
   assert.match(text, /Unpaid/, 'and its state in a word an owner uses');
 
@@ -786,7 +786,7 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
 
   text = plain((await agent.get(created.headers.location)).text);
   assert.match(text, /Partly paid/, 'half paid is neither unpaid nor paid');
-  assert.match(text, /\$500\.00 paid/, 'and both halves are shown');
+  assert.match(text, /Paid \$500\.00/, 'and both halves are shown');
   env.db.close();
 });
 

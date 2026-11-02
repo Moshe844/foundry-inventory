@@ -69,6 +69,7 @@ test('typed context resolution fills a unique valid location independent of word
 
 test('ambiguous entities never become arbitrary IDs or names',async()=>{
   const database={async query(statement){
+    if(statement.includes('FROM workspace_record_aliases'))return {rows:[]};
     if(statement.includes('FROM locations'))return {rows:[{value:'North',label:'North'},
       {value:'South',label:'South'}]};
     if(statement.includes('FROM skus'))return {rows:[{value:'ABC-1',label:'ABC-1 Alpha'}]};

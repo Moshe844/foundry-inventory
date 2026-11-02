@@ -418,6 +418,7 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
 }
 
 async function analyse(database, ctx, input) {
+  if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
   await assertOperator(database,ctx);
   const buffer=input.buffer || null;
   const text=input.text === undefined ? null : String(input.text);
@@ -509,7 +510,7 @@ async function analyse(database, ctx, input) {
         variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
       ...(!workbook?worksheetCoverage(parsedWorkbook.sheets,sheetIndex):{}),
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length,existingStockRows:validated.summary.existingStockRows,
-      unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations},trackingModel:{mode:'per-row'},
+      unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations,...(input.importMode?{importMode:input.importMode}:{})},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:streaming?sheet.rows.length:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
     warnings:[...(parsedWorkbook.sheets.length>1&&!workbook?[`Only “${sheet.name}” was interpreted. The other ${parsedWorkbook.sheets.length-1} sheets have not been linked or imported; review the complete workbook before approval.`]:[]),

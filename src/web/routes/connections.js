@@ -158,6 +158,7 @@ router.get('/settings/connections', (req, res, next) => {
   const requestOrigin = `${req.protocol}://${req.get('host')}`;
   res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
     room: true, backTo: { href: '/settings', label: 'Settings' },
+    commercialDevelopment:true,mailPreparationStates:{},connectionSection:req.query.section==='developers'||apiToken||webhookSecret?'developers':'connections',
     // Whose Stripe account this inventory takes money into. Shown here rather
     // than on Money, because it is a connection and not an accounting figure.
     paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),

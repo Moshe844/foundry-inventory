@@ -73,7 +73,7 @@ test('Tell StockChief → structured review → approve → same Settings record
   assert.equal(approved.status, 303);
   assert.equal(reorderPolicies.effectivePolicy(env.db, env.workspace.workspaceId, sku.id).reorderPoint, 18);
 
-  const settings = await agent.get('/settings#learned-instructions');
+  const settings = await agent.get('/settings?section=advanced#learned-instructions');
   assert.match(plain(settings.text), /Rule history/);
   assert.match(plain(settings.text), /For charcoal long aprons/);
   assert.match(settings.text, /<details class="card advanced-settings" id="learned-instructions">/,
@@ -111,7 +111,7 @@ test('Tell StockChief accepts a general low-stock sales guard and shows the same
   });
   assert.equal(approved.status, 303);
   assert.equal(operatingGuards.list(env.db, env.workspace.workspaceId, { activeOnly: true, skuId: sku.id }).length, 1);
-  const settings = await agent.get('/settings');
+  const settings = await agent.get('/settings?section=advanced');
   const settingsText = plain(settings.text);
   assert.match(settingsText, /Stock protection/);
   assert.match(settingsText, /Resume after a supplier order is placed/);
@@ -135,7 +135,7 @@ test('inclusive protection wording names the configured limit and lowest permitt
 
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
-  const settingsText = plain((await agent.get('/settings')).text);
+  const settingsText = plain((await agent.get('/settings?section=advanced')).text);
   assert.match(settingsText, /at or below 8\. The lowest permitted balance is 9/i);
 
   const needsText = plain((await agent.get('/needs-you')).text);

@@ -34,4 +34,7 @@ test('mixed tracked stock uses row evidence without losing source requirements',
   choice=await imports.revise(db,ctx,choice.id,{expectedHash:choice.integrityHash,importMode:'add'});
   assert.equal(choice.recordsInvalid,0);await imports.approve(db,ctx,choice.id,choice.integrityHash);assert((await imports.execute(db,ctx,choice.id)).verified);
   await assert.rejects(imports.execute(db,ctx,p.id),/Approve/);
+  const explicit=await imports.analyse(db,ctx,{text:'Product,SKU,Quantity,Location,Lot\nFood A,'+savedFood.code+',1,Cabinet,EXPLICIT-LOT',allowModel:false,importMode:'add'});
+  assert.equal(explicit.transformations.importMode,'add');await imports.approve(db,ctx,explicit.id,explicit.integrityHash);assert((await imports.execute(db,ctx,explicit.id)).verified);
+  await assert.rejects(imports.analyse(db,ctx,{text:'SKU,Quantity\nX,1',allowModel:false,importMode:'invalid'}),/Choose whether/);
 });
