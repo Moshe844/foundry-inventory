@@ -67,7 +67,7 @@ jobs:
       - name: Browser-free Ask and streamed answer delivery
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 --test-force-exit tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+          node --test --test-concurrency=2 --test-force-exit tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail

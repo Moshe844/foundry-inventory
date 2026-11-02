@@ -30,6 +30,13 @@ const datasets=Object.freeze({
     recordHref:r=>'/accounting/entries/'+r.record_id,
     fields:{posting_date:'date',category:'text',description:'text',counterparty:'text',currency:'text',amount_minor:'money_minor'}},
   catalogue:{label:'Product and SKU catalogue, including inactive records and current saved selling prices',permission:permissions.VIEW,
+    // Counts retain the exact catalogue population without looking up every
+    // SKU's latest price. Price/currency filters still use the full source.
+    aggregateProjections:[{aggregates:['count','count_distinct'],fields:['product','sku','variant','barcode','unit','tracking','status','product_status','variant_status'],source:`SELECT i.name AS product,s.code AS sku,COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,i.unit_label AS unit,i.tracking_mode AS tracking,
+      CASE WHEN i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
+      CASE WHEN i.is_active=1 THEN 'active' ELSE 'inactive' END AS product_status,
+      CASE WHEN s.is_active=1 THEN 'active' ELSE 'inactive' END AS variant_status
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1`}],
     source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
       i.unit_label AS unit,i.tracking_mode AS tracking,
@@ -48,6 +55,12 @@ const datasets=Object.freeze({
     enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',category:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product, variant and location, with recorded inventory cost',permission:permissions.VIEW,
+    // Counting positions needs neither cost history nor accounting settings.
+    // Cost/category/date filters fall back to the canonical detailed source.
+    aggregateProjections:[{aggregates:['count','count_distinct'],fields:['product','sku','variant','location','stock_unit','on_hand'],source:`SELECT i.name AS product,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,b.on_hand::numeric AS on_hand
+      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
+      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id WHERE b.workspace_id=$1`}],
     source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,
       b.on_hand::numeric AS on_hand,cost.quantity_units::numeric AS costed_units,
       CASE WHEN settings.enabled=1 THEN cost.total_cost_minor::bigint END AS recorded_cost_minor,
