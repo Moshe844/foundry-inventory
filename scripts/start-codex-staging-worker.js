@@ -80,6 +80,8 @@ async function main(){
  const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
  const handler=async job=>{
   const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
+  const began=Date.now(),queueWaitMs=Math.max(0,began-Math.max(job.availableAt,new Date(job.createdAt).getTime()));
+  console.log(JSON.stringify({kind:'ask_job_started',goalId:job.payload.goalId,queueWaitMs}));
   const retained=inspectionPool.retain({ctx,connectionString:address.toString()});
   try{return await require('../src/assistant/postgres-codex-pilot').run(db,ctx,job.payload.goalId,{sandboxPool,inspectionPool});}
   catch(error){
@@ -89,13 +91,15 @@ async function main(){
     WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='READY'`,
     [ctx.workspaceId,ctx.actorId,job.payload.goalId,JSON.stringify({candidate:'codex',failure:{code:'WORKER_START_FAILED',requiresUserInput:false}})]).catch(()=>{});
    throw error;
-  }finally{await retained?.release();}
+  }finally{await retained?.release();console.log(JSON.stringify({kind:'ask_job_finished',goalId:job.payload.goalId,queueWaitMs,executionMs:Date.now()-began}));}
  };
  handler.externalEffect=true;
  const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE (workspace_id=ANY($1::text[]) OR $2 AND admission_kind='COMMERCIAL')
   AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
   AND period_ends_at>now() LIMIT 1`,[workspaces,commercialRollout])).rows.length);
- const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000,shouldClaim});
+ const concurrency=Number(process.env.STOCKCHIEF_ASK_CONCURRENCY||4);
+ if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4)throw Error('ASK_CONCURRENCY_MUST_BE_1_TO_4');
+ const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},concurrency,leaseMs:10*60000,shouldClaim});
  const stopNotifications=await require('../src/assistant/postgres-goal-resume').watchDependencies(db,workspaces,()=>worker.wake(),
   {availableWorkspace:require('../src/assistant/codex-pilot-scope').availableWorkspace})
   .catch(error=>{console.warn('Job/dependency notifications unavailable; durable polling and sweeps remain active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});

@@ -66,6 +66,8 @@ function startSingle(database, options = {}) {
 }
 
 function start(database, options = {}) {
+  const concurrency=options.concurrency??1;
+  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>8)throw new TypeError('Worker concurrency must be between one and eight.');
   const groups = new Map();
   for (const [kind,handler] of Object.entries(options.handlers || {})) {
     if (typeof handler !== 'function') continue;
@@ -75,7 +77,15 @@ function start(database, options = {}) {
     groups.get(lane)[kind] = handler;
   }
   const bulkKinds = [...new Set(['import.execute-approved', 'erp.cutover.continue', ...Object.keys(groups.get('bulk') || {})])];
-  if (groups.size <= 1) return startSingle(database, groups.has('maintenance') ? maintenanceOptions(database, options, bulkKinds) : options);
+  if (groups.size <= 1) {
+    const settings=groups.has('maintenance')?maintenanceOptions(database,options,bulkKinds):options;
+    if(concurrency===1)return startSingle(database,settings);
+    if(groups.has('maintenance'))throw new TypeError('Maintenance retains one bounded execution slot.');
+    const owner=options.owner||`${process.pid}@${os.hostname()}:${crypto.randomUUID()}`;
+    const workers=Array.from({length:concurrency},(_,n)=>startSingle(database,{...settings,owner:`${owner}:${n}`}));
+    return {owner,wake:()=>workers.forEach(worker=>worker.wake()),stop:()=>Promise.all(workers.map(worker=>worker.stop()))};
+  }
+  if(concurrency!==1)throw new TypeError('Configure concurrency only for a single execution lane.');
   if (groups.size > 4) throw new TypeError('A worker may use at most four bounded execution lanes.');
   const owner = options.owner || `${process.pid}@${os.hostname()}:${crypto.randomUUID()}`;
   // Each lane retains one in-flight job and uses the same durable claims and

@@ -6,21 +6,24 @@ function fundingWorkspaceId(){
  if(id&&process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')throw Error('CERTIFICATION_STAGING_ONLY');
  return id;
 }
-async function exposure(db,id){
- const row=(await db.query(`SELECT
+function exposureSql(funding,goal){
+ return `SELECT
   coalesce((SELECT sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END)
-   FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=$1
-    OR detail->>'certificationFundingWorkspaceId'=$1),0)
+   FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=${funding}
+    OR detail->>'certificationFundingWorkspaceId'=${funding}),0)
   +coalesce((SELECT sum(CASE WHEN status='SETTLED' THEN actual_minor
     WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000
-   FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1),0) +coalesce((SELECT sum(receipt.charged_micro_usd) FROM commercial_deleted_ai_receipts receipt WHERE receipt.funding_workspace_id=$1
+   FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=${funding}),0) +coalesce((SELECT sum(receipt.charged_micro_usd) FROM commercial_deleted_ai_receipts receipt WHERE receipt.funding_workspace_id=${funding}
     AND (receipt.receipt_kind<>'native' OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.codex_pilot_calls live WHERE live.id=receipt.receipt_id))
     AND (receipt.receipt_kind<>'model_hold' OR NOT EXISTS(SELECT 1 FROM commercial_model_cost_holds live WHERE live.id=receipt.receipt_id))),0) AS committed,
-  (SELECT count(*) FROM stockchief_runtime.codex_pilot_calls WHERE
-   (funding_workspace_id=$1 OR detail->>'certificationFundingWorkspaceId'=$1)
-    AND state IN ('RESERVED','UNKNOWN'))
-  +(SELECT count(*) FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1
-    AND status IN ('RESERVED','UNKNOWN')) AS unresolved`,[id])).rows[0];
+  (SELECT count(*) FROM stockchief_runtime.codex_pilot_calls call WHERE
+   (call.funding_workspace_id=${funding} OR call.detail->>'certificationFundingWorkspaceId'=${funding})
+    AND ${require('../assistant/live-model-reservation').blocksAdmission('call',goal)})
+  +(SELECT count(*) FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=${funding}
+    AND status IN ('RESERVED','UNKNOWN')) AS unresolved`;
+}
+async function exposure(db,id,{goalId=null}={}){
+ const row=(await db.query(exposureSql('$1','$2::text'),[id,goalId])).rows[0];
  return {committed:Number(row.committed),unresolved:Number(row.unresolved)};
 }
 async function status(db,fundingId=fundingWorkspaceId()){
@@ -35,7 +38,7 @@ async function reserve(client,maximumMicroUsd,{fundingId=fundingWorkspaceId(),go
  if(!Number.isSafeInteger(maximumMicroUsd)||maximumMicroUsd<=0||maximumMicroUsd>300000)throw Error('INVALID_CERTIFICATION_RESERVATION');
  const pilot=(await client.query("SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 AND admission_kind='PILOT' FOR UPDATE",[fundingId])).rows[0];
  if(!pilot?.enabled||pilot.stopped||new Date(pilot.period_starts_at)>new Date()||new Date(pilot.period_ends_at)<=new Date())throw Error('CERTIFICATION_WINDOW_CLOSED');
- const used=await exposure(client,fundingId);
+ const used=await exposure(client,fundingId,{goalId});
  if(used.unresolved)throw Error('CERTIFICATION_UNRESOLVED');
  if(used.committed+maximumMicroUsd>Number(pilot.ceiling_micro_usd))throw Error('CERTIFICATION_SPENDING_CEILING');
  if(goalId){let goalCeiling=1000000;
@@ -59,4 +62,4 @@ function detail(value={},fundingId=null){
  const {certificationFundingWorkspaceId:ignored,...rest}=value;
  return {...rest,...(fundingId?{certificationFundingWorkspaceId:fundingId}:{})};
 }
-module.exports={fundingWorkspaceId,exposure,status,reserve,detail};
+module.exports={fundingWorkspaceId,exposure,exposureSql,status,reserve,detail};

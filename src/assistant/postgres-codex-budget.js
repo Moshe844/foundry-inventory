@@ -5,16 +5,19 @@ function createBudget(db,ctx,goalId){
   // One database snapshot and round trip for approval + exposure. In
   // particular, do not combine an earlier approval with later ledger totals.
   // The reservation path still locks the pilot and repeats fresh authority.
-  const row=(await client.query(`SELECT p.pilot,u.*
+  const pool=require('../commercial/staging-certification-budget');
+  const row=(await client.query(`SELECT p.pilot,u.calls,
+   CASE WHEN p.pilot->>'admission_kind'='COMMERCIAL' THEN u.committed ELSE shared.committed END AS committed,
+   CASE WHEN p.pilot->>'admission_kind'='COMMERCIAL' THEN u.unresolved ELSE shared.unresolved END AS unresolved
    FROM stockchief_runtime.codex_pilot_workspace_access p
    CROSS JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN p.pilot->>'admission_kind'='COMMERCIAL'
       AND (created_at<(p.pilot->>'period_starts_at')::timestamptz OR created_at>=(p.pilot->>'period_ends_at')::timestamptz)
       THEN 0 WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS committed,
-    count(*) AS calls,count(*) FILTER(WHERE state IN ('RESERVED','UNKNOWN')) AS unresolved
-    FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=p.funding_workspace_id) u
-   WHERE p.workspace_id=$1`,[ctx.workspaceId])).rows[0]||{pilot:null,committed:0,calls:0,unresolved:0};
+    count(*) AS calls,count(*) FILTER(WHERE ${require('./live-model-reservation').blocksAdmission('call','$2::text')}) AS unresolved
+    FROM stockchief_runtime.codex_pilot_calls call WHERE funding_workspace_id=p.funding_workspace_id) u
+   CROSS JOIN LATERAL (${pool.exposureSql('p.funding_workspace_id','$2::text')}) shared
+   WHERE p.workspace_id=$1`,[ctx.workspaceId,goalId||null])).rows[0]||{pilot:null,committed:0,calls:0,unresolved:0};
   const p=row.pilot,u=row;
-  if(p?.admission_kind!=='COMMERCIAL'&&p){const exposure=await require('../commercial/staging-certification-budget').exposure(client,p.funding_workspace_id||p.workspace_id);u.committed=exposure.committed;u.unresolved=exposure.unresolved;}
   return {creditMeterOnly:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly(),approval:p?.approval_reference,ceiling:Number(p?.ceiling_micro_usd||0),expires:p?new Date(p.period_ends_at).getTime():0,
    stopped:!p?.enabled||p.stopped,committed:Number(u.committed),calls:Number(u.calls),unresolved:Number(u.unresolved),
    remaining:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly()?Infinity:Math.max(0,Number(p?.ceiling_micro_usd||0)-Number(u.committed))};
