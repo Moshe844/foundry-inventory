@@ -16,7 +16,7 @@
 <div class="ox ox-ohead-wrap">
   <a class="ox-back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
   <div class="ox ox-oactions ox-head__actions" data-ox-order-actions>
-    <button class="ox-btn ox-btn--ghost" type="button" data-ox-print>Print</button>
+    <button class="ox-btn ox-btn--ghost" type="button" onclick="window.print()">Print</button>
     <% if (order.status !== 'DRAFT' && order.status !== 'CANCELLED') { %><a class="ox-btn ox-btn--secondary" href="/orders/<%= order.id %>?open=money#money">Invoice and payment</a><% } %>
     <% if (oxNext) { %><a class="ox-btn ox-btn--primary" href="<%= oxNext.href %>"><%= oxNext.label %></a><% } %>
   </div>

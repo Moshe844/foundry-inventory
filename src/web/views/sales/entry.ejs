@@ -21,23 +21,26 @@
 %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
 <div class="ox" data-ox-page="order-entry">
+ <form method="post" action="<%= quotation?'/quotes':editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" id="sales-entry">
  <header class="ox-head ox-head--form">
   <div>
    <a class="ox-back" href="<%= back.href %>"><span aria-hidden="true">←</span> <%= back.label %></a>
    <h1 class="ox-title"><%= heading %></h1>
   </div>
+  <%# Create order comes first in the markup so Enter in a field still means
+      "create", as it did; CSS puts Save draft visually before it. %>
   <div class="ox-head__actions">
    <a class="ox-btn ox-btn--ghost" href="<%= back.href %>">Cancel</a>
-   <% if(quotation){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry">Save quote</button>
-   <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry">Save changes</button>
-   <% }else{ %><button class="ox-btn ox-btn--secondary" type="submit" form="sales-entry" name="nextStep" value="draft">Save draft</button>
-   <button class="ox-btn ox-btn--primary" type="submit" form="sales-entry" name="nextStep" value="confirm">Create order</button><% } %>
+   <% if(quotation){ %><button class="ox-btn ox-btn--primary" type="submit">Save quote</button>
+   <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary" type="submit">Save changes</button>
+   <% }else{ %><button class="ox-btn ox-btn--primary ox-order-3" type="submit" name="nextStep" value="confirm">Create order</button>
+   <button class="ox-btn ox-btn--secondary ox-order-2" type="submit" name="nextStep" value="draft">Save draft</button><% } %>
   </div>
  </header>
 
  <% if(formError){ %><div class="ox-error" role="alert"><strong><%= quotation?'Quote':'Order' %> not saved.</strong> <%= formError %></div><% } %>
 
- <form method="post" action="<%= quotation?'/quotes':editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" class="ox-form" id="sales-entry">
+ <div class="ox-form">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= currency %>">
   <input type="hidden" name="idempotencyKey" value="<%= form.idempotencyKey||operationKey %>">
   <% if(quotation){ %><input type="hidden" name="supersedesId" value="<%= form.supersedesId||'' %>"><% } %>
@@ -142,14 +145,15 @@
     <p class="ox-fine"><%= quotation?'Saving a quote holds no stock and sends nothing to the customer.':editOrder?'Saving changes keeps this a draft. No stock moves.':'Create order holds the stock for this customer. Nothing ships and nothing is invoiced until you say so.' %></p>
    </section>
   </aside>
- </form>
+ </div>
 
  <div class="ox-mbar" aria-label="Order total">
   <span class="ox-mbar__t">Total<b data-ox-mbar-total>—</b></span>
-  <% if(quotation||editOrder){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry"><%= quotation?'Save quote':'Save changes' %></button>
-  <% }else{ %><button class="ox-btn ox-btn--secondary" type="submit" form="sales-entry" name="nextStep" value="draft">Draft</button>
-  <button class="ox-btn ox-btn--primary" type="submit" form="sales-entry" name="nextStep" value="confirm">Create order</button><% } %>
+  <% if(quotation||editOrder){ %><button class="ox-btn ox-btn--primary" type="submit"><%= quotation?'Save quote':'Save changes' %></button>
+  <% }else{ %><button class="ox-btn ox-btn--primary ox-order-3" type="submit" name="nextStep" value="confirm">Create order</button>
+  <button class="ox-btn ox-btn--secondary ox-order-2" type="submit" name="nextStep" value="draft">Draft</button><% } %>
  </div>
+ </form>
 
  <dialog class="modal ox-modal" id="new-order-customer" aria-labelledby="ox-h-newcust"><form action="/sales/customers" method="post" data-inline-customer><input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <div class="ox-modal__h"><h2 id="ox-h-newcust">New customer</h2><button class="ox-modal__x" type="button" data-modal-close aria-label="Close">×</button></div>

@@ -60,8 +60,6 @@
     var head = $('.ox-ohead-wrap ~ .page-head');
     if (!actions) return;
     if (head) head.appendChild(actions);
-    var print = $('[data-ox-print]', actions);
-    if (print) print.addEventListener('click', function () { window.print(); });
   }
 
   function start() {

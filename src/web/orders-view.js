@@ -38,10 +38,8 @@ function initials(name) {
 const shippedSome = (order) => Number(order.units_fulfilled || 0) > 0;
 
 function bucket(order) {
-  if (order.status === 'FULFILLED' || (order.status === 'CANCELLED' && shippedSome(order))) {
-    return Number(order.balance_minor) > 0 ? 'unpaid' : 'done';
-  }
   if (order.status === 'CANCELLED') return 'done';
+  if (order.status === 'FULFILLED') return Number(order.balance_minor) > 0 ? 'unpaid' : 'done';
   if (order.status === 'DRAFT' || (order.next && order.next.rank >= 80)) return 'needs';
   return 'ship';
 }
@@ -53,7 +51,7 @@ function statusBadge(order) {
     case 'CONFIRMED': return { text: 'Ready to ship', tone: 'blue' };
     case 'PARTIALLY_FULFILLED': return { text: 'Being shipped', tone: 'blue' };
     case 'FULFILLED': return { text: 'Delivered', tone: 'green' };
-    case 'CANCELLED': return { text: shippedSome(order) ? 'Part shipped, rest cancelled' : 'Cancelled', tone: 'grey' };
+    case 'CANCELLED': return { text: require('../sales/order-status').label(order.status, Number(order.units_fulfilled || 0), order.delivery_method), tone: 'grey' };
     default: return { text: String(order.status || '').toLowerCase(), tone: 'grey' };
   }
 }
