@@ -48,7 +48,7 @@ const datasets=Object.freeze({
     enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',category:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product, variant and location, with recorded inventory cost',permission:permissions.VIEW,
-    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,
+    source:`SELECT i.id AS record_id,i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,l.name AS location,i.unit_label AS stock_unit,
       b.on_hand::numeric AS on_hand,cost.quantity_units::numeric AS costed_units,
       CASE WHEN settings.enabled=1 THEN cost.total_cost_minor::bigint END AS recorded_cost_minor,
       CASE WHEN settings.enabled=1 THEN settings.base_currency END AS currency,
@@ -65,7 +65,7 @@ const datasets=Object.freeze({
     moneyCompleteness:{recorded_cost_minor:{field:'cost_status',value:'complete'}},
     enumFields:['cost_status'],filterValues:{cost_status:['complete','partial','missing']},
     fields:{product:'text',category:'text',sku:'text',variant:'text',location:'text',on_hand:'number',
-      costed_units:'number',recorded_cost_minor:'money_minor',currency:'text',cost_status:'text',as_of:'date'}},
+      costed_units:'number',recorded_cost_minor:'money_minor',currency:'text',cost_status:'text',as_of:'date',stock_unit:'text'}},
   stock_recency:{label:'Stock positions and recorded sales recency',permission:permissions.VIEW_SALES,
     source:`WITH recorded_sales AS (
       SELECT jl.workspace_id,jl.sku_id,MAX(e.posting_date) AS last_sold_on

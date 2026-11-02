@@ -13,8 +13,11 @@ test('actual pinned SDK preserves the recorded two responses then unknown third-
  const profile=require('../../scripts/environment-agent-demo/codex-models').getProfile('sol-low-fast');
  for(const [operation,rate]of Object.entries(profile.rates))await db.query(`INSERT INTO commercial_cost_rates(id,provider,model,provider_version,operation,unit,cost_per_unit_minor,currency,effective_from,source,pricing_basis,confidence)
   VALUES($1,'openai',$2,$3,$4,'token',$5,'USD',now(),'OFFLINE SYNTHETIC PROVIDER ONLY','VERIFIED_PUBLIC','HIGH')`,[randomUUID(),profile.model,profile.providerVersion,operation,rate/10000]);
+ // The current credit-only commercial transport requires an actual funded
+ // included allowance, even when the provider and its responses are fake.
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_FIXTURE')",[randomUUID(),owner.accountId]);
  const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),conversation=require('../../src/assistant/agent-conversation');
- const started=await pilot.start(db,ctx,'Investigate the authorized inventory and inspect the application without changing records.');let calls=0;
+ const started=await pilot.start(db,ctx,'Prepare a purchase order after inspecting the authorized inventory and application, without committing the proposed order.');let calls=0;
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',countInput:async()=>({object:'response.input_tokens',input_tokens:200}),fetchImpl:async(_url,init)=>{
   calls++;assert.equal(typeof init.headers['x-client-request-id'],'string');const body=JSON.parse(init.body);
   if(calls<=2){const program=calls===1?`text(await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:'read.inventory_summary',arguments:[],dependsOn:[]}])}));`:`text(await tools.mcp__stockchief__environment_browser({action:'inspect',ref:null,value:null}));`;

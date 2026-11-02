@@ -262,10 +262,9 @@ function createPostgresAskRouter(database,options={}){
     req.session.postgresAskNavigationGoal=req.params.id;
     return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
   }));
-  router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
-    res.set('Cache-Control','no-store');
+  async function goalSnapshot(req){
     let goal=await goalStore.progress(database,req.ctx,req.params.id);
-    if(!goal)return res.status(404).json({error:'Goal not found.'});
+    if(!goal)return null;
     const isPilot=goal.checkpoint.runtime==='codex-staging';
     const workerAvailable=isPilot?Boolean(goal.worker_available):null;
     // inbox performs the same fresh pilot/commercial admission. The polling
@@ -282,9 +281,43 @@ function createPostgresAskRouter(database,options={}){
     const continuation=isPilot&&goal.status==='BLOCKED'?await pilot.continuation(database,req.ctx,goal.id):null;
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
-    return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
+    return {id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
       workerAvailable,continuation,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
-      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
+      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
+  }
+  router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');const goal=await goalSnapshot(req);
+    return goal?res.json(goal):res.status(404).json({error:'Goal not found.'});
+  }));
+  router.get('/ask/goals/:id/stream',asyncRoute(async(req,res)=>{
+    // One shared LISTEN connection per app, never one connection per browser.
+    // Notifications wake a fresh authorized projection; they contain no facts.
+    let closed=false,busy=false,pending=false,stop=null,timer=null;
+    const close=()=>{if(closed)return;closed=true;clearInterval(timer);stop?.().catch(()=>{});res.end();};
+    req.once('close',close);res.once('close',close);
+    async function current(){
+      await new Promise((resolve,reject)=>req.session.reload(error=>error?reject(error):resolve()));
+      if(req.session.accountId!==req.account.id||req.session.workspaceId!==req.ctx.workspaceId)throw Error('ASK_STREAM_SESSION_CHANGED');
+      const auth=require('../../domain/postgres-auth-service'),account=await auth.getAccount(database,req.account.id);
+      if(!account||account.platform_access_disabled_at||Number(account.platform_access_revision||0)!==Number(req.session.accountAccessRevision||0)||
+        !await require('../../domain/postgres-business-sso').validateSession(database,account.id,req.session.sso))throw Error('ASK_STREAM_ACCESS_CHANGED');
+      const scope=await auth.resolveForAccount(database,account.id,req.ctx.workspaceId);
+      if(!scope||scope.membership.id!==req.ctx.actorId)throw Error('ASK_STREAM_ACCESS_CHANGED');
+      if(scope.membership.role!==req.user.role||!require('node:util').isDeepStrictEqual(scope.membership.permissions,req.user.permissions))throw Error('ASK_STREAM_AUTHORITY_CHANGED');
+      return goalSnapshot(req);
+    }
+    async function publish(){
+      if(closed)return;if(busy){pending=true;return;}busy=true;
+      try{do{pending=false;const goal=await current();if(!goal||closed){close();return;}
+        res.write('event: goal\ndata: '+JSON.stringify(goal)+'\n\n');
+        if(!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(goal.status)){close();return;}
+      }while(pending&&!closed);}catch{close();}finally{busy=false;}
+    }
+    const initial=await current();if(!initial)return res.status(404).json({error:'Goal not found.'});
+    stop=await require('../../assistant/postgres-goal-stream').hub(database).subscribe({...req.ctx,goalId:req.params.id},publish);
+    if(closed){await stop();return;}
+    res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache, no-store','X-Accel-Buffering':'no'});res.flushHeaders();
+    await publish();if(!closed){timer=setInterval(publish,15000);timer.unref();}
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);

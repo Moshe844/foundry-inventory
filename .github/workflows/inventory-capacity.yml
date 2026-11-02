@@ -64,6 +64,10 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 --test-force-exit tests/postgres/round17-ask-concurrency.test.js tests/postgres/round17-parallel-ai-budget.test.js tests/postgres/codex-staging-budget.test.js tests/postgres/codex-account-access.test.js tests/postgres/staging-installation-budget.test.js tests/postgres/maintenance-claims.test.js tests/postgres/worker-lane-isolation.test.js 2>&1 | tee output/inventory-ci/ask-parallel-budget.log
+      - name: Browser-free Ask and streamed answer delivery
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 --test-force-exit tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail

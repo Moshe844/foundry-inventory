@@ -2179,8 +2179,11 @@ async function cancelProposal(database,ctx,id) {
 
 async function ask(database,ctx,message,options={}){
   ctx={...ctx,conversationId:options.conversationId||null};
+  const directStarted=Date.now();
   const direct=await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
-  if(direct){direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};return recordCapabilityOutcome(database,ctx,message,direct);}
+  if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
+    const result=await recordCapabilityOutcome(database,ctx,message,direct);
+    console.log(JSON.stringify({kind:'ask_direct_read_finished',interactionId:result.interactionId||null,queueWaitMs:0,modelCalls:0,toolCalls:1,toolMs,totalMs:Date.now()-directStarted}));return result;}
   if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx)){
     // Preserve the existing zero-model page command. This is only a shortcut:
     // unknown destinations and compound requests still reach the native agent.

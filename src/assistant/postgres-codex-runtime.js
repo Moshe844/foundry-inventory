@@ -4,7 +4,7 @@ const store=require('./postgres-goal-store'),pilot=require('./postgres-codex-pil
 const base='../../scripts/environment-agent-demo/';
 const internalActivity=new Set(['codex_event','codex_resources','codex_isolation','model_profile_selected','codex_input_count',
  'model_call','model_response','native_completion_checkpoint','canonical_operation','agent_tool_completed','answer_scope_review_settled']);
-const timingFields=['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'];
+const timingFields=['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs','modelMs','toolMs','totalMs'];
 function timingDetail(event){return Object.fromEntries(Object.entries(event.timings||{}).filter(([key,value])=>
  timingFields.includes(key)&&Number.isFinite(value)&&value>=0));}
 function activityDetail(event){
@@ -48,6 +48,9 @@ async function run(database,ctx,id,options={}){
   auditQueue.catch(()=>{});return auditQueue;
  }
  const audit=event=>{
+  if(event.kind.startsWith('bounded_read_')){
+   console.log(JSON.stringify({kind:event.kind,goalId:id,timings:timingDetail(event)}));return;
+  }
   if(['context_preparation_timing','browser_preparation_timing'].includes(event.kind)){
    if(process.env.STOCKCHIEF_CODEX_TIMING==='1')console.log(JSON.stringify({kind:event.kind,goalId:id,phase:event.phase,ms:event.ms}));
    return;
@@ -85,6 +88,7 @@ async function run(database,ctx,id,options={}){
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
+   if(goal.checkpoint.boundedRead===true)throw Error('READ_ONLY_BROWSER_FORBIDDEN');
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
    let server,phaseStarted=Date.now();
@@ -161,7 +165,7 @@ async function run(database,ctx,id,options={}){
   if(!pendingFinal&&!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
    input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);preparations.push(warm);}
   const processing=require('../connections/postgres-source-automation').processing(goal);
-  if(processing)await session.initialize();
+  if(processing||goal.checkpoint.boundedRead===true)await session.initialize();
   let preparedSandbox=null,preparedContext=null;
   const prepareNative=()=>{
    preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
@@ -173,7 +177,8 @@ async function run(database,ctx,id,options={}){
   // Page context remains in the native prompt. The existing lazy browser
   // initializes on the agent's first browser tool or mandatory verification,
   // avoiding an unconditional renderer/DOM read for governed-record questions.
-  if(!pendingFinal&&!processing)prepareNative();
+  const boundedRead=goal.checkpoint.boundedRead===true;
+  if(!pendingFinal&&!processing&&!boundedRead)prepareNative();
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');
   // These fresh admission reads are independent. Join all of them before
@@ -194,7 +199,7 @@ async function run(database,ctx,id,options={}){
   const modelPolicy=require(base+'codex-wire').forProfile(modelProfile.id);
   // Exploration may use a cheaper profile. Canonical semantic helpers retain
   // the previously configured verification strength and their own exact rates.
-  const helperPolicy=modelProfile.verificationProfile?require(base+'codex-wire').forProfile(modelProfile.verificationProfile):modelPolicy;
+  const helperPolicy=!boundedRead&&modelProfile.verificationProfile?require(base+'codex-wire').forProfile(modelProfile.verificationProfile):modelPolicy;
   if(helperPolicy!==modelPolicy)await require('./codex-staging-readiness').verifyPricing(database,helperPolicy.PROFILE);
   const economical=modelProfile.fallbackProcessingProfile?require(base+'codex-wire').forProfile(modelProfile.fallbackProcessingProfile):null;
   if(economical){
@@ -226,6 +231,40 @@ async function run(database,ctx,id,options={}){
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});
+  if(boundedRead){
+   // One governed interpretation and one bounded database tool. No browser,
+   // autonomous planning turn, scope-review model or second investigation.
+   const reads=require('./bounded-business-read'),currentAccess=await authorize({catalogue:false});
+   const began=Date.now(),modelStarted=Date.now();
+   let plan;
+   try{plan=await reads.interpret(helper,currentAccess.actor,goal.original_request,{clock:currentAccess.environment?.clock,
+    conversation:(goal.checkpoint.messages||[]).slice(-4)});}
+   finally{audit({kind:'bounded_read_model',timings:{modelMs:Date.now()-modelStarted}});}
+   if(plan.status==='clarify'){
+    await session.finish({verified:false,answer:plan.question,report:{version:1,status:'needs_user',question:plan.question,missingInformation:['The records, dates or measure to check']}});
+    return store.get(database,ctx,id);
+   }
+   const toolStarted=Date.now();
+   let sections;try{sections=await session.execute('business_database_read',{queries:plan.queries},async()=>{
+    const fresh=await authorize({catalogue:false});
+    const partial=[];
+    return reads.execute(database,ctx,fresh.actor,plan,{onSection:async section=>{
+     await session.initialize(); // Recheck the exact authority and lease before publishing facts.
+     partial.push(section);
+     const published=await database.query(`UPDATE stockchief_runtime.assistant_goals SET answer=$5,updated_at=clock_timestamp()
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4 AND status='RUNNING'
+       AND lease_until>now() AND expires_at>now()`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,reads.render(partial)]);
+     if(published.rowCount!==1)throw Error('SESSION_LEASE_LOST');
+    }});
+   });}finally{audit({kind:'bounded_read_tool',timings:{toolMs:Date.now()-toolStarted}});}
+   const answer=reads.render(sections),checkStarted=Date.now();
+   // The host renders every number from this tool's immutable result. A cheap
+   // structural check cannot start a model or rerun the original questions.
+   if(sections.length!==plan.queries.length||!answer)throw Error('BOUNDED_READ_INCOMPLETE');
+   await session.finish({verified:true,answer,report:{version:1,status:'completed',outcome:'answer',answer,claims:[]}});
+   audit({kind:'bounded_read_finished',timings:{finalVerificationMs:Date.now()-checkStarted,totalMs:Date.now()-began}});
+   return store.get(database,ctx,id);
+  }
   audit({kind:'runtime_starting',status:processing?'Preparing a record-grounded reply':'Starting the Codex SDK session'});
   if(processing){
    // The existing relay owns the key, exact token admission, durable response
