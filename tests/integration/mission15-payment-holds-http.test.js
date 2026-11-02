@@ -204,9 +204,17 @@ test('an order does not offer an online charge until this business has connected
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
-  const words = plain((await agent.get(`/orders/${order.id}`)).text);
+  const page = await agent.get(`/orders/${order.id}`);
+  assert.equal(page.status, 200);
+  const words = plain(page.text);
   assert.match(words, /Online payment is not set up for this business yet/i);
-  assert.match(words, /Set up Stripe payments/i);
+  const setupLinks = [...page.text.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>/g)]
+    .map(match => new URL(match[1].replace(/&amp;/g, '&'), 'http://stockchief.test'))
+    .filter(url => url.pathname === '/settings/connections' && url.searchParams.get('only') === 'payments');
+  assert.equal(setupLinks.length, 1, 'The owner gets one link to the payment gateways');
+  assert.equal(setupLinks[0].searchParams.get('return'), `/orders/${order.id}`);
+  assert.ok(!page.text.includes(`action="/sales/orders/${order.id}/payment-request"`),
+    'An unconnected business must not offer a form that starts an online charge');
   assert.doesNotMatch(words, /Take \$1,500\.00 now/i);
 });
 
