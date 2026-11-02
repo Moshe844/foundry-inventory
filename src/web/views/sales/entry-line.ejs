@@ -1,8 +1,20 @@
-<div class="sales-order-line" data-order-line>
- <label class="rm-field"><span>Search products</span><input type="search" data-product-search placeholder="Name or SKU · searches all products" autocomplete="off"></label>
- <label class="rm-field"><span>Product or variant</span><select name="skuId" required><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>" <%= selected===s.id?'selected':'' %>><%= s.display_name %> · <%= s.code %></option><% }) %></select><small data-search-status>Showing up to 50 products. Search to find any SKU.</small></label>
- <label class="rm-field"><span>Quantity</span><input type="number" name="quantity" min="0.000001" max="1000000000" step="any" value="<%= quantity %>" required></label>
- <label class="rm-field" data-secondary-field hidden><span data-secondary-label>Actual weight</span><input name="secondaryQuantity" inputmode="decimal" value="<%= locals.secondaryQuantity||'' %>"></label>
- <label class="rm-field"><span>Price <small>editable selling price</small></span><input name="unitPrice" inputmode="decimal" value="<%= price %>" placeholder="Use saved pricing"><input type="hidden" name="priceOverride" value="<%= override %>"><small data-price-source></small></label>
- <div><span>Line total</span><output data-line-total>—</output></div><button class="btn btn--ghost btn--sm" type="button" data-remove-order-line>Remove</button>
-</div>
+<%#
+  One order line. The select, quantity, price and override fields are the
+  ones the server and the tests read; the product cell is what people see.
+  The select stays in the line as a 1px field so a line can still be filled
+  without the search above (no script, automation, the variant grid).
+%>
+<tr class="ox-line" data-order-line>
+ <td class="ox-line__pc">
+  <div class="ox-line__p" data-line-view>
+   <span class="ox-thumb" aria-hidden="true" data-line-thumb></span>
+   <span class="ox-line__name"><strong data-line-name>No product yet</strong><small data-line-meta>Search above to choose one</small></span>
+  </div>
+  <select class="ox-native" name="skuId" aria-label="Product or variant" tabindex="-1" required><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>" <%= selected===s.id?'selected':'' %>><%= s.display_name %> · <%= s.code %></option><% }) %></select>
+  <label class="ox-weight" data-secondary-field hidden><span data-secondary-label>Actual weight</span><input name="secondaryQuantity" inputmode="decimal" value="<%= locals.secondaryQuantity||'' %>"></label>
+ </td>
+ <td class="ox-line__qty"><span class="ox-step"><button type="button" data-ox-dec aria-label="One fewer">−</button><input type="number" name="quantity" aria-label="Quantity" min="0.000001" max="1000000000" step="any" value="<%= quantity %>" required><button type="button" data-ox-inc aria-label="One more">+</button></span></td>
+ <td class="ox-r"><input class="ox-input ox-price" name="unitPrice" aria-label="Price" inputmode="decimal" value="<%= price %>" placeholder="Price" title="Saved selling price and pricing rules. Type a price to use your own for this order."><input type="hidden" name="priceOverride" value="<%= override %>"><small class="ox-sr" data-price-source></small></td>
+ <td class="ox-r ox-num ox-line__tot"><output data-line-total>—</output></td>
+ <td class="ox-r"><button class="ox-remove" type="button" data-remove-order-line aria-label="Remove line">✕</button></td>
+</tr>

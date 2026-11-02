@@ -1,43 +1,169 @@
-<% const list=v=>Array.isArray(v)?v:[v??''];const ids=list(form.skuId),qty=list(form.quantity),prices=list(form.unitPrice),overrides=list(form.priceOverride);const count=Math.max(1,ids.length); %>
-<div class="rm-head"><a href="<%= locals.quotation?'/quotes':'/orders' %>">← <%= locals.quotation?'Quotes':'Orders' %></a><h1><%= locals.quotation?'Prepare a customer quotation':editOrder?'Edit draft order':'What did the customer order?' %></h1><p>Choose the customer and products. Prices and totals use your saved pricing rules.<% if(locals.quotation){ %> Saving a quote reserves no stock and sends no message.<% } %></p></div>
-<% if(formError){ %><div class="notice notice--warn" role="alert"><div><strong><%= locals.quotation?'Quotation':'Order' %> not saved.</strong> <%= formError %></div></div><% } %>
-<form method="post" action="<%= locals.quotation?'/quotes':editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" class="card form-card" id="sales-entry">
- <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= currency %>">
- <input type="hidden" name="idempotencyKey" value="<%= form.idempotencyKey||operationKey %>">
- <% if(locals.quotation){ %><label class="rm-field"><span>Quotation valid through</span><input type="date" name="validUntil" min="<%= today %>" value="<%= form.validUntil||today %>" required></label><input type="hidden" name="supersedesId" value="<%= form.supersedesId||'' %>"><% } %>
- <% ['email','phone','address'].forEach(key=>{ %><input type="hidden" data-contact-manual="<%= key %>" name="<%= key %>Manual" value="<%= form[key+'Manual']||'' %>"><% }) %>
- <% if(editOrder){ %><input type="hidden" name="expectedVersion" value="<%= editOrder.version %>"><input type="hidden" name="editOrderId" value="<%= editOrder.id %>"><% } %>
- <section class="rm-step-panel"><div class="rm-step-panel__h"><h2>Customer and delivery</h2></div><div class="rm-step-panel__b form-grid">
- <label class="rm-field"><span>Customer</span><select name="customerId" id="order-customer" aria-label="Customer" required><option value="">Choose a customer</option><% customers.forEach(c=>{ %><option value="<%= c.id %>" data-email="<%= c.email||'' %>" data-phone="<%= c.phone||'' %>" data-address="<%= c.shipping_address||'' %>" <%= form.customerId===c.id?'selected':'' %>><%= c.name %></option><% }) %></select></label>
- <button class="btn btn--ghost" type="button" data-modal-open="new-order-customer">+ New customer</button>
- <label class="rm-field"><span>Their email <small>order updates</small></span><input type="email" name="customerEmail" id="order-customer-email" data-customer-field="email" value="<%= form.customerEmail??'' %>"></label>
- <label class="rm-field"><span>Phone</span><input type="tel" name="customerPhone" data-customer-field="phone" value="<%= form.customerPhone??'' %>"></label>
- <fieldset class="rm-picks"><legend>How will they receive it?</legend><label><input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod!=='PICKUP'?'checked':'' %>> Send by carrier</label><label><input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod==='PICKUP'?'checked':'' %>> Customer pickup</label></fieldset>
- <div id="order-destination"><label class="rm-field"><span>Delivery address for this order</span><textarea name="customerShippingAddress" id="order-customer-address" data-customer-field="address" rows="3"><%= form.customerShippingAddress??'' %></textarea><small>Saved with this order. Customer defaults stay unchanged.</small></label></div>
- <label class="rm-field"><span>Ship from</span><select name="fulfillmentLocationId" id="order-location"><option value="" <%= !form.fulfillmentLocationId?'selected':'' %>>Use available stock across locations</option><% locations.forEach((l,i)=>{ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId===l.id?'selected':'' %>><%= l.name %></option><% }) %></select></label>
- </div></section>
- <section class="rm-step-panel"><div class="rm-step-panel__h"><h2>Products</h2></div><div class="rm-step-panel__b">
- <div id="order-lines"><% for(let n=0;n<count;n++){ %><%- include('entry-line',{n,selected:ids[n]||'',quantity:form.quantity===undefined?'1':qty[n]??'',secondaryQuantity:list(form.secondaryQuantity)[n]||'',price:prices[n]??'',override:overrides[n]??(prices[n]?'1':'0'),catalogue}) %><% } %></div>
- <%- include('../inventory/quantity-grid-picker',{gridKind:'sale'}) %>
- <button type="button" class="btn btn--ghost" id="add-order-line">+ Add another product</button>
- <p id="order-stock-check" role="status">Choose products to see available stock.</p>
- <p id="order-weight" class="hint"></p>
- </div></section>
- <% if(!taxRates.length){ %><aside class="notice notice--warn" role="status"><strong>Set up your sales tax before invoicing.</strong> <a href="/accounting/tax?next=/orders/new">Add a tax rate</a>, if your business charges sales tax. You can save a tax-free draft while you finish setup.</aside><% } %><details class="rm-work"><summary>Optional order details — dates, tax, discount, reference, and notes</summary><div class="rm-work__body form-grid">
- <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber||'' %>" <%= editOrder?'disabled':'' %>></label>
- <label class="rm-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate||today %>" required></label>
- <label class="rm-field"><span>Needed by</span><input type="date" name="neededBy" value="<%= form.neededBy||'' %>"></label>
- <label class="rm-field"><span>Discount amount</span><input name="discount" inputmode="decimal" value="<%= form.discount||'' %>"></label>
- <label class="rm-field"><span>Tax rate</span><select name="taxRateId"><option value=""><%= taxRates.length?'Select a tax rate':'No tax rate set up' %></option><% taxRates.forEach(t=>{ %><option value="<%= t.id %>" <%= form.taxRateId===t.id?'selected':'' %>><%= t.name %> · <%= Number(t.rate_millionths)/10000 %>%</option><% }) %></select><small><a href="/accounting/tax">Manage tax rates</a></small></label>
- <label class="rm-field"><span>Tax amount <small>only without a configured rate</small></span><input name="tax" inputmode="decimal" value="<%= form.tax||'' %>"></label>
- <label class="rm-field"><span>Promotion codes</span><input name="couponCodes" value="<%= form.couponCodes||'' %>"></label>
- <input type="hidden" name="priceListId" value="<%= form.priceListId||'' %>">
- <label class="rm-field"><span>Reference</span><input name="reference" value="<%= form.reference||'' %>"></label><label class="rm-field"><span>Notes</span><textarea name="notes"><%= form.notes||'' %></textarea></label>
- </div></details>
- <section class="section" aria-live="polite" aria-label="Order totals"><p id="order-quote-status">Choose a customer and product to calculate totals.</p><dl class="kv"><dt>Subtotal</dt><dd data-total="subtotalMinor">—</dd><dt>Discount</dt><dd data-total="discountMinor">—</dd><dt>Tax</dt><dd data-total="taxMinor">—</dd><dt>Total</dt><dd data-total="totalMinor">—</dd></dl></section>
- <div class="form-actions"><% if(locals.quotation){ %><button class="rm-btn" type="submit">Save quotation</button><% }else if(editOrder){ %><button class="rm-btn" type="submit">Save draft changes</button><% }else{ %><button class="rm-btn" id="order-confirm-button" name="nextStep" value="confirm">Create order and reserve stock</button><button class="rm-btn" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button><button class="rm-btn rm-btn--ghost" name="nextStep" value="draft">Save draft</button><% } %><a href="<%= locals.quotation?'/quotes':'/orders' %>">Cancel</a></div>
-</form>
-<dialog class="modal" id="new-order-customer"><form action="/sales/customers" method="post" data-inline-customer><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="modal-head"><h2>New customer</h2><button type="button" data-modal-close aria-label="Close">×</button></div><div class="modal-body"><label class="field"><span>Customer name</span><input name="name" required></label><label class="field"><span>Customer email</span><input name="email" type="email"></label><label class="field"><span>Customer phone</span><input name="phone"></label><label class="field"><span>Customer shipping address</span><textarea name="shippingAddress"></textarea></label><p role="status" data-customer-status></p><button class="btn btn--primary">Save customer</button></div></form></dialog><script src="/inline-customer.js?v=<%= assetVersion %>" defer></script>
+<%
+  /*
+   * New order, edit draft and new quotation: one page with a sticky total.
+   *
+   * Every field the server reads keeps its name, and the hooks other code
+   * relies on keep their ids (#sales-entry, #order-customer, #order-lines,
+   * [data-order-line], #order-destination, #order-location, details.rm-work,
+   * [data-total], #order-confirm-button, #order-complete-button,
+   * #new-order-customer). The customer and product selects stay as 1px
+   * fields behind the two searches, so the form still works field by field.
+   * Totals come from the server's pricing quote, as before.
+   */
+  const list=v=>Array.isArray(v)?v:[v??''];const ids=list(form.skuId),qty=list(form.quantity),prices=list(form.unitPrice),overrides=list(form.priceOverride);const count=Math.max(1,ids.length);
+  const quotation=Boolean(locals.quotation),back=quotation?{href:'/quotes',label:'Quotes'}:{href:'/orders',label:'Orders'};
+  const heading=quotation?'New quote':editOrder?'Edit draft order':'New order';
+  // The Hendels demo inventory carries records left by automated sweeps; they
+  // stay in the books but are kept out of its pickers. Chosen records always show.
+  const demo=/hendel/i.test((locals.workspace&&workspace.name)||''),sweep=name=>demo&&(/^\s*(sweep|r18|rt-|qa)\b/i.test(String(name||''))||/<\/?[a-z][^>]*>/i.test(String(name||'')));
+  customers=customers.filter(c=>c.id===form.customerId||!sweep(c.name));locations=locations.filter(l=>l.id===form.fulfillmentLocationId||!sweep(l.name));
+  catalogue=catalogue.filter(s=>ids.includes(s.id)||!sweep(s.item_name||s.display_name));
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox" data-ox-page="order-entry">
+ <header class="ox-head ox-head--form">
+  <div>
+   <a class="ox-back" href="<%= back.href %>"><span aria-hidden="true">←</span> <%= back.label %></a>
+   <h1 class="ox-title"><%= heading %></h1>
+  </div>
+  <div class="ox-head__actions">
+   <a class="ox-btn ox-btn--ghost" href="<%= back.href %>">Cancel</a>
+   <% if(quotation){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry">Save quote</button>
+   <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry">Save changes</button>
+   <% }else{ %><button class="ox-btn ox-btn--secondary" type="submit" form="sales-entry" name="nextStep" value="draft">Save draft</button>
+   <button class="ox-btn ox-btn--primary" type="submit" form="sales-entry" name="nextStep" value="confirm">Create order</button><% } %>
+  </div>
+ </header>
+
+ <% if(formError){ %><div class="ox-error" role="alert"><strong><%= quotation?'Quote':'Order' %> not saved.</strong> <%= formError %></div><% } %>
+
+ <form method="post" action="<%= quotation?'/quotes':editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" class="ox-form" id="sales-entry">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= currency %>">
+  <input type="hidden" name="idempotencyKey" value="<%= form.idempotencyKey||operationKey %>">
+  <% if(quotation){ %><input type="hidden" name="supersedesId" value="<%= form.supersedesId||'' %>"><% } %>
+  <% ['email','phone','address'].forEach(key=>{ %><input type="hidden" data-contact-manual="<%= key %>" name="<%= key %>Manual" value="<%= form[key+'Manual']||'' %>"><% }) %>
+  <% if(editOrder){ %><input type="hidden" name="expectedVersion" value="<%= editOrder.version %>"><input type="hidden" name="editOrderId" value="<%= editOrder.id %>"><% } %>
+  <input type="hidden" name="priceListId" value="<%= form.priceListId||'' %>">
+
+  <div class="ox-col">
+   <section class="ox-card" aria-labelledby="ox-h-customer">
+    <div class="ox-card__h"><h2 id="ox-h-customer">Customer</h2><button class="ox-linkbtn" type="button" data-modal-open="new-order-customer">+ New customer</button></div>
+    <div class="ox-card__b">
+     <select name="customerId" id="order-customer" class="ox-native" aria-label="Customer" tabindex="-1" required><option value="">Choose a customer</option><% customers.forEach(c=>{ %><option value="<%= c.id %>" data-email="<%= c.email||'' %>" data-phone="<%= c.phone||'' %>" data-address="<%= c.shipping_address||'' %>" data-orders="<%= c.order_count||0 %>" <%= form.customerId===c.id?'selected':'' %>><%= c.name %></option><% }) %></select>
+     <div class="ox-combo" data-ox-customer-combo>
+      <svg class="ox-combo__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input class="ox-input" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-customer-list" aria-label="Search customers" placeholder="Search customers by name, email or phone" autocomplete="off" data-ox-customer-search>
+      <ul class="ox-pop" id="ox-customer-list" role="listbox" aria-label="Customers" hidden></ul>
+     </div>
+     <div class="ox-chipcard" data-ox-customer-chip hidden>
+      <span class="ox-avatar" aria-hidden="true" data-ox-chip-initials></span>
+      <div class="ox-chipcard__main"><strong data-ox-chip-name></strong><span data-ox-chip-contact></span><span data-ox-chip-address></span></div>
+      <div class="ox-chipcard__links"><button class="ox-linkbtn" type="button" data-ox-customer-change>Change</button></div>
+     </div>
+     <div class="ox-grid2 ox-contact" data-ox-contact>
+      <label class="ox-field"><span>Email for order updates</span><input type="email" name="customerEmail" id="order-customer-email" data-customer-field="email" value="<%= form.customerEmail??'' %>" placeholder="name@example.com"></label>
+      <label class="ox-field"><span>Phone</span><input type="tel" name="customerPhone" data-customer-field="phone" value="<%= form.customerPhone??'' %>"></label>
+     </div>
+    </div>
+   </section>
+
+   <section class="ox-card" aria-labelledby="ox-h-items">
+    <div class="ox-card__h"><h2 id="ox-h-items">Items</h2>
+     <%- include('../inventory/quantity-grid-picker',{gridKind:'sale',gridLabel:'Add many sizes at once',gridButtonClass:'ox-linkbtn'}) %>
+    </div>
+    <div class="ox-card__b">
+     <div class="ox-combo" data-ox-product-combo>
+      <svg class="ox-combo__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input class="ox-input" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-product-list" aria-label="Search products" placeholder="Search products or scan a barcode" autocomplete="off" data-product-search>
+      <ul class="ox-pop" id="ox-product-list" role="listbox" aria-label="Products" hidden></ul>
+     </div>
+     <table class="ox-lines">
+      <thead><tr><th scope="col">Product</th><th scope="col">Qty</th><th scope="col" class="ox-r">Price</th><th scope="col" class="ox-r">Total</th><th scope="col"><span class="ox-sr">Remove</span></th></tr></thead>
+      <tbody id="order-lines"><% for(let n=0;n<count;n++){ %><%- include('entry-line',{n,selected:ids[n]||'',quantity:form.quantity===undefined?'1':qty[n]??'',secondaryQuantity:list(form.secondaryQuantity)[n]||'',price:prices[n]??'',override:overrides[n]??(prices[n]?'1':'0'),catalogue}) %><% } %></tbody>
+     </table>
+     <button type="button" class="ox-linkbtn ox-addline" id="add-order-line">+ Add another product</button>
+    </div>
+   </section>
+
+   <section class="ox-card" aria-labelledby="ox-h-delivery">
+    <div class="ox-card__h"><h2 id="ox-h-delivery">Delivery</h2></div>
+    <div class="ox-card__b">
+     <div class="ox-seg" role="radiogroup" aria-label="How the customer gets it">
+      <label><input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod!=='PICKUP'?'checked':'' %>><span>Ship to customer</span></label>
+      <label><input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod==='PICKUP'?'checked':'' %>><span>Customer pickup</span></label>
+     </div>
+     <div class="ox-grid2">
+      <div id="order-destination">
+       <label class="ox-field"><span>Ship to</span><textarea name="customerShippingAddress" id="order-customer-address" data-customer-field="address" rows="3" placeholder="Street, town, state, postcode" aria-describedby="ox-address-help"><%= form.customerShippingAddress??'' %></textarea></label>
+       <small class="ox-help" id="ox-address-help" data-ox-address-help>Saved with this order. The customer's saved address stays as it is.</small>
+      </div>
+      <label class="ox-field"><span data-ox-from-label>Ship from</span><select name="fulfillmentLocationId" id="order-location"><option value="" <%= !form.fulfillmentLocationId?'selected':'' %>>Best location (auto)</option><% locations.forEach(l=>{ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId===l.id?'selected':'' %>><%= l.name %></option><% }) %></select><small class="ox-help" data-ox-from-help>We pick the location that has it all in stock.</small></label>
+     </div>
+    </div>
+   </section>
+
+   <details class="ox-card ox-more rm-work">
+    <summary><span><h2>More details</h2><small>Order date, needed by, PO number, promo code, notes</small></span><span class="ox-more__pm" aria-hidden="true"></span></summary>
+    <div class="ox-card__b ox-grid2">
+     <label class="ox-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate||today %>" required></label>
+     <label class="ox-field"><span>Needed by</span><input type="date" name="neededBy" value="<%= form.neededBy||'' %>"></label>
+     <label class="ox-field"><span>Customer PO / reference</span><input name="reference" value="<%= form.reference||'' %>"></label>
+     <label class="ox-field"><span>Order number</span><input name="orderNumber" value="<%= form.orderNumber||'' %>" placeholder="Auto" <%= editOrder?'disabled':'' %>></label>
+     <label class="ox-field"><span>Promo code</span><input name="couponCodes" value="<%= form.couponCodes||'' %>" placeholder="Separate several with commas"></label>
+     <% if(taxRates.length){ %><label class="ox-field"><span>Tax amount <small>only without a tax rate</small></span><input name="tax" inputmode="decimal" value="<%= form.tax||'' %>"></label><% }else{ %><span></span><% } %>
+     <label class="ox-field ox-span2"><span>Note for the team</span><textarea name="notes" rows="3"><%= form.notes||'' %></textarea></label>
+    </div>
+   </details>
+  </div>
+
+  <aside class="ox-side">
+   <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-summary" style="padding-top:18px">
+    <h2 id="ox-h-summary">Summary</h2>
+    <% if(quotation){ %><label class="ox-field" style="margin-bottom:10px"><span>Quote valid through</span><input type="date" name="validUntil" min="<%= today %>" value="<%= form.validUntil||today %>" required></label><% } %>
+    <div aria-live="polite" aria-label="Order totals">
+     <div class="ox-sum__row"><span>Subtotal<small data-ox-count>0 items</small></span><b data-total="subtotalMinor">—</b></div>
+     <div class="ox-sum__row ox-sum__row--input"><label for="ox-discount">Discount</label><input class="ox-input ox-mini" id="ox-discount" name="discount" inputmode="decimal" placeholder="0.00" value="<%= form.discount||'' %>"></div>
+     <div class="ox-sum__row ox-sum__row--input"><label for="ox-tax">Tax</label>
+      <% if(taxRates.length){ %><select class="ox-mini" id="ox-tax" name="taxRateId"><option value="">No tax</option><% taxRates.forEach(t=>{ %><option value="<%= t.id %>" <%= form.taxRateId===t.id?'selected':'' %>><%= t.name %> · <%= Number(t.rate_millionths)/10000 %>%</option><% }) %></select>
+      <% }else{ %><input class="ox-input ox-mini" id="ox-tax" name="tax" inputmode="decimal" placeholder="0.00" value="<%= form.tax||'' %>"><% } %></div>
+     <% if(!taxRates.length){ %><p class="ox-taxnote">Set up your sales tax before invoicing. <a href="/accounting/tax?next=/orders/new">Add a tax rate</a></p><% } %>
+     <div class="ox-sum__total"><span>Total</span><b data-total="totalMinor">—</b></div>
+     <p class="ox-quote-meta">Discount <span data-total="discountMinor">—</span> · Tax <span data-total="taxMinor">—</span></p>
+     <p class="ox-quote-status" id="order-quote-status">Choose a customer and product to calculate totals.</p>
+    </div>
+    <p class="ox-sum__stock" role="status" id="order-stock-check"><span class="ox-dot ox-dot--grey" aria-hidden="true"></span><span>Pick a customer and add items</span></p>
+    <div class="ox-sum__btns">
+     <% if(quotation){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save quotation</button>
+     <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Save draft changes</button>
+     <% }else{ %><button class="ox-btn ox-btn--primary ox-btn--block" id="order-confirm-button" name="nextStep" value="confirm" aria-label="Create order and reserve stock">Create order</button>
+     <button class="ox-btn ox-btn--secondary ox-btn--block" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button>
+     <button class="ox-btn ox-btn--secondary ox-btn--block" name="nextStep" value="draft">Save as draft</button><% } %>
+    </div>
+    <p class="ox-fine"><%= quotation?'Saving a quote holds no stock and sends nothing to the customer.':editOrder?'Saving changes keeps this a draft. No stock moves.':'Create order holds the stock for this customer. Nothing ships and nothing is invoiced until you say so.' %></p>
+   </section>
+  </aside>
+ </form>
+
+ <div class="ox-mbar" aria-label="Order total">
+  <span class="ox-mbar__t">Total<b data-ox-mbar-total>—</b></span>
+  <% if(quotation||editOrder){ %><button class="ox-btn ox-btn--primary" type="submit" form="sales-entry"><%= quotation?'Save quote':'Save changes' %></button>
+  <% }else{ %><button class="ox-btn ox-btn--secondary" type="submit" form="sales-entry" name="nextStep" value="draft">Draft</button>
+  <button class="ox-btn ox-btn--primary" type="submit" form="sales-entry" name="nextStep" value="confirm">Create order</button><% } %>
+ </div>
+
+ <dialog class="modal ox-modal" id="new-order-customer" aria-labelledby="ox-h-newcust"><form action="/sales/customers" method="post" data-inline-customer><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="ox-modal__h"><h2 id="ox-h-newcust">New customer</h2><button class="ox-modal__x" type="button" data-modal-close aria-label="Close">×</button></div>
+  <div class="ox-modal__b">
+   <label class="ox-field"><span>Name <span class="ox-req" aria-hidden="true">*</span></span><input name="name" required maxlength="160"></label>
+   <label class="ox-field"><span>Email</span><input name="email" type="email"></label>
+   <label class="ox-field"><span>Phone</span><input name="phone" type="tel"></label>
+   <label class="ox-field"><span>Shipping address</span><textarea name="shippingAddress" rows="3"></textarea></label>
+   <p class="ox-error" role="status" data-customer-status></p>
+  </div>
+  <div class="ox-modal__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary">Save customer</button></div>
+ </form></dialog>
+</div>
 <template id="order-line-template"><%- include('entry-line',{n:0,selected:'',quantity:'1',secondaryQuantity:'',price:'',override:'0',catalogue}) %></template>
 <script type="application/json" id="order-catalogue"><%- JSON.stringify(catalogue).replace(/</g,'\\u003c') %></script>
-<script src="/sales-entry.js?v=<%= assetVersion %>" defer></script>
+<script src="/inline-customer.js?v=<%= assetVersion %>" defer></script>
+<script src="/order-entry-ui.js?v=<%= assetVersion %>" defer></script>
