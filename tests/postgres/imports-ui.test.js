@@ -386,9 +386,15 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     try{await assert.rejects(imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id),/simulated process failure/);}finally{stockEngine.receiveManyInTransaction=originalReceiveMany;}
     assert.equal(wroteBeforeFailure,true,'Fail after real transactional writes, then verify their rollback');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1
-      AND name IN ('Rollback One','Rollback Two')`,[identity.workspace_id])).rows[0].count,'0');
+      AND name IN ('Rollback One','Rollback Two')`,[identity.workspace_id])).rows[0].count,'2','Prepared catalogue records are retained for a safe resume');
+    const preparedIds=(await database.query("SELECT id FROM skus WHERE workspace_id=$1 AND code IN('RB-1','RB-2') ORDER BY id",[identity.workspace_id])).rows;
+    assert.equal((await database.query("SELECT count(*)::int n FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.code IN('RB-1','RB-2')",[identity.workspace_id])).rows[0].n,0);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1
       AND reference LIKE 'Import rollback.csv%'`,[identity.workspace_id])).rows[0].count,'0');
     assert.equal((await database.query(`SELECT status FROM import_executions WHERE import_id=$1`,[failing.id])).rows[0].status,'FAILED');
+    const resumed=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id);
+    assert.equal(resumed.verified,true);assert.equal(resumed.rowsImported,2);
+    assert.deepEqual((await database.query("SELECT id FROM skus WHERE workspace_id=$1 AND code IN('RB-1','RB-2') ORDER BY id",[identity.workspace_id])).rows,preparedIds);
+    assert.equal(Number((await database.query("SELECT sum(b.on_hand) units FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.code IN('RB-1','RB-2')",[identity.workspace_id])).rows[0].units),7);
     assert.deepEqual(errors,[]);
   });
