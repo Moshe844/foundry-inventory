@@ -167,10 +167,11 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
 }
 
 function listOrder(sort) {
-  if (sort === 'stock_desc') return 'on_hand DESC,i.name,i.id';
-  if (sort === 'stock_asc') return 'on_hand ASC,i.name,i.id';
+  const name = 'i.name COLLATE stockchief_natural,i.id';
+  if (sort === 'stock_desc') return 'on_hand DESC,'+name;
+  if (sort === 'stock_asc') return 'on_hand ASC,'+name;
   if (sort === 'newest') return 'i.created_at DESC,i.id';
-  return 'i.name,i.id';
+  return name;
 }
 
 async function updateImportedNamesInTransaction(client,ctx,changes){
@@ -224,7 +225,7 @@ async function listItemsUncached(database, workspaceId, input = {}) {
             SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))
     ), selected_items AS MATERIALIZED (
       SELECT i.* FROM matching_items i WHERE TRUE
-        AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name,i.id)>($11::text,$10::text)'} )
+        AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name COLLATE stockchief_natural,i.id)>($11::text COLLATE stockchief_natural,$10::text)'} )
         AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)
       ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}
     )

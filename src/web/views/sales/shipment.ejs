@@ -80,7 +80,7 @@
 <% } else if (s.ship_to_address) { %>
   <section class="section">
     <div class="panel">
-      <div class="panel-head"><div><h2><%= isOpen ? 'Where it is going' : 'Where it went' %></h2></div></div>
+      <div class="panel-head"><div><h2><%= isOpen ? 'Where it is going' : s.status === 'CANCELLED' ? 'Where it was going' : 'Where it went' %></h2></div></div>
       <div class="card-body">
         <address class="ship-to"><%= s.customer_name %>
 <%= s.ship_to_address %></address>
@@ -149,7 +149,7 @@
     <div class="panel-head">
       <div>
         <h2><%= s.status === 'PICKING' ? 'What to collect'
-          : s.status === 'PACKED' ? 'What is in the box' : 'What went' %></h2>
+          : s.status === 'PACKED' ? 'What is in the box' : s.status === 'CANCELLED' ? 'What was in the box' : 'What went' %></h2>
         <span class="t-xs t-muted">
           <% if (s.status === 'PICKING') { %>
             <%= pickList.stops.length %>

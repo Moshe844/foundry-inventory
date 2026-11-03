@@ -61,7 +61,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/integrations',asyncRoute(async(req,res)=>renderPublic(req,res,'public/integrations',{
     groups:require('../presentation/public-integrations').groups(),title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
   router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
-    title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
+    title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, matching and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
     title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
@@ -70,6 +70,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   for(const [path,title] of [['/security','Security'],['/roadmap','Product roadmap'],['/api/docs','Public API documentation']])router.get(path,asyncRoute(async(req,res)=>renderPublic(req,res,'public/operations-information',{title,nav:'',kind:path,staging:require('../../config').operations.runtimeEnvironment==='staging'})));
+  router.get('/docs',(req,res)=>res.redirect(301,'/api/docs'));
+  router.get('/features',(req,res)=>res.redirect(301,'/capabilities'));
   router.get('/status',asyncRoute(async(req,res)=>{if(['stockchief-staging-web.onrender.com','qualify.stockchiefhq.com'].includes(req.hostname))return res.redirect(302,'https://moshe844.github.io/stockchief-status/');let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));

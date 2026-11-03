@@ -2,7 +2,7 @@
 <section class="pub-legal">
 <% if(kind==='/roadmap'){ %>
 <p>These are future development areas. They are not promises of current support or delivery dates.</p>
-<ul><li>Vendor-qualified ERP integrations, including NetSuite</li><li>Full QuickBooks and Xero accounting synchronization and reconciliation. Connections for approved journal exports are available today; full two-way accounting sync is planned.</li><li>EDI trading-partner workflows</li><li>SAML single sign-on. Company sign-in using OpenID Connect is available today on Custom.</li><li>Multi-currency operations</li><li>Multi-company administration and consolidation</li></ul>
+<ul><li>Vendor-qualified ERP integrations, including NetSuite</li><li>Full two-way QuickBooks and Xero accounting sync. Connections for approved journal exports are available today; full two-way accounting sync is planned.</li><li>EDI trading-partner workflows</li><li>SAML single sign-on. Company sign-in using OpenID Connect is available today on Pro and Custom.</li><li>Multi-currency operations</li><li>Multi-company administration and consolidation</li></ul>
 <p>Current work focuses on import reliability, inventory accuracy, plan limits, and everyday warehouse operations. <a href="/contact">Discuss a requirement</a> before relying on a roadmap feature.</p>
 <% }else if(kind==='/security'){ %>
 <h2>Encryption and credentials</h2><p>Hosted access uses HTTPS. Stored connection credentials use AES-256-GCM encryption. Passwords are stored as salted scrypt hashes; API tokens are stored as hashes. Database encryption and recovery settings depend on the deployed hosting configuration.</p>

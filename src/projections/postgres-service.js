@@ -106,10 +106,14 @@ async function needsUncached(database,workspaceId,actorId=null){
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,grouped:Boolean(row.summary),href:row.href||(row.item_id?`/inventory/${row.item_id}`:'/inventory'),actionLabel:row.summary?'Review group':'Review inventory',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
+  for(const row of await require('../sales/postgres-deposit-refunds').due(database,workspaceId)){const amount=require('../pricing/postgres-service').formatMinor(row.toRefundMinor,row.currency);
+    items.push({kind:'accounting',importance:'Important',priority:88,title:'Deposit to refund: '+amount+' to '+row.customerName,happened:row.orderNumber+' was cancelled after the customer paid.',
+      why:'That money is still theirs. It stays on your books as a customer deposit until it is returned.',recommendation:'Send the money back, then record the refund on the order.',
+      href:'/orders/'+row.orderId+'#deposit-refund',actionLabel:'Refund deposit',sourceId:'deposit-refund:'+row.orderId,createdAt:row.cancelledAt,timeLabel:'Cancelled',updatedAt:row.cancelledAt,at:row.cancelledAt});}
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
     happened:row.detail,why:row.issue_type==='EMAIL_SEND_AMBIGUOUS'
       ?'The provider may have accepted the email before StockChief could verify delivery. Sending it again could create a duplicate.'
-      :`${row.provider_type} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
+      :`${require('../web/presentation/connections').name(row)} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
     href:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,

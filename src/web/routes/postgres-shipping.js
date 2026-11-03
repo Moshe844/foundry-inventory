@@ -53,7 +53,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
     ?orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0)
     :Math.max(0,orderDetail.orderTotalMinor-paid);
   const terms=orderDetail.paymentTerms;const blocksShipping=Boolean(terms?.hold_shipping&&remaining>0);
-  const paymentPosition={status:remaining>0?(paid>0?'Partially paid':'Unpaid'):'Paid',remainingMinor:remaining,
+  const cancelledUnbilled=orderDetail.order.status==='CANCELLED'&&!orderDetail.invoices.length;
+  const paymentPosition={status:cancelledUnbilled?'Order cancelled':remaining>0?(paid>0?'Partially paid':'Unpaid'):'Paid',remainingMinor:cancelledUnbilled?0:remaining,
     currency:state.shipment.currency||orderDetail.order.currency,termsText:!terms?'No payment terms agreed':
       terms.kind==='DEPOSIT'?'Deposit required':terms.kind==='BEFORE_FULFILMENT'?'Payment before fulfilment':`Net ${Number(terms.net_days||0)}`,
     terms:terms||{source:'nothing agreed'},blocksShipping,heldReason:{ship:blocksShipping?'The agreed balance is still outstanding.':null}};
