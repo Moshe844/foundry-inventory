@@ -290,12 +290,20 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,`/fulfilment/${req.params.id}#carrier`);
   }));
   // "Ship this order" on the order page: one step opens the parcel with its
-  // weight, packs it and fetches rates; the next screen is choosing a rate.
-  router.post('/orders/:id/ship-label',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
-    const toGrams={lb:453.59237,oz:28.349523125,kg:1000,g:1}[req.body.weightUnit],weight=Number(String(req.body.weight||'').replace(',','.'));
+  // weight, packs it and fetches rates; choosing a rate, buying, printing and
+  // the handover all happen on the order too (returnTo=order).
+  const parcelBox=(body)=>{const toGrams={lb:453.59237,oz:28.349523125,kg:1000,g:1}[body.weightUnit],weight=Number(String(body.weight||'').replace(',','.'));
     if(!toGrams||!(weight>0))throw new ValidationError('Enter the parcel weight.');
-    const toMm={in:25.4,cm:10}[req.body.sizeUnit]||25.4,size=name=>{const value=Number(String(req.body[name]||'').replace(',','.'));return value>0?Math.round(value*toMm):undefined;};
-    const box={weightGrams:Math.max(1,Math.round(weight*toGrams)),lengthMm:size('length'),widthMm:size('width'),heightMm:size('height')};
+    const toMm={in:25.4,cm:10}[body.sizeUnit]||25.4,size=name=>{const value=Number(String(body[name]||'').replace(',','.'));return value>0?Math.round(value*toMm):undefined;};
+    return {weightGrams:Math.max(1,Math.round(weight*toGrams)),lengthMm:size('length'),widthMm:size('width'),heightMm:size('height')};};
+  const backTo=async(req,res,anchor)=>{if(req.body.returnTo!=='order')return res.redirect(303,'/fulfilment/'+req.params.id+anchor);
+    const parcel=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);return res.redirect(303,'/orders/'+parcel.sales_order_id+'#ship-now');};
+  const quoteFlash=async(req,shipmentId,key)=>{
+    try{const quoted=await shipping.quote(database,req.ctx,shipmentId,{idempotencyKey:key,providerResolver:options.providerResolver});
+      req.flash(quoted.rates?.length?'success':'warning',quoted.rates?.length?'Rates are ready. Choose one to buy the label.':quoted.blocked?.length?'Before rates can be fetched: '+quoted.blocked.join(' '):'No rates came back. Check the address and weight, then try again.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('warning','Rates could not be fetched: '+error.message);}};
+  router.post('/orders/:id/ship-label',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
+    const box=parcelBox(req.body);
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const {lines,locationId}=require('../../sales/parcel-lines').forParcel(detail);
     const key=String(req.body.requestKey||'').slice(0,120)||newId('shiplabel');
@@ -303,10 +311,14 @@ function createPostgresShippingRouter(database,options={}){
       shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,startPicking:true,lines});
     const current=await shipping.requireShipment(database,req.ctx.workspaceId,prepared.shipmentId);
     if(current.status==='PICKING'){await shipping.setPackages(database,req.ctx,prepared.shipmentId,[box]);await shipping.markPacked(database,req.ctx,prepared.shipmentId,{});}
-    try{const quoted=await shipping.quote(database,req.ctx,prepared.shipmentId,{idempotencyKey:'ship-label-quote:'+key,providerResolver:options.providerResolver});
-      req.flash(quoted.rates?.length?'success':'warning',quoted.rates?.length?'Rates are ready. Choose one to buy the label.':quoted.blocked?.length?'The parcel is packed. Before rates can be fetched: '+quoted.blocked.join(' '):'The parcel is packed, but no rates came back. Check the address and weight, then refresh rates.');}
-    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('warning','The parcel is packed, but rates could not be fetched: '+error.message);}
-    return res.redirect(303,'/fulfilment/'+prepared.shipmentId+'#carrier');
+    await quoteFlash(req,prepared.shipmentId,'ship-label-quote:'+key);
+    return res.redirect(303,'/orders/'+req.params.id+'#ship-now');
+  }));
+  // A different weight or box for the parcel on the order: save it and quote again.
+  router.post('/fulfilment/:id/reweigh',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
+    await shipping.setPackages(database,req.ctx,req.params.id,[parcelBox(req.body)]);
+    await quoteFlash(req,req.params.id,'reweigh:'+newId('quote'));
+    return backTo(req,res,'#carrier');
   }));
   router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
     const queued=await shipping.queueLabelPurchase(database,req.ctx,req.params.id,req.body.rateId,
@@ -319,15 +331,15 @@ function createPostgresShippingRouter(database,options={}){
     const queued=await shipping.queueLabelPurchase(database,req.ctx,req.params.id,req.body.rateId,
       {idempotencyKey:req.body.idempotencyKey||`label:${req.params.id}:${req.body.rateId}`});
     req.flash('success',queued.replayed?'That label request is already being verified. StockChief did not submit it twice.':
-      'Label purchase queued. StockChief will record it only after the carrier confirms the charge and tracking number.');
-    return res.redirect(303,`/fulfilment/${req.params.id}#label`);
+      'Buying the label. It appears here as soon as the carrier confirms it.');
+    return backTo(req,res,'#label');
   }));
   router.post('/fulfilment/:id/label/void',requireOwner,asyncRoute(async(req,res)=>{
     const result=await require('../../shipping/postgres-label-voids').queue(database,req.ctx,req.params.id,
       {idempotencyKey:req.body.idempotencyKey});
     req.flash('success',result.replayed?'The saved void request is already being checked. It was not submitted twice.':
       'Void requested. StockChief will verify the carrier response. Stock and bank balances have not changed.');
-    return res.redirect(303,`/fulfilment/${req.params.id}#label`);
+    return backTo(req,res,'#label');
   }));
   router.post('/fulfilment/:id/handoff',asyncRoute(async(req,res)=>{
     await shipping.handoff(database,req.ctx,req.params.id,{...req.body,idempotencyKey:req.body.idempotencyKey,
@@ -339,7 +351,7 @@ function createPostgresShippingRouter(database,options={}){
     await shipping.handoff(database,req.ctx,req.params.id,{...req.body,idempotencyKey:req.body.idempotencyKey||`shipment-handoff:${req.params.id}`,
       shippingCostMinor:trimOrNull(req.body.shippingCost)===null?null:Math.round(Number(req.body.shippingCost)*100)});
     req.flash('success','Handoff recorded. Inventory, the customer order, revenue, product cost and receivable changed together.');
-    return res.redirect(303,`/fulfilment/${req.params.id}#tracking`);
+    return backTo(req,res,'#tracking');
   }));
   router.post('/fulfilment/:id/destination',asyncRoute(async(req,res)=>{
     const parcel=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);

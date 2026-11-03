@@ -1036,8 +1036,17 @@ function createPostgresCommerceRouter(database,options={}){
       commerce.locations(database,req.ctx.workspaceId),
     ]);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
-    const shippingReady=page.order.delivery_method==='SHIP'&&(await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId)).length>0;
-    return res.page('sales/order',{shippingReady,shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
+    const shippingReady=shippingAccounts.length>0;
+    // The parcel being shipped through a carrier right now: its rates and label are shown on the order itself.
+    const openParcel=shippingReady?page.shipments.find(box=>['PICKING','PACKED'].includes(box.status)&&!['COLLECTED','DELIVERED_BY_US'].includes(box.handover)):null;
+    let shipNow=null;
+    if(openParcel){const carriers=require('../../sales/carriers'),current=await shipping.state(database,req.ctx.workspaceId,openParcel.id);
+      shipNow={shipment:current.shipment,blocked:current.blocked,accounts:shippingAccounts.map(a=>a.providerName),
+        rates:current.rates.map(rate=>({...rate,carrierName:carriers.displayName(rate.carrier)})),
+        carrierName:current.shipment.carrier?carriers.displayName(current.shipment.carrier):null,
+        trackingUrl:current.shipment.tracking_url||carriers.trackingUrlFor(current.shipment.carrier,current.shipment.tracking_number)};}
+    return res.page('sales/order',{shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),

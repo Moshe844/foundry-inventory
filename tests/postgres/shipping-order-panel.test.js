@@ -54,8 +54,11 @@ test('shipping: link Shippo, no new EasyPost, weight to rates from the order, an
   // Ship this order: weight in, packed parcel with rates out, nothing bought.
   await page.goto(base+'/orders/'+order.salesOrderId);
   await page.getByLabel('Parcel weight').fill('2.5');
-  await Promise.all([page.waitForURL(/\/fulfilment\/.+#carrier/),page.getByRole('button',{name:'Get shipping rates'}).click()]);
-  assert.match(await page.locator('main').innerText(),/Rates are ready/);assert(await page.getByRole('button',{name:'Buy label'}).isVisible());
+  await Promise.all([page.waitForURL(new RegExp('/orders/'+order.salesOrderId+'#ship-now$')),page.getByRole('button',{name:'Get shipping rates'}).click()]);
+  assert.match(await page.locator('body').innerText(),/Rates are ready/);assert(await page.getByRole('button',{name:'Buy label'}).isVisible());
+  // The rates are chosen on the order itself, cheapest first and already selected.
+  const shipCard=page.locator('#ship-now');assert.match(await shipCard.innerText(),/USPS[\s\S]*Cheapest[\s\S]*\$7\.42[\s\S]*UPS[\s\S]*\$12\.99/);
+  assert.equal(await shipCard.locator('input[name=rateId]:checked').count(),1);
   const shipment=(await db.query('SELECT status,weight_grams FROM sales_shipments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
   assert.equal(shipment.status,'PACKED');assert.equal(Number(shipment.weight_grams),1134);
   assert.equal((await db.query("SELECT count(*)::int n FROM shipping_label_transactions WHERE workspace_id=$1",[ctx.workspaceId])).rows[0].n,0);
