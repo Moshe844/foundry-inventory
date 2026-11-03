@@ -13,6 +13,8 @@ test('grouped and flat inventory stay bounded with 52,500 variants concentrated 
  // One healthy parent must lose its badge; 2,100 healthy variants remain exact.
  await db.query("INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,id,$2,3,now() FROM skus WHERE workspace_id=$1 AND item_id='dense-item-0'",[ctx.workspaceId,f.location.id]);
  const now=await badges.forItems(db,ctx.workspaceId,['dense-item-0','dense-item-1']);assert.deepEqual(now,[{record_id:'dense-item-1'}]);assert.equal((await badges.forSkus(db,ctx.workspaceId,['dense-sku-0','dense-sku-2100'])).length,1);
+ const flat=require('../../src/domain/postgres-flat-catalog'),catalog=require('../../src/domain/postgres-catalog-service');
+ for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{await c.query('SET LOCAL plan_cache_mode='+mode);assert.equal((await flat.list(c,ctx.workspaceId,{lowStock:true})).totalCount,50400);assert.equal((await catalog.listItems(c,ctx.workspaceId,{lowStock:true})).totalCount,24);},{readOnly:true,statementTimeoutMs:2000});
  assert.deepEqual(await badges.forItems(db,'foreign-inventory',ids),[]);
  t.diagnostic(JSON.stringify({products:25,variants:52500,zeroStockDoesNotScanVariantCrossProducts:true,timings,paidCalls:0}));
 });
