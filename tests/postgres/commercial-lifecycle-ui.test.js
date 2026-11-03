@@ -77,7 +77,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
     page.getByRole('button',{name:'Schedule downgrade'}).click()]);
   assert.match(await page.locator('body').innerText(),/Your plan changes to Starter on/);assert.equal(changes[2].priceId,'price_starter_monthly');
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'pro');
-  await Promise.all([page.waitForURL(base+'/settings/billing'),page.getByRole('button',{name:'Cancel at renewal'}).last().click()]);
+  await page.getByRole('button',{name:'Cancel subscription'}).first().click();await Promise.all([page.waitForURL(base+'/settings/billing'),page.locator('#cancel-plan button[type=submit]').click()]);
   assert.match(await page.locator('body').innerText(),/Your plan ends on/);assert.doesNotMatch(await page.locator('body').innerText(),/Your plan changes to Starter on/);
   assert.equal((await database.query("SELECT status FROM commercial_subscription_changes WHERE account_id=$1 AND to_plan_id='starter' ORDER BY created_at DESC LIMIT 1",[business.accountId])).rows[0].status,'CANCELLED');
   await page.getByRole('button',{name:'Keep my subscription'}).click();await page.waitForURL(base+'/settings/billing');
@@ -95,7 +95,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
     AND to_plan_id='starter' ORDER BY created_at DESC LIMIT 1`,[business.accountId])).rows[0].status,'APPLIED');
 
   await page.reload();
-  await Promise.all([page.waitForURL(`${base}/settings/billing`),page.getByRole('button',{name:'Cancel at renewal'}).last().click()]);
+  await page.getByRole('button',{name:'Cancel subscription'}).first().click();await Promise.all([page.waitForURL(`${base}/settings/billing`),page.locator('#cancel-plan button[type=submit]').click()]);
   assert.match(await page.locator('body').innerText(),/Cancellation is scheduled/);
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).cancel_at_period_end,true);assert.match(await page.locator('body').innerText(),/Your plan ends on/);
   await page.getByRole('button',{name:'Keep my subscription'}).click();await page.waitForURL(`${base}/settings/billing`);
