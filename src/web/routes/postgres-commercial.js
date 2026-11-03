@@ -118,7 +118,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(String(latest?.updated_at)!==String(summary.subscription?.updated_at)){
       summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     }
-    for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id);}
+    for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id,{planVersionId:change.target_plan_version_id||null});}
     // Billing and downgrade checks describe the whole subscription. Locations
     // are capped per inventory: show the highest use across owned inventories,
     // rather than comparing an account-wide warning to this tab's local count.
@@ -219,7 +219,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     criticalWarnings:(await database.query("SELECT * FROM commercial_critical_warnings WHERE status='OPEN' ORDER BY created_at DESC LIMIT 100")).rows,
     costCoverage:await require('../../commercial/cost-coverage').report(database),
     commercialAudit:(await database.query('SELECT * FROM commercial_change_audit ORDER BY created_at DESC LIMIT 50')).rows,
-    economics:await commercialControl.portfolioEconomics(database)})));
+    economics:await commercialControl.portfolioEconomics(database),approvedOfferEconomics:require('../../commercial/approved-economics').all()})));
   router.get('/commercial-admin/cost-coverage',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>
     res.json(await require('../../commercial/cost-coverage').report(database,{start:req.query.start,end:req.query.end}))));
   router.post('/commercial-admin/plans/:id',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const monthly=Math.max(0,Math.round(Number(req.body.monthlyAmount||0)*100));

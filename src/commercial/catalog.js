@@ -27,6 +27,7 @@ const CAPABILITIES = Object.freeze([
   ['payments.customer','Merchant customer payments','payments','CONDITIONAL',true],
   ['accounting.core','Operational accounting ledger','accounting','SELLABLE',false],
   ['accounting.reports','Accounting reports','accounting','SELLABLE',false],
+  ['reports.advanced','Advanced report comparisons','intelligence','SELLABLE',false],
   ['accounting.sync','QuickBooks and Xero synchronization','accounting','CONDITIONAL',true],
   ['accounting.explanations','Evidence-backed accounting explanations','accounting','SELLABLE',true],
   ['ask.lookup','Ask StockChief business questions','intelligence','SELLABLE',true],
@@ -46,6 +47,7 @@ const CAPABILITIES = Object.freeze([
   ['automation.transfers','Automatic transfers within authority','automation','SELLABLE',true],
   ['automation.purchasing','Automatic purchasing within authority','automation','SELLABLE',true],
   ['authority.advanced','Advanced authority policies','automation','SELLABLE',true],
+  ['authority.autonomous','Policy-controlled autonomous work','automation','SELLABLE',true],
   ['adaptive_optimization','Adaptive optimization','planning','DISABLED',true],
   ['operations.alerts','Operational alerts and Needs You','operations','SELLABLE',true],
   ['support.priority','Priority support','support','SELLABLE',false],
@@ -72,7 +74,7 @@ const CAPABILITIES = Object.freeze([
   ['forecasting.basic','Forecasting compatibility key','compatibility','SELLABLE',true],
 ]);
 
-const METERS = Object.freeze([
+const legacyMeters = [
   ['products','Products','STRUCTURAL',true,true],
   ['scheduled_reports','Scheduled reports','STRUCTURAL',true,false],
   ['sales_channels','Sales channels','STRUCTURAL',true,true],
@@ -95,7 +97,13 @@ const METERS = Object.freeze([
   ['accounting_syncs','Accounting synchronization runs','USAGE',false,false],
   ['api_events','API events processed','USAGE',false,false],
   ['processing_units','Legacy business processing units','USAGE',false,false],
-]);
+];
+// The immutable approved offer supplies the same meter names and units to its
+// migration, public presentation, enforcement and private owner tools.
+const approvedDefinitions=require('./offers/approved-2026-11-02').definitions;
+const meterRows=new Map(legacyMeters.map(row=>[row[0],row]));
+for(const [key,[label,kind]]of Object.entries(approvedDefinitions))meterRows.set(key,[key,label,kind,true,kind==='STRUCTURAL']);
+const METERS=Object.freeze([...meterRows.values()].map(Object.freeze));
 
 const capabilityMap = new Map(CAPABILITIES.map((row) => [row[0], {
   key:row[0],label:row[1],category:row[2],readiness:row[3],variableCost:row[4],

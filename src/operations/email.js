@@ -31,7 +31,9 @@ async function sendResend(message, options = {}) {
       ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}) },
     body: JSON.stringify({
       from,
-      to: [message.to],
+      to: require('../commercial/usage-categories').addresses(message.to),
+      ...(message.cc?{cc:require('../commercial/usage-categories').addresses(message.cc)}:{}),
+      ...(message.bcc?{bcc:require('../commercial/usage-categories').addresses(message.bcc)}:{}),
       subject: message.subject,
       ...(message.replyTo?{reply_to:message.replyTo}:{}),
       html: message.html,

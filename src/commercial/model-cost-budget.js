@@ -13,8 +13,14 @@ function configuredUsd(name,fallback){const raw=process.env[name];const value=ra
  return value;}
 function operationLimit(operation){return configuredUsd(`STOCKCHIEF_AI_MAX_COST_USD_${operation.toUpperCase()}`,
  DEFAULTS.operation[operation]);}
-function periodLimit(plan){return configuredUsd(`STOCKCHIEF_AI_PERIOD_COST_CAP_USD_${String(plan||'').toUpperCase()}`,
- DEFAULTS.period[plan]);}
+function periodLimit(plan,configuration){return configuredUsd(`STOCKCHIEF_AI_PERIOD_COST_CAP_USD_${String(plan||'').toUpperCase()}`,
+ configuration?.providerCostCeilingsMinor?.ai!==undefined?configuration.providerCostCeilingsMinor.ai/100:DEFAULTS.period[plan]);}
+async function periodBudget(database,scope,subscription){
+ const plan=subscription?.plan_id||'starter',configuration=subscription?.plan_configuration;let amount=periodLimit(plan,configuration)*100;
+ if(configuration?.offerId&&process.env[`STOCKCHIEF_AI_PERIOD_COST_CAP_USD_${plan.toUpperCase()}`]===undefined){const state=await entitlements.meterState(database,scope,'ai_work_credits',{subscription});
+  amount+=Number(state.rollover?.units||0)*configuration.providerCostReserves.aiMinorPerCredit*(1+configuration.providerCostReserves.aiFailureFraction);}
+ return paidBudget.round(amount);
+}
 function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor,providerExecutions=MAX_PROVIDER_EXECUTIONS){
  if(!Number.isInteger(providerExecutions)||providerExecutions<1||providerExecutions>MAX_PROVIDER_EXECUTIONS)throw new ValidationError('Invalid trusted provider execution bound.');
  const bytes=Buffer.byteLength(String(request.system||''))+Buffer.byteLength(String(request.prompt||''))+
@@ -83,7 +89,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
  // A native relay may pass the subscription checked at this same HTTP
  // admission. No snapshot is retained for a later request or resumption.
  const subscription=goalScope.subscription||await entitlements.subscriptionFor(database,scope.accountId);
- const plan=subscription?.plan_id||'starter';const normalAccountCap=periodLimit(plan)*100;
+ const normalAccountCap=await periodBudget(database,scope,subscription);
  const normalWorkspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',normalAccountCap/100)*100;
  const bounds=entitlements.periodBounds(subscription);
  const transaction=async client=>{
@@ -93,6 +99,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   const ownerLimits=await require('./ai-spending-limits').effective(client,scope.accountId,bounds,{accountCapMinor:accountCap,workspaceCapMinor:workspaceCap},scope.workspaceId);accountCap=ownerLimits.accountCapMinor;workspaceCap=ownerLimits.workspaceCapMinor;
+  const enforceCost=!creditsOnly()||Boolean(subscription?.plan_configuration?.offerId)||ownerLimits.ownerConfigured;
   const sharedTestApproval=await require('./staging-shared-cost-approval').resolve(client,{...scope,actorId:goalScope.actorId||scope.actorId},{requireActor:true});
   if(sharedTestApproval&&!ownerLimits.ownerConfigured){accountCap=Math.max(accountCap,sharedTestApproval.maximumMinor);workspaceCap=Math.max(workspaceCap,sharedTestApproval.maximumMinor);}
   if(sharedTestApproval&&bound.maximumMinor>30)throw Object.assign(new RateLimitError('This test request exceeds its $0.30 request limit. No model call was made.'),{limitKind:'operation_cost'});
@@ -134,7 +141,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   if(grantIds.length)await client.query('SELECT id FROM commercial_usage_grants WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[grantIds]);
   const usage=(await client.query(`SELECT a.grant_id,a.units,k.version AS pack_version,b.budget_minor,b.cost_model_key,
     b.approved_model_rate_ceiling,
-    g.revoked_units,g.dispute_hold_units,g.units AS grant_units,b.account_id AS budget_account_id,
+    g.revoked_units,g.dispute_hold_units,g.units AS grant_units,g.workspace_id AS grant_workspace_id,p.allocation_scope,b.account_id AS budget_account_id,
     b.workspace_id AS budget_workspace_id
     FROM commercial_usage_events e JOIN commercial_usage_allocations a ON a.event_id=e.id
     LEFT JOIN commercial_usage_grants g ON g.id=a.grant_id
@@ -151,7 +158,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   if(usage.some(row=>row.grant_id&&Number(row.pack_version)>=2&&!row.budget_minor))
    throw new RateLimitError('Purchased AI funding is not reconciled. No model call was made.');
   const funded=usage.filter(row=>row.grant_id&&row.budget_minor);
-  if(funded.some(row=>row.budget_account_id!==scope.accountId||row.budget_workspace_id!==scope.workspaceId))
+  if(funded.some(row=>row.budget_account_id!==scope.accountId||row.budget_workspace_id!==row.grant_workspace_id||(row.budget_workspace_id===null?row.allocation_scope!=='ACCOUNT':row.budget_workspace_id!==scope.workspaceId)))
    throw new ValidationError('The purchased AI budget belongs to another inventory.');
   for(const row of funded.filter(row=>!row.approved_model_rate_ceiling?.[`${bound.provider}/${bound.model}/${bound.providerVersion}`]))
    await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
@@ -163,7 +170,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   const fundedUnits=funded.reduce((sum,row)=>sum+Number(row.units),0);
   const sources=[];const baseUnits=totalUnits?totalUnits-fundedUnits:1;
   if(baseUnits>0)sources.push({source:'INCLUDED',grantId:null,units:baseUnits});
-  for(const row of funded)sources.push({source:'PURCHASED',grantId:row.grant_id,units:Number(row.units),
+  for(const row of funded)sources.push({source:'PURCHASED',grantId:row.grant_id,units:Number(row.units),packVersion:Number(row.pack_version),
    budgetMinor:Number(row.budget_minor),grantUnits:Number(row.grant_units),
    revokedUnits:Number(row.revoked_units),disputeHoldUnits:Number(row.dispute_hold_units)});
   let assigned=0;for(let i=0;i<sources.length;i++){
@@ -195,9 +202,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    }
   }
   const baseMaximum=sources.filter(row=>row.source==='INCLUDED').reduce((sum,row)=>sum+row.maximumMinor,0);
-  if(!creditsOnly()&&baseMaximum>0&&Number(current.account_exposure)+baseMaximum>accountCap)
+  if(enforceCost&&baseMaximum>0&&Number(current.account_exposure)+baseMaximum>accountCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'account_period_cost'});
-  if(!creditsOnly()&&baseMaximum>0&&Number(current.workspace_exposure)+baseMaximum>workspaceCap)
+  if(enforceCost&&baseMaximum>0&&Number(current.workspace_exposure)+baseMaximum>workspaceCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'workspace_period_cost'});
   for(const source of sources.filter(row=>row.source==='PURCHASED')){
    const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor
@@ -206,7 +213,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
      WHERE a.grant_id=$1`,[source.grantId])).rows[0];
    const effective=paidBudget.effectiveLimit({budget_minor:source.budgetMinor},{units:source.grantUnits,
     revoked_units:source.revokedUnits,dispute_hold_units:source.disputeHoldUnits});
-   if(!creditsOnly()&&Number(exposure.amount)+source.maximumMinor>effective+1e-6)
+   if((enforceCost||source.packVersion>=4)&&Number(exposure.amount)+source.maximumMinor>effective+1e-6)
     throw Object.assign(new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.'),{limitKind:'purchased_pack_cost'});
   }
   // Calculations and rounding remain in the canonical engine above. Persist
@@ -288,7 +295,7 @@ async function status(database,workspaceId){
  const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
  if(!owner)return null;
  const subscription=await entitlements.subscriptionFor(database,owner.owner_account_id),bounds=entitlements.periodBounds(subscription);
- const cap=periodLimit(subscription?.plan_id||'starter')*100,workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',cap/100)*100;
+ const cap=await periodBudget(database,{accountId:owner.owner_account_id,workspaceId},subscription),workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',cap/100)*100;
  const row=(await database.query(`SELECT coalesce(sum(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END),0) AS account,
  coalesce(sum(CASE WHEN h.workspace_id=$3 THEN CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END ELSE 0 END),0) AS workspace
  FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
@@ -298,7 +305,8 @@ async function status(database,workspaceId){
  const effectiveLimits=sharedTestAllowance&&!limits.ownerConfigured?{...limits,accountCapMinor:Math.max(limits.accountCapMinor,sharedTestAllowance.maximumMinor),workspaceCapMinor:Math.max(limits.workspaceCapMinor,sharedTestAllowance.maximumMinor)}:limits;
  const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),...effectiveLimits,sharedTestAllowance,
   importRequestCapMinor:operationLimit('import_mapping')*100,periodEndsAt:bounds.end.toISOString()};
- return {...usage,creditsOnly:creditsOnly(),warning:!creditsOnly()&&(usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8),
-  blocked:!creditsOnly()&&(usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor)};
+ const enforceCost=!creditsOnly()||Boolean(subscription?.plan_configuration?.offerId)||limits.ownerConfigured;
+ return {...usage,creditsOnly:creditsOnly(),warning:enforceCost&&(usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8),
+  blocked:enforceCost&&(usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor)};
 }
 module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};

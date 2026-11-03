@@ -73,14 +73,15 @@ async function connect(database,ctx,input={}){
       WHERE workspace_id=$1 AND provider_type=$2 ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
     [ctx.workspaceId,provider]);
     const id=existing.rows[0]?.id||newId('con');
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    const delta=existing.rows.length?await require('../commercial/connection-capacity').activationDelta(client,ctx.workspaceId,id):1;
+    await require('../commercial/connection-capacity').assertActivation(client,commercialScope,provider,delta);
     if(existing.rows.length){
       await client.query(`UPDATE workspace_connectors SET status='connected',paused_at=NULL,
         setup_status='CONNECTED',last_error=NULL,credential_ref=$3,authorized_by_user_id=$4,updated_at=$5
         ,config=(config::jsonb||jsonb_build_object('shippingAccountMode',$6::text))::text
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,`connection_credentials:${id}`,ctx.actorId,now,isTestKey(provider,apiKey)?'TEST':'LIVE']);
     }else{
-      const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
-      await require('../commercial/connection-capacity').assertActivation(client,commercialScope,provider,1);
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
          credential_ref,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -90,7 +91,6 @@ async function connect(database,ctx,input={}){
     }
     const previous=await credentials.get(client,ctx.workspaceId,id,'provider')||{};
     await credentials.put(client,ctx.workspaceId,id,'provider',{apiKey,webhookSecret:webhookSecret||previous.webhookSecret||require('node:crypto').randomBytes(32).toString('hex')});
-    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
     await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
       sourcePath:'shipping_connection',detail:{providerType:provider}});
     return id;

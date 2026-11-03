@@ -1,7 +1,7 @@
 'use strict';
 const {newId}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
-const CATEGORIES=new Set(['ai_work_credits','connected_operations','emails_sent']);
+const CATEGORIES=new Set(['ai_work_credits','incoming_emails','connected_operations','emails_sent']);
 const CATEGORY_FOR=Object.freeze({intelligent_operations:'ai_work_credits',document_pages:'ai_work_credits',processing_units:'ai_work_credits',
  business_communications:'connected_operations',external_events:'connected_operations',shipments_managed:'connected_operations',
  automatic_actions:'connected_operations',accounting_syncs:'connected_operations',api_events:'connected_operations'});
@@ -26,7 +26,7 @@ async function balances(database,scope,category,bounds,at=new Date()){
  const grants=(await database.query(`SELECT g.*,GREATEST(0,g.units-g.revoked_units-g.dispute_hold_units-COALESCE((SELECT SUM(a.units)
  FROM commercial_usage_allocations a JOIN commercial_usage_events e ON e.id=a.event_id
  WHERE a.grant_id=g.id AND e.status IN ('RESERVED','COMMITTED')),0)) AS remaining
- FROM commercial_usage_grants g WHERE g.account_id=$1 AND g.workspace_id=$2 AND g.category=$3
+ FROM commercial_usage_grants g WHERE g.account_id=$1 AND (g.workspace_id IS NULL OR g.workspace_id=$2) AND g.category=$3
  AND g.expires_at>$4 ORDER BY g.expires_at,g.created_at,g.id`,[scope.accountId,scope.workspaceId||null,category,at])).rows;
  return {includedUsed:Number(totals.used),includedReserved:Number(totals.reserved),grants,
  purchasedRemaining:grants.reduce((sum,g)=>sum+Number(g.remaining),0)};

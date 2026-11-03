@@ -37,8 +37,9 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   await assert.rejects(()=>release.assertCheckoutOpen(db),/closed/);await assert.rejects(()=>commercial.beginCheckout(db,{id:business.accountId},
    {planId:'starter'}),/Plan changes are paused/);assert.equal((await release.state(db)).checkout_enabled,false);
  });
- await t.test('unsupported capabilities remain disabled and aliases resolve canonically',async()=>{
-  for(const key of ['communications.ai_drafts','documents.extraction','shipping.automation','adaptive_optimization'])assert.equal((await usage.capabilityState(db,scope,key)).enabled,false);
+ await t.test('essential communication drafts are included; unqualified capabilities stay disabled',async()=>{
+  assert.equal((await usage.capabilityState(db,scope,'communications.ai_drafts')).enabled,true);
+  for(const key of ['documents.extraction','shipping.automation','adaptive_optimization'])assert.equal((await usage.capabilityState(db,scope,key)).enabled,false);
   assert.equal((await usage.capabilityState(db,scope,'ask_stockchief')).capability,'ask.lookup');
   await assert.rejects(()=>usage.assertCapability(db,scope,'warehouse.advanced'),/requires the|unavailable on your current plan/);
  });
@@ -255,7 +256,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'ACTIVE');
  });
  await t.test('provider exhaustion blocks before invocation; failed operations reverse customer usage and retain cost',async()=>{
-  let called=0;await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'communications.ai_drafts',key:'disabled-email',provider:'gmail',operation:'draft'},async()=>{called++;}),/requires the|unavailable on your current plan/);assert.equal(called,0);
+  let called=0;await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'connections.custom_api',key:'disabled-custom-feed',provider:'fixture',operation:'inventory_read'},async()=>{called++;}),/requires the|unavailable on your current plan/);assert.equal(called,0);
   const before=(await usage.meterState(db,scope,'connected_operations')).remaining;
   await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'connections.commerce',key:'failed-provider',provider:'shopify',operation:'catalog_sync'},async()=>{throw new Error('Provider failed');}),/Provider failed/);
   assert.equal((await usage.meterState(db,scope,'connected_operations')).remaining,before);
@@ -266,7 +267,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   await db.query(`INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason)
     VALUES('pause-test',$1,'connected_operations',0,'Disposable exhaustion test')`,[business.accountId]);
   let calls=0;const handler=async(job,database)=>operations.run(database,job.workspaceId,
-    {capability:'connections.commerce',key:job.idempotencyKey,provider:'fixture',operation:'scheduled_read'},async()=>{calls++;return {ok:true};});
+    {capability:'connections.commerce',key:job.idempotencyKey,provider:'fixture',operation:'commerce_position_publish'},async()=>{calls++;return {ok:true};});
   handler.externalEffect=true;
   const queued=await jobs.enqueue(db,{workspaceId:business.workspaceId,kind:'test.commercial-paused',idempotencyKey:'paused-read',payload:{}});
   const paused=await jobs.processOne(db,{'test.commercial-paused':handler},{owner:'commercial-pause-test',leaseMs:120000});
@@ -287,7 +288,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
     new usage.EntitlementError('No funded usage.',{meter:'connected_operations'}),{apply:()=>{throw new Error('A quota denial must not apply a provider rejection.');}});
   assert.equal(held.status,'PENDING');assert.equal(held.claimToken,null);
  });
- await t.test('real Chromium shows capability pricing, two usage categories and closed purchase controls',async()=>{
+ await t.test('real Chromium shows approved billing resources and closed purchase controls',async()=>{
   const app=createPostgresApp({database:db,env:'test',sessionSecret:'wallet-browser-test-long',commercialOptions:{billingProvider:provider,loadInvoices:false,publicOrigin:'request'}});
   const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});const browser=await chromium.launch();
   try{const page=await browser.newPage();const base=`http://127.0.0.1:${server.address().port}`;
@@ -295,7 +296,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
    assert.doesNotMatch(await page.locator('body').innerText(),/AI communication drafts|Routine auto-send|Business-email understanding/);
    await page.goto(`${base}/login`);await page.getByLabel('Email').fill('wallet@example.test');await page.locator('input[name="password"]').fill('wallet-password-long');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('wallet-password-long');
    await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);await page.goto(`${base}/billing`);
-   assert.equal(await page.locator('[data-usage-category]').count(),2);assert.match(await page.locator('body').innerText(),/Plan & billing/);
+   assert.equal(await page.locator('[data-usage-category]').count(),5);assert.match(await page.locator('body').innerText(),/Plan & billing/);
    assert.match(await page.locator('body').innerText(),/Plan changes are paused/);for(const buy of await page.locator('form[action="/billing/buy-more"] button').all())assert.equal(await buy.isDisabled(),true);
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
  });

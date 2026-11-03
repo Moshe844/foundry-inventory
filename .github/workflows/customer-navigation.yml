@@ -63,7 +63,7 @@ jobs:
       - name: Redesigned orders and order entry in the browser
         run: |
           set -euo pipefail
-          node --test tests/postgres/orders-redesign-ui.test.js 2>&1 | tee output/customer-navigation-ci/orders-redesign.log
+          node --test tests/postgres/orders-redesign-ui.test.js tests/postgres/buy-redesign-ui.test.js 2>&1 | tee output/customer-navigation-ci/orders-redesign.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

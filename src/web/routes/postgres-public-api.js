@@ -29,14 +29,19 @@ function apiError(res,error){
 
 function route(scope,handler){
   return async(req,res)=>{
+    let held;const database=req.app.locals.database,resource=require('../../commercial/api-resources');
     try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
       if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
       await entitlements.assertCapability(req.app.locals.database,auth,'api.public');
-      if(scope.endsWith(':read'))return await require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
+      held=await resource.begin(database,auth,require('../../lib/util').newId('api-resource'));
+      const response={statusCode:200,status(code){this.statusCode=code;return this;},json(body){this.body=body;return this;}};
+      if(scope.endsWith(':read'))await require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
         {capability:'api.public',key:require('../../lib/util').newId('api-read'),provider:'stockchief_api',
-          operation:'inventory_read',unit:'request'},()=>handler(auth,req,res));
-      return await handler(auth,req,res);}
-    catch(error){return apiError(res,error);}
+          operation:'inventory_read',unit:'request'},()=>handler(auth,req,response));
+      else await handler(auth,req,response);
+      await resource.settle(database,held,response.statusCode>=200&&response.statusCode<300);
+      return res.status(response.statusCode).json(response.body);}
+    catch(error){if(held)try{await resource.settle(database,held,false);}catch(settlementError){console.error('[postgres-public-api] usage settlement requires reconciliation',settlementError.code||settlementError.name);}return apiError(res,error);}
   };
 }
 

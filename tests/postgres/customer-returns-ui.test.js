@@ -151,7 +151,7 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     await Promise.all([page.waitForURL(/\/orders\/so_/), page.getByRole('button', { name: 'Prepare replacement order' }).click()]);
     const replacementOrderId = page.url().split('/').pop();
     assert.notEqual(replacementOrderId, order.salesOrderId);
-    assert.match(await page.locator('main').innerText(), /\$0\.00 each/);
+    assert.equal((await page.locator('[data-order-lines] td[data-label="Unit price"]').first().innerText()).trim(), '$0.00');
     const exchangeState = (await database.query(`SELECT r.status,r.return_number,r.exchange_order_id,so.status AS order_status,
         so.reference,sol.quantity_ordered,sol.unit_price_minor
       FROM customer_returns r JOIN sales_orders so ON so.id=r.exchange_order_id

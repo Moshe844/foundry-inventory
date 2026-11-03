@@ -68,6 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+      - name: Approved subscription packaging, metering and billing isolation
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail

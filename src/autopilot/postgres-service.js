@@ -45,15 +45,20 @@ async function ensure(database,workspaceId){const at=nowIso();
 async function getState(database,workspaceId){
   // Reading a new workspace must not initialize automation or require INSERT
   // privileges. Write paths still call ensure() before changing persisted state.
-  const row=(await database.query(`SELECT a.*,w.id AS workspace_id FROM workspaces w
-    LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id WHERE w.id=$1`,[workspaceId])).rows[0];
+  const row=(await database.query(`SELECT a.*,w.id AS workspace_id,w.owner_account_id,v.id AS effective_plan_version_id,v.configuration AS effective_plan_configuration FROM workspaces w
+    LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id LEFT JOIN account_subscriptions s ON s.account_id=w.owner_account_id
+    LEFT JOIN commercial_plan_versions v ON v.id=s.plan_version_id AND v.plan_id=s.plan_id WHERE w.id=$1`,[workspaceId])).rows[0];
   if(!row)throw new NotFoundError('That inventory could not be found.');
+  if(row.mode===MODES.POLICY_AUTOMATED){const key=row.effective_plan_version_id&&!row.effective_plan_configuration?.offerId?'authority.advanced':'authority.autonomous';
+    if(!(await entitlements.capabilityState(database,{accountId:row.owner_account_id,workspaceId},key)).enabled)row.mode=MODES.SUPERVISED;}
   return stateFrom({...row,mode:row.mode||MODES.SUPERVISED,paused:row.paused??0,suspended:row.suspended??0});
 }
+async function autonomousCapability(database,workspaceId){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId),sub=await entitlements.subscriptionFor(database,scope.accountId);
+ return sub?.plan_version_id&&!sub.plan_configuration?.offerId?'authority.advanced':'authority.autonomous';}
 
 async function setMode(database,ctx,membership,mode){if(!Object.values(MODES).includes(mode))
   throw new ValidationError('Choose watch only, ask first, or bounded automatic work.');
-  if(mode==='POLICY_AUTOMATED')await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'authority.advanced');
+  if(mode==='POLICY_AUTOMATED')await require('../commercial/enforcement').workspace(database,ctx.workspaceId,await autonomousCapability(database,ctx.workspaceId));
   const current=await ensure(database,ctx.workspaceId);const rank={OBSERVE:0,SUPERVISED:1,POLICY_AUTOMATED:2};
   if(rank[mode]>rank[current.mode])assertAdmin(membership);else assertOperate(membership);
   await database.query('UPDATE workspace_autopilot SET mode=$2,updated_at=$3 WHERE workspace_id=$1',[ctx.workspaceId,mode,nowIso()]);
@@ -95,7 +100,7 @@ async function listCapabilities(database,workspaceId){const rows=(await database
 async function setCapability(database,ctx,membership,capability,granted){if(!capabilityDefinitions.CAPABILITIES[capability])
   throw new ValidationError(`There is no StockChief job called "${capability}".`);
   if(granted)await require('../commercial/enforcement').workspace(database,ctx.workspaceId,
-    capability==='supplier_document_review'?'communications.ai_drafts':'authority.advanced');
+    capability==='supplier_document_review'?'communications.ai_drafts':capability==='replenishment'?'automation.purchasing':capability==='inventory_transfers'?'automation.transfers':await autonomousCapability(database,ctx.workspaceId));
   if(granted)assertAdmin(membership);else assertOperate(membership);const at=nowIso();
   await database.query(`INSERT INTO autopilot_capabilities
     (workspace_id,capability,granted,granted_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
@@ -147,6 +152,7 @@ async function replacePolicy(client,ctx,input){await ensure(client,ctx.workspace
 
 async function configureRoutine(database,ctx,membership,input){assertAdmin(membership);
   const transferEnabled=['1','on',true].includes(input.transferEnabled);const purchaseEnabled=['1','on',true].includes(input.purchaseEnabled);
+  if(transferEnabled||purchaseEnabled)await require('../commercial/enforcement').workspace(database,ctx.workspaceId,await autonomousCapability(database,ctx.workspaceId));
   const locationScope=[...new Set((Array.isArray(input.locationIds)?input.locationIds:input.locationIds?[input.locationIds]:[]).map(String))];
   const supplierScope=[...new Set((Array.isArray(input.supplierIds)?input.supplierIds:input.supplierIds?[input.supplierIds]:[]).map(String))];
   const maximumQuantity=transferEnabled?integer(input.maximumQuantity,'Transfer limit',{minimum:1,maximum:100000}):null;
@@ -359,8 +365,9 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
   const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
+  const chargeAutomatic=automatic&&!(await entitlements.subscriptionFor(client,scope.accountId))?.plan_configuration?.offerId;
   if(automatic){await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'automation.transfers':'automation.purchasing');
-    await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
+    if(chargeAutomatic)await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
       detail:{operation:'autopilot_action',workId:item.id}});}
   await revalidate(scoped,ctx.workspaceId,item.recommendedAction);const at=nowIso();
   await client.query(`UPDATE work_items SET execution_status='EXECUTING',approved_by_user_id=COALESCE(approved_by_user_id,$3),
@@ -392,7 +399,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
         VALUES($1,$2,$3,'outcome_in_progress',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,
         JSON.stringify({effectId:result.effectId,purchaseOrderId:result.purchaseOrderId}),ctx.actorId,nowIso()]);
-      if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+      if(automatic){if(chargeAutomatic)await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
         await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
           unit:'operation',quantity:1,idempotencyKey:usageKey});}
       return getWork(scoped,ctx.workspaceId,item.id);
@@ -402,7 +409,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     [ctx.workspaceId,item.id,JSON.stringify(result.movementIds||[]),result.purchaseOrderId||null,JSON.stringify(result),nowIso()]);
     await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
       VALUES($1,$2,$3,'completed',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,JSON.stringify(result),ctx.actorId,nowIso()]);
-    if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+    if(automatic){if(chargeAutomatic)await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
       await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
         unit:'operation',quantity:1,idempotencyKey:usageKey});}
     const commercialScope=scope;
@@ -489,5 +496,4 @@ async function lowestStockDraft(database,workspaceId){
 module.exports={lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
   supplierDeliveryReadiness,reconcileSupplierFollowThrough};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{configureRoutine:'authority.advanced',
- plan:'planning.basic',run:'planning.basic'});
+require('../commercial/enforcement').guardExports(module.exports,0,1,{plan:'planning.basic',run:'planning.basic'});

@@ -21,7 +21,7 @@ async function deliver(db,job,options={}){
  const body=JSON.stringify(row.payload),sealed=JSON.parse(row.signing_secret_encrypted),secret=credentials.decrypt({ciphertext:sealed.ciphertext,iv:sealed.iv,auth_tag:sealed.authTag}).secret,timestamp=String(Math.floor(Date.now()/1000)),signature=crypto.createHmac('sha256',secret).update(timestamp+'.'+body).digest('hex');
  try{
   const scope=await entitlements.ownerScopeForWorkspace(db,job.workspaceId);await entitlements.assertCapability(db,scope,'api.public');
-  const key='webhook:'+row.id+':'+job.attemptCount;
+  const key='webhook:'+row.id;
   const result=await require('../commercial/operations').run(db,job.workspaceId,{key,retryReversed:true,capability:'api.public',category:'api_events',operation:'outbound_webhook',provider:'customer_webhook'},async()=>{
    const response=await send(options.fetch||network.fetchStore,row.endpoint_url,{method:'POST',headers:{'content-type':'application/json','x-stockchief-event-id':row.domain_event_id,'x-stockchief-timestamp':timestamp,'x-stockchief-signature':'v1='+signature,'idempotency-key':row.domain_event_id},body});
    if(!response.ok)throw Object.assign(new Error('The receiver returned HTTP '+response.status+'.'),{responseStatus:response.status});return {status:response.status};});

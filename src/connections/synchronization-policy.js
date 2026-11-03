@@ -10,7 +10,7 @@ function describe(connection,adapter,now=Date.now()){
   const config=object(connection.config),requestedMinutes=Number(connection.expected_interval_minutes)||1;
   // A Xero catalogue read needs Organisation and Items. Its Starter allowance
   // is 1,000 requests per organisation/day; leave room for foreground work.
-  const minimumMinutes=connection.provider_type==='xero'?5:1;
+  const minimumMinutes=Math.max(connection.provider_type==='xero'?5:1,Number(connection.plan_sync_seconds||0)/60);
   const effectiveMinutes=Math.max(requestedMinutes,minimumMinutes);
   const supported=supports(adapter),disabled=config.syncDisabled===true;
   const mode=disabled?'off':connection.paused_at?'paused':connection.status!=='connected'?'disconnected':'active';
@@ -27,6 +27,6 @@ function describe(connection,adapter,now=Date.now()){
     nextCheckAt:supported&&mode==='active'?new Date(Math.max(dueAt,Number.isFinite(cooldownAt)?cooldownAt:0)).toISOString():null,
     retryAt:Number.isFinite(cooldownAt)&&cooldownAt>now?new Date(cooldownAt).toISOString():null,
     scope:typeof adapter?.poll==='function'?'mailbox':'catalogue',
-    providerLimitNote:minimumMinutes>requestedMinutes?'Xero catalogue checks run at least five minutes apart to preserve its daily API allowance.':null};
+    providerLimitNote:minimumMinutes>requestedMinutes?`Checks run at least ${minimumMinutes} minutes apart under your plan and provider limits.`:null};
 }
 module.exports={INTERVALS,object,interval,supports,describe};

@@ -3,14 +3,15 @@ const test=require('node:test'),assert=require('node:assert/strict');
 test('Published plan allowances govern the actual canonical services',{timeout:240000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
  const ent=require('../../src/commercial/entitlements'),scope={accountId:f.owner.accountId,workspaceId:ctx.workspaceId};
+ const selectPlan=id=>db.query('UPDATE account_subscriptions SET plan_id=$2,plan_version_id=$3 WHERE account_id=$1',[scope.accountId,id,'approved-2026-11-02:'+id]);
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES('public-plan',$1,'starter','COMP','MONTHLY','ISOLATED_TEST')",[scope.accountId]);
  await t.test('a terms review without saved comparable terms stays read-only and cannot change the plan',async()=>{
   const service=require('../../src/commercial/plan-terms'),review=await service.review(db,scope.accountId);assert.equal(review.canAccept,false);assert.match(review.reason,/saved terms/);
   await assert.rejects(()=>service.accept(db,scope.accountId,{confirm:'1'}),/saved terms/);assert.equal((await ent.subscriptionFor(db,scope.accountId)).plan_version_id,null);
  });
  await t.test('reference limits are real and annual is exactly ten monthly payments',async()=>{
-  for(const [id,credits,emails,users,locations,products]of [['starter',3000,1000,3,2,500],['growth',10000,10000,10,10,25000],['pro',25000,50000,25,null,250000]]){
-   await db.query('UPDATE account_subscriptions SET plan_id=$2 WHERE account_id=$1',[scope.accountId,id]);
+  for(const [id,credits,emails,users,locations,products]of [['starter',3000,1000,3,2,1000],['growth',10000,10000,10,10,50000],['pro',25000,50000,25,50,250000]]){
+   await selectPlan(id);
    for(const [meter,included]of Object.entries({ai_work_credits:credits,emails_sent:emails,members:users,locations,products}))assert.equal((await ent.meterState(db,scope,meter)).included,included,id+' '+meter);
    const p=(await db.query('SELECT * FROM commercial_plans WHERE id=$1',[id])).rows[0];assert.equal(Number(p.annual_amount_minor),Number(p.monthly_amount_minor)*10);assert.equal(Number(p.trial_days),0);
   }
@@ -19,46 +20,44 @@ test('Published plan allowances govern the actual canonical services',{timeout:2
  await t.test('new product capacity is shared by forms and bulk imports, not matched updates',async()=>{
   await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason,source) VALUES('small-product-limit',$1,'products',2,'Boundary fixture','ISOLATED_TEST')",[scope.accountId]);
   const catalog=require('../../src/domain/postgres-catalog-service');await catalog.createItem(db,ctx,{name:'Allowed second',baseCode:'SECOND',trackingMode:'quantity'});
-  await assert.rejects(()=>catalog.createItem(db,ctx,{name:'Too many',baseCode:'THIRD',trackingMode:'quantity'}),/Products has reached/);
-  await assert.rejects(()=>db.transaction(c=>catalog.createImportedItemsInTransaction(c,ctx,[{name:'Bulk extra',trackingMode:'quantity',variants:[{code:'FOURTH'}]}])),/Products has reached/);
+  await assert.rejects(()=>catalog.createItem(db,ctx,{name:'Too many',baseCode:'THIRD',trackingMode:'quantity'}),/Active products has reached/);
+  await assert.rejects(()=>db.transaction(c=>catalog.createImportedItemsInTransaction(c,ctx,[{name:'Bulk extra',trackingMode:'quantity',variants:[{code:'FOURTH'}]}])),/Active products has reached/);
   const imports=require('../../src/imports/postgres-service'),plan=await imports.analyse(db,ctx,{text:'Product,SKU,Location,Quantity\nUnfamiliar capacity import,CAPACITY-IMPORT,'+f.location.name+',1',allowModel:false});
-  await assert.rejects(()=>imports.approve(db,ctx,plan.id,plan.integrityHash),/Products has reached/);
+  await assert.rejects(()=>imports.approve(db,ctx,plan.id,plan.integrityHash),/Active products has reached/);
   assert.notEqual((await imports.get(db,ctx.workspaceId,plan.id)).approvalStatus,'APPROVED','an oversized import must fail before approval, not halfway through applying');
   assert.equal(Number((await ent.meterState(db,scope,'products')).used),2);
   await db.query("DELETE FROM commercial_entitlement_overrides WHERE id='small-product-limit'");
  });
- await t.test('Starter enforces one sales channel and one shipping account independently',async()=>{
-  await db.query("UPDATE account_subscriptions SET plan_id='starter' WHERE account_id=$1",[scope.accountId]);
-  const caps=require('../../src/commercial/connection-capacity');
-  await db.transaction(c=>caps.assertActivation(c,scope,'shopify',1));
-  await db.query("INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,setup_status,created_at,updated_at) VALUES('capacity-sales',$1,'sale-fixture','Store','shopify','[]','{}','connected','CONNECTED',now(),now())",[ctx.workspaceId]);
-  await assert.rejects(()=>db.transaction(c=>caps.assertActivation(c,scope,'square',1)),/Sales channels has reached/);
-  await assert.rejects(()=>db.transaction(c=>caps.assertActivation(c,scope,'easypost',1)),/Shipping accounts has reached/);
-  await assert.rejects(()=>db.transaction(c=>caps.assertActivation(c,scope,'shipengine',1)),/Shipping accounts has reached/);
+ await t.test('Starter shares five connections across essential provider categories',async()=>{
+  await selectPlan('starter');const caps=require('../../src/commercial/connection-capacity');
+  for(const type of ['shopify','square','easypost','gmail']){await db.transaction(c=>caps.assertActivation(c,scope,type,1));await db.query("INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,setup_status,created_at,updated_at) VALUES($1,$2,$1,$1,$3,'[]','{}','connected','CONNECTED',now(),now())",['capacity-'+type,ctx.workspaceId,type]);}
+  assert.equal((await ent.meterState(db,scope,'connections')).used,5);
+  for(const type of ['woocommerce','shippo','gmail'])await assert.rejects(()=>db.transaction(c=>caps.assertActivation(c,scope,type,1)),e=>e.code==='entitlement_required'&&e.details.meter==='connections');
   await db.transaction(c=>caps.assertActivation(c,scope,'shopify',0));
-  await db.query("UPDATE account_subscriptions SET plan_id='growth' WHERE account_id=$1",[scope.accountId]);await db.transaction(c=>caps.assertActivation(c,scope,'square',1));
+  await selectPlan('growth');await db.transaction(c=>caps.assertActivation(c,scope,'square',1));
  });
  await t.test('email quota reserves, commits once and releases definite rejection only',async()=>{
   await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason,source) VALUES('small-email-limit',$1,'emails_sent',1,'Boundary fixture','ISOLATED_TEST')",[scope.accountId]);
   const email=require('../../src/commercial/email-allowance'),held=await email.begin(db,ctx.workspaceId,'mail-quota-fixture');
   await email.complete(db,held);await email.complete(db,held);assert.equal((await ent.meterState(db,scope,'emails_sent')).used,1);
-  await assert.rejects(()=>email.begin(db,ctx.workspaceId,'another-mail'),/Emails sent has reached/);
+  await assert.rejects(()=>email.begin(db,ctx.workspaceId,'another-mail'),/Outgoing email recipients has reached/);
   await db.query("UPDATE commercial_entitlement_overrides SET limit_units=2 WHERE id='small-email-limit'");
   const rejected=await email.begin(db,ctx.workspaceId,'rejected-mail');await email.failed(db,rejected,{status:400,definiteFailure:true});
   // The provider classifier, not an arbitrary error string, controls release.
   assert.equal((await ent.meterState(db,scope,'emails_sent')).capacityUsed,1);
   const ambiguous=await email.begin(db,ctx.workspaceId,'ambiguous-mail');await email.failed(db,ambiguous,{status:503});
   assert.equal((await ent.meterState(db,scope,'emails_sent')).capacityUsed,2);
-  await assert.rejects(()=>email.begin(db,ctx.workspaceId,'blocked-while-uncertain'),/Emails sent has reached/);
+  await assert.rejects(()=>email.begin(db,ctx.workspaceId,'blocked-while-uncertain'),/Outgoing email recipients has reached/);
   await db.query("DELETE FROM commercial_entitlement_overrides WHERE id='small-email-limit'");
  });
- await t.test('connected operations have no hidden usage cutoff on the new offers',async()=>{
-  const state=await ent.meterState(db,scope,'connected_operations');assert.equal(state.hardLimit,null);assert.equal(state.remaining,null);
-  await ent.reserveUsage(db,scope,{meter:'connected_operations',units:100000,idempotencyKey:'connected-operation-boundary'});await ent.commitUsage(db,scope,{meter:'connected_operations',idempotencyKey:'connected-operation-boundary'});
-  assert.equal((await ent.meterState(db,scope,'connected_operations')).used,100000);
+ await t.test('Connected Operations enforce their published allowance without duplicate charges',async()=>{
+  await selectPlan('starter');const state=await ent.meterState(db,scope,'connected_operations');assert.equal(state.hardLimit,5000);assert.equal(state.remaining,5000);
+  await ent.reserveUsage(db,scope,{meter:'connected_operations',units:5000,idempotencyKey:'connected-operation-boundary'});await ent.commitUsage(db,scope,{meter:'connected_operations',idempotencyKey:'connected-operation-boundary'});await ent.commitUsage(db,scope,{meter:'connected_operations',idempotencyKey:'connected-operation-boundary'});
+  assert.equal((await ent.meterState(db,scope,'connected_operations')).used,5000);
+  await assert.rejects(()=>ent.reserveUsage(db,scope,{meter:'connected_operations',units:1,idempotencyKey:'over-boundary'}),e=>e.code==='entitlement_required');
  });
  await t.test('Starter gets three real schedules; editing or pausing does not consume another slot',async()=>{
-  await db.query("UPDATE account_subscriptions SET plan_id='starter' WHERE account_id=$1",[scope.accountId]);
+  await selectPlan('starter');
   const reports=require('../../src/reports/postgres-service'),actor={role:'owner',permissions:[],email:f.email},rows=[];
   for(let i=0;i<3;i++)rows.push(await reports.save(db,ctx,actor,{dataset:'stock',title:'Independent scheduled view '+i,columns:['sku','on_hand']},{schedule:{frequency:'weekly',hour:9,minute:17,weekday:2,timeZone:'America/New_York'}}));
   await assert.rejects(()=>reports.save(db,ctx,actor,{dataset:'stock',title:'Fourth',columns:['sku','on_hand']},{schedule:{frequency:'daily',hour:8}}),/Scheduled reports has reached/);

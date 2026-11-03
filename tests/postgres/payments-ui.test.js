@@ -88,7 +88,7 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Prepare secure deposit link'}).click()]);
     assert.equal(providerCalls,0);assert.match(await page.locator('main').innerText(),/Provider confirmation pending/);
     const handlerOptions={paymentProviderResolver:()=>provider,paymentAccountContext:()=>({})};
-    await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),{owner:'deposit-worker',leaseMs:30000});
+    await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},{owner:'deposit-worker',leaseMs:30000});
     assert.equal(providerCalls,2);await page.reload();
     assert.equal(await page.getByRole('link',{name:'Open secure page'}).getAttribute('href'),
       'https://payments.example.test/in_fixture_1');
@@ -127,10 +127,10 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Prepare secure payment link'}).click()]);
     assert.equal(providerCalls,2);
     assert.match(await page.locator('main').innerText(),/Provider confirmation pending/);
-    const completed=await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
+    const completed=await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},
       {owner:'payment-worker',leaseMs:30000});
     assert.equal(completed.status,'COMPLETED');assert.equal(providerCalls,3);
-    assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
+    assert.equal(await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},
       {owner:'payment-worker',leaseMs:30000}),null);assert.equal(providerCalls,3);
     await page.reload();
     assert.match(await page.locator('main').innerText(),/Ready for customer/);
@@ -179,7 +179,7 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
     const receiptCredits=await require('../../src/operations/postgres-return-credits').read(database,ctx.workspaceId,requested.customerReturnId);
     assert.equal(receiptCredits.reduce((sum,credit)=>sum+Number(credit.cash_due_minor),0),1200);
     assert.equal(receiptCredits.reduce((sum,credit)=>sum+Number(credit.cash_refunded_minor),0),0,'the receipt credit cannot pretend the provider refund already happened');
-    const refunded=await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
+    const refunded=await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},
       {owner:'refund-worker',leaseMs:30000});
     assert.equal(refunded.status,'COMPLETED');assert.equal(providerCalls,4);await page.reload();
     assert.match(await page.locator('main').innerText(),/This return is complete/);
@@ -195,10 +195,10 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
     const uncertain=await fulfilledOrder('uncertain',1);mode='ambiguous';
     await page.goto(`${base}/orders/${uncertain.salesOrderId}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Prepare secure payment link'}).click()]);
-    const stopped=await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
+    const stopped=await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},
       {owner:'payment-worker',leaseMs:30000});
     assert.equal(stopped.status,'DEAD');assert.equal(providerCalls,5);
-    assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
+    assert.equal(await jobs.processOne(database,{'provider.effect':runtimeHandlers.create(undefined,handlerOptions)['provider.effect']},
       {owner:'payment-worker',leaseMs:30000}),null);assert.equal(providerCalls,5);
     await page.reload();assert.match(await page.locator('main').innerText(),/Provider outcome needs review/);
     assert.equal(await page.getByRole('button',{name:'Prepare secure payment link'}).count(),0);

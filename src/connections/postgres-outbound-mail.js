@@ -170,8 +170,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
-        providerCalled=true;return provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
+        providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
+        if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;
       });
     if(!result||typeof result.externalMessageId!=='string'||!result.externalMessageId.trim())
       throw Object.assign(new Error('The mailbox provider did not return a verifiable message ID.'),

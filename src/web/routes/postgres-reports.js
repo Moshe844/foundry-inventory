@@ -46,13 +46,16 @@ async function builderChoices(database,ctx,actor){
   const datasets=registry.list(actor),entitlements=require('../../commercial/entitlements');
   const needed=[...new Set(datasets.map(item=>registry.get(item.key)?.commercialCapability).filter(Boolean))];
   const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  const versioned=Boolean((await entitlements.subscriptionFor(database,scope.accountId))?.plan_configuration?.offerId);
+  if(versioned)needed.push('reports.advanced');
   const states=needed.length?await entitlements.capabilityStates(database,scope,needed):new Map();
   return {datasets,unavailableSources:datasets.filter(item=>{
     const required=registry.get(item.key)?.commercialCapability;
     return required&&!states.get(required)?.enabled;
-  }).map(item=>item.key)};
+  }).map(item=>item.key).concat(versioned&&!states.get('reports.advanced')?.enabled?['composed']:[])};
 }
 async function requireBuilderSource(database,ctx,key){
+  if(key==='composed'){const entitlements=require('../../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);if((await entitlements.subscriptionFor(database,scope.accountId))?.plan_configuration?.offerId)await entitlements.assertCapability(database,scope,'reports.advanced');}
   const required=registry.get(key)?.commercialCapability;
   if(!required)return;
   const entitlements=require('../../commercial/entitlements');

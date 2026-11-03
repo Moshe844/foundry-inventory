@@ -245,6 +245,7 @@ async function verifyDelivery(db,workspaceId,effectId,options={}){
   const observed=await providerRead(db,c,p,adapter,'commerce-verification:'+e.id+':'+newId('read'));
   if(!same(observed.value,e.payload.value))throw new ValidationError('The retained delivery is not confirmed by the provider. No write was repeated.');
   return effects.succeed(db,workspaceId,e.id,e.claimToken,{providerReference:e.providerReference,result:{externalId:p.external_id,value:observed.value,verified:true,recoveredByReadback:true},apply:async tx=>{
+   await require('../commercial/operations').completeRetained(tx,workspaceId,{operation:'commerce_position_publish',key:'commerce-write:'+e.id},{recoveredByReadback:true});
    if(p.revision===e.payload.revision&&current.pending_effect_id===e.id){await advance(tx,p,e.payload.value,observed.value);await tx.query('UPDATE connection_commerce_positions SET pending_effect_id=NULL WHERE workspace_id=$1 AND id=$2 AND pending_effect_id=$3',[workspaceId,p.id,e.id]);}
    await audit(tx,p,'connection.commerce_sync.verified',{effectId:e.id,value:observed.value,writeRepeated:false});}});
  }catch(error){await effects.finishError(db,workspaceId,e.id,e.claimToken,error,{ambiguous:true});throw error;}

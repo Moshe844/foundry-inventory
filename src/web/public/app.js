@@ -135,7 +135,7 @@
           dialog.scrollTop=0;dialog.querySelectorAll('.modal-body,[data-dialog-scroll]').forEach(node=>node.scrollTop=0);
           dialog.showModal();
           const focusable = dialog.querySelector('[autofocus]:not(:disabled),select:not(:disabled), input:not([type=hidden]):not(:disabled), textarea:not(:disabled)');
-          if (focusable) window.setTimeout(() => focusable.focus(), 30);
+          if (focusable) focusable.focus({ preventScroll: true });
         }
         return;
       }

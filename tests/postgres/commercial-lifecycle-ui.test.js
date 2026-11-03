@@ -90,7 +90,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
     items:{data:[{id:'si_lifecycle',price:{id:'price_starter_monthly',recurring:{interval:'month'}}}]}};
   await commercial.handleBillingEvent(database,{id:'evt_starter_renewal',created:effective,type:'customer.subscription.updated',
     data:{object:structuredClone(providerSubscription)}});
-  assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'starter');assert.equal((await entitlements.capabilityState(database,{accountId:business.accountId,workspaceId:business.workspaceId},'api.public')).enabled,false);
+  assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'starter');assert.equal((await entitlements.capabilityState(database,{accountId:business.accountId,workspaceId:business.workspaceId},'warehouse.advanced')).enabled,false);
   assert.equal((await database.query(`SELECT status FROM commercial_subscription_changes WHERE account_id=$1
     AND to_plan_id='starter' ORDER BY created_at DESC LIMIT 1`,[business.accountId])).rows[0].status,'APPLIED');
 

@@ -25,21 +25,37 @@ async function modelUsage(database,scope,usage,key,detail={}){
 async function begin(database,workspaceId,input){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
  if(!input.key||typeof input.key!=='string')throw new ValidationError('An operation needs its stable usage key.');
  input={...input,key:`${workspaceId}:${input.key}`};
- if(!input.category&&['outbound_email','reply_email'].includes(input.operation)&&await require('./email-allowance').applies(database,scope))input.category='emails_sent';
+ const category=require('./usage-operation-contract').category(input.operation),sub=await entitlements.subscriptionFor(database,scope.accountId);
+ input.category=category==='api_requests'&&!sub?.plan_configuration?.offerId?'api_events':category;
+ if(input.category==='emails_sent'&&!await require('./email-allowance').applies(database,scope))input.category=null;
  await entitlements.assertCapability(database,scope,input.capability);
- const reservation=await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:input.category||'connected_operations',
+ if(input.category==='api_requests')await require('./api-resources').admitMinute(database,scope);
+ if(!input.category)return {scope,input,unmetered:true};
+ const reservation=await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:input.category,
   units:input.units||1,idempotencyKey:input.key,retryReversed:input.retryReversed===true,detail:{operation:input.operation}});
  if(!reservation.created)throw new ValidationError('This operation is already recorded or in progress. Its provider work was not repeated.');
  return {scope,input};}
-async function complete(database,held,detail={}){return entitlements.commitUsage(database,held.scope,
- {meter:held.input.category||'connected_operations',idempotencyKey:held.input.key,detail});}
-async function reverse(database,held,error){return entitlements.reverseUsage(database,held.scope,
- {meter:held.input.category||'connected_operations',idempotencyKey:held.input.key,reason:error?.message});}
+async function complete(database,held,detail={}){if(held.unmetered)return {unmetered:true};return entitlements.commitUsage(database,held.scope,
+ {meter:held.input.category,idempotencyKey:held.input.key,detail});}
+async function reverse(database,held,error){if(held.unmetered)return {unmetered:true};return entitlements.reverseUsage(database,held.scope,
+ {meter:held.input.category,idempotencyKey:held.input.key,reason:error?.message});}
+async function completeRetained(database,workspaceId,input,detail={}){
+ const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId),category=require('./usage-operation-contract').category(input.operation),key=`${workspaceId}:${input.key}`;
+ if(!category)return {unmetered:true};
+ const event=(await database.query('SELECT status FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter=$3 AND idempotency_key=$4',[scope.accountId,workspaceId,category,key])).rows[0];
+ if(!event)return {unmetered:true};
+ // A readback settles the original hold; it cannot reserve another unit or
+ // dispatch the provider operation again, even after a plan change.
+ const result=await complete(database,{scope,input:{category,key}},detail);
+ await database.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE account_id=$1 AND fingerprint=$2",[scope.accountId,`ambiguous-usage:${key}`]);
+ return result;
+}
 async function run(database,workspaceId,input,operation){const held=await begin(database,workspaceId,input);let attempted=false;
  try{attempted=true;const result=await require('./context').run({...require('./context').current(),database,scope:held.scope,funded:true,requestId:input.key},operation);
  await complete(database,held);return result;}
- catch(error){const writes=new Set(['customer_create','invoice_create','refund_create','mail_send','outbound_send','outbound_email','reply_email','label_purchase']);
-  if(writes.has(input.operation)&&!require('../operations/postgres-provider-effects').definiteFailure(error)){
+ catch(error){const writes=new Set([...require('./usage-operation-contract').writes,'outbound_email','reply_email']);
+  if(writes.has(input.operation)&&!require('../operations/postgres-provider-effects').definiteFailure(error)&&
+    !require('./usage-operation-contract').definiteRejection(input.operation,error)){
    await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
     VALUES($1,$2,$3,'AMBIGUOUS_PROVIDER_USAGE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN'`,
     [newId('critical'),held.scope.accountId,`ambiguous-usage:${held.input.key}`,JSON.stringify({workspaceId,operation:input.operation,
@@ -55,4 +71,4 @@ async function run(database,workspaceId,input,operation){const held=await begin(
     costConfidence:'HIGH',costSource:'src/commercial/operations.js; Gmail API attempts are accounted separately'}:{}),
   detail:{attempted:true,...(input.provider==='gmail'&&GMAIL_LOGICAL_WRAPPERS.has(input.operation)?
    {feeResponsibility:'NO_EXTRA_PROVIDER_CALL_FOR_WRAPPER'}:{})}});}}
-module.exports={modelUsage,begin,complete,reverse,run};
+module.exports={modelUsage,begin,complete,reverse,completeRetained,run};

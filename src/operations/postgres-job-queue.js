@@ -107,6 +107,7 @@ async function claim(database, options = {}) {
         AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
           AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
       AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
+      AND public.commercial_job_lane_available(workspace_id,kind)
       AND (kind NOT IN('import.execute-approved','assistant.run-codex-goal') OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=jobs.kind AND active.status='RUNNING'))
       AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
@@ -119,6 +120,12 @@ async function claim(database, options = {}) {
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
+    if(['assistant.run-goal','assistant.run-codex-goal','import.analyse-source','import.execute-approved','import.revise-preview'].includes(selected.kind)){
+      const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[selected.workspace_id])).rows[0]?.owner_account_id;
+      const lane=selected.kind.startsWith('import.')?'imports':'agents';
+      if(owner){const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[`jobs-account:${owner}:${lane}`])).rows[0].acquired;
+        if(!locked||!(await client.query('SELECT public.commercial_job_lane_available($1,$2) AS available',[selected.workspace_id,selected.kind])).rows[0].available)return null;}
+    }
     const maintenance=MAINTENANCE_KINDS.includes(selected.kind);
     if(['import.execute-approved','assistant.run-codex-goal'].includes(selected.kind)||maintenance){
       // The transaction lock closes the race between independent workers

@@ -15,6 +15,6 @@ test('a stale scheduled downgrade shows its date and current excess instead of a
  assert.match(accountPage.text,/5 used; 2 allowed/);
  const capacity=accountPage.text.split('data-plan-capacity')[1].split('</section>')[0];
  assert.match(capacity,/5 used in your busiest inventory/);assert.match(capacity,/3 in this inventory/);
- const locationEntry=/<dt>Locations<\/dt><dd>([\s\S]*?)<\/dd>/.exec(capacity);
+ const locationEntry=/<dt data-meter="locations">[^<]+<\/dt><dd>([\s\S]*?)<\/dd>/.exec(capacity);
  assert(locationEntry,'The location limit has its own row');assert.match(locationEntry[1],/5 used in your busiest inventory/);assert.doesNotMatch(locationEntry[1],/2 used/);
 });

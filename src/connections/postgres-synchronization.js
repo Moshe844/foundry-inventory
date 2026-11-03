@@ -14,6 +14,9 @@ async function configure(database,ctx,connectorId,input={},options={}){
     const row=(await client.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,connectorId])).rows[0];
     if(!row)throw new NotFoundError('Connection not found.');
+    const ownerScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId),subscription=await require('../commercial/entitlements').subscriptionFor(client,ownerScope.accountId);
+    const minimum=Number(subscription?.plan_configuration?.syncIntervalSeconds||0)/60;
+    if(!disabled&&minutes<minimum)throw new ValidationError(`Your plan supports scheduled checks every ${minimum} minutes or longer. Choose that interval, or upgrade for more frequent checks.`);
     if(!policy.supports((options.providers||providers).get(row.provider_type)))
       throw new ValidationError('This connection receives events only; it has no scheduled check.');
     const config=policy.object(row.config),wasDisabled=config.syncDisabled===true;
