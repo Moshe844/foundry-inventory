@@ -682,7 +682,7 @@ async function lookupRecords(database,ctx,request,options={}) {
   if(request.view==='inventory_summary'){
     const {products,productsEver,skus,onHand}=await require('./postgres-inventory-summary').read(database,ctx.workspaceId);
     const question=String(options.question||'');
-    const asksSkus=/\bSKUs?\b/i.test(question);
+    const asksSkus=/\b(?:SKUs?|variants?)\b/i.test(question);
     const asksProducts=/\b(?:products?|items?)\b/i.test(question);
     const asksUnits=/\b(?:units?|on[ -]?hand|stock)\b/i.test(question);
     const asksHistory=/\b(?:ever|historical|previously|before|set up)\b/i.test(question);
