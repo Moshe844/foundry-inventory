@@ -83,7 +83,7 @@
   const meter=panel.querySelector('[data-import-meter]');if(!meter)return;meter.dataset.state=state.state.toLowerCase();
   meter.querySelector('[data-import-stage]').textContent=state.stageLabel;
    const estimate=meter.querySelector('[data-import-estimate]');if(estimate)estimate.textContent=state.state==='QUEUED'?state.queueLabel||'Waiting for an available worker.':state.working?state.estimateLabel||'Estimating time remaining.':'';
-  meter.querySelector('[data-import-count]').textContent=state.stage==='preparing'&&state.preparedRows!==null&&state.preparedRows!==undefined?state.preparedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' approved rows prepared':state.processedRows===null?'':(state.attempt>1?'Attempt '+state.attempt+': ':'')+state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+(state.durable?' rows saved':' rows processed');
+  meter.querySelector('[data-import-count]').textContent=state.stage==='preparing'&&state.preparedRows!==null&&state.preparedRows!==undefined?state.preparedRows.toLocaleString()+' / '+(state.preparedTotal??state.readyRows).toLocaleString()+(state.preparedTotal!=null?' new SKUs prepared':' approved rows prepared'):state.processedRows===null?'':(state.attempt>1?'Attempt '+state.attempt+': ':'')+state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+(state.durable?' rows saved':' rows processed');
   const bar=meter.querySelector('[data-import-bar]');bar.classList.toggle('is-indeterminate',state.progressPercent===null);
   if(state.progressPercent===null)bar.removeAttribute('aria-valuenow');else bar.setAttribute('aria-valuenow',String(state.progressPercent));
   bar.firstElementChild.style.width=(state.progressPercent===null?32:state.progressPercent)+'%';

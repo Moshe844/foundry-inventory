@@ -60,3 +60,12 @@ test('import estimates use only rows saved in this attempt and show per-inventor
  const base={id:'timing',records_valid:10000,records_detected:10000,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',lease_expires_at:2000,database_now:1000,job_result:{importProgress:{stage:'processing',processedRows:5500,totalRows:10000,attemptStartRows:5000,elapsedMs:10000}}};
  const state=present(base);assert.equal(state.estimatedSeconds,90);assert.match(state.estimateLabel,/About 2 minutes/);assert.equal(present({...base,job_status:'PENDING',queue_ahead:2}).queuePosition,3);assert.match(present({...base,job_status:'PENDING',queue_ahead:2}).queueLabel,/Earlier imports/);assert.equal(present({...base,job_result:{importProgress:{...base.job_result.importProgress,attemptStartRows:5500}}}).estimatedSeconds,null);assert.equal(present({...base,job_status:'PAUSED'}).estimatedSeconds,null);
 });
+
+test('a large import moves its bar while preparing new SKUs, then while saving rows',()=>{
+ const running={id:'big',records_detected:210000,records_valid:210000,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',lease_expires_at:Date.now()+60000,database_now:Date.now(),integrity_hash:'approved',apply_checkpoint:{hash:'approved',catalogueStarted:true,savedRows:0}};
+ const preparing=present({...running,job_result:{importProgress:{stage:'preparing',processedRows:0,totalRows:210000,preparedRows:13500,preparedTotal:52500,elapsedMs:70000,attempt:1}}});
+ assert.equal(preparing.preparedTotal,52500);assert.equal(preparing.progressPercent,6);
+ assert.match(preparing.estimateLabel,/About 4 minutes left to prepare/);
+ const saving=present({...running,apply_checkpoint:{hash:'approved',cataloguePrepared:true,savedRows:105000},job_result:{importProgress:{stage:'processing',processedRows:105000,totalRows:210000,attempt:1,elapsedMs:300000,attemptStartRows:0}}});
+ assert.equal(saving.progressPercent,62);assert.match(saving.estimateLabel,/About 5 minutes remaining/);
+});

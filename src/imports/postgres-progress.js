@@ -35,9 +35,15 @@ function present(row){
  if(durable&&failure)reason=savedRows.toLocaleString()+' rows are already saved with their stock and accounting. '+(failure.code==='validation_error'?String(row.execution_error||failure.message||'The remaining rows need review.'):failure.code==='57014'?'The last batch exceeded the database time limit.':failure.code==='53200'?'The database ran out of memory for the last batch.':'The worker was interrupted during the last batch.')+' Continue resumes the approved rows without repeating saved ones.';
  if(failure?.code==='import_verification_incomplete')reason='Final checks have not confirmed this import. Review the saved result or contact support before applying it again.';
  const applied=Number(p?.processedRows)-Number(p?.attemptStartRows),elapsedMs=Number(p?.elapsedMs),remaining=Number(row.records_valid)-Number(p?.processedRows);
+ const prepared=Number(p?.preparedRows),preparing=state==='RUNNING'&&known&&stage==='preparing'&&Number.isSafeInteger(prepared);
+ // Preparing creates new SKUs; measure it against them when the import says how many.
+ const preparedTotal=Number.isSafeInteger(p?.preparedTotal)&&p.preparedTotal>0?p.preparedTotal:null,prepareGoal=preparedTotal??p?.totalRows;
+ // Preparing has its own pace: estimate what is left of it from rows prepared so far.
+ const preparingSeconds=preparing&&prepared>=500&&Number.isSafeInteger(elapsedMs)&&elapsedMs>=5000&&prepared<prepareGoal?Math.ceil((prepareGoal-prepared)/prepared*elapsedMs/1000):null;
  const estimatedSeconds=state==='RUNNING'&&known&&stage==='processing'&&Number.isSafeInteger(applied)&&applied>=500&&Number.isSafeInteger(elapsedMs)&&elapsedMs>=5000&&remaining>0?Math.ceil(remaining/applied*elapsedMs/1000):null;
  const queuePosition=state==='QUEUED'?Math.max(1,Number(row.queue_ahead||0)+1):null;
- const estimateLabel=estimatedSeconds===null?'Estimating time remaining after the next saved batch.':'About '+Math.max(1,Math.ceil(estimatedSeconds/60))+' minute'+(Math.ceil(estimatedSeconds/60)===1?'':'s')+' remaining at the current speed, plus final checks.';
+ const minutes=seconds=>Math.max(1,Math.ceil(seconds/60))+' minute'+(Math.ceil(seconds/60)<=1?'':'s');
+ const estimateLabel=preparingSeconds!==null?'About '+minutes(preparingSeconds)+' left to prepare, then records are saved in batches.':estimatedSeconds===null?'Estimating time remaining after the next saved batch.':'About '+Math.max(1,Math.ceil(estimatedSeconds/60))+' minute'+(Math.ceil(estimatedSeconds/60)===1?'':'s')+' remaining at the current speed, plus final checks.';
  const queueLabel=queuePosition===null?'':'Queue position '+queuePosition+' in this inventory. '+(queuePosition===1?'Waiting for an available worker.':'Earlier imports must finish first; the wait depends on their size.');
  const attempt=revising?(known?Number(p.attempt||1):null):Math.max(known?Number(p.attempt||1):0,Number(row.job_attempt_count||0))||null;
  const stageLabel=(attempt>1&&['RUNNING','UPDATING_PREVIEW'].includes(state)?'Attempt '+attempt+' · '+(durable?'resuming saved rows':'restarting safely after rollback')+' · ':'')+(detailsPending?'Applying imported details and reorder settings':{preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
@@ -46,8 +52,10 @@ function present(row){
   verified,finished:!['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,estimatedSeconds,estimateLabel,queuePosition,queueLabel,detailsPending,durable,savedRows,cataloguePrepared:checkpoint.cataloguePrepared===true,attempt,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
-  progressPercent:verified?100:durable&&Number(row.records_valid)?Math.min(99,Math.floor(savedRows/Number(row.records_valid)*100)):known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
+  stage,stageLabel,estimatedSeconds,estimateLabel,queuePosition,queueLabel,detailsPending,durable,savedRows,cataloguePrepared:checkpoint.cataloguePrepared===true,attempt,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,preparedTotal:known?preparedTotal:null,processedRows:verified?Number(row.records_valid):durable?savedRows:known?p.processedRows:null,
+  // One bar for the whole import: preparing fills the first quarter, saving
+  // batches the rest, so the bar moves from the first prepared row.
+  progressPercent:verified?100:preparing&&prepareGoal?Math.min(24,Math.floor(prepared/prepareGoal*25)):durable&&Number(row.records_valid)?25+Math.min(74,Math.floor(savedRows/Number(row.records_valid)*74)):known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(revising?row.preview_updated_at:row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
 }
@@ -99,11 +107,12 @@ async function record(database,job,value){
  if(!job.workspaceId||!job.leaseToken||!['preparing','processing','verifying'].includes(value.stage)||!Number.isSafeInteger(value.processedRows)||!Number.isSafeInteger(value.totalRows)||value.processedRows<0||value.processedRows>value.totalRows)throw new TypeError('Invalid import progress.');
  if(value.elapsedMs!==undefined&&(!Number.isSafeInteger(value.elapsedMs)||value.elapsedMs<0)||value.attemptStartRows!==undefined&&(!Number.isSafeInteger(value.attemptStartRows)||value.attemptStartRows<0||value.attemptStartRows>value.processedRows))throw new TypeError('Invalid import timing.');
  if(value.preparedRows!==undefined&&(!Number.isSafeInteger(value.preparedRows)||value.preparedRows<0||value.preparedRows>value.totalRows))throw new TypeError('Invalid prepared import progress.');
+ if(value.preparedTotal!==undefined&&(!Number.isSafeInteger(value.preparedTotal)||value.preparedTotal<0||value.preparedTotal>value.totalRows))throw new TypeError('Invalid prepared import total.');
  return (await database.query(`UPDATE stockchief_runtime.jobs SET result=CASE WHEN
    result->'importProgress' IS NULL OR COALESCE((result->'importProgress'->>'attempt')::int,1)<$5
    OR COALESCE((result->'importProgress'->>'attempt')::int,1)=$5 AND COALESCE((result->'importProgress'->>'processedRows')::int,0)<=$6
    THEN jsonb_build_object('importProgress',$4::jsonb) ELSE result END
   WHERE workspace_id=$1 AND id=$2 AND lease_token=$3 AND kind='import.execute-approved' AND status='RUNNING'
-   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1,durable:value.durable===true,...(value.elapsedMs===undefined?{}:{elapsedMs:value.elapsedMs,attemptStartRows:value.attemptStartRows}),...(value.preparedRows===undefined?{}:{preparedRows:value.preparedRows})}),value.attempt||1,value.processedRows])).rowCount===1;
+   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1,durable:value.durable===true,...(value.elapsedMs===undefined?{}:{elapsedMs:value.elapsedMs,attemptStartRows:value.attemptStartRows}),...(value.preparedRows===undefined?{}:{preparedRows:value.preparedRows}),...(value.preparedTotal===undefined?{}:{preparedTotal:value.preparedTotal})}),value.attempt||1,value.processedRows])).rowCount===1;
 }
 module.exports={list,get,present,record};

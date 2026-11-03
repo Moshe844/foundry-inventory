@@ -1,91 +1,72 @@
-<div class="page-head">
-  <div class="titles">
-    <h1>Bring your data in</h1>
-    <div class="page-sub">
-      Upload a product, stock or supplier file—or paste rows from one.
-      StockChief identifies what it contains, shows the exact records it would create, and changes nothing until you approve.
-    </div>
-  </div>
+<% const DAY=24*60*60*1000,now=Date.now();
+   // What needs the owner comes first. A draft preview expires after a day, so
+   // an old one is a past result, not something still waiting.
+   const expired=plan=>['AWAITING_APPROVAL','NEEDS_INPUT'].includes(plan.state)&&Date.parse(plan.createdAt)+DAY<now;
+   const needsYou=recent.filter(plan=>['AWAITING_APPROVAL','NEEDS_INPUT','APPROVED','PAUSED','NEEDS_REVIEW'].includes(plan.state)&&!expired(plan));
+   const working=recent.filter(plan=>plan.active);
+   const past=recent.filter(plan=>!needsYou.includes(plan)&&!working.includes(plan));
+   const stopped=(locals.sourceUploads||[]).filter(upload=>!upload.active&&!upload.ready),reading=(locals.sourceUploads||[]).filter(upload=>upload.active);
+   const when=plan=>plan.completedAt||plan.startedAt||plan.createdAt;
+   const action={AWAITING_APPROVAL:'Review and approve',NEEDS_INPUT:'Answer the question',APPROVED:'Start import',PAUSED:'Review',NEEDS_REVIEW:'Review'}; %>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
+<div class="ox ox-flow ox-review ox-imports" data-ox-page>
+<div class="ox-head">
+  <div><h1 class="ox-title">File imports</h1><p class="ox-sub">Upload a product, stock or supplier file. Nothing changes until you check it and approve.</p></div>
+  <div class="ox-head__actions"><a class="ox-btn ox-btn--ghost" href="/erp-cutovers">Move a full ERP opening position</a></div>
 </div>
 
 <% if (!canOperate) { %>
-  <div class="notice notice--warn section">
-    You have read-only access to this inventory, so you cannot import data into it.
-  </div>
+  <div class="notice notice--warn section">You have read-only access to this inventory, so you cannot import data into it.</div>
 <% } else { %>
-
-<p><a class="btn" href="/erp-cutovers">Move a full ERP opening position</a></p>
-<div class="grid grid--2 section">
-  <div class="card">
-    <div class="card-head"><h2>From a file</h2></div>
-    <form method="post" action="/imports" enctype="multipart/form-data" data-busy data-import-file-upload>
-      <div class="card-body">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
-        <input type="hidden" name="prepareAsync" value="yes"><input type="hidden" name="uploadKey" value="<%= usageKey %>:file">
-        <label class="field">
-          <span class="field-label">Your business file</span>
-          <input class="input" type="file" name="file" accept="<%= helpers.importSourceFormats.accept %>" required>
-          <span class="field-help"><%= helpers.importSourceFormats.description %> Maximum upload <%= Math.floor((locals.uploadLimitBytes||536870912)/1048576) %> MB. No need to rename columns.</span>
-        </label>
-      </div>
-      <div class="card-foot">
-        <button class="btn btn--primary" type="submit"><%- helpers.icon('import', { size: 15 }) %> Read the file</button>
-      </div>
-    </form>
-  </div>
-
-  <div class="card">
-    <div class="card-head"><h2>Pasted</h2></div>
-    <form method="post" action="/imports" data-busy>
-      <div class="card-body">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="usageKey" value="<%= usageKey %>:paste">
-        <label class="field">
-          <span class="field-label">Paste rows here</span>
-          <textarea class="input" name="pasted" rows="8" placeholder="Copper Elbow 1/2in	CE-050	Main Warehouse	140
-Copper Elbow 3/4in	CE-075	Main Warehouse	86"></textarea>
-          <span class="field-help">Copy straight out of a spreadsheet. A header row helps but is not needed.</span>
-        </label>
-      </div>
-      <div class="card-foot">
-        <button class="btn" type="submit">Read what I pasted</button>
-      </div>
-    </form>
-  </div>
+<div class="ox-imports__add">
+  <form class="card ox-imports__file" method="post" action="/imports" enctype="multipart/form-data" data-busy data-import-file-upload>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
+    <input type="hidden" name="prepareAsync" value="yes"><input type="hidden" name="uploadKey" value="<%= usageKey %>:file">
+    <label class="field"><span class="field-label">Your business file</span>
+      <input class="input" type="file" name="file" accept="<%= helpers.importSourceFormats.accept %>" required>
+      <span class="hint">Excel, CSV, PDF, photos and more · up to <%= Math.floor((locals.uploadLimitBytes||536870912)/1048576) %> MB · only column headings are needed.</span></label>
+    <button class="btn btn--primary" type="submit"><%- helpers.icon('import', { size: 15 }) %> Read the file</button>
+  </form>
+  <form class="card ox-imports__paste" method="post" action="/imports" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="usageKey" value="<%= usageKey %>:paste">
+    <label class="field"><span class="field-label">Or paste rows</span>
+      <textarea class="input" name="pasted" rows="3" placeholder="Copper Elbow 1/2in	CE-050	Main Warehouse	140"></textarea></label>
+    <button class="btn" type="submit">Read what I pasted</button>
+  </form>
 </div>
-
-<% if (!aiConfigured) { %>
-  <p class="muted" style="font-size:13px;">
-    No AI provider is configured, so StockChief names the columns it recognises by their headers
-    and leaves the rest for you to set on the next screen.
-  </p>
+<% if (!aiConfigured) { %><p class="hint">No AI provider is configured, so StockChief names the columns it recognises by their headings and asks about the rest.</p><% } %>
 <% } %>
 
-<% } %>
+<% if(needsYou.length){ %>
+<section class="card section ox-imports__group is-needs" aria-labelledby="imports-needs"><div class="card-head"><h2 id="imports-needs">Needs you</h2><span class="badge"><%= needsYou.length %></span></div>
+  <ul class="ox-imports__list"><% needsYou.forEach(function(plan){ %><li>
+    <div><a class="ox-imports__name" href="<%= plan.href %>"><%= plan.sourceName %></a><span class="hint"><%= Number(plan.rows).toLocaleString('en-US') %> rows · <time data-import-time datetime="<%= plan.createdAt %>"><%= new Date(plan.createdAt).toISOString().slice(0,16).replace('T',' ') %></time></span></div>
+    <span class="badge <%= ['PAUSED','NEEDS_REVIEW'].includes(plan.state)?'badge--danger':'' %>"><%= plan.label %></span>
+    <a class="btn btn--primary btn--sm" href="<%= plan.href %>"><%= action[plan.state] %></a></li><% }) %></ul>
+</section><% } %>
 
-<% if(locals.sourceUploads?.length){ %><section class="card section"><div class="card-head"><h2>Saved files being checked</h2></div><div class="card-body"><% sourceUploads.forEach(upload=>{ %><%- include('source-upload-panel',{upload,detail:false}) %><% }); %></div></section><% } %>
-<% if (recent.length) { %>
-  <div class="card section">
-    <div class="card-head"><h2>File imports and results</h2></div>
-    <table class="table">
-      <thead>
-        <tr><th>File</th><th>Rows</th><th>Status</th><th>When</th></tr>
-      </thead>
-      <tbody>
-        <% recent.forEach(function (plan) { %>
-          <tr <% if(plan.active){ %>data-import-progress="<%= plan.href %>/progress"<% } %>>
-            <td><a href="/imports/<%= plan.id %>"><%= plan.sourceName %></a></td>
-            <td class="num"><%= plan.rows??plan.recordsDetected %></td>
-            <td>
-              <span data-import-status class="badge badge--<%= plan.verified ? 'ok' : ['PAUSED','NEEDS_REVIEW'].includes(plan.state) ? 'danger' : 'muted' %>">
-                <%= plan.label||(plan.status==='READY'?(plan.approvalStatus==='APPROVED'?'Approved — ready to start':'Waiting for your approval'):helpers.columnLabel(plan.status.toLowerCase())) %>
-              </span>
-            </td>
-            <td class="muted" data-import-timing><time data-import-time datetime="<%= plan.completedAt||plan.startedAt||plan.createdAt %>"><%= new Date(plan.completedAt||plan.startedAt||plan.createdAt).toISOString().replace('T',' ').replace('Z',' UTC') %></time><div><%= plan.completedAt?'Finished':plan.startedAt?'Started':'Uploaded' %></div></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  </div>
-<% } %>
+<% if(working.length||reading.length){ %>
+<section class="card section ox-imports__group" aria-labelledby="imports-working"><div class="card-head"><h2 id="imports-working">In progress</h2></div>
+  <ul class="ox-imports__list">
+  <% reading.forEach(function(upload){ %><li><div><a class="ox-imports__name" href="<%= upload.href %>"><%= upload.sourceName %></a><span class="hint">Reading the file</span></div><span class="badge"><%= upload.label %></span><a class="btn btn--sm" href="<%= upload.href %>">Open</a></li><% }) %>
+  <% working.forEach(function(plan){ %><li data-import-progress="<%= plan.href %>/progress"><div><a class="ox-imports__name" href="<%= plan.href %>"><%= plan.sourceName %></a><span class="hint"><%= Number(plan.rows).toLocaleString('en-US') %> rows</span></div><span data-import-status class="badge"><%= plan.label %></span><a class="btn btn--sm" href="<%= plan.href %>">Open</a></li><% }) %>
+  </ul>
+</section><% } %>
+
+<% if(stopped.length){ %>
+<section class="card section ox-imports__group" aria-labelledby="imports-stopped"><div class="card-head"><h2 id="imports-stopped">Couldn’t read</h2></div>
+  <ul class="ox-imports__list"><% stopped.forEach(function(upload){ %><li><div><a class="ox-imports__name" href="<%= upload.href %>"><%= upload.sourceName %></a><span class="hint"><%= upload.reason||'Reading stopped before a preview was ready.' %></span></div><a class="btn btn--sm" href="<%= upload.href %>">Open</a></li><% }) %></ul>
+</section><% } %>
+
+<% if(past.length){ %>
+<details class="card section ox-imports__group" <%= needsYou.length||working.length?'':'open' %>><summary class="card-head"><h2>File imports and results</h2><span class="badge"><%= past.length %></span></summary>
+  <div class="table-scroll"><table class="table table--tight"><thead><tr><th>File</th><th>Rows</th><th>Status</th><th>When</th></tr></thead><tbody>
+  <% past.forEach(function (plan) { %><tr>
+    <td><a href="<%= plan.href %>"><%= plan.sourceName %></a></td><td class="num"><%= Number(plan.rows).toLocaleString('en-US') %></td>
+    <td><span class="badge <%= plan.verified?'badge--ok':'' %>"><%= expired(plan)?'Expired — read the file again to import':plan.label %></span></td>
+    <td class="muted"><time data-import-time datetime="<%= when(plan) %>"><%= new Date(when(plan)).toISOString().slice(0,16).replace('T',' ') %></time></td></tr><% }) %>
+  </tbody></table></div>
+</details><% } %>
+</div>
