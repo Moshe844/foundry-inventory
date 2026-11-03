@@ -5,7 +5,8 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  await require('../../src/db/migrate-postgres').migratePostgres(db);t.after(async()=>{await db.close();await cluster.stop();});
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Channel verification',email:randomUUID()+'@example.test',password:'Test!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
- await db.query("UPDATE account_subscriptions SET plan_id='growth',plan_version_id=NULL WHERE account_id=$1",[owner.accountId]);
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,source) VALUES('commerce-metered',$1,'growth',(SELECT id FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE'),'ACTIVE','ISOLATED_TEST') ON CONFLICT(account_id) DO UPDATE SET plan_id=excluded.plan_id,plan_version_id=excluded.plan_version_id",[owner.accountId]);
+ const usage=async effectId=>(await db.query("SELECT status,units,detail FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='connected_operations' AND idempotency_key=$3",[owner.accountId,ctx.workspaceId,ctx.workspaceId+':commerce-write:'+effectId])).rows[0];
  const cat=require('../../src/domain/postgres-catalog-service'),locations=require('../../src/domain/postgres-location-service'),prices=require('../../src/pricing/postgres-service'),sync=require('../../src/connections/postgres-commerce-sync');
  const product=await cat.createItem(db,ctx,{name:'Orchid vessel',baseCode:'ORC-7',trackingMode:'quantity',unitLabel:'unit'}),sku=product.skuIds[0];
  assert(sku,'canonical product has a SKU');
@@ -51,6 +52,7 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  remote.price={amount:1500,currency:'USD'};await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).inboundPrices,1);assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1500);
  const conflicted=await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1600,currency:'USD'});remote.price={amount:1700,currency:'USD'};await cacheRemote();
  await assert.rejects(sync.execute(db,ctx.workspaceId,conflicted.effectIds[0],{providers:registry}));assert.equal(writes,1,'the fresh provider comparison prevents overwriting its concurrent change');assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1600);
+ assert.equal((await usage(conflicted.effectIds[0])).status,'REVERSED','a verified refusal before a write does not consume Connected Operations');
  const reviewedConflict=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way',initialSyncSource:'provider'},{providers:registry});await db.transaction(tx=>sync.configureInTransaction(tx,ctx,reviewedConflict.payload));await db.transaction(tx=>sync.reconcile(tx,c));
  remote.quantity=4;await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts,1);
  const heldPosition=(await sync.list(db,ctx.workspaceId,id)).find(p=>p.field==='quantity');assert(heldPosition.review_issue_id,'the exact stock hold is visible through the existing connection read');assert.equal(heldPosition.review_title,'Review channel stock difference');
@@ -77,8 +79,12 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];uncertain=true;
  await assert.rejects(sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry}),/lost acknowledgement/);
  assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,p.pending_effect_id)).status,'AMBIGUOUS');
+ assert.equal((await usage(p.pending_effect_id)).status,'RESERVED','an uncertain provider outcome retains its original allowance hold');
  await assert.rejects(sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry}),/uncertain/);assert.equal(writes,3,'uncertain writes do not repeat');
  const recovered=await sync.verifyDelivery(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(recovered.status,'SUCCEEDED');assert.equal(recovered.result.recoveredByReadback,true);assert.equal(writes,3,'recovery is read-only');
+ assert.equal((await usage(p.pending_effect_id)).status,'COMMITTED','confirmed readback settles the original hold');
+ assert.equal((await db.query('SELECT status FROM commercial_critical_warnings WHERE account_id=$1 AND fingerprint=$2',[owner.accountId,'ambiguous-usage:'+ctx.workspaceId+':commerce-write:'+p.pending_effect_id])).rows[0].status,'RESOLVED');
+ await sync.verifyDelivery(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(writes,3,'verified replay cannot send another write or reserve another unit');
  // Asynchronous adapters checkpoint the accepted provider transaction before
  // eventual read-back. A crash or delay must never buy another write.
  let acceptedId;
@@ -88,11 +94,15 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  assert.equal(acceptedId,asyncId);const asyncEffect=await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,asyncId);assert.equal(asyncEffect.providerReference.transactionId,'provider-transaction-7');assert.equal(asyncEffect.status,'AMBIGUOUS');
  await assert.rejects(sync.execute(db,ctx.workspaceId,asyncId,{providers:{get:()=>asyncAdapter}}),/uncertain/);assert.equal(writes,4);
  remote.price={amount:1850,currency:'USD'};const verifiedAsync=await sync.verifyDelivery(db,ctx.workspaceId,asyncId,{providers:registry});assert.equal(verifiedAsync.status,'SUCCEEDED');assert.equal(verifiedAsync.providerReference.transactionId,'provider-transaction-7');assert.equal(writes,4);
+ assert.equal((await usage(asyncId)).status,'COMMITTED');
  uncertain=false;await cacheRemote();await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1900,currency:'USD'});await db.transaction(tx=>sync.reconcile(tx,c));
  p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];rateLimited=true;
  await assert.rejects(sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry}),e=>e.status===429&&e.retryable===true&&e.retryAfterMs===60002);
  assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,p.pending_effect_id)).status,'PENDING');assert.equal(writes,4,'a known rate-limit rejection did not write');
+ assert.equal((await usage(p.pending_effect_id)).status,'REVERSED','known rate-limit refusals release their reservation for the already-authorized retry');
  rateLimited=false;await sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(writes,5);assert.equal(remote.price.amount,1900,'safe delayed retry uses the original delivery and fresh expected value');
+ assert.equal((await usage(p.pending_effect_id)).status,'COMMITTED');assert.equal((await usage(p.pending_effect_id)).detail.retryCount,1);
+ assert.equal((await require('../../src/commercial/entitlements').meterState(db,{accountId:owner.accountId,workspaceId:ctx.workspaceId},'connected_operations')).used,5,'five confirmed mutations consume exactly five operations, including readback recovery');
  await cacheRemote();await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1950,currency:'USD'});await db.transaction(tx=>sync.reconcile(tx,c));
  p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];const pending=p.pending_effect_id;
  const off=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'off'},{providers:registry});await db.transaction(tx=>sync.configureInTransaction(tx,ctx,off.payload));
