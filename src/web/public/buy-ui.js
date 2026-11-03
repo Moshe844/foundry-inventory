@@ -62,9 +62,16 @@
     if (!root) return;
     var input = $('[data-ox-pick-input]', root);
     var none = $('[data-ox-pick-none]', root);
+    var matches = 1;
+    // The list holds one page of suppliers; Enter with nothing matching here searches them all.
+    input.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || matches || !input.value.trim()) return;
+      event.preventDefault();
+      window.location.href = '/purchasing/orders/new?q=' + encodeURIComponent(input.value.trim());
+    });
     listbox(input, $('[data-ox-pick-list]', root), {
       alwaysOpen: true,
-      onFilter: function (shown) { if (none) none.hidden = shown > 0; },
+      onFilter: function (shown) { matches = shown; if (none) none.hidden = shown > 0; },
       choose: function (li) { var target = $('a, button', li); if (target) target.click(); },
     });
   }

@@ -59,14 +59,15 @@
       <% } else { %>
        <div class="ox-combo" data-ox-pick>
         <svg class="ox-combo__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <input class="ox-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ox-supplier-list" aria-label="Search suppliers" placeholder="Search suppliers" autocomplete="off" autofocus data-ox-pick-input>
+        <input class="ox-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ox-supplier-list" aria-label="Search suppliers" placeholder="Search suppliers" autocomplete="off" autofocus data-ox-pick-input value="<%= locals.supplierQuery || '' %>">
         <ul class="ox-pop ox-pop--open" id="ox-supplier-list" role="listbox" aria-label="Suppliers" data-ox-pick-list>
          <% buy.suppliers.forEach(function (s) { %>
           <li role="option" aria-selected="false"><a class="ox-opt" href="/purchasing/orders/new?supplier=<%= s.id %>" data-ox-search-text="<%= (s.name + ' ' + (s.contactName || '') + ' ' + (s.email || '')).toLowerCase() %>"><span class="ox-avatar" aria-hidden="true"><%= s.initials %></span><span class="ox-opt__t"><b><%= s.name %></b><small><%= supplierLine(s) %></small></span></a></li>
          <% }) %>
+         <% if ((locals.supplierPage || 1) > 1 || locals.supplierHasMore) { %><li class="ox-pick-more" role="presentation" data-ox-pick-keep><% if ((locals.supplierPage || 1) > 1) { %><a href="/purchasing/orders/new?<%= new URLSearchParams({ q: locals.supplierQuery || '', page: supplierPage - 1 }) %>">Previous suppliers</a><% } %><% if (locals.supplierHasMore) { %><a href="/purchasing/orders/new?<%= new URLSearchParams({ q: locals.supplierQuery || '', page: (supplierPage || 1) + 1 }) %>">More suppliers</a><% } %></li><% } %>
          <% if (permissions.suppliers) { %><li role="option" aria-selected="false" data-ox-pick-keep><button class="ox-opt ox-opt--add" type="button" data-modal-open="ox-supplier-drawer"><span class="ox-avatar ox-avatar--add" aria-hidden="true">+</span><span class="ox-opt__t"><b>Add new supplier</b><small>Name, email, lead time</small></span></button></li><% } %>
         </ul>
-        <p class="ox-pick-none" data-ox-pick-none hidden>No supplier matches. <% if (permissions.suppliers) { %><button class="ox-linkbtn" type="button" data-modal-open="ox-supplier-drawer">Add a new supplier</button><% } %></p>
+        <p class="ox-pick-none" data-ox-pick-none hidden>No supplier on this list matches. Press Enter to search them all. <% if (permissions.suppliers) { %><button class="ox-linkbtn" type="button" data-modal-open="ox-supplier-drawer">Add a new supplier</button><% } %></p>
        </div>
       <% } %>
      </div>

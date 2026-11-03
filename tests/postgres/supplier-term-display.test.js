@@ -20,10 +20,11 @@ test('real supplier screen distinguishes missing, zero, single-pack and larger p
  const context=await browser.newContext(),origin='http://127.0.0.1:'+server.address().port;
  await context.addCookies([{name:'foundry.sid',value:encodeURIComponent('s:'+require('cookie-signature').sign(sid,secret)),url:origin,httpOnly:true,sameSite:'Lax'}]);
  const page=await context.newPage();await page.goto(origin+'/suppliers/'+supplier.id,{waitUntil:'domcontentloaded'});
- const table=page.locator('table').filter({has:page.getByRole('columnheader',{name:'Order multiple',exact:true})});
- for(const [name,minimum,multiple] of [['No saved terms','Not recorded','Not recorded'],['Single pack','0 case(s)','1 case(s)'],['Larger pack','3 case(s)','4 case(s)']]){
+ const table=page.locator('table').filter({has:page.getByRole('columnheader',{name:'Min order',exact:true})});
+ // Not set, zero and a real minimum stay distinct: a dash, 0 and the number.
+ for(const [name,minimum] of [['No saved terms','—'],['Single pack','0'],['Larger pack','3']]){
   const cells=await table.getByRole('row').filter({hasText:name}).locator('td').allTextContents();
-  assert.equal(cells[6].trim(),minimum);assert.equal(cells[7].trim(),multiple);
+  assert.equal(cells[4].trim(),minimum);
  }
  const saved=(await db.query('SELECT minimum_order_quantity,order_multiple FROM supplier_items WHERE workspace_id=$1 ORDER BY order_multiple NULLS FIRST',[ctx.workspaceId])).rows;
  assert.deepEqual(saved.map(r=>[r.minimum_order_quantity===null?null:Number(r.minimum_order_quantity),r.order_multiple===null?null:Number(r.order_multiple)]),[[null,null],[0,1],[3,4]]);

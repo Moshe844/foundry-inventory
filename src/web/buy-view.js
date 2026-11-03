@@ -174,10 +174,12 @@ async function purchaseOrdersList(database, workspaceId, rows, query = {}, can =
  * products: every active supplier for the picker, stock on hand per product,
  * weighed products, and that supplier's items on What to order as suggestions.
  */
-async function purchaseEntryExtras(database, workspaceId, supplierId, supplierItems) {
-  const supplierRows = (await database.query(`SELECT s.id,s.name,s.contact_name,s.email,s.default_lead_time_days,s.payment_terms,s.currency,
-      (SELECT COUNT(*) FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.supplier_id=s.id AND si.is_active=1)::int AS item_count
-    FROM suppliers s WHERE s.workspace_id=$1 AND s.status='active' ORDER BY lower(s.name),s.id LIMIT 500`, [workspaceId])).rows;
+async function purchaseEntryExtras(database, workspaceId, supplierId, supplierItems, pageRows) {
+  // The picker shows the same bounded page of suppliers (50, searched on the server) the route already read.
+  const counts = pageRows.length ? (await database.query(`SELECT supplier_id,COUNT(*)::int AS n FROM supplier_items
+    WHERE workspace_id=$1 AND supplier_id=ANY($2::text[]) AND is_active=1 GROUP BY supplier_id`, [workspaceId, pageRows.map((row) => row.id)])).rows : [];
+  const itemCount = new Map(counts.map((row) => [row.supplier_id, Number(row.n)]));
+  const supplierRows = pageRows.map((row) => ({ ...row, item_count: itemCount.get(row.id) || 0 }));
   const suppliers = supplierRows.map((s) => ({ id: s.id, name: s.name, initials: initials(s.name), contactName: s.contact_name, email: s.email,
     defaultLeadTimeDays: s.default_lead_time_days, paymentTerms: s.payment_terms, currency: s.currency || 'USD', itemCount: Number(s.item_count) }));
   if (!supplierId || !supplierItems.length) return { suppliers, items: supplierItems, suggestions: [] };

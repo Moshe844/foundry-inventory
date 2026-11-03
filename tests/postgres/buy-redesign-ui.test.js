@@ -72,7 +72,7 @@ test('Buy: purchase orders, one-page PO, receiving, suppliers, what to order and
   await page.waitForFunction(()=>document.querySelector('[data-purchase-total]').textContent==='$380.00');
   await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft',exact:true}).click()]);
   const draftId=new URL(page.url()).pathname.split('/').pop();
-  assert.match(await page.locator('main').innerText(),/Draft saved\. Nothing was sent to Nike Wholesale\./);
+  assert.match(await page.locator('main').innerText(),/Nothing has been sent to Nike Wholesale\./);
   assert.equal((await database.query('SELECT status FROM purchase_orders WHERE id=$1',[draftId])).rows[0].status,'DRAFT');
   assert.equal(Number((await database.query("SELECT COUNT(*) AS n FROM supplier_communications WHERE purchase_order_id=$1 AND status='SENT'",[draftId])).rows[0].n),0);
 

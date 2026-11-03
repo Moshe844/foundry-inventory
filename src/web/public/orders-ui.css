@@ -900,3 +900,4 @@ div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 
 @media (max-width: 819px) { .ox-grid3 { grid-template-columns: 1fr; } .ox-field--half { max-width: none; } }
 .ox-buy .ox-rotable input.ox-mini { width: 72px; height: 34px; text-align: center; }
 .ox-note--amber { background: var(--ox-amber-bg); border-color: #FBE3B5; color: #7C3A06; }
+.ox-pick-more { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; font-size: 13px; list-style: none; }

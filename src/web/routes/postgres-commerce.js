@@ -639,7 +639,7 @@ function createPostgresCommerceRouter(database,options={}){
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
     const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
-    const buy=await require('../buy-view').purchaseEntryExtras(database,req.ctx.workspaceId,supplierId,supplierItems);
+    const buy=await require('../buy-view').purchaseEntryExtras(database,req.ctx.workspaceId,supplierId,supplierItems,supplierRows);
     const hidden=require('../buy-view').demoHidden(req.workspace?.name);buy.suppliers=buy.suppliers.filter(s=>s.id===supplierId||!hidden(s.name));
     const entryLocations=(await commerce.locations(database,req.ctx.workspaceId)).filter(l=>l.id===submitted?.destinationLocationId||!hidden(l.name));
     return res.status(status).page('buy/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems:buy.items,buy:{...buy,leadDays},locations:entryLocations,orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today,
@@ -747,7 +747,7 @@ function createPostgresCommerceRouter(database,options={}){
   // + New return: pick the purchase order, then that order's own return panel opens.
   router.get('/supplier-returns/start',requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
     const po=(await database.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,String(req.query.po||'')])).rows[0];
-    if(!po)throw new ValidationError('Choose a purchase order from this inventory.');
+    if(!po){if(req.query.po)req.flash('error','Choose a purchase order from this inventory.');return res.redirect(303,'/supplier-returns');}
     return res.redirect(303,`/purchasing/orders/${encodeURIComponent(po.id)}?return=1`);
   }));
 
