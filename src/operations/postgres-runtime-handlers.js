@@ -293,7 +293,7 @@ async function runtimeSweep(job,client,options={}){
           resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at`,
       [newId('conissue'),connector.workspace_id,connector.id,fingerprint,`${connector.display_name} stopped updating`,
         `The last verified activity was ${connector.evidence_at}. StockChief no longer claims this source is current.`,
-        `Reconnect ${connector.provider_type} or confirm the source should stay paused.`,at]);
+        `Reconnect ${require('../web/presentation/connections').name(connector)} or confirm the source should stay paused.`,at]);
     } else {
       const resolved=await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
         WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN' RETURNING id`,[connector.workspace_id,fingerprint,at]);

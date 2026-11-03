@@ -968,6 +968,14 @@ async function cancelSalesOrderInTransaction(client,rawContext,salesOrderId,inpu
       (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2)`,[ctx.workspaceId,salesOrderId]);
     await require('./postgres-kit-allocations').release(client,ctx,salesOrderId);
     const at=nowIso();
+    // Nothing is going out for a cancelled order. A saved label stops the
+    // cancellation: it has to be voided first or its postage is simply lost.
+    const parcels=require('../shipping/postgres-service');
+    for(const open of (await client.query(`SELECT id FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2
+      AND status IN ('PICKING','PACKED') AND customer_return_id IS NULL ORDER BY id`,[ctx.workspaceId,salesOrderId])).rows){
+      parcels.assertParcelEditable(await parcels.requireShipment(client,ctx.workspaceId,open.id,true));
+      await client.query(`UPDATE sales_shipments SET status='CANCELLED',updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,open.id,at]);
+    }
     await client.query(`UPDATE sales_orders SET status='CANCELLED',cancelled_by_user_id=$3,cancelled_at=$4,
       cancel_reason=$5,updated_at=$4,version=version+1 WHERE id=$1 AND workspace_id=$2`,
     [salesOrderId,ctx.workspaceId,ctx.actorId,at,trimOrNull(input.reason)||'Cancelled']);
@@ -1225,6 +1233,43 @@ async function recordCustomerDeposit(database, rawContext, input) {
   });
 }
 
+// Hands back a deposit from a cancelled order: the money leaves the bank and the
+// business no longer holds it for the customer. Revenue was never recorded.
+async function refundCustomerDeposit(database, rawContext, input) {
+  const ctx = requireContext(rawContext);
+  return transaction(database, async (client) => {
+    await requirePermission(client, ctx, access.RECORD_PAYMENTS, 'refund customer deposits');
+    const operation = await beginOperation(client, ctx, 'payment.customer_deposit_refund', input.idempotencyKey);
+    if (operation.replayed) return { ...operation.result, replayed: true };
+    const order = await requireRow(client, `SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
+      [input.salesOrderId, ctx.workspaceId], 'That sales order was not found.');
+    if (order.status !== 'CANCELLED') throw new ValidationError('Only a cancelled order has a deposit to refund.');
+    const position = await require('../sales/postgres-deposit-refunds').forOrder(client, ctx.workspaceId, order.id);
+    const amountMinor = positiveInteger(input.amountMinor, 'Refund amount');
+    if (!position || amountMinor > position.toRefundMinor) throw new ValidationError('That is more than this order has left to refund.');
+    const refundDate = dateOnly(input.refundDate || await require('../lib/business-time').today(client, ctx.workspaceId), 'Refund date');
+    const sourceKey = `customer_deposit_refund:${input.idempotencyKey}`;
+    const posted = await ledger.postInTransaction(client, ctx, {
+      postingDate: refundDate, sourceKey: `journal:${sourceKey}`,
+      description: `Deposit refund for cancelled ${order.order_number}`, sourceType: 'customer_deposit_refund',
+      sourceRecordType: 'sales_order', sourceRecordId: order.id, currency: order.currency,
+      lines: [
+        { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: amountMinor, customerId: order.customer_id },
+        { accountKey: 'CASH', creditMinor: amountMinor, customerId: order.customer_id },
+      ],
+    });
+    const id = newId('depositrefund');
+    await client.query(`INSERT INTO accounting_deposit_refunds
+      (id,workspace_id,sales_order_id,customer_id,amount_minor,currency,refund_date,method,reference,journal_entry_id,source_key,created_by_user_id,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [id, ctx.workspaceId, order.id, order.customer_id, amountMinor, order.currency, refundDate, input.method || null,
+      input.reference || null, posted.entry.id, sourceKey, ctx.actorId, nowIso()]);
+    const result = { refundId: id, amountMinor, salesOrderId: order.id, journalEntryId: posted.entry.id };
+    await completeOperation(client, operation, result);
+    return { ...result, replayed: false };
+  });
+}
+
 function recordCustomerPayment(database, ctx, input) {
   return recordPayment(database, ctx, { ...input, direction: 'CUSTOMER_RECEIPT' });
 }
@@ -1266,7 +1311,7 @@ module.exports = {
   reviseDraftSalesOrderLine,
   reviseDraftSalesOrderLineInTransaction,
   recordCustomerPayment,
-  recordCustomerDeposit,
+  recordCustomerDeposit,refundCustomerDeposit,
   recordSupplierPayment,
   recordSupplierPaymentInTransaction,
 };

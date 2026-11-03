@@ -1877,5 +1877,17 @@
   });
 })();
 
+// A business time zone nobody has chosen follows the browser until it is saved.
+(function () {
+  var zone; try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return; }
+  if (!zone) return;
+  document.querySelectorAll('input[data-business-time-zone]').forEach(function (input) { if (!input.value) input.value = zone; });
+  document.querySelectorAll('select[data-time-zone-default="browser"]').forEach(function (select) {
+    if (zone === select.value || !Array.prototype.some.call(select.options, function (o) { return o.value === zone; })) return;
+    select.value = zone;
+    var hint = select.parentElement.querySelector('[data-time-zone-hint]'); if (hint) hint.hidden = false;
+  });
+})();
+
 // Brand security-service navigation failures without caching or repeating requests.
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/edge-error-worker.js', {scope:'/', updateViaCache:'none'}).catch(function() {});

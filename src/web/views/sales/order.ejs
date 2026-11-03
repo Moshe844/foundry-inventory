@@ -521,7 +521,8 @@
       <div>
         <h2>Fulfilment</h2>
         <span class="t-xs t-muted">
-          <% if (locals.money && money.blocksPicking) { %>Waiting on payment
+          <% if (order.status === 'CANCELLED') { %><%= boxes.length %> <%= boxes.length === 1 ? 'shipment' : 'shipments' %>
+          <% } else if (locals.money && money.blocksPicking) { %>Waiting on payment
           <% } else if (fulfilment.detail) { %><%= fulfilment.detail %><% } else { %>
             <%= boxes.length %> <%= boxes.length === 1 ? 'shipment' : 'shipments' %>
           <% } %>
@@ -535,7 +536,7 @@
          * badge saying so beside a sentence saying the opposite is the kind of
          * thing that makes somebody stop believing the screen.
          */
-        var fulfilmentWord = (locals.money && money.blocksPicking && fulfilment.state === 'Ready to pick')
+        var fulfilmentWord = order.status === 'CANCELLED' ? 'Cancelled' : (locals.money && money.blocksPicking && fulfilment.state === 'Ready to pick')
           ? 'Held until paid' : (fulfilment.label || fulfilment.state);
       %>
       <span class="badge badge--<%= ['Shipped', 'Delivered'].indexOf(fulfilmentWord) >= 0 ? 'ok'
@@ -612,7 +613,9 @@
       </table>
     <% } %>
 
-    <% if (locals.shipNow) { %>
+    <% if (order.status === 'CANCELLED' && boxes.some(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })) { %>
+      <div class="card-body"><p class="ship-now__warn">This order is cancelled, but a parcel still has a saved label. <a href="/fulfilment/<%= boxes.filter(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })[0].id %>#label">Void the label</a></p></div>
+    <% } else if (locals.shipNow) { %>
       <%- include('ship-now', { sn: shipNow, order: order }) %>
     <% } else if (freeUnits && locals.money && money.blocksPicking) { %>
       <div class="card-body">

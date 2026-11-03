@@ -1261,3 +1261,8 @@ details.ship-way .ox-ship__form { max-width: 520px; margin-top: 14px; padding-to
   .ship-acct { padding: 16px; }
 }
 .ship-now > .ship-now__size { order: 0; flex-basis: auto; }
+/* Deposit to refund on a cancelled order. */
+.ox-refund { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ox-divider); }
+.ox-refund p { margin: 0 0 10px; font-size: 13px; color: var(--ox-text-2); }
+.ox-refund form { display: flex; flex-direction: column; gap: 10px; }
+.ox-refund .ox-btn { align-self: flex-start; }

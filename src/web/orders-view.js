@@ -58,7 +58,9 @@ function statusBadge(order) {
 
 // Payment is read from money actually received, not from whether an invoice
 // exists yet: an order paid upfront is paid before anything has shipped.
-function paymentBadge(order, invoiced, paidMinor) {
+function paymentBadge(order, invoiced, paidMinor, deposit) {
+  if (deposit && deposit.toRefundMinor > 0) return { text: 'Deposit to refund', tone: 'amber' };
+  if (deposit && deposit.refundedMinor > 0 && !invoiced) return { text: 'Refunded', tone: 'grey' };
   const total = Number(order.pricing.totalMinor || 0);
   const quiet = order.status === 'DRAFT' || (order.status === 'CANCELLED' && !shippedSome(order));
   if (quiet && !paidMinor) return null;
@@ -101,6 +103,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
     WHERE workspace_id=$1 AND direction='CUSTOMER_RECEIPT' AND status='POSTED' AND sales_order_id IS NOT NULL
     GROUP BY sales_order_id`, [workspaceId])).rows;
   const paid = new Map(paidRows.map((row) => [row.sales_order_id, Number(row.minor)]));
+  const deposits = new Map((await require('../sales/postgres-deposit-refunds').positions(database, workspaceId)).map((row) => [row.orderId, row]));
 
   const all = result.orders.map((order) => {
     const tabKey = bucket(order);
@@ -109,7 +112,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
       customer: order.customer.name, initials: initials(order.customer.name),
       date: shortDay(order.order_date || order.created_at), day: isoDay(order.order_date || order.created_at),
       totalMinor: Number(order.pricing.totalMinor || 0), balanceMinor: Number(order.balance_minor || 0),
-      currency: order.currency || 'USD', badge: statusBadge(order), payment: paymentBadge(order, invoiced.has(order.id), paid.get(order.id) || 0),
+      currency: order.currency || 'USD', badge: statusBadge(order), payment: paymentBadge(order, invoiced.has(order.id), paid.get(order.id) || 0, deposits.get(order.id)),
       action: rowAction(order, tabKey), attention: tabKey === 'needs', muted: order.status === 'CANCELLED' && tabKey === 'done',
     };
   });
@@ -122,7 +125,6 @@ async function ordersList(database, workspaceId, result, query = {}) {
   const page = Math.min(pages, Math.max(1, Number.parseInt(query.page, 10) || 1));
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const month = new Date().toISOString().slice(0, 7);
   const open = result.orders.filter((order) => ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'].includes(order.status));
   const readyToShip = all.filter((row) => row.status === 'CONFIRMED');
   const unpaid = all.filter((row) => row.tab === 'unpaid');
@@ -130,8 +132,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
     open: { count: open.length, minor: open.reduce((sum, order) => sum + Number(order.pricing.totalMinor || 0), 0) },
     ready: { count: readyToShip.length, first: readyToShip.length === 1 ? readyToShip[0].number : null },
     unpaid: { count: unpaid.length, minor: unpaid.reduce((sum, row) => sum + row.balanceMinor, 0) },
-    month: { minor: all.filter((row) => row.day.startsWith(month) && !['DRAFT', 'CANCELLED'].includes(row.status))
-      .reduce((sum, row) => sum + row.totalMinor, 0) },
+    month: await require('../accounting/posted-sales').thisMonth(database, workspaceId),
   };
   return { tab, q, counts, rows, page, pages, shown: rows.length, matching: filtered.length, kpis,
     currency: (result.orders[0] && result.orders[0].currency) || 'USD' };

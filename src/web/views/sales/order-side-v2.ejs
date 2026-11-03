@@ -29,8 +29,10 @@
   var pendingCard = requests.filter(function (r) { return r.status === 'PENDING'; })[0];
   var canCollect = owed > 0 && order.status !== 'CANCELLED' && locals.canRecordPayments !== false;
   // Paid means nothing is owed, before an invoice exists as well as after.
-  var state = owed === 0 && Number(money.paidMinor || 0) > 0 && !refunded ? 'Paid' : sv.state;
-  var stateTone = { Paid: 'green', 'Partly paid': 'amber', Unpaid: money.invoiced ? 'rose' : 'grey' }[state] || 'grey';
+  var toRefund = Number(money.depositToRefundMinor || 0);
+  var cancelled = order.status === 'CANCELLED' && !money.invoiced;
+  var state = toRefund > 0 ? 'Deposit to refund' : cancelled ? 'Cancelled' : owed === 0 && Number(money.paidMinor || 0) > 0 && !refunded ? 'Paid' : sv.state;
+  var stateTone = { Paid: 'green', 'Partly paid': 'amber', 'Deposit to refund': 'amber', Unpaid: money.invoiced ? 'rose' : 'grey' }[state] || 'grey';
   var bank = locals.bankDetails;
   var bankText = bank ? [bank.bank_name, 'Account name: ' + bank.account_name, bank.routing_number ? 'Routing: ' + bank.routing_number : null, 'Account: ' + bank.account_number, bank.note].filter(Boolean).join('\n') : '';
   var dollars = function (minor) { return (Number(minor || 0) / 100).toFixed(2); };
@@ -46,8 +48,22 @@
       <div><dt>Order total</dt><dd class="ox-num"><%= helpers.money(money.totalMinor, cur) %></dd></div>
       <div><dt>Paid</dt><dd class="ox-num"><%= helpers.money(money.paidMinor, cur) %></dd></div>
     <% } %>
-    <div class="ox-paycard__due"><dt>Balance due</dt><dd class="ox-num"><%= helpers.money(owed, cur) %></dd></div>
+    <% if (cancelled && refunded) { %><div><dt>Refunded</dt><dd class="ox-num"><%= helpers.money(refunded, cur) %></dd></div><% } %>
+    <% if (toRefund > 0) { %><div class="ox-paycard__due"><dt>Deposit to refund</dt><dd class="ox-num"><%= helpers.money(toRefund, cur) %></dd></div>
+    <% } else if (!cancelled) { %><div class="ox-paycard__due"><dt>Balance due</dt><dd class="ox-num"><%= helpers.money(owed, cur) %></dd></div><% } %>
   </dl>
+  <% if (toRefund > 0 && locals.canRecordPayments !== false) { %>
+  <div class="ox-refund" id="deposit-refund">
+    <p>This order was cancelled after the customer paid. Send the money back, then record it here. If they paid online, refund it in your payment provider first.</p>
+    <form method="post" action="/orders/<%= order.id %>/deposit-refund" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.depositRefundKey %>">
+      <label class="ox-field"><span>Amount</span><input name="amount" inputmode="decimal" required value="<%= dollars(toRefund) %>"></label>
+      <label class="ox-field"><span>How it was returned <small>optional</small></span><input name="method" maxlength="60" placeholder="Card, cash, bank transfer"></label>
+      <label class="ox-field"><span>Reference <small>optional</small></span><input name="reference" maxlength="120"></label>
+      <button class="ox-btn ox-btn--primary" type="submit">Record refund</button>
+    </form>
+  </div>
+  <% } %>
   <% if (receipts.length) { %>
   <ul class="ox-receipts" aria-label="Payments received">
     <% receipts.forEach(function (receipt) { %>

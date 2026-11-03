@@ -197,6 +197,10 @@ async function salesOrderPage(database,workspaceId,id){
     heldReason:{pick:held?'The agreed payment is still due before this order can be picked.':null,
       ship:terms?.hold_shipping&&invoiceOutstanding>0?'The remaining balance is due before this order can ship.':null},
     blocksPicking:held,blocksShipping:Boolean(terms?.hold_shipping&&invoiceOutstanding>0),override:null,dueDate:null};
+  // A cancelled order with no invoice owes nothing. What was already paid is the customer's to get back.
+  if(detail.order.status==='CANCELLED'){const deposit=await require('../../sales/postgres-deposit-refunds').forOrder(database,workspaceId,id);
+    money.depositToRefundMinor=deposit?.toRefundMinor||0;money.refundedMinor+=deposit?.refundedMinor||0;
+    if(!detail.invoices.length)Object.assign(money,{outstandingMinor:0,dueNowMinor:0,blocksPicking:false,blocksShipping:false,state:'Cancelled',heldReason:{pick:null,ship:null}});}
   const accountingTotals=accountingRows.rows.reduce((total,row)=>({revenueMinor:total.revenueMinor+Number(row.revenue_minor),
     cogsMinor:total.cogsMinor+Number(row.cogs_minor)}),{revenueMinor:0,cogsMinor:0});
   const latestAccounting=accountingRows.rows[0];const accounting=latestAccounting?{id:latestAccounting.id,
@@ -1042,14 +1046,14 @@ function createPostgresCommerceRouter(database,options={}){
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
     // The parcel being shipped through a carrier right now: its rates and label are shown on the order itself.
-    const openParcel=shippingReady?page.shipments.find(box=>['PICKING','PACKED'].includes(box.status)&&!['COLLECTED','DELIVERED_BY_US'].includes(box.handover)):null;
+    const openParcel=shippingReady&&page.order.status!=='CANCELLED'?page.shipments.find(box=>['PICKING','PACKED'].includes(box.status)&&!['COLLECTED','DELIVERED_BY_US'].includes(box.handover)):null;
     let shipNow=null;
     if(openParcel){const carriers=require('../../sales/carriers'),current=await shipping.state(database,req.ctx.workspaceId,openParcel.id);
       shipNow={shipment:current.shipment,blocked:current.blocked,accounts:shippingAccounts.map(a=>a.providerName),
         rates:current.rates.map(rate=>({...rate,carrierName:carriers.displayName(rate.carrier)})),
         carrierName:current.shipment.carrier?carriers.displayName(current.shipment.carrier):null,
         trackingUrl:current.shipment.tracking_url||carriers.trackingUrlFor(current.shipment.carrier,current.shipment.tracking_number)};}
-    return res.page('sales/order',{shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    return res.page('sales/order',{depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
@@ -1250,6 +1254,13 @@ function createPostgresCommerceRouter(database,options={}){
     return res.redirect(303,`/orders/${req.params.id}`);
   }));
 
+  router.post('/orders/:id/deposit-refund',requirePermission(permissions.RECORD_PAYMENTS,'refund customer deposits'),asyncRoute(async(req,res)=>{
+    const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id),amountMinor=minor(req.body.amount,'Refund amount',detail.order.currency);
+    await workflows.refundCustomerDeposit(database,req.ctx,{salesOrderId:detail.order.id,amountMinor,refundDate:req.body.refundDate||dateToday(req),
+      method:trimOrNull(req.body.method),reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-deposit-refund')});
+    req.flash('success','Refund of '+require('../../pricing/postgres-service').formatMinor(amountMinor,detail.order.currency)+' recorded.');
+    return res.redirect(303,'/orders/'+req.params.id);
+  }));
   router.post('/sales/orders/:id/payment',requirePermission(permissions.RECORD_PAYMENTS,'record customer payments'),asyncRoute(async(req,res)=>{
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const invoice=detail.invoices.find((candidate)=>['OPEN','PARTIALLY_PAID'].includes(candidate.status));

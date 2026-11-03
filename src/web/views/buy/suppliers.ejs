@@ -12,7 +12,7 @@
     var parts = Object.keys(p).filter(function (k) { return p[k]; }).map(function (k) { return k + '=' + encodeURIComponent(p[k]); });
     return '/suppliers' + (parts.length ? '?' + parts.join('&') : '');
   };
-  var tabs = [['all', 'All'], ['email', 'Missing email'], ['owed', 'Owed money'], ['archived', 'Archived']];
+  var tabs = [['all', 'Active'], ['email', 'Missing email'], ['owed', 'Owed money'], ['archived', 'Archived']];
 %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
 <div class="ox ox-buy" data-ox-page="suppliers">
