@@ -89,7 +89,8 @@ const numbersOf = (text) => (String(text || '').match(/\d+(?:[.,]\d+)?/g) || [])
 
 // References may contain digits without establishing a quantity. A cited
 // order number, tracking code, date or URL is valid only as that whole token.
-const REFERENCE = /https?:\/\/[^\s]+|\b\d{4}-\d{2}-\d{2}\b|\b(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*\b/g;
+const TIMESTAMP = /\b\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2})?\b/g;
+const REFERENCE = new RegExp('https?:\\/\\/[^\\s]+|'+TIMESTAMP.source+'|\\b\\d{4}-\\d{2}-\\d{2}\\b|\\b(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\\d)[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*\\b','g');
 function withoutReferences(text, allowed) {
   return String(text || '').replace(REFERENCE, token => !allowed || allowed.has(token) ? ' ' : token);
 }
@@ -226,7 +227,7 @@ function permittedFrom(message, facts) {
 
 function datesAreGrounded(text, message, facts) {
   const source = `${message.subject || ''} ${message.body_text || ''} ${facts.join(' ')}`.toLowerCase();
-  for (const named of [...(String(text).match(WHEN) || []), ...(String(text).match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])]) {
+  for (const named of [...(String(text).match(WHEN) || []), ...(String(text).match(TIMESTAMP) || []), ...(String(text).match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])]) {
     if (!source.includes(named.toLowerCase())) return false;
   }
   return true;
