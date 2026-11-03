@@ -1104,3 +1104,73 @@ details.ox-billing-section[open] > summary h2::after { content: " −"; }
 [data-plan-capacity] dd { overflow-wrap: anywhere; }
 @media (max-width: 819px) { [data-plan-capacity] dl { grid-template-columns: 1fr; gap: 2px; } [data-plan-capacity] dd { text-align: left; margin-bottom: 8px; } }
 .ox-plan-now__hint { flex-basis: 100%; margin: 0; font-size: 12.5px; color: var(--ox-text-3); }
+
+/* Shipping settings: connected accounts, the ways to connect (in order), then
+   optional preferences and limits. */
+.ox-ship { max-width: 900px; }
+.ox-ship__card { padding: 18px 20px; margin: 0 0 14px; }
+.ox-ship__card-h h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.ox-ship__card-h h2 small { font-size: 12px; font-weight: 500; color: var(--ox-text-3); margin-left: 4px; }
+.ox-ship__card-h p { margin: 4px 0 0; color: var(--ox-text-2); font-size: 13.5px; }
+.ox-ship__account { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 0 0; margin-top: 14px; border-top: 1px solid var(--ox-divider); }
+.ox-ship__account-main p { margin: 4px 0; color: var(--ox-text-2); font-size: 13.5px; }
+.ox-ship__account form { margin: 0; }
+.ox-ship__ways { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; }
+.ox-ship__way { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 20px; margin: 0; }
+.ox-ship__way.is-primary { border-color: #C9C4FB; box-shadow: 0 0 0 3px rgba(79,70,229,.08), var(--ox-shadow); }
+.ox-ship__way h3 { margin: 0; font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ox-ship__way p { margin: 3px 0 0; color: var(--ox-text-2); font-size: 13.5px; }
+.ox-ship__way form { margin: 0; }
+.ox-ship__step { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--ox-primary-soft); color: #4338CA; font-weight: 700; font-size: 13px; }
+details.ox-ship__way { display: block; }
+details.ox-ship__way > summary { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 14px; align-items: center; cursor: pointer; list-style: none; }
+details.ox-ship__way > summary::-webkit-details-marker { display: none; }
+details.ox-ship__way[open] .ox-ship__open { display: none; }
+.ox-ship__form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+details.ox-ship__way .ox-ship__form { margin-left: 46px; padding-top: 14px; border-top: 1px solid var(--ox-divider); max-width: 520px; }
+.ox-ship__form > .ox-btn { align-self: flex-start; }
+.ox-ship__field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ox-text-2); }
+.ox-ship__field input, .ox-ship__field select { height: 40px; padding: 0 12px; border: 1px solid var(--ox-border); border-radius: var(--ox-r); background: #fff; font: inherit; font-size: 14px; color: var(--ox-text); }
+.ox-ship__field--minor input { height: 36px; }
+.ox-ship__help { margin: -4px 0 0; font-size: 13px; color: var(--ox-text-2); background: var(--ox-grey-bg); padding: 9px 12px; border-radius: var(--ox-r); }
+.ox-ship__fine { margin: 0; font-size: 12.5px; color: var(--ox-text-3); }
+.ox-ship > .ox-ship__fine { margin: 4px 2px 0; }
+.ox-ship__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ox-ship__choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ox-ship__choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--ox-border); border-radius: var(--ox-r); cursor: pointer; }
+.ox-ship__choice:has(input:checked) { border-color: var(--ox-primary); background: var(--ox-primary-soft); }
+.ox-ship__choice span { display: flex; flex-direction: column; gap: 2px; }
+.ox-ship__choice small { color: var(--ox-text-2); font-size: 12.5px; }
+.ox-ship__check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
+.ox-ship__rules { list-style: none; margin: 12px 0 0; padding: 0; }
+.ox-ship__rules li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--ox-divider); font-size: 13.5px; }
+.ox-ship__rules form { margin: 0; }
+@media (max-width: 819px) {
+  .ox-ship__way, details.ox-ship__way > summary { grid-template-columns: 28px minmax(0, 1fr); }
+  .ox-ship__way > form, .ox-ship__way > .ox-btn, details.ox-ship__way > summary .ox-ship__open { grid-column: 1 / -1; }
+  .ox-ship__way > form .ox-btn, .ox-ship__way > .ox-btn { width: 100%; }
+  details.ox-ship__way .ox-ship__form { margin-left: 0; }
+  .ox-ship__grid, .ox-ship__choices { grid-template-columns: 1fr; }
+  .ox-ship__account { flex-direction: column; }
+}
+
+/* Ship this order (order page): weight in, rates out. */
+.ship-now { display: flex; flex-direction: column; gap: 12px; }
+.ship-now__to { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.ship-now__to span { font-size: 12px; color: #7A839C; text-transform: uppercase; letter-spacing: .04em; }
+.ship-now__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.ship-now__field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: #475069; }
+.ship-now__pair { display: inline-flex; gap: 6px; }
+.ship-now__pair input { width: 90px; height: 40px; padding: 0 10px; border: 1px solid #E5E8F1; border-radius: 10px; font: inherit; }
+.ship-now__pair select { height: 40px; padding: 0 8px; border: 1px solid #E5E8F1; border-radius: 10px; font: inherit; background: #fff; }
+.ship-now__size { flex-basis: 100%; order: 3; font-size: 13px; }
+.ship-now__size summary { cursor: pointer; color: #4F46E5; }
+.ship-now__size[open] summary { margin-bottom: 8px; }
+.ship-now__size .ship-now__pair input { width: 70px; }
+.ship-now__connect { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ship-now__other { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 10px; border-top: 1px solid #EEF0F6; font-size: 13.5px; }
+.ship-now__other form { margin: 0; }
+@media (max-width: 819px) { .ship-now__form { flex-direction: column; align-items: stretch; } .ship-now__form .btn { width: 100%; } }
+.ship-settings-h { margin: 18px 20px 0; padding-top: 14px; border-top: 1px solid #EEF0F6; font-size: 14px; font-weight: 650; color: #475069; }
+details.ox-ship__way > summary::before { display: none !important; content: none !important; }
+.ship-now__warn { margin: 0; padding: 9px 12px; border-radius: 10px; background: #FFF6E5; color: #7C3A06; font-size: 13.5px; }

@@ -98,7 +98,7 @@
      </div>
      <div class="ox-grid2">
       <div id="order-destination">
-       <label class="ox-field"><span>Ship to</span><textarea name="customerShippingAddress" id="order-customer-address" data-customer-field="address" rows="3" placeholder="Street, town, state, postcode" aria-describedby="ox-address-help"><%= form.customerShippingAddress??'' %></textarea></label>
+       <div class="ox-field"><span>Ship to</span><%- include('../partials/address-fields',{idPrefix:'order-addr',target:'order-customer-address'}) %></div><label class="addr-native"><span>Full delivery address</span><textarea name="customerShippingAddress" id="order-customer-address" data-customer-field="address" rows="3" placeholder="Street, town, state, postcode" aria-describedby="ox-address-help"><%= form.customerShippingAddress??'' %></textarea></label>
        <small class="ox-help" id="ox-address-help" data-ox-address-help>Saved with this order. The customer's saved address stays as it is.</small>
       </div>
       <label class="ox-field"><span data-ox-from-label>Ship from</span><select name="fulfillmentLocationId" id="order-location"><option value="" <%= !form.fulfillmentLocationId?'selected':'' %>>Best location (auto)</option><% locations.forEach(l=>{ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId===l.id?'selected':'' %>><%= l.name %></option><% }) %></select><small class="ox-help" data-ox-from-help>We pick the location that has it all in stock.</small></label>

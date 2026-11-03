@@ -1,0 +1,24 @@
+/* Address boxes: street and unit across, then ZIP, city, state; country last. */
+.addr { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 12px; width: 100%; }
+.addr__f { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 13px; font-weight: 500; color: #475069; min-width: 0; }
+.addr__f small { font-weight: 400; color: #7A839C; }
+.addr__f input, .addr__f select { width: 100%; height: 40px; padding: 0 11px; border: 1px solid #DCE0EA; border-radius: 10px; background: #fff; font: inherit; font-size: 14px; color: #0F172A; box-sizing: border-box; }
+.addr__f input:focus, .addr__f select:focus { outline: none; border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,.15); }
+.addr__line1 { grid-column: span 4; }
+.addr__line2 { grid-column: span 2; }
+.addr__zip { grid-column: span 2; }
+.addr__city { grid-column: span 2; }
+.addr__state { grid-column: span 2; }
+.addr__country { grid-column: span 3; }
+.addr__note { grid-column: 1 / -1; margin: -4px 0 0; font-size: 12.5px; color: #B45309; }
+.addr-native { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; margin: -1px !important; padding: 0 !important; border: 0 !important; opacity: 0; }
+.addr-native textarea { width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; border: 0 !important; resize: none; }
+fieldset.addr-set { border: 0; padding: 0; margin: 0; }
+fieldset.addr-set > legend { font-weight: 600; font-size: 14px; margin-bottom: 8px; padding: 0; }
+#order-destination { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .addr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .addr__line1, .addr__line2, .addr__country { grid-column: 1 / -1; }
+  .addr__zip, .addr__city, .addr__state { grid-column: span 1; }
+  .addr__city { grid-column: 1 / -1; }
+}

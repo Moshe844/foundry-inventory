@@ -1,3 +1,4 @@
+<% if (locals.postgresPlacement) { %><link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>"><% } %>
 <%
   /*
    * One box, from the shelf to the customer's door.
@@ -355,6 +356,131 @@
         </div>
       <% } %>
 
+      <%# Once rates are in, choosing one comes first; the parcel and label settings follow. %>
+      <% if (locals.postgresPlacement && ship.rates.length) { %>
+      <% if (ship.rates.length) { %>
+        <div class="card-body">
+          <% if (ship.ruled && ship.ruled.rate) { %>
+            <div class="notice"><div>
+              <strong>A rule of yours covers this.</strong><br><%= ship.ruled.because %>
+            </div></div>
+          <% } else if (ship.recommended) { %>
+            <p class="lede">
+              StockChief recommends the highlighted rate below —
+              <%= helpers.money(ship.recommended.rate.amountMinor, ship.recommended.rate.currency) %>.
+            </p>
+            <p class="hint"><%= ship.recommended.because %>
+              <% if (ship.ruled) { %> <%= ship.ruled.because %><% } %></p>
+          <% } %>
+
+          <form method="post" action="/fulfilment/<%= s.id %>/label" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <%
+              var preferredRate = ship.ruled && ship.ruled.rate ? ship.ruled.rate
+                : ship.recommended && ship.recommended.rate ? ship.recommended.rate : ship.rates[0];
+              var otherRates = ship.rates.filter(function (rate) {
+                return !preferredRate || rate.id !== preferredRate.id;
+              });
+            %>
+            <ul class="rate-list">
+              <% if (preferredRate) { var rate = preferredRate; %>
+                <li class="rate-row is-pick">
+                  <label class="choice">
+                    <input type="radio" name="rateId" value="<%= rate.id %>" checked required>
+                    <span>
+                      <strong><%= rate.carrierName %> <%= rate.service %></strong>
+                      <% if(locals.postgresPlacement){ %><small> · via <%= rate.provider %></small><% } %>
+                      — <%= helpers.money(rate.amountMinor, rate.currency) %>
+                      <% if (rate.deliveryDate) { %>
+                        · expected <%= rate.deliveryDate %><% if (rate.guaranteed) { %> (guaranteed)<% } %>
+                      <% } else if (rate.deliveryDays) { %>
+                        · <%= rate.deliveryDays %> days
+                      <% } else { %>
+                        · no date given
+                      <% } %>
+                      <% if (ship.promised && rate.deliveryDate && rate.deliveryDate > ship.promised) { %>
+                        <span class="badge badge--warn">after the promised date</span>
+                      <% } %>
+                    </span>
+                  </label>
+                </li>
+              <% } %>
+            </ul>
+            <% if (otherRates.length) { %>
+              <details class="disclosure">
+                <summary>Compare <%= otherRates.length %> other rate<%= otherRates.length === 1 ? '' : 's' %></summary>
+                <ul class="rate-list">
+                  <% otherRates.forEach(function (rate) { %>
+                    <li class="rate-row">
+                      <label class="choice">
+                        <input type="radio" name="rateId" value="<%= rate.id %>" <%= preferredRate ? '' : 'required' %>>
+                        <span>
+                          <strong><%= rate.carrierName %> <%= rate.service %></strong>
+                          <% if(locals.postgresPlacement){ %><small> · via <%= rate.provider %></small><% } %>
+                          — <%= helpers.money(rate.amountMinor, rate.currency) %>
+                          <% if (rate.deliveryDate) { %>
+                            · expected <%= rate.deliveryDate %><% if (rate.guaranteed) { %> (guaranteed)<% } %>
+                          <% } else if (rate.deliveryDays) { %>
+                            · <%= rate.deliveryDays %> days
+                          <% } else { %>
+                            · no date given
+                          <% } %>
+                        </span>
+                      </label>
+                    </li>
+                  <% }) %>
+                </ul>
+              </details>
+            <% } %>
+            <p class="t-xs t-muted">
+              Quoted <%= ship.rates[0].quotedAt.slice(0, 16).replace('T', ' ') %>. Rates go stale;
+              get fresh ones if this has been sitting.
+            </p>
+            <div class="button-row" style="margin-top:12px;">
+              <button class="btn btn--primary" type="submit" <%= s.provider_packages?.some(p=>p.externalLabel===true)?'disabled':'' %>>Buy label</button><% if(s.provider_packages?.some(p=>p.externalLabel===true)){ %><p role="status">This parcel already has an externally managed label. Use its tracking and confirm physical handoff here; manage that label in the shipping account.</p><% } %>
+            </div>
+            <p class="t-xs t-muted" style="margin-top:8px;">
+              This buys postage only. The parcel remains packed and every unit stays in inventory
+              until you confirm it was physically handed over.
+            </p>
+          </form>
+        </div>
+      <% } %>
+        <h3 class="ship-settings-h">Package and label settings</h3>
+      <% if (ship.boxes && ship.boxes.length && s.status === 'PACKED') { %>
+        <div class="card-body">
+          <% if(locals.postgresPlacement){ %><%- include('../shipping/parcel-setup',{shipment:s,shipping:ship}) %><% } else { %>
+          <form method="post" action="/fulfilment/<%= s.id %>/packages" class="inline-form" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <% ship.boxes.forEach(function (box, index) { %>
+            <label class="field">
+              <span class="field-label"><%= ship.boxes.length > 1 ? `Weight of package ${index + 1} (grams)` : 'Weight of this parcel (grams)' %></span>
+              <input class="input" type="number" name="weightGrams" min="1"
+                value="<%= box.weightGrams || '' %>">
+              <span class="field-hint">
+                <% if (box.estimated) { %>
+                  Added up from the product weights StockChief has. Weigh the box and correct it if that is wrong —
+                  a rate quoted on a guess gets corrected at the counter.
+                <% } else { %>What you measured.<% } %>
+              </span>
+            </label>
+            <% }) %>
+            <button class="btn btn--sm" type="submit"><%= ship.boxes.length > 1 ? 'Save package weights' : 'Save weight' %></button>
+          </form><% } %>
+        </div>
+      <% } %>
+
+      <% if (!ship.blocked.length) { %>
+        <div class="card-foot">
+          <form method="post" action="/fulfilment/<%= s.id %>/rates" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn <%= ship.rates.length ? '' : 'btn--primary' %>" type="submit">
+              <%= ship.rates.length ? 'Get fresh rates' : 'Get carrier rates' %>
+            </button>
+          </form>
+        </div>
+      <% } %>
+      <% } else { %>
       <% if (ship.boxes && ship.boxes.length && s.status === 'PACKED') { %>
         <div class="card-body">
           <% if(locals.postgresPlacement){ %><%- include('../shipping/parcel-setup',{shipment:s,shipping:ship}) %><% } else { %>
@@ -476,6 +602,7 @@
             </p>
           </form>
         </div>
+      <% } %>
       <% } %>
     </div>
   </section>

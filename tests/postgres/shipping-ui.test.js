@@ -279,7 +279,9 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       {owner:'ask-shipping-quote-worker'});
     assert.equal(staleJob.status,'DEAD');
     assert.equal(quoteCalls,beforeStale,'a stale approved quote never reaches the carrier');
-    for(const [provider,apiKey]of [['easypost','EZTK_fixture_easy_5678'],['shipstation','TEST_fixture_station_4567'],['shippo','shippo_test_fixture_3456']]){
+    // EasyPost is no longer offered for new connections; an account connected earlier keeps working.
+    await require('../../src/shipping/postgres-accounts').connect(database,ctx,{provider:'easypost',apiKey:'EZTK_fixture_easy_5678'});
+    for(const [provider,apiKey]of [['shipstation','TEST_fixture_station_4567'],['shippo','shippo_test_fixture_3456']]){
       await page.goto(`${base}/settings/shipping`);
       await page.locator('details#existing-carrier-connection > summary').click();
       await page.getByLabel('Shipping platform',{exact:true}).selectOption(provider);

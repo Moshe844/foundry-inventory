@@ -925,6 +925,11 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   function customerEntry(req,res,form={},formError=null,status=200){return res.status(status).page('sales/customer-new',{title:'New customer',nav:'sales',form,formError,screenGuide:null,postgresCustomer:true,canSetTaxExemption:permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
+  // City and state for a ZIP or postal code, for the address boxes.
+  router.get('/address/postal',requirePermission(permissions.VIEW_SALES,'look up an address'),asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','private, max-age=86400');
+    return res.json({places:await require('../../lib/postal-lookup').towns(req.query.country,req.query.code)});
+  }));
   router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>customerEntry(req,res,{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''}));
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
@@ -1027,7 +1032,8 @@ function createPostgresCommerceRouter(database,options={}){
       commerce.locations(database,req.ctx.workspaceId),
     ]);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
-    return res.page('sales/order',{bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    const shippingReady=page.order.delivery_method==='SHIP'&&(await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId)).length>0;
+    return res.page('sales/order',{shippingReady,shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
@@ -1166,19 +1172,7 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/sales/orders/:id/pick',requirePermission(permissions.OPERATE,'fulfill sales orders'),asyncRoute(async(req,res)=>{
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
-    if(detail.order.delivery_method!=='SHIP')throw new ValidationError(
-      'Pickup orders do not need a carrier parcel. Use “Record what physically left” when the customer collects it.');
-    const lines=detail.lines.flatMap((line)=>line.allocations.map((allocation)=>({lineId:line.id,
-      locationId:allocation.location_id,quantity:Number(allocation.quantity)})));
-    for(const line of detail.lines.filter(l=>l.kitReady>0)){
-      const places=[...new Set(line.kitComponents.flatMap(p=>p.allocations.map(a=>a.location_id)))],place=places.find(id=>line.kitComponents.every(p=>p.allocations.filter(a=>a.location_id===id).reduce((n,a)=>n+a.quantity,0)+1e-9>=line.kitReady*Number(p.quantity_per_kit)));
-      if(!place)throw new ValidationError('The kit components are reserved across locations. Move them to one dispatch location for a carrier parcel, or record the exact goods leaving each location below.');
-      lines.push({lineId:line.id,locationId:place,quantity:line.kitReady,kit:true});
-    }
-    if(!lines.length)throw new ValidationError('There is no committed stock ready to pick.');
-    const locationId=lines[0].locationId;
-    if(lines.some((line)=>line.locationId!==locationId))throw new ValidationError(
-      'This order is held at more than one location. Prepare one shipment from each location.');
+    const {lines,locationId}=require('../../sales/parcel-lines').forParcel(detail);
     const result=await shipping.prepare(database,req.ctx,req.params.id,{idempotencyKey:key(req,'shipment-pick'),
       shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,startPicking:true,lines});
     req.flash('success','Pick list opened. Stock remains committed until the parcel is handed over.');

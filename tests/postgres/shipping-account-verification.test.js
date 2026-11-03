@@ -19,8 +19,8 @@ test('the real shipping connection route verifies test keys inside the tenant co
     const parsed=new URL(String(url)),context=require('../../src/commercial/context').current();
     assert.equal(context?.scope?.workspaceId,owner.workspaceId);assert.equal(context?.funded,true);
     assert.equal(String(input.method||'GET'),'GET');
-    assert(['api.easypost.com','api.shipstation.com','api.goshippo.com'].includes(parsed.hostname));
-    const allowed={ 'api.easypost.com':'/v2/shipments','api.shipstation.com':'/v2/carriers','api.goshippo.com':'/carrier_accounts/'};
+    assert(['api.shipengine.com','api.shipstation.com','api.goshippo.com'].includes(parsed.hostname));
+    const allowed={ 'api.shipengine.com':'/v1/carriers','api.shipstation.com':'/v2/carriers','api.goshippo.com':'/carrier_accounts/'};
     assert.equal(parsed.pathname,allowed[parsed.hostname],'verification uses a test-compatible read endpoint');
     calls.push({host:parsed.hostname,workspace:context.scope.workspaceId});
     return new Response(JSON.stringify({shipments:[],carriers:[],results:[]}),{status:200,headers:{'content-type':'application/json'}});
@@ -28,7 +28,7 @@ test('the real shipping connection route verifies test keys inside the tenant co
   const page=await browser.newPage(),base='http://127.0.0.1:'+server.address().port;
   await page.goto(base+'/login');await page.locator('input[name=email]').fill(email);await page.locator('input[name=password]').fill(password);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
-  for(const [provider,key]of [['easypost','EZTK_account_fixture'],['shipstation','TEST_account_fixture'],['shippo','shippo_test_account_fixture']]){
+  for(const [provider,key]of [['shipengine','TEST_account_fixture_engine'],['shipstation','TEST_account_fixture'],['shippo','shippo_test_account_fixture']]){
     await page.goto(base+'/settings/shipping');await page.locator('#existing-carrier-connection > summary').click();
     await page.getByLabel('Shipping platform',{exact:true}).selectOption(provider);await page.getByLabel('API key',{exact:true}).fill(key);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Verify and connect',exact:true}).click()]);

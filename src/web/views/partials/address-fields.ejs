@@ -1,0 +1,21 @@
+<link rel="stylesheet" href="/address-fields.css?v=<%= locals.assetVersion||'current' %>">
+<%#
+  One address, in separate boxes: street, unit, ZIP, city, state, country.
+  Either the boxes are the form fields themselves (names: { line1, line2, city,
+  state, postalCode, country }), or they write one combined line into an
+  existing field (target: its id), for forms that store the address as text.
+  A US or Canadian postal code fills in the city and state.
+%>
+<% const v=locals.values||{},n=locals.names||null,id=locals.idPrefix||'addr',country=(v.country||'US').toUpperCase(),states=helpers.regions.byCountry[country]||null,nm=part=>n&&n[part]?'name="'+n[part]+'"':''; %>
+<div class="addr" data-address-box data-regions="<%= JSON.stringify(helpers.regions.byCountry) %>" <%- locals.target?'data-address-target="'+target+'"':'' %>>
+  <label class="addr__f addr__line1"><span>Street address</span><input data-part="line1" <%- nm('line1') %> maxlength="200" autocomplete="address-line1" value="<%= v.line1||'' %>"></label>
+  <label class="addr__f addr__line2"><span>Apt, suite or unit <small>optional</small></span><input data-part="line2" <%- nm('line2') %> maxlength="200" autocomplete="address-line2" value="<%= v.line2||'' %>"></label>
+  <label class="addr__f addr__zip"><span data-zip-label><%= country==='US'?'ZIP code':'Postal code' %></span><input data-part="postalCode" <%- nm('postalCode') %> maxlength="20" autocomplete="postal-code" value="<%= v.postalCode||'' %>"></label>
+  <label class="addr__f addr__city"><span>City</span><input data-part="city" <%- nm('city') %> maxlength="200" autocomplete="address-level2" list="<%= id %>-cities" value="<%= v.city||'' %>"><datalist id="<%= id %>-cities"></datalist></label>
+  <label class="addr__f addr__state"><span data-state-label><%= country==='CA'?'Province':country==='US'?'State':'State or region' %></span>
+    <select data-part="state" <%- states?nm('state'):'' %> autocomplete="address-level1" <%= states?'':'hidden disabled' %>><option value="">Choose…</option><% (states||helpers.regions.US).forEach(function(s){ %><option value="<%= s[0] %>" <%= String(v.state||'').toUpperCase()===s[0]||String(v.state||'').toLowerCase()===s[1].toLowerCase()?'selected':'' %>><%= s[1] %></option><% }) %></select>
+    <input data-part="stateText" <%- states?'':nm('state') %> maxlength="200" autocomplete="address-level1" value="<%= states?'':v.state||'' %>" <%= states?'hidden disabled':'' %>></label>
+  <label class="addr__f addr__country"><span>Country</span><select data-part="country" <%- nm('country') %> autocomplete="country"><% helpers.regions.COUNTRIES.forEach(function(c){ %><option value="<%= c[0] %>" <%= country===c[0]?'selected':'' %>><%= c[1] %></option><% }) %><% if(!helpers.regions.COUNTRIES.some(c=>c[0]===country)){ %><option value="<%= country %>" selected><%= country %></option><% } %></select></label>
+  <p class="addr__note" data-postal-note hidden></p>
+</div>
+<script src="/address-fields.js?v=<%= locals.assetVersion||'current' %>" defer></script>
