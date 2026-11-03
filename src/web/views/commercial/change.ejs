@@ -1,7 +1,30 @@
-<div class="rm-head"><div><span class="rm-eyebrow">PLAN CHANGE</span><h1>Review before anything changes.</h1><p>StockChief keeps your current plan active until Stripe confirms an upgrade or the paid period reaches a scheduled downgrade.</p></div></div>
-<section class="rm-panel"><div class="rm-panel__head"><h2><%= quote.currentPlan.public_name %> → <%= quote.target.public_name %></h2><span class="right"><span class="rm-pillbadge <%= quote.downgrade?'is-warn':'is-ok' %>"><%= quote.downgrade?'At renewal':'After Stripe confirms' %></span></span></div><div style="padding:20px">
-  <div class="rm-grid rm-grid--2"><div><span class="rm-eyebrow">CURRENT</span><h3><%= quote.currentPlan.public_name %></h3><p><%= String(quote.current.billing_interval||'').toLowerCase() %> billing</p></div><div><span class="rm-eyebrow">NEW PLAN</span><h3><%= quote.target.public_name %></h3><p><%= quote.interval.toLowerCase() %> billing · <strong><%= (Number(quote.interval==='ANNUAL'?quote.target.annual_amount_minor:quote.target.monthly_amount_minor)/100).toLocaleString('en-US',{style:'currency',currency:quote.target.currency}) %></strong></p></div></div>
-  <% if(quote.downgrade){ %><div class="notice notice--warn"><strong>Scheduled for <%= new Date(quote.effectiveAt).toLocaleDateString() %>.</strong> Your current capabilities remain active until then. No records, locations, connections or history are deleted.</div><% } else { %><div class="notice notice--ok"><strong>Immediate upgrade after Stripe confirms it.</strong> Your new billing month or year starts today. Unused paid time is credited. <%= quote.amountDueMinor===null?'The estimated billing adjustment is':'The estimated amount due now is' %> <%= (Number(quote.amountDueMinor??quote.prorationAmountMinor??0)/100).toLocaleString('en-US',{style:'currency',currency:quote.target.currency}) %>. Stripe remains authoritative if taxes, credits or discounts alter the final amount.</div><% } %>
-  <% var excess=Object.values(quote.excess||{});if(excess.length){ %><div class="notice notice--warn"><strong>This downgrade cannot be scheduled yet.</strong><% excess.forEach(function(item){ %><br><%= item.label %>: <%= item.used %> active, <%= item.allowed %> allowed<% }); %><br>Nothing was deleted or disabled.</div><% } %>
-  <div class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/billing">Keep current plan</a><% if(!excess.length){ %><form method="post" action="/billing/change"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="changeKey" value="<%= changeKey %>"><input type="hidden" name="planId" value="<%= quote.target.id %>"><input type="hidden" name="interval" value="<%= quote.interval.toLowerCase() %>"><button class="rm-btn" type="submit"><%= quote.downgrade?'Schedule downgrade':'Confirm upgrade' %></button></form><% } %></div>
-</div></section>
+<% const money=minor=>(Number(minor||0)/100).toLocaleString('en-US',{style:'currency',currency:quote.target.currency||'USD'});
+   const annual=quote.interval==='ANNUAL',price=annual?quote.target.annual_amount_minor:quote.target.monthly_amount_minor,per=annual?'year':'month';
+   const due=quote.amountDueMinor??quote.prorationAmountMinor,excess=Object.values(quote.excess||{}); %>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
+<div class="ox ox-flow ox-change" data-ox-page>
+  <div class="ox-head"><div><h1 class="ox-title"><%= quote.downgrade?'Downgrade to':'Upgrade to' %> <%= quote.target.public_name %></h1>
+    <p class="ox-sub"><%= quote.currentPlan.public_name %> → <%= quote.target.public_name %> · <%= money(price) %>/<%= per %></p></div></div>
+  <section class="ox-card ox-change__order">
+  <% if(quote.downgrade){ %>
+    <div class="ox-change__due"><span>Due today</span><strong><%= money(0) %></strong></div>
+    <ul class="ox-change__lines">
+      <li><span>Your <%= quote.currentPlan.public_name %> plan</span><b>Stays until <%= new Date(quote.effectiveAt).toLocaleDateString('en-US',{dateStyle:'medium'}) %></b></li>
+      <li><span><%= quote.target.public_name %> starts</span><b>Scheduled for <%= new Date(quote.effectiveAt).toLocaleDateString('en-US',{dateStyle:'medium'}) %></b></li>
+      <li><span>Then you pay</span><b><%= money(price) %>/<%= per %></b></li>
+    </ul>
+    <p class="ox-change__fine">Nothing is charged for a downgrade. No records, locations, connections or history are deleted.</p>
+    <% if(excess.length){ %><div class="notice notice--warn"><strong>This downgrade cannot be scheduled yet.</strong><% excess.forEach(function(item){ %><br><%= item.label %>: <%= item.used %> active, <%= item.allowed %> allowed<% }); %><br>Nothing was deleted or disabled.</div><% } %>
+  <% } else { %>
+    <div class="ox-change__due"><span>Due today</span><strong><%= due===null||due===undefined?'—':money(due) %></strong></div>
+    <ul class="ox-change__lines">
+      <li><span><%= quote.target.public_name %> starts</span><b>As soon as the payment goes through</b></li>
+      <li><span>Unused time on <%= quote.currentPlan.public_name %></span><b>Credited in the amount above</b></li>
+      <li><span>Then you pay</span><b><%= money(price) %>/<%= per %>, from today</b></li>
+    </ul>
+    <p class="ox-change__fine">Your card on file is charged when you confirm. If it is declined, you stay on <%= quote.currentPlan.public_name %> and nothing changes. The estimated amount due now is <%= due===null||due===undefined?'not available':money(due) %>; Stripe’s invoice is final if tax, credits or discounts change it.</p>
+  <% } %>
+    <div class="ox-change__actions"><a class="ox-btn ox-btn--ghost" href="/billing">Keep current plan</a>
+    <% if(!excess.length&&(quote.downgrade||due!==null&&due!==undefined)){ %><form method="post" action="/billing/change"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="changeKey" value="<%= changeKey %>"><input type="hidden" name="planId" value="<%= quote.target.id %>"><input type="hidden" name="interval" value="<%= quote.interval.toLowerCase() %>"><button class="ox-btn ox-btn--primary" type="submit"><%= quote.downgrade?'Schedule downgrade':'Confirm upgrade and pay '+money(due) %></button></form><% } else if(!quote.downgrade){ %><p class="ox-change__fine">The amount due could not be worked out right now, so nothing can be charged. Try again in a minute.</p><% } %></div>
+  </section>
+</div>

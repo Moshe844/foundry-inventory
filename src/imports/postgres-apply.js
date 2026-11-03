@@ -5,7 +5,7 @@ const exact=require('../domain/exact-quantity');
 const addExact=(a,b)=>exact.safeNumber(exact.add(a,b),{signed:true});
 async function run(database,ctx,plan,executionId,inputOptions,deps){
  const id=plan.id,options=inputOptions,identities=require('./postgres-execution-identities'),batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
- const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows})});
+ const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows}),...(Number.isSafeInteger(checkpoint?.skusPlanned)?{preparedTotal:checkpoint.skusPlanned}:{})});
  async function phase(operation){return database.transaction(async client=>{
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
   if(!locked||locked.approval_status!=='APPROVED'||locked.integrity_hash!==plan.integrityHash)throw new ValidationError('The approved import changed. Its saved batches remain recorded.');
@@ -15,12 +15,13 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  },{isolation:'SERIALIZABLE',retrySafe:true});}
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
  do {checkpoint=await phase(async(client,saved)=>{
-  await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true}));
+  await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));
   const imported=saved.catalogueStarted&&!saved.cataloguePrepared?0:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
   if(saved.cataloguePrepared){if(Number(saved.savedRows)!==imported)throw new ValidationError('Saved import progress does not match its recorded rows. Its existing records remain safe.');return saved;}
   if(!saved.catalogueStatsPrepared&&plan.recordsValid>=5000){await client.query('ANALYZE import_execution_identities,import_rows');saved.catalogueStatsPrepared=true;}
   if(imported)throw new ValidationError('This import has saved records without a matching execution checkpoint. Review its saved result.');
-  if(!saved.catalogueStarted){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);
+  // New SKUs are what preparing creates; progress is shown against them.
+  if(!saved.catalogueStarted){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);saved.skusPlanned=capacity.skus;
    await entitlements.assertMeterCapacity(client,scope,'active_skus',capacity.skus);}
   const locations=saved.locations||Object.fromEntries(await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]));
   const created=await require('./postgres-prepare-catalogue').prepare(client,ctx,plan,options,deps,saved);
