@@ -19,8 +19,8 @@ async function towns(countryInput, codeInput, options = {}) {
   if (cache.has(key)) return cache.get(key);
   let places = [];
   try {
-    const response = await (options.fetch || providerFetch)(`https://api.zippopotam.us/${country.toLowerCase()}/${code}`,
-      { headers: { accept: 'application/json' } }, { provider: 'Zippopotam', retries: 0, timeoutMs: 3000 });
+    const response = await providerFetch(`https://api.zippopotam.us/${country.toLowerCase()}/${code}`,
+      { headers: { accept: 'application/json' } }, { provider: 'Zippopotam', retries: 0, timeoutMs: 3000, fetch: options.fetch });
     if (response.ok) {
       const body = await response.json();
       places = (Array.isArray(body?.places) ? body.places : []).map((p) => ({ city: String(p['place name'] || '').trim(), state: String(p['state abbreviation'] || '').trim() }))

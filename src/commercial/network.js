@@ -20,6 +20,8 @@ function gmailQuota(url,method){const address=new URL(url);if(address.hostname!=
  if(/^\/gmail\/v1\/users\/[^/]+\/messages\/[^/]+$/.test(path)&&verb==='GET')return {method:'messages.get',units:20};
  return null;}
 function definition(url){const address=new URL(url);const host=address.hostname;
+ if(host==='api.zippopotam.us')return {
+  provider:'zippopotam',capability:'sales_orders.core',version:'public-v1',host};
  if(host==='oauth2.googleapis.com'&&address.pathname==='/token')return {
   provider:'google_oauth',capability:'communications.email_ingestion',version:'oauth2-v1',host};
  const rows=[[/googleapis\.com$/,'gmail','communications.email_ingestion'],[/microsoft\.com$/,'microsoft365','communications.email_ingestion'],

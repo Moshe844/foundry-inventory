@@ -37,6 +37,9 @@ const classification=Object.freeze({
  // Relational workbook interpretation receives the same funded import provider.
  'imports/workbook-relations.js':'METERED',
  'lib/provider-http.js':'METERED',
+ // Postal reads and Shippo authorization use scoped resource accounting;
+ // neither consumes a customer Connected Operation.
+ 'lib/postal-lookup.js':'METERED',
  'manager/operating-instructions.js':'NOT_PG_ENABLED',
  'manager/postgres-operating-instructions.js':'METERED',
  'operations/email.js':'METERED_INTERNAL_COST',
@@ -53,6 +56,7 @@ const classification=Object.freeze({
  'shipping/providers/shippo.js':'METERED',
  'shipping/providers/shipstation.js':'METERED',
  'shipping/shipengine-platform.js':'NOT_PG_ENABLED',
+ 'shipping/shippo-link.js':'METERED',
 });
 function classify(boundary){
  if(boundary.file==='shipping/providers/shipengine.js'&&boundary.expression.includes('options.fetch'))
