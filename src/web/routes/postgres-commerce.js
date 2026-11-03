@@ -274,8 +274,9 @@ function createPostgresCommerceRouter(database,options={}){
     const prefill=['name','email','phone','contactName'].some((field)=>trimOrNull(req.query[field]))
       ?{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',
         contactName:trimOrNull(req.query.contactName)||''}:null;
-    return res.page('purchasing/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,prefill,
-      permissions:purchasingPermissions(req)});
+    const list=await require('../buy-view').suppliersList(database,req.ctx.workspaceId,suppliers,req.query);
+    return res.page('buy/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,list,prefill,
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }));
   router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
     try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);
@@ -328,7 +329,10 @@ function createPostgresCommerceRouter(database,options={}){
       minimumOrderQuantity:row.minimum_order_quantity===null?null:Number(row.minimum_order_quantity),
       orderMultiple:row.order_multiple===null?null:Number(row.order_multiple),isPreferred:Boolean(Number(row.is_preferred)),
       isActive:Boolean(Number(row.is_active))}));
-    return res.page('purchasing/supplier',{title:supplier.name,nav:'purchasing',supplier,items,
+    const buyView=require('../buy-view');
+    const view=await buyView.supplierView(database,req.ctx.workspaceId,supplier,orderRows,purchasingPermissions(req),dateToday(req));
+    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
+      ownSectionTabs:true,suppressBack:true,screenGuide:null,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
       codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},

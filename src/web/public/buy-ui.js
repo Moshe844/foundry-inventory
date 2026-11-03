@@ -385,8 +385,63 @@
     update();
   }
 
+  /* ---------- Tabs that switch a card's content (Products / Orders / Bills) ---------- */
+  function panes() {
+    $$('[data-ox-panes]').forEach(function (root) {
+      var tabs = $$('[data-ox-pane]', root);
+      function show(name, focus) {
+        tabs.forEach(function (tab) {
+          var on = tab.getAttribute('data-ox-pane') === name;
+          tab.classList.toggle('is-on', on);
+          tab.setAttribute('aria-selected', String(on));
+          tab.tabIndex = on ? 0 : -1;
+          if (on && focus) tab.focus();
+        });
+        $$('[data-ox-pane-body]', root).forEach(function (body) { body.hidden = body.getAttribute('data-ox-pane-body') !== name; });
+      }
+      tabs.forEach(function (tab, index) {
+        tab.addEventListener('click', function () { show(tab.getAttribute('data-ox-pane')); });
+        tab.addEventListener('keydown', function (event) {
+          var step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+          if (step) { event.preventDefault(); show(tabs[(index + step + tabs.length) % tabs.length].getAttribute('data-ox-pane'), true); }
+        });
+      });
+    });
+  }
+
+  /* ---------- A searchable list in front of a native select (it stays the posted field) ---------- */
+  function selectCombos() {
+    $$('[data-ox-select-combo]').forEach(function (root) {
+      var input = $('[data-ox-select-input]', root);
+      var list = $('[role="listbox"]', root);
+      var select = $('select', root);
+      if (!input || !list || !select) return;
+      Array.prototype.forEach.call(select.options, function (option, i) {
+        if (!option.value) return;
+        var li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', 'false');
+        li.id = list.id + '-' + i;
+        li.textContent = option.textContent;
+        li.setAttribute('data-ox-search-text', option.textContent.toLowerCase());
+        li.dataset.value = option.value;
+        list.appendChild(li);
+      });
+      function pick(li) {
+        select.value = li.dataset.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        input.value = li.textContent;
+        combo.close();
+      }
+      var combo = listbox(input, list, { choose: pick });
+      if (select.value && select.selectedOptions[0]) input.value = select.selectedOptions[0].textContent;
+    });
+  }
+
   // Record payment from the purchase order list lands here with ?pay=1: open the first bill's panel.
   function openFromQuery() {
+    // "Add email" on the supplier list opens the supplier's Edit panel.
+    if (/[?&]edit=1(&|$)/.test(window.location.search)) { var edit = $('#ox-supplier-drawer'); if (edit && edit.showModal && !edit.open) edit.showModal(); }
     if (!/[?&]pay=1(&|$)/.test(window.location.search)) return;
     var dialog = $('[data-ox-pay-bill]');
     if (dialog && dialog.showModal && !dialog.open) dialog.showModal();
@@ -398,6 +453,8 @@
     paymentTerms();
     purchaseEntry();
     receive();
+    panes();
+    selectCombos();
     gridPanel();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

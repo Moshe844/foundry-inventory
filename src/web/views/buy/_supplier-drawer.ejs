@@ -31,6 +31,18 @@
         </label>
       </div>
       <label class="ox-field" data-ox-terms-other <%= otherTerms ? '' : 'hidden' %>><span>Payment terms, in your words</span><input name="paymentTerms" value="<%= otherTerms ? sd.paymentTerms : '' %>" <%= otherTerms ? '' : 'disabled' %> placeholder="e.g. 50% upfront, rest on delivery"></label>
+      <% if (locals.more) { var mo = more; %>
+      <details class="ox-more-inline"><summary>More settings</summary>
+        <div class="ox-grid2">
+          <label class="ox-field"><span>How orders reach them</span><select name="preferredOrderingMethod"><% [['email','Email'],['supplier portal','Supplier portal'],['phone','Phone'],['edi','EDI / system connection']].forEach(function (o) { %><option value="<%= o[0] %>" <%= mo.preferredOrderingMethod === o[0] ? 'selected' : '' %>><%= o[1] %></option><% }) %></select></label>
+          <label class="ox-field"><span>Currency</span><input name="currency" maxlength="3" value="<%= mo.currency || 'USD' %>"></label>
+          <label class="ox-field"><span>Their minimum order value</span><input type="number" min="0" step="0.01" name="minimumOrderAmount" value="<%= mo.minimumOrderAmount == null ? '' : mo.minimumOrderAmount %>" placeholder="$0.00"></label>
+          <label class="ox-field"><span>Quantity-change tolerance (%)</span><input type="number" min="0" max="100" step="0.1" name="quantityTolerancePercent" value="<%= mo.quantityTolerancePercent ?? '' %>"></label>
+        </div>
+        <input type="hidden" name="trustedDeliveryReceipt" value="0">
+        <label class="ox-check"><input type="checkbox" name="trustedDeliveryReceipt" value="1" <%= mo.trustedDeliveryReceipt ? 'checked' : '' %>> Book in exact deliveries automatically when their trusted email confirms them</label>
+      </details>
+      <% } %>
       <% if (locals.archiveAction) { %>
         <p class="ox-drawer__danger"><button class="ox-linkbtn ox-rose" type="submit" form="ox-archive-form"><%= sd.isActive === false ? 'Restore supplier' : 'Archive supplier' %></button></p>
       <% } %>

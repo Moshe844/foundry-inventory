@@ -1,0 +1,208 @@
+<%
+  /*
+   * One supplier: what is open and owed, what they sell you, and the setup
+   * step to do next. Editing, linking a product and the sending rules open in
+   * side panels and post to the same routes with the same fields as before.
+   */
+  var V = view;
+  var cur = supplier.currency || 'USD';
+  var m = function (minor) { return helpers.money(minor, cur); };
+  var dollars = function (value) { return value == null ? '—' : helpers.money(Math.round(Number(value) * 100), cur); };
+  var archived = supplier.status === 'inactive';
+  var activeItems = items.filter(function (i) { return i.isActive; });
+  var connected = mailboxConnections.filter(function (c) { return c.status === 'connected'; });
+  var senderReady = senderRules.length > 0 && !!supplier.watchedConnectorId;
+  var steps = [
+    { done: !!supplier.email, label: supplier.email ? 'Email added' : 'Add their email', action: { panel: 'ox-supplier-drawer', text: 'Add email' } },
+    { done: activeItems.length > 0, label: activeItems.length ? activeItems.length + ' product' + (activeItems.length === 1 ? '' : 's') + ' linked' : 'Link what you buy', action: { panel: 'link-product', text: 'Link' } },
+    { done: connected.length > 0, label: connected.length ? 'Mailbox connected' : 'Connect your mailbox', action: { href: '/settings/connections#supplier-communication', text: 'Connect' } },
+    { done: senderReady, label: senderReady ? 'Their emails are trusted' : 'Trust their invoice emails', action: connected.length && supplier.email ? { sender: true, text: 'Trust' } : null },
+    { done: true, label: supplier.autoSendEnabled ? 'Sends routine orders by itself' : 'Asks you before sending', action: null },
+    { done: V.orders.length > 0, label: V.orders.length ? 'First order written' : 'Write the first order', action: permissions.create ? { href: '/purchasing/orders/new?supplier=' + supplier.id, text: 'New PO' } : null },
+  ];
+  var now = steps.findIndex(function (s) { return !s.done; });
+  var doneCount = steps.filter(function (s) { return s.done; }).length;
+  var subtitle = [supplier.contactName, supplier.email, supplier.defaultLeadTimeDays != null ? 'usually ' + supplier.defaultLeadTimeDays + ' days' : null, supplier.paymentTerms].filter(Boolean).join(' · ');
+  var pack = function (i) { return i.unitsPerPurchaseUnit > 1 ? i.purchaseUnit + ' of ' + i.unitsPerPurchaseUnit : i.purchaseUnit; };
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="supplier">
+  <header class="ox-head">
+    <div>
+      <a class="ox-back" href="/suppliers"><span aria-hidden="true">←</span> Suppliers</a>
+      <h1 class="ox-title"><%= supplier.name %><% if (archived) { %> <span class="ox-badge ox-badge--grey ox-title__badge">Archived</span><% } %></h1>
+      <p class="ox-sub"><%= subtitle || 'No contact or email yet' %></p>
+    </div>
+    <div class="ox-head__actions">
+      <% if (permissions.suppliers) { %><button class="ox-btn ox-btn--ghost" type="button" data-modal-open="ox-supplier-drawer">Edit</button><% } %>
+      <% if (!archived && permissions.create) { %><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new?supplier=<%= supplier.id %>"><span aria-hidden="true">+</span> New purchase order</a><% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/suppliers' }) %>
+
+  <section class="ox-kpis" aria-label="<%= supplier.name %> in numbers">
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Open orders</span><strong class="ox-kpi__n ox-num"><%= V.kpis.open.count %></strong><span class="ox-kpi__s"><%= V.kpis.open.first || 'Nothing open' %></span></div>
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Owed</span><strong class="ox-kpi__n ox-num <%= V.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(V.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.owed.bills %> bill<%= V.kpis.owed.bills === 1 ? '' : 's' %><%= V.kpis.owed.due ? ' · due ' + V.kpis.owed.due : '' %></span></div>
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Real lead time</span><strong class="ox-kpi__n ox-num"><%= V.kpis.lead.days == null ? '—' : V.kpis.lead.days + ' day' + (V.kpis.lead.days === 1 ? '' : 's') %></strong><span class="ox-kpi__s"><%= V.kpis.lead.note %></span></div>
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Bought this year</span><strong class="ox-kpi__n ox-num"><%= m(V.kpis.year.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.year.orders %> order<%= V.kpis.year.orders === 1 ? '' : 's' %></span></div>
+  </section>
+
+  <div class="ox-2col">
+    <div class="ox-2col__main">
+      <section class="ox-card ox-list">
+        <div class="ox-toolbar">
+          <nav class="ox-tabs" aria-label="<%= supplier.name %>">
+            <% [['products', 'Products', activeItems.length], ['orders', 'Orders', V.orders.length], ['bills', 'Bills', V.bills.length]].forEach(function (t) { %><a class="ox-tab <%= pane === t[0] ? 'is-on' : '' %>" href="/suppliers/<%= supplier.id %><%= t[0] === 'products' ? '' : '?tab=' + t[0] %>"<%- pane === t[0] ? ' aria-current="page"' : '' %>><%= t[1] %> <span class="ox-chip<%= t[0] === 'bills' && V.kpis.owed.bills ? ' ox-chip--rose' : '' %>"><%= t[2] %></span></a><% }) %>
+          </nav>
+          <% if (permissions.suppliers) { %><button class="ox-btn ox-btn--sm ox-btn--ghost" type="button" data-modal-open="link-product" aria-label="Link a product"><span aria-hidden="true">+</span> Link product</button><% } %>
+        </div>
+
+        <% if (pane === 'products') { %><div id="ox-pane-products">
+          <% if (!items.length) { %><p class="ox-empty-line" style="margin:16px 20px 20px">Nothing linked yet. Link what <%= supplier.name %> sells you, with their code, pack and cost.</p>
+          <% } else { %>
+          <table class="ox-table" data-preserve-grid>
+            <thead><tr><th scope="col">Product</th><th scope="col" class="ox-hide-sm"><%= supplier.itemCodeLabel %></th><th scope="col" class="ox-hide-sm">Pack</th><th scope="col" class="ox-r">Cost</th><th scope="col" class="ox-hide-sm ox-c">Min order</th><th scope="col"><span class="ox-sr">More</span></th></tr></thead>
+            <tbody>
+              <% items.forEach(function (i) { %>
+                <tr class="<%= i.isActive ? '' : 'is-muted' %>">
+                  <td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= i.displayName %></b><small><%= i.internalCode || '' %><% if (i.isPreferred) { %> · preferred<% } %><% if (!i.isActive) { %> · removed<% } %></small><small class="ox-show-sm"><%= [i.supplierSku, pack(i)].filter(Boolean).join(' · ') %></small></div></div></td>
+                  <td class="ox-hide-sm"><%= i.supplierSku || '—' %></td>
+                  <td class="ox-hide-sm"><%= pack(i) %></td>
+                  <td class="ox-r ox-num"><%= dollars(i.lastUnitCost) %></td>
+                  <td class="ox-hide-sm ox-c ox-num"><%= i.minimumOrderQuantity == null ? '—' : i.minimumOrderQuantity %></td>
+                  <td class="ox-r"><% if (permissions.suppliers && i.isActive) { %><details class="ox-menu"><summary aria-label="More for <%= i.displayName %>">⋯</summary><div class="ox-menu__pop"><form method="post" action="/suppliers/<%= supplier.id %>/items/<%= i.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-menu__item ox-rose" type="submit">Remove from <%= supplier.name %></button></form></div></details><% } %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+          <% } %>
+        </div>
+
+        <% } else if (pane === 'orders') { %><div id="ox-pane-orders">
+          <% if (!V.orders.length) { %><p class="ox-empty-line" style="margin:16px 20px 20px">No orders with <%= supplier.name %> yet.</p>
+          <% } else { %>
+          <table class="ox-table" data-preserve-grid>
+            <thead><tr><th scope="col">PO</th><th scope="col" class="ox-hide-sm">Expected</th><th scope="col">Status</th><th scope="col" class="ox-r">Total</th></tr></thead>
+            <tbody><% V.orders.forEach(function (o) { %><tr class="ox-row<%= o.status === 'CANCELLED' ? ' is-muted' : '' %>" data-href="/purchasing/orders/<%= o.id %>"><td><a class="ox-order" href="/purchasing/orders/<%= o.id %>"><%= o.number %></a></td><td class="ox-hide-sm ox-muted"><%= o.expected || '—' %></td><td><span class="ox-badge ox-badge--<%= o.badge.tone %>"><%= o.badge.text %></span></td><td class="ox-r ox-num"><%= o.status === 'CANCELLED' ? '—' : m(o.totalMinor) %></td></tr><% }) %></tbody>
+          </table>
+          <% } %>
+        </div>
+
+        <% } else { %><div id="ox-pane-bills">
+          <% if (!V.bills.length) { %><p class="ox-empty-line" style="margin:16px 20px 20px">No bills from <%= supplier.name %> yet.</p>
+          <% } else { %>
+          <table class="ox-table" data-preserve-grid>
+            <thead><tr><th scope="col">Bill</th><th scope="col" class="ox-hide-sm">PO</th><th scope="col">Status</th><th scope="col" class="ox-r">Owed</th><th scope="col" class="ox-hide-sm"><span class="ox-sr">Record payment</span></th></tr></thead>
+            <tbody><% V.bills.forEach(function (b) { %><tr><td><b><%= b.number %></b><span class="ox-show-sm ox-cell-sub"><%= m(b.totalMinor) %><%= b.poNumber ? ' · ' + b.poNumber : '' %></span></td><td class="ox-hide-sm"><% if (b.poId) { %><a href="/purchasing/orders/<%= b.poId %>"><%= b.poNumber %></a><% } else { %>—<% } %></td><td><span class="ox-badge ox-badge--<%= b.badge.tone %>"><%= b.badge.text %></span></td><td class="ox-r ox-num"><%= m(b.balanceMinor) %></td><td class="ox-r ox-hide-sm"><% if (b.open && b.poId && permissions.payments) { %><a class="ox-btn ox-btn--sm ox-btn--ghost" href="/purchasing/orders/<%= b.poId %>?pay=1">Record payment</a><% } %></td></tr><% }) %></tbody>
+          </table>
+          <% } %>
+        </div>
+        <% } %>
+      </section>
+
+      <% if (priceHistory.length) { %>
+      <details class="ox-card ox-more">
+        <summary><span><h2>Price evidence</h2><small>Costs read from their documents</small></span><span class="ox-more__pm" aria-hidden="true"></span></summary>
+        <table class="ox-table" data-preserve-grid><thead><tr><th scope="col">Product</th><th scope="col" class="ox-hide-sm">Seen</th><th scope="col" class="ox-r">Unit cost</th></tr></thead>
+          <tbody><% priceHistory.forEach(function (e) { %><tr><td><%= e.item_name %> <span class="ox-muted">· <%= e.sku_code %></span></td><td class="ox-hide-sm ox-muted"><%= shortDate(e.observed_at) %></td><td class="ox-r ox-num"><%= helpers.money(Math.round(Number(e.unit_cost) * 100), e.currency || cur) %></td></tr><% }) %></tbody></table>
+      </details>
+      <% } %>
+    </div>
+
+    <aside class="ox-2col__side">
+      <section class="ox-card ox-card__b" aria-labelledby="ox-h-setup">
+        <h2 id="ox-h-setup" class="ox-h2">Setup</h2>
+        <span class="ox-bar ox-bar--meter" role="img" aria-label="<%= doneCount %> of <%= steps.length %> steps done"><i class="<%= doneCount === steps.length ? 'is-done' : '' %>" style="width:<%= Math.round(doneCount / steps.length * 100) %>%"></i></span>
+        <ol class="ox-setup">
+          <% steps.forEach(function (s, index) { var isNow = index === now; %>
+            <li class="<%= s.done ? 'is-done' : '' %> <%= isNow ? 'is-now' : '' %>"><span class="ox-setup__ic" aria-hidden="true"><%= s.done ? '✓' : index + 1 %></span><span class="ox-setup__t"><%= s.label %></span>
+              <% if (isNow && s.action && permissions.suppliers) { %>
+                <% if (s.action.panel) { %><button class="ox-btn ox-btn--sm ox-btn--secondary" type="button" data-modal-open="<%= s.action.panel %>"><%= s.action.text %></button>
+                <% } else if (s.action.sender) { %><form method="post" action="/suppliers/<%= supplier.id %>/senders"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connected[0].id %>"><input type="hidden" name="senderPattern" value="<%= supplier.email %>"><button class="ox-btn ox-btn--sm ox-btn--secondary" type="submit" aria-label="Trust emails from <%= supplier.email %>"><%= s.action.text %></button></form>
+                <% } else { %><a class="ox-btn ox-btn--sm ox-btn--secondary" href="<%= s.action.href %>"><%= s.action.text %></a><% } %>
+              <% } %></li>
+          <% }) %>
+        </ol>
+        <p class="ox-fine">So StockChief can read their invoices and delivery notes for you.</p>
+      </section>
+
+      <section class="ox-card ox-card__b" aria-labelledby="ox-h-details">
+        <h2 id="ox-h-details" class="ox-h2">Details</h2>
+        <dl class="ox-kv">
+          <dt>Contact</dt><dd><%= supplier.contactName || '—' %></dd>
+          <dt>Email</dt><dd><%= supplier.email || 'No email yet' %></dd>
+          <dt>Phone</dt><dd class="<%= supplier.phone ? '' : 'ox-muted' %>"><%= supplier.phone || '—' %></dd>
+          <dt>Terms</dt><dd><%= supplier.paymentTerms || '—' %></dd>
+          <dt>Lead time</dt><dd><%= supplier.defaultLeadTimeDays == null ? '—' : supplier.defaultLeadTimeDays + ' days' %></dd>
+          <dt>Sending</dt><dd><%= supplier.autoSendEnabled ? 'Sends routine orders' : 'Asks you first' %><% if (permissions.suppliers && senderReady) { %> · <button class="ox-linkbtn" type="button" data-modal-open="ox-rules">Change</button><% } %></dd>
+        </dl>
+      </section>
+    </aside>
+  </div>
+
+  <% if (permissions.suppliers) { %>
+    <%- include('_supplier-drawer', { action: '/suppliers/' + supplier.id, archiveAction: '/suppliers/' + supplier.id + '/archive', drawerId: 'ox-supplier-drawer',
+      supplier: { id: supplier.id, name: supplier.name, contactName: supplier.contactName, email: supplier.email, phone: supplier.phone, defaultLeadTimeDays: supplier.defaultLeadTimeDays, paymentTerms: supplier.paymentTerms, isActive: !archived },
+      more: supplier }) %>
+
+    <dialog class="ox ox-drawer" id="link-product" aria-labelledby="link-product-h">
+      <form method="post" action="/suppliers/<%= supplier.id %>/items" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="ox-drawer__h"><h2 id="link-product-h">Link a product</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+        <div class="ox-drawer__b">
+          <div class="ox-field"><span>Product</span>
+            <div class="ox-combo" data-ox-select-combo>
+              <input class="ox-input" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-link-products" aria-label="Search products to link" placeholder="Search your products" autocomplete="off" data-ox-select-input>
+              <ul class="ox-pop" id="ox-link-products" role="listbox" aria-label="Products" hidden></ul>
+              <select class="ox-native" name="skuId" data-supplier-product required tabindex="-1" aria-label="Product">
+                <% catalogue.forEach(function (sku) { %><option value="<%= sku.id %>" data-cost="<%= sku.purchaseCost %>" data-lead="<%= sku.leadDays %>"><%= sku.variant_label ? sku.item_name + ' / ' + sku.variant_label : sku.item_name %></option><% }) %>
+              </select>
+            </div>
+          </div>
+          <div class="ox-grid2">
+            <label class="ox-field"><span><%= supplier.itemCodeLabel %></span><input name="supplierSku" maxlength="80" placeholder="Their code"></label>
+            <label class="ox-field"><span>Cost per unit</span><input name="lastUnitCost" data-supplier-cost inputmode="decimal" placeholder="$0.00"></label>
+          </div>
+          <div class="ox-grid2">
+            <label class="ox-field"><span>Sold in</span><input name="purchaseUnit" maxlength="40" placeholder="unit" value="unit"></label>
+            <label class="ox-field"><span>How many per pack</span><input type="number" min="1" name="unitsPerPurchaseUnit" value="1"></label>
+          </div>
+          <div class="ox-grid2">
+            <label class="ox-field"><span>Minimum order (packs)</span><input type="number" min="0" name="minimumOrderQuantity" placeholder="1"></label>
+            <label class="ox-field"><span>Lead time (days)</span><input type="number" min="0" max="365" name="leadTimeDays" data-supplier-lead value="<%= supplier.defaultLeadTimeDays ?? '' %>"></label>
+          </div>
+          <details class="ox-more-inline"><summary>More</summary>
+            <label class="ox-field"><span>Order multiple (packs)</span><input type="number" min="1" name="orderMultiple" placeholder="1"></label>
+            <label class="ox-check"><input type="checkbox" name="isPreferred" value="1"> Preferred supplier for this product</label>
+          </details>
+        </div>
+        <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Link product</button></div>
+      </form>
+    </dialog>
+
+    <% if (senderReady) { %>
+    <dialog class="ox ox-drawer" id="ox-rules" aria-labelledby="ox-rules-h">
+      <form method="post" action="/suppliers/<%= supplier.id %>" id="routine-work" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="ox-drawer__h"><h2 id="ox-rules-h">Sending rules</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+        <div class="ox-drawer__b">
+          <input type="hidden" name="prepareCommunications" value="0">
+          <label class="ox-check"><input type="checkbox" name="prepareCommunications" value="1" <%= supplier.prepareCommunications ? 'checked' : '' %>> Prepare order and follow-up emails for me</label>
+          <input type="hidden" name="autoSendEnabled" value="0">
+          <label class="ox-check"><input type="checkbox" name="autoSendEnabled" value="1" <%= supplier.autoSendEnabled ? 'checked' : '' %>> Send routine approved orders by itself</label>
+          <p class="ox-fine ox-fine--flush">Leave this off and StockChief asks you before anything is sent.</p>
+          <div class="ox-grid2">
+            <label class="ox-field"><span>Ask me above</span><input type="number" min="0" step="0.01" name="autoSendLimit" value="<%= supplier.autoSendLimit === null ? '' : supplier.autoSendLimit %>" placeholder="$500.00"></label>
+            <label class="ox-field"><span>Ask if a price moves more than (%)</span><input type="number" min="0" max="100" step="0.1" name="priceTolerancePercent" value="<%= supplier.priceTolerancePercent %>"></label>
+          </div>
+          <label class="ox-field"><span>Follow up after no reply for (days)</span><input type="number" min="1" max="60" name="followUpDays" value="<%= supplier.followUpDays %>"></label>
+        </div>
+        <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Save supplier rules</button></div>
+      </form>
+    </dialog>
+    <% } %>
+  <% } %>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/supplier-entry.js?v=<%= assetVersion %>" defer></script>

@@ -53,18 +53,18 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM sales_orders')).rows[0].count,'0');
 
     await page.goto(`${base}/suppliers`);
-    await page.getByText('Add a supplier',{exact:true}).first().click();
-    const supplierForm=page.locator('details').filter({hasText:'Add a supplier'});
+    await page.getByRole('button',{name:'Add supplier'}).click();
+    const supplierForm=page.locator('#ox-supplier-drawer');
     await supplierForm.getByLabel('Name').fill('Boot Supply');await supplierForm.getByLabel('Email').fill('orders@boots.test');
-    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Create supplier and continue'}).click()]);
+    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Save supplier'}).click()]);
     assert.match(page.url(),/\/suppliers\/sup_/);
     const supplierPageText=await page.locator('main').innerText();
-    assert.match(supplierPageText,/Boot Supply/);assert.match(supplierPageText,/Supplier setup/i);
-    await page.locator('select[name="skuId"]').selectOption(item.skuIds[0]);
+    assert.match(supplierPageText,/Boot Supply/);assert.match(supplierPageText,/Setup/);
+    await page.getByRole('button',{name:'Link a product'}).click();await page.locator('#link-product select[name="skuId"]').selectOption(item.skuIds[0]);
     await page.getByLabel('Supplier code').fill('SUP-BOOT-1');
     await page.getByLabel('How many per pack').fill('2');
     await page.getByLabel('Cost per unit').fill('8.00');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
 

@@ -270,4 +270,72 @@ async function purchaseOrderView(database, workspaceId, page, can, today = isoDa
   };
 }
 
-module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };
+async function owedBySupplier(database, workspaceId) {
+  const rows = (await database.query(`SELECT supplier_id,COUNT(*)::int AS n,COALESCE(SUM(balance_minor),0)::bigint AS owed,MIN(due_date) AS due
+    FROM accounting_supplier_bills WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID') AND balance_minor>0 GROUP BY supplier_id`, [workspaceId])).rows;
+  return new Map(rows.map((row) => [row.supplier_id, { bills: Number(row.n), minor: Number(row.owed), due: row.due }]));
+}
+
+const SUPPLIER_TABS = ['all', 'email', 'owed', 'archived'];
+
+/*
+ * Suppliers: active ones under All, with the two things that stop work —
+ * no email to send orders to, money owed — as their own tabs.
+ */
+async function suppliersList(database, workspaceId, suppliers, query = {}) {
+  const tab = SUPPLIER_TABS.includes(query.tab) ? query.tab : 'all';
+  const q = String(query.q || '').trim().toLowerCase().slice(0, 120);
+  let owed = new Map();
+  try { owed = await owedBySupplier(database, workspaceId); } catch { owed = new Map(); }
+  const all = suppliers.map((s) => ({ ...s, initials: initials(s.name), owed: owed.get(s.id) || null }));
+  const active = all.filter((s) => s.isActive);
+  const inTab = { all: active, email: active.filter((s) => !s.email), owed: active.filter((s) => s.owed && s.owed.minor > 0),
+    archived: all.filter((s) => !s.isActive) };
+  const counts = Object.fromEntries(Object.entries(inTab).map(([key, list]) => [key, list.length]));
+  const rows = inTab[tab].filter((s) => !q || [s.name, s.contactName, s.email].filter(Boolean).join(' ').toLowerCase().includes(q));
+  return { tab, q, counts, rows, total: active.length };
+}
+
+/*
+ * One supplier: how much is open and owed, how long deliveries really take,
+ * what was bought this year, and the setup steps with the one to do now.
+ */
+async function supplierView(database, workspaceId, supplier, allOrders, can, today = isoDay(new Date())) {
+  const mine = allOrders.filter((row) => row.supplier_id === supplier.id).map(decorate);
+  const open = mine.filter((o) => ['DRAFT', 'AWAITING_APPROVAL'].includes(o.status) || (OPEN.includes(o.status) && o.outstandingUnits > 0));
+  const year = today.slice(0, 4);
+  const bought = mine.filter((o) => !['DRAFT', 'AWAITING_APPROVAL', 'CANCELLED'].includes(o.status) && o.orderDate.startsWith(year));
+  const [billRows, leadRows] = await Promise.all([
+    database.query(`SELECT b.id,b.bill_number,b.supplier_invoice_number,b.status,b.total_minor,b.balance_minor,b.due_date,b.currency,
+        b.purchase_order_id,po.po_number FROM accounting_supplier_bills b
+        LEFT JOIN purchase_orders po ON po.id=b.purchase_order_id AND po.workspace_id=b.workspace_id
+      WHERE b.workspace_id=$1 AND b.supplier_id=$2 AND b.status<>'VOID' ORDER BY b.created_at DESC,b.id DESC LIMIT 50`, [workspaceId, supplier.id]).catch(() => ({ rows: [] })),
+    database.query(`SELECT AVG(EXTRACT(EPOCH FROM (first_in::timestamptz-po.order_date::timestamptz))/86400)::numeric AS days,COUNT(*)::int AS n
+      FROM (SELECT r.purchase_order_id,MIN(r.received_at) AS first_in FROM purchase_order_receipts r WHERE r.workspace_id=$1 GROUP BY r.purchase_order_id) f
+      JOIN purchase_orders po ON po.id=f.purchase_order_id AND po.workspace_id=$1 WHERE po.supplier_id=$2 AND po.order_date IS NOT NULL`, [workspaceId, supplier.id]).catch(() => ({ rows: [] })),
+  ]);
+  const bills = billRows.rows.map((b) => {
+    const total = Number(b.total_minor); const balance = Number(b.balance_minor);
+    const badge = b.status === 'PAID' || balance === 0 ? { text: 'Paid', tone: 'green' } : ['DRAFT', 'DISPUTED'].includes(b.status) ? { text: 'Needs review', tone: 'amber' }
+      : total > balance ? { text: 'Partly paid', tone: 'amber' } : { text: 'Unpaid', tone: 'rose' };
+    return { id: b.id, number: b.supplier_invoice_number || b.bill_number, totalMinor: total, balanceMinor: balance, currency: b.currency || supplier.currency || 'USD',
+      poId: b.purchase_order_id, poNumber: b.po_number, due: b.due_date ? shortDay(b.due_date) : null, badge,
+      open: ['OPEN', 'PARTIALLY_PAID'].includes(b.status) && balance > 0 };
+  });
+  const owedBills = bills.filter((b) => b.open);
+  const lead = leadRows.rows[0] && Number(leadRows.rows[0].n) > 0 ? Math.round(Number(leadRows.rows[0].days)) : null;
+  return {
+    initials: initials(supplier.name),
+    orders: mine.map((o) => ({ ...o, badge: statusBadge(o.status), expected: o.expectedDate ? shortDay(o.expectedDate) : null })),
+    bills,
+    kpis: {
+      open: { count: open.length, first: open[0] ? `${open[0].number} · ${statusBadge(open[0].status).text.toLowerCase()}` : null },
+      owed: { minor: owedBills.reduce((s, b) => s + b.balanceMinor, 0), bills: owedBills.length, due: owedBills.map((b) => b.due).filter(Boolean)[0] || null },
+      lead: lead != null ? { days: lead, note: `average of ${leadRows.rows[0].n} deliver${Number(leadRows.rows[0].n) === 1 ? 'y' : 'ies'}` }
+        : { days: supplier.defaultLeadTimeDays, note: supplier.defaultLeadTimeDays != null ? 'the lead time you set' : 'not set yet' },
+      year: { minor: bought.reduce((s, o) => s + o.totalMinor, 0), orders: bought.length },
+    },
+  };
+}
+
+module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

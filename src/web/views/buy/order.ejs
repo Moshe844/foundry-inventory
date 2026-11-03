@@ -15,7 +15,8 @@
   var nextButton = function (cls) {
     if (!V.next) return '';
     if (V.next.href) return '<a class="ox-btn ox-btn--primary ' + (cls || '') + '" href="' + V.next.href + '">' + V.next.label + '</a>';
-    if (V.next.kind === 'approve') return '<button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="submit" form="ox-approve">' + V.next.label + '</button>';
+    // Approve posts from a form of its own, wherever the button sits.
+    if (V.next.kind === 'approve') return '<form class="ox-inline-form" method="post" action="/purchasing/orders/' + order.id + '/approve" data-busy><input type="hidden" name="_csrf" value="' + csrfToken + '"><input type="hidden" name="integrityHash" value="' + order.integrityHash + '"><button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="submit">' + V.next.label + '</button></form>';
     var panel = { place: 'ox-place', bill: 'ox-bill', pay: V.openBills[0] ? 'ox-pay-' + V.openBills[0].id : '' }[V.next.kind];
     return '<button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="button" data-modal-open="' + panel + '">' + V.next.label + '</button>';
   };
@@ -35,11 +36,6 @@
   </header>
   <%- include('_tabs', { active: '/purchasing/orders' }) %>
 
-  <% if (V.next && V.next.kind === 'approve') { %>
-    <form id="ox-approve" method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy hidden>
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= order.integrityHash %>">
-    </form>
-  <% } %>
 
   <% if (V.cancelled) { %>
     <div class="ox-note ox-note--grey">Cancelled<%= order.cancelReason ? ': ' + order.cancelReason : '.' %><% if (order.receivedUnits) { %> The <%= order.receivedUnits %> unit<%= order.receivedUnits === 1 ? '' : 's' %> already received stay in stock.<% } %></div>
