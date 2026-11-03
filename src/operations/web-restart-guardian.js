@@ -1,6 +1,6 @@
 'use strict';
 const http=require('node:http'),{fork}=require('node:child_process'),{EventEmitter}=require('node:events');
-const statusUrl='https://stockchief-staging-status.onrender.com/';
+const statusUrl='https://moshe844.github.io/stockchief-status/';
 function fallback(req,res){
  if(res.destroyed||res.writableEnded)return;if(res.headersSent){res.destroy();return;}req.resume();
  const message='StockChief is restarting. Please try again shortly.',json=String(req.headers.accept||'').includes('application/json')||req.url.startsWith('/api/')||req.url.startsWith('/healthz');

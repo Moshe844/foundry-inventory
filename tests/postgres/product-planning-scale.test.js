@@ -7,8 +7,10 @@ test('large catalogs do not expand irrelevant planning positions and reconciliat
  const destination=await locations.createLocation(db,ctx,{name:'Neutral destination',kind:'store'});
  await inventory.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'scale-demand-a'});
  await inventory.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'scale-demand-b'});
- await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,position,is_active,created_at)
-   SELECT 'scale-'||n,$1,$2,'OTHER-'||n,n+100,1,$3 FROM generate_series(1,30000)n`,[ctx.workspaceId,f.item.itemId,new Date().toISOString()]);
+ // Match production's bounded catalogue batches; one huge fixture statement
+ // needlessly builds a long chain of updates to the same parent rollup.
+ for(let first=1;first<=30000;first+=1000)await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,position,is_active,created_at)
+   SELECT 'scale-'||n,$1,$2,'OTHER-'||n,n+100,1,$3 FROM generate_series($4::int,$5::int)n`,[ctx.workspaceId,f.item.itemId,new Date().toISOString(),first,Math.min(30000,first+999)]);
  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,created_at,updated_at)
    VALUES('policy-scale',$1,$2,$3,2,4,0,$4,$4)`,[ctx.workspaceId,f.item.skuIds[0],destination.id,new Date().toISOString()]);
  const observed={planning:0,forecast:0},wrapped={...db,query:async(sql,args)=>{const result=await db.query(sql,args);if(sql.includes('rp.default_order_quantity')){observed.planning=result.rows.length;observed.forecast=result.rows.length;}return result;}};
@@ -52,6 +54,10 @@ test('large catalogs do not expand irrelevant planning positions and reconciliat
    VALUES('late-global',$1,'scale-9999',NULL,1,2,0,$2,$2)`,[ctx.workspaceId,new Date().toISOString()]);
   const tail=await planner.position(db,ctx.workspaceId,{limitSkus:1,afterSkuId:'scale-9998'}),global=tail.find(r=>r.scope==='workspace');
   assert.equal(global.sku_id,'scale-9999');assert.equal(global.onHand,0);assert(global.shortage);assert(global.receivingOptions.length>=1000);assert.equal(tail.length,2);
+ });
+ await t.test('fresh generic and custom planning reads stay bounded after catalogue-wide rules and empty locations',async()=>{
+  await db.query("UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND id='scale-1'",[ctx.workspaceId]);
+  for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{await c.query('SET LOCAL plan_cache_mode='+mode);const rows=await require(root+'/src/purchasing/postgres-replenishment-state').rows(c,ctx.workspaceId,{eligibleOnly:true,limitSkus:250});assert(rows.length>0&&rows.length<=502);assert.equal(new Set(rows.map(r=>r.sku_id)).size,251,'An archived early SKU must not leave the requested page short');assert(rows.every(row=>row.item_id===f.item.itemId&&row.sku_id!=='scale-1'));},{readOnly:true,statementTimeoutMs:3000});
  });
  assert.deepEqual((await db.query('SELECT sum(on_hand)::text stock FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0],snapshot);
 });
