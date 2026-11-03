@@ -9,4 +9,9 @@ test('Ask reads arbitrary option values exactly, includes every location and pre
  const coffee=await catalog.createItem(db,ctx,{name:'Coffee by weight',baseCode:'COFF-W',trackingMode:'quantity',hasVariants:true,options:[{name:'Flavor',values:'Original,Vanilla'},{name:'Bag size',values:'0.5kg,1kg'}]});const result=await read(db,ctx.workspaceId,'Coffee by weight Flavor Vanilla Bag size 0.5kg');assert.equal(result.skuCount,1);assert.match(result.rows[0].variant,/Vanilla.*0\.5kg/);assert.equal(result.rows[0].onHand,0);
  await require('../../src/domain/postgres-sku-maintenance').update(db,ctx,coffee.itemId,result.rows[0].href.split('#sku-')[1],{active:false});assert.equal(await read(db,ctx.workspaceId,'Coffee by weight Flavor Vanilla Bag size 0.5kg'),null);
  assert.equal(direct.classify('Which variant sells best?').kind,'product_ranking');
+ // An exact code must not also match unrelated product names containing its
+ // words. Barcode lookup must return the same variant across all locations.
+ await catalog.createItem(db,ctx,{name:'Another '+small.code,baseCode:'UNRELATED-EXACT',trackingMode:'quantity'});
+ await db.query('UPDATE skus SET barcode=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,small.id,'EXACT-READ-987']);
+ for(const code of [small.code.toLowerCase(),'exact-read-987']){const matched=await read(db,ctx.workspaceId,code);assert.equal(matched.skuCount,1);assert.equal(matched.totals[0].quantity,7);assert(matched.rows.every(r=>r.sku===small.code));}
 });

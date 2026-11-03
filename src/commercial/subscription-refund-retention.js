@@ -79,7 +79,10 @@ async function purgeWorkspace(c,workspaceId){
  // This derived row has no FK to the products it counts, so the dependency
  // graph alone cannot keep it alive until their canonical deletes complete.
  const capacityCounter=r=>r.schema==='stockchief_runtime'&&r.name==='inventory_capacity';
- const deletionOrder=[...order.filter(r=>!capacityCounter(r)),...order.filter(capacityCounter)];
+ const storageCounter=r=>r.schema==='public'&&r.name==='commercial_storage_usage';
+ // Keep byte counters until canonical deletes (including SKU-capacity updates)
+ // have finished. They are maintained by triggers rather than foreign keys.
+ const deletionOrder=[...order.filter(r=>!capacityCounter(r)&&!storageCounter(r)),...order.filter(capacityCounter),...order.filter(storageCounter)];
  for(const r of deletionOrder)await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
  await c.query('UPDATE accounts SET last_workspace_id=NULL WHERE last_workspace_id=$1',[workspaceId]);
  await c.query('DELETE FROM workspaces WHERE id=$1',[workspaceId]);return {deleted:true};
