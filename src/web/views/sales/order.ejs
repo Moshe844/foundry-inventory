@@ -209,7 +209,7 @@
       <label class="choice"><input type="radio" name="deliveryMethod" value="SHIP" required checked><span>Ship to this address</span></label>
       <label class="choice"><input type="radio" name="deliveryMethod" value="PICKUP" required><span>Customer pickup</span></label>
     </fieldset>
-    <label class="field"><span>Full delivery address</span><textarea name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= order.ship_to_address || '' %></textarea><small>Not needed for pickup.</small></label>
+    <div class="field"><span>Delivery address</span><%- include('../partials/address-fields',{idPrefix:'order-edit-addr',target:'order-edit-address'}) %><small>Not needed for pickup.</small></div><label class="addr-native"><span>Full delivery address</span><textarea id="order-edit-address" name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= order.ship_to_address || '' %></textarea></label>
     <label class="choice"><input type="checkbox" name="saveCustomerAddress" value="1"><span>Use this as the customer's default next time</span></label>
     <button class="btn btn--primary" type="submit">Save delivery choice and continue</button>
   </form>
@@ -618,6 +618,34 @@
           <%= freeUnits %> <%= freeUnits === 1 ? 'unit is' : 'units are' %> committed and ready,
           but this order is held until it is paid. Picking it is refused until then.
         </p>
+      </div>
+    <% } else if (freeUnits && locals.postgresPlacement && order.delivery_method === 'SHIP') { %>
+      <%# Ship this order: weight in, rates out, then choose a rate and print. %>
+      <div class="card-body ship-now" id="ship-now">
+        <p class="ship-now__to"><span>Ship to</span><strong><%= order.ship_to_address || 'No delivery address yet — add one with Edit' %></strong></p>
+        <% if (locals.shippingReady && !(order.customer && order.customer.phone)) { %>
+          <p class="ship-now__warn">Carriers need the customer’s phone number for a label. Add it to <%= order.customer ? order.customer.name : 'the customer' %> first.</p>
+        <% } %>
+        <% if (locals.shippingReady) { %>
+          <form method="post" action="/orders/<%= order.id %>/ship-label" class="ship-now__form" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= locals.shipRequestKey %>">
+            <label class="ship-now__field"><span>Parcel weight</span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required placeholder="2.5" aria-label="Parcel weight">
+              <select name="weightUnit" aria-label="Weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g">g</option></select></span></label>
+            <details class="ship-now__size"><summary>Box size (optional)</summary>
+              <span class="ship-now__pair"><input name="length" inputmode="decimal" placeholder="L" aria-label="Box length"><input name="width" inputmode="decimal" placeholder="W" aria-label="Box width"><input name="height" inputmode="decimal" placeholder="H" aria-label="Box height">
+              <select name="sizeUnit" aria-label="Size unit"><option value="in">in</option><option value="cm">cm</option></select></span></details>
+            <button class="btn btn--primary" type="submit">Get shipping rates</button>
+          </form>
+          <p class="hint">Rates come from your connected shipping account. Nothing is bought until you choose a rate.</p>
+        <% } else { %>
+          <div class="ship-now__connect"><a class="btn btn--primary" href="/settings/shipping">Connect a shipping account</a><span class="hint">to compare rates and print labels right here.</span></div>
+        <% } %>
+        <div class="ship-now__other">
+          <a href="#record-left" onclick="document.getElementById('record-left').open=true">Ship without a label</a>
+          <form method="post" action="/sales/orders/<%= order.id %>/pick" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--ghost btn--sm" type="submit">Start picking <%= freeUnits %> <%= freeUnits === 1 ? 'unit' : 'units' %></button></form>
+          <span class="hint">Picking opens a pick list first, for a warehouse.</span>
+        </div>
       </div>
     <% } else if (freeUnits) { %>
       <div class="card-foot">

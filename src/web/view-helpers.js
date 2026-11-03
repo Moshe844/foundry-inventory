@@ -212,6 +212,7 @@ module.exports = {
   connectionPresentation:require('./presentation/connections'),
   paymentSummary:require('./presentation/payment-summary').present,
   importSourceFormats: require('../imports/source-formats'),
+  regions: require('../lib/regions'),
   orderStatus:require('../sales/order-status').label,
   aiCustomerMeter:require('../commercial/ai-spending-limits').customerMeter,
   currencyExponent:require('../domain/currency').exponent,
