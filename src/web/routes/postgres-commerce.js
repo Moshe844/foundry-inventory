@@ -258,8 +258,11 @@ function createPostgresCommerceRouter(database,options={}){
       href:collection.path+'/'+encodeURIComponent(row.id),
       orderHref:collection.customer?'/orders/'+encodeURIComponent(row.sales_order_id):row.purchase_order_id?'/purchasing/orders/'+encodeURIComponent(row.purchase_order_id):null,
       orderLabel:collection.customer?row.order_number:'Purchase order'}));
-    return res.page('returns/list',{title:collection.title,nav:collection.nav,collection,records,
-      previous:offset?Math.max(0,offset-50):null,next:found.length>50?offset+50:null});
+    const previous=offset?Math.max(0,offset-50):null,next=found.length>50?offset+50:null;
+    if(!collection.customer){const buyView=require('../buy-view');
+      return res.page('buy/returns',{title:collection.title,nav:collection.nav,list:await buyView.supplierReturnsList(database,req.ctx.workspaceId,found.slice(0,50),req.query),
+        previous,next,shortDate:buyView.shortDay,canStart:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN),ownSectionTabs:true,suppressBack:true,screenGuide:null});}
+    return res.page('returns/list',{title:collection.title,nav:collection.nav,collection,records,previous,next});
   }));
 
   router.get('/suppliers',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
@@ -736,17 +739,25 @@ function createPostgresCommerceRouter(database,options={}){
       return res.redirect(303,`/supplier-returns/${result.supplierReturnId}`);
     }));
 
+  // + New return: pick the purchase order, then that order's own return panel opens.
+  router.get('/supplier-returns/start',requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
+    const po=(await database.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,String(req.query.po||'')])).rows[0];
+    if(!po)throw new ValidationError('Choose a purchase order from this inventory.');
+    return res.redirect(303,`/purchasing/orders/${encodeURIComponent(po.id)}?return=1`);
+  }));
+
   router.get('/supplier-returns/:id',requirePermission(permissions.VIEW_PURCHASING,'see supplier returns'),
     asyncRoute(async(req,res)=>{
       const supplierReturn=await returns.getSupplierReturn(database,req.ctx.workspaceId,req.params.id);
-      return res.page('purchasing/postgres-supplier-return',{title:supplierReturn.return_number,nav:'purchasing',
-        supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step')});
+      const buyView=require('../buy-view');
+      return res.page('buy/return',{title:supplierReturn.return_number,nav:'purchasing',supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step'),
+        badge:buyView.returnBadge(supplierReturn.status),steps:buyView.supplierReturnSteps(supplierReturn),shortDate:buyView.shortDay,ownSectionTabs:true,suppressBack:true,screenGuide:null});
     }));
 
   router.post('/supplier-returns/:id/authorize',
     requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
       await returns.authorizeSupplierReturn(database,req.ctx,req.params.id,{idempotencyKey:key(req,'supplier-return-authorize')});
-      req.flash('success','Supplier return authorized. Nothing has left inventory yet.');
+      req.flash('success','Marked as approved by the supplier. Nothing has left stock yet.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 
@@ -754,7 +765,7 @@ function createPostgresCommerceRouter(database,options={}){
     requirePermission(permissions.SHIP_SUPPLIER_RETURN,'ship supplier returns'),asyncRoute(async(req,res)=>{
       await returns.shipSupplierReturn(database,req.ctx,req.params.id,{shippedAt:req.body.shippedAt||nowIso(),
         idempotencyKey:key(req,'supplier-return-ship')});
-      req.flash('success','Supplier return shipped. Physical stock and inventory value left together; the supplier credit is still outstanding.');
+      req.flash('success','Shipped back. The goods left stock; the supplier credit is still to come.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 
@@ -765,8 +776,8 @@ function createPostgresCommerceRouter(database,options={}){
         amountMinor:minor(req.body.amount,'Supplier credit',record.currency||await entryCurrency(req)),creditNumber:trimOrNull(req.body.creditNumber),
         creditDate:req.body.creditDate||dateToday(req),idempotencyKey:key(req,'supplier-return-reconcile')});
       req.flash(result.status==='CREDIT_MISMATCH'?'warn':'success',result.status==='CREDIT_MISMATCH'
-        ?'Supplier credit was recorded, but it differs from the expected amount and remains an exception.'
-        :'Supplier credit reconciled to the open bill. Inventory did not move again.');
+        ?'Credit recorded, but it differs from the expected amount. The difference stays open.'
+        :'Credit recorded against the bill. Stock did not change again.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 

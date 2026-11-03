@@ -42,7 +42,7 @@
    * stay where the person was working.
    */
   function toasts() {
-    if (!ORDER_PAGE.test(window.location.pathname)) return;
+    if (!ORDER_PAGE.test(window.location.pathname) && !$('.ox-buy')) return;
     $$('[data-flash-stack] .flash').forEach(function (flash) {
       flash.classList.add('ox-toast');
       var close = document.createElement('button');

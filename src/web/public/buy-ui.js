@@ -489,6 +489,8 @@
   // Record payment from the purchase order list lands here with ?pay=1: open the first bill's panel.
   function openFromQuery() {
     // "Add email" on the supplier list opens the supplier's Edit panel.
+    // + New return on Supplier returns lands here with ?return=1: open this order's return panel.
+    if (/[?&]return=1(&|$)/.test(window.location.search)) { var ret = $('#ox-return'); if (ret && ret.showModal && !ret.open) ret.showModal(); }
     if (/[?&]edit=1(&|$)/.test(window.location.search)) { var edit = $('#ox-supplier-drawer'); if (edit && edit.showModal && !edit.open) edit.showModal(); }
     if (!/[?&]pay=1(&|$)/.test(window.location.search)) return;
     var dialog = $('[data-ox-pay-bill]');

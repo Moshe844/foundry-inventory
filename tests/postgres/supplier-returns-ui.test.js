@@ -75,11 +75,13 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
       await Promise.all([page.waitForURL(/\/supplier-returns\/rtv_/),
         page.getByRole('button', { name: 'Create return' }).click()]);
       const supplierReturnId = page.url().split('/').pop();
-      assert.match(await page.locator('main').innerText(), /is requested/);
-      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Authorize supplier return' }).click()]);
-      assert.match(await page.locator('main').innerText(), /is authorized/);
+      assert.match(await page.locator('.ox-head').innerText(), /Requested/);
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Supplier approved it' }).click()]);
+      assert.match(await page.locator('.ox-head').innerText(), /Approved by supplier/);
+      await page.getByRole('button', { name: 'Mark shipped back' }).click();
       await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Record goods shipped to supplier' }).click()]);
-      assert.match(await page.locator('main').innerText(), /is awaiting credit/);
+      assert.match(await page.locator('.ox-head').innerText(), /Shipped back/);
+      await page.getByRole('button', { name: 'Record credit' }).click();
       await page.getByLabel('Actual supplier credit').fill(actual);
       await page.getByLabel('Credit memo number').fill(creditNumber);
       await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Record and reconcile credit' }).click()]);
@@ -87,7 +89,7 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
     }
 
     const firstReturnId = await completeReturn({ quantity: 2, expected: '16.00', actual: '16.00', creditNumber: 'CM-16' });
-    assert.match(await page.locator('main').innerText(), /is reconciled/);
+    assert.match(await page.locator('.ox-head').innerText(), /Credited/);
     let state = (await database.query(`SELECT r.status,b.balance_minor FROM supplier_returns r
       JOIN accounting_supplier_bills b ON b.id=r.supplier_bill_id WHERE r.id=$1`, [firstReturnId])).rows[0];
     assert.deepEqual({ status: state.status, balance: Number(state.balance_minor) }, { status: 'RECONCILED', balance: 6400 });

@@ -390,4 +390,51 @@ async function reorderView(database, workspaceId, overview) {
     totalMinor: list.reduce((sum, group) => sum + group.totalMinor, 0) };
 }
 
-module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, reorderView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };
+const RETURN_TABS = ['all', 'waiting', 'done'];
+const RETURN_DONE = ['RECONCILED', 'CREDIT_MISMATCH', 'CANCELLED'];
+
+/*
+ * Supplier returns: each with its PO, units and credit, and the purchase
+ * orders a new return can start from (received goods and an open bill to
+ * credit, which the existing request requires).
+ */
+async function supplierReturnsList(database, workspaceId, rows, query = {}) {
+  const tab = RETURN_TABS.includes(query.tab) ? query.tab : 'all';
+  const q = String(query.q || '').trim().toLowerCase().slice(0, 120);
+  const ids = rows.map((row) => row.id);
+  const poIds = [...new Set(rows.map((row) => row.purchase_order_id).filter(Boolean))];
+  const [units, pos, sources] = await Promise.all([
+    ids.length ? database.query(`SELECT supplier_return_id,COALESCE(SUM(quantity),0)::numeric AS n FROM supplier_return_lines WHERE workspace_id=$1 AND supplier_return_id=ANY($2::text[]) GROUP BY supplier_return_id`, [workspaceId, ids]).catch(() => ({ rows: [] })) : { rows: [] },
+    poIds.length ? database.query('SELECT id,po_number FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[])', [workspaceId, poIds]) : { rows: [] },
+    database.query(`SELECT po.id,po.po_number,s.name AS supplier_name,po.currency,
+        (SELECT COALESCE(SUM(quantity_received_units),0) FROM purchase_order_lines l WHERE l.workspace_id=po.workspace_id AND l.purchase_order_id=po.id)::numeric AS received
+      FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
+      WHERE po.workspace_id=$1 AND EXISTS(SELECT 1 FROM purchase_order_lines l WHERE l.workspace_id=po.workspace_id AND l.purchase_order_id=po.id AND l.quantity_received_units>0)
+        AND EXISTS(SELECT 1 FROM accounting_supplier_bills b WHERE b.workspace_id=po.workspace_id AND b.purchase_order_id=po.id AND b.status IN ('OPEN','PARTIALLY_PAID'))
+      ORDER BY po.created_at DESC LIMIT 30`, [workspaceId]).catch(() => ({ rows: [] })),
+  ]);
+  const unitMap = new Map(units.rows.map((row) => [row.supplier_return_id, Number(row.n)]));
+  const poMap = new Map(pos.rows.map((row) => [row.id, row.po_number]));
+  const all = rows.map((row) => ({ id: row.id, number: row.return_number, supplierName: row.supplier_name, initials: initials(row.supplier_name),
+    poId: row.purchase_order_id, poNumber: poMap.get(row.purchase_order_id) || null, units: unitMap.get(row.id) ?? null,
+    badge: returnBadge(row.status), done: RETURN_DONE.includes(row.status), createdAt: row.created_at,
+    creditMinor: row.actual_credit_minor == null ? null : Number(row.actual_credit_minor), currency: row.currency || 'USD' }));
+  const counts = { all: all.length, waiting: all.filter((r) => !r.done).length, done: all.filter((r) => r.done).length };
+  const shown = all.filter((r) => (tab === 'all' || (tab === 'done') === r.done) && (!q || [r.number, r.supplierName, r.poNumber].filter(Boolean).join(' ').toLowerCase().includes(q)));
+  return { tab, q, counts, rows: shown, sources: sources.rows.map((row) => ({ id: row.id, number: row.po_number, supplierName: row.supplier_name, received: Number(row.received) })) };
+}
+
+function supplierReturnSteps(r) {
+  const order = ['REQUESTED', 'AUTHORIZED', 'AWAITING_CREDIT', 'RECONCILED'];
+  const at = r.status === 'CREDIT_MISMATCH' ? 3 : order.indexOf(r.status);
+  const day = (value) => (value ? shortDay(value) : '');
+  return [
+    { label: 'Requested', note: day(r.created_at), done: at >= 0 },
+    { label: 'Approved', note: day(r.authorized_at) || (at < 1 ? 'by supplier' : ''), done: at >= 1 },
+    { label: 'Shipped back', note: day(r.shipped_at) || '—', done: at >= 2 },
+    { label: 'Credited', note: r.actual_credit_minor == null ? '—' : money(Number(r.actual_credit_minor), r.currency || 'USD'), done: at >= 3 },
+  ].map((step, index, list) => ({ ...step, now: r.status !== 'CANCELLED' && !step.done && (index === 0 || list[index - 1].done) }));
+}
+
+module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, reorderView,
+  supplierReturnsList, supplierReturnSteps, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

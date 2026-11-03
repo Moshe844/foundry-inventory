@@ -1,0 +1,85 @@
+<%
+  /*
+   * Supplier returns: what went back, from which order, and whether the
+   * credit has come in. A new return starts from the purchase order the goods
+   * arrived on, through that order's own return panel.
+   */
+  var L = list;
+  var qs = function (over) {
+    var p = { tab: L.tab === 'all' ? '' : L.tab, q: L.q };
+    Object.keys(over || {}).forEach(function (k) { p[k] = over[k]; });
+    var parts = Object.keys(p).filter(function (k) { return p[k]; }).map(function (k) { return k + '=' + encodeURIComponent(p[k]); });
+    return '/supplier-returns' + (parts.length ? '?' + parts.join('&') : '');
+  };
+  var tabs = [['all', 'All'], ['waiting', 'Waiting on supplier'], ['done', 'Done']];
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="supplier-returns">
+  <header class="ox-head">
+    <div>
+      <h1 class="ox-title">Supplier returns</h1>
+      <p class="ox-sub">Send goods back and track the credit</p>
+    </div>
+    <div class="ox-head__actions">
+      <% if (canStart) { %><button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-new-return"><span aria-hidden="true">+</span> New return</button><% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/supplier-returns' }) %>
+
+  <section class="ox-card ox-list" aria-label="Supplier return list">
+    <% if (!L.counts.all) { %>
+      <div class="ox-empty"><strong>No returns yet.</strong><p>When goods need to go back, start a return from the purchase order they arrived on.</p>
+        <% if (canStart && L.sources.length) { %><div class="ox-empty__actions"><button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-new-return"><span aria-hidden="true">+</span> New return</button></div><% } %></div>
+    <% } else { %>
+    <div class="ox-toolbar">
+      <nav class="ox-tabs" aria-label="Filter returns">
+        <% tabs.forEach(function (t) { %><a class="ox-tab <%= L.tab === t[0] ? 'is-on' : '' %>" href="<%= qs({ tab: t[0] === 'all' ? '' : t[0] }) %>"<%- L.tab === t[0] ? ' aria-current="page"' : '' %>><%= t[1] %> <span class="ox-chip"><%= L.counts[t[0]] %></span></a><% }) %>
+      </nav>
+      <form class="ox-search" method="get" action="/supplier-returns" role="search" data-ox-search>
+        <% if (L.tab !== 'all') { %><input type="hidden" name="tab" value="<%= L.tab %>"><% } %>
+        <svg class="ox-search__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input class="ox-input" type="search" name="q" value="<%= L.q %>" placeholder="Search return #, supplier, PO" aria-label="Search returns" autocomplete="off">
+      </form>
+    </div>
+    <% if (!L.rows.length) { %><div class="ox-empty"><strong>No returns match</strong><p><a href="/supplier-returns">Show every return</a></p></div>
+    <% } else { %>
+    <table class="ox-table" data-preserve-grid>
+      <thead><tr><th scope="col">Return</th><th scope="col" class="ox-hide-sm">Supplier</th><th scope="col" class="ox-hide-sm">From PO</th><th scope="col" class="ox-hide-sm ox-c">Units</th><th scope="col">Status</th><th scope="col" class="ox-r">Credit</th></tr></thead>
+      <tbody>
+        <% L.rows.forEach(function (r) { %>
+          <tr class="ox-row" data-href="/supplier-returns/<%= r.id %>">
+            <td><a class="ox-order" href="/supplier-returns/<%= r.id %>"><%= r.number %></a><small class="ox-block ox-muted"><time datetime="<%= r.createdAt %>"><%= shortDate(r.createdAt) %></time></small><span class="ox-show-sm ox-cell-sub"><%= r.supplierName %><%= r.units != null ? ' · ' + r.units + ' unit' + (r.units === 1 ? '' : 's') : '' %></span></td>
+            <td class="ox-hide-sm"><span class="ox-cust"><span class="ox-avatar" aria-hidden="true"><%= r.initials %></span><span><%= r.supplierName %></span></span></td>
+            <td class="ox-hide-sm"><% if (r.poId) { %><a href="/purchasing/orders/<%= r.poId %>"><%= r.poNumber || 'Purchase order' %></a><% } else { %>—<% } %></td>
+            <td class="ox-hide-sm ox-c ox-num"><%= r.units == null ? '—' : r.units %></td>
+            <td><span class="ox-badge ox-badge--<%= r.badge.tone %>"><%= r.badge.text %></span></td>
+            <td class="ox-r ox-num <%= r.creditMinor == null ? 'ox-muted' : '' %>"><%= r.creditMinor == null ? (r.done ? '—' : 'waiting') : helpers.money(r.creditMinor, r.currency) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% } %>
+    <footer class="ox-foot"><span class="ox-muted">Requested → approved by supplier → shipped back → credited</span><span>
+      <% if (previous !== null) { %><a href="/supplier-returns?offset=<%= previous %>">Previous</a><% } %>
+      <% if (next !== null) { %><a href="/supplier-returns?offset=<%= next %>">Next</a><% } %></span></footer>
+    <% } %>
+  </section>
+
+  <% if (canStart) { %>
+  <dialog class="ox ox-drawer" id="ox-new-return" aria-labelledby="ox-new-return-h">
+    <form method="get" action="/supplier-returns/start">
+      <div class="ox-drawer__h"><h2 id="ox-new-return-h">New supplier return</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <% if (!L.sources.length) { %>
+          <p class="ox-note">Nothing can go back yet. A return starts from a purchase order with received goods and a supplier bill to credit.</p>
+        <% } else { %>
+          <label class="ox-field"><span>From which purchase order?</span><select name="po" required><option value="">Choose the order the goods came on</option><% L.sources.forEach(function (s) { %><option value="<%= s.id %>"><%= s.number %> · <%= s.supplierName %> · <%= s.received %> received</option><% }) %></select></label>
+          <p class="ox-fine ox-fine--flush">Next you choose what goes back and why. Stock goes down only when the goods are shipped back. The credit is recorded when the supplier confirms it.</p>
+        <% } %>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><% if (L.sources.length) { %><button class="ox-btn ox-btn--primary" type="submit">Choose items</button><% } %></div>
+    </form>
+  </dialog>
+  <% } %>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
