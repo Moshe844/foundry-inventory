@@ -20,8 +20,20 @@ test('model financial admission and settlement each commit as one READ COMMITTED
  failSettlement=true;await assert.rejects(accounting.complete(held,receipt),/OFFLINE_SETTLEMENT_FAILURE/);
  assert.equal((await db.query('SELECT status FROM commercial_model_cost_holds WHERE id=$1',[held.cost.id])).rows[0].status,'RESERVED');
  assert.equal((await db.query('SELECT status FROM commercial_usage_events WHERE account_id=$1 AND idempotency_key=$2',[scope.accountId,ctx.workspaceId+':'+fundingKey])).rows[0].status,'RESERVED');
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_cost_events WHERE account_id=$1 AND left(idempotency_key,length($2))=$2',[scope.accountId,held.key+':'])).rows[0].n,0,'A failed boundary must not partly settle a provider receipt');
  transactions=0;queries=0;await accounting.complete(held,receipt);assert.equal(transactions,1);const settlementQueries=queries;
+ assert(admissionQueries<20,'Financial admission must use fewer than twenty statements');
+ assert(settlementQueries<20,'Financial settlement must use fewer than twenty statements');
  assert.equal((await db.query('SELECT status FROM commercial_model_cost_holds WHERE id=$1',[held.cost.id])).rows[0].status,'SETTLED');
  assert.equal((await db.query('SELECT status FROM commercial_usage_events WHERE account_id=$1 AND idempotency_key=$2',[scope.accountId,ctx.workspaceId+':'+fundingKey])).rows[0].status,'COMMITTED');
+ await accounting.complete(held,receipt);
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_cost_events WHERE account_id=$1 AND left(idempotency_key,length($2))=$2',[scope.accountId,held.key+':'])).rows[0].n,2,'Replayed receipts never duplicate token charges');
+ const control=require('../../src/commercial/control-service'),components=[
+  {provider:'anthropic',model:'claude-sonnet-5',providerVersion:'2023-06-01',operation:'model_input',unit:'token',quantity:3,idempotencyKey:'batch-cost-input'},
+  {provider:'anthropic',model:'claude-sonnet-5',providerVersion:'2023-06-01',operation:'model_output',unit:'token',quantity:2,idempotencyKey:'batch-cost-output'},
+  {provider:'missing-offline-provider',operation:'unpriced',unit:'token',quantity:1,idempotencyKey:'batch-cost-unknown'}];
+ const recorded=await control.recordCosts(db,scope,components);assert(recorded.every(r=>r.created));
+ assert(recorded.slice(0,2).every(r=>r.event.amount_minor!==null));assert.equal(recorded[2].event.amount_minor,null);assert.equal(recorded[2].event.detail.costBasis,'MISSING');
+ assert((await control.recordCosts(db,scope,components)).every(r=>!r.created));
  t.diagnostic(JSON.stringify({financialAdmissionTransactions:1,financialSettlementTransactions:1,admissionQueries,settlementQueries,paidCalls:0}));
 });
