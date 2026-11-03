@@ -52,7 +52,7 @@
       if (tail && /\d/.test(tail[2])) { st = tail[1]; pc = tail[2]; parts.pop(); }
       else if (parts.length > 2 && /^[A-Za-z .]{2,}$/.test(parts[parts.length - 1])) st = parts.pop();
       const town = parts.length > 1 ? parts.pop() : '';
-      country.value = code; useRegions(code, st);
+      country.value = code; shownCountry = code; useRegions(code, st);
       part('line1').value = parts.shift() || ''; part('line2').value = parts.join(', '); city.value = town; zip.value = pc;
     }
     async function fillFromPostal() {
@@ -67,7 +67,9 @@
       note.textContent = found.length > 1 ? found.length + ' towns use ' + code + '. Pick the right one in City.' : '';
       write();
     }
-    country.addEventListener('change', () => { useRegions(country.value, ''); write(); });
+    // Only a different country clears the state; re-choosing the same one keeps it.
+    let shownCountry = country.value;
+    country.addEventListener('change', () => { if (country.value !== shownCountry) useRegions(country.value, ''); shownCountry = country.value; write(); });
     city.addEventListener('input', () => { auto.city = false; });
     state.addEventListener('change', () => { auto.state = false; });
     zip.addEventListener('input', () => { fillFromPostal(); });

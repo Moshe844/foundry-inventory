@@ -42,10 +42,10 @@
     <summary><span class="ox-ship__step"><%= locals.shippoLink?2:1 %></span><div><h3>Connect with an API key</h3><p>Already use ShipStation, its API (ShipEngine) or Shippo? Copy the API key from that account and paste it here.</p></div><span class="ox-btn ox-btn--secondary ox-ship__open">Connect with a key</span></summary>
     <% if(owner){ %><form method="post" action="/settings/shipping/account" class="ox-ship__form" data-busy data-key-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="ox-ship__field"><span>Shipping platform</span><select name="provider" required data-key-provider>
+      <label class="ox-ship__field"><span id="shipping-provider-label">Shipping platform</span><select name="provider" required data-key-provider aria-labelledby="shipping-provider-label">
         <% keyProviders.forEach(function(provider){ %><option value="<%= provider %>" <%= locals.selectedProvider===provider?'selected':'' %>><%= providerNames[provider] %></option><% }); %></select></label>
       <% keyProviders.forEach(function(provider){ %><p class="ox-ship__help" data-key-help="<%= provider %>" <%= (locals.selectedProvider||keyProviders[0])===provider?'':'hidden' %>><%= keyHelp[provider][0] %> <a href="<%= keyHelp[provider][1] %>" target="_blank" rel="noopener noreferrer">How to find it</a></p><% }); %>
-      <label class="ox-ship__field"><span>API key</span><input type="password" name="apiKey" required autocomplete="off"></label>
+      <label class="ox-ship__field"><span id="shipping-key-label">API key</span><input type="password" name="apiKey" aria-labelledby="shipping-key-label" required autocomplete="off"></label>
       <label class="ox-ship__field ox-ship__field--minor"><span>Webhook secret (optional)</span><input type="password" name="webhookSecret" autocomplete="off"></label>
       <button class="ox-btn ox-btn--primary" type="submit">Verify and connect</button>
       <p class="ox-ship__fine">StockChief checks the key before saving it. Connecting the same platform again replaces only its saved key.</p>
@@ -53,7 +53,7 @@
   </details>
   <section class="ox-card ox-ship__way">
     <span class="ox-ship__step"><%= locals.shippoLink?3:2 %></span>
-    <div><h3>ShipStation Custom Store</h3><p>Already print labels in ShipStation? Let ShipStation pull your StockChief orders and send tracking back.<% if(locals.customStore){ %> <strong>Connected.</strong><% } %></p></div>
+    <div><h3>ShipStation Custom Store</h3><p>Already print labels in ShipStation? Let ShipStation pull your StockChief orders and send tracking back.<% if(locals.customStore){ %> <strong>Connected</strong> · StockChief connection details are ready to enter in ShipStation.<% } %></p></div>
     <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
   </section>
 </div>
