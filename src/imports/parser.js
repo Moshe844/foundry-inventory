@@ -241,9 +241,21 @@ function parseWorkbook(buffer) {
 
 function decodeText(buffer){
   const encoding=buffer[0]===0xff&&buffer[1]===0xfe?'utf-16le':buffer[0]===0xfe&&buffer[1]===0xff?'utf-16be':'utf-8';
-  try{return new TextDecoder(encoding,{fatal:true}).decode(buffer);}
-  catch{throw new SpreadsheetError('This text file’s character encoding could not be read safely. Save it as UTF-8 or UTF-16 and upload it again. No inventory changed.');}
+  const unreadable=()=>new SpreadsheetError('StockChief could not read this file type. Upload it as Excel, CSV, PDF or a photo. No inventory changed.');
+  const malformed=()=>new SpreadsheetError('This text file’s character encoding could not be read safely. Save it as UTF-8 or UTF-16 and upload it again. No inventory changed.');
+  // Text has no NUL bytes; an unknown binary format does.
+  if(encoding==='utf-8'&&buffer.subarray(0,65536).includes(0))throw unreadable();
+  try{return {text:new TextDecoder(encoding,{fatal:true}).decode(buffer)};}
+  catch{
+    // Excel's "CSV" and most older systems save Windows-1252 text. It is read
+    // as that, and the preview says so, so accented names are checked.
+    if(encoding!=='utf-8')throw malformed();
+    return {text:new TextDecoder('windows-1252').decode(buffer),
+      note:'This file was saved as older Windows text (for example Excel’s “CSV”), so it was read that way. Check accented letters in product names before approving.'};
+  }
 }
+
+const OLE2=Buffer.from('d0cf11e0a1b11ae1','hex');
 
 /**
  * Reads an upload or a paste into named sheets of tabulated rows.
@@ -261,13 +273,24 @@ function parse(input) {
   const looksXlsx =
     Boolean(input.buffer) && input.buffer.length > 4 && input.buffer.readUInt32LE(0) === 0x04034b50;
 
+  // Excel 97-2003 workbooks are OLE2 compound files, not ZIPs.
+  const looksLegacyExcel=Boolean(input.buffer)&&input.buffer.length>8&&input.buffer.subarray(0,8).equals(OLE2);
+
   const extension=String(input.filename||'').split('.').at(-1).toLowerCase();
   if(['heic','heif','tif','tiff'].includes(extension))throw new SpreadsheetError('This '+extension.toUpperCase()+' file could not be opened as a readable image. Upload a fresh copy. No inventory changed.');
   // Decode text only. Binary archives retain their bytes and do not allocate a
   // second, lossy UTF-8 copy before the bounded workbook reader opens them.
-  const sourceText=input.text ?? (looksXlsx?'':decodeText(input.buffer||Buffer.alloc(0)));
-  if(extension==='xml'||/^\s*<\?xml|^\s*<[a-zA-Z][^>]*>/.test(sourceText)&&!looksXlsx)throw new SpreadsheetError('XML product imports are not supported yet. Export the product list as JSON, CSV or XLSX; no inventory changed.');
-  const parsed = looksXlsx
+  const decoded=input.text==null&&!looksXlsx&&!looksLegacyExcel?decodeText(input.buffer||Buffer.alloc(0)):null;
+  const sourceText=input.text ?? (decoded?decoded.text:'');
+  const markup=!looksXlsx&&!looksLegacyExcel&&/^\s*</.test(sourceText);
+  // Web systems often export an HTML table and name it .xls; Excel 2003 saved
+  // its own XML. Both are spreadsheets. Any other XML is a list of records.
+  const spreadsheetMarkup=markup&&(/^\s*(<\?xml[^>]*>\s*)?(<!doctype html|<html|<table)/i.test(sourceText)||['htm','html'].includes(extension)
+    ||/urn:schemas-microsoft-com:office:spreadsheet/.test(sourceText.slice(0,4096)));
+  const parsed = looksLegacyExcel ? require('./other-spreadsheets').read(input.buffer)
+    : spreadsheetMarkup ? require('./other-spreadsheets').read(sourceText,{type:'string'})
+    : markup||extension==='xml' ? require('./xml-records').records(sourceText)
+    : looksXlsx
     ? require('./structured-files').archive(input.buffer)||parseWorkbook(input.buffer)
     : extension==='json'||/^\s*[\[{]/.test(sourceText)?require('./structured-files').json(Buffer.from(sourceText))
     : input.indexed ? {sheets:[require('./indexed-delimited').indexedDelimited(stripBom(sourceText),detectDelimiter(sourceText),
@@ -291,7 +314,7 @@ function parse(input) {
     (best, sheet, index) => (sheet.rows.length > sheets[best].rows.length ? index : best),
     0
   );
-  return { sheets, primarySheet: primary, format: looksXlsx ? 'xlsx' : 'delimited' };
+  return { sheets, primarySheet: primary, format: looksXlsx||looksLegacyExcel||spreadsheetMarkup ? 'xlsx' : 'delimited', ...(decoded?.note?{encodingNote:decoded.note}:{}) };
 }
 
 module.exports = {

@@ -22,6 +22,8 @@ function archive(buffer){const zip=readZip(buffer),word=zip.get('word/document.x
    if(!cells.some(c=>String(c).trim()))continue;const repeated=Number(/table:number-rows-repeated="(\d+)"/.exec(row[1])?.[1]||1);if(grid.length+repeated>1000001)throw new ValidationError('This ODS table exceeds the import row capacity.');for(let i=0;i<repeated;i++)grid.push([...cells]);}
    if(grid.length)sheets.push({name:decodeXml(/table:name="([^"]*)"/.exec(sheet[1])?.[1]||'Sheet '+(sheets.length+1)),grid});}if(!sheets.length)throw new ValidationError('That ODS workbook has no readable table.');return {sheets};
  }
+ // Binary workbooks (.xlsb) are ZIPs too.
+ if(zip.get('xl/workbook.bin'))return require('./other-spreadsheets').read(buffer);
  if(!zip.get('xl/workbook.xml'))throw new ValidationError('ZIP bundles are not imported as spreadsheets. Upload each CSV separately, or combine them in an XLSX workbook.');return null;
 }
 module.exports={json,archive,table};

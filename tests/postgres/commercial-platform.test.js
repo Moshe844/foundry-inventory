@@ -397,7 +397,7 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     password:'invite-password'});const invitation=await lifecycle.createInvitation(database,{workspaceId:business.workspaceId,actorId:business.userId},
     {name:'New Teammate',email:'new-team@example.test',role:'staff'},{origin:base,includeToken:true});
   const page=await browser.newPage();await page.goto(`${base}/invite?token=${encodeURIComponent(invitation.token)}`);
-  assert.match(await page.locator('body').innerText(),/Join Invite Business/i);await page.getByLabel('Create a password').fill('teammate-password');
+  assert.match(await page.locator('body').innerText(),/Join Invite Business/i);await page.getByLabel('Create a password').fill('teammate-password');await page.getByLabel('Confirm password').fill('teammate-password');
   await page.getByRole('button',{name:'Accept invitation'}).click();await page.waitForURL((url)=>!url.pathname.startsWith('/invite'));
   assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM users WHERE workspace_id=$1',[business.workspaceId])).rows[0].count),2);
   const reusedInvitation=await page.goto(`${base}/invite?token=${encodeURIComponent(invitation.token)}`);

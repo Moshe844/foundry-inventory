@@ -3,3 +3,30 @@
 @media(max-width:650px){.setup-header{margin-bottom:18px}.setup-header p{font-size:14px}.setup-source-grid{display:flex;flex-direction:column;gap:14px}.setup-source-card{display:flex;min-height:0;padding:20px;width:100%;gap:18px}.setup-source-card--file>form{width:100%}.setup-details__forms{grid-template-columns:1fr;gap:24px;padding:16px}.setup-details__hint{display:block;flex:1;text-align:right;max-width:135px}.inventory-setup summary{padding:15px 16px}.setup-source-card h2{font-size:16px}.setup-icon{width:40px;height:40px}.setup-drop{min-height:190px}.setup-footer{align-items:flex-start;gap:8px}.setup-footer>span{max-width:240px}.setup-file-types>summary{padding-left:0!important;padding-right:0!important}}
 
 .inventory-setup summary{width:100%;max-width:none}.inventory-setup summary::before{display:none!important}
+
+/* One clear first step: the file upload is the page; the other two ways in
+   are small alternatives under it, and settings sit at the bottom. */
+.setup--focused{max-width:960px}
+.setup--focused .setup-header{margin:0 0 14px}
+.setup--focused .setup-header h1{margin:0 0 6px}
+.setup--focused .setup-header p{max-width:680px;margin:0}
+.setup-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;margin:0 0 16px;padding:0;background:#fff;border:1px solid #e5e8f1;border-radius:14px;overflow:hidden}
+.setup-flow li{padding:10px 14px;border-right:1px solid #eef0f6;font-size:13px;color:#7a839c}
+.setup-flow li:last-child{border-right:0}
+.setup-flow li b{font-weight:600;color:#475069}
+.setup-flow li.is-now{background:#eef0ff}
+.setup-flow li.is-now b{color:#4338ca}
+.setup--focused .setup-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.setup--focused .setup-source-card--file{grid-column:1/-1;display:flex;flex-direction:column;gap:12px;padding:22px 24px}
+.setup--focused .setup-source-card--file>header{display:none}
+.setup--focused .setup-source-card--file>form{display:flex;flex-direction:column;gap:12px}
+.setup--focused .setup-drop{min-height:230px;justify-content:center}
+.setup--focused .setup-drop>strong{font-size:19px}
+.setup--focused .setup-source-card:not(.setup-source-card--file){display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;min-height:0}
+.setup--focused .setup-source-card:not(.setup-source-card--file)>header{display:flex;align-items:center;gap:12px;margin:0}
+.setup--focused .setup-source-card:not(.setup-source-card--file) h2{font-size:15px;margin:0}
+.setup--focused .setup-source-card:not(.setup-source-card--file) header p{margin:2px 0 0;font-size:13px}
+.setup--focused .setup-source-card:not(.setup-source-card--file)>form{margin:0;flex-shrink:0}
+.setup--focused .setup-footer{margin-top:14px}
+.setup--focused .setup-sample,.setup--focused .setup-details{margin-top:10px}
+@media(max-width:650px){.setup-flow li{padding:9px 6px;text-align:center}.setup--focused .setup-source-grid{display:flex;flex-direction:column}.setup--focused .setup-source-card--file{padding:16px}.setup--focused .setup-drop{min-height:190px}.setup--focused .setup-source-card:not(.setup-source-card--file){flex-direction:column;align-items:stretch}.setup--focused .setup-source-card:not(.setup-source-card--file)>form .btn{width:100%}}

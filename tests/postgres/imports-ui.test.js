@@ -138,7 +138,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       unknownId,unknownPlan.integrityHash),/Map a product name or SKU/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are product names'}).first().click()]);
     assert.equal((await imports.get(database,identity.workspace_id,unknownId)).fieldMappings.name,0);
-    await page.getByText('Advanced: change how StockChief read a column').click();
+    await page.getByText('Something wrong? Change how a column was read').click();
     await page.getByLabel('Source column “Beta”').selectOption('code');
     await page.getByLabel('Source column “Gamma”').selectOption('quantity');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save column mapping and recheck rows'}).click()]);
@@ -288,7 +288,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       actorId:otherIdentity.actor_id},correctionId,{expectedHash:staleHash}),/not be found/i);
     await page.getByLabel('Existing match for Old Warehouse',{exact:true}).selectOption({label:'Main Warehouse'});
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Update location choices'}).click()]);
-    await page.getByText('Advanced: change how StockChief read a column').click();
+    await page.getByText('Something wrong? Change how a column was read').click();
     await page.getByLabel(/Row 3 · Corrected Valve quantity/).fill('4');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save column mapping and recheck rows'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);

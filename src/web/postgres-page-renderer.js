@@ -19,7 +19,7 @@ function postgresPageRenderer(req,res,next){
       return res.send(body);
     });
   };
-  res.page=(view,data={})=>{const onboardingEntry=['inventory/new','imports/start','imports/postgres-preview','imports/supplier-preview'].includes(view)?null:
+  res.page=(view,data={})=>{const onboardingEntry=['inventory/new','imports/start','imports/postgres-preview','imports/supplier-preview','imports/source-upload'].includes(view)?null:
     data.onboardingEntry || data.layoutOnboardingEntry || res.locals.globalOnboardingEntry || null;
     return res.render(view,{...data,onboardingEntry,pageSection:require('./presentation/navigation').sectionFor(req.path)},(error,body)=>{
     if(error)return next(error);

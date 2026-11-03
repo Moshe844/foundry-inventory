@@ -83,6 +83,7 @@ async function cancelInvitation(database,ctx,id){return database.transaction(asy
 });}
 
 async function inspectInvitation(database,token){const row=(await database.query(`SELECT invitation.*,workspace.name AS workspace_name,
+    EXISTS(SELECT 1 FROM accounts existing WHERE lower(existing.email)=lower(invitation.email)) AS invitee_has_account,
     inviter.name AS inviter_name FROM workspace_invitations invitation JOIN workspaces workspace ON workspace.id=invitation.workspace_id
     JOIN users inviter ON inviter.id=invitation.invited_by_user_id WHERE invitation.token_hash=$1`,[hash(token)])).rows[0];
   if(!row)return null;if(row.status==='PENDING'&&new Date(row.expires_at)<=new Date()){await database.query(
@@ -96,7 +97,10 @@ async function acceptInvitation(database,token,input={}){return database.transac
   await require('../commercial/enforcement').workspace(client,invitation.workspace_id,'workspace.core');
   let account=input.accountId?(await client.query('SELECT * FROM accounts WHERE id=$1',[input.accountId])).rows[0]:null;
   if(account&&account.email.toLowerCase()!==String(invitation.email).toLowerCase())throw new ValidationError('Sign in with the invited email address.');
-  if(!account)account=(await client.query('SELECT * FROM accounts WHERE email=$1',[invitation.email])).rows[0];
+  // An existing account joins only after it signs in; a link alone never
+  // opens someone else's account.
+  if(!account&&(await client.query('SELECT 1 FROM accounts WHERE lower(email)=lower($1)',[invitation.email])).rows.length)
+    throw new ValidationError('This email already has a StockChief account. Enter its password to join.');
   if(!account){const password=auth.checkPasswordStrength(input.password);account={id:newId('acc')};
     await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,email_verified_at,created_at)
       VALUES($1,$2,$3,$4,'invited',now(),now())`,[account.id,invitation.email,input.name||invitation.name||invitation.email,

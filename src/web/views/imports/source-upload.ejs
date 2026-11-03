@@ -1,2 +1,17 @@
-<div class="page-head"><div class="titles"><a class="back-link" href="/imports">All files and results</a><h1>Preparing your file for review</h1><p>Your source is saved in this inventory. StockChief will show the records and any questions before asking for approval.</p></div></div>
-<%- include('source-upload-panel',{upload:sourceUpload,detail:true}) %>
+<% const upload=sourceUpload,stages=[['reading','Opening the file'],['understanding','Understanding the columns'],['checking','Checking every row'],['saving','Preparing your check']];
+   const rank={queued:-1,reading:0,matching:0,understanding:1,checking:2,saving:3,ready:4}[upload.stage]??-1,stopped=!upload.active&&!upload.ready; %>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||"current" %>">
+<div class="ox ox-flow" data-ox-page>
+  <%- include('_flow',{step:upload.ready?3:2}) %>
+  <section class="ox-card ox-flow__card" data-source-upload="<%= upload.href %>/progress" data-source-active="<%= upload.active?'yes':'no' %>" data-source-detail aria-live="polite">
+    <p class="ox-flow__file"><%- helpers.icon('import',{size:18}) %><strong><%= upload.sourceName %></strong></p>
+    <h1 class="ox-flow__title" data-source-label><%= upload.label %></h1>
+    <ol class="ox-flow__stages" data-source-stages <%= stopped?'hidden':'' %>><% stages.forEach(function(stage,index){ %><li data-stage="<%= stage[0] %>" class="<%= index<rank?'is-done':index===rank?'is-now':'' %>"><%= stage[1] %></li><% }) %></ol>
+    <progress class="ox-flow__meter" data-source-meter max="<%= upload.totalRows||1 %>" <% if(upload.processedRows!==null){ %>value="<%= upload.processedRows %>"<% } %> aria-label="File reading progress" <%= stopped?'hidden':'' %>></progress>
+    <p class="ox-flow__count" data-source-rows><%= upload.totalRows===null?'Counting the rows in your file…':(upload.processedRows??0).toLocaleString()+' / '+upload.totalRows.toLocaleString()+' rows checked and prepared' %></p>
+    <p class="ox-flow__reason" data-source-reason role="alert"><%= upload.reason||'' %></p>
+    <form method="post" action="<%= upload.href %>/retry" data-source-retry <%= upload.canRetry?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--primary" type="submit">Retry reading the saved file</button> <a class="ox-btn ox-btn--ghost" href="/onboarding?add=1">Upload a different file</a></form>
+    <a class="ox-btn ox-btn--primary" data-source-result href="<%= upload.previewHref||upload.href %>" <%= upload.ready?'':'hidden' %>>Check what we found</a>
+    <p class="ox-flow__note"><span data-source-timing>Started <time data-import-time datetime="<%= new Date(upload.createdAt).toISOString() %>"><%= new Date(upload.createdAt).toUTCString() %></time></span><span data-source-live hidden></span> · Nothing is added to your stock until you check it and press import. You can leave this page; reading carries on.</p>
+  </section>
+</div>

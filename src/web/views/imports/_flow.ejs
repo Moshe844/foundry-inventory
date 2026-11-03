@@ -1,0 +1,2 @@
+<% const flowSteps=[['Upload','Your file'],['Read','Every row, every sheet'],['Check','Answer any questions'],['Import','Added to your stock']]; %>
+<ol class="ox-steps ox-flow__steps" aria-label="Bringing in your inventory"><% flowSteps.forEach(function(entry,index){ const n=index+1; %><li class="<%= n<step?'is-done':n===step?'is-now':'' %>" <%- n===step?'aria-current="step"':'' %>><b><%= entry[0] %></b><span><%= entry[1] %></span></li><% }) %></ol>
