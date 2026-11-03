@@ -794,3 +794,32 @@ div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 
   .ox-poitems th:nth-child(2), .ox-poitems td:nth-child(2) { display: none; }
   .ox-poitems tfoot td:nth-child(2) { display: none; }
 }
+
+/* ---------- Receive ---------- */
+.ox-rcvlines { margin: 12px 0 0; }
+.ox-rcvlines th:first-child, .ox-rcvlines td:first-child { padding-left: 20px; }
+.ox-rcvlines th:last-child, .ox-rcvlines td:last-child { padding-right: 20px; }
+.ox-rcvlines tr.is-off .ox-pcell { opacity: .55; }
+.ox-rcvlines .ox-step input { width: 52px; }
+.ox-strong { color: var(--ox-text); font-weight: 600; }
+.ox-rcv-extra { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ox-rcv-extra input, .ox-rcv-extra textarea { height: 34px; border: 1px solid var(--ox-border); border-radius: 8px; padding: 0 8px; font: inherit; width: 100%; }
+.ox-rcv-extra textarea { height: auto; padding: 6px 8px; }
+.ox-mini--select { width: auto; max-width: 170px; text-align: left; padding: 0 8px; border: 1px solid var(--ox-border); border-radius: 8px; background: #fff; font: inherit; font-size: 13px; }
+.ox-big { margin: 0 0 6px; font-size: 28px; font-weight: 700; letter-spacing: -.02em; color: var(--ox-text); }
+.ox-big small { font-size: 15px; font-weight: 500; color: var(--ox-text-2); }
+@media (max-width: 819px) {
+  .ox-rcvlines thead { display: none; }
+  .ox-rcvlines tr.ox-line { display: grid; grid-template-columns: auto auto 1fr; gap: 8px 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--ox-divider); }
+  .ox-rcvlines td { display: block; padding: 0 !important; border: 0 !important; }
+  .ox-rcvlines td.ox-line__pc { grid-column: 1 / -1; }
+  .ox-rcvlines td:last-child { justify-self: end; }
+}
+.ox-mini--select { min-width: 150px; }
+@media (max-width: 819px) {
+  [data-ox-page="receive"] .ox-2col__side > .ox-sum { order: 3; }
+  .ox-rcvlines tr.ox-line { grid-template-columns: auto 1fr; }
+  .ox-rcvlines td:nth-child(3) { justify-self: end; }
+  .ox-rcvlines td:last-child { grid-column: 1 / -1; justify-self: stretch; }
+  .ox-rcvlines td:last-child .ox-mini--select { width: 100%; max-width: none; height: 40px; }
+}

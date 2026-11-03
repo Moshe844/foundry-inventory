@@ -99,13 +99,13 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/Boot Supply/);
     assert.match(await page.locator('main').innerText(),/PO-00001/);
     await page.goto(`${base}/purchasing/receive`);
-    assert.match(await page.locator('main').innerText(),/Book in a delivery/);
+    assert.match(await page.locator('main').innerText(),/waiting for a delivery/);
     await Promise.all([page.waitForURL(new RegExp(`/purchasing/orders/${purchaseOrderId}/receive$`)),
-      page.getByRole('link',{name:'Receive'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Arrived \(pairs\)/);
-    await page.getByLabel('Arrived (pairs)').fill('10');await page.getByLabel('Delivery note or reference').fill('DOCK-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Book it in'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Physical receipt recorded through the inventory ledger/);
+      page.getByRole('link',{name:'Receive PO-00001'}).click()]);
+    await page.locator('[name^="qty_"]').first().fill('10');
+    await page.locator('summary',{hasText:'Packing slip'}).click();await page.getByLabel('Delivery note or reference').fill('DOCK-1');
+    await Promise.all([page.waitForNavigation(),page.locator('.ox-head [data-ox-rcv-label]').click()]);
+    assert.match(await page.locator('main').innerText(),/10 units received/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
 

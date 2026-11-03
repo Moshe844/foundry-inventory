@@ -1,0 +1,95 @@
+<%
+  /*
+   * Receive one purchase order.
+   *
+   * Every line starts with what is still to come, so a complete delivery is
+   * one button. Same fields as before (qty_, location_, lot_, expires_,
+   * serials_, secondary_, weights_, reference, note); condition_ marks a
+   * line's units as damaged, which writes them off after they are received.
+   */
+  var sub = function (key, fallback) { return submitted && submitted[key] !== undefined ? submitted[key] : fallback; };
+  var already = lines.reduce(function (s, l) { return s + l.quantityReceivedUnits; }, 0);
+  var remaining = lines.reduce(function (s, l) { return s + l.outstandingUnits; }, 0);
+  var tracked = function (l) { return l.trackingMode === 'lot' || l.trackingMode === 'serial' || l.secondaryUnitLabel; };
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="receive">
+  <header class="ox-head ox-head--form">
+    <div>
+      <a class="ox-back" href="/purchasing/orders/<%= order.id %>"><span aria-hidden="true">←</span> <%= order.poNumber %></a>
+      <h1 class="ox-title">Receive <%= order.poNumber %></h1>
+      <p class="ox-sub"><%= order.supplierName %> · <%= order.orderedUnits ? (order.orderedUnits - order.outstandingUnits) + ' of ' + order.orderedUnits + ' already in' : remaining + ' to come' %></p>
+    </div>
+    <div class="ox-head__actions">
+      <a class="ox-btn ox-btn--ghost" href="/purchasing/orders/<%= order.id %>">Cancel</a>
+      <button class="ox-btn ox-btn--primary" type="submit" form="ox-receive-form" data-ox-rcv-label>Receive <%= remaining %> units</button>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing/receive' }) %>
+ <form id="ox-receive-form" method="post" action="/purchasing/orders/<%= order.id %>/receive" data-busy data-purchase-receipt data-ox-receive data-po="<%= order.poNumber %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="idempotencyKey" value="<%= receiptIdempotencyKey %>">
+  <% if (sourceEvent) { %><input type="hidden" name="physicalEventId" value="<%= sourceEvent.id %>"><% } %>
+
+  <% if (warnings && warnings.length) { %><div class="ox-error" role="alert"><% warnings.forEach(function (w) { %><%= w %> <% }) %></div><% } %>
+  <% if (sourceEvent) { %><div class="ox-note"><%= sourceEvent.attachmentName ? 'Prepared from ' + sourceEvent.attachmentName + '.' : 'From what you said: “' + sourceEvent.statedAs + '”.' %> Check what physically arrived; nothing has changed yet.</div><% } %>
+
+  <div class="ox-2col">
+   <div class="ox-2col__main">
+    <section class="ox-card" aria-labelledby="ox-h-arrived">
+     <div class="ox-card__h"><h2 id="ox-h-arrived">What arrived</h2><span class="ox-small"><button class="ox-linkbtn" type="button" data-ox-rcv-fill>Fill all remaining</button> · <button class="ox-linkbtn" type="button" data-ox-rcv-clear>Clear</button></span></div>
+     <table class="ox-lines ox-rcvlines" data-preserve-grid>
+      <thead><tr><th scope="col">Product</th><th scope="col" class="ox-c">Receiving now</th><th scope="col" class="ox-c">Condition</th><th scope="col">To</th></tr></thead>
+      <tbody>
+       <% lines.forEach(function (l) { %>
+        <tr class="ox-line" data-ox-rcv-line data-left="<%= l.outstandingUnits %>">
+         <td class="ox-line__pc"><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= l.displayName %></b>
+           <small><%= l.quantityUnits %> ordered · <%= l.quantityReceivedUnits %> in · <b class="ox-strong"><%= l.outstandingUnits %> to come</b><% if (l.unitsPerPurchaseUnit > 1) { %> · <%= l.purchaseUnit %> of <%= l.unitsPerPurchaseUnit %><% } %></small></div></div>
+          <% if (tracked(l)) { %><div class="ox-rcv-extra">
+           <% if (l.secondaryUnitLabel) { %><label class="ox-field ox-field--sm"><span>Actual <%= l.secondaryUnitLabel %> received</span><input type="number" min="<%= l.secondaryIncrement %>" step="<%= l.secondaryIncrement %>" name="secondary_<%= l.id %>" data-receipt-measure required value="<%= sub('secondary_' + l.id, '') %>"></label>
+            <% if (l.trackingMode === 'serial') { %><label class="ox-field ox-field--sm"><span>Actual weight of each serial</span><textarea name="weights_<%= l.id %>" data-receipt-measure required placeholder="SERIAL = 1.25" rows="2"><%= sub('weights_' + l.id, '') %></textarea></label><% } %><% } %>
+           <% if (l.trackingMode === 'lot') { %><div class="ox-grid2"><label class="ox-field ox-field--sm"><span>Lot or batch</span><input name="lot_<%= l.id %>" maxlength="80" value="<%= sub('lot_' + l.id, '') %>"></label><label class="ox-field ox-field--sm"><span>Expires</span><input type="date" name="expires_<%= l.id %>" value="<%= sub('expires_' + l.id, '') %>"></label></div><% } %>
+           <% if (l.trackingMode === 'serial') { %><label class="ox-field ox-field--sm"><span>Serial numbers, one per line</span><textarea name="serials_<%= l.id %>" rows="3"><%= sub('serials_' + l.id, '') %></textarea></label><% } %>
+          </div><% } %>
+         </td>
+         <td class="ox-c ox-line__qty"><span class="ox-step"><button type="button" data-ox-dec aria-label="One fewer <%= l.displayName %>">−</button><input type="number" min="0" max="<%= l.outstandingUnits %>" step="<%= l.quantityIncrement || 1 %>" inputmode="numeric" name="qty_<%= l.id %>" data-receipt-quantity aria-label="Receiving now: <%= l.displayName %>" value="<%= sub('qty_' + l.id, l.outstandingUnits) %>"><button type="button" data-ox-inc aria-label="One more <%= l.displayName %>">+</button></span></td>
+         <td class="ox-c"><% if (tracked(l)) { %><span class="ox-cond" title="Batch and serial items are received as good; write off damaged ones from the product."><label><input type="radio" name="condition_<%= l.id %>" value="good" checked><span>Good</span></label></span><% } else { %><span class="ox-cond" role="radiogroup" aria-label="Condition of <%= l.displayName %>"><label><input type="radio" name="condition_<%= l.id %>" value="good" <%= sub('condition_' + l.id, 'good') !== 'damaged' ? 'checked' : '' %>><span>Good</span></label><label><input type="radio" name="condition_<%= l.id %>" value="damaged" <%= sub('condition_' + l.id, '') === 'damaged' ? 'checked' : '' %>><span>Damaged</span></label></span><% } %></td>
+         <td><select class="ox-mini ox-mini--select" name="location_<%= l.id %>" aria-label="Receive <%= l.displayName %> into"><% locations.forEach(function (loc) { %><option value="<%= loc.id %>" <%= sub('location_' + l.id, l.destinationLocationId) === loc.id ? 'selected' : '' %>><%= loc.name %></option><% }) %></select></td>
+        </tr>
+       <% }) %>
+      </tbody>
+     </table>
+    </section>
+
+    <details class="ox-card ox-more" <%= submitted && (submitted.reference || submitted.note) ? 'open' : '' %>>
+     <summary><span><h2>Packing slip and notes</h2><small>Slip number, note</small></span><span class="ox-more__pm" aria-hidden="true"></span></summary>
+     <div class="ox-card__b ox-grid2">
+      <label class="ox-field"><span>Packing slip #</span><input name="reference" maxlength="120" aria-label="Delivery note or reference" placeholder="e.g. DN-1004" value="<%= sub('reference', '') %>"></label>
+      <label class="ox-field"><span>Note</span><input name="note" maxlength="200" placeholder="e.g. one box dented" value="<%= sub('note', '') %>"></label>
+     </div>
+    </details>
+    <% if (overReceipt) { %><label class="ox-zero"><input type="checkbox" name="approveOverReceipt" value="1"> Accept more than was ordered, and record the difference</label><% } %>
+   </div>
+
+   <aside class="ox-2col__side">
+    <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-delivery" style="padding-top:18px">
+     <h2 id="ox-h-delivery">This delivery</h2>
+     <p class="ox-big ox-num"><span data-ox-rcv-n><%= remaining %></span> <small>units</small></p>
+     <div class="ox-sum__row"><span>Good</span><b class="ox-num" data-ox-rcv-good><%= remaining %></b></div>
+     <div class="ox-sum__row"><span>Damaged</span><b class="ox-num" data-ox-rcv-bad>0</b></div>
+     <div class="ox-sum__row"><span>Still to come after this</span><b class="ox-num" data-ox-rcv-left>0</b></div>
+     <p class="ox-sum__stock" role="status"><span class="ox-dot ox-dot--green" aria-hidden="true"></span><span data-ox-rcv-status>This completes <%= order.poNumber %>.</span></p>
+     <div class="ox-sum__btns"><button class="ox-btn ox-btn--primary ox-btn--block" type="submit" data-ox-rcv-label aria-label="Receive this delivery">Receive <%= remaining %> units</button></div>
+     <p class="ox-fine">Adds good units to stock right away. Damaged units are written off, so they never count as stock you can sell. The supplier bill is separate.</p>
+    </section>
+   </aside>
+  </div>
+
+ </form>
+  <div class="ox-mbar" aria-label="Receive">
+   <span class="ox-mbar__t">Receiving<b class="ox-num"><span data-ox-rcv-n><%= remaining %></span> units</b></span>
+   <button class="ox-btn ox-btn--primary" type="submit" form="ox-receive-form" aria-label="Receive this delivery">Receive</button>
+  </div>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

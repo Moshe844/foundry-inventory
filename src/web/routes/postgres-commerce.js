@@ -479,8 +479,10 @@ function createPostgresCommerceRouter(database,options={}){
       .filter((row)=>['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(row.status)&&Number(row.units_outstanding)>0)
       .map((row)=>({...row,outstanding_units:Number(row.units_outstanding)}));
     const matched=supplierName?all.filter((row)=>row.supplier_name.toLowerCase().includes(supplierName.toLowerCase())):all;
-    return res.page('purchasing/receive-pick',{title:'Book in a delivery',nav:'purchasing',orders:matched.length?matched:all,
-      supplierName,noMatch:Boolean(supplierName)&&matched.length===0,permissions:purchasingPermissions(req),screenGuide:null});
+    const buyView=require('../buy-view');
+    return res.page('buy/receive-list',{title:'Receive',nav:'purchasing',orders:matched.length?matched:all,
+      supplierName,noMatch:Boolean(supplierName)&&matched.length===0,permissions:purchasingPermissions(req),screenGuide:null,
+      today:dateToday(req),shortDate:buyView.shortDay,initials:buyView.initials,ownSectionTabs:true,suppressBack:true});
   }));
   router.get('/purchasing/setup',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const [rows,supplierRows]=await Promise.all([planning.position(database,req.ctx.workspaceId,{afterSkuId:req.query.after||null,limitSkus:250}),commerce.suppliers(database,req.ctx.workspaceId)]);
@@ -567,6 +569,7 @@ function createPostgresCommerceRouter(database,options={}){
     const [detail,locations]=await Promise.all([commerce.purchaseOrder(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId)]);
     const order={...detail.order,id:detail.order.id,poNumber:detail.order.po_number,supplierName:detail.order.supplier_name,
+      orderedUnits:detail.lines.reduce((sum,line)=>sum+Number(line.quantity_units),0),
       outstandingUnits:detail.lines.reduce((sum,line)=>sum+Math.max(0,Number(line.quantity_units)-Number(line.quantity_received_units)),0)};
     const lines=detail.lines.filter((line)=>Number(line.quantity_received_units)<Number(line.quantity_units)).map((line)=>({
       id:line.id,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),skuCode:line.code,
@@ -575,9 +578,9 @@ function createPostgresCommerceRouter(database,options={}){
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
-    return res.page('purchasing/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
+    return res.page('buy/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
-      permissions:purchasingPermissions(req),screenGuide:null});
+      permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
   }));
   async function purchaseEntry(req,res,{submitted=null,errors=[],status=200}={}){
     const supplierId=trimOrNull(submitted?.supplierId||req.query.supplier),supplierQuery=String(req.query.q||'').trim().slice(0,200),supplierPage=Math.max(1,Math.min(1000000,Number.parseInt(req.query.page,10)||1));
@@ -753,10 +756,24 @@ function createPostgresCommerceRouter(database,options={}){
         serials:String(req.body[`serials_${line.id}`]||'').split(/[\n,]+/).map((value)=>value.trim()).filter(Boolean)}))
         .filter((line)=>Number(line.quantity)>0);
     if(!lines.length)throw new ValidationError('Say how much of the order physically arrived.');
-    await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'po-receive'),
+    const receiptKey=key(req,'po-receive');
+    await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:receiptKey,
       reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),
       overReceiptApproved:req.body.overReceiptApproved==='1'||req.body.approveOverReceipt==='1',lines});
-    req.flash('success','Physical receipt recorded through the inventory ledger.');
+    // Units marked damaged arrived and are written off at once through the
+    // stock-removal path's own "damaged" reason, so they never count as
+    // sellable. Batch and serial lines are always received as good.
+    let damaged=0;
+    for(const line of lines){const source=detail.lines.find((candidate)=>candidate.id===line.lineId);
+      if(req.body[`condition_${line.lineId}`]!=='damaged'||!source||source.secondary_unit_label||['lot','serial'].includes(source.tracking_mode))continue;
+      await require('../../accounting/postgres-stock-removal').issue(database,req.ctx,{skuId:source.sku_id,locationId:line.locationId,
+        quantity:line.quantity,reasonCode:'damaged',notes:`Arrived damaged on ${detail.order.po_number}`,reference:detail.order.po_number,
+        idempotencyKey:`${receiptKey}:damaged:${line.lineId}`});
+      damaged+=Number(line.quantity);}
+    const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
+    const places=[...new Set(lines.map((line)=>line.locationId))];
+    const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
+    req.flash('success',`${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 

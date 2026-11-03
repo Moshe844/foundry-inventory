@@ -1,0 +1,47 @@
+<%
+  /*
+   * Receive: the purchase orders that still have something to come, each with
+   * one button that opens it ready to count in.
+   */
+  var cur = function (o) { return o.currency || 'USD'; };
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="receive-list">
+  <header class="ox-head">
+    <div>
+      <h1 class="ox-title">Receive</h1>
+      <p class="ox-sub"><%= orders.length ? orders.length + ' order' + (orders.length === 1 ? '' : 's') + ' waiting for a delivery' : 'Nothing is on the way' %></p>
+    </div>
+    <div class="ox-head__actions">
+      <% if (permissions.create) { %><a class="ox-btn ox-btn--secondary" href="/purchasing/orders/new"><span aria-hidden="true">+</span> New purchase order</a><% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing/receive' }) %>
+
+  <section class="ox-card ox-list" aria-label="Orders waiting for a delivery">
+    <% if (!orders.length) { %>
+      <div class="ox-empty">
+        <strong>Nothing is on the way.</strong>
+        <p>Approved purchase orders show up here until everything has arrived.</p>
+        <% if (permissions.create) { %><div class="ox-empty__actions"><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new"><span aria-hidden="true">+</span> New purchase order</a></div><% } %>
+      </div>
+    <% } else { %>
+      <% if (locals.noMatch) { %><p class="ox-note" style="margin:16px 20px 0">Nothing on order from “<%= supplierName %>”. Showing every open order.</p><% } %>
+      <table class="ox-table" data-preserve-grid>
+        <thead><tr><th scope="col">PO</th><th scope="col" class="ox-hide-sm">Supplier</th><th scope="col" class="ox-hide-sm">Expected</th><th scope="col">Left to come</th><th scope="col"><span class="ox-sr">Receive</span></th></tr></thead>
+        <tbody>
+          <% orders.forEach(function (o) { var ordered = Number(o.ordered_units || 0); var left = Number(o.outstanding_units || 0); var late = o.expected_date && String(o.expected_date).slice(0, 10) < today; %>
+            <tr class="ox-row" data-href="/purchasing/orders/<%= o.id %>/receive">
+              <td><a class="ox-order" href="/purchasing/orders/<%= o.id %>"><%= o.po_number %></a><span class="ox-show-sm ox-cell-sub"><%= o.supplier_name %></span></td>
+              <td class="ox-hide-sm"><span class="ox-cust"><span class="ox-avatar" aria-hidden="true"><%= initials(o.supplier_name) %></span><span><%= o.supplier_name %></span></span></td>
+              <td class="ox-hide-sm <%= late ? 'ox-amber' : '' %>"><%= o.expected_date ? shortDate(o.expected_date) + (late ? ' · late' : '') : '—' %></td>
+              <td class="ox-num"><%= left %> of <%= ordered %> left</td>
+              <td class="ox-r"><a class="ox-btn ox-btn--sm ox-btn--primary" href="/purchasing/orders/<%= o.id %>/receive" aria-label="Receive <%= o.po_number %>">Receive</a></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </section>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

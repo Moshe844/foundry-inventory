@@ -341,6 +341,50 @@
     });
   }
 
+  /* ---------- Receive a delivery: live count, good and damaged ---------- */
+  function receive() {
+    var form = $('[data-ox-receive]');
+    if (!form) return;
+    var rows = $$('[data-ox-rcv-line]', form);
+    var qty = function (row) { return $('[name^="qty_"]', row); };
+    var damaged = function (row) { var r = $('input[value="damaged"]', row); return Boolean(r && r.checked); };
+    function update() {
+      var n = 0; var bad = 0; var left = 0;
+      rows.forEach(function (row) {
+        var q = Math.max(0, Number(qty(row).value || 0));
+        var max = Number(row.dataset.left || 0);
+        n += q;
+        if (damaged(row)) bad += q;
+        left += Math.max(0, max - q);
+        // Weights, batches and serials are needed only for a line that is arriving.
+        $$('[data-receipt-measure]', row).forEach(function (field) { field.required = q > 0; });
+        row.classList.toggle('is-off', q === 0);
+      });
+      $$('[data-ox-rcv-n]').forEach(function (node) { node.textContent = n; });
+      var good = $('[data-ox-rcv-good]', form); if (good) good.textContent = n - bad;
+      var badOut = $('[data-ox-rcv-bad]', form); if (badOut) badOut.textContent = bad;
+      var leftOut = $('[data-ox-rcv-left]', form); if (leftOut) leftOut.textContent = left;
+      $$('[data-ox-rcv-label]').forEach(function (b) { b.textContent = n ? 'Receive ' + n + ' unit' + (n === 1 ? '' : 's') : 'Enter what arrived'; b.disabled = !n; });
+      var status = $('[data-ox-rcv-status]', form);
+      if (status) status.textContent = !n ? 'Nothing entered yet.' : left ? left + ' still to come. ' + form.dataset.po + ' stays open.' : 'This completes ' + form.dataset.po + '.';
+    }
+    form.addEventListener('click', function (event) {
+      var step = event.target.closest('[data-ox-inc], [data-ox-dec]');
+      if (step) {
+        var input = $('input', step.closest('.ox-step'));
+        var max = Number(input.max || Infinity);
+        input.value = String(Math.min(max, Math.max(0, Number(input.value || 0) + (step.hasAttribute('data-ox-inc') ? 1 : -1))));
+        update();
+        return;
+      }
+      if (event.target.closest('[data-ox-rcv-fill]')) { rows.forEach(function (row) { qty(row).value = row.dataset.left; }); update(); }
+      if (event.target.closest('[data-ox-rcv-clear]')) { rows.forEach(function (row) { qty(row).value = '0'; }); update(); }
+    });
+    form.addEventListener('input', update);
+    form.addEventListener('change', update);
+    update();
+  }
+
   // Record payment from the purchase order list lands here with ?pay=1: open the first bill's panel.
   function openFromQuery() {
     if (!/[?&]pay=1(&|$)/.test(window.location.search)) return;
@@ -353,6 +397,7 @@
     supplierPicker();
     paymentTerms();
     purchaseEntry();
+    receive();
     gridPanel();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
