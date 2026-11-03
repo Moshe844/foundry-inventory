@@ -15,6 +15,7 @@ test('actual provider invoices allocate every cent once with administrator attes
   allocations:[{accountId:first.accountId,weight:1},{accountId:second.accountId,weight:2}]};
  await assert.rejects(()=>costs.ingest(db,input,first.accountId),/administrator/);
  await db.query("INSERT INTO commercial_admin_accounts(account_id,granted_by) VALUES($1,'certification-fixture')",[first.accountId]);
+ await db.query('UPDATE accounts SET email_verified_at=now() WHERE id=$1',[first.accountId]);
  const results=await Promise.all(Array.from({length:5},()=>costs.ingest(db,input,first.accountId)));
  assert.equal(results.filter(x=>x.created).length,1);
  const allocations=(await db.query('SELECT amount_minor FROM commercial_provider_cost_allocations ORDER BY amount_minor')).rows;
@@ -26,6 +27,14 @@ test('actual provider invoices allocate every cent once with administrator attes
  await assert.rejects(()=>costs.ingest(db,{...input,externalLineId:'missing-evidence',evidenceSha256:''},first.accountId),/evidence/);
  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint='infrastructure-cost-contracts'")).rows[0].status,'OPEN');
  assert.equal(costs.allocate(0,[{accountId:first.accountId,weight:1}])[0].amountMinor,0);
+ await t.test('owner-console authority records invoices without a second legacy grant; revoked and billing-only operators cannot attest',async()=>{
+  await db.query('UPDATE accounts SET email_verified_at=now() WHERE id=$1',[second.accountId]);
+  await db.query("INSERT INTO platform_console_operators(account_id,role,granted_by) VALUES($1,'OWNER','Isolated owner-console fixture')",[second.accountId]);
+  const statement={...input,externalLineId:'console-owner',amountMinor:1,platformOverhead:true,allocationBasis:'PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION',allocations:[]};
+  assert.equal((await costs.ingest(db,statement,second.accountId)).created,true);
+  await db.query("UPDATE platform_console_operators SET role='BILLING' WHERE account_id=$1",[second.accountId]);await assert.rejects(costs.ingest(db,{...statement,externalLineId:'billing-not-owner'},second.accountId),/administrator/);
+  await db.query("UPDATE platform_console_operators SET role='OWNER',active=false WHERE account_id=$1",[second.accountId]);await assert.rejects(costs.ingest(db,{...statement,externalLineId:'revoked-owner'},second.accountId),/administrator/);
+ });
  await t.test('actual platform invoices are recorded once without inventing tenant allocations or charging usage',async()=>{
   const overhead={...input,externalLineId:'platform-overhead',amountMinor:9288,platformOverhead:true,allocationBasis:'PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION',allocations:[]};
   assert.throws(()=>costs.normalize({...overhead,allocationBasis:'Pretend measured shares'}),/platform overhead/);

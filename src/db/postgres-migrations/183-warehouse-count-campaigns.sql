@@ -1,5 +1,5 @@
 CREATE TABLE warehouse_count_campaigns (
- id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+ id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
  created_by_user_id TEXT NOT NULL,approved_by_user_id TEXT,
  title TEXT NOT NULL,scope JSONB NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT'
  CHECK(status IN ('DRAFT','APPLYING','REVIEW_REQUIRED','COMPLETED')),
@@ -13,7 +13,7 @@ CREATE TABLE warehouse_count_campaign_lines (
  balance_version TEXT NOT NULL,cost_version TEXT NOT NULL,
  counted_quantity NUMERIC,unit_cost_minor BIGINT CHECK(unit_cost_minor>=0),cost_delta_minor BIGINT,applied_at TIMESTAMPTZ,
  PRIMARY KEY(campaign_id,location_id,sku_id),
- FOREIGN KEY(workspace_id,campaign_id) REFERENCES warehouse_count_campaigns(workspace_id,id),
+ FOREIGN KEY(workspace_id,campaign_id) REFERENCES warehouse_count_campaigns(workspace_id,id) ON DELETE CASCADE,
  FOREIGN KEY(sku_id) REFERENCES skus(id),FOREIGN KEY(location_id) REFERENCES locations(id)
 );
 CREATE INDEX warehouse_count_campaign_inventory ON warehouse_count_campaigns(workspace_id,created_at DESC,id);

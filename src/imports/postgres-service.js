@@ -545,9 +545,9 @@ async function analyse(database, ctx, input) {
       VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
     const executionIdentities=require('./postgres-execution-identities');
     if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);await executionIdentities.insertPage(client,ctx,plan,validated.rows,{productKey,variantKey});await executionIdentities.mark(client,ctx,plan);await input.onProgress?.({stage:'saving',processedRows:validated.rows.length,totalRows:validated.rows.length});await input.beforeCommit?.(client,plan);return;}
-    const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
-    for(let start=0;start<sheet.rows.length;start+=500){
-      const sourceRows=sheet.rows.slice(start,start+500);
+    const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map(),analysisBatchSize=sheet.rows.length>=5000?2000:500;
+    for(let start=0;start<sheet.rows.length;start+=analysisBatchSize){
+      const sourceRows=sheet.rows.slice(start,start+analysisBatchSize);
       const batchContext=await workspaceContext(client,ctx.workspaceId,scopeRows(sourceRows));
       const batch=validateRows({...sheet,rows:sourceRows},proposal.mappings,proposal,
         {...batchContext,locations:validationContext.locations,locationByName:validationContext.locationByName,validationState:validationContext.validationState},input);
@@ -557,7 +557,7 @@ async function analyse(database, ctx, input) {
       for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
       await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
       await executionIdentities.insertPage(client,ctx,plan,batch.rows,{productKey,variantKey});
-      await input.onProgress?.({stage:'saving',processedRows:Math.min(start+500,sheet.rows.length),totalRows:sheet.rows.length});
+      await input.onProgress?.({stage:'saving',processedRows:Math.min(start+analysisBatchSize,sheet.rows.length),totalRows:sheet.rows.length});
     }
     plan.integrityHash=hash.finish();plan.recordsValid=summary.valid;plan.recordsInvalid=summary.invalid;plan.conflicts=[...conflicts.values()];
     plan.transformations.existingStockRows=summary.existingStockRows;

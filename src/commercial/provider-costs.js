@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const config = require('../config');
 const { ValidationError, AuthorizationError } = require('../domain/errors');
 const control = require('./control-service');
 
@@ -56,10 +55,8 @@ function allocate(amountMinor, rows) {
 }
 
 async function ingest(database, input, actorAccountId) {
-  const actor = (await database.query('SELECT email FROM accounts WHERE id=$1', [actorAccountId])).rows[0];
-  const admin = config.commercial.adminEmails.includes(String(actor?.email || '').toLowerCase())
-    || (await database.query('SELECT 1 FROM commercial_admin_accounts WHERE account_id=$1', [actorAccountId])).rows.length > 0;
-  if (!actor || !admin) throw new AuthorizationError('Only a commercial administrator can attest provider costs.');
+  const actor=await require('../platform-owner/auth').operator(database,actorAccountId);
+  if(actor?.role!=='OWNER')throw new AuthorizationError('Only an active StockChief owner-console administrator can attest provider costs.');
   const statement = normalize(input);
   const snapshot = JSON.stringify(statement);
   const id = `provider-statement:${crypto.createHash('sha256').update(`${statement.provider}:${statement.externalLineId}`).digest('hex')}`;

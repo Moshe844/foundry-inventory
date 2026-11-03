@@ -3,12 +3,13 @@ const path=require('node:path'),os=require('node:os'),{spawn}=require('node:chil
 function specification(job,env=process.env){
  if(!/^[a-zA-Z0-9_-]{1,120}$/.test(job.id||''))throw Error('Invalid qualification job identity.');
  if(env.RENDER_SERVICE_ID!=='srv-daqh418473hc73853e7g')throw Error('Qualification runs only on the existing staging worker.');
- const url=new URL(env.FOUNDRY_DATABASE_URL||env.DATABASE_URL);if(!url.hostname.includes('dpg-damlkhuk1f9s739h5ga0-a')||url.pathname!=='/stockchief_staging')throw Error('Staging database guard');
+ require('../../scripts/lib/staging-database-guard').assertDatabase(env.FOUNDRY_DATABASE_URL||env.DATABASE_URL);
  const release=String(job.payload?.release||'');if(!/^[a-f0-9]{40}$/.test(release)||release!==env.RENDER_GIT_COMMIT)throw Error('Exact deployed staging release required.');
  const root=path.resolve(__dirname,'../..'),output=path.join(os.tmpdir(),'stockchief-staging-load-'+job.id+'.json');
  if(job.kind==='qualification.staging-load'){
   if(!/^wsp_[a-z0-9]+$/.test(job.workspaceId||''))throw Error('A synthetic inventory is required.');
-  return {args:['--max-old-space-size=256',path.join(root,'scripts/certify-staging-variant-load.js'),'--hosted-sessions','--qa-workspace-id',job.workspaceId,'--release',release,'--seconds','120','--output',output],timeout:180000};
+  const tenants=job.payload?.tenants;if(tenants&&(!Array.isArray(tenants)||tenants.length<2||tenants.length>4||tenants[0]?.workspaceId!==job.workspaceId||tenants.some(t=>!/^wsp_[a-z0-9]+$/.test(t?.workspaceId||'')||!Number.isInteger(t.users)||t.users<1||t.users>50)||tenants.reduce((n,t)=>n+t.users,0)!==50||new Set(tenants.map(t=>t.workspaceId)).size!==tenants.length))throw Error('Choose two to four synthetic inventories and exactly 50 members.');
+  return {args:['--max-old-space-size=256',path.join(root,'scripts/certify-staging-variant-load.js'),'--hosted-sessions',...(tenants?['--qa-workspaces',JSON.stringify(tenants)]:['--qa-workspace-id',job.workspaceId]),'--release',release,'--seconds','120','--output',output],timeout:180000};
  }
  const mode=job.payload?.mode,run=job.payload?.run;if(job.kind!=='qualification.staging-million'||!['prepare','million','verify'].includes(mode)||!/^[a-z0-9-]{6,60}$/.test(run||''))throw Error('Invalid bounded qualification request.');
  return {args:['--max-old-space-size=1280',path.join(root,'scripts/certify-staging-million.js'),'--mode',mode,'--run',run,'--release',release],timeout:2700000};

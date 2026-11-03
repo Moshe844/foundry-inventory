@@ -275,10 +275,19 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   }
   const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
   const receiptLots=await require('./postgres-receipt-lots').resolve(client,ctx,values,targets,at);
-  await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);
-  const positionSkus=[...new Set(positions.map(p=>p.sku_id))];
-  const balances=(await client.query(`SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON b.sku_id=x.sku_id AND b.location_id=x.location_id WHERE b.workspace_id=$1 AND b.sku_id=ANY($3::text[]) ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,[ctx.workspaceId,positionJSON,positionSkus])).rows;
-  const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before:Number(row.on_hand),after:Number(row.on_hand)}])),operations=[],movements=[],results=[];
+  // Atomically add the whole receipt once per position. Inserting zero and
+  // updating it again doubles rollup, quota and cost-coverage trigger work.
+  const totals=new Map(positions.map(p=>[JSON.stringify([p.sku_id,p.location_id]),{...p,delta:'0'}]));
+  for(const value of values){const p=totals.get(JSON.stringify([value.input.skuId,value.input.locationId]));p.delta=exact.add(p.delta,value.quantity);}
+  const payload=JSON.stringify([...totals.values()]);
+  const balances=(await client.query(`WITH changed AS (
+   INSERT INTO balances AS b(workspace_id,sku_id,location_id,on_hand,updated_at)
+   SELECT $1,x.sku_id,x.location_id,x.delta,$3 FROM jsonb_to_recordset($2::jsonb) x(sku_id text,location_id text,delta numeric) ORDER BY x.sku_id,x.location_id
+   ON CONFLICT(sku_id,location_id) DO UPDATE SET on_hand=b.on_hand+EXCLUDED.on_hand,updated_at=EXCLUDED.updated_at WHERE b.workspace_id=EXCLUDED.workspace_id
+   RETURNING b.sku_id,b.location_id,b.on_hand)
+   SELECT b.*,x.delta FROM changed b JOIN jsonb_to_recordset($2::jsonb)x(sku_id text,location_id text,delta numeric) USING(sku_id,location_id)`,[ctx.workspaceId,payload,at])).rows;
+  if(balances.length!==positions.length)throw new InvariantError('A stock position could not be verified in this inventory.','stock_changed');
+  const states=new Map(balances.map(row=>{const before=exact.safeNumber(exact.subtract(row.on_hand,row.delta),{signed:true});return [JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before,after:before,expectedAfter:exact.safeNumber(row.on_hand,{signed:true})}];})),operations=[],movements=[],results=[];
   for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:true,total:true});
     if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
     const result={movementId:newAppendId('mv'),groupId:newAppendId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:receiptLots.get(value.index)?.id||null,serials:[],serialUnitIds:[]};
@@ -288,7 +297,7 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   // once in this same transaction; a later failure rolls it back with the stock.
   // Other connections cannot observe completion before those effects commit.
   const inserted=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key,status,result,completed_at) SELECT x.id,$1,'inventory.receive',x.idempotency_key,'COMPLETED',x.result,now() FROM jsonb_to_recordset($2::jsonb) AS x(id text,idempotency_key text,result jsonb) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING`,[ctx.workspaceId,JSON.stringify(operations)]);if(inserted.rowCount!==values.length)throw new InvariantError('That inventory operation is already running.','operation_in_progress');
-  const changed=await client.query(`UPDATE balances b SET on_hand=x.after,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,before numeric,after numeric) WHERE b.workspace_id=$1 AND b.sku_id=ANY($4::text[]) AND b.sku_id=x.sku_id AND b.location_id=x.location_id AND b.on_hand=x.before`,[ctx.workspaceId,JSON.stringify([...states.values()]),at,positionSkus]);if(changed.rowCount!==states.size)throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
+  if([...states.values()].some(s=>s.after!==s.expectedAfter))throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
   const lotPositions=new Map();for(const m of movements){if(!m.lot_id)continue;const key=JSON.stringify([m.lot_id,m.location_id]),p=lotPositions.get(key)||{lot_id:m.lot_id,location_id:m.location_id,quantity:'0'};p.quantity=exact.add(p.quantity,m.quantity_delta);lotPositions.set(key,p);}
   if(lotPositions.size){const payload=JSON.stringify([...lotPositions.values()].sort((a,b)=>a.lot_id.localeCompare(b.lot_id)||a.location_id.localeCompare(b.location_id)));
     const changed=await client.query(`INSERT INTO lot_balances AS b(workspace_id,lot_id,location_id,quantity,updated_at)
