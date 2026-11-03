@@ -8,7 +8,7 @@ function blocksAdmission(call, goal) {
   ${call}.goal_id IS NOT DISTINCT FROM ${goal} OR NOT EXISTS (
    SELECT 1 FROM stockchief_runtime.jobs live_job
    WHERE live_job.workspace_id=${call}.workspace_id
-    AND live_job.kind='assistant.run-codex-goal' AND live_job.status='RUNNING'
+    AND live_job.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND live_job.status='RUNNING'
     AND live_job.payload->>'goalId'=${call}.goal_id
     AND live_job.payload->>'actorId'=${call}.actor_id
     AND live_job.lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)

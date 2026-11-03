@@ -20,6 +20,7 @@ const database = openPostgres(connectionString, {
 let runtime = null;
 let scheduleRuntime = null;
 let capacityRuntime = null;
+let readAgentRuntime = null;
 let shuttingDown = false;
 
 async function shutdown(signal, exitCode = 0) {
@@ -27,7 +28,7 @@ async function shutdown(signal, exitCode = 0) {
   shuttingDown = true;
   console.log(`[stockchief] ${signal}; stopping PostgreSQL worker.`);
   try {
-    await require('./operations/runtime-shutdown').stopRuntimes([runtime,scheduleRuntime,capacityRuntime]);
+    await require('./operations/runtime-shutdown').stopRuntimes([runtime,scheduleRuntime,capacityRuntime,readAgentRuntime]);
     await database.close();
   } finally {
     process.exit(exitCode);
@@ -50,6 +51,8 @@ async function start() {
     onError(error){console.error('[stockchief] PostgreSQL scheduler iteration failed:',error.code || error.message);}});
   capacityRuntime=require('./operations/postgres-capacity').start(database,{role:'worker',
     onError(error){console.error('[stockchief] worker capacity telemetry failed:',error.code||error.message);}});
+  readAgentRuntime=await require('./assistant/postgres-hosted-read-worker').start(database,{
+    onError(error){console.error('[stockchief] hosted Ask read failed:',error.code||error.message);}});
   console.log(`[stockchief] PostgreSQL worker ${runtime.owner} ready; migrations applied: ${applied.length}.`);
 }
 

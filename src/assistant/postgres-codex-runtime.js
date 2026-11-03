@@ -75,7 +75,7 @@ async function run(database,ctx,id,options={}){
   const routing=require('./codex-model-routing');ctx=await routing.context(database,ctx);
   let modelProfile=routing.selected(goal,ctx);
   audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
-  const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
+  const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE||(goal.checkpoint.boundedRead===true?'database-tools-v1':undefined);
   let helper;
   const provider=require('../commercial/relay-provider').register({name:'openai',get model(){return modelProfile.verificationProfile?
    require(base+'codex-models').getProfile(modelProfile.verificationProfile).model:modelProfile.model;},

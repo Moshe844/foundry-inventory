@@ -48,7 +48,8 @@ async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pil
  if(pilot.admission_kind==='COMMERCIAL')return null;
  const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status();return {
  enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
- workerAvailable:Boolean(pilot.worker_seen_at&&Date.now()-new Date(pilot.worker_seen_at).getTime()<30000),
+ workerAvailable:Boolean(pilot.worker_seen_at&&Date.now()-new Date(pilot.worker_seen_at).getTime()<30000)||
+  (await db.query("SELECT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_worker_health WHERE kind='database-read' AND last_seen_at>now()-interval '30 seconds') AS available")).rows[0].available,
  budget:{ceiling:usage.ceiling,committed:usage.committed,remaining:usage.remaining},
  model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
@@ -78,6 +79,7 @@ async function start(db,ctx,message,options={}){
    ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{}),
    ...(!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message)?{boundedRead:true}:{})})]);
  goal.checkpoint.runtime='codex-staging';
+ if(!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message))goal.checkpoint.boundedRead=true;
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }
 async function inbox(db,ctx,id,{progress=false}={}){await access(db,ctx);

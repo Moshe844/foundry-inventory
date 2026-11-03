@@ -9,7 +9,9 @@ async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
 async function conversation(db,ctx,id){return (await db.query(`SELECT id,coalesce(checkpoint->>'chatId',id) AS chat_id FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
- COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
+ CASE WHEN checkpoint->>'boundedRead'='true' THEN EXISTS(SELECT 1 FROM stockchief_runtime.assistant_worker_health
+  WHERE kind='database-read' AND last_seen_at>now()-interval '30 seconds') ELSE
+ COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) END AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
  'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
  'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
@@ -88,7 +90,7 @@ async function reply(db,ctx,id,message,{questionId=null}={}){
  },{isolation:'READ COMMITTED',retrySafe:true});
 }
 async function enqueue(db,goal){const queued=await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
- kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
+ kind:goal.checkpoint.runtime==='codex-staging'?(goal.checkpoint.boundedRead===true?'assistant.run-codex-read':'assistant.run-codex-goal'):'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
  idempotencyKey:`goal:${goal.id}:${goal.updated_at.toISOString()}`,maxAttempts:1,priority:20});
  if(queued.job?.status==='DEAD'&&goal.status==='READY'&&goal.checkpoint.runtime==='codex-staging'){
   await db.query(`UPDATE ${TABLE} SET status='BLOCKED',answer='The worker stopped before starting this request. Your goal is saved; you can continue it here.',

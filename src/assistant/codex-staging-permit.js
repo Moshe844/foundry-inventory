@@ -9,7 +9,8 @@ async function issue({database,ctx,goalId,budget,image}){
  if(goal?.checkpoint.runtime!=='codex-staging'||goal.status!=='RUNNING')throw denied('native_admission_goal_state');
  if(!state.approval||state.stopped||state.expires<=Date.now())throw denied('native_admission_allowance');
  if(state.unresolved)throw denied('native_admission_unsettled_usage');
- if(!/^sha256:[a-f0-9]{64}$/.test(image))throw denied('native_admission_image');
+ const databaseOnly=goal.checkpoint.boundedRead===true&&!goal.checkpoint.harness?.native?.codex&&image==='database-tools-v1';
+ if(!databaseOnly&&!/^sha256:[a-f0-9]{64}$/.test(image))throw denied('native_admission_image');
  const permit=Object.freeze({});permits.set(permit,{budget,task:goalId,image,goalId,workspaceId:ctx.workspaceId,actorId:ctx.actorId,
   sourceHash:await require('../../scripts/environment-agent-demo/source-hash-worker').sourceHash()});return permit;
 }
