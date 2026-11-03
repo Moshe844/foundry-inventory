@@ -23,7 +23,7 @@ async function execute(kind,count){const ctx=state.ctx,key=kind+':'+count;state.
  const health=await (await fetch('https://stockchief-staging-web.onrender.com/healthz')).json();if(!health.ok||health.releaseRef!==arg('release'))throw Error('Exact healthy staging release required.');
  if(!state.ctx){
   if(mode!=='prepare')throw Error('Prepare this synthetic run first.');state.beforeBytes=await capacity();
-  const auth=require('../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'Synthetic scale owner',businessName:'Synthetic ERP release million '+run,email:'stockchief-million-'+run+'@example.test',password:crypto.randomBytes(32).toString('base64url')});
+  const auth=require('../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'Synthetic scale owner',businessName:'Synthetic ERP release million '+run,email:'stockchief-million-'+run+'@example.test',password:crypto.randomBytes(32).toString('base64url')+'!Aa7'});
   state.ctx={workspaceId:owner.workspaceId,actorId:owner.userId};state.accountId=owner.accountId;state.releaseRef=health.releaseRef;save();
   await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,current_period_start,current_period_end,source) VALUES($1,$2,'pro','approved-2026-11-02:pro','COMP','MONTHLY',now(),now()+interval '1 month','ISOLATED_STAGING_QUALIFICATION')",['million-sub-'+run,owner.accountId]);
   await require('../src/accounting/postgres-ledger').configure(db,state.ctx,{currency:'USD',startDate:'2026-01-01'});
