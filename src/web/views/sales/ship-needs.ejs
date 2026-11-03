@@ -1,0 +1,34 @@
+<%#
+  What the carrier still needs, all together, inside the form that gets rates.
+  Saved by the same press of the button, so nobody leaves the order for it.
+%>
+<% if (needs && needs.any) { %>
+<div class="ship-needs" data-ship-needs>
+  <p class="ship-needs__h">Carriers need these before they can quote <small><span aria-hidden="true">*</span> required</small></p>
+  <% if (needs.customerPhone) { %>
+    <label class="ship-needs__f"><span>Customer phone <i aria-hidden="true">*</i></span><input name="customerPhone" type="tel" autocomplete="off" required aria-label="Customer phone"></label>
+  <% } %>
+  <% if (needs.shipTo) { %>
+    <div class="ship-needs__group"><p class="ship-needs__g">Deliver to</p>
+      <%- include('../partials/address-fields',{idPrefix:'ship-to-addr',target:'ship-to-address'}) %>
+      <label class="addr-native"><span>Delivery address</span><textarea name="shipToAddress" id="ship-to-address" required><%= needs.shipTo.address %></textarea></label>
+    </div>
+  <% } %>
+  <% if (needs.from) { %>
+    <div class="ship-needs__group"><p class="ship-needs__g">Ship from <%= needs.from.name %></p>
+      <% if (!locals.canEditLocation) { %>
+        <p class="ship-now__warn">Only an owner can add this location's <%= needs.from.addressMissing ? 'address' : 'phone' %>. Ask them to add it, then get rates.</p>
+      <% } else { %>
+        <% if (needs.from.addressMissing) { %>
+          <%- include('../partials/address-fields',{idPrefix:'ship-from-addr',target:'ship-from-address'}) %>
+          <label class="addr-native"><span>Ship-from address</span><textarea name="shipFromAddress" id="ship-from-address" required><%= needs.from.address %></textarea></label>
+        <% } %>
+        <% if (needs.from.phoneMissing) { %>
+          <label class="ship-needs__f"><span>Ship-from phone <i aria-hidden="true">*</i></span><input name="shipFromPhone" type="tel" autocomplete="off" required aria-label="Ship-from phone"></label>
+        <% } %>
+        <p class="hint">Saved on <%= needs.from.name %>, so you only enter this once.</p>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+<% } %>

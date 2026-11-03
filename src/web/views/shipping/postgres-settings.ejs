@@ -9,6 +9,7 @@
 <div class="ox-head"><div><h1 class="ox-title">Shipping</h1>
   <p class="ox-sub">Print shipping labels right from your orders. Postage is billed to your own shipping account.</p></div></div>
 
+<% if(locals.returnTo){ %><div class="ship-return" data-ship-return><span>Connect an account below and you'll go straight back to your order.</span><a class="ox-btn ox-btn--ghost ox-btn--sm" href="<%= returnTo %>">Back to the order</a></div><% } %>
 <ol class="ship-how" aria-label="How shipping works">
   <li class="<%= connectedAny?'is-done':'is-now' %>"><span>1</span><div><strong>Connect your shipping account</strong><small><%= connectedAny?'Done · '+shippingAccounts.map(a=>a.providerName).join(', '):'Once, below' %></small></div></li>
   <li class="<%= connectedAny?'is-now':'' %>"><span>2</span><div><strong>Open an order and enter the weight</strong><small>Its Fulfilment card shows rates from your account</small></div></li>
@@ -40,13 +41,13 @@
     <% if(locals.shippoLink){ %>
     <div class="ship-way <%= connectedAny?'':'is-primary' %>">
       <div><strong>Link your Shippo account <span class="ox-badge ox-badge--blue">Easiest</span></strong><p>Sign in to Shippo and approve. No keys to copy.</p></div>
-      <% if(owner){ %><a class="ox-btn <%= connectedAny?'ox-btn--secondary':'ox-btn--primary' %>" href="/settings/shipping/shippo/connect">Link Shippo account</a><% } %>
+      <% if(owner){ %><a class="ox-btn <%= connectedAny?'ox-btn--secondary':'ox-btn--primary' %>" href="/settings/shipping/shippo/connect<%= locals.returnTo?'?returnTo='+encodeURIComponent(returnTo):'' %>">Link Shippo account</a><% } %>
     </div>
     <% } %>
     <details class="ship-way ship-way--key" id="existing-carrier-connection" <%= openKey?'open':'' %>>
       <summary><div><strong>Connect with an API key</strong><p>For ShipStation, its API (ShipEngine) or Shippo: copy the key from that account and paste it here.</p></div><span class="ox-btn ox-btn--secondary ship-way__open">Use an API key</span></summary>
     <% if(owner){ %><form method="post" action="/settings/shipping/account" class="ox-ship__form" data-busy data-key-form>
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if(locals.returnTo){ %><input type="hidden" name="returnTo" value="<%= returnTo %>"><% } %>
       <label class="ox-ship__field"><span id="shipping-provider-label">Shipping platform</span><select name="provider" required data-key-provider aria-labelledby="shipping-provider-label">
         <% keyProviders.forEach(function(provider){ %><option value="<%= provider %>" <%= locals.selectedProvider===provider?'selected':'' %>><%= providerNames[provider] %></option><% }); %></select></label>
       <% keyProviders.forEach(function(provider){ %><p class="ox-ship__help" data-key-help="<%= provider %>" <%= (locals.selectedProvider||keyProviders[0])===provider?'':'hidden' %>><%= keyHelp[provider][0] %> <a href="<%= keyHelp[provider][1] %>" target="_blank" rel="noopener noreferrer">How to find it</a></p><% }); %>
@@ -58,7 +59,7 @@
     </details>
     <div class="ship-way">
       <div><strong>ShipStation Custom Store</strong><p>Keep printing labels in ShipStation: it pulls your StockChief orders and sends tracking back.<% if(locals.customStore){ %> <strong>Connected</strong> · StockChief connection details are ready to enter in ShipStation.<% } %></p></div>
-      <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
+      <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if(locals.returnTo){ %><input type="hidden" name="returnTo" value="<%= returnTo %>"><% } %><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
     </div>
   </div>
 </section>

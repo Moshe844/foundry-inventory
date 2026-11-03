@@ -10,6 +10,8 @@
   <% } %>
 </div>
 
+<link rel="stylesheet" href="/address-fields.css?v=<%= locals.assetVersion||'current' %>">
+<% if (locals.returnTo) { %><div class="notice section"><span>Save this location and you'll go straight back to your shipment.</span> <a class="btn btn--sm" href="<%= returnTo %>">Back</a></div><% } %>
 <div class="card">
   <% if (locals.resumeInstruction) { %>
     <div class="notice" style="margin:16px;">
@@ -43,7 +45,7 @@
               </td>
               <td data-label="Type"><span class="badge"><%= helpers.locationKindLabel(location.kind) %></span></td>
               <td class="right" data-label="Items"><span class="num"><%= helpers.qty(location.sku_count) %></span></td>
-              <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(location.on_hand) %></strong></td>
+              <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(location.whole_units === undefined ? location.on_hand : location.whole_units) %></strong><% (location.measured_stock || []).forEach(function (part) { %><span class="cell-sub" data-measured-stock>+ <%= helpers.qty(part.quantity) %> <%= part.unit %></span><% }) %></td>
               <td class="right cell-full">
                 <% if (currentUser.role === 'owner') { %>
                   <div class="btn-row" style="justify-content:flex-end;">
@@ -89,11 +91,11 @@
       </div>
       <div class="modal-body">
         <div class="field">
-          <label class="label" for="location-name">Name</label>
+          <label class="label label--req" for="location-name">Name</label>
           <input class="input" id="location-name" name="name" required placeholder="Main Warehouse">
         </div>
         <div class="field">
-          <label class="label" for="location-kind">Type</label>
+          <label class="label label--req" for="location-kind">Type</label>
           <select class="select" id="location-kind" name="kind" required>
             <% helpers.LOCATION_KINDS.forEach(function (kind) { %>
               <option value="<%= kind.id %>"><%= kind.label %></option>
@@ -114,9 +116,9 @@
             Optional: most locations never post anything, and a stockroom does
             not need a postal address to hold stock.
           %>
-          <label class="label" for="location-address">Postal address <span class="optional">optional</span></label>
-          <textarea class="input textarea" id="location-address" name="address" rows="3"
-            placeholder="12 Depot Road&#10;Monroe, NY 10950"></textarea>
+          <span class="label">Postal address <span class="optional">optional</span></span>
+          <%- include('../partials/address-fields',{idPrefix:'location-addr',target:'location-address'}) %>
+          <label class="addr-native" for="location-address"><span>Full postal address</span><textarea id="location-address" name="address"></textarea></label>
           <p class="field-hint">
             Where parcels leave from. Needed only to buy a shipping label, and StockChief asks for it
             once rather than filling it in on your behalf.
@@ -144,21 +146,22 @@
     </form>
   </dialog>
 
-  <% locations.forEach(function (location) { %>
-    <dialog class="modal" id="modal-location-<%= location.id %>">
+  <template id="location-address-template"><%- include('../partials/address-fields',{idPrefix:'edit-addr',target:'__target__'}) %></template>
+  <% locations.forEach(function (location) { var shippingEdit = Boolean(locals.returnTo && locals.editId === location.id); %>
+    <dialog class="modal" id="modal-location-<%= location.id %>" <%= locals.editId === location.id ? 'data-open-on-load' : '' %>>
       <form method="post" action="/locations/<%= location.id %>">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if (shippingEdit) { %><input type="hidden" name="returnTo" value="<%= returnTo %>"><% } %>
         <div class="modal-head">
           <h2>Edit <%= location.name %></h2>
           <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
         </div>
         <div class="modal-body">
           <div class="field">
-            <label class="label" for="edit-name-<%= location.id %>">Name</label>
+            <label class="label label--req" for="edit-name-<%= location.id %>">Name</label>
             <input class="input" id="edit-name-<%= location.id %>" name="name" value="<%= locals.renameTo && locals.editId === location.id ? locals.renameTo : location.name %>" required>
           </div>
           <div class="field">
-            <label class="label" for="edit-kind-<%= location.id %>">Type</label>
+            <label class="label label--req" for="edit-kind-<%= location.id %>">Type</label>
             <select class="select" id="edit-kind-<%= location.id %>" name="kind" required>
               <% helpers.LOCATION_KINDS.forEach(function (kind) { %>
                 <option value="<%= kind.id %>" <%= location.kind === kind.id ? 'selected' : '' %>><%= kind.label %></option>
@@ -169,14 +172,14 @@
           <div class="field"><label class="label" for="edit-barcode-<%= location.id %>">Scan code</label><input class="input" id="edit-barcode-<%= location.id %>" name="barcode" value="<%= location.barcode || '' %>"></div>
           <div class="field"><label class="label" for="edit-sequence-<%= location.id %>">Pick sequence</label><input class="input" id="edit-sequence-<%= location.id %>" name="pickSequence" type="number" min="0" value="<%= location.pick_sequence || 0 %>"></div>
           <div class="field">
-            <label class="label" for="edit-address-<%= location.id %>">Postal address</label>
-            <textarea class="input textarea" id="edit-address-<%= location.id %>" name="address" rows="3"
-              placeholder="12 Depot Road&#10;Monroe, NY 10950"><%= location.address || '' %></textarea>
+            <span class="label">Postal address<% if (shippingEdit) { %> <i class="ship-now__req" aria-hidden="true">*</i><% } %></span>
+            <div data-address-slot="edit-address-<%= location.id %>"></div>
+            <label class="addr-native" for="edit-address-<%= location.id %>"><span>Full postal address</span><textarea id="edit-address-<%= location.id %>" name="address" <%= shippingEdit ? 'required' : '' %>><%= location.address || '' %></textarea></label>
             <p class="field-hint">Where parcels leave from, for buying a shipping label.</p>
           </div>
           <div class="field">
-            <label class="label" for="edit-phone-<%= location.id %>">Shipping contact phone</label>
-            <input class="input" id="edit-phone-<%= location.id %>" name="phone" type="tel" autocomplete="tel"
+            <label class="label" for="edit-phone-<%= location.id %>">Shipping contact phone<% if (shippingEdit) { %> <i class="ship-now__req" aria-hidden="true">*</i><% } %></label>
+            <input class="input" id="edit-phone-<%= location.id %>" name="phone" type="tel" autocomplete="tel" <%= shippingEdit ? 'required' : '' %>
               value="<%= location.phone || '' %>" placeholder="512-555-0147">
             <p class="field-hint">The carrier contact for parcels leaving this location.</p>
           </div>
@@ -198,4 +201,5 @@
   <% }) %>
 <% } %>
 
+<script src="/address-fields.js?v=<%= assetVersion %>" defer></script>
 <script src="/location-entry.js?v=<%= assetVersion %>" defer></script>

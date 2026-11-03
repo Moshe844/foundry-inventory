@@ -22,3 +22,7 @@ fieldset.addr-set > legend { font-weight: 600; font-size: 14px; margin-bottom: 8
   .addr__zip, .addr__city, .addr__state { grid-column: span 1; }
   .addr__city { grid-column: 1 / -1; }
 }
+/* Required: the mark is drawn, so a field's accessible name stays its plain label. */
+.addr.is-required .addr__line1 > span:first-child::after, .addr.is-required .addr__zip > span:first-child::after, .addr.is-required .addr__city > span:first-child::after, .addr.is-required .addr__state > span:first-child::after { content: " *"; color: #DC2626; }
+.label--req::after { content: " *"; color: #DC2626; }
+.ship-now__req { color: #DC2626; font-style: normal; }

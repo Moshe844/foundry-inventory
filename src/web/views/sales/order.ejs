@@ -294,7 +294,7 @@
     <% } %>
     <a class="btn btn--primary" href="#payment-hold">Settle the hold</a>
   </div>
-<% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && (locals.shipments || [])
+<% } else if (!locals.shipNow && !locals.shipNoAccount && !['FULFILLED','CANCELLED'].includes(order.status) && (locals.shipments || [])
     .some(function (box) { return box.status === 'PICKING' || box.status === 'PACKED'; })) { %>
   <%
     /*
@@ -617,6 +617,10 @@
       <div class="card-body"><p class="ship-now__warn">This order is cancelled, but a parcel still has a saved label. <a href="/fulfilment/<%= boxes.filter(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })[0].id %>#label">Void the label</a></p></div>
     <% } else if (locals.shipNow) { %>
       <%- include('ship-now', { sn: shipNow, order: order }) %>
+    <% } else if (locals.shipNoAccount) { %>
+      <div class="card-body ship-now" id="ship-now">
+        <div class="ship-now__connect"><a class="btn btn--primary" href="<%= locals.shipConnectHref %>">Connect a shipping account</a><span class="hint">to compare rates and print labels here. You'll come straight back to this order.</span></div>
+      </div>
     <% } else if (freeUnits && locals.money && money.blocksPicking) { %>
       <div class="card-body">
         <p class="hint">
@@ -628,14 +632,12 @@
       <%# Ship this order: weight in, rates out, then choose a rate and print. %>
       <div class="card-body ship-now" id="ship-now">
         <% if (locals.shippingReady) { %><ol class="ship-steps" aria-label="Shipping steps"><li class="is-now"><span>1</span>Parcel</li><li><span>2</span>Choose a rate</li><li><span>3</span>Print and hand over</li></ol><% } %>
-        <p class="ship-now__to"><span>Ship to</span><strong><%= order.ship_to_address || 'No delivery address yet — add one with Edit' %></strong></p>
-        <% if (locals.shippingReady && !(order.customer && order.customer.phone)) { %>
-          <p class="ship-now__warn">Carriers need the customer’s phone number for a label. Add it to <%= order.customer ? order.customer.name : 'the customer' %> first.</p>
-        <% } %>
+        <% if (!(locals.shipNeeds && shipNeeds.shipTo)) { %><p class="ship-now__to"><span>Ship to</span><strong><%= order.ship_to_address || 'No delivery address yet — add one with Edit' %></strong></p><% } %>
         <% if (locals.shippingReady) { %>
           <form method="post" action="/orders/<%= order.id %>/ship-label" class="ship-now__form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= locals.shipRequestKey %>">
-            <label class="ship-now__field"><span>Parcel weight</span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required placeholder="2.5" aria-label="Parcel weight">
+            <%- include('ship-needs', { needs: locals.shipNeeds }) %>
+            <label class="ship-now__field"><span>Parcel weight <i class="ship-now__req" aria-hidden="true">*</i></span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required placeholder="2.5" aria-label="Parcel weight">
               <select name="weightUnit" aria-label="Weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g">g</option></select></span></label>
             <details class="ship-now__size"><summary>Box size (optional)</summary>
               <span class="ship-now__pair"><input name="length" inputmode="decimal" placeholder="L" aria-label="Box length"><input name="width" inputmode="decimal" placeholder="W" aria-label="Box width"><input name="height" inputmode="decimal" placeholder="H" aria-label="Box height">
@@ -644,7 +646,7 @@
           </form>
           <p class="hint">Rates come from your <%= (locals.shippingAccountNames || []).join(', ') || 'connected shipping' %> account. Nothing is bought until you choose a rate.</p>
         <% } else { %>
-          <div class="ship-now__connect"><a class="btn btn--primary" href="/settings/shipping">Connect a shipping account</a><span class="hint">to compare rates and print labels right here.</span></div>
+          <div class="ship-now__connect"><a class="btn btn--primary" href="<%= locals.shipConnectHref %>">Connect a shipping account</a><span class="hint">to compare rates and print labels right here. You'll come straight back to this order.</span></div>
         <% } %>
         <div class="ship-now__other">
           <a href="#record-left" onclick="document.getElementById('record-left').open=true">Ship without a label</a>

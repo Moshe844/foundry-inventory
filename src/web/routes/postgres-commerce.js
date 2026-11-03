@@ -890,7 +890,8 @@ function createPostgresCommerceRouter(database,options={}){
     // Same readiness the order page uses before it offers a card or a link.
     const paymentsReady=(await payments.availableProviders(database,req.ctx.workspaceId)).length>0
       ||Boolean((await paymentConnect.describe(database,req.ctx.workspaceId))?.connected);
-    return res.status(status).page('sales/entry',{title:quotation?'New quotation':editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,quotation,operationKey:newId('order-form'),
+    const shippingConnected=(await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId)).length>0;
+    return res.status(status).page('sales/entry',{shippingConnected,canConnectShipping:req.user?.role==='owner',title:quotation?'New quotation':editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,quotation,operationKey:newId('order-form'),
       paymentsReady,canManagePaymentAccount:req.user?.role==='owner'});
   }
   const quotations=require('../../sales/postgres-quotes');
@@ -997,7 +998,10 @@ function createPostgresCommerceRouter(database,options={}){
         return res.page('sales/pricing-review',{title:'Review order pricing',nav:'sales',reviewId,nextStep,quote,products:await commerce.catalogue(database,req.ctx.workspaceId,{ids:input.lines.map(l=>l.skuId),limit:500}),customer:(await commerce.customers(database,req.ctx.workspaceId)).find(c=>c.id===input.customerId)});
       }
       const result=await submitOrder(database,req.ctx,input,req.body.nextStep||'draft');
-      req.flash('success',result.orderNumber+': '+(result.status==='DRAFT'?'draft saved; no stock reserved':result.status==='FULFILLED'?'pickup fulfilled and invoice posted; no payment recorded':'available stock reserved; nothing physically released')+'.');return res.redirect(303,'/orders/'+result.salesOrderId);
+      req.flash('success',result.orderNumber+': '+(result.status==='DRAFT'?'draft saved; no stock reserved':result.status==='FULFILLED'?'pickup fulfilled and invoice posted; no payment recorded':'available stock reserved; nothing physically released')+'.');
+      // "Save and connect shipping": connect first, then straight back to this order.
+      if(req.query.connectShipping==='1'&&req.user?.role==='owner')return res.redirect(303,'/settings/shipping?returnTo='+encodeURIComponent('/orders/'+result.salesOrderId+'#ship-now'));
+      return res.redirect(303,'/orders/'+result.salesOrderId);
     }catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,status:400});}
   }));
   router.post('/sales/pricing/order-reviews/:id/approve',requirePermission(permissions.OPERATE,'approve draft order pricing'),asyncRoute(async(req,res)=>{
@@ -1046,14 +1050,19 @@ function createPostgresCommerceRouter(database,options={}){
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
     // The parcel being shipped through a carrier right now: its rates and label are shown on the order itself.
-    const openParcel=shippingReady&&page.order.status!=='CANCELLED'?page.shipments.find(box=>['PICKING','PACKED'].includes(box.status)&&!['COLLECTED','DELIVERED_BY_US'].includes(box.handover)):null;
-    let shipNow=null;
-    if(openParcel){const carriers=require('../../sales/carriers'),current=await shipping.state(database,req.ctx.workspaceId,openParcel.id);
-      shipNow={shipment:current.shipment,blocked:current.blocked,accounts:shippingAccounts.map(a=>a.providerName),
+    const openParcel=page.order.delivery_method==='SHIP'&&page.order.status!=='CANCELLED'?page.shipments.find(box=>['PICKING','PACKED'].includes(box.status)&&!['COLLECTED','DELIVERED_BY_US'].includes(box.handover)):null;
+    const readiness=require('../../shipping/readiness'),canEditLocation=req.user?.role==='owner';
+    const shipConnectHref='/settings/shipping?returnTo='+encodeURIComponent('/orders/'+page.order.id+'#ship-now');
+    let shipNow=null,shipNeeds=null;
+    if(openParcel&&shippingReady){const carriers=require('../../sales/carriers'),current=await shipping.state(database,req.ctx.workspaceId,openParcel.id);
+      shipNow={needs:await readiness.needs(database,req.ctx.workspaceId,{orderId:page.order.id,locationId:current.shipment.ship_from_location_id,shipToAddress:current.shipment.ship_to_address}),
+        shipment:current.shipment,blocked:current.blocked,accounts:shippingAccounts.map(a=>a.providerName),
         rates:current.rates.map(rate=>({...rate,carrierName:carriers.displayName(rate.carrier)})),
         carrierName:current.shipment.carrier?carriers.displayName(current.shipment.carrier):null,
         trackingUrl:current.shipment.tracking_url||carriers.trackingUrlFor(current.shipment.carrier,current.shipment.tracking_number)};}
-    return res.page('sales/order',{depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    else if(shippingReady&&page.order.status!=='CANCELLED'&&page.pickable.length){let locationId=null;try{locationId=require('../../sales/parcel-lines').forParcel(page.detail).locationId;}catch(error){if(!(error instanceof ValidationError))throw error;}
+      if(locationId)shipNeeds=await readiness.needs(database,req.ctx.workspaceId,{orderId:page.order.id,locationId});}
+    return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
