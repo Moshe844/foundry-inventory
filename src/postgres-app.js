@@ -170,6 +170,7 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
   app.use(require('./web/mfa-middleware')(database));
   app.use(require('./web/routes/postgres-mfa').createRouter(database));
+  app.use(require('./web/routes/postgres-warehouse-stock').protection(database));
   app.use(require('./web/routes/postgres-company-sign-in').scopeProtection(database));
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;

@@ -15,6 +15,7 @@ test('actual provider invoices allocate every cent once with administrator attes
   allocations:[{accountId:first.accountId,weight:1},{accountId:second.accountId,weight:2}]};
  await assert.rejects(()=>costs.ingest(db,input,first.accountId),/administrator/);
  await db.query("INSERT INTO commercial_admin_accounts(account_id,granted_by) VALUES($1,'certification-fixture')",[first.accountId]);
+ await db.query('UPDATE accounts SET email_verified_at=now() WHERE id=$1',[first.accountId]);
  const results=await Promise.all(Array.from({length:5},()=>costs.ingest(db,input,first.accountId)));
  assert.equal(results.filter(x=>x.created).length,1);
  const allocations=(await db.query('SELECT amount_minor FROM commercial_provider_cost_allocations ORDER BY amount_minor')).rows;
@@ -26,6 +27,23 @@ test('actual provider invoices allocate every cent once with administrator attes
  await assert.rejects(()=>costs.ingest(db,{...input,externalLineId:'missing-evidence',evidenceSha256:''},first.accountId),/evidence/);
  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint='infrastructure-cost-contracts'")).rows[0].status,'OPEN');
  assert.equal(costs.allocate(0,[{accountId:first.accountId,weight:1}])[0].amountMinor,0);
+ await t.test('owner-console authority records invoices without a second legacy grant; revoked and billing-only operators cannot attest',async()=>{
+  await db.query('UPDATE accounts SET email_verified_at=now() WHERE id=$1',[second.accountId]);
+  await db.query("INSERT INTO platform_console_operators(account_id,role,granted_by) VALUES($1,'OWNER','Isolated owner-console fixture')",[second.accountId]);
+  const statement={...input,externalLineId:'console-owner',amountMinor:1,platformOverhead:true,allocationBasis:'PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION',allocations:[]};
+  assert.equal((await costs.ingest(db,statement,second.accountId)).created,true);
+  await db.query("UPDATE platform_console_operators SET role='BILLING' WHERE account_id=$1",[second.accountId]);await assert.rejects(costs.ingest(db,{...statement,externalLineId:'billing-not-owner'},second.accountId),/administrator/);
+  await db.query("UPDATE platform_console_operators SET role='OWNER',active=false WHERE account_id=$1",[second.accountId]);await assert.rejects(costs.ingest(db,{...statement,externalLineId:'revoked-owner'},second.accountId),/administrator/);
+ });
+ await t.test('actual platform invoices are recorded once without inventing tenant allocations or charging usage',async()=>{
+  const overhead={...input,externalLineId:'platform-overhead',amountMinor:9288,platformOverhead:true,allocationBasis:'PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION',allocations:[]};
+  assert.throws(()=>costs.normalize({...overhead,allocationBasis:'Pretend measured shares'}),/platform overhead/);
+  assert.throws(()=>costs.normalize({...overhead,allocations:[{accountId:first.accountId,weight:1}]}),/allocation weights/);
+  const result=await costs.ingest(db,overhead,first.accountId);assert(result.created);assert.equal((await costs.ingest(db,overhead,first.accountId)).created,false);
+  const event=(await db.query("SELECT account_id,workspace_id,amount_minor,detail FROM commercial_cost_events WHERE idempotency_key=$1",[result.id+':platform'])).rows[0];
+  assert.equal(event.account_id,null);assert.equal(event.workspace_id,null);assert.equal(Number(event.amount_minor),9288);assert.equal(event.detail.costBasis,'PROVIDER_INVOICE');
+  assert.equal((await db.query('SELECT count(*)::int n FROM commercial_provider_cost_allocations WHERE statement_id=$1',[result.id])).rows[0].n,0);
+ });
  assert.throws(()=>costs.normalize({...input,excludesAlreadyMeteredDirectCosts:false}),/evidence/);
  for(const amountMinor of [null,undefined,'',false])assert.throws(()=>costs.normalize({...input,amountMinor}),/actual amount/);
  await t.test('resource statements accrue over overlapping service periods without duplicate ledger postings',async()=>{
@@ -53,7 +71,7 @@ test('actual provider invoices allocate every cent once with administrator attes
   const control=require('../../src/commercial/control-service');
   const rate=await control.saveCostRate(db,{provider:'fixture-free',operation:'request',unit:'request',costPerUnitMinor:'0',source:'Explicit fixture-only free contract'});
   assert.equal(Number(rate.cost_per_unit_minor),0);
-  const missing=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-unknown',operation:'request',unit:'request',quantity:1,amountMinor:null,idempotencyKey:'still-unknown'});
+  const missing=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-unknown',operation:'request',unit:'request',quantity:1,amountMinor:null,idempotencyKey:'still-unknown',occurredAt:'2026-10-05T00:00:00Z'});
   assert.equal(missing.event.amount_minor,null);
   const estimate=await control.saveCostRate(db,{provider:'fixture-unknown',operation:'request',unit:'request',
    costPerUnitMinor:.25,effectiveFrom:'2026-01-01T00:00:00Z',source:'Conservative fixture estimate; not an invoice',
@@ -64,7 +82,7 @@ test('actual provider invoices allocate every cent once with administrator attes
   assert.equal(repriced.detail.costBasis,'CONSERVATIVE_ESTIMATE');
   assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1",
    [`cost-rate:${first.accountId}:fixture-unknown:request:request::`])).rows[0].status,'RESOLVED');
-  const zero=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-explicit',operation:'request',unit:'request',quantity:1,amountMinor:0,idempotencyKey:'explicit-zero'});
+  const zero=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-explicit',operation:'request',unit:'request',quantity:1,amountMinor:0,idempotencyKey:'explicit-zero',occurredAt:'2026-10-05T00:00:00Z'});
   assert.equal(Number(zero.event.amount_minor),0);
   await db.query("UPDATE account_subscriptions SET current_period_start='2026-10-01T00:00:00Z',current_period_end='2026-11-01T00:00:00Z' WHERE id='period-cost-sub'");
   await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE status='OPEN'");

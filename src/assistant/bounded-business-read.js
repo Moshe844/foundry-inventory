@@ -46,6 +46,7 @@ async function interpret(provider,actor,message,{clock,conversation=[]}={}){
  return validate(response.data,actor);
 }
 async function execute(db,ctx,actor,plan,{onSection=()=>{}}={}){
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  // reports.run always parameterizes the workspace and validates permissions,
  // currencies, completeness and registered filters. It opens read-only SQL.
  const sections=[];

@@ -71,7 +71,11 @@ jobs:
       - name: Approved subscription packaging, metering and billing isolation
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+      - name: Combined onboarding, invitations and real import approval
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/flash-after-redirect.test.js tests/postgres/invitation-accept-browser.test.js tests/postgres/onboarding-file-formats.test.js tests/postgres/imports-ui.test.js 2>&1 | tee output/inventory-ci/onboarding-import-browser.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail
@@ -147,7 +151,7 @@ jobs:
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/maintenance-claims.test.js tests/postgres/maintenance-batches.test.js tests/postgres/maintenance-progress.test.js tests/postgres/worker-lane-isolation.test.js tests/postgres/round16-maintenance-bulk-budget.test.js tests/postgres/round16-maintenance-read-capacity.test.js 2>&1 | tee output/inventory-ci/maintenance.log
       - name: Atomic bulk receipt operation writes
-        run: node --test tests/postgres/round16-receipt-operation-writes.test.js
+        run: node --test tests/postgres/round16-receipt-operation-writes.test.js tests/postgres/bulk-balance-write-once.test.js
       - name: Full large-import certification
         if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')
         timeout-minutes: 240

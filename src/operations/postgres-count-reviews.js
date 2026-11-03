@@ -26,6 +26,7 @@ async function prepare(db,ctx,input){return db.transaction(async c=>{
  if(!supplied.length||supplied.length>500||new Set(supplied.map(l=>l.skuId)).size!==supplied.length)throw new ValidationError('Enter counts for between 1 and 500 different variants.');
  const location=(await c.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,input.locationId])).rows[0];
  if(!location)throw new ValidationError('Choose an active location from this inventory.');
+ await require('./postgres-warehouse-access').assertLocations(c,ctx,[location.id]);
  const current=await positions(c,ctx,location.id,supplied.map(l=>l.skuId));if(current.length!==supplied.length)throw new ValidationError('Every counted variant must be active in this inventory.');
  const currency=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency;
  if(!currency)throw new ValidationError('Set up your stock currency before reviewing a count.');
@@ -44,7 +45,7 @@ async function prepare(db,ctx,input){return db.transaction(async c=>{
  const payload={location,currency,reference:String(input.reference||'').trim().slice(0,160),lines},id=newId('countreview'),integrityHash=digest(payload);
  await c.query('INSERT INTO physical_count_reviews(id,workspace_id,created_by_user_id,payload,integrity_hash) VALUES($1,$2,$3,$4,$5)',[id,ctx.workspaceId,ctx.actorId,payload,integrityHash]);return {id};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
-async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');return row;}
+async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');await require('./postgres-warehouse-access').assertLocations(db,ctx,[row.payload.location.id]);return row;}
 async function approve(db,ctx,id,integrityHash){return db.transaction(async c=>{
  await authorize(c,ctx,true);const review=(await c.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
  if(!review||review.integrity_hash!==integrityHash||digest(review.payload)!==integrityHash)throw new ValidationError('Open the current count review before approving.');

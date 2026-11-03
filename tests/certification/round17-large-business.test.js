@@ -132,5 +132,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
   }
   assert.deepEqual(await state(),{physical:exact.safeNumber(exact.add(before.physical,'0.5')),costed:exact.safeNumber(exact.add(before.costed,'0.5')),value:before.value+50});
  });
+ await t.test('E20 warehouse member boundaries hold at 50,000 SKUs and 150,000 positions',async()=>require('../helpers/warehouse-member-checks').check(t,f));
+ await t.test('B12 whole-category warehouse count remains paginated and approves all variances once at scale',async()=>require('../helpers/warehouse-count-checks').check(t,f,{category:'Apparel',large:true}));
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });

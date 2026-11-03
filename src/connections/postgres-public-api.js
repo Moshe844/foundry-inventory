@@ -25,6 +25,7 @@ function scopes(input){
 }
 
 async function create(database,ctx,input={}){
+  await require('../operations/postgres-warehouse-access').assertInventoryWide(database,ctx);
   const name=requireText(input.name,'API client name',{max:100});
   const selected=scopes(input.scopes);const visible=crypto.randomBytes(6).toString('hex');
   const token=`${PREFIX}${visible}.${crypto.randomBytes(32).toString('base64url')}`;
@@ -63,6 +64,7 @@ async function authenticate(database,authorization,requiredScope){
       WHERE api.token_hash=$1 AND api.revoked_at IS NULL AND workspace.deletion_requested_at IS NULL FOR UPDATE OF api`,[hash(match[1])]);
     const row=result.rows[0];
     if(!row)throw new AuthenticationError('This API token is invalid or revoked.');
+    await require('../operations/postgres-warehouse-access').assertInventoryWide(client,{workspaceId:row.workspace_id,actorId:row.created_by_user_id});
     const granted=parse(row.scopes);
     if(requiredScope&&!granted.includes(requiredScope)){
       const error=new AuthenticationError(`This API token does not have ${requiredScope} authority.`);

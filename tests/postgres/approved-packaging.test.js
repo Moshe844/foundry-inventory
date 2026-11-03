@@ -142,5 +142,13 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
    await assert.rejects(addons.saveTopup(db,legacyScope,{enabled:true,packId,category,monthlyCapMinor:100000,explicitConsent:true},options),/No purchase is needed/);
   }
   assert.equal(calls,0);assert.equal(Number((await db.query('SELECT count(*) n FROM commercial_usage_purchases WHERE account_id=$1',[legacy.accountId])).rows[0].n),0);
+  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'legacy-usage-display-test'});t.after(()=>app.locals.sessionStore.close());
+  const agent=require('supertest').agent(app),login=await agent.get('/login'),csrf=/name="_csrf" value="([^"]+)"/.exec(login.text)[1];
+  await agent.post('/login').type('form').send({_csrf:csrf,email:legacy.email,password:'Legacy-pack-password!'});
+  for(const path of ['/settings/billing','/usage']){
+   const page=await agent.get(path);assert.equal(page.status,200,path);assert.doesNotMatch(page.text,/9007199254740991|9,007,199,254,740,991/);
+   assert.match(page.text,/accepted terms/);assert.doesNotMatch(page.text,/<input[^>]*name="category"[^>]*value="(?:incoming_emails|connected_operations)"/);
+   assert.doesNotMatch(page.text,/data-(?:usage-)?pack="(?:incoming-10000-v4|ops-100000-v4)"/);
+  }
  });
 });

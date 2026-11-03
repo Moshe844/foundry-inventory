@@ -51,9 +51,8 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='imports-pg@example.test'`)).rows[0];
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1',[identity.workspace_id])).rows[0].count,'0');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1',[identity.workspace_id])).rows[0].count,'0');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     const main=await page.locator('main').innerText();
@@ -75,15 +74,18 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query('SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1',
       [identity.workspace_id])).rows[0].count,0);
     const supplierPlanId=page.url().split('/').at(-1);
-    // Older previews that misclassified Vendor as Product are safely repaired in place.
+    // Legacy classification is never silently changed by viewing or approval.
     await database.query(`UPDATE import_plans SET transformations='{}'::jsonb,field_mappings='{"name":0}'::jsonb,integrity_hash='legacy-inventory-preview'
       WHERE id=$1`,[supplierPlanId]);
     await page.reload();
     assert.equal((await imports.get(database,identity.workspace_id,supplierPlanId)).transformations.dataset,undefined,
       'Viewing a legacy preview must not mutate its interpretation or approval');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
+    assert.match(await page.locator('main').innerText(),/preview changed|supplier directory.*classify/i);
+    assert.equal((await imports.get(database,identity.workspace_id,supplierPlanId)).approvalStatus,'AWAITING_APPROVAL');
+    if(!await page.locator('#column-mapping select').first().isVisible()) await page.getByText('Something wrong? Change how a column was read').click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save column mapping and recheck rows'}).click()]);
     assert.match(await page.locator('main').innerText(),/recognized a supplier directory/i);
-    assert.match(await page.locator('main').innerText(),/preview changed/i);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 suppliers'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify suppliers'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
@@ -98,9 +100,9 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.getByLabel('Inventory spreadsheets').setInputFiles({name:'opening-stock.csv',mimeType:'text/csv',buffer:source});
     await page.waitForURL(/\/imports\/imp_/);
     const duplicateMain=await page.locator('main').innerText();
-    assert.match(duplicateMain,/This exact source was already imported/);
-    assert.match(duplicateMain,/SKIPPED 2/);
-    assert.equal(await page.locator('form[action$="/approve"]').count(),0);
+    assert.match(duplicateMain,/You already approved this file/);
+    assert.match(duplicateMain,/Import complete and verified/);
+    assert.equal(await page.locator('form[action$="/approve"],form[action$="/approve-and-run"]').count(),0);
     assert.deepEqual((await database.query(`SELECT COUNT(*) AS items,COALESCE((SELECT SUM(on_hand) FROM balances
       WHERE workspace_id=$1),0) AS units FROM items WHERE workspace_id=$1`,[identity.workspace_id])).rows[0],
     {items:'1',units:'12'});
@@ -113,8 +115,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.match(await page.locator('main').innerText(),/1 row read · 1 ready · 0 need correction/);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
       AND name='Ask Imported Valve'`,[identity.workspace_id])).rows[0].count,0);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 1 row'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 1 row'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
@@ -133,19 +134,18 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal(unknownPlan.detectedType,'unknown');
     assert.equal(unknownPlan.recordsValid,0);
     assert.match(await page.locator('main').innerText(),/which values identify your products/);
-    assert.equal(await page.locator('form[action$="/approve"]').count(),0);
+    assert.equal(await page.locator('form[action$="/approve"],form[action$="/approve-and-run"]').count(),0);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       unknownId,unknownPlan.integrityHash),/Map a product name or SKU/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are product names'}).first().click()]);
     assert.equal((await imports.get(database,identity.workspace_id,unknownId)).fieldMappings.name,0);
-    await page.getByText('Something wrong? Change how a column was read').click();
+    if(!await page.locator('#column-mapping select').first().isVisible()) await page.getByText('Something wrong? Change how a column was read').click();
     await page.getByLabel('Source column “Beta”').selectOption('code');
     await page.getByLabel('Source column “Gamma”').selectOption('quantity');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save column mapping and recheck rows'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
     assert.equal((await imports.get(database,identity.workspace_id,unknownId)).detectedType,'inventory');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/8 opening units/);
@@ -164,8 +164,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal(unusualPlan.recordsValid,2,JSON.stringify({mappings:unusualPlan.fieldMappings,
       rows:await imports.rowsFor(database,identity.workspace_id,unusualPlan.id)}));
     assert.match(await page.locator('main').innerText(),/12.*7/s);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/19 opening units/);
@@ -182,7 +181,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.goto(`${base}/imports/${ambiguousId}`);
     assert.equal(ambiguousPlan.fieldMappings.quantity,undefined);
     assert.deepEqual(ambiguousPlan.transformations.unmappedNumericColumns,['Metric X']);
-    assert.equal(await page.locator('form[action$="/approve"]').count(),0);
+    assert.equal(await page.locator('form[action$="/approve"],form[action$="/approve-and-run"]').count(),0);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
     await database.query(`UPDATE import_plans SET transformations=(transformations::jsonb-'unmappedNumericColumns')::text
@@ -191,9 +190,8 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are stock quantities'}).click()]);
     assert.equal((await imports.get(database,identity.workspace_id,ambiguousId)).fieldMappings.quantity,2);
-    assert.equal(await page.getByRole('button',{name:'Approve 1 row'}).isEnabled(),true);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 1 row'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.equal(await page.getByRole('button',{name:'Approve and import 1 row'}).isEnabled(),true);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 1 row'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/8 opening units/);
@@ -214,8 +212,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.match(await page.locator('main').innerText(),/3 rows read · 3 ready · 0 need correction/);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
       AND code IN ('LAB-PT-012','LAB-BN-015','LAB-PC-022')`,[identity.workspace_id])).rows[0].count,0);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 3 rows'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 3 rows'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/3 rows created/);
@@ -230,14 +227,13 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.match(await page.locator('main').innerText(),/Where is this stock kept\?/);
     await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
       .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
-    assert.equal(await page.locator('form[action$="/approve"]').count(),0,'A PDF scan must use the same evidence review as a photograph');
+    assert.equal(await page.locator('form[action$="/approve"],form[action$="/approve-and-run"]').count(),0,'A PDF scan must use the same evidence review as a photograph');
     await page.locator('input[name=confirmImageReading]').check();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save image review'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
       AND code IN ('LAMP-10','LIGHT-20')`,[identity.workspace_id])).rows[0].count,0);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/7 opening units/);
@@ -252,14 +248,13 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.match(await page.locator('main').innerText(),/2 rows read · Review required before approval/);
     await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
       .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
-    assert.equal(await page.locator('form[action$="/approve"]').count(),0,'An image requires explicit review even after its location is known');
+    assert.equal(await page.locator('form[action$="/approve"],form[action$="/approve-and-run"]').count(),0,'An image requires explicit review even after its location is known');
     await page.getByLabel('Image quantity for row 2',{exact:true}).fill('5');
     await page.getByLabel('Image quantity for row 3',{exact:true}).fill('6');
     await page.locator('input[name=confirmImageReading]').check();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save image review'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/11 opening units/);
@@ -288,7 +283,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       actorId:otherIdentity.actor_id},correctionId,{expectedHash:staleHash}),/not be found/i);
     await page.getByLabel('Existing match for Old Warehouse',{exact:true}).selectOption({label:'Main Warehouse'});
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Update location choices'}).click()]);
-    await page.getByText('Something wrong? Change how a column was read').click();
+    if(!await page.locator('#column-mapping select').first().isVisible()) await page.getByText('Something wrong? Change how a column was read').click();
     await page.getByLabel(/Row 3 · Corrected Valve quantity/).fill('4');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save column mapping and recheck rows'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
@@ -297,11 +292,10 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     /preview changed/i);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
       AND code IN ('CORR-TAPE','CORR-VALVE')`,[identity.workspace_id])).rows[0].count,0);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and import 2 rows'}).click()]);
     await assert.rejects(imports.revise(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       correctionId,{expectedHash:(await imports.get(database,identity.workspace_id,correctionId)).integrityHash}),
     /unapproved preview/i);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
     {const jobs=require('../../src/operations/postgres-job-queue'),handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.execute-approved'];
      const completed=await jobs.processOne(database,{'import.execute-approved':handler},{owner:'browser-import-worker',kinds:['import.execute-approved']});assert.equal(completed.status,'COMPLETED');await page.reload();}
     assert.match(await page.locator('main').innerText(),/2 rows created 2 products, 2 SKUs and 10 opening units/);
@@ -336,12 +330,13 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     const costWithoutStock=await imports.analyse(database,{workspaceId:identity.workspace_id,
       actorId:identity.actor_id},{text:'Product,SKU,Unit Cost\nCosted Part,COST-NO-STOCK,12.50\n',
       filename:'cost-without-stock.csv',mappings:{name:0,code:1,unitCost:2}});
-    assert.equal(costWithoutStock.recordsInvalid,1,JSON.stringify({mappings:costWithoutStock.fieldMappings,
+    assert.equal(costWithoutStock.recordsInvalid,0,JSON.stringify({mappings:costWithoutStock.fieldMappings,
       rows:await imports.rowsFor(database,identity.workspace_id,costWithoutStock.id)}));
-    assert.match((await imports.rowsFor(database,identity.workspace_id,costWithoutStock.id))[0].problems
-      .map((entry)=>entry.message).join(' '),/No cost will be silently discarded/);
-    await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,
-      actorId:identity.actor_id},costWithoutStock.id,costWithoutStock.integrityHash),/no valid rows/i);
+    await imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costWithoutStock.id,costWithoutStock.integrityHash);
+    assert.equal((await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costWithoutStock.id)).verified,true);
+    const catalogueSku=(await database.query("SELECT id FROM skus WHERE workspace_id=$1 AND code='COST-NO-STOCK'",[identity.workspace_id])).rows[0];
+    assert.equal((await require('../../src/pricing/postgres-service').purchaseCost(database,identity.workspace_id,catalogueSku.id)).amount_minor,1250);
+    assert.equal((await database.query('SELECT count(*)::int n FROM balances WHERE workspace_id=$1 AND sku_id=$2',[identity.workspace_id,catalogueSku.id])).rows[0].n,0);
     const costed=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity,Unit Cost,Selling Price\nCosted Valve,COST-1,Main Warehouse,3,12.50,24.00\n',
       filename:'costed-opening-after-accounting.csv'});
@@ -359,7 +354,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     const costEvidence=await assistant.lookup(database,{workspaceId:identity.workspace_id,
       actorId:identity.actor_id},{view:'purchase_costs',search:'COST-1'});
     assert.equal(costEvidence.rows.length,1);
-    assert.equal(costEvidence.rows[0].purchaseCost,'Not recorded');
+    assert.equal(costEvidence.rows[0].purchaseCost,'Not recorded','An actual opening-stock unit cost must not invent a supplier quote');
     assert.equal(costEvidence.rows[0].inventoryBookCost,'$37.50');
     assert.equal(costEvidence.rows[0].openingImportCost,'$37.50');
     assert.equal(costEvidence.rows[0].openingImportUnits,3);
@@ -391,9 +386,15 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     try{await assert.rejects(imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id),/simulated process failure/);}finally{stockEngine.receiveManyInTransaction=originalReceiveMany;}
     assert.equal(wroteBeforeFailure,true,'Fail after real transactional writes, then verify their rollback');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1
-      AND name IN ('Rollback One','Rollback Two')`,[identity.workspace_id])).rows[0].count,'0');
+      AND name IN ('Rollback One','Rollback Two')`,[identity.workspace_id])).rows[0].count,'2','Prepared catalogue records are retained for a safe resume');
+    const preparedIds=(await database.query("SELECT id FROM skus WHERE workspace_id=$1 AND code IN('RB-1','RB-2') ORDER BY id",[identity.workspace_id])).rows;
+    assert.equal((await database.query("SELECT count(*)::int n FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.code IN('RB-1','RB-2')",[identity.workspace_id])).rows[0].n,0);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1
       AND reference LIKE 'Import rollback.csv%'`,[identity.workspace_id])).rows[0].count,'0');
     assert.equal((await database.query(`SELECT status FROM import_executions WHERE import_id=$1`,[failing.id])).rows[0].status,'FAILED');
+    const resumed=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id);
+    assert.equal(resumed.verified,true);assert.equal(resumed.rowsImported,2);
+    assert.deepEqual((await database.query("SELECT id FROM skus WHERE workspace_id=$1 AND code IN('RB-1','RB-2') ORDER BY id",[identity.workspace_id])).rows,preparedIds);
+    assert.equal(Number((await database.query("SELECT sum(b.on_hand) units FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.code IN('RB-1','RB-2')",[identity.workspace_id])).rows[0].units),7);
     assert.deepEqual(errors,[]);
   });

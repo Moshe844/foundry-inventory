@@ -2,6 +2,7 @@
 const inventory=require('../domain/postgres-inventory-engine'),money=require('../domain/currency'),exact=require('../domain/exact-quantity');
 const {ValidationError}=require('../domain/errors');
 async function receiveInTransaction(client,ctx,input){
+ await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[input.locationId]);
  const prior=(await client.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,input.idempotencyKey])).rows[0];
  if(prior)return {...prior.result,replayed:true};
  const settings=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];

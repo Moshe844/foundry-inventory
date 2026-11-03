@@ -34,6 +34,7 @@
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p>Record a verified provider invoice line and measured allocation weights. Include its evidence reference and SHA-256 hash. Do not include credentials, card details or customer records.</p>
     <p>This is an administrator attestation, not automatic invoice verification. Exclude costs already recorded elsewhere. Importing a bill never clears missing-rate or coverage warnings.</p>
+    <p>For shared infrastructure that has no measured customer allocation, record platform overhead with <code>platformOverhead: true</code>, <code>allocationBasis: "PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION"</code> and an empty <code>allocations</code> array. This records the bill without inventing customer shares or charging customer usage.</p>
     <label class="rm-field"><span>Provider statement JSON</span><textarea name="statement" rows="10" required placeholder='{"provider":"render","externalLineId":"invoice:line","resourceId":"srv_...","amountMinor":0,"currency":"USD","periodStart":"2026-10-01","periodEnd":"2026-11-01","evidenceReference":"invoice location","evidenceSha256":"64-character SHA-256","allocationBasis":"Measured usage basis","excludesAlreadyMeteredDirectCosts":true,"allocations":[{"accountId":"account_...","weight":1}]}'></textarea></label>
     <button class="rm-btn" type="submit">Attest and record provider cost</button>
   </form>
