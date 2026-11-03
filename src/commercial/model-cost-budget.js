@@ -30,10 +30,12 @@ function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor,prov
    ?Math.min(request.maxOutputTokens,policy.maxOutputTokens):policy.maxOutputTokens;
  return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+outputTokens*outputRateMinor)*
   providerExecutions*1e6)/1e6,inputTokens,outputTokens,providerExecutions};}
-async function rate(database,provider,model,operation,version){return (await database.query(`SELECT cost_per_unit_minor,
- pricing_basis,confidence,source FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3
- AND operation=$4 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
- ORDER BY effective_from DESC LIMIT 1`,[provider,model,version,operation])).rows[0]||null;}
+async function rates(database,provider,model,operations,version){const rows=(await database.query(`SELECT DISTINCT ON(operation)
+ operation,cost_per_unit_minor,pricing_basis,confidence,source FROM commercial_cost_rates
+ WHERE provider=$1 AND model=$2 AND provider_version=$3 AND operation=ANY($4::text[]) AND unit='token'
+ AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
+ ORDER BY operation,effective_from DESC,id DESC`,[provider,model,version,operations])).rows;
+ const byOperation=new Map(rows.map(row=>[row.operation,row]));return operations.map(operation=>byOperation.get(operation)||null);}
 async function pricedBound(database,provider,request,policy,operation,nativeBound=null){
  const name=String(provider.name||'').toLowerCase();const model=String(provider.model||'');
  // A native host profile may select another verified processing price version.
@@ -41,8 +43,7 @@ async function pricedBound(database,provider,request,policy,operation,nativeBoun
  // model or inferred from a cheaper tier. Every selected rate is read fresh.
  const version=nativeBound?String(provider.providerVersion||VERSION[name]||''):VERSION[name];
  if(!VERSION[name]||!version||!model)throw new ValidationError('This model has no approved cost-bound pricing version.');
- const prices=await Promise.all(['model_input','cache_write_1h','model_output']
-  .map(operationName=>rate(database,name,model,operationName,version)));
+ const prices=await rates(database,name,model,['model_input','cache_write_1h','model_output'],version);
  if(prices.some(row=>!row||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT'].includes(row.pricing_basis))){
   await database.query(`INSERT INTO commercial_critical_warnings(id,fingerprint,code,detail)
    VALUES($1,$2,'UNBOUNDED_MODEL_PRICE',$3::jsonb) ON CONFLICT(fingerprint)
