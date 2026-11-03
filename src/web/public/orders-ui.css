@@ -282,8 +282,13 @@ main:has(> .ox), main:has(.ox[data-ox-page]) { background: #F4F6FB; }
   transition: opacity .4s, transform .4s; max-width: calc(100vw - 32px); }
 .ox-toast.is-gone { opacity: 0; transform: translate(-50%, -8px); pointer-events: none; }
 .flash.ox-toast { display: block; margin: 0; border: 0; font-weight: 500; font-size: 13px; width: max-content; max-width: min(520px, calc(100vw - 32px)); }
-.flash.ox-toast::before { content: attr(data-ox-title); display: block; font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+.flash.ox-toast { padding-right: 40px; }
+.flash.ox-toast[data-ox-title]::before { content: attr(data-ox-title); display: block; font-weight: 700; font-size: 14px; margin-bottom: 2px; }
 .flash.ox-toast > * { color: #fff; }
+.flash.ox-toast.flash--error { background: #E11D48; box-shadow: 0 12px 32px rgba(225,29,72,.3); }
+.flash.ox-toast.flash--info, .flash.ox-toast.flash--warning { background: #0F172A; box-shadow: 0 12px 32px rgba(15,23,42,.3); }
+.ox-toast__x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 8px; background: rgba(255,255,255,.16); color: #fff; font-size: 16px; line-height: 1; cursor: pointer; }
+.ox-toast__x:hover { background: rgba(255,255,255,.28); }
 
 /* Order header (detail page): restyles the page's own .page-head. */
 .ox-ohead-wrap { max-width: none; padding: 0; margin: 0 0 2px; }
@@ -465,3 +470,120 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
 .ox-order__side > .card .card-body { padding: 16px 18px; }
 .ox-order__main p, .ox-order__main .notice, .ox-order__main .card-body, .ox-order__main summary { white-space: normal; overflow-wrap: anywhere; }
 .ox-order__main > * { max-width: 100%; }
+
+/* ---------- Order page main column ----------
+   One column of cards in a fixed order: anything blocking the order, the next
+   step, the shipments, what was ordered, then everything optional folded at the
+   bottom. The order page's own panels keep their markup; they are only placed
+   and drawn like the rest of the page. */
+.ox-order__main { display: flex; flex-direction: column; gap: 16px; }
+.ox-order__main > * { order: 5; margin: 0 !important; }
+.ox-order__main > #payment-hold, .ox-order__main > #stock-shortage, .ox-order__main > .notice { order: 0; }
+.ox-order__main > .sales-primary-action { order: 1; }
+.ox-order__main > #fulfilment, .ox-order__main > [aria-label="Shipment tracking"] { order: 2; }
+.ox-order__main > [data-order-lines] { order: 3; }
+.ox-order__main > .sales-secondary-actions, .ox-order__main > #money,
+.ox-order__main > .order-activity, .ox-order__main > script { order: 8; }
+
+.ox-order__main > .card, .ox-order__main > .panel, .ox-order__main > section, .ox-order__main > form.card,
+.ox-order__side > .card {
+  background: #fff; border: 1px solid #E5E8F1 !important; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.04); padding: 0; }
+.ox-order__main > .notice { border-radius: 14px; }
+.ox-order__main h2 { font-size: 15px; line-height: 1.35; font-weight: 650; letter-spacing: 0; color: #0F172A; margin: 0; }
+.ox-order__main > form.card { padding: 18px; }
+.ox-order__main > form.card > * + * { margin-top: 10px; }
+.ox-order__main > form.card .eyebrow { display: none; }
+.ox-order__main > div.card.sales-action-card { padding: 18px; }
+
+/* The step to take now: a quiet accent so it reads as the place to start. */
+.ox-order__main > .sales-primary-action { border-color: #C9CCF6 !important; box-shadow: 0 0 0 3px #F1F2FE, 0 1px 2px rgba(16,24,40,.05); }
+
+/* Folding headers: a chevron instead of Open / Close / Show / Hide words. */
+.ox-order__main details > summary.card-head, .ox-order__main details > summary.panel-head,
+.ox-order__main details.advanced-settings > summary {
+  display: flex; align-items: center; gap: 10px; min-height: 0; padding: 14px 18px; margin: 0; background: none;
+  border: 0; border-radius: 0; cursor: pointer; list-style: none; font-size: 14px; color: #0F172A; }
+.ox-order__main details > summary::-webkit-details-marker { display: none; }
+.ox-order__main details > summary::before { content: none !important; }
+.ox-order__main details > summary::after {
+  content: "" !important; flex: 0 0 auto; width: 7px; height: 7px; margin: -3px 2px 0 auto; padding: 0;
+  border-right: 1.5px solid #7A839C; border-bottom: 1.5px solid #7A839C; transform: rotate(45deg); transition: transform .15s; }
+.ox-order__main details[open] > summary::after { transform: rotate(-135deg); margin-top: 3px; }
+.ox-order__main details > summary:hover { background: #FAFBFD; }
+.ox-order__main details > summary .fold-note, .ox-order__main details > summary .hint { margin-left: 0; color: #7A839C; font-size: 12.5px; font-weight: 400; }
+.ox-order__main details > summary .spacer { flex: 1; }
+.ox-order__main details[open] > summary { border-bottom: 1px solid #EEF0F6; }
+.ox-order__main details > summary > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ox-order__main details > summary .badge { margin-left: auto; }
+.ox-order__main details > summary .badge + .spacer { display: none; }
+.ox-order__main details > summary > div + .spacer + .badge, .ox-order__main details > summary > .spacer + .badge { margin-left: 0; }
+.ox-order__main details > summary > .spacer + .fold-note { margin-left: 0; }
+
+/* What was ordered is always shown: it is a table, not a choice. */
+.ox-order__main > [data-order-lines] > summary { pointer-events: none; cursor: default; }
+.ox-order__main > [data-order-lines] > summary::after, .ox-order__main > [data-order-lines] > summary .fold-note { display: none; }
+.ox-order__main > [data-order-lines] .table-wrap { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.ox-order__main .table { margin: 0; }
+.ox-order__main .table th { font-size: 12px; font-weight: 600; color: #7A839C; text-transform: none; letter-spacing: 0; background: #FAFBFD; padding: 10px 18px; }
+.ox-order__main .table td { padding: 12px 18px; border-color: #EEF0F6; }
+.ox-order__main .sales-total-block { padding: 12px 18px 16px; }
+
+.ox-order__main .card-body, .ox-order__main details > form.card-body { padding: 16px 18px; }
+.ox-order__main .card-foot { padding: 14px 18px; border-top: 1px solid #EEF0F6; background: #FAFBFD; display: flex; }
+.ox-order__main .card-foot form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.ox-order__main .hint { color: #7A839C; font-size: 13px; }
+
+/* Buttons drawn like the header's. */
+.ox-order .btn { height: 40px; padding: 0 16px; border-radius: 10px; font-weight: 600; font-size: 14px; box-shadow: none; }
+.ox-order .btn--sm { height: 32px; padding: 0 12px; font-size: 13px; }
+.ox-order .btn--primary { background: #4F46E5; border-color: #4F46E5; color: #fff; }
+.ox-order .btn--primary:hover { background: #4338CA; border-color: #4338CA; }
+
+/* Pickup: the one card is the whole job. */
+.ox-order__main #record-left.sales-primary-action form.card-body > p:first-of-type { color: #475069; margin: 0 0 12px; }
+.ox-order__main #record-left .form-row { margin: 0 0 12px; }
+.ox-order__main #record-left .field > span { font-size: 13px; color: #475069; }
+.ox-order__main #record-left input[type="number"] { max-width: 120px; }
+
+/* Side cards. */
+.ox-order__side > .ox-contact .card-body { padding: 16px 18px; }
+.ox-contact h2 { font-size: 15px; font-weight: 650; margin: 0 0 8px; }
+.ox-contact p { margin: 0 0 4px; }
+.ox-contact .form-actions { margin-top: 10px; }
+.ox-contact .btn--ghost { height: auto; padding: 0; background: none; border: 0; color: #4F46E5; font-size: 13px; font-weight: 600; }
+.ox-paycard .ox-receipts li > * { min-width: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 819px) {
+  .ox-order__main details > summary.card-head, .ox-order__main details > summary.panel-head,
+  .ox-order__main details.advanced-settings > summary { padding: 14px 16px; }
+  .ox-order__main .table th, .ox-order__main .table td { padding-left: 16px; padding-right: 16px; }
+}
+
+/* Order form: Create order, Save draft and Save changes live once, in the
+   summary that stays beside the form (and the bar along the bottom on a phone).
+   The header copies stay in the markup so Enter in a field still creates. */
+.ox-head--form .ox-head__actions button[type="submit"] { display: none; }
+
+/* After the goods have gone: the books and returns are reference, kept below. */
+.ox-order__main > details:has([data-order-profit]), .ox-order__main > .card.section:has(> .card-head) { order: 7; }
+.ox-order__main > .card.section > .card-head { padding: 16px 18px 0; }
+.ox-order__main > .card.section > .card-head p { margin: 4px 0 0; color: #7A839C; font-size: 13px; }
+.ox-order__main > .sales-primary-action > summary .fold-note { display: none; }
+.ox-paycard .ox-receipts li, .ox-paycard .ox-receipts span { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
+.ox-order .ox-contact .form-actions { border: 0; padding: 0; margin-top: 8px; }
+.ox-order .ox-contact .btn--ghost { height: auto; padding: 0; background: none; border: 0; color: #4F46E5; font-size: 13px; font-weight: 600; }
+
+/* Phone: one column with the next step straight under the header, then the
+   money, then what was ordered, then the customer and the rest. */
+@media (max-width: 819px) {
+  .ox-order { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
+  .ox-order > * , .ox-order__main > *, .ox-order__side > * { width: auto; align-self: stretch; }
+  .ox-order__side, .ox-order__main { display: contents; }
+  .ox-order__main > #fulfilment { order: 1; }
+  .ox-order__side > .ox-paycard { order: 2; }
+  .ox-order__side > .ox-contact { order: 4; }
+  .ox-order__side > * { margin: 0 !important; }
+}
+.ox-order__main .card-foot form { flex: 1; min-width: 0; }
+.ox-order__main .card-foot .hint { flex: 1 1 220px; min-width: 0; white-space: normal; }

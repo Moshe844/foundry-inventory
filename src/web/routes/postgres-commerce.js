@@ -31,6 +31,13 @@ async function submitOrder(database,ctx,input,nextStep){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// "$130.00 cash recorded." — what the person just did, in their words.
+function paidWords(amountMinor,currency,method){
+  let amount;try{amount=new Intl.NumberFormat('en-US',{style:'currency',currency:currency||'USD'}).format(amountMinor/100);}
+  catch{amount=(amountMinor/100).toFixed(2);}
+  return `${amount}${method?` ${String(method).replace(/_/g,' ')}`:''} recorded. The receipt is on the order.`;
+}
+
 function minor(value,label,currency='USD'){
   return require('../../domain/currency').userToMinor(value,currency,{label});
 }
@@ -1072,7 +1079,9 @@ function createPostgresCommerceRouter(database,options={}){
       .filter((line)=>Number(line.quantity)>0);
     const result=await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines,
       shipment:{handover:req.body.handover,carrier:req.body.carrier,trackingNumber:req.body.trackingNumber}});
-    req.flash('success',result.replayed?'These goods were already shipped. The original shipment and accounting were kept.':'Shipment and tracking saved. Inventory, revenue, COGS and the customer invoice changed together.');
+    req.flash('success',result.replayed?'These goods were already shipped. The original shipment and accounting were kept.'
+      :req.body.handover==='COLLECTED'?'Picked up. Stock, the books and the invoice are updated.'
+        :'Shipment and tracking saved. Inventory, revenue, COGS and the customer invoice changed together.');
     return res.redirect(303,`/orders/${req.params.id}`);
   }));
 
@@ -1165,16 +1174,16 @@ function createPostgresCommerceRouter(database,options={}){
       await workflows.recordCustomerDeposit(database,req.ctx,{customerId:detail.order.customer_id,salesOrderId:detail.order.id,amountMinor,
         paymentDate:req.body.paymentDate||dateToday(req),currency:detail.order.currency,method:trimOrNull(req.body.method),
         reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-deposit')});
-      req.flash('success','Payment recorded as a customer deposit. It is applied to the invoice when the goods leave.');
-      return res.redirect(303,`/orders/${req.params.id}?open=money`);
+      req.flash('success',paidWords(amountMinor,detail.order.currency,req.body.method));
+      return res.redirect(303,`/orders/${req.params.id}`);
     }
     if(!invoice)throw new ValidationError('This order has no open customer invoice to pay.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
       customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount',invoice.currency),
       paymentDate:req.body.paymentDate||dateToday(req),currency:invoice.currency,method:trimOrNull(req.body.method),
       reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-payment')});
-    req.flash('success','Customer payment recorded through the same receivables and journal engine.');
-    return res.redirect(303,`/orders/${req.params.id}?payment=paid&open=money`);
+    req.flash('success',paidWords(minor(req.body.amount,'Payment amount',invoice.currency),invoice.currency,req.body.method));
+    return res.redirect(303,`/orders/${req.params.id}`);
   }));
 
   router.post(['/orders/:id/payment-requests','/sales/orders/:id/payment-requests'],

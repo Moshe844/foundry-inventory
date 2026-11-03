@@ -43,7 +43,12 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const s={...state.shipment,units,ship_from_location_name:state.shipment.location_name,
     carrierName:state.shipment.carrier?carriers.displayName(state.shipment.carrier):null,
     tracking_url:state.shipment.tracking_url||carriers.trackingUrlFor(state.shipment.carrier,state.shipment.tracking_number),trackingUrl:state.shipment.tracking_url||carriers.trackingUrlFor(state.shipment.carrier,state.shipment.tracking_number),label_status:state.shipment.label_status||null};
-  const paid=orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.paid_minor),0);
+  // Before there is an invoice, money taken up front is a customer deposit on
+  // the order itself; the order page counts it, so this box counts it too.
+  const paid=orderDetail.invoices.length?orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.paid_minor),0)
+    :Number((await database.query(`SELECT coalesce(sum(amount_minor),0)::bigint AS minor FROM accounting_payments
+      WHERE workspace_id=$1 AND sales_order_id=$2 AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,
+    [workspaceId,state.shipment.sales_order_id])).rows[0].minor);
   const remaining=orderDetail.invoices.length
     ?orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0)
     :Math.max(0,orderDetail.orderTotalMinor-paid);

@@ -152,7 +152,7 @@
      <% }else if(editOrder){ %><button class="ox-btn ox-btn--primary ox-btn--block" type="submit"><%= editingOpen?'Save changes':'Save draft changes' %></button>
      <% }else{ %><button class="ox-btn ox-btn--primary ox-btn--block" id="order-confirm-button" name="nextStep" value="confirm" aria-label="Create order and reserve stock">Create order</button>
      <button class="ox-btn ox-btn--secondary ox-btn--block" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button>
-     <button class="ox-btn ox-btn--secondary ox-btn--block" name="nextStep" value="draft">Save as draft</button><% } %>
+     <button class="ox-btn ox-btn--secondary ox-btn--block" name="nextStep" value="draft">Save draft</button><% } %>
     </div>
     <p class="ox-fine"><%= quotation?'Saving a quote holds no stock and sends nothing to the customer.':editingOpen?'Saving releases the stock held for this order and holds it again for what it contains now.':editOrder?'Saving changes keeps this a draft. No stock moves.':'Create order holds the stock for this customer. Nothing ships and nothing is invoiced until you say so.' %></p>
    </section>

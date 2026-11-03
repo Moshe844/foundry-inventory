@@ -183,10 +183,12 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     assert.equal((await page.goto(base+await page.locator('.ox-receipts a').first().getAttribute('href'))).status(),200);
     await page.goto(base+'/orders/'+createdId);
     assert.equal(Number((await database.query('SELECT COUNT(*) AS n FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id WHERE l.sales_order_id=$1',[createdId])).rows[0].n)>0,true,'Paying moved no stock');
-    // A carrier order: Ship order, no pickup step.
+    // A carrier order: the next step is picking, offered once, in the Fulfilment card; no pickup step.
     const actions=page.locator('[data-ox-order-actions]');
-    assert.equal(await actions.getByRole('link',{name:'Ship order'}).count(),1);
-    assert.equal(await actions.getByRole('link',{name:'Mark picked up'}).count(),0);
+    assert.equal(await actions.locator('.ox-btn--primary').count(),0,'The header repeats no step');
+    assert.equal(await page.getByRole('button',{name:/Start picking/}).count(),1);
+    assert.equal(await page.locator('#fulfilment').getByRole('button',{name:/Start picking/}).count(),1);
+    assert.equal(await page.getByRole('button',{name:'Mark picked up'}).count(),0);
     // Edit a confirmed, part-paid order: the held stock follows the new quantity.
     await Promise.all([page.waitForURL(/\/edit$/),actions.getByRole('link',{name:'Edit'}).click()]);
     assert.equal(await page.locator('main h1').innerText(),'Edit order SO-00004');
@@ -212,7 +214,7 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE id=$1',[page.url().split('/').pop()])).rows[0].status,'DRAFT');
     assert.match(await page.locator('.ox-toast').innerText(),/draft/i);
     // A draft can be edited from the header.
-    await Promise.all([page.waitForURL(/\/edit$/),page.locator('[data-ox-order-actions]').getByRole('link',{name:'Edit',exact:true}).click()]);
+    await Promise.all([page.waitForURL(/\/edit$/),page.locator('[data-ox-order-actions]').getByRole('link',{name:'Edit draft order',exact:true}).click()]);
     assert.equal(await page.locator('main h1').innerText(),'Edit draft order');
     assert.equal(await page.locator('[data-order-line] [name=quantity]').first().inputValue(),'1');
 
@@ -222,9 +224,14 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await page.getByText('Customer pickup',{exact:true}).click();
     await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Create order and reserve stock',exact:true}).click()]);
     const pickupActions=page.locator('[data-ox-order-actions]');
-    assert.equal(await pickupActions.getByRole('link',{name:'Ship order'}).count(),0);
-    await pickupActions.getByRole('link',{name:'Mark picked up'}).click();
-    assert.equal(await page.locator('#record-left').evaluate((details)=>details.open),true);
+    const pickupCard=page.locator('#record-left');
+    assert.equal(await pickupCard.locator('summary h2').first().innerText(),'Ready for pickup');
+    assert.equal(await pickupCard.evaluate((details)=>details.open),true);
+    assert.equal(await pickupCard.getByRole('button',{name:'Mark picked up'}).count(),1);
+    assert.equal(await pickupCard.locator('[name=trackingNumber], [name=carrier]').count(),0,'No carrier questions for a counter pickup');
+    assert.equal(await page.locator('#fulfilment').count(),0,'Nothing to pick or ship');
+    // It is the first card on the page, above what was ordered.
+    assert.ok((await pickupCard.boundingBox()).y<(await page.locator('[data-order-lines]').boundingBox()).y);
     // Cancel order: a confirmation, then the held stock is released.
     const cancelId=page.url().split('?')[0].split('#')[0].split('/').pop();
     await pickupActions.getByRole('button',{name:'Cancel order'}).click();

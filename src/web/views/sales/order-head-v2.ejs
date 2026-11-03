@@ -5,18 +5,12 @@
    * The page's own breadcrumb and .page-head stay exactly as rendered (other
    * code reads their text) and are restyled. This adds the back link and the
    * actions, which the script moves onto the header row: Edit while nothing
-   * has shipped, Cancel order with a confirmation, and the one next step,
-   * which follows how the customer gets the goods.
+   * has shipped and Cancel order with a confirmation. The next step itself is
+   * the first card under the header, so it is never offered twice.
    */
-  var oxOpen = ['CONFIRMED', 'PARTIALLY_FULFILLED', 'BACKORDERED'].includes(order.status);
   var oxShipped = Number(order.totals && order.totals.fulfilled || 0) > 0;
   var oxPicking = (locals.shipments || []).some(function (s) { return s.status !== 'CANCELLED'; });
   var oxHeld = Number(order.totals && order.totals.allocated || 0) > 0;
-  var oxPickup = order.delivery_method === 'PICKUP';
-  var oxNext = order.status === 'DRAFT' ? { label: 'Confirm order', href: '#approve-order' }
-    : oxOpen && oxPickup ? (oxHeld ? { label: 'Mark picked up', href: '#record-left' } : null)
-    : oxOpen ? { label: 'Ship order', href: '/orders/' + order.id + '?open=fulfilment#fulfilment' }
-    : null;
   var oxCanEdit = locals.canEdit !== false && (order.status === 'DRAFT'
     || (['CONFIRMED', 'BACKORDERED'].includes(order.status) && !oxShipped && !oxPicking));
   var oxCanCancel = locals.canEdit !== false && !['FULFILLED', 'CANCELLED'].includes(order.status);
@@ -27,8 +21,7 @@
   <div class="ox ox-oactions ox-head__actions" data-ox-order-actions>
     <button class="ox-btn ox-btn--ghost" type="button" onclick="window.print()">Print</button>
     <% if (oxCanCancel) { %><button class="ox-btn ox-btn--ghost" type="button" data-modal-open="ox-cancel"><%= oxShipped ? 'Cancel the rest' : 'Cancel order' %></button><% } %>
-    <% if (oxCanEdit) { %><a class="ox-btn ox-btn--secondary" href="/orders/<%= order.id %>/edit">Edit</a><% } %>
-    <% if (oxNext) { %><a class="ox-btn ox-btn--primary" href="<%= oxNext.href %>"><%= oxNext.label %></a><% } %>
+    <% if (oxCanEdit) { %><a class="ox-btn ox-btn--secondary" href="/orders/<%= order.id %>/edit"<% if (order.status === 'DRAFT') { %> aria-label="Edit draft order"<% } %>>Edit</a><% } %>
   </div>
   <% if (oxCanCancel) { %>
   <dialog class="ox-modal" id="ox-cancel" aria-labelledby="ox-h-cancel">

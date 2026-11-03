@@ -34,6 +34,13 @@
   <span><%= s.shipment_number %></span>
 </div>
 
+<%# On the PostgreSQL page the money is one line beside the box being packed; the order page has the rest. A payment hold still shows in full. %>
+<% if (locals.postgresPlacement && !paymentPosition.blocksShipping) { %>
+<section class="section" id="payment-status"><div class="panel"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  <p style="margin:0"><strong><%= paymentPosition.status %></strong><% if (paymentPosition.remainingMinor > 0) { %> · <%= helpers.money(paymentPosition.remainingMinor, paymentPosition.currency) %> still owed on <%= s.order_number %><% } else { %> · nothing owed on <%= s.order_number %><% } %></p>
+  <% if (paymentPosition.remainingMinor > 0) { %><a class="btn btn--sm" href="/orders/<%= s.sales_order_id %>?pay=cash">Collect payment</a><% } %>
+</div></div></section>
+<% } else { %>
 <section class="section" id="payment-status"><div class="panel">
   <div class="panel-head"><div><h2>Payment for this order</h2></div></div>
   <div class="card-body">
@@ -42,10 +49,12 @@
     <% if (paymentPosition.terms.source === 'nothing agreed') { %><p class="notice notice--warn">No payment terms have been configured. The current default allows unpaid orders to leave. Agree customer terms before relying on a payment hold.</p><% } %>
     <% if (paymentPosition.blocksShipping) { %><p class="notice notice--warn">This order cannot leave until its payment hold is resolved. <%= paymentPosition.heldReason.ship %></p>
     <% } else if (paymentPosition.remainingMinor > 0) { %><p class="hint">The recorded terms allow fulfilment with this balance still owed. Shipping does not mark it paid.</p><% } %>
-    <a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>?open=money#money">Payment options: request payment or record money received</a>
-    <p class="field-hint">Online payment links require a connected payment provider. Recording a payment is only for money actually received.</p>
+    <% if (locals.postgresPlacement) { %><% if (paymentPosition.remainingMinor > 0) { %><a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>?pay=cash">Collect payment</a><% } %>
+    <% } else { %><a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>?open=money#money">Payment options: request payment or record money received</a>
+    <p class="field-hint">Online payment links require a connected payment provider. Recording a payment is only for money actually received.</p><% } %>
   </div>
 </div></section>
+<% } %>
 
 <div class="page-head">
   <div>

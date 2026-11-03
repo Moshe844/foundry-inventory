@@ -143,7 +143,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm order and reserve stock'}).click()]);
     assert.equal(Number((await database.query(`SELECT COALESCE(SUM(a.quantity),0) AS quantity FROM sales_order_allocations a
       JOIN sales_order_lines l ON l.id=a.sales_order_line_id WHERE l.sales_order_id=$1`,[salesOrderId])).rows[0].quantity),4);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record these goods as gone'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Mark picked up'}).click()]);
     assert.match(await page.locator('main').innerText(),/Inventory, revenue, COGS and the customer invoice changed together/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),6);

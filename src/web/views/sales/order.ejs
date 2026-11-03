@@ -48,7 +48,8 @@
 
 
 
-<% if (locals.money && Number(money.totalMinor || 0) > 0 && Number(money.outstandingMinor || 0) === 0
+<%# The Payment card beside the order already says it is paid in full. %>
+<% if (!locals.postgresPlacement && locals.money && Number(money.totalMinor || 0) > 0 && Number(money.outstandingMinor || 0) === 0
     && !['FULFILLED','CANCELLED'].includes(order.status)) { %>
   <div class="notice notice--ok section">
     <div>
@@ -165,7 +166,8 @@
 <% } %>
 
 <% if(money.invoiced && !locals.postgresPlacement){ %><%- include('../components/payment-summary',{money,currency:order.currency}) %><% } %>
-<% if(locals.postgresPlacement&&shipments.some(s=>['SHIPPED','DELIVERED'].includes(s.status))){ %><section class="card section" aria-label="Shipment tracking"><div class="card-body"><h2>Shipment tracking</h2><% shipments.filter(s=>['SHIPPED','DELIVERED'].includes(s.status)).forEach(s=>{const url=s.tracking_url||s.trackingUrl; %><p><a href="/fulfilment/<%= s.id %>"><%= s.shipment_number %></a> · <%= s.carrier_name||s.carrier||s.handover||'Shipped' %><% if(s.tracking_number){ %> · <% if(url){ %><a href="<%= url %>" target="_blank" rel="noopener noreferrer"><%= s.tracking_number %></a><% }else{ %><%= s.tracking_number %><% } %><% } %></p><% }); %></div></section><% } %>
+<%# The Fulfilment panel lists the same shipments with their tracking links. %>
+<% if(locals.postgresPlacement&&!locals.fulfilment&&shipments.some(s=>['SHIPPED','DELIVERED'].includes(s.status))){ %><section class="card section" aria-label="Shipment tracking"><div class="card-body"><h2>Shipment tracking</h2><% shipments.filter(s=>['SHIPPED','DELIVERED'].includes(s.status)).forEach(s=>{const url=s.tracking_url||s.trackingUrl; %><p><a href="/fulfilment/<%= s.id %>"><%= s.shipment_number %></a> · <%= s.carrier_name||s.carrier||s.handover||'Shipped' %><% if(s.tracking_number){ %> · <% if(url){ %><a href="<%= url %>" target="_blank" rel="noopener noreferrer"><%= s.tracking_number %></a><% }else{ %><%= s.tracking_number %><% } %><% } %></p><% }); %></div></section><% } %>
 <% if (order.customer_decision_required) { %>
   <div class="card sales-action-card sales-primary-action" id="customer-decision">
     <p class="eyebrow">Do this next — 1 of <%= order.delivery_decision_required ? '2' : '1' %></p>
@@ -316,7 +318,8 @@
     <a class="btn btn--primary" href="/fulfilment/<%= openBox.id %>">Open <%= openBox.shipment_number %></a>
   </div>
 <% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && order.totals.allocated > 0) { %>
-  <% if (pickFirst && locals.openSection !== 'fulfilment') { %>
+  <%# The Fulfilment panel carries the same pick button on the PostgreSQL page. %>
+  <% if (pickFirst && locals.openSection !== 'fulfilment' && !locals.postgresPlacement) { %>
     <div class="card sales-action-card sales-primary-action">
       <p class="eyebrow">Do this next</p>
       <h2>Pick <%= pickableUnits %> <%= pickableUnits === 1 ? 'unit' : 'units' %></h2>
@@ -330,16 +333,21 @@
       </form>
     </div>
   <% } %>
-  <details class="card fold <%= pickFirst ? 'sales-secondary-actions' : 'sales-action-card sales-primary-action' %>" <%= pickFirst ? '' : 'open' %>>
+  <%
+    /* A customer collecting from the counter needs no carrier, tracking number or
+       handover question: the order already says they are collecting it. */
+    var counterPickup = Boolean(locals.postgresPlacement) && order.delivery_method === 'PICKUP';
+  %>
+  <details id="record-left" class="card fold <%= pickFirst ? 'sales-secondary-actions' : 'sales-action-card sales-primary-action' %>" <%= pickFirst ? '' : 'open' %>>
     <summary class="card-head">
-      <h2>Record what physically left</h2>
+      <h2><%= counterPickup ? 'Ready for pickup' : 'Record what physically left' %></h2>
       <span class="spacer"></span>
       <span class="fold-note"><%= pickFirst ? 'Only if they left without a pick list' : 'Do this next' %></span>
     </summary>
   <form method="post" action="/sales/orders/<%= order.id %>/fulfill" class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>">
-    <p>Only use this when the items physically leave. StockChief will reduce on-hand once and update Accounting automatically.</p>
+    <p><%= counterPickup ? 'When the customer collects it, mark it picked up. Stock and the books update once.' : 'Only use this when the items physically leave. StockChief will reduce on-hand once and update Accounting automatically.' %></p>
     <% if(locals.postgresPlacement){for(const line of order.lines.filter(l=>l.kitReady>0)){ %>
       <fieldset><legend><%= line.displayName %> · build from reserved components</legend>
         <input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="__kit__">
@@ -367,6 +375,7 @@
       var plannedHandoverLabel = plannedHandover === 'COLLECTED'
         ? 'Collected by the customer' : 'Sent by carrier';
     %>
+    <% if (counterPickup) { %><input type="hidden" name="handover" value="COLLECTED"><% } else { %>
     <div class="notice notice--info">
       <div><strong>Planned: <%= plannedHandoverLabel %></strong><br>This came from the delivery choice on the order.</div>
     </div>
@@ -398,13 +407,14 @@
         <small>Becomes a link the customer can follow.</small>
       </label>
     </div>
+    <% } %>
     <% if (order.delivery_method !== 'PICKUP' && !order.ship_to_address) { %>
       <p class="hint">
         This Sales Order has no delivery address, so StockChief cannot prepare a carrier label.
         The customer's profile is only a default; the order needs its own confirmed destination.
       </p>
     <% } %>
-    <button class="btn <%= pickFirst ? '' : 'btn--primary' %>" type="submit">Record these goods as gone</button>
+    <button class="btn <%= pickFirst ? '' : 'btn--primary' %>" type="submit"><%= counterPickup ? 'Mark picked up' : 'Record these goods as gone' %></button>
   </form>
   </details>
 <% } %>
@@ -502,7 +512,8 @@
   var free = locals.pickable || [];
   var freeUnits = free.reduce(function (sum, row) { return sum + row.available; }, 0);
 %>
-<% if (fulfilment && order.status !== 'DRAFT') { %>
+<%# A counter pickup with nothing boxed has no shipments to show; Ready for pickup is its step. %>
+<% if (fulfilment && order.status !== 'DRAFT' && !(locals.postgresPlacement && order.delivery_method === 'PICKUP' && !boxes.length)) { %>
   <%# Closed when the step above already carries the pick button: two of the
       same button on one screen is the thing this page was full of. %>
   <details class="panel section fold" id="fulfilment" open>
@@ -946,12 +957,14 @@
             <div><button class="btn btn--primary" type="submit">Request return</button></div>
             <p class="muted">Nothing moves until authorization and physical receipt.</p>
           </form>
-        </details><% } %>
+        </details>
       <% } else if (!(locals.returns || []).length && ['PARTIALLY_FULFILLED', 'FULFILLED'].includes(order.status)) { %>
         <p class="muted">Every fulfilled unit is already covered by a return.</p>
       <% } %>
     </div>
   </div>
+<% } %>
+<%# Closes the order-setup branch opened above the stock and money steps. %>
 <% } %>
 
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
@@ -962,7 +975,7 @@
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
-<% if (!locals.room) { %><%- include('allocation-settings') %><% } %>
+<% if (!locals.room && !(locals.postgresPlacement && ['FULFILLED','CANCELLED'].includes(order.status))) { %><%- include('allocation-settings') %><% } %>
 <details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <time data-local-time datetime="<%= event.created_at %>"><%= helpers.dateTime(event.created_at) %></time></small></span></div><% }) %></div></details>
 
 <%#
