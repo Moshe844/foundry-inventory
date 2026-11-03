@@ -136,7 +136,7 @@ function createPostgresShippingRouter(database,options={}){
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,customStore:customRows.rows[0]||null,selectedProvider:accounts.PROVIDERS.includes(req.query.provider)?req.query.provider:'easypost',shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      account,customStore:customRows.rows[0]||null,selectedProvider:accounts.KEY_PROVIDERS.includes(req.query.provider)?req.query.provider:'shipengine',openKeyForm:Boolean(req.query.provider),shippoLink:shippoReady(),shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
       purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
@@ -168,7 +168,9 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,'/settings/shipping#handling');
   }));
   router.post('/settings/shipping/account',requireOwner,asyncRoute(async(req,res)=>{
-    const chosen=accounts.PROVIDERS.includes(req.body.provider)?req.body.provider:'easypost';
+    const chosen=accounts.KEY_PROVIDERS.includes(req.body.provider)?req.body.provider:'shipengine';
+    // EasyPost needs a partner agreement for every setup; existing connections keep working.
+    if(!accounts.KEY_PROVIDERS.includes(String(req.body.provider||'').toLowerCase())){req.flash('error','Choose ShipEngine, Shippo or ShipStation.');return res.redirect(303,'/settings/shipping?provider=shipengine#account');}
     try{
     const verify=options.verifyAccount||legacyAccounts.verifyInput;
     const provider=accounts.requireProvider(req.body.provider),apiKey=requireText(req.body.apiKey,'API key',{max:400});
@@ -191,6 +193,26 @@ function createPostgresShippingRouter(database,options={}){
   router.post('/settings/shipping/account/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});
     req.flash('success','Postage account disconnected and its encrypted credentials removed.');
+    return res.redirect(303,'/settings/shipping');
+  }));
+  // Link Shippo account: sign in at Shippo, approve, come back connected.
+  const shippoLink=require('../../shipping/shippo-link');
+  const shippoReturn=res=>`${res.locals.origin}/settings/shipping/shippo/callback`,shippoReady=()=>(options.shippoLink?.configured||shippoLink.configured)();
+  router.get('/settings/shipping/shippo/connect',requireOwner,asyncRoute(async(req,res)=>{
+    if(!shippoReady()){req.flash('error','Linking a Shippo account is not available yet. Connect with a Shippo API key instead.');return res.redirect(303,'/settings/shipping?provider=shippo#account');}
+    const started=options.shippoLink?.start?options.shippoLink.start(shippoReturn(res)):shippoLink.start(shippoReturn(res));
+    req.session.shippoLink=started.saved;return req.session.save(()=>res.redirect(303,started.url));
+  }));
+  router.get('/settings/shipping/shippo/callback',requireOwner,asyncRoute(async(req,res)=>{
+    const saved=req.session.shippoLink;delete req.session.shippoLink;
+    try{
+      if(req.query.error)throw new ValidationError('Shippo linking was cancelled. Nothing was connected.');
+      shippoLink.checkState(saved,req.query.state);
+      const token=await (options.shippoLink?.exchange||shippoLink.exchange)(req.query.code,shippoReturn(res));
+      await accounts.connect(database,req.ctx,{provider:'shippo',apiKey:shippoLink.storedKey(token)});
+      req.flash('success','Your Shippo account is linked. Rates from its carriers appear when you ship an order.');
+    }catch(error){if(!(error instanceof ValidationError)&&!error.limitKind)throw error;
+      req.flash('error',error.limitKind?'Connecting another shipping account is not included in your plan.':error.message);}
     return res.redirect(303,'/settings/shipping');
   }));
   router.post('/settings/shipping/account/remove',requireOwner,asyncRoute(async(req,res)=>{
@@ -266,6 +288,25 @@ function createPostgresShippingRouter(database,options={}){
       'Rates refreshed. Some connected accounts could not return rates; their offers are excluded. No postage was purchased.':
       'Rates refreshed across connected shipping accounts. No postage was purchased.');
     return res.redirect(303,`/fulfilment/${req.params.id}#carrier`);
+  }));
+  // "Ship this order" on the order page: one step opens the parcel with its
+  // weight, packs it and fetches rates; the next screen is choosing a rate.
+  router.post('/orders/:id/ship-label',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
+    const toGrams={lb:453.59237,oz:28.349523125,kg:1000,g:1}[req.body.weightUnit],weight=Number(String(req.body.weight||'').replace(',','.'));
+    if(!toGrams||!(weight>0))throw new ValidationError('Enter the parcel weight.');
+    const toMm={in:25.4,cm:10}[req.body.sizeUnit]||25.4,size=name=>{const value=Number(String(req.body[name]||'').replace(',','.'));return value>0?Math.round(value*toMm):undefined;};
+    const box={weightGrams:Math.max(1,Math.round(weight*toGrams)),lengthMm:size('length'),widthMm:size('width'),heightMm:size('height')};
+    const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
+    const {lines,locationId}=require('../../sales/parcel-lines').forParcel(detail);
+    const key=String(req.body.requestKey||'').slice(0,120)||newId('shiplabel');
+    const prepared=await shipping.prepare(database,req.ctx,req.params.id,{idempotencyKey:'ship-label:'+key,
+      shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,startPicking:true,lines});
+    const current=await shipping.requireShipment(database,req.ctx.workspaceId,prepared.shipmentId);
+    if(current.status==='PICKING'){await shipping.setPackages(database,req.ctx,prepared.shipmentId,[box]);await shipping.markPacked(database,req.ctx,prepared.shipmentId,{});}
+    try{const quoted=await shipping.quote(database,req.ctx,prepared.shipmentId,{idempotencyKey:'ship-label-quote:'+key,providerResolver:options.providerResolver});
+      req.flash(quoted.rates?.length?'success':'warning',quoted.rates?.length?'Rates are ready. Choose one to buy the label.':quoted.blocked?.length?'The parcel is packed. Before rates can be fetched: '+quoted.blocked.join(' '):'The parcel is packed, but no rates came back. Check the address and weight, then refresh rates.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('warning','The parcel is packed, but rates could not be fetched: '+error.message);}
+    return res.redirect(303,'/fulfilment/'+prepared.shipmentId+'#carrier');
   }));
   router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
     const queued=await shipping.queueLabelPurchase(database,req.ctx,req.params.id,req.body.rateId,

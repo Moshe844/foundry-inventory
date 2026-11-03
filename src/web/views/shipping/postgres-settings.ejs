@@ -1,101 +1,107 @@
-<% const providerNames={easypost:'EasyPost',shipstation:'ShipStation',shippo:'Shippo',shipengine:'ShipEngine'}; %>
-<header class="rm-head">
-  <p class="rm-head__eyebrow">Shipping</p>
-  <h1>Your shipping accounts, managed in StockChief</h1>
-  <p>Connect this business’s own accounts. StockChief compares their available rates; the provider bills your business directly for approved postage.</p>
-</header>
+<% const providerNames={easypost:'EasyPost',shipstation:'ShipStation',shippo:'Shippo',shipengine:'ShipEngine'};
+   const keyProviders=['shipengine','shippo','shipstation'].filter(p=>providers.includes(p)),owner=currentUser.role==='owner';
+   const keyHelp={shipengine:['In ShipEngine, open API Management and copy your API key. Test keys start with TEST_.','https://www.shipengine.com/docs/auth/'],
+     shippo:['In Shippo, open Settings → API and copy your API token. Test tokens start with shippo_test_.','https://docs.goshippo.com/guides/authentication'],
+     shipstation:['In ShipStation, open Settings → API Keys and create a V2 API key. Sandbox keys start with TEST_.','https://docs.shipstation.com/authentication']}; %>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
+<div class="ox ox-ship" data-ox-page>
+<div class="ox-head"><div><h1 class="ox-title">Shipping</h1>
+  <p class="ox-sub">Connect your shipping account to compare rates and print labels from any order. Postage is billed to your own account by your shipping provider.</p></div></div>
 
-<section class="card section" aria-label="Connected shipping accounts">
-  <div class="card-head"><div><h2><%= shippingAccounts.length ? (shippingAccounts.every(a=>a.testMode)?'Sandbox connected':'Connected shipping accounts') : 'Connect a shipping account' %></h2>
-    <p class="hint">Each account is encrypted and belongs only to this inventory. Connecting another provider keeps your existing connections.</p></div></div>
-  <% if(!shippingAccounts.length){ %><div class="card-body"><p>No shipping accounts are connected yet. Add EasyPost, ShipStation or Shippo below.</p></div><% } %>
+<section class="ox-card ox-ship__card" aria-label="Connected shipping accounts">
+  <div class="ox-ship__card-h"><h2><%= shippingAccounts.length ? (shippingAccounts.every(a=>a.testMode)?'Sandbox connected':'Connected shipping accounts') : 'Connect a shipping account' %></h2>
+    <p><%= shippingAccounts.length?'Rates from every connected account are compared on each parcel.':'Choose one way below. You can connect more than one; each is encrypted and belongs only to this business.' %></p></div>
   <% shippingAccounts.forEach(function(connected){ %>
-  <article class="card-body stack" id="account-<%= connected.connectorId %>" aria-label="<%= connected.providerName %> account">
-    <h3><%= connected.providerName %> <span class="badge <%= connected.testMode?'badge--warn':'badge--ok' %>"><%= connected.testMode?'Test labels only':'Live account' %></span></h3>
-    <p><%= connected.testMode?'Test labels cannot be used for real parcels and do not charge real postage.':'Approved labels are billed to your connected provider account.' %></p>
-    <p role="status"><%= connected.webhookSetup?.status==='CONNECTED'?'Automatic carrier updates are registered. StockChief also checks tracking periodically.':connected.webhookSetup?.status==='POLLING'?'This provider’s test environment uses automatic tracking checks.':connected.webhookSetup?.status==='REVIEW'?'Carrier update registration needs attention. Automatic tracking checks continue.':'StockChief is setting up automatic carrier updates.' %></p>
-    <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
-      <div class="disclose__body t-sm">Platform: <%= connected.providerName %> · key ending <%= connected.keyEnding %>
+  <article class="ox-ship__account" id="account-<%= connected.connectorId %>" aria-label="<%= connected.providerName %> account">
+    <div class="ox-ship__account-main"><strong><%= connected.providerName %></strong> <span class="ox-badge <%= connected.testMode?'ox-badge--amber':'ox-badge--green' %>"><%= connected.testMode?'Test labels only':'Live account' %></span>
+      <p><%= connected.testMode?'Test labels cannot be used for real parcels and do not charge real postage.':'Labels you buy are billed to this account.' %>
+        <span role="status"><%= connected.webhookSetup?.status==='CONNECTED'?'Tracking updates arrive automatically.':connected.webhookSetup?.status==='POLLING'?'Tracking is checked automatically.':connected.webhookSetup?.status==='REVIEW'?'Tracking update setup needs attention; tracking is still checked regularly.':'Setting up automatic tracking updates.' %></span></p>
+      <details class="ox-more"><summary>Advanced connection details</summary>
+        <p>Platform: <%= connected.providerName %> · key ending <%= connected.keyEnding %></p>
         <p>Tracking webhook: <code style="overflow-wrap:anywhere"><%= connected.webhookUrl %></code></p>
         <p><%= connected.hasWebhookSecret?'Carrier event verification is configured for this business.':'StockChief will configure carrier event verification automatically.' %></p>
-      </div>
-    </details>
-    <form method="post" action="/settings/shipping/account/disconnect" data-busy data-confirm="Disconnect this account? Existing labels and shipment history remain.">
+      </details></div>
+    <% if(owner){ %><form method="post" action="/settings/shipping/account/disconnect" data-busy data-confirm="Disconnect this account? Existing labels and shipment history remain.">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connected.connectorId %>">
-      <button class="btn btn--ghost" type="submit">Disconnect <%= connected.providerName %></button>
-    </form>
+      <button class="ox-btn ox-btn--ghost ox-btn--sm" type="submit">Disconnect <%= connected.providerName %></button>
+    </form><% } %>
   </article>
   <% }); %>
 </section>
 
-<section class="card section" id="account">
-  <div class="card-body"><h2>ShipStation Custom Store</h2><p>Send prepared StockChief parcels to ShipStation and receive tracking back. ShipStation V2 above remains the rate and label API connection.</p>
-  <% if(locals.customStore){ %><p><strong>Connected</strong> · StockChief connection details are ready. Enter them in your ShipStation Custom Store settings to start exchanging parcels.</p><% } %>
-  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %></div>
-  <div class="card-head"><div><h2><%= shippingAccounts.length?'Add or update a shipping account':'Use your existing shipping account' %></h2>
-    <p class="hint">Choose the shipping platform your business uses. Your carrier contracts and billing stay with you.</p></div></div>
-  <div class="card-body">
-  <details class="disclose" id="existing-carrier-connection"><summary><span>Connect with a shipping-platform key</span><span class="disclose__cue">Show</span></summary>
-    <div class="disclose__body">
-      <form method="post" action="/settings/shipping/account" class="stack" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <label class="field"><span class="field-label" id="shipping-provider-label">Shipping platform</span><select class="select" name="provider" required aria-labelledby="shipping-provider-label">
-          <% ['easypost','shipstation','shippo','shipengine'].filter(p=>providers.includes(p)).forEach(function(provider){ %>
-          <option value="<%= provider %>" <%= locals.selectedProvider===provider?'selected':'' %>><%= providerNames[provider] %></option><% }); %>
-        </select></label>
-        <label class="field"><span class="field-label" id="shipping-key-label">API key</span><input class="input" type="password" name="apiKey" required autocomplete="off" aria-labelledby="shipping-key-label">
-          <span class="field-help">Use a test key to try shipping without real postage. ShipStation requires a V2 API key; sandbox keys start with TEST_.</span></label>
-        <label class="field"><span class="field-label">Webhook secret <small>(optional)</small></span><input class="input" type="password" name="webhookSecret" autocomplete="off"></label>
-        <p class="hint">Updating an existing provider replaces only its saved key. Rates quoted on the old key must be refreshed before buying a label.</p>
-        <button class="btn btn--primary" type="submit">Verify and connect</button>
-      </form>
-      <p class="hint">Key setup: <a href="https://docs.easypost.com/docs/authentication" target="_blank" rel="noopener noreferrer">EasyPost</a> ·
-        <a href="https://docs.shipstation.com/authentication" target="_blank" rel="noopener noreferrer">ShipStation V2</a> ·
-        <a href="https://docs.goshippo.com/guides/authentication" target="_blank" rel="noopener noreferrer">Shippo</a> ·
-        <a href="https://www.shipengine.com/docs/auth/" target="_blank" rel="noopener noreferrer">ShipEngine API key setup</a> (now ShipStation API).</p>
-    </div>
+<div class="ox-ship__ways" id="account">
+  <% if(locals.shippoLink){ %>
+  <section class="ox-card ox-ship__way is-primary">
+    <span class="ox-ship__step">1</span>
+    <div><h3>Link your Shippo account <span class="ox-badge ox-badge--blue">Easiest</span></h3>
+      <p>Sign in to Shippo and approve. No keys to copy. The carriers in your Shippo account appear here, and postage is billed by Shippo.</p></div>
+    <% if(owner){ %><a class="ox-btn ox-btn--primary" href="/settings/shipping/shippo/connect">Link Shippo account</a><% } %>
+  </section>
+  <% } %>
+  <details class="ox-card ox-ship__way" id="existing-carrier-connection" <%= locals.openKeyForm?'open':'' %>>
+    <summary><span class="ox-ship__step"><%= locals.shippoLink?2:1 %></span><div><h3>Connect with an API key</h3><p>Use your own <%= keyProviders.map(p=>providerNames[p]).join(', ').replace(/, ([^,]*)$/,' or $1') %> account. Copy its API key and paste it here.</p></div><span class="ox-btn ox-btn--secondary ox-ship__open">Connect with a key</span></summary>
+    <% if(owner){ %><form method="post" action="/settings/shipping/account" class="ox-ship__form" data-busy data-key-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="ox-ship__field"><span>Shipping platform</span><select name="provider" required data-key-provider>
+        <% keyProviders.forEach(function(provider){ %><option value="<%= provider %>" <%= locals.selectedProvider===provider?'selected':'' %>><%= providerNames[provider] %></option><% }); %></select></label>
+      <% keyProviders.forEach(function(provider){ %><p class="ox-ship__help" data-key-help="<%= provider %>" <%= (locals.selectedProvider||keyProviders[0])===provider?'':'hidden' %>><%= keyHelp[provider][0] %> <a href="<%= keyHelp[provider][1] %>" target="_blank" rel="noopener noreferrer">How to find it</a></p><% }); %>
+      <label class="ox-ship__field"><span>API key</span><input type="password" name="apiKey" required autocomplete="off"></label>
+      <label class="ox-ship__field ox-ship__field--minor"><span>Webhook secret (optional)</span><input type="password" name="webhookSecret" autocomplete="off"></label>
+      <button class="ox-btn ox-btn--primary" type="submit">Verify and connect</button>
+      <p class="ox-ship__fine">StockChief checks the key before saving it. Connecting the same platform again replaces only its saved key.</p>
+    </form><% }else{ %><p class="ox-ship__fine">Only an owner can connect a shipping account.</p><% } %>
   </details>
-  </div>
-</section>
+  <section class="ox-card ox-ship__way">
+    <span class="ox-ship__step"><%= locals.shippoLink?3:2 %></span>
+    <div><h3>ShipStation Custom Store</h3><p>Already print labels in ShipStation? Let ShipStation pull your StockChief orders and send tracking back.<% if(locals.customStore){ %> <strong>Connected.</strong><% } %></p></div>
+    <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
+  </section>
+</div>
 
 <% if(account.connected){ %>
-<section class="card section" id="handling">
-  <div class="card-head"><div><h2>How StockChief handles shipping</h2><p class="hint">Comparing rates buys no postage. Every label purchase needs the appropriate permission and approval.</p></div></div>
-  <form method="post" action="/settings/shipping/operation-mode" data-busy>
+<section class="ox-card ox-ship__card" id="handling">
+  <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage. Every label is bought by a person.</p></div>
+  <form method="post" action="/settings/shipping/operation-mode" class="ox-ship__form" data-busy>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <div class="card-body choice-grid">
-      <% [['MANUAL','Manual','Choose from the available rates yourself.'],['RECOMMEND','Recommend','StockChief highlights the lowest current price; you approve the label.']].forEach(function(choice){ %>
-      <label class="choice"><input type="radio" name="mode" value="<%= choice[0] %>" <%= operationPolicy.mode===choice[0]?'checked':'' %>>
-        <span class="choice-body"><strong><%= choice[1] %></strong><span><%= choice[2] %></span></span></label><% }); %>
-    </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save handling</button></div>
+    <div class="ox-ship__choices">
+      <% [['MANUAL','Manual','I pick from the rates myself.'],['RECOMMEND','Recommend','StockChief highlights the best rate; I approve the label.']].forEach(function(choice){ %>
+      <label class="ox-ship__choice"><input type="radio" name="mode" value="<%= choice[0] %>" <%= operationPolicy.mode===choice[0]?'checked':'' %>><span><strong><%= choice[1] %></strong><small><%= choice[2] %></small></span></label><% }); %>
+    </div>
+    <button class="ox-btn ox-btn--secondary" type="submit">Save handling</button>
   </form>
 </section>
 <% } %>
 
-<section class="card section" id="limits"><div class="card-head"><div><h2>Postage spending limits</h2><p class="hint">These limits apply to every purchase, including batches. Pending and uncertain charges stay reserved. Only an owner can change the limits.</p></div></div><form method="post" action="/settings/shipping/limits" class="card-body stack" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= purchaseLimits?.currency||currency %>">
-<label class="field"><span class="field-label">Maximum per parcel (<%= purchaseLimits?.currency||currency %>)</span><input class="input" name="perLabel" inputmode="decimal" value="<%= purchaseLimits?.per_label_minor!=null?fromMinor(purchaseLimits.per_label_minor,purchaseLimits.currency):'' %>"><span class="field-help">Blank means no additional business limit. Each purchase still needs approval.</span></label>
-<label class="field"><span class="field-label">Maximum over any 24 hours (<%= purchaseLimits?.currency||currency %>)</span><input class="input" name="rollingDay" inputmode="decimal" value="<%= purchaseLimits?.rolling_day_minor!=null?fromMinor(purchaseLimits.rolling_day_minor,purchaseLimits.currency):'' %>"></label><button class="btn btn--primary" type="submit">Save postage limits</button></form></section>
-<section class="card section" id="rules">
-  <div class="card-head"><div><h2>Shipping preferences</h2><p class="hint">Save the carrier, price and delivery limits you want StockChief to consider.</p></div></div>
-  <div class="card-body stack">
-    <% rules.forEach(function(rule){ %><div class="planning-item"><strong><%= rule.name %></strong> <%= rule.active?'':'· Off' %><% if(rule.maxDeliveryDays!=null){ %> · Within <%= rule.maxDeliveryDays %> delivery days<% } %>
-      <% if(rule.active){ %><form method="post" action="/settings/shipping/<%= rule.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Turn off</button></form><% } %>
-    </div><% }); %>
-    <form method="post" action="/settings/shipping" class="stack" data-busy>
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field"><span class="field-label">Carrier (optional)</span><select class="select" name="carrier"><option value="">Any carrier</option>
-        <% carriers.forEach(function(carrier){ %><option value="<%= carrier.code %>"><%= carrier.name %></option><% }); %>
-      </select></label>
-      <label class="field"><span class="field-label">Service (optional)</span><input class="input" name="service" maxlength="160"></label>
-      <label class="field"><span class="field-label">Only when it costs less than</span><input class="input" name="maxCost" inputmode="decimal" placeholder="25.00"></label>
-      <label class="field"><span class="field-label">Maximum delivery days (optional)</span><input class="input" type="number" name="maxDeliveryDays" min="1" max="30"></label>
-      <div class="grid grid--2"><label class="field"><span class="field-label">Minimum parcel weight, grams (optional)</span><input class="input" type="number" name="minWeightGrams" min="1" max="2147483647" step="1"></label><label class="field"><span class="field-label">Maximum parcel weight, grams (optional)</span><input class="input" type="number" name="maxWeightGrams" min="1" max="2147483647" step="1"></label></div>
-      <label class="choice"><input type="checkbox" name="requireByPromised"><span>Must arrive by the promised date</span></label>
-      <button class="btn btn--primary" type="submit">Save this rule</button>
-    </form>
-  </div>
+<section class="ox-card ox-ship__card" id="rules">
+  <div class="ox-ship__card-h"><h2>Preferred carriers <small>optional</small></h2><p>Tell StockChief which rates you prefer; matching rates are marked when you ship.</p></div>
+  <% if(rules.length){ %><ul class="ox-ship__rules"><% rules.forEach(function(rule){ %><li><span><strong><%= rule.name %></strong><%= rule.active?'':' · Off' %><% if(rule.maxDeliveryDays!=null){ %> · Within <%= rule.maxDeliveryDays %> delivery days<% } %></span>
+    <% if(rule.active){ %><form method="post" action="/settings/shipping/<%= rule.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--ghost ox-btn--sm" type="submit">Turn off</button></form><% } %></li><% }); %></ul><% } %>
+  <form method="post" action="/settings/shipping" class="ox-ship__form" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="ox-ship__grid">
+      <label class="ox-ship__field"><span>Carrier (optional)</span><select name="carrier"><option value="">Any carrier</option><% carriers.forEach(function(carrier){ %><option value="<%= carrier.code %>"><%= carrier.name %></option><% }); %></select></label>
+      <label class="ox-ship__field"><span>Service (optional)</span><input name="service" maxlength="160" placeholder="e.g. Ground"></label>
+      <label class="ox-ship__field"><span>Only when it costs less than</span><input name="maxCost" inputmode="decimal" placeholder="25.00"></label>
+      <label class="ox-ship__field"><span>Maximum delivery days (optional)</span><input type="number" name="maxDeliveryDays" min="1" max="30"></label>
+    </div>
+    <details class="ox-more"><summary>Weight limits</summary><div class="ox-ship__grid">
+      <label class="ox-ship__field"><span>Minimum parcel weight, grams (optional)</span><input type="number" name="minWeightGrams" min="1" max="2147483647" step="1"></label>
+      <label class="ox-ship__field"><span>Maximum parcel weight, grams (optional)</span><input type="number" name="maxWeightGrams" min="1" max="2147483647" step="1"></label></div></details>
+    <label class="ox-ship__check"><input type="checkbox" name="requireByPromised"> Must arrive by the promised date</label>
+    <button class="ox-btn ox-btn--secondary" type="submit">Save this rule</button>
+  </form>
 </section>
 
-<section class="card section"><div class="card-body"><h2>When inventory changes</h2>
-  <p>A label does not mean the goods have left. StockChief deducts stock once when you confirm physical handoff. Voiding an unused label leaves stock unchanged. Goods already shipped come back through a confirmed physical return.</p>
-</div></section>
+<section class="ox-card ox-ship__card" id="limits">
+  <div class="ox-ship__card-h"><h2>Postage spending limits <small>optional</small></h2><p>Caps on what can be spent on labels, including batches. Blank means no limit beyond your own approval.</p></div>
+  <form method="post" action="/settings/shipping/limits" class="ox-ship__form" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= purchaseLimits?.currency||currency %>">
+    <div class="ox-ship__grid">
+      <label class="ox-ship__field"><span>Maximum per parcel (<%= purchaseLimits?.currency||currency %>)</span><input name="perLabel" inputmode="decimal" value="<%= purchaseLimits?.per_label_minor!=null?fromMinor(purchaseLimits.per_label_minor,purchaseLimits.currency):'' %>" <%= owner?'':'disabled' %>></label>
+      <label class="ox-ship__field"><span>Maximum over any 24 hours (<%= purchaseLimits?.currency||currency %>)</span><input name="rollingDay" inputmode="decimal" value="<%= purchaseLimits?.rolling_day_minor!=null?fromMinor(purchaseLimits.rolling_day_minor,purchaseLimits.currency):'' %>" <%= owner?'':'disabled' %>></label>
+    </div>
+    <% if(owner){ %><button class="ox-btn ox-btn--secondary" type="submit">Save postage limits</button><% } %>
+  </form>
+</section>
+<p class="ox-ship__fine">Buying a label does not move stock. Stock leaves once, when you confirm the parcel was handed to the carrier; voiding an unused label changes nothing.</p>
+</div>
+<script>(()=>{const form=document.querySelector('[data-key-form]');if(!form)return;const select=form.querySelector('[data-key-provider]');const show=()=>form.querySelectorAll('[data-key-help]').forEach(p=>p.hidden=p.dataset.keyHelp!==select.value);select.addEventListener('change',show);show();})();</script>

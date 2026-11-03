@@ -7,6 +7,8 @@ const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
 
 const PROVIDERS=['shipengine','shipstation','easypost','shippo'];
+// New connections: EasyPost is no longer offered, but accounts already connected keep working.
+const KEY_PROVIDERS=['shipengine','shippo','shipstation'];
 const KEY_FIELD={shipengine:'shipengineApiKey',shipstation:'shipstationApiKey',
   easypost:'easypostApiKey',shippo:'shippoApiKey'};
 const DISPLAY={shipengine:'ShipEngine',shipstation:'ShipStation',easypost:'EasyPost',shippo:'Shippo'};
@@ -130,5 +132,5 @@ async function describeAll(database,workspaceId){
   return (await allForWorkspace(database,workspaceId)).map(describeAccount);
 }
 
-module.exports={PROVIDERS,KEY_FIELD,requireProvider,isTestKey,connectorsFor,connectorFor,forWorkspace,allForWorkspace,contextFor,connect,disconnect,describe,describeAll};
+module.exports={PROVIDERS,KEY_PROVIDERS,KEY_FIELD,requireProvider,isTestKey,connectorsFor,connectorFor,forWorkspace,allForWorkspace,contextFor,connect,disconnect,describe,describeAll};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{connect:'shipping.rates'});

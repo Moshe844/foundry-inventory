@@ -19,11 +19,17 @@ function apiKey(ctx = {}) {
 
 function isConfigured() { return Boolean(process.env.SHIPPO_API_KEY); }
 
+// A linked account (OAuth) is a Bearer token; a pasted API token uses ShippoToken.
+function authorization(key) {
+  if (key.startsWith('bearer:')) return 'Bearer ' + key.slice(7);
+  return key.startsWith('oauth.') ? 'Bearer ' + key : 'ShippoToken ' + key;
+}
+
 async function call(ctx, path, options = {}) {
   const response = await providerFetch(`${BASE}${path}`, {
     method: options.method || 'GET',
     headers: {
-      authorization: `ShippoToken ${apiKey(ctx)}`,
+      authorization: authorization(apiKey(ctx)),
       'content-type': 'application/json',
       accept: 'application/json',
       ...(options.headers || {}),
