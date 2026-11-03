@@ -453,11 +453,41 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const result=await presenters.purchasing(database,req.ctx.workspaceId);
     const reorderOverview=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,req.query);
-    return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,reorderOverview,postgresQuickEntry:true,
-      permissions:{create:permissions.can(req.user,permissions.CREATE_PO),
-        receive:permissions.can(req.user,permissions.RECEIVE_PO)}});
+    const reorder=await require('../buy-view').reorderView(database,req.ctx.workspaceId,reorderOverview);
+    return res.page('buy/reorder',{title:'What to order',nav:'purchasing',room:true,reorder,reorderOverview,draftKey:newId('reorder-drafts'),
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
+  }));
+
+  /*
+   * Draft purchase orders straight from What to order: one per chosen supplier,
+   * through the same createPurchaseOrder the New purchase order form uses, with
+   * the same cost fallback. Drafts only — approving and sending stay separate.
+   */
+  router.post('/purchasing/reorder/drafts',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
+    const chosen=trimOrNull(req.body.only)?[trimOrNull(req.body.only)]:[].concat(req.body.group||[]).map(String);
+    const lines=req.body.line&&typeof req.body.line==='object'?req.body.line:{},on=req.body.on&&typeof req.body.on==='object'?req.body.on:{};
+    if(!chosen.length)throw new ValidationError('Choose at least one supplier to order from.');
+    const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate;
+    const created=[];
+    for(const supplierId of chosen){
+      const wanted=Object.entries(lines[supplierId]||{}).filter(([skuId,q])=>on[supplierId]?.[skuId]==='1'&&Number(q)>0);
+      if(!wanted.length)continue;
+      const supplier=(await database.query('SELECT id,name FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,supplierId])).rows[0];
+      if(!supplier)throw new ValidationError('Choose a supplier from this inventory.');
+      const linked=(await database.query('SELECT sku_id,last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND is_active=1',[req.ctx.workspaceId,supplierId])).rows;
+      const destinationLocationId=trimOrNull(req.body.deliver?.[supplierId]);
+      const orderLines=wanted.map(([skuId,quantity])=>{const link=linked.find(l=>l.sku_id===skuId);
+        if(!link)throw new ValidationError('Choose products linked to this supplier.');
+        return {skuId,quantityPurchaseUnits:quantity,unitCost:link.last_unit_cost==null?undefined:link.last_unit_cost,destinationLocationId};});
+      const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId,orderDate:today,expectedDate:null,destinationLocationId,
+        idempotencyKey:`${key(req,'reorder-drafts')}:${supplierId}`,lines:orderLines});
+      created.push({id:result.purchaseOrderId,name:supplier.name});
+    }
+    if(!created.length)throw new ValidationError('Enter an amount to order for at least one item.');
+    if(created.length===1){req.flash('success',`Draft saved. Nothing was sent to ${created[0].name}.`);return res.redirect(303,`/purchasing/orders/${created[0].id}`);}
+    req.flash('success',`${created.length} drafts saved. Nothing was sent to ${created.map(c=>c.name).join(' or ')}.`);
+    return res.redirect(303,'/purchasing/orders?status=approve');
   }));
 
   router.get(['/purchasing/supplier-for/:skuId','/suppliers/for/:skuId'],requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
@@ -466,7 +496,8 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers,supplierQuery});
   }));
   router.post('/purchasing/supplier-for/:skuId',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
-    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true});req.flash('success','Supplier linked to this variant.');return res.redirect(303,'/purchasing');
+    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true,
+      ...(trimOrNull(req.body.supplierSku)?{supplierSku:req.body.supplierSku}:{}),...(String(req.body.minimumOrderQuantity||'').trim()?{minimumOrderQuantity:req.body.minimumOrderQuantity}:{})});req.flash('success','Supplier linked to this variant.');return res.redirect(303,'/purchasing');
   }));
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{

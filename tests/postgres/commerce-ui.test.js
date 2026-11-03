@@ -68,19 +68,8 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
 
-    assert.equal(await page.getByRole('heading',{name:'Ask or tell StockChief.'}).count(),1);
-    await page.locator('#suppliers > summary').click();
-    await page.getByText('Add a supplier',{exact:true}).click();
-    const quickSupplier=page.locator('#suppliers details').filter({hasText:'Add a supplier'});
-    const supplierInputWidths=await quickSupplier.locator('input[name="name"], input[name="email"]').evaluateAll(
-      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
-    assert.equal(supplierInputWidths.length,2);
-    assert.ok(supplierInputWidths.every((width)=>width>300),`Supplier form controls were ${supplierInputWidths.join(', ')}px wide.`);
-    assert.ok(Math.abs(supplierInputWidths[0]-supplierInputWidths[1])<=2,'Supplier form columns must align.');
-    await page.setViewportSize({width:753,height:900});
-    const compactSupplierWidths=await quickSupplier.locator('input[name="name"], input[name="email"], input[name="currency"]').evaluateAll(
-      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
-    assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
+    // What to order groups shortages by supplier; adding a supplier lives on Suppliers.
+    assert.equal(await page.getByRole('heading',{name:'What to order'}).count(),1);
     await page.setViewportSize({width:1440,height:1000});
     await page.goto(base+'/purchasing/orders/new');await page.getByRole('link').filter({hasText:'Boot Supply'}).click();
     await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('[data-ox-po-input]').click();await page.locator('[data-ox-po-option="'+item.skuIds[0]+'"]').click();await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');

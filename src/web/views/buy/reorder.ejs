@@ -1,0 +1,95 @@
+<%
+  /*
+   * What to order, one card per supplier.
+   *
+   * Every number is editable and nothing is ordered here: "Create PO" makes a
+   * draft purchase order per supplier through the same draft action as New
+   * purchase order, and the draft waits for your approval like any other.
+   */
+  var R = reorder;
+  var m = function (minor) { return helpers.money(minor, 'USD'); };
+  var groupLine = function (g) {
+    return [g.items.length + ' item' + (g.items.length === 1 ? '' : 's'), g.leadDays != null ? g.leadDays + ' days' : null,
+      g.email ? g.email : 'no email yet, you’ll send the PO yourself'].filter(Boolean).join(' · ');
+  };
+  var SHOW = 5;
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="reorder">
+ <form method="post" action="/purchasing/reorder/drafts" id="ox-reorder" data-ox-reorder data-busy>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="idempotencyKey" value="<%= draftKey %>">
+  <header class="ox-head">
+    <div>
+      <h1 class="ox-title">What to order</h1>
+      <p class="ox-sub"><%= R.count %> item<%= R.count === 1 ? '' : 's' %> at or below their reorder point<% if (R.groups.length) { %> · <%= R.groups.length %> supplier<%= R.groups.length === 1 ? '' : 's' %><% } %></p>
+    </div>
+    <div class="ox-head__actions">
+      <a class="ox-btn ox-btn--ghost ox-hide-sm" href="/reorder-rules">Reorder settings</a>
+      <% if (permissions.create && R.groups.length) { %><button class="ox-btn ox-btn--primary" type="submit" data-ox-ro-make>Create <%= R.groups.length %> draft PO<%= R.groups.length === 1 ? '' : 's' %></button><% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing' }) %>
+
+  <% if (!R.count) { %>
+    <section class="ox-card ox-list"><div class="ox-empty"><strong>Nothing needs ordering right now.</strong><p>Items show up here when their stock reaches the reorder point you set.</p><div class="ox-empty__actions"><a class="ox-btn ox-btn--secondary" href="/reorder-rules">Reorder settings</a></div></div></section>
+  <% } else { %>
+    <p class="ox-note">Suggested amounts bring each item back up to its target. Change any number. Nothing is ordered until you approve the draft.</p>
+
+    <% R.groups.forEach(function (g) { %>
+      <section class="ox-card ox-list ox-rogroup" data-ox-ro-group data-supplier="<%= g.id %>" aria-label="<%= g.name %>">
+        <input type="hidden" name="deliver[<%= g.id %>]" value="<%= g.deliverTo %>">
+        <div class="ox-grp">
+          <label class="ox-grp__who"><input class="ox-chk" type="checkbox" name="group" value="<%= g.id %>" checked data-ox-ro-groupchk aria-label="Order from <%= g.name %>"><span class="ox-avatar" aria-hidden="true"><%= g.initials %></span><span><b><%= g.name %></b><small><%= groupLine(g) %></small></span></label>
+          <div class="ox-grp__tot"><b class="ox-num" data-ox-ro-gtotal><%= m(g.totalMinor) %></b><% if (permissions.create) { %><button class="ox-btn ox-btn--sm ox-btn--secondary" type="submit" name="only" value="<%= g.id %>" aria-label="Create a draft PO for <%= g.name %>">Create PO</button><% } %></div>
+        </div>
+        <table class="ox-table ox-rotable" data-preserve-grid>
+          <thead><tr><th scope="col" class="ox-rocheck"><span class="ox-sr">Include</span></th><th scope="col">Product</th><th scope="col" class="ox-hide-sm">Location</th><th scope="col" class="ox-c ox-hide-sm">On hand</th><th scope="col" class="ox-c ox-hide-sm">Coming</th><th scope="col" class="ox-c ox-hide-sm">Reorder at</th><th scope="col" class="ox-c">Order</th><th scope="col" class="ox-r ox-hide-sm">Cost</th><th scope="col"><span class="ox-sr">More</span></th></tr></thead>
+          <tbody>
+            <% g.items.forEach(function (it, i) { %>
+              <tr data-ox-ro-row data-unit-cost="<%= it.unitCostMinor == null ? '' : it.unitCostMinor %>" data-pack="<%= it.pack %>" <%= i >= SHOW ? 'hidden data-ox-ro-more' : '' %>>
+                <td class="ox-rocheck"><input class="ox-chk" type="checkbox" name="on[<%= g.id %>][<%= it.skuId %>]" value="1" checked aria-label="Include <%= it.name %>"></td>
+                <td><div class="ox-pcell"><span class="ox-thumb ox-hide-sm" aria-hidden="true"></span><div><b><%= it.name %></b><small><%= it.code %></small><small class="ox-show-sm"><span class="<%= it.onHand <= 1 ? 'ox-rose' : '' %>"><%= it.onHand %> on hand</span><%= it.coming ? ' · ' + it.coming + ' coming' : '' %></small></div></div></td>
+                <td class="ox-hide-sm"><%= it.location %></td>
+                <td class="ox-c ox-num ox-hide-sm <%= it.onHand <= 1 ? 'ox-rose' : '' %>"><%= it.onHand %></td>
+                <td class="ox-c ox-num ox-hide-sm <%= it.coming ? '' : 'ox-muted' %>"><%= it.coming %></td>
+                <td class="ox-c ox-num ox-hide-sm"><%= it.reorderAt == null ? '—' : it.reorderAt %></td>
+                <td class="ox-c"><input class="ox-input ox-mini" type="number" min="0" step="1" inputmode="numeric" name="line[<%= g.id %>][<%= it.skuId %>]" value="<%= it.order %>" aria-label="Order <%= it.name %><%= it.pack > 1 ? ' in ' + it.packName + 's of ' + it.pack : '' %>"><% if (it.pack > 1) { %><small class="ox-packhint"><%= it.packName %> of <%= it.pack %></small><% } %></td>
+                <td class="ox-r ox-num ox-hide-sm" data-ox-ro-cost><%= it.costMinor == null ? '—' : m(it.costMinor) %></td>
+                <td class="ox-r"><details class="ox-menu"><summary aria-label="More for <%= it.name %>">⋯</summary><div class="ox-menu__pop"><a class="ox-menu__item" href="/purchasing/why/<%= it.skuId %>">Review reorder</a></div></details></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <% if (g.items.length > SHOW) { %><div class="ox-foot"><span class="ox-muted" data-ox-ro-showing>Showing <%= SHOW %> of <%= g.items.length %></span><button class="ox-linkbtn" type="button" data-ox-ro-all>Show all <%= g.items.length %></button></div><% } %>
+      </section>
+    <% }) %>
+
+    <% if (R.unlinked.length) { %>
+      <section class="ox-card ox-list ox-rogroup" aria-label="No supplier linked">
+        <div class="ox-grp"><div class="ox-grp__who"><span class="ox-avatar ox-avatar--warn" aria-hidden="true">!</span><span><b>No supplier linked</b><small><%= R.unlinked.length %> item<%= R.unlinked.length === 1 ? '' : 's' %> · link who you buy <%= R.unlinked.length === 1 ? 'it' : 'them' %> from to order</small></span></div></div>
+        <ul class="ox-rows ox-rows--pad">
+          <% R.unlinked.forEach(function (it) { %>
+            <li class="ox-billrow"><span><b><%= it.name %></b><small><%= it.location %> · <%= it.onHand %> on hand, needs <%= it.needed %></small></span><span></span><span></span>
+              <% if (permissions.suppliers) { %><a class="ox-btn ox-btn--sm ox-btn--secondary" href="/purchasing/supplier-for/<%= it.skuId %>">Link a supplier</a><% } else { %><span></span><% } %></li>
+          <% }) %>
+        </ul>
+      </section>
+    <% } %>
+  <% } %>
+
+  <footer class="ox-foot ox-foot--page">
+    <% if (R.hasMore) { %><a href="/purchasing?afterSkuId=<%= encodeURIComponent(R.nextAfter) %>">Check more products →</a><% } else { %><span></span><% } %>
+    <a href="/planning">See measured shortages and planning evidence</a>
+  </footer>
+
+  <% if (R.groups.length && permissions.create) { %>
+  <div class="ox-mbar" aria-label="Create draft purchase orders">
+   <span class="ox-mbar__t">Selected<b class="ox-num" data-ox-ro-selected><%= m(R.totalMinor) %></b></span>
+   <button class="ox-btn ox-btn--primary" type="submit" aria-label="Create drafts for the selected suppliers">Create drafts</button>
+  </div>
+  <% } %>
+ </form>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

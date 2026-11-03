@@ -338,4 +338,56 @@ async function supplierView(database, workspaceId, supplier, allOrders, can, tod
   };
 }
 
-module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };
+/*
+ * What to order, grouped by the supplier each item is bought from. The
+ * suggested amount is the existing "needed" figure from the shortage list,
+ * turned into the supplier's packs; nothing here orders anything.
+ */
+async function reorderView(database, workspaceId, overview) {
+  const rows = (overview.rows || []).filter((row) => Number(row.needed) > 0);
+  const skuIds = [...new Set(rows.map((row) => row.sku_id))];
+  const [links, locations] = await Promise.all([
+    skuIds.length ? database.query(`SELECT DISTINCT ON (si.sku_id) si.sku_id,s.id AS supplier_id,s.name,s.email,s.default_lead_time_days,s.currency,
+        si.last_unit_cost,si.units_per_purchase_unit,si.purchase_unit,si.supplier_sku
+      FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
+      WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
+      ORDER BY si.sku_id,si.is_preferred DESC,lower(s.name),si.id`, [workspaceId, skuIds]) : { rows: [] },
+    database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id', [workspaceId]),
+  ]);
+  const bySku = new Map(links.rows.map((row) => [row.sku_id, row]));
+  const groups = new Map();
+  const unlinked = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const key = `${row.sku_id}|${row.location_id || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const link = bySku.get(row.sku_id);
+    const item = { skuId: row.sku_id, name: row.displayName || row.item_name, code: row.code || '', locationId: row.location_id || null,
+      location: row.location_name || 'All locations', onHand: Number(row.onHand || 0), coming: Number(row.incoming || 0),
+      reorderAt: row.effectiveReorder ?? row.reorderPoint ?? null, needed: Number(row.needed) };
+    if (!link) { unlinked.push(item); continue; }
+    const pack = Math.max(1, Number(link.units_per_purchase_unit || 1));
+    const cost = link.last_unit_cost == null ? null : Number(link.last_unit_cost);
+    item.pack = pack;
+    item.packName = link.purchase_unit || 'unit';
+    item.order = Math.max(1, Math.ceil(item.needed / pack));
+    item.unitCostMinor = cost == null ? null : Math.round(cost * 100);
+    item.costMinor = cost == null ? null : Math.round(item.order * pack * cost * 100);
+    if (!groups.has(link.supplier_id)) {
+      groups.set(link.supplier_id, { id: link.supplier_id, name: link.name, initials: initials(link.name), email: link.email,
+        leadDays: link.default_lead_time_days, currency: link.currency || 'USD', items: [] });
+    }
+    groups.get(link.supplier_id).items.push(item);
+  }
+  const list = [...groups.values()].map((group) => {
+    const counts = new Map();
+    group.items.forEach((item) => { if (item.locationId) counts.set(item.locationId, (counts.get(item.locationId) || 0) + 1); });
+    const deliverTo = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || locations.rows[0]?.id || null;
+    return { ...group, deliverTo, totalMinor: group.items.reduce((sum, item) => sum + (item.costMinor || 0), 0) };
+  }).sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
+  return { groups: list, unlinked, count: seen.size, hasMore: Boolean(overview.hasMore), nextAfter: overview.nextAfterSkuId,
+    totalMinor: list.reduce((sum, group) => sum + group.totalMinor, 0) };
+}
+
+module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, reorderView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

@@ -1,4 +1,33 @@
-<a class="back-link" href="/purchasing">‹ What to order</a><h1>Link a supplier</h1><p><strong><%= sku.name %><%= sku.variant_label?' — '+sku.variant_label:'' %></strong> · <%= sku.code %></p>
-<form method="get"><label>Search suppliers <input name="q" value="<%= supplierQuery %>" maxlength="120"></label><button class="btn">Search</button></form>
-<form method="post" action="/purchasing/supplier-for/<%= sku.id %>" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Supplier<select name="supplierId" required><option value="">Choose a supplier</option><% for(const s of suppliers){ %><option value="<%= s.id %>"><%= s.name %></option><% } %></select></label><p>Up to 50 matching suppliers shown. Search to find another supplier, or <a href="/suppliers/new">add a supplier</a>.</p>
-<label>Purchase unit <input name="purchaseUnit" value="unit" maxlength="40" required></label><label>Stock units in each purchase unit <input name="unitsPerPurchaseUnit" value="1" inputmode="decimal" required></label><p>For a case of 12, enter 12. Cost below is per stock unit.</p><label>Supplier cost per stock unit <input name="lastUnitCost" inputmode="decimal"></label><button class="btn btn--primary">Save supplier link</button></form><a href="/inventory/<%= sku.item_id %>#variant-editor">Edit suppliers for several variants together</a>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy ox-narrow" data-ox-page="link-supplier">
+  <header class="ox-head">
+    <div>
+      <a class="ox-back" href="/purchasing"><span aria-hidden="true">←</span> What to order</a>
+      <h1 class="ox-title">Link a supplier</h1>
+      <p class="ox-sub"><%= sku.name %><%= sku.variant_label ? ' · ' + sku.variant_label : '' %> · <%= sku.code %></p>
+    </div>
+  </header>
+  <form method="post" action="/purchasing/supplier-for/<%= sku.id %>" class="ox-card ox-card__b ox-formcard">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="ox-field"><span>Supplier</span>
+      <div class="ox-combo" data-ox-select-combo>
+        <input class="ox-input" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-link-suppliers" aria-label="Search suppliers" placeholder="Search suppliers" autocomplete="off" data-ox-select-input>
+        <ul class="ox-pop" id="ox-link-suppliers" role="listbox" aria-label="Suppliers" hidden></ul>
+        <select class="ox-native" name="supplierId" required tabindex="-1" aria-label="Supplier"><option value="">Choose a supplier</option><% for (const s of suppliers) { %><option value="<%= s.id %>"><%= s.name %></option><% } %></select>
+      </div>
+      <small class="ox-help">Not listed? <a href="/suppliers/new">Add a supplier</a>.</small>
+    </div>
+    <div class="ox-grid2">
+      <label class="ox-field"><span>Their code <small>optional</small></span><input name="supplierSku" maxlength="80" placeholder="e.g. NK-Black-11"></label>
+      <label class="ox-field"><span>Cost per <%= 'unit' %></span><input name="lastUnitCost" inputmode="decimal" placeholder="$0.00"><small class="ox-help">Per single item, even when they sell by the case.</small></label>
+    </div>
+    <div class="ox-grid2">
+      <label class="ox-field"><span>Bought in</span><input name="purchaseUnit" value="unit" maxlength="40" required placeholder="unit, case, box"></label>
+      <label class="ox-field"><span>How many in each</span><input name="unitsPerPurchaseUnit" value="1" inputmode="decimal" required><small class="ox-help">For a case of 12, enter 12.</small></label>
+    </div>
+    <label class="ox-field ox-field--half"><span>Minimum order <small>optional</small></span><input type="number" min="0" name="minimumOrderQuantity" placeholder="1"></label>
+    <div class="ox-formcard__f"><a class="ox-btn ox-btn--ghost" href="/purchasing">Cancel</a><button class="ox-btn ox-btn--primary" type="submit">Save supplier link</button></div>
+  </form>
+  <p class="ox-fine"><a href="/inventory/<%= sku.item_id %>#variant-editor">Link suppliers for several variants together</a></p>
+</div>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

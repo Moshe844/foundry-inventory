@@ -865,3 +865,37 @@ div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 
 @media (max-width: 1100px) { .ox-buy .ox-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ox-buy .ox-card__b > h2.ox-h2 { margin: 0 0 12px; }
 .ox-inline-form { display: contents; margin: 0; }
+
+/* ---------- What to order ---------- */
+.ox-rogroup { margin: 0 0 16px; }
+.ox-rogroup.is-off .ox-rotable { opacity: .45; }
+.ox-grp { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--ox-divider); flex-wrap: wrap; }
+.ox-grp__who { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.ox-grp__who b { display: block; }
+.ox-grp__who small { display: block; color: var(--ox-text-3); font-size: 12px; }
+.ox-grp__tot { display: flex; align-items: center; gap: 12px; color: var(--ox-text-2); font-size: 13px; }
+.ox-chk { width: 18px; height: 18px; accent-color: var(--ox-primary); cursor: pointer; flex-shrink: 0; }
+.ox-rocheck { width: 36px; padding-right: 0 !important; }
+.ox-rotable tr.is-off td:not(.ox-rocheck) { opacity: .5; }
+.ox-rotable .ox-mini { width: 68px; }
+.ox-avatar--warn { background: var(--ox-amber-bg); color: var(--ox-amber); }
+.ox-rows--pad { padding: 4px 16px 8px; }
+.ox-foot--page { display: flex; justify-content: space-between; gap: 12px; padding: 4px 2px 12px; font-size: 13px; }
+@media (max-width: 819px) {
+  .ox-grp { padding: 12px; }
+  .ox-rotable th, .ox-rotable td { padding-left: 8px; padding-right: 8px; }
+}
+.ox-narrow { max-width: 820px; }
+.ox-formcard { display: flex; flex-direction: column; gap: 14px; margin: 0 0 16px; padding-top: 18px; }
+.ox-formcard__f { display: flex; justify-content: flex-end; gap: 8px; }
+.ox-field--half { max-width: 50%; }
+.ox-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.ox-grid2--cards { margin-top: 16px; gap: 16px; }
+.ox-plain { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
+.ox-plain li { padding: 4px 0; }
+.ox-formcard .ox-combo { position: relative; }
+.ox-formcard .ox-pop > li[role="option"] { padding: 8px 10px; border-radius: 8px; cursor: pointer; list-style: none; }
+.ox-formcard .ox-pop > li.is-active, .ox-formcard .ox-pop > li:hover { background: var(--ox-primary-soft); }
+.ox-formcard .ox-pop > li[hidden] { display: none; }
+@media (max-width: 819px) { .ox-grid3 { grid-template-columns: 1fr; } .ox-field--half { max-width: none; } }
+.ox-buy .ox-rotable input.ox-mini { width: 72px; height: 34px; text-align: center; }

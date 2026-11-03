@@ -385,6 +385,54 @@
     update();
   }
 
+  /* ---------- What to order: choose groups and rows, costs follow the numbers ---------- */
+  function reorder() {
+    var form = $('[data-ox-reorder]');
+    if (!form) return;
+    var money = function (minor) { return '$' + (minor / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    var groups = $$('[data-ox-ro-group]', form);
+    function update() {
+      var selected = 0; var total = 0;
+      groups.forEach(function (group) {
+        var on = $('[data-ox-ro-groupchk]', group).checked;
+        var sum = 0;
+        $$('[data-ox-ro-row]', group).forEach(function (row) {
+          var include = $('input[type="checkbox"]', row).checked;
+          var qty = Math.max(0, Number($('input[type="number"]', row).value || 0));
+          var unit = row.dataset.unitCost === '' ? null : Number(row.dataset.unitCost);
+          var cost = unit == null ? null : Math.round(qty * Number(row.dataset.pack || 1) * unit);
+          var cell = $('[data-ox-ro-cost]', row);
+          if (cell) cell.textContent = cost == null ? '—' : money(cost);
+          row.classList.toggle('is-off', !include || !qty);
+          if (include && cost) sum += cost;
+        });
+        $('[data-ox-ro-gtotal]', group).textContent = money(sum);
+        group.classList.toggle('is-off', !on);
+        if (on) { selected += 1; total += sum; }
+      });
+      var make = $('[data-ox-ro-make]');
+      if (make) { make.textContent = selected ? 'Create ' + selected + ' draft PO' + (selected === 1 ? '' : 's') : 'Choose a supplier'; make.disabled = !selected; }
+      var out = $('[data-ox-ro-selected]', form);
+      if (out) out.textContent = money(total);
+    }
+    form.addEventListener('change', function (event) {
+      var groupBox = event.target.closest('[data-ox-ro-groupchk]');
+      if (groupBox) $$('[data-ox-ro-row] input[type="checkbox"]', groupBox.closest('[data-ox-ro-group]')).forEach(function (box) { box.checked = groupBox.checked; });
+      update();
+    });
+    form.addEventListener('input', update);
+    form.addEventListener('click', function (event) {
+      var all = event.target.closest('[data-ox-ro-all]');
+      if (!all) return;
+      var group = all.closest('[data-ox-ro-group]');
+      $$('[data-ox-ro-more]', group).forEach(function (row) { row.hidden = false; });
+      var showing = $('[data-ox-ro-showing]', group);
+      if (showing) showing.textContent = 'Showing all ' + $$('[data-ox-ro-row]', group).length;
+      all.remove();
+    });
+    update();
+  }
+
   /* ---------- Tabs that switch a card's content (Products / Orders / Bills) ---------- */
   function panes() {
     $$('[data-ox-panes]').forEach(function (root) {
@@ -453,6 +501,7 @@
     paymentTerms();
     purchaseEntry();
     receive();
+    reorder();
     panes();
     selectCombos();
     gridPanel();

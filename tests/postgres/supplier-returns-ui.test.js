@@ -123,7 +123,7 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
       [ctx.workspaceId])).rows[0].count);
     assert.equal(movementCount, 3);
     await page.goto(`${base}/purchasing`);
-    await page.getByRole('link',{name:'Supplier returns and credits',exact:true}).click();
+    await page.locator('.ox-subtabs').getByRole('link',{name:'Returns',exact:true}).click();
     assert.equal(new URL(page.url()).pathname,'/supplier-returns');
     assert.equal(await page.locator(`a[href="/supplier-returns/${firstReturnId}"]`).count(),1);
     assert.equal(await page.locator(`a[href="/supplier-returns/${mismatchReturnId}"]`).count(),1);
