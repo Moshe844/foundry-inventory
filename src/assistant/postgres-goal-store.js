@@ -20,6 +20,7 @@ async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answ
  'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function create(db,ctx,message,{usageKey=newId('goalrequest'),budgetMinor=75,page=null,continuation=null}={}){
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  const clean=String(message||'').trim();
  if(!clean||clean.length>12000)throw new ValidationError('Describe a goal in at most 12,000 characters.');
  if(!Number.isFinite(budgetMinor)||budgetMinor<=0||budgetMinor>100)throw new ValidationError('Invalid goal budget.');
@@ -32,6 +33,7 @@ async function create(db,ctx,message,{usageKey=newId('goalrequest'),budgetMinor=
  return goal;
 }
 async function claim(db,ctx,id){
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  const token=newId('goalrun');
  // An abandoned in-flight operation needs reconciliation, not blind replay.
  await db.query(`UPDATE ${TABLE} SET status='BLOCKED',answer='The previous run was interrupted. Review its recorded work before retrying.',

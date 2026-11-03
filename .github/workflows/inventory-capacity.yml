@@ -71,7 +71,7 @@ jobs:
       - name: Approved subscription packaging, metering and billing isolation
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
       - name: Full unit and integration regression audit
         run: |
           set -euo pipefail

@@ -48,6 +48,7 @@ async function requireActor(client, ctx) {
 }
 
 async function requirePermission(client, ctx, permission, what) {
+  await require('./postgres-warehouse-access').assertInventoryWide(client,ctx);
   const actor = await requireActor(client, ctx);
   access.assertCan(actor, permission, what);
   return actor;

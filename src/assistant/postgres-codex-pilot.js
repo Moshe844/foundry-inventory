@@ -4,6 +4,7 @@ const store=require('./postgres-goal-store');
 const readonlyAuthorizations=new WeakMap();
 const {list,configured,fundingWorkspaces,customerAccess}=require('./codex-pilot-scope');
 async function access(db,ctx,{enabled=false,owner=false}={}){
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
  // One fresh identity/pilot snapshot for this boundary. No authority is cached
  // between reads, model requests or operations.

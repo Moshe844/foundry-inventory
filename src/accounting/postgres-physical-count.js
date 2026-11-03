@@ -3,6 +3,7 @@ const {ValidationError}=require('../domain/errors'),inventory=require('../domain
 const {nowIso}=require('../lib/util');
 const exact=require('../domain/exact-quantity');
 async function applyInTransaction(client,ctx,input){
+ await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[input.locationId]);
  let settings=null;
  if(input.unitCost!=null&&String(input.unitCost).trim()!==''){
   settings=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];

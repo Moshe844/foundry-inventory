@@ -38,6 +38,7 @@ function assertActiveTarget(row){
 }
 
 async function target(client, ctx, skuId, locationId) {
+  await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[locationId]);
   const result = await client.query(`SELECT s.id, s.item_id, s.is_active AS sku_active,
       i.name, i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment, i.allow_negative AS allow_negative_stock, i.is_active AS item_active,
       l.id AS location_id, l.name AS location_name, l.is_active AS location_active,l.custody_agreement_id
@@ -249,6 +250,7 @@ async function receiveInTransaction(client, rawContext, input) {
 
 async function receiveManyInTransaction(client,rawContext,inputs){
   const ctx=context(rawContext);if(!Array.isArray(inputs))throw new ValidationError('Stock receipts must be a list.');if(!inputs.length)return [];
+  await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[...new Set(inputs.map(i=>i.locationId))]);
   const values=inputs.map((input,index)=>({input:physicalInput.validate(input),index,quantity:positiveInteger(input.quantity),key:String(input.idempotencyKey||newId('operation'))}));
   await requirePermission(client,ctx,permissions.OPERATE,'receive stock');
   const keys=values.map(value=>value.key),existing=(await client.query("SELECT id FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive' AND idempotency_key=ANY($2::text[])",[ctx.workspaceId,keys])).rows;

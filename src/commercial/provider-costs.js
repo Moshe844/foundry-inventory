@@ -23,7 +23,9 @@ function normalize(input) {
       || input.excludesAlreadyMeteredDirectCosts !== true) {
     throw new ValidationError('A provider statement needs its actual amount, currency, period, resource, evidence hash and allocation basis.');
   }
-  if (!Array.isArray(input.allocations) || !input.allocations.length || input.allocations.length > 10000) {
+  const platformOverhead=input.platformOverhead===true;
+  if (platformOverhead&&input.allocationBasis!=='PLATFORM_OVERHEAD_NO_TENANT_ALLOCATION')throw new ValidationError('Unallocated provider invoices must be recorded as platform overhead.');
+  if (!Array.isArray(input.allocations) || (!input.allocations.length&&!platformOverhead) || input.allocations.length > 10000 || (platformOverhead&&input.allocations.length)) {
     throw new ValidationError('Provide the measured allocation weights for the statement.');
   }
   const seen = new Set();
@@ -35,10 +37,11 @@ function normalize(input) {
     seen.add(accountId); return { accountId, weight };
   }).sort((a, b) => a.accountId.localeCompare(b.accountId));
   return { provider, externalLineId, resourceId, amountMinor, currency, evidenceReference, evidenceSha256,
-    allocationBasis, excludesAlreadyMeteredDirectCosts: true, periodStart: start.toISOString(), periodEnd: end.toISOString(), allocations };
+    allocationBasis, platformOverhead, excludesAlreadyMeteredDirectCosts: true, periodStart: start.toISOString(), periodEnd: end.toISOString(), allocations };
 }
 
 function allocate(amountMinor, rows) {
+  if(!rows.length)return [];
   // Integer arithmetic and largest remainders preserve every billed cent.
   const total = rows.reduce((sum, row) => sum + BigInt(row.weight), 0n);
   const allocations = rows.map(row => {
@@ -93,6 +96,14 @@ async function ingest(database, input, actorAccountId) {
           basis: 'ADMIN_ATTESTED_PROVIDER_INVOICE', excludesAlreadyMeteredDirectCosts: true },
       });
     }
+    if(statement.platformOverhead)await control.recordCost(client,{}, {
+      provider:statement.provider,operation:'billed_platform_overhead',unit:'statement',quantity:1,
+      amountMinor:statement.amountMinor,currency:statement.currency,idempotencyKey:id+':platform',
+      occurredAt:statement.periodStart,providerVersion:'provider-invoice-v1',
+      detail:{statementId:id,resourceId:statement.resourceId,periodStart:statement.periodStart,periodEnd:statement.periodEnd,
+        evidenceReference:statement.evidenceReference,evidenceSha256:statement.evidenceSha256,basis:'ADMIN_ATTESTED_PROVIDER_INVOICE',
+        allocationBasis:statement.allocationBasis,excludesAlreadyMeteredDirectCosts:true},
+    });
     await control.audit(client, { actorAccountId, subjectType: 'provider_cost_statement', subjectId: id,
       action: 'attested_and_allocated', afterState: { ...statement, allocations },
       reason: 'Actual provider invoice line; does not clear missing-rate or coverage warnings.' });

@@ -368,6 +368,7 @@ function integrityStream(plan) {
 function integrityFor(plan,rows){const stream=integrityStream(plan);for(const row of rows)stream.append(row);return stream.finish();}
 
 async function assertOperator(database, ctx) {
+  await require('../operations/postgres-warehouse-access').assertInventoryWide(database,ctx);
   const result=await database.query('SELECT role,permissions FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId]);
   if(!result.rows.length)throw new ValidationError('The acting user does not belong to this inventory.');
   permissions.assertCan(result.rows[0],permissions.OPERATE,'import inventory data');
