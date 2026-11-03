@@ -65,7 +65,15 @@ test('first shipped order from a bare start: connect and come back, every missin
  await Promise.all([page.waitForURL(base+back),dialog.getByRole('button',{name:'Save',exact:true}).click()]);
  await page.goto(base+'/locations?returnTo=https%3A%2F%2Fevil.example%2F');assert.equal(await page.locator('[name=returnTo]').count(),0,'only a path inside the app can be returned to');
 
+ // A back link goes to the page you were really on, not the page's usual parent.
+ await page.goto(base+'/activity');
+ await Promise.all([page.waitForNavigation(),page.evaluate(href=>{location.href=href;},'/orders/'+order.salesOrderId)]);
+ const backLink=page.locator('.page-back:visible,.back-link:visible,.rm-head__back:visible,.ox-back:visible,.rm-back:visible').first();
+ assert.match(await backLink.innerText(),/Activity/);
+ await Promise.all([page.waitForURL(base+'/activity'),backLink.click()]);
+
  // Whole units and measured stock are not added together.
+ await page.goto(base+'/locations');
  const row=page.locator('tr',{hasText:'Back Stockroom'});assert.match(await row.innerText(),/\b39|\b40/);assert.match(await row.locator('[data-measured-stock]').innerText(),/\+ 12\.75 kg/);
  assert.doesNotMatch(await row.locator('.cell-end strong').innerText(),/\./);
  assert.deepEqual(errors,[]);

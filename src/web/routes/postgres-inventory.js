@@ -160,7 +160,8 @@ function createPostgresInventoryRouter(database) {
     const variantStockSnapshots=req.user.role==='owner'&&detail.item.tracking_mode==='quantity'&&!detail.item.secondary_unit_label?await require('../../domain/postgres-variant-stock-counts').snapshots(database,req.ctx,detail.skus.filter(s=>s.is_active).map(s=>s.id),variantStockLocations):{};
     const kitCounts=(await database.query('SELECT kit_sku_id,count(*) n FROM kit_components WHERE workspace_id=$1 AND kit_sku_id=ANY($2::text[]) GROUP BY kit_sku_id',[req.ctx.workspaceId,detail.skus.map(s=>s.id)])).rows;
     const kitAvailability=kitCounts.length?Object.fromEntries(await require('../../domain/postgres-kit-availability').read(database,req.ctx.workspaceId,kitCounts.map(k=>k.kit_sku_id))):{};
-    return res.page('inventory/item',{productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    const finding=req.query.finding?(await database.query("SELECT id,title,concise_summary,recommendation FROM attention_items WHERE workspace_id=$1 AND id=$2 AND item_id=$3 AND status='OPEN'",[req.ctx.workspaceId,String(req.query.finding).slice(0,160),req.params.id])).rows[0]||null:null;
+    return res.page('inventory/item',{finding,productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Inventory'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),

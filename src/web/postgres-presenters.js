@@ -55,7 +55,7 @@ async function homeUncached(database,workspaceId,actorId=null){
       ) dated ORDER BY event_date,reference LIMIT 5`,[workspaceId]),
   ]);
   const needs=brief.needs.slice(0,6).map((item)=>({
-    title:item.kind==='order'?item.title.replace('does not have enough allocated stock','cannot be filled yet'):item.title,
+    title:item.title,
     because:item.kind==='order'?'There is not enough stock ready for this customer order.':item.why,importance:item.importance,
     href:item.href,link:item.href,action:item.actionLabel||'Open'}));
   const lastLookedAt=state.lastEvaluatedAt;
@@ -69,7 +69,9 @@ async function homeUncached(database,workspaceId,actorId=null){
   const handled=completed.rows.map(row=>{const action=json(row.recommended_action),outcome=json(row.outcome);
     return {headline:(outcome.reference||action.displayName||'Business work')+': '+(outcome.nextAction||'Completed and verified'),detail:outcome.completionProof?'Completion checked against the linked business records.':'Open the saved verification evidence.',link:outcome.href||action.href||'/autopilot/work/'+row.id,verified:true,at:row.completed_at};});
   const active=executing.rows.map(row=>{const action=json(row.recommended_action),outcome=json(row.outcome);
-    return {title:outcome.reference||action.displayName||'Business work',detail:outcome.nextAction||'Checking the saved order and provider evidence',link:'/autopilot/work/'+row.id};});
+    const waitingFor={customer_order:'Waiting to be delivered and paid',purchase:'Waiting for the supplier order to arrive',supplier_invoice:'Waiting to be paid',transfer:'Waiting for the transfer to arrive'}[action.type];
+    const said=outcome.nextAction&&outcome.nextAction!=='Check the saved business records'?outcome.nextAction:null;
+    return {title:outcome.reference||action.displayName||'Business work',detail:said||waitingFor||'Being checked against your records',link:'/autopilot/work/'+row.id};});
   const nextDates=upcoming.rows.map((row)=>({text:row.kind==='purchase'
     ?`${row.party} delivery expected · ${row.reference}`:`${row.party} order needed by · ${row.reference}`,
     when:row.event_date,href:row.kind==='purchase'?`/purchasing/orders/${row.id}`:`/orders/${row.id}`}));

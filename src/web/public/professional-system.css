@@ -29,3 +29,8 @@ body a{color:#4F46E5}
 .commercial-auth .auth-plan li{border-color:#474684}
 .commercial-auth .auth-plan a{color:#DCD9FF}
 .support-owner-inbox,.support-inbox-presence{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:20px}.support-owner-inbox h2,.support-inbox-presence h2{margin-top:0}.support-inbox nav{display:flex;gap:18px;margin-top:18px}.support-profile{margin-top:20px}.support-profile summary{cursor:pointer;font-weight:600}.support-profile form{max-width:540px;display:grid;gap:14px;margin-top:18px}.support-profile .field{display:grid;gap:6px}.support-inbox td{vertical-align:top;overflow-wrap:anywhere}@media(max-width:600px){.support-owner-inbox,.support-inbox-presence{display:grid;gap:12px}.support-owner-inbox .btn{justify-self:start}}
+
+/* The top bar stays on one line in a narrower window. */
+@media(max-width:1320px) and (min-width:761px){.sc-toolbar{flex-wrap:nowrap;gap:10px}.sc-toolbar .sc-global-search{flex:1 1 120px;min-width:110px;width:auto}.sc-toolbar-actions{flex-wrap:nowrap!important;flex:none;gap:2px}.sc-toolbar-actions .btn{padding:6px 8px;font-size:13px;white-space:nowrap;min-height:32px}.sc-global-search kbd{display:none}}
+@media(max-width:1180px) and (min-width:761px){.sc-toolbar-actions .sc-usage-link{display:none}.sc-toolbar-actions a[href='/ask'] .sc-ask-word{display:none}.sc-toolbar-actions a[href='/ask']::after{content:'Ask'}}
+@media(max-width:1000px) and (min-width:761px){.sc-toolbar-actions .sc-upgrade-link{display:none}.sc-toolbar-actions .sc-support-link span{display:none}.sc-toolbar-actions .sc-support-link::after{content:'Help'}}
