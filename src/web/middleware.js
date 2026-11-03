@@ -53,6 +53,14 @@ function flash(req, res, next) {
   };
   const messages = (req.session && req.session.flash) || [];
   res.locals.flash = messages.filter(m=>!m.scope||m.scope===req.path);
+  // express-session sends the response headers before it stores the session,
+  // so a browser can follow a redirect and render the next page before the
+  // queued message exists. Store a pending message first, then redirect.
+  const redirect=res.redirect.bind(res);
+  res.redirect=(...args)=>{
+    if(!req.session?.flash?.length||typeof req.session.save!=='function')return redirect(...args);
+    return req.session.save(error=>error?next(error):redirect(...args));
+  };
   next();
 }
 
