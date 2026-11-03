@@ -23,7 +23,7 @@ test('shipping: link Shippo, no new EasyPost, weight to rates from the order, an
   await db.query("INSERT INTO customers(id,workspace_id,name,email,phone,shipping_address,record_state,created_by_user_id,created_at,updated_at) VALUES('cust',$1,'Sarah','s@example.test','718-555-0101','245 Bedford Ave, Brooklyn, NY 11211','ACTIVE',$2,$3,$3)",[ctx.workspaceId,ctx.actorId,at]);
   const order=await wf.createSalesOrder(db,ctx,{customerId:'cust',deliveryMethod:'SHIP',fulfillmentLocationId:location.id,idempotencyKey:'so',lines:[{skuId:item.skuIds[0],quantity:1,unitPriceMinor:9900}]});
   await wf.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:'sok'});
-  const realFetch=global.fetch;global.fetch=async(url,init)=>String(url).startsWith('https://api.zippopotam.us/us/10952')?new Response(JSON.stringify({places:[{'place name':'Monsey','state abbreviation':'NY'}]}),{status:200,headers:{'content-type':'application/json'}}):realFetch(url,init);
+  const realFetch=global.fetch;const addressFetch=async(url,init)=>String(url).startsWith('https://api.zippopotam.us/us/10952')?new Response(JSON.stringify({places:[{'place name':'Monsey','state abbreviation':'NY'}]}),{status:200,headers:{'content-type':'application/json'}}):realFetch(url,init);global.fetch=addressFetch;
   t.after(()=>{global.fetch=realFetch;});
   app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),shippingOptions:{providerResolver:()=>fakeCarrier,
     shippoLink:{configured:()=>true,start:redirect=>({url:redirect+'?code=c&state=s1',saved:{state:'s1',at:Date.now()}}),exchange:async code=>{assert.equal(code,'c');return 'oauth.linked-token';}}}});
@@ -47,7 +47,7 @@ test('shipping: link Shippo, no new EasyPost, weight to rates from the order, an
   assert.match(await page.locator('main').innerText(),/Your Shippo account is linked/);
   const linked=await require('../../src/shipping/postgres-accounts').forWorkspace(db,ctx.workspaceId,{provider:'shippo'});assert.equal(linked.apiKey,'oauth.linked-token');
   const sent=[];global.fetch=async(url,init)=>{sent.push(init?.headers?.authorization);return new Response('{}',{status:200,headers:{'content-type':'application/json'}});};
-  await require('../../src/shipping/providers/shippo').call({shippoApiKey:linked.apiKey},'/carrier_accounts/').catch(()=>{});global.fetch=realFetch;
+  await require('../../src/shipping/providers/shippo').call({shippoApiKey:linked.apiKey},'/carrier_accounts/').catch(()=>{});global.fetch=addressFetch;
   assert.equal(sent[0],'Bearer oauth.linked-token');
   const replay=await page.request.get(base+'/settings/shipping/shippo/callback?code=c&state=s1',{maxRedirects:0});assert.equal(replay.status(),303,'a used link cannot be replayed');
 
