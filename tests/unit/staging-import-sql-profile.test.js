@@ -8,4 +8,6 @@ test('import SQL profiling resets only the guarded staging database and preserve
  for(const invalid of [{...options,serviceId:'production'},{...options,connectionString:'postgres://fixture@production/stockchief'}])await assert.rejects(profile.reset(db,invalid));
  await assert.rejects(profile.reset({query:async()=>({rows:[{name:'production',oid:'77'}]})},options),/does not match/);
  assert.equal(calls.filter(x=>x.sql.includes('pg_stat_statements_reset')).length,1);
+ const captured=calls.find(x=>x.sql.includes('FROM pg_stat_statements')).sql;
+ assert(captured.includes('AND query ~*'));assert(captured.includes("'%replenishment_%'"),'Only import/replenishment work enters the profile; authentication and role DDL are excluded');
 });

@@ -3,6 +3,8 @@ const guard=require('./staging-database-guard');
 async function snapshot(db){
  return (await db.query(`SELECT queryid::text,calls::text,total_exec_time,mean_exec_time,rows::text,left(query,2000) AS statement
   FROM pg_stat_statements WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database())
+  AND query ~* '^[[:space:]]*(select|with|insert|update|delete|analyze|explain)[[:space:]]'
+  AND(query ILIKE '%replenishment_%' OR query ILIKE '%import_%' OR query ILIKE '%movements%' OR query ILIKE '%accounting_%')
   ORDER BY total_exec_time DESC LIMIT 80`)).rows;
 }
 async function reset(db,{connectionString,serviceId}={}){
