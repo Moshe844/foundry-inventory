@@ -327,7 +327,10 @@ async function proposeMappings(sheet, options = {}) {
     }
   } catch (error) {
     if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'inventory_import_mapping',failed:true});
-    if(['entitlement_required','validation_error'].includes(error.code))throw error;
+    // A refused admission (no AI credits left, plan without AI) made no model
+    // call, so the headings alone still read the file and the person is asked
+    // about anything unclear. Only a started call's refusal is surfaced.
+    if(['entitlement_required','validation_error'].includes(error.code)&&!require('./analysis-notice').admissionPause(error))throw error;
     // The file is readable without the model. Losing it costs suggestions,
     // not the import.
     return { ...base, aiError: 'The AI column reader is unavailable right now. Review or change the column mapping below, then continue your import.' };
