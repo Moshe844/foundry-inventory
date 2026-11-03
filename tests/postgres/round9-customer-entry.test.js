@@ -11,7 +11,7 @@ test('Round 9 signup, forms, approvals, imports and fulfillment browser regressi
   await page.goto(origin+'/purchasing/orders/new?supplier=fixture-supplier');assert.deepEqual(errors,[]);
   await db.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,purchase_unit,units_per_purchase_unit,last_unit_cost,lead_time_days,is_active,created_at,updated_at)
    VALUES($1,$2,'fixture-supplier',$3,'case',6,2.35,4,1,$4,$4)`,[randomUUID(),ctx.workspaceId,f.item.skuIds[0],new Date().toISOString()]);
-  await page.reload();assert.equal(await page.locator('[name^="unitCost["]').inputValue(),'2.35');await page.locator('[name^="quantity["]').fill('3');assert.match(await page.locator('[data-purchase-total]').innerText(),/42\.30/);
+  await page.reload();assert.equal(await page.locator('[name^="unitCost["]').inputValue(),'2.35');await page.locator('[data-ox-po-input]').click();await page.locator('[data-ox-po-option]').first().click();await page.locator('[name^="quantity["]').fill('3');assert.match(await page.locator('[data-purchase-total]').innerText(),/42\.30/);
   await page.locator('[name^="unitCost["]').fill('3.10');assert.match(await page.locator('[data-line-total]').innerText(),/55\.80/);assert(await page.locator('[name=expectedDate]').inputValue());assert.deepEqual(errors,[]);
  });
  await t.test('first sales order offers tax setup instead of an unexplained empty rate list',async()=>{await page.goto(origin+'/orders/new');assert.match(await page.locator('main').innerText(),/Set up your sales tax before invoicing/);assert.equal(await page.getByRole('link',{name:'Add a tax rate',exact:true}).count(),1);});

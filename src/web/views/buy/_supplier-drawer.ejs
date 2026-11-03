@@ -1,0 +1,43 @@
+<%
+  /*
+   * Add or change a supplier, in a side panel. Same fields and names as the
+   * full /suppliers/new page; `action` and `supplier` decide add or edit, and
+   * `returnTo` brings a new supplier straight back to where it was wanted.
+   */
+  var sd = locals.supplier || {};
+  var terms = ['Net 30', 'Net 15', 'Net 60', 'Pay on order'];
+  var otherTerms = sd.paymentTerms && terms.indexOf(sd.paymentTerms) < 0;
+%>
+<dialog class="ox ox-drawer" id="<%= locals.drawerId || 'ox-supplier-drawer' %>" aria-labelledby="<%= locals.drawerId || 'ox-supplier-drawer' %>-h">
+  <form method="post" action="<%= action %>" data-ox-terms-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% if (locals.returnTo) { %><input type="hidden" name="returnTo" value="<%= returnTo %>"><% } %>
+    <div class="ox-drawer__h"><h2 id="<%= locals.drawerId || 'ox-supplier-drawer' %>-h"><%= sd.id ? 'Edit supplier' : 'Add supplier' %></h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+    <div class="ox-drawer__b">
+      <label class="ox-field"><span>Name</span><input name="name" required value="<%= sd.name || '' %>" placeholder="e.g. Nike Wholesale" autocomplete="organization"></label>
+      <div class="ox-grid2">
+        <label class="ox-field"><span>Contact person</span><input name="contactName" value="<%= sd.contactName || '' %>" autocomplete="name"></label>
+        <label class="ox-field"><span>Phone</span><input name="phone" type="tel" value="<%= sd.phone || '' %>" autocomplete="tel"></label>
+      </div>
+      <label class="ox-field"><span>Email for purchase orders</span><input name="email" type="email" value="<%= sd.email || '' %>" placeholder="orders@supplier.com" autocomplete="email"><small class="ox-help">Purchase orders are emailed here after you approve them.</small></label>
+      <div class="ox-grid2">
+        <label class="ox-field"><span>Usual lead time (days)</span><input name="defaultLeadTimeDays" type="number" min="0" step="1" inputmode="numeric" value="<%= sd.defaultLeadTimeDays == null ? '' : sd.defaultLeadTimeDays %>" placeholder="10"></label>
+        <label class="ox-field"><span>Payment terms</span>
+          <select name="paymentTerms" aria-label="Payment terms" data-ox-terms <%= otherTerms ? 'disabled' : '' %>>
+            <option value="" <%= !sd.paymentTerms ? 'selected' : '' %>>Not set</option>
+            <% terms.forEach(function (t) { %><option <%= sd.paymentTerms === t ? 'selected' : '' %>><%= t %></option><% }) %>
+            <option value="__other" <%= otherTerms ? 'selected' : '' %>>Other…</option>
+          </select>
+        </label>
+      </div>
+      <label class="ox-field" data-ox-terms-other <%= otherTerms ? '' : 'hidden' %>><span>Payment terms, in your words</span><input name="paymentTerms" value="<%= otherTerms ? sd.paymentTerms : '' %>" <%= otherTerms ? '' : 'disabled' %> placeholder="e.g. 50% upfront, rest on delivery"></label>
+      <% if (locals.archiveAction) { %>
+        <p class="ox-drawer__danger"><button class="ox-linkbtn ox-rose" type="submit" form="ox-archive-form"><%= sd.isActive === false ? 'Restore supplier' : 'Archive supplier' %></button></p>
+      <% } %>
+    </div>
+    <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Save supplier</button></div>
+  </form>
+  <% if (locals.archiveAction) { %>
+    <form id="ox-archive-form" method="post" action="<%= archiveAction %>" hidden<% if (sd.isActive !== false) { %> data-confirm="Archive <%= sd.name %>? Their purchase history stays."<% } %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if (sd.isActive === false) { %><input type="hidden" name="restore" value="1"><% } %></form>
+  <% } %>
+</dialog>

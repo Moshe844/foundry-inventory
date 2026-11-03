@@ -278,7 +278,10 @@ function createPostgresCommerceRouter(database,options={}){
       permissions:purchasingPermissions(req)});
   }));
   router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
-    try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);return res.redirect(303,`/suppliers/${supplier.id}`);}
+    try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);
+      // Added from a new purchase order: go straight back to it with the supplier chosen.
+      if(req.body.returnTo==='/purchasing/orders/new')return res.redirect(303,`/purchasing/orders/new?supplier=${encodeURIComponent(supplier.id)}`);
+      return res.redirect(303,`/suppliers/${supplier.id}`);}
     catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).page('purchasing/supplier-new',{title:'Add supplier',nav:'purchasing',prefill:req.body,formError:error.message,formOrigin:'/suppliers/new'});}
   }));
 
@@ -592,7 +595,9 @@ function createPostgresCommerceRouter(database,options={}){
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
     const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
-    return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
+    const buy=await require('../buy-view').purchaseEntryExtras(database,req.ctx.workspaceId,supplierId,supplierItems);
+    return res.status(status).page('buy/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems:buy.items,buy:{...buy,leadDays},locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today,
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }
   router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute((req,res)=>purchaseEntry(req,res)));
 
@@ -610,7 +615,8 @@ function createPostgresCommerceRouter(database,options={}){
       for(const line of lines){if(line.unitCost==null||String(line.unitCost).trim()===''){const supplier=(await database.query('SELECT currency FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0],linked=(await database.query('SELECT last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId,line.skuId])).rows[0];if(linked?.last_unit_cost!=null)line.unitCost=linked.last_unit_cost;else{const fallback=await require('../../pricing/postgres-service').purchaseCost(database,req.ctx.workspaceId,line.skuId);if(fallback?.currency===supplier?.currency)line.unitCost=require('../../domain/currency').fromMinor(fallback.amount_minor,fallback.currency);}}}
       if(lines.some(l=>l.unitCost!==undefined&&Number(l.unitCost)===0)&&req.body.confirmZeroCost!=='1')return purchaseEntry(req,res,{submitted:req.body,errors:['One or more selected lines have a $0 unit cost. Confirm that these are free before saving.'],status:400});
       const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,orderDate:req.body.orderDate||require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,expectedDate:req.body.expectedDateAuto==='1'?null:trimOrNull(req.body.expectedDate),destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||undefined,notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
-      req.flash('success',result.poNumber+' was prepared. Nothing was sent to the supplier.');return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
+      const supplierName=(await database.query('SELECT name FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0]?.name||'the supplier';
+      req.flash('success',`Draft saved. Nothing was sent to ${supplierName}.`);return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
     }catch(e){if(!(e instanceof ValidationError)||!req.body.quantity||typeof req.body.quantity!=='object')throw e;return purchaseEntry(req,res,{submitted:req.body,errors:[e.message],status:400});}
   }));
 

@@ -639,3 +639,74 @@ div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 
   .ox-buy .ox-head > div:first-child { flex: 1 1 100%; min-width: 0; }
   .ox-buy .ox-head__actions { width: 100%; justify-content: flex-start; }
 }
+
+/* ---------- New purchase order ---------- */
+.ox-buy .ox-pop--open { position: static; box-shadow: none; max-height: 320px; margin-top: 8px; }
+.ox-buy .ox-pop > li { list-style: none; }
+.ox-buy .ox-pop > li[role="option"]:not(:has(> .ox-opt)) { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.ox-buy .ox-pop > li[hidden] { display: none !important; }
+.ox-buy .ox-pop > li.is-active, .ox-buy .ox-pop > li[role="option"]:hover, .ox-buy .ox-pop > li.is-active > .ox-opt { background: var(--ox-primary-soft); }
+.ox-buy a.ox-opt, .ox-buy button.ox-opt { width: 100%; color: var(--ox-text); text-decoration: none; border: 0; background: none; font: inherit; text-align: left; }
+.ox-buy .ox-opt__t { flex: 1; min-width: 0; font-weight: 400; white-space: normal; }
+.ox-buy .ox-opt__t b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ox-buy .ox-opt__t small, .ox-buy .ox-opt__r small { display: block; font-size: 12px; color: var(--ox-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ox-buy .ox-opt__r b { display: block; }
+.ox-avatar--add { background: var(--ox-primary-soft); color: var(--ox-primary); font-size: 16px; }
+.ox-pick-none { margin: 10px 0 0; color: var(--ox-text-3); font-size: 13px; }
+.ox-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.ox-chip-add { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed #C9CEF5; border-radius: 999px;
+  background: var(--ox-primary-soft); color: #4338CA; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ox-chip-add:hover { border-style: solid; }
+.ox-chip-add:disabled { opacity: .45; cursor: default; border-style: solid; }
+.ox-empty-line { margin: 14px 0 0; padding: 18px; border: 1px dashed var(--ox-border); border-radius: 12px; color: var(--ox-text-3); text-align: center; font-size: 13.5px; }
+.ox-empty-line[hidden] { display: none; }
+.ox-polines { table-layout: auto; }
+.ox-polines td.ox-line__pc { width: 100%; }
+.ox-polines .ox-price { width: 104px; text-align: right; }
+.ox-polines .ox-line__tot { min-width: 90px; white-space: nowrap; }
+.ox-packhint { display: block; margin-top: 4px; font-size: 11.5px; color: var(--ox-text-3); white-space: nowrap; }
+.ox-more-line { display: inline-block; margin-top: 4px; }
+.ox-more-line > summary { list-style: none; cursor: pointer; width: 28px; height: 22px; border-radius: 6px; color: var(--ox-text-3); text-align: center; line-height: 18px; font-weight: 700; }
+.ox-more-line > summary::-webkit-details-marker { display: none; }
+.ox-more-line > summary:hover { background: var(--ox-grey-bg); }
+.ox-more-line[open] .ox-weight { display: flex; margin-top: 6px; }
+.ox-buy .ox-weight { gap: 8px; align-items: center; font-size: 12px; color: var(--ox-text-2); }
+.ox-buy .ox-weight input { width: 110px; height: 32px; border: 1px solid var(--ox-border); border-radius: 8px; padding: 0 8px; font: inherit; }
+.ox-zero { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--ox-amber-bg); color: #7C3A06; font-size: 12.5px; font-weight: 600; }
+.ox-zero[hidden] { display: none; }
+.ox-rose { color: var(--ox-rose) !important; }
+.ox-green { color: var(--ox-green) !important; }
+
+/* The variant grid as a side panel: a product list instead of a dropdown. */
+.ox-gridpanel[open] { display: flex; flex-direction: column; }
+.ox-gridpanel .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; border-bottom: 1px solid var(--ox-divider); }
+.ox-gridpanel .modal-head h2 { margin: 0; font-size: 17px; }
+.ox-gridpanel .modal-body { flex: 1; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.ox-gridpanel .field > span { font-size: 13px; font-weight: 600; color: var(--ox-text-2); }
+.ox-gridpanel input:not([type="hidden"]) { height: 40px; border: 1px solid var(--ox-border); border-radius: 10px; padding: 0 12px; font: inherit; }
+.ox-gridpanel__native { position: relative; height: 1px; overflow: hidden; margin: 0; }
+.ox-gridpanel__native > span { display: none; }
+.ox-gridlist { list-style: none; margin: 0; padding: 4px; max-height: 240px; overflow: auto; border: 1px solid var(--ox-border); border-radius: 12px; }
+.ox-gridlist:empty { display: none; }
+.ox-gridlist li { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.ox-gridlist li:hover, .ox-gridlist li:focus, .ox-gridlist li[aria-selected="true"] { background: var(--ox-primary-soft); outline: none; }
+.ox-gridpanel .btn { height: 40px; border-radius: 10px; }
+.ox-gridpanel .btn--primary { background: var(--ox-primary); border-color: var(--ox-primary); color: #fff; }
+.ox-drawer__danger { margin: 8px 0 0; padding-top: 12px; border-top: 1px solid var(--ox-divider); }
+
+@media (max-width: 819px) {
+  .ox-polines thead { display: none; }
+  .ox-polines tr.ox-line { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px 10px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--ox-divider); }
+  .ox-polines tr.ox-line[hidden] { display: none; }
+  .ox-polines td { display: block; padding: 0 !important; border: 0 !important; }
+  .ox-polines td.ox-line__pc { grid-column: 1 / -1; }
+  .ox-polines .ox-line__tot { text-align: right; }
+}
+.ox-more-line > summary::before, .ox-more-line > summary::after { content: none !important; }
+/* The Buy form keeps Create draft in its header on a desktop, as well as in the summary. */
+@media (min-width: 820px) { .ox-buy .ox-head--form .ox-head__actions button[type="submit"] { display: inline-flex; } }
+@media (max-width: 819px) {
+  .ox-polines tr.ox-line { grid-template-columns: auto auto 1fr auto; }
+  .ox-polines td.ox-line__tot { display: block !important; }
+  .ox-buy .ox-polines .ox-price { width: 96px !important; min-width: 96px; padding: 0 8px; }
+}

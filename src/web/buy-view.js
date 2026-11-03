@@ -159,4 +159,102 @@ async function purchaseOrdersList(database, workspaceId, rows, query = {}, can =
     currency: (all[0] && all[0].currency) || 'USD' };
 }
 
-module.exports = { purchaseOrdersList, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };
+/*
+ * What the one-page purchase order needs beyond the supplier's linked
+ * products: every active supplier for the picker, stock on hand per product,
+ * weighed products, and that supplier's items on What to order as suggestions.
+ */
+async function purchaseEntryExtras(database, workspaceId, supplierId, supplierItems) {
+  const supplierRows = (await database.query(`SELECT s.id,s.name,s.contact_name,s.email,s.default_lead_time_days,s.payment_terms,s.currency,
+      (SELECT COUNT(*) FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.supplier_id=s.id AND si.is_active=1)::int AS item_count
+    FROM suppliers s WHERE s.workspace_id=$1 AND s.status='active' ORDER BY lower(s.name),s.id LIMIT 500`, [workspaceId])).rows;
+  const suppliers = supplierRows.map((s) => ({ id: s.id, name: s.name, initials: initials(s.name), contactName: s.contact_name, email: s.email,
+    defaultLeadTimeDays: s.default_lead_time_days, paymentTerms: s.payment_terms, currency: s.currency || 'USD', itemCount: Number(s.item_count) }));
+  if (!supplierId || !supplierItems.length) return { suppliers, items: supplierItems, suggestions: [] };
+  const skuIds = supplierItems.map((item) => item.skuId);
+  const [stockRows, skuRows, shortages] = await Promise.all([
+    database.query(`SELECT sku_id,COALESCE(SUM(on_hand),0)::numeric AS on_hand FROM balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id`, [workspaceId, skuIds]),
+    database.query(`SELECT s.id,s.code,i.secondary_unit_label FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])`, [workspaceId, skuIds]),
+    require('../purchasing/postgres-shortage-list').read(database, workspaceId, {}).catch(() => ({ rows: [] })),
+  ]);
+  const stock = new Map(stockRows.rows.map((row) => [row.sku_id, Number(row.on_hand)]));
+  const sku = new Map(skuRows.rows.map((row) => [row.id, row]));
+  const short = new Map(shortages.rows.filter((row) => Number(row.needed) > 0).map((row) => [row.sku_id, row]));
+  const items = supplierItems.map((item) => ({ ...item, code: sku.get(item.skuId)?.code || '', secondaryUnit: sku.get(item.skuId)?.secondary_unit_label || null,
+    onHand: stock.get(item.skuId) || 0, low: short.has(item.skuId) || !(stock.get(item.skuId) > 0) }));
+  const suggestions = items.filter((item) => short.has(item.skuId)).map((item) => {
+    const pack = Number(item.unitsPerPurchaseUnit || 1);
+    return { skuId: item.skuId, label: String(item.displayName).replace(/\s*\/\s*/g, ' '), onHand: item.onHand,
+      quantity: Math.max(1, Math.ceil(Number(short.get(item.skuId).needed) / pack)) };
+  });
+  return { suppliers, items, suggestions };
+}
+
+const EVENT_WORDS = { created: 'Draft created', approved: 'Approved', ordered: 'Sent to the supplier', placed: 'Sent to the supplier',
+  received: 'Delivery received', cancelled: 'Cancelled', draft_reference_revised: 'Reference changed', priced: 'Prices added' };
+
+function dateTime(value) {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return '';
+  return at.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/*
+ * The purchase order page: where it stands (the Draft → Paid strip), the one
+ * next step, and the money in four numbers. Everything is read from the page
+ * data the route already builds.
+ */
+async function purchaseOrderView(database, workspaceId, page, can, today = isoDay(new Date())) {
+  const { order, receipts, supplierBills, billSummary, supplier } = page;
+  const skuIds = order.lines.map((line) => line.sku_id).filter(Boolean);
+  const stockRows = skuIds.length ? (await database.query(`SELECT sku_id,COALESCE(SUM(on_hand),0)::numeric AS on_hand FROM balances
+    WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id`, [workspaceId, skuIds])).rows : [];
+  const stock = new Map(stockRows.map((row) => [row.sku_id, Number(row.on_hand)]));
+  const events = [...page.events].reverse();
+  const at = (type) => { const hit = events.find((event) => event.event === type); return hit ? shortDay(hit.created_at) : null; };
+  const status = order.status;
+  const draft = ['DRAFT', 'AWAITING_APPROVAL'].includes(status);
+  const cancelled = status === 'CANCELLED';
+  const billed = billSummary.approvedTotalMinor;
+  const openBills = supplierBills.filter((bill) => ['OPEN', 'PARTIALLY_PAID'].includes(bill.status));
+  const unbilled = order.lines.some((line) => line.quantityUnbilledUnits > 0);
+  const lastReceipt = receipts.length ? shortDay(receipts[receipts.length - 1].receivedAt) : null;
+  const orderTotalMinor = Math.round(Number(order.subtotal || 0) * 100);
+
+  const steps = [
+    { key: 'draft', label: 'Draft', note: shortDay(order.createdAt) || 'Started', done: true },
+    { key: 'approve', label: 'Approve', note: at('approved') || (draft ? 'You' : '—'), done: !draft },
+    { key: 'sent', label: 'Sent', note: at('ordered') || at('placed') || 'to supplier', done: ['ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(status) },
+    { key: 'received', label: 'Received', note: `${order.receivedUnits} / ${order.orderedUnits}${lastReceipt && order.receivedUnits ? ' · ' + lastReceipt : ''}`, done: order.orderedUnits > 0 && order.outstandingUnits === 0 },
+    { key: 'billed', label: 'Billed', note: billed ? money(billed, order.currency) : '—', done: supplierBills.length > 0 && !unbilled },
+    { key: 'paid', label: 'Paid', note: billSummary.paidMinor ? money(billSummary.paidMinor, order.currency) : '—', done: supplierBills.length > 0 && !unbilled && billSummary.owedMinor === 0 },
+  ];
+  const now = cancelled ? -1 : steps.findIndex((step) => !step.done);
+  steps.forEach((step, index) => { step.now = index === now; });
+
+  let next = null;
+  if (cancelled) next = null;
+  else if (draft && order.hasCosts && can.approve) next = { kind: 'approve', label: 'Approve' };
+  else if (status === 'APPROVED' && can.approve) next = { kind: 'place', label: 'Mark as sent' };
+  else if (['ORDERED', 'PARTIALLY_RECEIVED'].includes(status) && order.outstandingUnits > 0 && can.receive) next = { kind: 'receive', label: 'Receive delivery', href: `/purchasing/orders/${order.id}/receive` };
+  else if (unbilled && order.receivedUnits > 0 && can.accounting) next = { kind: 'bill', label: 'Add supplier bill' };
+  else if (openBills.length && can.payments) next = { kind: 'pay', label: 'Record payment' };
+
+  const subtitle = [order.supplierName, `${order.orderedUnits} unit${order.orderedUnits === 1 ? '' : 's'}`,
+    order.expectedDate && !['RECEIVED', 'CANCELLED'].includes(status) ? `expected ${weekday(order.expectedDate)}${order.destinationLocationName ? ' → ' + order.destinationLocationName : ''}` : order.destinationLocationName ? `→ ${order.destinationLocationName}` : null]
+    .filter(Boolean).join(' · ');
+
+  return {
+    badge: statusBadge(status), subtitle, steps, next, draft, cancelled, openBills, unbilled,
+    stock: Object.fromEntries(stock),
+    moneyRows: { totalMinor: orderTotalMinor, billedMinor: billed, paidMinor: billSummary.paidMinor, owedMinor: billSummary.owedMinor },
+    supplier: supplier ? { id: supplier.id, name: supplier.name, initials: initials(supplier.name), contactName: supplier.contact_name, email: supplier.email,
+      phone: supplier.phone, leadDays: supplier.default_lead_time_days, terms: supplier.payment_terms } : { name: order.supplierName, initials: initials(order.supplierName) },
+    history: events.map((event) => ({ text: EVENT_WORDS[event.event] || String(event.event).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()),
+      when: dateTime(event.created_at), done: true })),
+    late: Boolean(order.expectedDate && order.expectedDate < today && order.outstandingUnits > 0 && !draft && !cancelled),
+  };
+}
+
+module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

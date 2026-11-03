@@ -83,9 +83,9 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
     await page.setViewportSize({width:1440,height:1000});
     await page.goto(base+'/purchasing/orders/new');await page.getByRole('link').filter({hasText:'Boot Supply'}).click();
-    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');
+    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('[data-ox-po-input]').click();await page.locator('[data-ox-po-option="'+item.skuIds[0]+'"]').click();await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');
     await page.locator('input[name="unitCost['+item.skuIds[0]+']"]').fill('8.00');
-    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft order'}).click()]);
+    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft',exact:true}).click()]);
     const purchaseOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Nothing has been sent to Boot Supply/);
     assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
