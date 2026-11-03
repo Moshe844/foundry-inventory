@@ -612,7 +612,9 @@
       </table>
     <% } %>
 
-    <% if (freeUnits && locals.money && money.blocksPicking) { %>
+    <% if (locals.shipNow) { %>
+      <%- include('ship-now', { sn: shipNow, order: order }) %>
+    <% } else if (freeUnits && locals.money && money.blocksPicking) { %>
       <div class="card-body">
         <p class="hint">
           <%= freeUnits %> <%= freeUnits === 1 ? 'unit is' : 'units are' %> committed and ready,
@@ -622,6 +624,7 @@
     <% } else if (freeUnits && locals.postgresPlacement && order.delivery_method === 'SHIP') { %>
       <%# Ship this order: weight in, rates out, then choose a rate and print. %>
       <div class="card-body ship-now" id="ship-now">
+        <% if (locals.shippingReady) { %><ol class="ship-steps" aria-label="Shipping steps"><li class="is-now"><span>1</span>Parcel</li><li><span>2</span>Choose a rate</li><li><span>3</span>Print and hand over</li></ol><% } %>
         <p class="ship-now__to"><span>Ship to</span><strong><%= order.ship_to_address || 'No delivery address yet — add one with Edit' %></strong></p>
         <% if (locals.shippingReady && !(order.customer && order.customer.phone)) { %>
           <p class="ship-now__warn">Carriers need the customer’s phone number for a label. Add it to <%= order.customer ? order.customer.name : 'the customer' %> first.</p>
@@ -636,7 +639,7 @@
               <select name="sizeUnit" aria-label="Size unit"><option value="in">in</option><option value="cm">cm</option></select></span></details>
             <button class="btn btn--primary" type="submit">Get shipping rates</button>
           </form>
-          <p class="hint">Rates come from your connected shipping account. Nothing is bought until you choose a rate.</p>
+          <p class="hint">Rates come from your <%= (locals.shippingAccountNames || []).join(', ') || 'connected shipping' %> account. Nothing is bought until you choose a rate.</p>
         <% } else { %>
           <div class="ship-now__connect"><a class="btn btn--primary" href="/settings/shipping">Connect a shipping account</a><span class="hint">to compare rates and print labels right here.</span></div>
         <% } %>

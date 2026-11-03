@@ -4,13 +4,21 @@
      shippo:['In Shippo, open Settings → API and copy your API token. Test tokens start with shippo_test_.','https://docs.goshippo.com/guides/authentication'],
      shipstation:['Your existing ShipStation account: in ShipStation open Account → API Settings, choose V2 API and generate a key. API access depends on your ShipStation plan; sandbox keys start with TEST_.','https://help.shipstation.com/hc/articles/360025856212']}; %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
+<% const connectedAny=shippingAccounts.length>0,openKey=locals.openKeyForm; %>
 <div class="ox ox-ship" data-ox-page>
 <div class="ox-head"><div><h1 class="ox-title">Shipping</h1>
-  <p class="ox-sub">Connect your shipping account to compare rates and print labels from any order. Postage is billed to your own account by your shipping provider.</p></div></div>
+  <p class="ox-sub">Print shipping labels right from your orders. Postage is billed to your own shipping account.</p></div></div>
 
-<section class="ox-card ox-ship__card" aria-label="Connected shipping accounts">
-  <div class="ox-ship__card-h"><h2><%= shippingAccounts.length ? (shippingAccounts.every(a=>a.testMode)?'Sandbox connected':'Connected shipping accounts') : 'Connect a shipping account' %></h2>
-    <p><%= shippingAccounts.length?'Rates from every connected account are compared on each parcel.':'Choose one way below. You can connect more than one; each is encrypted and belongs only to this business.' %></p></div>
+<ol class="ship-how" aria-label="How shipping works">
+  <li class="<%= connectedAny?'is-done':'is-now' %>"><span>1</span><div><strong>Connect your shipping account</strong><small><%= connectedAny?'Done · '+shippingAccounts.map(a=>a.providerName).join(', '):'Once, below' %></small></div></li>
+  <li class="<%= connectedAny?'is-now':'' %>"><span>2</span><div><strong>Open an order and enter the weight</strong><small>Its Fulfilment card shows rates from your account</small></div></li>
+  <li><span>3</span><div><strong>Pick a rate, print, hand over</strong><small>Stock leaves when the parcel is handed over</small></div></li>
+</ol>
+<% if(connectedAny){ %><p class="ship-how__go"><a class="ox-btn ox-btn--primary" href="/orders">Go to orders to ship</a></p><% } %>
+
+<section class="ox-card ship-acct" aria-label="Connected shipping accounts">
+  <div class="ship-acct__h"><h2><%= connectedAny ? (shippingAccounts.every(a=>a.testMode)?'Sandbox connected':'Your shipping account') : 'Connect your shipping account' %></h2>
+    <p><%= connectedAny?'Every order you ship gets rates from '+(shippingAccounts.length>1?'these accounts':'this account')+'. Labels you buy are charged to it.':'Pick the way that matches the account you already have. Your key is encrypted and belongs only to this business.' %></p></div>
   <% shippingAccounts.forEach(function(connected){ %>
   <article class="ox-ship__account" id="account-<%= connected.connectorId %>" aria-label="<%= connected.providerName %> account">
     <div class="ox-ship__account-main"><strong><%= connected.providerName %></strong> <span class="ox-badge <%= connected.testMode?'ox-badge--amber':'ox-badge--green' %>"><%= connected.testMode?'Test labels only':'Live account' %></span>
@@ -27,19 +35,16 @@
     </form><% } %>
   </article>
   <% }); %>
-</section>
-
-<div class="ox-ship__ways" id="account">
-  <% if(locals.shippoLink){ %>
-  <section class="ox-card ox-ship__way is-primary">
-    <span class="ox-ship__step">1</span>
-    <div><h3>Link your Shippo account <span class="ox-badge ox-badge--blue">Easiest</span></h3>
-      <p>Sign in to Shippo and approve. No keys to copy. The carriers in your Shippo account appear here, and postage is billed by Shippo.</p></div>
-    <% if(owner){ %><a class="ox-btn ox-btn--primary" href="/settings/shipping/shippo/connect">Link Shippo account</a><% } %>
-  </section>
-  <% } %>
-  <details class="ox-card ox-ship__way" id="existing-carrier-connection" <%= locals.openKeyForm?'open':'' %>>
-    <summary><span class="ox-ship__step"><%= locals.shippoLink?2:1 %></span><div><h3>Connect with an API key</h3><p>Already use ShipStation, its API (ShipEngine) or Shippo? Copy the API key from that account and paste it here.</p></div><span class="ox-btn ox-btn--secondary ox-ship__open">Connect with a key</span></summary>
+  <div class="ship-ways" id="account">
+    <% if(connectedAny){ %><h3 class="ship-ways__h">Add another account</h3><% } %>
+    <% if(locals.shippoLink){ %>
+    <div class="ship-way <%= connectedAny?'':'is-primary' %>">
+      <div><strong>Link your Shippo account <span class="ox-badge ox-badge--blue">Easiest</span></strong><p>Sign in to Shippo and approve. No keys to copy.</p></div>
+      <% if(owner){ %><a class="ox-btn <%= connectedAny?'ox-btn--secondary':'ox-btn--primary' %>" href="/settings/shipping/shippo/connect">Link Shippo account</a><% } %>
+    </div>
+    <% } %>
+    <details class="ship-way ship-way--key" id="existing-carrier-connection" <%= openKey?'open':'' %>>
+      <summary><div><strong>Connect with an API key</strong><p>For ShipStation, its API (ShipEngine) or Shippo: copy the key from that account and paste it here.</p></div><span class="ox-btn ox-btn--secondary ship-way__open">Use an API key</span></summary>
     <% if(owner){ %><form method="post" action="/settings/shipping/account" class="ox-ship__form" data-busy data-key-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="ox-ship__field"><span id="shipping-provider-label">Shipping platform</span><select name="provider" required data-key-provider aria-labelledby="shipping-provider-label">
@@ -50,14 +55,16 @@
       <button class="ox-btn ox-btn--primary" type="submit">Verify and connect</button>
       <p class="ox-ship__fine">StockChief checks the key before saving it. Connecting the same platform again replaces only its saved key.</p>
     </form><% }else{ %><p class="ox-ship__fine">Only an owner can connect a shipping account.</p><% } %>
-  </details>
-  <section class="ox-card ox-ship__way">
-    <span class="ox-ship__step"><%= locals.shippoLink?3:2 %></span>
-    <div><h3>ShipStation Custom Store</h3><p>Already print labels in ShipStation? Let ShipStation pull your StockChief orders and send tracking back.<% if(locals.customStore){ %> <strong>Connected</strong> · StockChief connection details are ready to enter in ShipStation.<% } %></p></div>
-    <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
-  </section>
-</div>
+    </details>
+    <div class="ship-way">
+      <div><strong>ShipStation Custom Store</strong><p>Keep printing labels in ShipStation: it pulls your StockChief orders and sends tracking back.<% if(locals.customStore){ %> <strong>Connected</strong> · StockChief connection details are ready to enter in ShipStation.<% } %></p></div>
+      <% if(owner){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn ox-btn--secondary" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %>
+    </div>
+  </div>
+</section>
 
+<div class="ship-prefs-h"><h2>Optional preferences</h2><p>You don't need any of these to ship. They only shape which rate is suggested and how much can be spent.</p></div>
+<div class="ship-prefs">
 <% if(account.connected){ %>
 <section class="ox-card ox-ship__card" id="handling">
   <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage. Every label is bought by a person.</p></div>
@@ -101,7 +108,7 @@
     </div>
     <% if(owner){ %><button class="ox-btn ox-btn--secondary" type="submit">Save postage limits</button><% } %>
   </form>
-</section>
+</section></div>
 <p class="ox-ship__fine">Buying a label does not move stock. Stock leaves once, when you confirm the parcel was handed to the carrier; voiding an unused label changes nothing.</p>
 </div>
 <script>(()=>{const form=document.querySelector('[data-key-form]');if(!form)return;const select=form.querySelector('[data-key-provider]');const show=()=>form.querySelectorAll('[data-key-help]').forEach(p=>p.hidden=p.dataset.keyHelp!==select.value);select.addEventListener('change',show);show();})();</script>

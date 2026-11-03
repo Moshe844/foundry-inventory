@@ -1174,3 +1174,90 @@ details.ox-ship__way .ox-ship__form { margin-left: 46px; padding-top: 14px; bord
 .ship-settings-h { margin: 18px 20px 0; padding-top: 14px; border-top: 1px solid #EEF0F6; font-size: 14px; font-weight: 650; color: #475069; }
 details.ox-ship__way > summary::before { display: none !important; content: none !important; }
 .ship-now__warn { margin: 0; padding: 9px 12px; border-radius: 10px; background: #FFF6E5; color: #7C3A06; font-size: 13.5px; }
+/* Ship this order: three steps on the order itself. */
+.ship-steps { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.ship-steps li { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 5px 6px; border-radius: 999px; background: #F4F5FA; color: #7A839C; font-size: 13px; font-weight: 500; }
+.ship-steps li span { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: #fff; border: 1px solid #DDE1EC; font-size: 11.5px; font-weight: 700; }
+.ship-steps li.is-now { background: #EEF0FE; color: #3730A3; }
+.ship-steps li.is-now span { background: #4F46E5; border-color: #4F46E5; color: #fff; }
+.ship-steps li.is-done { color: #1F7A4D; background: #EDF8F1; }
+.ship-steps li.is-done span { background: #1F9D5B; border-color: #1F9D5B; color: #fff; font-size: 0; }
+.ship-steps li.is-done span::after { content: "✓"; font-size: 11.5px; }
+.ship-rates { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ship-rates legend { padding: 0; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #475069; }
+.ship-rate { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid #E5E8F1; border-radius: 12px; cursor: pointer; background: #fff; font-size: 14px; }
+.ship-rate:hover { border-color: #C9CCF6; }
+.ship-rate:has(input:checked) { border-color: #4F46E5; background: #F7F7FF; box-shadow: 0 0 0 3px #EEF0FE; }
+.ship-rate input { margin: 0; accent-color: #4F46E5; }
+.ship-rate__name { color: #475069; }
+.ship-rate__name strong { color: #141A33; }
+.ship-rate__tag { margin-left: 6px; padding: 2px 8px; border-radius: 999px; background: #EDF8F1; color: #1F7A4D; font-size: 11.5px; font-weight: 600; }
+.ship-rate__days { color: #7A839C; font-size: 13px; white-space: nowrap; }
+.ship-rate__price { font-size: 15px; color: #141A33; white-space: nowrap; }
+.ship-now__buy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; }
+.ship-now__wait { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 12px; background: #EEF0FE; color: #3730A3; font-size: 14px; }
+.ship-now__wait span { color: #475069; font-size: 13px; }
+.ship-label { display: flex; flex-direction: column; gap: 12px; }
+.ship-label__facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px 16px; border: 1px solid #E5E8F1; border-radius: 12px; background: #FAFBFD; }
+.ship-label__facts p { margin: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.ship-label__facts span { font-size: 12px; color: #7A839C; }
+.ship-label__do { display: flex; flex-wrap: wrap; gap: 10px; }
+.ship-label__do form, .ship-now__minor { margin: 0; }
+.ship-now__link { background: none; border: 0; padding: 0; color: #7A839C; font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+.ship-now__warn ul { margin: 6px 0 0; padding-left: 18px; }
+.ship-now__warn li + li { margin-top: 4px; }
+.ship-now__warn a { margin-left: 4px; font-weight: 600; }
+.ship-now__more { margin: 0; font-size: 13px; }
+.ship-now__more a { color: #7A839C; }
+.ship-now__size .ship-now__form { margin-top: 8px; }
+@media (max-width: 819px) {
+  .ship-rate { grid-template-columns: 18px minmax(0, 1fr) auto; }
+  .ship-rate__days { grid-column: 2; }
+  .ship-label__facts { grid-template-columns: 1fr; }
+  .ship-label__do .btn, .ship-now__buy .btn { width: 100%; }
+  .ship-label__do form { width: 100%; }
+}
+/* Shipping settings: how it works, the account, then optional preferences. */
+.ship-how { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ship-how li { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: #F4F5FA; }
+.ship-how li > span { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: #fff; border: 1px solid #DDE1EC; color: #7A839C; font-size: 12px; font-weight: 700; }
+.ship-how li div { display: flex; flex-direction: column; gap: 2px; }
+.ship-how strong { font-size: 13.5px; color: #141A33; font-weight: 600; }
+.ship-how small { font-size: 12.5px; color: #7A839C; }
+.ship-how li.is-now { background: #EEF0FE; }
+.ship-how li.is-now > span { background: #4F46E5; border-color: #4F46E5; color: #fff; }
+.ship-how li.is-done { background: #EDF8F1; }
+.ship-how li.is-done > span { background: #1F9D5B; border-color: #1F9D5B; color: #fff; font-size: 0; }
+.ship-how li.is-done > span::after { content: "✓"; font-size: 12px; }
+.ship-how li.is-done small { color: #1F7A4D; }
+.ship-how__go { margin: -4px 0 14px; }
+.ship-acct { padding: 20px 22px; margin: 0 0 28px; border-color: #C9CCF6; box-shadow: 0 0 0 3px #F1F2FE, var(--ox-shadow); }
+.ship-acct__h h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.ship-acct__h p { margin: 4px 0 0; color: var(--ox-text-2); font-size: 14px; }
+.ship-acct .ox-ship__account { padding: 14px 16px; margin-top: 14px; border: 1px solid #DCEFE3; border-radius: 12px; background: #F6FBF8; }
+.ship-ways { display: flex; flex-direction: column; margin-top: 16px; border: 1px solid var(--ox-border); border-radius: 12px; }
+.ship-ways__h { margin: 0; padding: 12px 16px 0; font-size: 13px; font-weight: 600; color: #7A839C; }
+.ship-way { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 16px; }
+.ship-way + .ship-way { border-top: 1px solid var(--ox-divider); }
+.ship-way strong { font-size: 14.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ship-way p { margin: 3px 0 0; color: var(--ox-text-2); font-size: 13.5px; }
+.ship-way form { margin: 0; flex: none; }
+.ship-way.is-primary { background: #F7F7FF; border-radius: 12px 12px 0 0; }
+details.ship-way { display: block; }
+details.ship-way > summary { display: flex; justify-content: space-between; align-items: center; gap: 14px; cursor: pointer; list-style: none; }
+details.ship-way > summary::-webkit-details-marker { display: none; }
+details.ship-way > summary::before { display: none !important; content: none !important; }
+details.ship-way[open] .ship-way__open { display: none; }
+details.ship-way .ox-ship__form { max-width: 520px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ox-divider); }
+.ship-prefs-h { margin: 0 0 10px; padding-top: 18px; border-top: 1px solid var(--ox-divider); }
+.ship-prefs-h h2 { margin: 0; font-size: 14px; font-weight: 650; color: #475069; text-transform: uppercase; letter-spacing: .05em; }
+.ship-prefs-h p { margin: 4px 0 0; font-size: 13.5px; color: #7A839C; }
+.ship-prefs > .ox-card { background: #FBFBFD; box-shadow: none; }
+.ship-prefs .ox-ship__card-h h2 { font-size: 15px; }
+@media (max-width: 819px) {
+  .ship-how { grid-template-columns: 1fr; }
+  .ship-way, details.ship-way > summary { flex-direction: column; align-items: stretch; }
+  .ship-way .ox-btn, .ship-way form, .ship-way form .ox-btn { width: 100%; }
+  .ship-acct { padding: 16px; }
+}
+.ship-now > .ship-now__size { order: 0; flex-basis: auto; }
