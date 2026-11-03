@@ -7,7 +7,7 @@ test('Codex transport preserves native context and selected effort, while enforc
  const result=wire.normalize(input);
  assert.deepEqual(result.body.input,input.input);assert.equal(result.body.reasoning.effort,wire.EFFORT);
  assert.equal(result.body.max_output_tokens,3000);assert.equal(result.body.store,false);assert.equal(result.body.service_tier,'default');
- assert.equal(result.upperBoundMicroUsd,null);assert.equal(result.inputTokens,null,'no byte-based token admission');
+ assert.equal(result.upperBoundMicroUsd,null);assert.equal(result.inputTokens,null,'the selected profile prices the bound after normalization');
  for(const bad of [{model:'unapproved-model'},{reasoning:{effort:'low'}},{max_output_tokens:3001},{previous_response_id:'hidden'},
   {tools:[{type:'web_search'}]},{input:[{type:'compaction',encrypted_content:'unknown'}]}])assert.throws(()=>wire.normalize({...request,...bad}));
  assert.throws(()=>wire.receipt({returnedModel:'different'}),/RETURNED_MODEL/);
@@ -15,16 +15,13 @@ test('Codex transport preserves native context and selected effort, while enforc
  assert.deepEqual(wire.countRequest(result.body).input,input.input);
  for(const count of [0,-1,NaN,1.5,180001])assert.throws(()=>wire.counted(result,{object:'response.input_tokens',input_tokens:count}),/TOKEN_COUNT/);
 });
-test('token preflight sends identical native model inputs and fails closed without retries',async()=>{
+test('token preflight bounds identical native model inputs without a second HTTP request',async()=>{
  let calls=0;
  const counted=wire.countRequest(wire.normalize(request).body);
- const counter=require(base+'codex-token-counter').createTokenCounter({apiKey:'FAKE',fetchImpl:async(url,init)=>{
-  calls++;assert.equal(url,'https://api.openai.com/v1/responses/input_tokens');assert.equal(init.redirect,'error');
-  assert.deepEqual(JSON.parse(init.body),counted);return Response.json({object:'response.input_tokens',input_tokens:4321});
- }});
- const r=wire.counted(wire.normalize(request),await counter(counted));assert.equal(r.inputTokens,4321);assert.equal(calls,1);
- const denied=require(base+'codex-token-counter').createTokenCounter({apiKey:'FAKE',fetchImpl:async()=>{calls++;return new Response('',{status:400});}});
- await assert.rejects(()=>denied(counted),/TOKEN_COUNT_UNAVAILABLE/);assert.equal(calls,2);
+ const counter=require(base+'codex-token-counter').createTokenCounter({apiKey:'FAKE',fetchImpl:async()=>{calls++;throw Error('TOKEN_COUNT_HTTP_FORBIDDEN');}});
+ const r=wire.counted(wire.normalize(request),await counter(counted));
+ assert(r.inputTokens>=Buffer.byteLength(JSON.stringify(counted))+8192);assert.equal(calls,0);
+ await assert.rejects(counter({...counted,previous_response_id:'hidden'}),/UNBOUNDED_FEATURE/);assert.equal(calls,0);
 });
 test('native state digest survives PostgreSQL JSONB key ordering',()=>{
  const {digest}=require(base+'codex-runtime');assert.equal(digest({b:'two',a:'one'}),digest({a:'one',b:'two'}));

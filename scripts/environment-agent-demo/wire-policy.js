@@ -78,9 +78,9 @@ function normalize(provider,input,{nativeTokenPreflight=false}={}){
  const inputTokens=Buffer.byteLength(JSON.stringify(counted))+8192+images*20000+reasoningBlocks*MAX_OUTPUT;
  if(inputTokens>180000&&!nativeTokenPreflight)throw new Error('INPUT_LIMIT');
  const outputTokens=provider==='openai'?body.max_output_tokens:body.max_tokens;
- // Native callers MUST obtain an exact count. A byte estimate is neither a
- // token admission decision nor a spending reservation for that path.
- return {body,inputTokens:nativeTokenPreflight?null:inputTokens,outputTokens,
+ // Native profiles price this conservative bound with their own approved
+ // rates. Keep it separate until that profile applies its context/cost caps.
+ return {body,conservativeInputTokens:inputTokens,inputTokens:nativeTokenPreflight?null:inputTokens,outputTokens,
   upperBoundMicroUsd:nativeTokenPreflight?null:inputTokens*PRICES[provider].input+outputTokens*PRICES[provider].output};
 }
 

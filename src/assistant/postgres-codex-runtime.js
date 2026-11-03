@@ -159,11 +159,7 @@ async function run(database,ctx,id,options={}){
    }
   }
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
-  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
-  // Warm only a session that actually needs reasoning. Every paid request
-  // still receives exact native preflight and every unchanged spending hold.
-  if(!pendingFinal&&!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
-   input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);preparations.push(warm);}
+  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter();
   const processing=require('../connections/postgres-source-automation').processing(goal);
   if(processing||goal.checkpoint.boundedRead===true)await session.initialize();
   let preparedSandbox=null,preparedContext=null;

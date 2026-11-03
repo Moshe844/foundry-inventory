@@ -32,6 +32,14 @@ test('READ COMMITTED retains stock, idempotency, supplier, price, catalogue, num
   const costs=await Promise.allSettled(['6','7'].map(amount=>rc.transaction(c=>prices.setPurchaseCostInTransaction(c,ctx,{skuId,amount,currency:'USD',expectedCurrentId:cost.id}))));
   assert.equal(costs.filter(r=>r.status==='fulfilled').length,1);assert.equal(costs.filter(r=>r.status==='rejected').length,1);
  });
+ await t.test('first supplier links and preferred supplier changes lock the exact variant',async()=>{
+  const supplier=await commerce.createSupplier(rc,ctx,{name:'Another concurrent supplier',currency:'USD'});
+  await Promise.all(['fixture-supplier',supplier.id].map(supplierId=>rc.transaction(c=>commerce.linkSupplierItemsInTransaction(c,ctx,[{skuId,supplierId,isPreferred:true}]))));
+  assert.equal((await db.query('SELECT count(*)::int n FROM supplier_items WHERE workspace_id=$1 AND sku_id=$2 AND is_preferred=1',[ctx.workspaceId,skuId])).rows[0].n,1);
+  const fresh=await catalog.createItem(db,ctx,{name:'Unlinked concurrent variant',baseCode:'RC-LINK',trackingMode:'quantity'});
+  const results=await Promise.allSettled([1,2].map(()=>rc.transaction(c=>commerce.linkSupplierItemsInTransaction(c,ctx,[{skuId:fresh.skuIds[0],supplierId:supplier.id,expectAbsent:true}]))));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.filter(r=>r.status==='rejected').length,1);
+ });
  await t.test('the catalogue session lock, import-plan row lock and unique bindings survive lower isolation',async()=>{
   const imports=require('../../src/imports/postgres-service'),settings=[];
   const scoped={...rc,withSessionLock:(key,fn)=>db.withSessionLock(key,locked=>fn({...locked,transaction:(fn,s={})=>{settings.push(s);return locked.transaction(fn,s);}}))};
@@ -46,5 +54,18 @@ test('READ COMMITTED retains stock, idempotency, supplier, price, catalogue, num
  await t.test('concurrent documents allocate unique numbers atomically',async()=>{
   const wf=require('../../src/operations/postgres-business-workflows'),orders=await Promise.all(Array.from({length:8},(_,n)=>wf.createPurchaseOrder(rc,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,idempotencyKey:'rc-number-'+n,lines:[{skuId,quantityUnits:1,unitCost:1}]})));
   const rows=(await db.query('SELECT po_number FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,orders.map(o=>o.purchaseOrderId)])).rows;assert.equal(rows.length,8);assert.equal(new Set(rows.map(r=>r.po_number)).size,8);
+ });
+ await t.test('journal validation rolls back the stock write in the same transaction',async()=>{
+  const ledger=require('../../src/accounting/postgres-ledger'),before=await quantity();
+  await assert.rejects(rc.transaction(async c=>{
+   await engine.receiveInTransaction(c,ctx,{skuId,locationId:f.location.id,quantity:1,idempotencyKey:'rc-unbalanced-receipt'});
+   await ledger.postInTransaction(c,ctx,{sourceType:'manual',sourceKey:'rc-unbalanced',description:'Must roll back',lines:[{accountKey:'INVENTORY_ASSET',debitMinor:100},{accountKey:'CASH',creditMinor:99}]});
+  }),/not balanced/);
+  assert.equal(await quantity(),before);
+  assert.equal((await db.query("SELECT count(*)::int n FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND idempotency_key='rc-unbalanced-receipt'",[ctx.workspaceId])).rows[0].n,0);
+  const input={sourceType:'manual',sourceKey:'rc-journal-idempotency',description:'One balanced entry',lines:[{accountKey:'INVENTORY_ASSET',debitMinor:100},{accountKey:'CASH',creditMinor:100}]};
+  const posted=await Promise.all([1,2].map(()=>rc.transaction(c=>ledger.postInTransaction(c,ctx,input))));
+  assert.equal(posted[0].entry.id,posted[1].entry.id);
+  assert.deepEqual((await db.query('SELECT entry_id FROM accounting_journal_lines WHERE workspace_id=$1 GROUP BY entry_id HAVING sum(debit_minor)<>sum(credit_minor)',[ctx.workspaceId])).rows,[]);
  });
 });

@@ -75,9 +75,12 @@ async function linkSupplierItemsInTransaction(client,ctx,inputs){
  if(!inputs.length)return [];
  if(inputs.length>1000)throw new ValidationError('Link at most 1,000 supplier products per batch.');
  await requirePermission(client,ctx,access.MANAGE_SUPPLIERS,'link supplier products');
- await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['supplier-links:'+ctx.workspaceId]);
  const unique=new Map();for(const input of inputs){const supplierId=trimOrNull(input.supplierId),skuId=trimOrNull(input.skuId);if(!supplierId||!skuId)throw new ValidationError('Choose one existing supplier and one exact SKU.');
   const key=JSON.stringify([supplierId,skuId]),prior=unique.get(key);if(prior){for(const [name,value]of Object.entries(input))if(Object.hasOwn(prior,name)&&prior[name]!==value)throw new ValidationError('Conflicting supplier-product terms need review.');unique.set(key,{...prior,...input});}else unique.set(key,{...input,supplierId,skuId});}inputs=[...unique.values()];
+ // Serialize terms and preferred-supplier changes for the affected variants,
+ // including the first link (where no supplier_items row exists to lock).
+ // Stable ordering also composes with price/cost changes in bulk approvals.
+ await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,[...new Set(inputs.map(i=>i.skuId))]]);
  const pairs=inputs.map(i=>({supplier_id:i.supplierId,sku_id:i.skuId}));
  const valid=(await client.query(`SELECT x.supplier_id,x.sku_id FROM jsonb_to_recordset($2::jsonb) AS x(supplier_id text,sku_id text)
   JOIN suppliers p ON p.workspace_id=$1 AND p.id=x.supplier_id AND p.status='active'
