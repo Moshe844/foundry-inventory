@@ -1,8 +1,8 @@
-<% const providerNames={easypost:'EasyPost',shipstation:'ShipStation',shippo:'Shippo',shipengine:'ShipEngine'};
+<% const providerNames={easypost:'EasyPost',shipstation:'ShipStation account',shippo:'Shippo',shipengine:'ShipStation API (ShipEngine)'};
    const keyProviders=['shipengine','shippo','shipstation'].filter(p=>providers.includes(p)),owner=currentUser.role==='owner';
-   const keyHelp={shipengine:['In ShipEngine, open API Management and copy your API key. Test keys start with TEST_.','https://www.shipengine.com/docs/auth/'],
+   const keyHelp={shipengine:['A standalone ShipStation API key (formerly ShipEngine): open API Management in that dashboard and copy the key. Test keys start with TEST_.','https://www.shipengine.com/docs/auth/'],
      shippo:['In Shippo, open Settings → API and copy your API token. Test tokens start with shippo_test_.','https://docs.goshippo.com/guides/authentication'],
-     shipstation:['In ShipStation, open Settings → API Keys and create a V2 API key. Sandbox keys start with TEST_.','https://docs.shipstation.com/authentication']}; %>
+     shipstation:['Your existing ShipStation account: in ShipStation open Account → API Settings, choose V2 API and generate a key. API access depends on your ShipStation plan; sandbox keys start with TEST_.','https://help.shipstation.com/hc/articles/360025856212']}; %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
 <div class="ox ox-ship" data-ox-page>
 <div class="ox-head"><div><h1 class="ox-title">Shipping</h1>
@@ -39,7 +39,7 @@
   </section>
   <% } %>
   <details class="ox-card ox-ship__way" id="existing-carrier-connection" <%= locals.openKeyForm?'open':'' %>>
-    <summary><span class="ox-ship__step"><%= locals.shippoLink?2:1 %></span><div><h3>Connect with an API key</h3><p>Use your own <%= keyProviders.map(p=>providerNames[p]).join(', ').replace(/, ([^,]*)$/,' or $1') %> account. Copy its API key and paste it here.</p></div><span class="ox-btn ox-btn--secondary ox-ship__open">Connect with a key</span></summary>
+    <summary><span class="ox-ship__step"><%= locals.shippoLink?2:1 %></span><div><h3>Connect with an API key</h3><p>Already use ShipStation, its API (ShipEngine) or Shippo? Copy the API key from that account and paste it here.</p></div><span class="ox-btn ox-btn--secondary ox-ship__open">Connect with a key</span></summary>
     <% if(owner){ %><form method="post" action="/settings/shipping/account" class="ox-ship__form" data-busy data-key-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="ox-ship__field"><span>Shipping platform</span><select name="provider" required data-key-provider>
