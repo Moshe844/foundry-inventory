@@ -18,7 +18,7 @@ async function lockStorageOwner(database,workspaceId){
  // deadlock (including when two inventories share one paying account).
  await database.query("SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||owner_account_id,0)) FROM workspaces WHERE id=$1",[workspaceId]);
 }
-async function begin(database,workspaceId,cycleId,{continuation=false}={}){
+async function begin(database,workspaceId,cycleId,{continuation=false,requestedByUser=false}={}){
  if((await database.query('SELECT '+activeImportSql+' AS active',[workspaceId])).rows[0].active){
   await lockStorageOwner(database,workspaceId);
   await database.query(`UPDATE workspace_autopilot SET next_evaluation_at=
@@ -29,7 +29,7 @@ async function begin(database,workspaceId,cycleId,{continuation=false}={}){
  const existing=(await database.query('SELECT *,started_at>CURRENT_TIMESTAMP-interval \'5 minutes\' AS recent FROM stockchief_runtime.replenishment_planning_runs WHERE workspace_id=$1 FOR UPDATE',[workspaceId])).rows[0];
  if(existing?.cycle_id===cycleId)return {planningRevision:String(existing.revision)};
  if(continuation)return {skipped:'superseded_planning_cycle'};
- if(existing?.recent){
+ if(existing?.recent&&!requestedByUser){
   await database.query(`UPDATE workspace_autopilot SET next_evaluation_at=to_char(($2::timestamptz+interval '5 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') WHERE workspace_id=$1`,[workspaceId,existing.started_at]);
   return {skipped:'planning_debounced'};
  }

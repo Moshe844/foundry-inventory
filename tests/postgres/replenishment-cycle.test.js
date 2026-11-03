@@ -31,7 +31,14 @@ test('replenishment coalesces stock changes, defers imports and avoids the quota
   const resumed=await db.transaction(c=>cycle.begin(c,ctx.workspaceId,'cycle-after-import'));assert(!resumed.skipped);
   const debounced=await db.transaction(c=>cycle.begin(c,ctx.workspaceId,'cycle-too-soon'));assert.equal(debounced.skipped,'planning_debounced');
   assert.equal((await db.transaction(c=>cycle.begin(c,ctx.workspaceId,'old-cycle',{continuation:true}))).skipped,'superseded_planning_cycle');
+  const manual=await db.transaction(c=>cycle.begin(c,ctx.workspaceId,'manual-cycle',{requestedByUser:true}));assert(!manual.skipped,'An explicit user request bypasses automatic debounce after imports stop');
   await db.query("UPDATE import_executions SET status='CANCELLED' WHERE id='cycle-import'");
+  const progress=require('../../src/operations/postgres-maintenance-progress'),queue=require('../../src/operations/postgres-job-queue');
+  const requested=await progress.request(db,ctx),again=await progress.request(db,ctx);assert.equal(requested.id,again.id,'Repeated clicks coalesce');
+  const requestedJob=await queue.get(db,requested.id,ctx.workspaceId);assert.equal(requestedJob.payload.requestedByUser,true);
+  const handlers=require('../../src/operations/postgres-runtime-handlers').create();
+  const finished=await queue.processOne(db,{'autopilot.evaluate':handlers['autopilot.evaluate']},{owner:'manual-review-regression'});
+  assert.equal(finished.status,'COMPLETED');assert.equal(finished.result.skipped,undefined,'A manual request must actually plan, not report a throttled check as complete');
  });
  await t.test('a planner waiting on an account quota never holds the source-version lock needed by a stock writer',async()=>{
   await require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId,locationId:f.location.id,quantity:5,idempotencyKey:'cycle-before-lock-order'});

@@ -41,7 +41,7 @@ async function request(database,ctx){
     if(current)return {id:current.id,created:false};
     const scoped={query:client.query,transaction:operation=>operation(client)};
     const queued=await require('./postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,kind:'autopilot.evaluate',
-      idempotencyKey:'requested:'+require('../lib/util').newId('check'),payload:{actorId:ctx.actorId},priority:40,maxAttempts:3});
+      idempotencyKey:'requested:'+require('../lib/util').newId('check'),payload:{actorId:ctx.actorId,requestedByUser:true},priority:40,maxAttempts:3});
     return {id:queued.job.id,created:queued.created};
   });
 }

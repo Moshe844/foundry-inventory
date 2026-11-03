@@ -416,7 +416,7 @@ async function autopilotEvaluate(job,client){
   if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription).canOperate)
     return {skipped:'subscription_read_only'};
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
-  const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId)});
+  const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
