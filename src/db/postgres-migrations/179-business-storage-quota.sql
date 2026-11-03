@@ -29,7 +29,7 @@ BEGIN
  SELECT coalesce(sum(greatest(0,u.baseline_bytes+u.delta_bytes-u.baseline_delta)),0),
  coalesce(bool_or(NOT u.baseline_complete),false) INTO used_bytes,incomplete
  FROM commercial_storage_usage u JOIN workspaces w ON w.id=u.workspace_id
- WHERE w.owner_account_id=owner_id AND w.deletion_requested_at IS NULL;
+ WHERE w.owner_account_id=owner_id;
  IF incomplete THEN RAISE EXCEPTION 'Stored data is being measured. New storage will be available once this check finishes; your saved data is preserved.' USING ERRCODE='23514',CONSTRAINT='commercial_storage_capacity'; END IF;
  SELECT quota+coalesce(sum((o.entitlements->>'storage_bytes')::bigint*o.quantity),0) INTO quota
  FROM commercial_capacity_orders o WHERE o.account_id=owner_id AND o.status='ACTIVE' AND o.paid_through>now() AND o.entitlements ? 'storage_bytes';

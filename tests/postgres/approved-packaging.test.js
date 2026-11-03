@@ -109,4 +109,27 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
   await storage.baseline(wrapper,ctx.workspaceId,'locations');assert.equal(await storage.state(db,scope.accountId),before+Buffer.byteLength(changed)*count);
   await db.query('UPDATE account_subscriptions SET plan_version_id=$2 WHERE account_id=$1',[scope.accountId,offer.id+':starter']);
  });
+ await t.test('reconnecting a postage account cannot bypass the shared five-connection limit',async()=>{
+  const shipping=require('../../src/shipping/postgres-accounts');await shipping.connect(db,ctx,{provider:'easypost',apiKey:'EZTK_approved_fixture_key'});
+  const row=(await db.query("SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='easypost'",[ctx.workspaceId])).rows[0];
+  await db.query("UPDATE workspace_connectors SET status='disconnected' WHERE id=$1",[row.id]);
+  await db.query("INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,status,setup_status,capabilities,provides,config,created_at,updated_at) SELECT 'approved-slot-'||n,$1,'approved-slot-'||n,'Connected account '||n,'shopify','connected','CONNECTED','[]','[]','{}',now(),now() FROM generate_series(1,5) n",[ctx.workspaceId]);
+  assert.equal((await ent.meterState(db,scope,'connections')).used,5);
+  await assert.rejects(shipping.connect(db,ctx,{provider:'easypost',apiKey:'EZTK_approved_reconnect_key'}),e=>e.code==='entitlement_required');
+  assert.equal((await db.query('SELECT status FROM workspace_connectors WHERE id=$1',[row.id])).rows[0].status,'disconnected');
+  await db.query("UPDATE workspace_connectors SET status='disconnected' WHERE id='approved-slot-5'");await shipping.connect(db,ctx,{provider:'easypost',apiKey:'EZTK_approved_reconnect_key'});assert.equal((await ent.meterState(db,scope,'connections')).used,5);
+ });
+ await t.test('Growth approval controls cannot grant Pro autonomy, and downgrade makes saved autonomy inert',async()=>{
+  const autonomy=require('../../src/autopilot/postgres-service'),member={role:'owner'},setPlan=id=>db.query('UPDATE account_subscriptions SET plan_id=$2,plan_version_id=$3 WHERE account_id=$1',[scope.accountId,id,offer.id+':'+id]);
+  await setPlan('growth');assert.equal((await ent.capabilityState(db,scope,'authority.advanced')).enabled,true);
+  await assert.rejects(autonomy.setMode(db,ctx,member,'POLICY_AUTOMATED'),e=>e.code==='entitlement_required');await assert.rejects(autonomy.setCapability(db,ctx,member,'replenishment',true),e=>e.code==='entitlement_required');
+  const gates=await require('../../src/web/presentation/plan-gates').read(db,scope);assert.equal(gates['authority.autonomous'].enabled,false);assert.equal(gates['authority.autonomous'].tier,'Pro');
+  await setPlan('pro');await autonomy.setMode(db,ctx,member,'POLICY_AUTOMATED');await autonomy.setCapability(db,ctx,member,'replenishment',true);assert.equal((await autonomy.getState(db,ctx.workspaceId)).canAutomate,true);
+  await setPlan('growth');assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,'SUPERVISED');assert.equal((await autonomy.capabilityMay(db,ctx.workspaceId,'replenishment')).allowed,false);
+  assert.equal((await db.query('SELECT mode FROM workspace_autopilot WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].mode,'POLICY_AUTOMATED','Saved policy history is retained');await setPlan('starter');
+ });
+ await t.test('business records awaiting inventory deletion keep their storage charge until actual purge',async()=>{
+  const storage=require('../../src/commercial/storage-capacity'),before=await storage.state(db,scope.accountId),second=(await db.query('SELECT id FROM workspaces WHERE owner_account_id=$1 AND id<>$2 LIMIT 1',[scope.accountId,ctx.workspaceId])).rows[0];
+  await db.query('UPDATE workspaces SET deletion_requested_at=now() WHERE id=$1',[second.id]);assert.equal(await storage.state(db,scope.accountId),before);
+ });
 });

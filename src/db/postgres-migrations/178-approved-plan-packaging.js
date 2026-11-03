@@ -12,7 +12,8 @@ ALTER TABLE commercial_capacity_products ADD COLUMN capacity_scope text NOT NULL
 ALTER TABLE commercial_capacity_orders ADD COLUMN workspace_id text REFERENCES workspaces(id);
 ALTER TABLE commercial_capacity_orders ADD COLUMN entitlements jsonb NOT NULL DEFAULT '{}';
 INSERT INTO commercial_capabilities(capability,label,category,readiness,variable_cost)
-VALUES('reports.advanced','Advanced report comparisons','intelligence','SELLABLE',0)
+VALUES('reports.advanced','Advanced report comparisons','intelligence','SELLABLE',0),
+ ('authority.autonomous','Policy-controlled autonomous work','automation','SELLABLE',1)
 ON CONFLICT(capability) DO NOTHING;
 -- Freeze legacy unversioned subscriptions before replacing the new-sale offer.
 UPDATE commercial_checkout_attempts a SET plan_version_id=(SELECT id FROM commercial_plan_versions v WHERE v.plan_id=a.plan_id AND v.status='ACTIVE' ORDER BY version_number DESC LIMIT 1) WHERE plan_version_id IS NULL;

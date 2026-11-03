@@ -9,4 +9,5 @@ test('the owner-approved prices and allowances cannot drift',()=>{
 test('plan definitions distinguish essential connectivity from higher automation authority',()=>{
  for(const p of Object.values(offer.plans))for(const key of ['communications.email_ingestion','connections.accounting','connections.commerce','shipping.labels','payments.customer'])assert(p.capabilities.includes(key));
  assert(!offer.plans.starter.capabilities.includes('warehouse.advanced'));assert(offer.plans.growth.capabilities.includes('warehouse.advanced'));assert(!offer.plans.growth.capabilities.includes('automation.purchasing'));assert(offer.plans.pro.capabilities.includes('automation.purchasing'));
+ assert(!offer.plans.growth.capabilities.includes('authority.autonomous'));assert(offer.plans.pro.capabilities.includes('authority.autonomous'));
 });

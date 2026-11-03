@@ -10,7 +10,7 @@ test('simulated provider deliveries exercise real PostgreSQL canonical money, id
  const foreign=await authService.createBusiness(db,{name:'Other owner',businessName:'Other isolated business',email:crypto.randomUUID()+'@example.test',password}),other={workspaceId:foreign.workspaceId,actorId:foreign.userId};
  const commerce=require('../../src/operations/postgres-commerce'),inventory=require('../../src/domain/postgres-inventory-engine'),catalog=require('../../src/domain/postgres-catalog-service'),wf=require('../../src/operations/postgres-business-workflows'),pricing=require('../../src/pricing/postgres-promotions'),ingest=require('../../src/connections/postgres-event-ingestion'),shopify=require('../../src/connections/providers/shopify');
  const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Isolated depot',kind:'warehouse'}),item=await catalog.createItem(db,ctx,{name:'Source line identity product',baseCode:'SOURCE-LINE',trackingMode:'quantity',unitLabel:'unit'}),skuId=item.skuIds[0];
- const date=new Date().toISOString().slice(0,10),at=date+'T12:00:00.000Z';
+ const epoch=Date.now()-60000,stamp=seconds=>new Date(epoch+seconds*1000).toISOString(),at=stamp(0),date=at.slice(0,10);
  await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:date,currency:'USD'});
  await inventory.receive(db,ctx,{skuId,locationId:location.id,quantity:12,idempotencyKey:'test:opening'});
  const cost=await require('../../src/accounting/postgres-inventory-costs').prepare(db,ctx,{skuId,locationId:location.id,unitCost:'1.00',currency:'USD',basis:'opening_inventory',postingDate:date,evidenceReference:'Synthetic fixture opening valuation; not a customer record'},'Fixture opening stock cost');
@@ -32,12 +32,12 @@ test('simulated provider deliveries exercise real PostgreSQL canonical money, id
  assert.equal(Number(report.rows[0].quoted_total_minor),2275);assert.equal(Number(report.rows[0].quoted_charges_minor),300);assert.equal(report.displayRows[0].quoted_total_minor,'$22.75');assert.equal(report.displayRows[0].quoted_charges_minor,'$3.00');
  assert.equal((await ingest.ingest(db,scope,normalize('orders/create',source,'create-B'))).replayed,true);
  await assert.rejects(()=>ingest.ingest(db,{...scope,workspaceId:other.workspaceId,actorId:other.actorId},created),/does not belong/);
- const updated={...source,updated_at:date+'T12:00:02.000Z',line_items:[...source.line_items].reverse()};
+ const updated={...source,updated_at:stamp(2),line_items:[...source.line_items].reverse()};
  await ingest.ingest(db,scope,normalize('orders/updated',updated,'snapshot-reordered'));detail=await commerce.salesOrder(db,ctx.workspaceId,orderId);
  assert.deepEqual(Object.fromEntries(detail.lines.map(l=>[l.external_line_id,Number(l.unit_price_minor)])),{'61':1000,'62':500});
- const stale=normalize('orders/updated',{...source,updated_at:date+'T12:00:01.000Z'},'snapshot-stale');
+ const stale=normalize('orders/updated',{...source,updated_at:stamp(1)},'snapshot-stale');
  assert.equal((await ingest.ingest(db,scope,stale)).stale,true);
- const fulfillment={id:101,order_id:41,location_id:81,created_at:date+'T12:00:03.000Z',line_items:[{id:61,variant_id:71,sku:'SOURCE-LINE',quantity:1}]};
+ const fulfillment={id:101,order_id:41,location_id:81,created_at:stamp(3),line_items:[{id:61,variant_id:71,sku:'SOURCE-LINE',quantity:1}]};
  await ingest.ingest(db,scope,normalize('fulfillments/create',fulfillment,'shipment-A'));
  const stock=async()=>Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,skuId,location.id])).rows[0].on_hand);
  assert.equal(await stock(),11);
@@ -52,7 +52,7 @@ test('simulated provider deliveries exercise real PostgreSQL canonical money, id
  detail=await commerce.salesOrder(db,ctx.workspaceId,orderId);assert.equal(detail.order.status,'FULFILLED');assert.equal(await stock(),9);
  assert.equal(detail.invoices.length,1);assert.equal(detail.invoices[0].total_minor,2275);assert.equal(Number(detail.invoices[0].charges_minor),300);
  const journal=(await db.query("SELECT coalesce(sum(l.debit_minor-l.credit_minor),0)::bigint AS difference FROM accounting_journal_lines l JOIN accounting_journal_entries e ON e.id=l.entry_id AND e.workspace_id=l.workspace_id WHERE e.workspace_id=$1 AND e.source_type='sale_fulfillment'",[ctx.workspaceId])).rows[0];assert.equal(Number(journal.difference),0);
- const refunds=shopify.normalizeWebhook({headers:{'x-shopify-topic':'refunds/create','x-shopify-webhook-id':'cancel-refund'},body:{id:201,order_id:41,created_at:date+'T12:00:04.000Z',refund_line_items:[{id:301,restock_type:'cancel',quantity:1,location_id:81,line_item:{id:61,variant_id:71,sku:'SOURCE-LINE'}}]}});
+ const refunds=shopify.normalizeWebhook({headers:{'x-shopify-topic':'refunds/create','x-shopify-webhook-id':'cancel-refund'},body:{id:201,order_id:41,created_at:stamp(4),refund_line_items:[{id:301,restock_type:'cancel',quantity:1,location_id:81,line_item:{id:61,variant_id:71,sku:'SOURCE-LINE'}}]}});
  await ingest.ingestBatch(db,scope,{events:refunds});assert.equal(await stock(),9);
  const customerId=detail.order.customer_id;
  await assert.rejects(()=>wf.createSalesOrder(db,ctx,{customerId,deliveryMethod:'PICKUP',currency:'USD',...created.data,lines:[{...created.data.lines[0],skuId}],idempotencyKey:'spoof-recorded'}),/authenticated/);

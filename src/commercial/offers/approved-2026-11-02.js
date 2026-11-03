@@ -21,7 +21,7 @@ const common=['identity.core','workspace.core','inventory.core','inventory.multi
  'ask.lookup','ask.prepare_actions','communications.email_ingestion','communications.ai_drafts','communications.send_approved',
  'connections.commerce','connections.accounting','imports.spreadsheet','planning.basic','operations.alerts','api.public'];
 const growth=['planning.transfer_before_buy','warehouse.advanced','authority.advanced','support.priority','reports.advanced'];
-const pro=['automation.transfers','automation.purchasing','support.chat','migration.assisted','identity.sso'];
+const pro=['automation.transfers','automation.purchasing','authority.autonomous','support.chat','migration.assisted','identity.sso'];
 const plans={
  starter:{name:'Starter',monthlyMinor:19900,annualMinor:199000,limits:{products:1000,active_skus:5000,import_rows:25000,members:3,workspaces:1,locations:2,sublocations:100,connections:5,ai_work_credits:3000,incoming_emails:2000,emails_sent:1000,connected_operations:5000,saved_reports:25,scheduled_reports:3,api_keys:2,api_requests:100000,api_requests_per_minute:60,custom_roles:0,agent_jobs:1,active_imports:1,storage_bytes:2000000000},capabilities:common,syncSeconds:900,authority:'review'},
  growth:{name:'Growth',monthlyMinor:49900,annualMinor:499000,limits:{products:50000,active_skus:400000,import_rows:500000,members:10,workspaces:3,locations:10,sublocations:1000,connections:20,ai_work_credits:10000,incoming_emails:20000,emails_sent:10000,connected_operations:50000,saved_reports:250,scheduled_reports:25,api_keys:10,api_requests:1000000,api_requests_per_minute:300,custom_roles:10,agent_jobs:2,active_imports:2,storage_bytes:20000000000},capabilities:[...common,...growth],syncSeconds:300,authority:'scheduled_review'},

@@ -47,6 +47,7 @@ const CAPABILITIES = Object.freeze([
   ['automation.transfers','Automatic transfers within authority','automation','SELLABLE',true],
   ['automation.purchasing','Automatic purchasing within authority','automation','SELLABLE',true],
   ['authority.advanced','Advanced authority policies','automation','SELLABLE',true],
+  ['authority.autonomous','Policy-controlled autonomous work','automation','SELLABLE',true],
   ['adaptive_optimization','Adaptive optimization','planning','DISABLED',true],
   ['operations.alerts','Operational alerts and Needs You','operations','SELLABLE',true],
   ['support.priority','Priority support','support','SELLABLE',false],
