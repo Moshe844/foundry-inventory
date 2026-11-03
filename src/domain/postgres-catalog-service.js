@@ -216,7 +216,7 @@ async function listItemsUncached(database, workspaceId, input = {}) {
         AND (($15::text IS NULL AND $16::text IS NULL) OR EXISTS(SELECT 1 FROM skus s WHERE s.workspace_id=$1 AND s.item_id=i.id AND s.is_active=1
           AND ($15::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name)='size' AND lower(v.value)=lower($15)))
           AND ($16::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name) IN ('color','colour') AND lower(v.value)=lower($16)))))
-        AND (NOT $17::boolean OR i.id IN (SELECT record_id FROM (${require('../reports/postgres-registry').get('low_stock').source}) low))
+        AND (NOT $17::boolean OR i.is_active=1 AND ${require('../reports/postgres-low-stock-badges').itemCondition()})
         AND ($18::jsonb='{}'::jsonb OR EXISTS(SELECT 1 FROM skus candidate WHERE candidate.workspace_id=$1 AND candidate.item_id=i.id AND candidate.is_active=1
           AND NOT EXISTS(SELECT 1 FROM jsonb_each_text($18::jsonb) wanted WHERE NOT EXISTS(
             SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))
