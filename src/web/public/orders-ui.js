@@ -99,10 +99,11 @@
     var held = /reserved|held/i.test(said) && !/draft|no stock (was )?reserved|not committed/i.test(said);
     var text = held
       ? 'Order created. ' + info.count + ' item' + (info.count === 1 ? '' : 's') + ' held' + (info.where ? ' from ' + info.where : '') + '.'
-      : /fulfilled/i.test(said) ? 'Pickup completed.' : 'Order saved as a draft. Nothing is held yet.';
+      : /fulfilled/i.test(said) ? 'Pickup completed.' : /draft/i.test(said) ? 'Order saved as a draft. Nothing is held yet.' : '';
     // The server's own message becomes the toast, so its exact wording stays
     // on the page; the short headline is drawn above it.
-    flash.setAttribute('data-ox-title', text);
+    // A message about something else (a shipping account just connected) stands as it is.
+    if (text) flash.setAttribute('data-ox-title', text);
     // The payment choice made on the order form opens that payment.
     if (info.pay === 'collect') openPay('cash');
     else if (info.pay === 'link') openPay('card');

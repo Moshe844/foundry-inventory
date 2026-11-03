@@ -25,7 +25,13 @@ async function requireLocation(client,workspaceId,id,label='location'){
   return result.rows[0];
 }
 
-async function listHierarchy(database,workspaceId,{includeInactive=false,includeStock=true}={}){
+// Whole units add up. Something measured (kilograms, metres) is never added to them.
+const STOCK_BY_UNIT=`,COALESCE((SELECT SUM(b.on_hand) FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+      WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND i.quantity_precision=0),0) AS whole_units,
+      (SELECT jsonb_agg(jsonb_build_object('unit',measured.unit,'quantity',measured.quantity) ORDER BY measured.unit) FROM (SELECT coalesce(i.unit_label,'measured') AS unit,SUM(b.on_hand) AS quantity
+        FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+        WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND i.quantity_precision>0 AND b.on_hand<>0 GROUP BY coalesce(i.unit_label,'measured')) measured) AS measured_stock`;
+async function listHierarchy(database,workspaceId,{includeInactive=false,includeStock=true,stockByUnit=false}={}){
   const stockColumns=includeStock?`,COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=tree.workspace_id
       AND b.location_id=tree.id),0) AS on_hand,COALESCE((SELECT COUNT(DISTINCT b.sku_id) FROM balances b
       WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND b.on_hand<>0),0) AS sku_count`:'';
@@ -36,7 +42,7 @@ async function listHierarchy(database,workspaceId,{includeInactive=false,include
     SELECT child.*,tree.depth+1,tree.sort_path || '/' || LPAD(child.pick_sequence::text,8,'0') || ':' || child.name,
       tree.display_path || ' / ' || child.name
       FROM locations child JOIN tree ON child.parent_location_id=tree.id WHERE child.workspace_id=$1)
-    SELECT tree.*${stockColumns}
+    SELECT tree.*${stockColumns}${includeStock&&stockByUnit?STOCK_BY_UNIT:''}
     FROM tree WHERE ($2::boolean OR is_active=1) ORDER BY sort_path`,[workspaceId,includeInactive]);
   return result.rows;
 }

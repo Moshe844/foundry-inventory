@@ -82,10 +82,9 @@
   <% } else { %>
     <div class="ship-now__warn">
       <strong>No rates yet.</strong>
-      <% if (sn.blocked.length) { %>
-        <ul><% sn.blocked.forEach(function (problem) { var lower = problem.toLowerCase(); %><li><%= problem %>
-          <% if (lower.indexOf('customer needs') >= 0 && order.customer) { %><a href="/sales/customers/<%= order.customer.id %>">Add it to <%= order.customer.name %></a>
-          <% } else if (lower.indexOf('ship-from') >= 0) { %><a href="/locations">Open locations</a><% } %></li><% }) %></ul>
+      <% if (sn.needs.any) { %> Fill in the details below and press Get rates.
+      <% } else if (sn.blocked.length) { %>
+        <ul><% sn.blocked.forEach(function (problem) { %><li><%= problem %></li><% }) %></ul>
       <% } else { %> The carrier returned nothing for this parcel. Check the weight and try again.<% } %>
     </div>
   <% } %>
@@ -95,11 +94,12 @@
       <summary><%= sn.rates.length ? 'Change weight or box' : 'Weight and box' %></summary>
       <form method="post" action="/fulfilment/<%= s.id %>/reweigh" class="ship-now__form" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order">
-        <label class="ship-now__field"><span>Weight</span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required value="<%= s.weight_grams ? (Number(s.weight_grams) / 453.59237).toFixed(2) : '' %>" aria-label="New parcel weight">
+        <%- include('ship-needs', { needs: sn.rates.length ? null : sn.needs }) %>
+        <label class="ship-now__field"><span>Weight <i class="ship-now__req" aria-hidden="true">*</i></span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required value="<%= s.weight_grams ? (Number(s.weight_grams) / 453.59237).toFixed(2) : '' %>" aria-label="New parcel weight">
           <select name="weightUnit" aria-label="New weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g">g</option></select></span></label>
         <label class="ship-now__field"><span>Box (L × W × H, optional)</span><span class="ship-now__pair"><input name="length" inputmode="decimal" placeholder="L" aria-label="New box length"><input name="width" inputmode="decimal" placeholder="W" aria-label="New box width"><input name="height" inputmode="decimal" placeholder="H" aria-label="New box height">
           <select name="sizeUnit" aria-label="New size unit"><option value="in">in</option><option value="cm">cm</option></select></span></label>
-        <button class="btn" type="submit"><%= sn.rates.length ? 'Get new rates' : 'Try again' %></button>
+        <button class="btn <%= sn.rates.length ? '' : 'btn--primary' %>" type="submit"><%= sn.rates.length ? 'Get new rates' : 'Get rates' %></button>
       </form>
     </details>
   <% } %>

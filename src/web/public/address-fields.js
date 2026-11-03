@@ -4,7 +4,6 @@
 // keeping that line and the boxes in step both ways.
 (() => {
   if (window.stockChiefAddressFields) return;
-  window.stockChiefAddressFields = true;
   const nativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
   const lookups = new Map();
   const lookup = (country, code) => {
@@ -13,7 +12,9 @@
       { credentials: 'same-origin', headers: { accept: 'application/json' } }).then((r) => (r.ok ? r.json() : { places: [] })).catch(() => ({ places: [] })));
     return lookups.get(key);
   };
-  document.querySelectorAll('[data-address-box]').forEach((box) => {
+  const init = (box) => {
+    if (box.dataset.addressReady) return;
+    box.dataset.addressReady = '1';
     const part = (name) => box.querySelector('[data-part="' + name + '"]');
     const regions = JSON.parse(box.dataset.regions || '{}');
     const target = box.dataset.addressTarget ? document.getElementById(box.dataset.addressTarget) : null;
@@ -114,8 +115,12 @@
       Object.defineProperty(target, 'value', { configurable: true, get() { return nativeValue.get.call(this); },
         set(value) { nativeValue.set.call(this, value); read(value); } });
       if (nativeValue.get.call(target).trim()) read(nativeValue.get.call(target));
-      const required = () => ['line1', 'city', 'postalCode'].forEach((name) => { part(name).required = target.required; });
+      const required = () => { ['line1', 'city', 'postalCode'].forEach((name) => { part(name).required = target.required; });
+        state.required = target.required && !state.disabled; box.classList.toggle('is-required', target.required); };
+      country.addEventListener('change', required);
       new MutationObserver(required).observe(target, { attributes: true, attributeFilter: ['required'] }); required();
     }
-  });
+  };
+  window.stockChiefAddressFields = { init };
+  document.querySelectorAll('[data-address-box]').forEach(init);
 })();

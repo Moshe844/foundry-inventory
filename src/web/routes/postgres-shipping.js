@@ -12,6 +12,7 @@ const {requireCapability,commercialScope}=require('../commercial-middleware');
 const entitlements=require('../../entitlements/postgres-service');
 const permissions=require('../../actions/permissions');
 const carriers=require('../../sales/carriers');
+const {safeReturn}=require('../presentation/return-path');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError}=require('../../domain/errors');
 
@@ -60,7 +61,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
     terms:terms||{source:'nothing agreed'},blocksShipping,heldReason:{ship:blocksShipping?'The agreed balance is still outstanding.':null}};
   const blocked=state.blocked.map((what)=>{const lower=what.toLowerCase();const key=lower.includes('weight')?'weight':
     lower.includes('postage account')?'account':lower.includes('ship-from')?'origin':lower.includes('phone')?'phone':'destination';
-    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations?edit='+encodeURIComponent(state.shipment.ship_from_location_id):'/orders/'+s.sales_order_id};});
+    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations?edit='+encodeURIComponent(state.shipment.ship_from_location_id)+'&returnTo='+encodeURIComponent('/fulfilment/'+s.id+'#carrier'):'/orders/'+s.sales_order_id};});
   const rates=state.rates.map((rate)=>({...rate,carrierName:carriers.displayName(rate.carrier),
     deliveryDate:rate.delivery_date,quotedAt:rate.quoted_at,guaranteed:rate.guaranteed}));
   const mode=policyRows.rows[0]?.mode||'RECOMMEND';
@@ -91,7 +92,7 @@ function createPostgresShippingRouter(database,options={}){
   router.post('/settings/shipping/shipstation-custom',requireOwner,asyncRoute(async(req,res)=>{
     const setup=await require('../../shipping/shipstation-custom-store').setup(database,req.ctx);
     res.set('Cache-Control','no-store');return res.page('shipping/custom-store',{title:'Connect ShipStation Custom Store',nav:'settings',room:true,
-      setup,endpoint:`${res.locals.origin}/api/v1/shipping/shipstation-custom/${setup.connectorId}`});
+      setup,returnTo:safeReturn(req.body.returnTo),endpoint:`${res.locals.origin}/api/v1/shipping/shipstation-custom/${setup.connectorId}`});
   }));
   router.post('/settings/shipping/shipstation-custom/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../shipping/shipstation-custom-store').disconnect(database,req.ctx,req.body.connectorId);req.flash('success','ShipStation Custom Store disconnected. Tracking history remains.');return res.redirect(303,'/settings/shipping');
@@ -137,7 +138,7 @@ function createPostgresShippingRouter(database,options={}){
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,customStore:customRows.rows[0]||null,selectedProvider:accounts.KEY_PROVIDERS.includes(req.query.provider)?req.query.provider:'shipengine',openKeyForm:Boolean(req.query.provider),shippoLink:shippoReady(),shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      account,customStore:customRows.rows[0]||null,returnTo:safeReturn(req.query.returnTo),selectedProvider:accounts.KEY_PROVIDERS.includes(req.query.provider)?req.query.provider:'shipengine',openKeyForm:Boolean(req.query.provider||safeReturn(req.query.returnTo)),shippoLink:shippoReady(),shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
       purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
@@ -187,9 +188,9 @@ function createPostgresShippingRouter(database,options={}){
     const account=await accounts.connect(database,req.ctx,{...req.body,provider,apiKey});
     req.flash('success',account.testMode?'Sandbox postage account connected. No real postage can be charged.':
       'This inventory’s own postage account is connected.');
-    return res.redirect(303,'/settings/shipping');
+    return res.redirect(303,safeReturn(req.body.returnTo)||'/settings/shipping');
     }catch(error){req.flash('error',error.limitKind?'Shipping verification is paused by your usage limit. Review usage in Settings.':
-      'This shipping account could not be verified. Check the API key, selected provider and test/live environment, then try again.');return res.redirect(303,'/settings/shipping?provider='+encodeURIComponent(chosen)+'#account');}
+      'This shipping account could not be verified. Check the API key, selected provider and test/live environment, then try again.');const back=safeReturn(req.body.returnTo);return res.redirect(303,'/settings/shipping?provider='+encodeURIComponent(chosen)+(back?'&returnTo='+encodeURIComponent(back):'')+'#account');}
   }));
   router.post('/settings/shipping/account/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});
@@ -202,10 +203,10 @@ function createPostgresShippingRouter(database,options={}){
   router.get('/settings/shipping/shippo/connect',requireOwner,asyncRoute(async(req,res)=>{
     if(!shippoReady()){req.flash('error','Linking a Shippo account is not available yet. Connect with a Shippo API key instead.');return res.redirect(303,'/settings/shipping?provider=shippo#account');}
     const started=options.shippoLink?.start?options.shippoLink.start(shippoReturn(res)):shippoLink.start(shippoReturn(res));
-    req.session.shippoLink=started.saved;return req.session.save(()=>res.redirect(303,started.url));
+    req.session.shippoLink=started.saved;req.session.shippoReturn=safeReturn(req.query.returnTo);return req.session.save(()=>res.redirect(303,started.url));
   }));
   router.get('/settings/shipping/shippo/callback',requireOwner,asyncRoute(async(req,res)=>{
-    const saved=req.session.shippoLink;delete req.session.shippoLink;
+    const saved=req.session.shippoLink,back=req.session.shippoReturn||null;delete req.session.shippoLink;delete req.session.shippoReturn;
     try{
       if(req.query.error)throw new ValidationError('Shippo linking was cancelled. Nothing was connected.');
       shippoLink.checkState(saved,req.query.state);
@@ -216,7 +217,7 @@ function createPostgresShippingRouter(database,options={}){
       req.flash('success','Your Shippo account is linked. Rates from its carriers appear when you ship an order.');
     }catch(error){if(!(error instanceof ValidationError)&&!error.limitKind)throw error;
       req.flash('error',error.limitKind?'Connecting another shipping account is not included in your plan.':error.message);}
-    return res.redirect(303,'/settings/shipping');
+    return res.redirect(303,back||'/settings/shipping');
   }));
   router.post('/settings/shipping/account/remove',requireOwner,asyncRoute(async(req,res)=>{
     await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});req.flash('success','Disconnected. Existing shipment, label and tracking history remains with this business.');
@@ -295,6 +296,7 @@ function createPostgresShippingRouter(database,options={}){
   // "Ship this order" on the order page: one step opens the parcel with its
   // weight, packs it and fetches rates; choosing a rate, buying, printing and
   // the handover all happen on the order too (returnTo=order).
+  const readiness=require('../../shipping/readiness');
   const parcelBox=(body)=>{const toGrams={lb:453.59237,oz:28.349523125,kg:1000,g:1}[body.weightUnit],weight=Number(String(body.weight||'').replace(',','.'));
     if(!toGrams||!(weight>0))throw new ValidationError('Enter the parcel weight.');
     const toMm={in:25.4,cm:10}[body.sizeUnit]||25.4,size=name=>{const value=Number(String(body[name]||'').replace(',','.'));return value>0?Math.round(value*toMm):undefined;};
@@ -305,22 +307,29 @@ function createPostgresShippingRouter(database,options={}){
     try{const quoted=await shipping.quote(database,req.ctx,shipmentId,{idempotencyKey:key,providerResolver:options.providerResolver});
       req.flash(quoted.rates?.length?'success':'warning',quoted.rates?.length?'Rates are ready. Choose one to buy the label.':quoted.blocked?.length?'Before rates can be fetched: '+quoted.blocked.join(' '):'No rates came back. Check the address and weight, then try again.');}
     catch(error){if(!(error instanceof ValidationError))throw error;req.flash('warning','Rates could not be fetched: '+error.message);}};
-  router.post('/orders/:id/ship-label',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
+  router.post('/orders/:id/ship-label',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{try{
     const box=parcelBox(req.body);
-    const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
+    let detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const {lines,locationId}=require('../../sales/parcel-lines').forParcel(detail);
     const key=String(req.body.requestKey||'').slice(0,120)||newId('shiplabel');
+    await readiness.save(database,req.ctx,{orderId:req.params.id,locationId,canEditLocation:req.user?.role==='owner'},req.body);
+    detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const prepared=await shipping.prepare(database,req.ctx,req.params.id,{idempotencyKey:'ship-label:'+key,
       shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,startPicking:true,lines});
     const current=await shipping.requireShipment(database,req.ctx.workspaceId,prepared.shipmentId);
     if(current.status==='PICKING'){await shipping.setPackages(database,req.ctx,prepared.shipmentId,[box]);await shipping.markPacked(database,req.ctx,prepared.shipmentId,{});}
     await quoteFlash(req,prepared.shipmentId,'ship-label-quote:'+key);
     return res.redirect(303,'/orders/'+req.params.id+'#ship-now');
+    }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);return res.redirect(303,'/orders/'+req.params.id+'#ship-now');}
   }));
   // A different weight or box for the parcel on the order: save it and quote again.
   router.post('/fulfilment/:id/reweigh',requirePermission(permissions.OPERATE,'ship customer orders'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
-    await shipping.setPackages(database,req.ctx,req.params.id,[parcelBox(req.body)]);
+    const parcel=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);try{const box=parcelBox(req.body);
+    await readiness.save(database,req.ctx,{orderId:parcel.sales_order_id,locationId:parcel.ship_from_location_id,canEditLocation:req.user?.role==='owner'},req.body);
+    await shipping.setPackages(database,req.ctx,req.params.id,[box]);
+    if(parcel.status==='PICKING')await shipping.markPacked(database,req.ctx,req.params.id,{});
     await quoteFlash(req,req.params.id,'reweigh:'+newId('quote'));
+    }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return backTo(req,res,'#carrier');
   }));
   router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
