@@ -51,6 +51,18 @@ test('cancelled orders, deposits, one sales total, plan locks, number order and 
   assert.equal((await require('../../src/accounting/postgres-reports').profitAndLoss(db,ctx.workspaceId,{})).revenueMinor,0,'a deposit and its refund are not sales');
  });
 
+ await t.test('refunds and warehouse counts participate in the authoritative business-storage allowance',async()=>{
+  const untracked=(await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE c.relkind='r' AND n.nspname='public' AND c.relname !~ '^(commercial_|platform_)'
+   AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='workspace_id' AND a.attnum>0 AND NOT a.attisdropped)
+   AND NOT EXISTS(SELECT 1 FROM commercial_storage_tables s WHERE s.relation=c.oid)`)).rows;
+  assert.deepEqual(untracked,[],'Every stored business table needs its quota registration');
+  const value=(await db.query(`SELECT greatest(0,baseline_bytes+delta_bytes-baseline_delta)::text bytes,
+   (SELECT sum(octet_length(convert_to(to_jsonb(r)::text,'UTF8')))::text FROM accounting_deposit_refunds r WHERE r.workspace_id=$1) actual
+   FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='accounting_deposit_refunds'::regclass`,[ctx.workspaceId])).rows[0];
+  assert(Number(value.bytes)>0);assert.equal(value.bytes,value.actual);
+ });
+
  await t.test('Orders, Money and Reports give one sales figure, and an unshipped order is not a sale',async()=>{
   await order('open-big',10);
   const shipped=await order('shipped',2),detail=await commerce.salesOrder(db,ctx.workspaceId,shipped);
