@@ -46,14 +46,48 @@
     function read(text) {
       const parts = String(text || '').split(/\s*[,\n]\s*/).map((v) => v.trim()).filter(Boolean);
       let code = 'US';
-      if (parts.length > 1 && /^[A-Za-z]{2}$/.test(parts[parts.length - 1]) && [...country.options].some((o) => o.value === parts[parts.length - 1].toUpperCase())) code = parts.pop().toUpperCase();
-      let st = '', pc = '';
-      const tail = parts.length > 1 ? /^(.*?)\s+([A-Za-z0-9][A-Za-z0-9 -]{2,9})$/.exec(parts[parts.length - 1]) : null;
-      if (tail && /\d/.test(tail[2])) { st = tail[1]; pc = tail[2]; parts.pop(); }
-      else if (parts.length > 2 && /^[A-Za-z .]{2,}$/.test(parts[parts.length - 1])) st = parts.pop();
+      // A last part naming the country, as a code ("US") or by name ("United States", "USA").
+      const named = (name) => {
+        const wanted = name.toLowerCase().replace(/\./g, '');
+        if (['usa', 'united states of america'].includes(wanted)) return 'US';
+        const hit = [...country.options].find((o) => (/^[a-z]{2}$/.test(wanted) && o.value.toLowerCase() === wanted) || o.text.toLowerCase() === wanted);
+        return hit ? hit.value : '';
+      };
+      if (parts.length > 1 && named(parts[parts.length - 1])) code = named(parts.pop());
+      else if (parts.length === 1 && /\s(USA|U\.S\.A\.?|United States(?: of America)?)$/i.test(parts[0])) parts[0] = parts[0].replace(/\s(USA|U\.S\.A\.?|United States(?: of America)?)$/i, '').trim();
+      let st = '', pc = '', last = parts.length ? parts[parts.length - 1] : '';
+      // US and Canadian lines often arrive without commas: "18 Forshay Rd Monsey NY 10952".
+      const postal = /(?:^|\s)(\d{5}(?:-\d{4})?|[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]\d)$/.exec(last);
+      if (postal && (code === 'US' || code === 'CA')) {
+        pc = postal[1].toUpperCase(); last = last.slice(0, postal.index).trim();
+        if (/^[A-Z]/.test(pc)) code = 'CA';
+        let best = '';
+        (regions[code] || []).forEach(([value, label]) => [value, label].forEach((name) => {
+          const lower = last.toLowerCase(), wanted = name.toLowerCase();
+          if ((lower === wanted || lower.endsWith(' ' + wanted)) && name.length > best.length) { best = name; st = value; }
+        }));
+        last = last.slice(0, last.length - best.length).trim();
+        if (last) parts[parts.length - 1] = last; else parts.pop();
+      } else {
+        const tail = parts.length > 1 ? /^(.*?)\s+([A-Za-z0-9][A-Za-z0-9 -]{2,9})$/.exec(last) : null;
+        // "London SW1A 2AA": with no states or provinces to choose from, the words are the town.
+        if (tail && /\d/.test(tail[2])) { pc = tail[2]; if (regions[code]) { st = tail[1]; parts.pop(); } else parts[parts.length - 1] = tail[1]; }
+        else if (parts.length > 2 && /^[A-Za-z .]{2,}$/.test(last)) st = parts.pop();
+      }
       const town = parts.length > 1 ? parts.pop() : '';
       country.value = code; shownCountry = code; useRegions(code, st);
       part('line1').value = parts.shift() || ''; part('line2').value = parts.join(', '); city.value = town; zip.value = pc;
+      if (pc && !town && part('line1').value) splitTown(code, pc, part('line1').value);
+    }
+    // Street and town ran together: the postal code says which town, so take it off the end.
+    async function splitTown(code, pc, street) {
+      const found = (await lookup(code, code === 'US' ? pc.slice(0, 5) : pc.slice(0, 3))).places || [];
+      if (part('line1').value !== street || city.value || !found.length) return;
+      const lower = street.toLowerCase(), hit = found.find((p) => lower.endsWith(' ' + p.city.toLowerCase()));
+      if (!hit && found.length > 1) return;
+      if (hit) part('line1').value = street.slice(0, street.length - hit.city.length).replace(/[\s,]+$/, '');
+      city.value = (hit || found[0]).city; auto.city = !hit;
+      if (!stateValue() && found[0].state) useRegions(code, found[0].state);
     }
     async function fillFromPostal() {
       const code = zip.value.trim().toUpperCase(), c = country.value;

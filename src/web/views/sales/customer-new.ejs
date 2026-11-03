@@ -46,8 +46,7 @@
           <input name="phone" value="<%= form.phone || '' %>">
         </label>
       </div>
-      <% if(locals.postgresCustomer){ %><fieldset class="rm-work addr-set"><legend>Delivery address · optional</legend><%- include('../partials/address-fields',{idPrefix:'customer-addr',names:{line1:'addressLine1',line2:'addressLine2',city:'city',state:'state',postalCode:'postalCode',country:'country'},values:{line1:form.addressLine1,line2:form.addressLine2,city:form.city,state:form.state,postalCode:form.postalCode,country:form.country}}) %></fieldset><% } %>
-      <% if(!locals.postgresCustomer||form.shippingAddress){ %><label class="rm-field">
+      <% if(locals.postgresCustomer){ %><fieldset class="rm-work addr-set"><legend>Delivery address · optional</legend><%- include('../partials/address-fields',{idPrefix:'customer-addr',target:'customer-new-address',names:{line1:'addressLine1',line2:'addressLine2',city:'city',state:'state',postalCode:'postalCode',country:'country'},values:{line1:form.addressLine1,line2:form.addressLine2,city:form.city,state:form.state,postalCode:form.postalCode,country:form.country}}) %><label class="addr-native"><span>Default shipping address</span><textarea name="shippingAddress" id="customer-new-address"><%= form.shippingAddress || '' %></textarea></label></fieldset><% } else { %><label class="rm-field">
         <span>Default shipping address <small>optional</small></span>
         <textarea name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.shippingAddress || '' %></textarea>
         <small>Each Sales Order keeps its own confirmed destination; this is only the starting default.</small>

@@ -173,7 +173,7 @@
    <label class="ox-field"><span>Name <span class="ox-req" aria-hidden="true">*</span></span><input name="name" required maxlength="160"></label>
    <label class="ox-field"><span>Email</span><input name="email" type="email"></label>
    <label class="ox-field"><span>Phone</span><input name="phone" type="tel"></label>
-   <label class="ox-field"><span>Shipping address</span><textarea name="shippingAddress" rows="3"></textarea></label>
+   <div class="ox-field"><span>Shipping address <small>optional</small></span><%- include('../partials/address-fields',{idPrefix:'new-customer-addr',names:{line1:'addressLine1',line2:'addressLine2',city:'city',state:'state',postalCode:'postalCode',country:'country'}}) %></div>
    <p class="ox-error" role="status" data-customer-status></p>
   </div>
   <div class="ox-modal__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary">Save customer</button></div>

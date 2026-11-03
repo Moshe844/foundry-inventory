@@ -934,7 +934,11 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
     let customer;try{customer=await commerce.createCustomer(database,req.ctx,req.body);}catch(error){if(error instanceof ValidationError){if(req.accepts(['html','json'])==='json')return res.status(400).json({ok:false,message:error.message});return customerEntry(req,res,req.body,error.message,400);}throw error;}
-    if(req.accepts(['html','json'])==='json')return res.status(201).json({ok:true,customer:{id:customer.id,name:customer.name,email:customer.email,phone:customer.phone,shipping_address:customer.shipping_address}});
+    if(req.accepts(['html','json'])==='json'){
+      // The order form fills email, phone and Ship to from this reply, so send what was saved.
+      const saved=(await database.query('SELECT id,name,email,phone,shipping_address FROM customers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,customer.id])).rows[0]||customer;
+      return res.status(201).json({ok:true,customer:{id:saved.id,name:saved.name,email:saved.email,phone:saved.phone,shipping_address:saved.shipping_address}});
+    }
     req.flash('success',`${customer.name} was added.`);
     return res.redirect(303,'/customers');
   }));

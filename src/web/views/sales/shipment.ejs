@@ -130,7 +130,8 @@
       <label class="field"><span class="field-label">How will the customer receive this order?</span>
         <select name="deliveryMethod" class="input" required><option value="">Choose delivery or pickup</option><option value="SHIP">Send to a delivery address</option><option value="PICKUP">Customer pickup</option></select>
       </label>
-      <label class="field"><span class="field-label">Full delivery address (required when sending)</span><textarea name="shippingAddress" class="input" placeholder="Street, city, state, postal code and country"></textarea></label>
+      <div class="field"><span class="field-label">Delivery address (required when sending)</span><%- include('../partials/address-fields',{idPrefix:'shipment-addr',target:'shipment-address'}) %></div>
+      <label class="addr-native"><span>Full delivery address</span><textarea name="shippingAddress" id="shipment-address" class="input"></textarea></label>
     </div>
     <div class="card-foot"><button class="btn btn--primary" type="submit">Save delivery choice — no stock moves</button></div>
   </form>
