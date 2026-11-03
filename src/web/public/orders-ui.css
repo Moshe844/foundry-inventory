@@ -1103,3 +1103,4 @@ details.ox-billing-section[open] > summary h2::after { content: " −"; }
 [data-plan-capacity] dd { margin: 0; text-align: right; font-weight: 600; }
 [data-plan-capacity] dd { overflow-wrap: anywhere; }
 @media (max-width: 819px) { [data-plan-capacity] dl { grid-template-columns: 1fr; gap: 2px; } [data-plan-capacity] dd { text-align: left; margin-bottom: 8px; } }
+.ox-plan-now__hint { flex-basis: 100%; margin: 0; font-size: 12.5px; color: var(--ox-text-3); }
