@@ -1,14 +1,16 @@
 'use strict';
 const decision=require('./replenishment-decision');
-async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null}={}){
+async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null,cycleId=null}={}){
  // Fresh imports can underestimate thousands of variants as one row. Drive
  // eligibility and final detail from their IDs with bounded primary-key reads;
  // do not repeatedly scan the catalogue or the same position CTE for each SKU.
  const result=await database.query(`WITH demand_eligible AS (
-  SELECT sku_id FROM movements WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0
-   AND occurred_at::timestamptz>=CURRENT_TIMESTAMP-make_interval(days=>$5) AND occurred_at::timestamptz<=CURRENT_TIMESTAMP
-   GROUP BY sku_id,location_id HAVING count(*)>=$6),
- eligible_skus AS MATERIALIZED (SELECT sku_id FROM reorder_policies WHERE workspace_id=$1 UNION SELECT sku_id FROM demand_eligible ORDER BY sku_id),
+  ${cycleId?`SELECT sku_id FROM stockchief_runtime.replenishment_planning_eligible WHERE workspace_id=$1
+   AND $5::int>0 AND $6::int>0 AND EXISTS(SELECT 1 FROM stockchief_runtime.replenishment_planning_runs WHERE workspace_id=$1 AND cycle_id=$9)`:
+  `SELECT sku_id FROM stockchief_runtime.replenishment_demand_events WHERE workspace_id=$1
+   AND occurred_at>=CURRENT_TIMESTAMP-make_interval(days=>$5) AND occurred_at<=CURRENT_TIMESTAMP
+   GROUP BY sku_id,location_id HAVING count(*)>=$6`}),
+ eligible_skus AS MATERIALIZED (${cycleId?'SELECT sku_id FROM demand_eligible':'SELECT sku_id FROM reorder_policies WHERE workspace_id=$1 UNION SELECT sku_id FROM demand_eligible'} ORDER BY sku_id),
  selected_skus AS MATERIALIZED (SELECT ${eligibleOnly?'eligible.sku_id':'s.id'} AS id FROM ${eligibleOnly?'eligible_skus eligible CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=eligible.sku_id LIMIT 1)s CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id LIMIT 1)i':'skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id'}
   WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id AND s.is_active=1 AND i.is_active=1 AND $4::boolean=${eligibleOnly?'true':'false'}
    AND ($2::text IS NULL OR ${eligibleOnly?'eligible.sku_id':'s.id'}>$2) AND ($8::text[] IS NULL OR ${eligibleOnly?'eligible.sku_id':'s.id'}=ANY($8::text[])) ORDER BY ${eligibleOnly?'eligible.sku_id':'s.id'} LIMIT $3),
@@ -26,9 +28,11 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
   FROM inventory_transfer_lines line JOIN inventory_transfers t ON t.id=line.transfer_id AND t.workspace_id=line.workspace_id
   WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND t.status IN('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED') GROUP BY line.sku_id,t.destination_location_id),
  incoming AS(SELECT sku_id,location_id,SUM(quantity) AS quantity FROM(SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming) pending GROUP BY sku_id,location_id),
- demand AS(SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(-quantity_delta) AS issued FROM movements
-  WHERE workspace_id=$1 AND sku_id IN(SELECT id FROM selected_skus) AND operation='issue' AND quantity_delta<0
-   AND occurred_at::timestamptz>=CURRENT_TIMESTAMP-make_interval(days=>$5) AND occurred_at::timestamptz<=CURRENT_TIMESTAMP GROUP BY sku_id,location_id),
+ demand AS(${cycleId?`SELECT sku_id,location_id,issue_events,issued FROM stockchief_runtime.replenishment_planning_demand
+  WHERE workspace_id=$1 AND sku_id IN(SELECT id FROM selected_skus)`:
+  `SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(issued) AS issued FROM stockchief_runtime.replenishment_demand_events
+  WHERE workspace_id=$1 AND sku_id IN(SELECT id FROM selected_skus)
+   AND occurred_at>=CURRENT_TIMESTAMP-make_interval(days=>$5) AND occurred_at<=CURRENT_TIMESTAMP GROUP BY sku_id,location_id`}),
  active_locations AS MATERIALIZED(SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL),
  evidenced_positions AS MATERIALIZED(
   SELECT sku_id,location_id FROM balances WHERE workspace_id=$1 AND sku_id IN(SELECT id FROM selected_skus)
@@ -54,7 +58,7 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  LEFT JOIN LATERAL(SELECT COALESCE(si.lead_time_days,supplier.default_lead_time_days) AS lead_time_days FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.is_active=1 AND supplier.status='active' AND(rp.preferred_supplier_id IS NULL OR si.supplier_id=rp.preferred_supplier_id) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),COALESCE(si.lead_time_days,supplier.default_lead_time_days,$7),si.id LIMIT 1) terms ON true
  LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
  WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id
- ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds]);
+ ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds,...(cycleId?[cycleId]:[])]);
  const receivingOptions=result.rows.some(row=>row.global_policy)?(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL ORDER BY id',[workspaceId])).rows:[];
  const availability=require('../domain/postgres-stock-availability'),current=await availability.readMany(database,workspaceId,result.rows.map(row=>({skuId:row.sku_id,locationId:row.location_id}))),bySku=new Map();
  for(const row of result.rows){if(row.saved_cover_days!==null&&row.saved_cover_days!==undefined){let saved;try{saved=JSON.parse(row.saved_cover_days);}catch{throw new(require('../domain/errors').ValidationError)('Review the saved target days of stock before replenishment can continue.');}const days=Number(saved&&typeof saved==='object'?saved.value:saved);if(!Number.isSafeInteger(days)||days<1)throw new(require('../domain/errors').ValidationError)('Target days of stock must be a positive whole number.');row.cover_days=days;}const stock=current.get(availability.key(row.sku_id,row.location_id));if(stock){row.committed=stock.committed+stock.reserved;row.rental_reserved=stock.rentalReserved;}if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}

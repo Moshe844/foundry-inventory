@@ -11,7 +11,7 @@ function specification(job,env=process.env){
   const tenants=job.payload?.tenants;if(tenants&&(!Array.isArray(tenants)||tenants.length<2||tenants.length>4||tenants[0]?.workspaceId!==job.workspaceId||tenants.some(t=>!/^wsp_[a-z0-9]+$/.test(t?.workspaceId||'')||!Number.isInteger(t.users)||t.users<1||t.users>50)||tenants.reduce((n,t)=>n+t.users,0)!==50||new Set(tenants.map(t=>t.workspaceId)).size!==tenants.length))throw Error('Choose two to four synthetic inventories and exactly 50 members.');
   return {args:['--max-old-space-size=256',path.join(root,'scripts/certify-staging-variant-load.js'),'--hosted-sessions',...(tenants?['--qa-workspaces',JSON.stringify(tenants)]:['--qa-workspace-id',job.workspaceId]),'--release',release,'--seconds','120','--output',output],timeout:180000};
  }
- const mode=job.payload?.mode,run=job.payload?.run;if(job.kind!=='qualification.staging-million'||!['prepare','million','verify'].includes(mode)||!/^[a-z0-9-]{6,60}$/.test(run||''))throw Error('Invalid bounded qualification request.');
+ const mode=job.payload?.mode,run=job.payload?.run;if(job.kind!=='qualification.staging-million'||!['prepare','million','verify','remeasure'].includes(mode)||!/^[a-z0-9-]{6,60}$/.test(run||''))throw Error('Invalid bounded qualification request.');
  return {args:['--max-old-space-size=1280',path.join(root,'scripts/certify-staging-million.js'),'--mode',mode,'--run',run,'--release',release],timeout:2700000};
 }
 async function run(job,db){

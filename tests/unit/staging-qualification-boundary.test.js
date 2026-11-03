@@ -8,5 +8,6 @@ test('hosted qualification cannot select production, arbitrary commands, another
  assert.throws(()=>specification(job,{...env,DATABASE_URL:'postgres://fixture@dpg-damlkhuk1f9s739h5ga0-a.attacker.test/stockchief_staging'}));
  assert.throws(()=>specification({...job,kind:'arbitrary.command'},env));assert.throws(()=>specification({...job,workspaceId:'../../private'},env));
  const million={...job,kind:'qualification.staging-million',payload:{release,mode:'million',run:'synthetic-run'}};assert(specification(million,env).args.includes('--max-old-space-size=1280'));
+ assert(specification({...million,payload:{...million.payload,mode:'remeasure'}},env).args.includes('remeasure'));
  for(const payload of [{...million.payload,run:'../../private'},{...million.payload,mode:'execute'},{...million.payload,release:'$(secret)'}])assert.throws(()=>specification({...million,payload},env));
 });
