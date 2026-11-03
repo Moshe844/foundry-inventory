@@ -10,7 +10,7 @@
     </div>
   </div>
   <nav class="sc-primary" aria-label="Primary navigation">
-    <% for(const item of navigation.sections){ %><a href="<%= item.href %>" <%- pageSection?.id===item.id?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
+    <% for(const item of navigation.sections){ %><a href="<%= item.href %>" <%- pageSection?.id===item.id?'aria-current="page"':'' %><% if(item.id==='buy'&&locals.buyCount){ %> data-nav-count="<%= buyCount %>"<% } %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
   </nav>
   <nav class="sc-account-nav" aria-label="Account navigation">
     <% for(const item of navigation.footer){ %><a href="<%= item.href %>" <%- currentHref.startsWith(item.href)?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>

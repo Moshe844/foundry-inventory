@@ -463,11 +463,13 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const orders=(await commerce.purchaseOrders(database,req.ctx.workspaceId,{q:req.query.q})).map(purchaseOrderForView);
-    return res.page('purchasing/orders',{title:'Purchases',nav:'purchasing',room:true,orders:orders.slice(0,200),
-      q:String(req.query.q||'').slice(0,120),truncated:orders.length>200,view:['late','waiting','open','done'].includes(req.query.view)?req.query.view:'all',
-      status:null,statuses:['DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED','CANCELLED'],
-      permissions:purchasingPermissions(req)});
+    const can=purchasingPermissions(req);
+    const list=await require('../buy-view').purchaseOrdersList(database,req.ctx.workspaceId,
+      await commerce.purchaseOrders(database,req.ctx.workspaceId),req.query,can,dateToday(req));
+    const lowCount=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,{})
+      .then((found)=>found.rows.length).catch(()=>0);
+    return res.page('buy/orders',{title:'Purchase orders',nav:'purchasing',room:true,list,lowCount,suppressBack:true,
+      ownSectionTabs:true,screenGuide:null,permissions:can});
   }));
   router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),asyncRoute(async(req,res)=>{
     const supplierName=trimOrNull(req.query.supplier);const all=(await commerce.purchaseOrders(database,req.ctx.workspaceId))

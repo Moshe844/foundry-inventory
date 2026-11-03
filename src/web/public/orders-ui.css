@@ -132,7 +132,7 @@ main:has(> .ox), main:has(.ox[data-ox-page]) { background: #F4F6FB; }
 .ox-row td:first-child { border-left: 3px solid transparent; }
 .ox-row.is-attention td:first-child { border-left-color: var(--ox-primary); }
 .ox-row.is-muted td, .ox-row.is-muted .ox-order { color: var(--ox-text-3); }
-.ox-order { font-weight: 700; color: var(--ox-text) !important; white-space: nowrap; }
+a.ox-order { font-weight: 700; color: var(--ox-text) !important; white-space: nowrap; }
 .ox-cust { display: inline-flex; align-items: center; gap: 10px; }
 .ox-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--ox-primary-soft); color: var(--ox-primary); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
 .ox-cell-sub { display: block; font-size: 12px; color: var(--ox-text-3); }
@@ -396,7 +396,7 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
 }
 
 /* ---------- Order page: two columns, one money card ---------- */
-.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
 .ox-order__main { grid-column: 1; grid-row: 1; min-width: 0; }
 .ox-order__side { grid-column: 2; grid-row: 1; position: sticky; top: 76px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .ox-order__side > .card { margin: 0; border-radius: 14px; border: 1px solid #E5E8F1; box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.04); }
@@ -457,9 +457,9 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
 .ox-modal .ox-field { display: flex; flex-direction: column; gap: 6px; }
 .ox-modal .ox-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-@media (max-width: 1100px) { .ox-order { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 1100px) { div.ox-order { grid-template-columns: minmax(0, 1fr) 300px; } }
 @media (max-width: 819px) {
-  .ox-order { grid-template-columns: minmax(0, 1fr); }
+  div.ox-order { grid-template-columns: minmax(0, 1fr); }
   .ox-order__side { grid-column: 1; grid-row: 2; position: static; }
   .ox-order__main { grid-row: 3; }
   .ox-pay__tabs { grid-template-columns: 1fr 1fr; }
@@ -577,7 +577,7 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
 /* Phone: one column with the next step straight under the header, then the
    money, then what was ordered, then the customer and the rest. */
 @media (max-width: 819px) {
-  .ox-order { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
+  div.ox-order { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
   .ox-order > * , .ox-order__main > *, .ox-order__side > * { width: auto; align-self: stretch; }
   .ox-order__side, .ox-order__main { display: contents; }
   .ox-order__main > #fulfilment { order: 1; }
@@ -587,3 +587,55 @@ select.ox-native { position: absolute !important; width: 1px !important; height:
 }
 .ox-order__main .card-foot form { flex: 1; min-width: 0; }
 .ox-order__main .card-foot .hint { flex: 1 1 220px; min-width: 0; white-space: normal; }
+
+/* ---------- Shared kit additions for Buy ----------
+   ProgressBar, Stepper strip, SidePanel (drawer) and the Good / Damaged toggle. */
+.ox-prog { display: flex; align-items: center; gap: 8px; min-width: 110px; }
+.ox-bar { flex: 1; height: 6px; min-width: 48px; border-radius: 999px; background: var(--ox-divider); overflow: hidden; }
+.ox-bar i { display: block; height: 100%; border-radius: 999px; background: var(--ox-primary); }
+.ox-bar i.is-done { background: #10B981; }
+.ox-prog small { color: var(--ox-text-3); font-size: 12px; white-space: nowrap; }
+
+.ox-steps { display: flex; margin: 0 0 16px; background: #fff; border: 1px solid var(--ox-border); border-radius: var(--ox-r-card);
+  box-shadow: var(--ox-shadow); overflow-x: auto; list-style: none; padding: 0; scrollbar-width: none; }
+.ox-steps li { flex: 1; min-width: 110px; padding: 12px 14px; border-right: 1px solid var(--ox-divider); font-size: 12.5px; color: var(--ox-text-3); }
+.ox-steps li:last-child { border-right: 0; }
+.ox-steps b { display: block; color: var(--ox-text-2); font-size: 13px; font-weight: 600; }
+.ox-steps .is-done b { color: var(--ox-green); }
+.ox-steps .is-done b::before { content: "✓ "; }
+.ox-steps .is-now { background: var(--ox-primary-soft); }
+.ox-steps .is-now b { color: #4338CA; }
+
+.ox-drawer { position: fixed; inset: 0 0 0 auto; width: 440px; max-width: 100%; height: 100%; max-height: none; margin: 0; padding: 0;
+  border: 0; background: #fff; box-shadow: -20px 0 50px -20px rgba(16,24,40,.35); }
+.ox-drawer[open] { display: flex; flex-direction: column; animation: ox-slide .22s ease; }
+.ox-drawer::backdrop { background: rgba(11,16,32,.38); }
+.ox-drawer > form, .ox-drawer > .ox-drawer__in { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ox-drawer__h { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--ox-divider); }
+.ox-drawer__h h2 { margin: 0; font-size: 17px; font-weight: 650; color: var(--ox-text); }
+.ox-drawer__b { flex: 1; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.ox-drawer__f { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--ox-divider); }
+.ox-drawer__x { width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: var(--ox-text-2); font-size: 18px; cursor: pointer; }
+.ox-drawer__x:hover { background: var(--ox-grey-bg); }
+@keyframes ox-slide { from { transform: translateX(30px); opacity: 0; } }
+
+.ox-cond { display: inline-flex; background: var(--ox-grey-bg); border-radius: 8px; padding: 2px; }
+.ox-cond label { position: relative; }
+.ox-cond input { position: absolute; opacity: 0; pointer-events: none; }
+.ox-cond span { display: block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--ox-text-2); cursor: pointer; }
+.ox-cond input:checked + span { background: #fff; color: var(--ox-text); box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+.ox-cond input[value="damaged"]:checked + span { color: var(--ox-rose); }
+.ox-cond input:focus-visible + span { box-shadow: var(--ox-ring); }
+
+/* Buy list tables on a phone: PO + one grey line, status and total. */
+@media (max-width: 819px) {
+  .ox-potable td, .ox-potable th { padding-left: 12px; padding-right: 12px; }
+  .ox-drawer { width: 100%; }
+}
+.ox-potable .ox-cust { white-space: nowrap; }
+/* Buy headers on a phone: the title on its own line, the actions under it. */
+@media (max-width: 819px) {
+  .ox-buy .ox-head { flex-wrap: wrap; row-gap: 10px; }
+  .ox-buy .ox-head > div:first-child { flex: 1 1 100%; min-width: 0; }
+  .ox-buy .ox-head__actions { width: 100%; justify-content: flex-start; }
+}
