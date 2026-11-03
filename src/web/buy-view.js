@@ -191,6 +191,19 @@ async function purchaseEntryExtras(database, workspaceId, supplierId, supplierIt
   return { suppliers, items, suggestions };
 }
 
+// A supplier return in plain words. Shipped goods wait for the supplier's credit.
+function returnBadge(status) {
+  switch (status) {
+    case 'REQUESTED': return { text: 'Requested', tone: 'amber' };
+    case 'AUTHORIZED': return { text: 'Approved by supplier', tone: 'blue' };
+    case 'AWAITING_CREDIT': return { text: 'Shipped back', tone: 'blue' };
+    case 'RECONCILED': return { text: 'Credited', tone: 'green' };
+    case 'CREDIT_MISMATCH': return { text: 'Credit differs', tone: 'amber' };
+    case 'CANCELLED': return { text: 'Cancelled', tone: 'grey' };
+    default: return { text: String(status || '').toLowerCase().replace(/_/g, ' '), tone: 'grey' };
+  }
+}
+
 const EVENT_WORDS = { created: 'Draft created', approved: 'Approved', ordered: 'Sent to the supplier', placed: 'Sent to the supplier',
   received: 'Delivery received', cancelled: 'Cancelled', draft_reference_revised: 'Reference changed', priced: 'Prices added' };
 
@@ -257,4 +270,4 @@ async function purchaseOrderView(database, workspaceId, page, can, today = isoDa
   };
 }
 
-module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };
+module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

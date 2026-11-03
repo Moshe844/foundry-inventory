@@ -90,9 +90,9 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/Nothing has been sent to Boot Supply/);
     assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,purchaseOrderId])).rows[0].status,'DRAFT');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve order'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.locator('.ox-head').getByRole('button',{name:'Approve',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/has not been sent yet/);
-    await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
+    await page.locator('.ox-head').getByRole('button',{name:'Mark as sent'}).click();await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record as sent to supplier'}).click()]);
     assert.match(await page.locator('main').innerText(),/on-hand stock did not/i);
     await page.goto(`${base}/purchasing/orders`);
@@ -109,16 +109,16 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
 
-    await page.getByText('Record a supplier invoice',{exact:true}).click();
+    await page.locator('.ox-head').getByRole('button',{name:'Add supplier bill'}).click();
     await page.getByLabel('Supplier invoice number').fill('SUP-INV-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record invoice, not receipt'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.locator('#ox-bill').getByRole('button',{name:'Save bill'}).click()]);
     assert.match(await page.locator('main').innerText(),/without receiving stock again/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
-    await page.locator('summary').filter({hasText:'Record payment'}).click();
-    await page.getByLabel('Amount actually paid').fill('30.00');await page.getByLabel('Reference').fill('ACH');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record payment'}).click()]);
-    assert.match(await page.locator('main').innerText(),/payment reduces only the bill/i);
+    await page.locator('.ox-head').getByRole('button',{name:'Record payment'}).click();const payPanel=page.locator('[data-ox-pay-bill][open]');
+    await payPanel.getByLabel('Amount actually paid').fill('30.00');await payPanel.getByLabel('Reference').fill('ACH');
+    await Promise.all([page.waitForNavigation(),payPanel.getByRole('button',{name:'Record payment'}).click()]);
+    assert.match(await page.locator('main').innerText(),/A payment lowers what you owe/i);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
 

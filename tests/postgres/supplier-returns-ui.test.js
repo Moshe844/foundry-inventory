@@ -67,13 +67,13 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
 
     async function completeReturn({ quantity, expected, actual, creditNumber }) {
       await page.goto(`${base}/purchasing/orders/${purchase.purchaseOrderId}`);
-      await page.getByText('Start a controlled supplier return', { exact: true }).click();
+      await page.getByRole('button', { name: 'Return goods to supplier' }).click();
       await page.getByLabel('Bill the supplier credit will reduce').selectOption(invoice.billId);
       await page.getByLabel('Expected supplier credit').fill(expected);
       await page.getByLabel('Return Supplier Return Boot to supplier quantity').fill(String(quantity));
-      await page.getByLabel('Reason').fill('Supplier approved return');
+      await page.getByLabel('Reason').selectOption('Damaged');
       await Promise.all([page.waitForURL(/\/supplier-returns\/rtv_/),
-        page.getByRole('button', { name: 'Request supplier return' }).click()]);
+        page.getByRole('button', { name: 'Create return' }).click()]);
       const supplierReturnId = page.url().split('/').pop();
       assert.match(await page.locator('main').innerText(), /is requested/);
       await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Authorize supplier return' }).click()]);

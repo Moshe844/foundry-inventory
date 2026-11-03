@@ -625,12 +625,15 @@ function createPostgresCommerceRouter(database,options={}){
       purchaseOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listSupplierReturns(database,req.ctx.workspaceId,req.params.id),
     ]);
-    return res.page('purchasing/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
+    const buyView=require('../buy-view');
+    const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+      returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
+    const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
+    return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
-      charges:page.charges,documentTotalMinor:null,locations:await commerce.locations(database,req.ctx.workspaceId),
-      permissions:purchasingPermissions(req),expectedInFuture:Boolean(page.order.expectedDate&&page.order.expectedDate>dateToday(req)),
-      communications:page.communications,supplierDocuments:page.supplierDocuments,supplierResponsePlans:[],
-      supplierBills:page.supplierBills,billSummary:page.billSummary,landedCostDocuments:[],supplierReturns,
+      charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
+      permissions:can,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));
 

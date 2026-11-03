@@ -341,7 +341,15 @@
     });
   }
 
+  // Record payment from the purchase order list lands here with ?pay=1: open the first bill's panel.
+  function openFromQuery() {
+    if (!/[?&]pay=1(&|$)/.test(window.location.search)) return;
+    var dialog = $('[data-ox-pay-bill]');
+    if (dialog && dialog.showModal && !dialog.open) dialog.showModal();
+  }
+
   function start() {
+    openFromQuery();
     supplierPicker();
     paymentTerms();
     purchaseEntry();
