@@ -28,8 +28,7 @@
 
   <section class="ox-card ox-list" aria-label="Supplier return list">
     <% if (!L.counts.all) { %>
-      <div class="ox-empty"><strong>No returns yet.</strong><p>When goods need to go back, start a return from the purchase order they arrived on.</p>
-        <% if (canStart && L.sources.length) { %><div class="ox-empty__actions"><button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-new-return"><span aria-hidden="true">+</span> New return</button></div><% } %></div>
+      <div class="ox-empty"><strong>No returns yet.</strong><p>When goods need to go back, start a return from the purchase order they arrived on.</p></div>
     <% } else { %>
     <div class="ox-toolbar">
       <nav class="ox-tabs" aria-label="Filter returns">

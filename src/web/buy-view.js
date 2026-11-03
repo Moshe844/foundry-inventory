@@ -11,6 +11,16 @@
 
 const { initials, shortDay } = require('./orders-view');
 
+/*
+ * The Hendels demo inventory carries records left by automated sweeps; they stay
+ * in the books but are kept out of the Buy pickers (as on the order form).
+ * Anything already chosen is always shown.
+ */
+function demoHidden(workspaceName) {
+  if (!/hendel/i.test(String(workspaceName || ''))) return () => false;
+  return (name) => /^\s*(sweep|r18|rt-|qa)\b/i.test(String(name || '')) || /<\/?[a-z][^>]*>/i.test(String(name || ''));
+}
+
 const PAGE_SIZE = 50;
 const TABS = ['all', 'approve', 'way', 'pay', 'done'];
 // Older links used ?view=; keep them landing on the matching tab.
@@ -436,5 +446,5 @@ function supplierReturnSteps(r) {
   ].map((step, index, list) => ({ ...step, now: r.status !== 'CANCELLED' && !step.done && (index === 0 || list[index - 1].done) }));
 }
 
-module.exports = { purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, reorderView,
+module.exports = { demoHidden, purchaseOrdersList, purchaseEntryExtras, purchaseOrderView, returnBadge, suppliersList, supplierView, reorderView,
   supplierReturnsList, supplierReturnSteps, statusBadge, billBadge, money, weekday, isoDay, initials, shortDay, TABS };

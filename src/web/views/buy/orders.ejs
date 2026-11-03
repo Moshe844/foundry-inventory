@@ -43,7 +43,7 @@
     <% if (!L.counts.all) { %>
       <div class="ox-empty">
         <strong>Nothing is on order.</strong>
-        <p>Write a purchase order to a supplier. Nothing is sent until you approve it.</p>
+        <p>Start a purchase order for a supplier. Nothing is sent until you approve it.</p>
         <% if (permissions.create) { %><div class="ox-empty__actions"><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new"><span aria-hidden="true">+</span> New purchase order</a></div><% } %>
       </div>
     <% } else { %>
