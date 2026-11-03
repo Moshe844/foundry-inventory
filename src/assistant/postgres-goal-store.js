@@ -55,7 +55,7 @@ async function save(db,ctx,goal,kind,detail={}){return db.transaction(async clie
  await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
  SELECT $1,$2,COALESCE(MAX(sequence),0)+1,$3,$4::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
  [newId('goalevent'),goal.id,kind,JSON.stringify(detail)]);
-},{isolation:'SERIALIZABLE',retrySafe:true});}
+},{isolation:'READ COMMITTED',retrySafe:true});}
 async function cancel(db,ctx,id){return (await db.query(`UPDATE ${TABLE} SET status='CANCELLED',run_token=NULL,lease_until=NULL,
  answer='Goal stopped. Previously approved or completed business operations retain their own recorded status.',updated_at=now()
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status NOT IN ('COMPLETED','CANCELLED') RETURNING *`,
@@ -85,7 +85,7 @@ async function reply(db,ctx,id,message,{questionId=null}={}){
    SELECT $1,$2,COALESCE(MAX(sequence),0)+1,'user_replied',$3::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
    [newId('goalevent'),id,JSON.stringify({questionId:inputId})]);
   return row;
- },{isolation:'SERIALIZABLE',retrySafe:true});
+ },{isolation:'READ COMMITTED',retrySafe:true});
 }
 async function enqueue(db,goal){const queued=await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
  kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},

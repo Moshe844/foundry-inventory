@@ -58,7 +58,7 @@ jobs:
       - name: Query deadlines, recovery and dense catalogue regressions
         run: node --test --test-concurrency=2 tests/postgres/import-legacy-lookup-scale.test.js tests/postgres/replenishment-expiry-scale.test.js tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js
       - name: Combined staging order money, refunds, plan locks and storage registration
-        run: node --test tests/postgres/order-money-truth.test.js
+        run: node --test --test-concurrency=2 tests/postgres/order-money-truth.test.js tests/postgres/read-committed-write-invariants.test.js
       - name: Decimal reporting, lot batching and account state regressions
         run: |
           mkdir -p output/inventory-ci

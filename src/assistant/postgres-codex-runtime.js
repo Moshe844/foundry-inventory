@@ -44,7 +44,7 @@ async function run(database,ctx,id,options={}){
     FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS entries(entry,ordinality)
     CROSS JOIN (SELECT COALESCE(max(sequence),0) AS sequence FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1) base`,
     [id,JSON.stringify(batch)]);
-  },{isolation:'SERIALIZABLE',retrySafe:true})));
+  },{isolation:'READ COMMITTED',retrySafe:true})));
   auditQueue.catch(()=>{});return auditQueue;
  }
  const audit=event=>{

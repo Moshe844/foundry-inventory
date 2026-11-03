@@ -21,29 +21,30 @@ function positiveInteger(value, label) {
   return number;
 }
 
-async function createSupplierInTransaction(client, ctx, input) {
+async function createSupplierInTransaction(client, ctx, input, {reuseExisting=false}={}) {
   await requirePermission(client, ctx, access.MANAGE_SUPPLIERS, 'add suppliers');
   const name = trimOrNull(input.name);
   if (!name) throw new ValidationError('Supplier name is required.');
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`supplier:${ctx.workspaceId}:${name.toLowerCase()}`]);
-  const duplicate=await client.query('SELECT id FROM suppliers WHERE workspace_id=$1 AND lower(name)=lower($2)',
-    [ctx.workspaceId,name]);
-  if(duplicate.rows.length)throw new ValidationError('A supplier with that name already exists.');
   const id=newId('sup'); const at=nowIso();
-  await client.query(`INSERT INTO suppliers
+  const inserted=await client.query(`INSERT INTO suppliers
     (id,workspace_id,name,code,contact_name,email,phone,notes,status,default_lead_time_days,
      minimum_order_amount,currency,payment_terms,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11,$12,$13,$13)`,
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11,$12,$13,$13)
+    ON CONFLICT(workspace_id,canonical_name) WHERE canonical_name IS NOT NULL DO NOTHING RETURNING id`,
   [id,ctx.workspaceId,name,trimOrNull(input.code),trimOrNull(input.contactName),trimOrNull(input.email),
     trimOrNull(input.phone),trimOrNull(input.notes),input.defaultLeadTimeDays?positiveInteger(input.defaultLeadTimeDays,'Lead time'):null,
     input.minimumOrderAmount?Number(input.minimumOrderAmount):null,trimOrNull(input.currency)||'USD',
     trimOrNull(input.paymentTerms),at]);
-  return {id,name};
+  if(inserted.rowCount)return {id,name};
+  if(reuseExisting){const existing=(await client.query('SELECT id,name,status FROM suppliers WHERE workspace_id=$1 AND canonical_name=lower(btrim($2)) FOR UPDATE',[ctx.workspaceId,name])).rows[0];
+    if(existing?.status==='active')return {id:existing.id,name:existing.name};
+    throw new ValidationError('This supplier is archived. Restore it before importing its products.');}
+  throw new ValidationError('A supplier with that name already exists.');
 }
 
 async function createSupplier(database, ctx, input) {
   return database.transaction((client)=>createSupplierInTransaction(client,ctx,input),
-    {isolation:'SERIALIZABLE',retrySafe:true});
+    {isolation:'READ COMMITTED',retrySafe:true});
 }
 
 function supplierItemValues(input,current){

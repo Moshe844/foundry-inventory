@@ -69,6 +69,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   if(!Array.isArray(inputs))throw new ValidationError('Selling prices must be a list.');if(!inputs.length)return [];
   const skuIds=inputs.map(input=>input.skuId);
   if(new Set(skuIds).size!==skuIds.length){if(initialize)throw new ValidationError('Initial prices require one price per new variant.');const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
+  if(!initialize)await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,skuIds]);
   // Drive bounded validation from the requested keys. A growing import can
   // otherwise make PostgreSQL repeatedly scan the entire tenant catalogue.
   const active=(await client.query(`SELECT s.id,s.created_here FROM unnest($2::text[]) wanted(id)
@@ -111,6 +112,7 @@ async function setPriceInTransaction(client,ctx,input){return (await setPricesIn
 async function setPrice(database,ctx,input){return database.transaction((client)=>setPriceInTransaction(client,ctx,input));}
 
 async function setPurchaseCostInTransaction(client,ctx,input){
+  await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,input.skuId]);
   const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?
     toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');
@@ -132,6 +134,7 @@ async function setPurchaseCostInTransaction(client,ctx,input){
 async function setPurchaseCostsInTransaction(client,ctx,inputs){
  if(!Array.isArray(inputs))throw new ValidationError('Purchase costs must be a list.');if(!inputs.length)return [];
  if(new Set(inputs.map(i=>i.skuId)).size!==inputs.length||inputs.some(i=>i.supplierItemId||Object.hasOwn(i,'expectedCurrentId'))){const result=[];for(const input of inputs)result.push(await setPurchaseCostInTransaction(client,ctx,input));return result;}
+ await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,inputs.map(i=>i.skuId)]);
  const ids=inputs.map(i=>i.skuId),active=(await client.query('SELECT s.id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,ids])).rows;if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
  if(ctx.actorId&&!(await client.query('SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows.length)throw new NotFoundError('The acting user does not belong to this inventory.');
  const current=new Map((await client.query('SELECT DISTINCT ON(sku_id) * FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,created_at DESC,id DESC',[ctx.workspaceId,ids])).rows.map(r=>[r.sku_id,r])),rows=[],at=nowIso();

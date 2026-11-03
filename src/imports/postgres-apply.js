@@ -12,7 +12,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   await deps.assertOperator(client,ctx);await deps.assertSourceClaim(client,ctx,plan);await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'imports.spreadsheet');await deps.bulkPlanning(client);
   const saved=locked.apply_checkpoint||{};if(saved.hash&&saved.hash!==plan.integrityHash)throw new ValidationError('Saved import progress belongs to another approval.');
   const result=await operation(client,saved);await inputOptions.beforeBatchCommit?.();return result;
- },{isolation:'SERIALIZABLE',retrySafe:true});}
+ },{isolation:'READ COMMITTED',retrySafe:true});}
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
  do {checkpoint=await phase(async(client,saved)=>{
   await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));
@@ -122,7 +122,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           if(p.supplierName){const name=p.supplierName.toLowerCase();let supplierId=suppliersByName.get(name);
             if(!supplierId){const existing=(await client.query("SELECT id,status FROM suppliers WHERE workspace_id=$1 AND lower(name)=lower($2)",[ctx.workspaceId,p.supplierName])).rows;
               if(existing.length>1||existing[0]&&existing[0].status!=='active')throw new ValidationError('The source supplier is ambiguous or archived. Review its saved record before importing.');
-              supplierId=existing[0]?.id||(await commerce.createSupplierInTransaction(client,ctx,{name:p.supplierName,currency:p.currency})).id;suppliersByName.set(name,supplierId);}
+              supplierId=existing[0]?.id||(await commerce.createSupplierInTransaction(client,ctx,{name:p.supplierName,currency:p.currency},{reuseExisting:true})).id;suppliersByName.set(name,supplierId);}
             supplierLinks.push({supplierId,skuId,...(p.unitCostMinor==null?{}:{lastUnitCost:require('../domain/currency').fromMinor(p.unitCostMinor,p.currency)}),...(p.reorder?.leadTimeDays===undefined?{}:{leadTimeDays:p.reorder.leadTimeDays})});
           }
         }
