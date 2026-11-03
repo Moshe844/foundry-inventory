@@ -14,6 +14,8 @@ async function topups(database,scope){await wallet.assertScope(database,scope);r
  'SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2',[scope.accountId,scope.workspaceId])).rows;}
 async function packFor(database,id,options){const pack=(await database.query('SELECT * FROM commercial_usage_packs WHERE id=$1',[id])).rows[0];
  if(!pack||pack.status!=='APPROVED'&&!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('This usage pack is provisional and cannot be purchased.');
+ if(options.scope&&(await require('./entitlements').meterState(database,options.scope,pack.category)).remaining===null)
+  throw new ValidationError('Your accepted plan has no separate count limit for this usage category. No purchase is needed.');
  if(!pack.stripe_price_id)throw new ValidationError('The usage pack has no configured Stripe price.');
  await paidBudget.assertSafePack(database,pack);if(options.scope&&pack.category==='ai_work_credits'&&Number(pack.version)>=3&&(await require('./ai-credit-policy').policy(database,options.scope)).scale!==Number(pack.credit_unit_scale||1))throw new ValidationError('Review and accept the updated plan terms before buying this AI pack.');return pack;}
 async function beginPurchase(database,scope,input,options={}){

@@ -132,4 +132,15 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
   const storage=require('../../src/commercial/storage-capacity'),before=await storage.state(db,scope.accountId),second=(await db.query('SELECT id FROM workspaces WHERE owner_account_id=$1 AND id<>$2 LIMIT 1',[scope.accountId,ctx.workspaceId])).rows[0];
   await db.query('UPDATE workspaces SET deletion_requested_at=now() WHERE id=$1',[second.id]);assert.equal(await storage.state(db,scope.accountId),before);
  });
+ await t.test('legacy categories without a separate count limit cannot cause an unnecessary pack charge',async()=>{
+  const legacy=await auth.createBusiness(db,{name:'Legacy pack owner',businessName:'Legacy pack business',email:'legacy-pack@example.test',password:'Legacy-pack-password!'}),legacyScope={accountId:legacy.accountId,workspaceId:legacy.workspaceId},addons=require('../../src/commercial/addons');
+  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,stripe_customer_id,stripe_subscription_id) VALUES('legacy-pack-sub',$1,'pro','plan-services-2026-10-27:pro','ACTIVE','MONTHLY','cus_legacy_pack','sub_legacy_pack')",[legacy.accountId]);
+  let calls=0;const options={testMode:true,provider:{retrievePrice:async()=>{calls++;throw Error('An unnecessary pack must never contact Stripe');}}};
+  for(const [packId,category]of [['incoming-10000-v4','incoming_emails'],['ops-100000-v4','connected_operations']]){
+   assert.equal((await ent.meterState(db,legacyScope,category)).remaining,null);
+   await assert.rejects(addons.beginPurchase(db,legacyScope,{packId,idempotencyKey:'unneeded-'+category,origin:'https://example.test'},options),/No purchase is needed/);
+   await assert.rejects(addons.saveTopup(db,legacyScope,{enabled:true,packId,category,monthlyCapMinor:100000,explicitConsent:true},options),/No purchase is needed/);
+  }
+  assert.equal(calls,0);assert.equal(Number((await db.query('SELECT count(*) n FROM commercial_usage_purchases WHERE account_id=$1',[legacy.accountId])).rows[0].n),0);
+ });
 });
