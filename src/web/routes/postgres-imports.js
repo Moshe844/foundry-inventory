@@ -40,7 +40,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   router.get('/imports/uploads/:id',asyncRoute(async(req,res)=>{
     const upload=await sourceUploads.get(database,req.ctx.workspaceId,req.params.id);
     if(upload.ready)return res.redirect(303,upload.previewHref);
-    return res.page('imports/source-upload',{title:'Reading '+upload.sourceName,nav:'imports',sourceUpload:upload});
+    return res.page('imports/source-upload',{title:'Reading '+upload.sourceName,nav:'imports',sourceUpload:upload,ownSectionTabs:true,suppressBack:true});
   }));
   router.get('/imports/uploads/:id/progress',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');return res.json(await sourceUploads.get(database,req.ctx.workspaceId,req.params.id));
@@ -120,7 +120,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       missingLocationRows:missingLocation.rows.length>0,missingAccountingSetup:missingAccounting.rows.length>0,
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
-      {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
+      {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,

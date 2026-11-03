@@ -17,7 +17,9 @@
   // A former question's hash must not keep a completed or running import
   // scrolled to an obsolete step after a redirect or progress refresh.
   if(step.closest('details'))step.closest('details').open=true;
-  step.setAttribute('tabindex','-1');step.focus({preventScroll:true});step.scrollIntoView({block:'start',behavior:'instant'});
+  step.setAttribute('tabindex','-1');step.focus({preventScroll:true});
+  // A question already on screen stays where it is; only one further down is brought up.
+  const top=step.getBoundingClientRect().top;if(top<0||top>innerHeight*0.6)step.scrollIntoView({block:'start',behavior:'instant'});
  }
  const advance=()=>requestAnimationFrame(()=>requestAnimationFrame(nextStep));
  if(document.readyState==='complete')advance();else window.addEventListener('load',advance,{once:true});
@@ -30,15 +32,18 @@
   const refresh=async()=>{if(pending||document.hidden)return;pending=true;
    try{await Promise.all([...sourceGroups].filter(([,entry])=>!entry.finished).map(async([endpoint,entry])=>{
     try{const response=await fetch(endpoint,{credentials:'same-origin',cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('unavailable');const state=await response.json();
-     for(const panel of entry.panels){panel.querySelector('[data-source-label]').textContent=state.label;
-      panel.querySelector('[data-source-rows]').textContent=(state.worksheets?state.worksheets+' worksheets read · ':'')+(state.totalRows===null?'The file is saved. Row totals appear after its tables are read.':(state.processedRows??0).toLocaleString()+' / '+state.totalRows.toLocaleString()+' rows checked and prepared');
-      const meter=panel.querySelector('[data-source-meter]');meter.max=state.totalRows||1;if(state.processedRows===null)meter.removeAttribute('value');else meter.value=state.processedRows;
-      const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.createdAt))/1000));panel.querySelector('[data-source-timing]').textContent='Uploaded '+format(state.createdAt)+(state.active?' · '+Math.floor(seconds/60)+'m '+seconds%60+'s elapsed':'');
-      panel.querySelector('[data-source-live]').textContent='Last worker update '+format(state.lastUpdateAt);panel.querySelector('[data-source-reason]').textContent=state.reason||'';
-      const link=panel.querySelector('[data-source-result]');link.href=state.previewHref||state.href;link.textContent=state.ready?'Review preview':'Open saved progress';const retry=panel.querySelector('[data-source-retry]');if(retry)retry.hidden=!state.canRetry;
+     for(const panel of entry.panels){const set=(selector,text)=>{const node=panel.querySelector(selector);if(node)node.textContent=text;};set('[data-source-label]',state.label);
+      set('[data-source-rows]',(state.worksheets>1?state.worksheets+' sheets read · ':'')+(state.totalRows===null?'Counting the rows in your file…':(state.processedRows??0).toLocaleString()+' / '+state.totalRows.toLocaleString()+' rows checked and prepared'));
+      const meter=panel.querySelector('[data-source-meter]');if(meter){meter.max=state.totalRows||1;if(state.processedRows===null)meter.removeAttribute('value');else meter.value=state.processedRows;meter.hidden=!state.active&&!state.ready;}
+      // The four plain steps a person sees, from the worker's finer stages.
+      const rank={queued:-1,reading:0,matching:0,understanding:1,checking:2,saving:3,ready:4}[state.stage]??-1,stages=panel.querySelector('[data-source-stages]');
+      if(stages){stages.hidden=!state.active&&!state.ready;[...stages.children].forEach((step,index)=>{step.classList.toggle('is-done',index<rank);step.classList.toggle('is-now',index===rank);});}
+      const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.createdAt))/1000));set('[data-source-timing]','Started '+format(state.createdAt)+(state.active?' · '+(seconds>=60?Math.floor(seconds/60)+'m ':'')+seconds%60+'s':''));
+      set('[data-source-live]','Last update '+format(state.lastUpdateAt));set('[data-source-reason]',state.reason||'');
+      const link=panel.querySelector('[data-source-result]');if(link){link.href=state.previewHref||state.href;if(link.hasAttribute('hidden')||panel.hasAttribute('data-source-detail'))link.hidden=!state.ready;else link.textContent=state.ready?'Review preview':'Open saved progress';}const retry=panel.querySelector('[data-source-retry]');if(retry)retry.hidden=!state.canRetry;
      }
      if(!state.active){entry.finished=true;if(state.ready&&entry.panels.some(panel=>panel.hasAttribute('data-source-detail'))&&/^\/imports\/imp_[a-z0-9]+$/.test(state.previewHref))location.assign(state.previewHref);}
-    }catch{for(const panel of entry.panels)panel.querySelector('[data-source-live]').textContent='Progress connection interrupted. Your file is saved; refresh this page to reconnect.';}
+    }catch{for(const panel of entry.panels){const live=panel.querySelector('[data-source-live]');if(live){live.hidden=false;live.textContent=' · Progress connection interrupted. Your file is saved; refresh this page to reconnect.';}}}
    }));if([...sourceGroups.values()].every(entry=>entry.finished))clearInterval(timer);}finally{pending=false;}
   };
   const timer=setInterval(refresh,2500);document.addEventListener('visibilitychange',refresh);refresh();
