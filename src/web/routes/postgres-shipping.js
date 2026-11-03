@@ -208,7 +208,9 @@ function createPostgresShippingRouter(database,options={}){
     try{
       if(req.query.error)throw new ValidationError('Shippo linking was cancelled. Nothing was connected.');
       shippoLink.checkState(saved,req.query.state);
-      const token=await (options.shippoLink?.exchange||shippoLink.exchange)(req.query.code,shippoReturn(res));
+      const token=await require('../../commercial/operations').run(database,req.ctx.workspaceId,
+        {capability:'shipping.rates',key:newId('shippo-authorization'),provider:'shippo',operation:'authorization_exchange'},
+        ()=>(options.shippoLink?.exchange||shippoLink.exchange)(req.query.code,shippoReturn(res)));
       await accounts.connect(database,req.ctx,{provider:'shippo',apiKey:shippoLink.storedKey(token)});
       req.flash('success','Your Shippo account is linked. Rates from its carriers appear when you ship an order.');
     }catch(error){if(!(error instanceof ValidationError)&&!error.limitKind)throw error;

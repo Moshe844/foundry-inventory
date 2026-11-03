@@ -202,8 +202,10 @@ async function listItemsUncached(database, workspaceId, input = {}) {
   }
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
     anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true,JSON.stringify(Object.fromEntries(optionFilters))];
-  const result = await database.query(`WITH matching_items AS NOT MATERIALIZED (
-      SELECT i.* FROM items i
+  // Start filtered pages from matching IDs. LIMIT keeps primary-key lookups
+  // bounded before workspace checks even when fresh imports have stale stats.
+  const result = await database.query(`WITH ${input.lowStock===true?`low_skus AS MATERIALIZED(${require('../reports/postgres-low-stock-badges').filterSource()}), low_items AS MATERIALIZED(SELECT DISTINCT s.item_id FROM low_skus low CROSS JOIN LATERAL(SELECT s.item_id,s.workspace_id,s.is_active FROM skus s WHERE s.id=low.sku_id LIMIT 1)s WHERE s.workspace_id=$1 AND s.is_active=1),`:''}matching_items AS NOT MATERIALIZED (
+      SELECT i.* FROM ${input.lowStock===true?'low_items low CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=low.item_id LIMIT 1)i':'items i'}
       WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
         AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
@@ -216,7 +218,7 @@ async function listItemsUncached(database, workspaceId, input = {}) {
         AND (($15::text IS NULL AND $16::text IS NULL) OR EXISTS(SELECT 1 FROM skus s WHERE s.workspace_id=$1 AND s.item_id=i.id AND s.is_active=1
           AND ($15::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name)='size' AND lower(v.value)=lower($15)))
           AND ($16::text IS NULL OR EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id AND o.workspace_id=s.workspace_id WHERE v.sku_id=s.id AND lower(o.name) IN ('color','colour') AND lower(v.value)=lower($16)))))
-        AND (NOT $17::boolean OR i.id IN (SELECT record_id FROM (${require('../reports/postgres-registry').get('low_stock').source}) low))
+        AND (NOT $17::boolean ${input.lowStock===true?'OR i.is_active=1':''})
         AND ($18::jsonb='{}'::jsonb OR EXISTS(SELECT 1 FROM skus candidate WHERE candidate.workspace_id=$1 AND candidate.item_id=i.id AND candidate.is_active=1
           AND NOT EXISTS(SELECT 1 FROM jsonb_each_text($18::jsonb) wanted WHERE NOT EXISTS(
             SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))

@@ -264,7 +264,10 @@ async function persistPlannedWork(database,workspaceId,entries){
    approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
    idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming}).slice(0,40),
    event_detail:{automatic,reason:evaluation.reason}};});
-  const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query('INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version) SELECT $1,id,0 FROM unnest($2::text[]) id ORDER BY id ON CONFLICT DO NOTHING',[workspaceId,ids]);
+  const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query(`WITH quota_lock AS MATERIALIZED(
+   SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||owner_account_id,0)) FROM workspaces WHERE id=$1)
+   INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version)
+   SELECT $1,id,0 FROM unnest($2::text[]) id CROSS JOIN quota_lock ORDER BY id ON CONFLICT DO NOTHING`,[workspaceId,ids]);
    const versions=(await client.query('SELECT sku_id,version::text FROM stockchief_runtime.replenishment_source_versions WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id FOR SHARE',[workspaceId,ids])).rows;
    const current=batch.filter(row=>versions.find(v=>v.sku_id===row.recommended_action.skuId)?.version===row.recommended_action.sourceVersion);stale+=batch.length-current.length;
    return client.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
@@ -282,7 +285,11 @@ async function persistPlannedWork(database,workspaceId,entries){
  }return {created,stale};
 }
 
-async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');const state=await ensure(database,workspaceId);planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus})).map(position);
+async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null,cycleId=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');
+  await require('../purchasing/postgres-replenishment-cycle').lockStorageOwner(database,workspaceId);
+  const state=await ensure(database,workspaceId);
+  if(!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
+  planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
@@ -309,8 +316,10 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)}]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
-  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial)await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $2 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
-    [workspaceId,nowIso(),new Date(Date.now()+(refreshRequested?0:15*60000)).toISOString(),planningRevision]);return {state,created,considered,partial,refreshRequested,planningRevision,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
+  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
+    [workspaceId,nowIso(),new Date(Date.now()+(refreshRequested?5:15)*60000).toISOString(),planningRevision,new Date(Date.now()+5*60000).toISOString()]);
+    if(cycleId)await database.query('UPDATE stockchief_runtime.replenishment_planning_runs SET completed_at=CURRENT_TIMESTAMP WHERE workspace_id=$1 AND cycle_id=$2',[workspaceId,cycleId]);}
+  return {state,created,considered,partial,refreshRequested,planningRevision,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
 
 async function revalidate(database,workspaceId,action){
  const rows=(await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{onlySkuIds:[action.skuId]})).map(position);

@@ -75,10 +75,10 @@ async function saveGoals(database, ctx, input) {
   return goals(database, ctx.workspaceId);
 }
 
-async function position(database,workspaceId,{recommendationsOnly=false,afterSkuId=null,limitSkus=null,onlySkuIds=null}={}){
+async function position(database,workspaceId,{recommendationsOnly=false,afterSkuId=null,limitSkus=null,onlySkuIds=null,cycleId=null}={}){
  if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Choose a planning page of at most 1,000 SKUs.');
  if(afterSkuId!==null&&(typeof afterSkuId!=='string'||afterSkuId.length>160))throw new ValidationError('Invalid planning page.');
- const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly,afterSkuId,limitSkus,onlySkuIds});
+ const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly,afterSkuId,limitSkus,onlySkuIds,cycleId});
  const ids=[...new Set(source.map(r=>r.sku_id))],selected=new Set(limitSkus===null?ids:ids.slice(0,limitSkus));
  const result=source.filter(r=>selected.has(r.sku_id)).map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
  Object.defineProperty(result,'coverage',{value:{partial:limitSkus!==null&&ids.length>limitSkus,afterSkuId,nextAfterSkuId:[...selected].at(-1)||null,scanned:selected.size}});
@@ -151,7 +151,7 @@ async function overview(database, workspaceId, {afterSkuId=null}={}) {
 async function refreshRecommendations(database,workspaceId,options={}){
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
   let afterSkuId=options.afterSkuId||null;
-  for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250});
+  for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250,cycleId:options.cycleId||null});
    await ensureRecommendations(database,workspaceId,rows);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;

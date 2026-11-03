@@ -553,7 +553,8 @@ function errorHandler(isProduction) {
     const declaredStatus = Number(err && err.status);
     const safeDeclaredStatus = Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus < 500
       ? declaredStatus : null;
-    const status = err instanceof DomainError ? err.status : safeDeclaredStatus || 500;
+    const databaseTimeout=err?.code==='57014';
+    const status = databaseTimeout?503:err instanceof DomainError ? err.status : safeDeclaredStatus || 500;
     const expected = err instanceof DomainError || Boolean(safeDeclaredStatus);
     if (!expected) {
       console.error('[foundry] unexpected error', err);
@@ -577,7 +578,7 @@ function errorHandler(isProduction) {
         console.error('[foundry] could not record operational alert', monitoringError);
       }
     }
-    const message = expected ? err.message : 'Something went wrong on our side. Please try again.';
+    const message = databaseTimeout?'This request took too long. Please try again shortly.':expected ? err.message : 'Something went wrong on our side. Please try again.';
 
     if (req.accepts('html') && !req.xhr && req.path.startsWith('/api/') === false) {
       if (req.method === 'POST' && req.session) {
@@ -593,8 +594,8 @@ function errorHandler(isProduction) {
       res.status(status);
       if (res.page) {
         return res.page('error', {
-          title: err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
-          errorTitle:err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
+          title: databaseTimeout?'The request took too long':err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':status === 404 ? 'Not found' : 'Something went wrong',
+          errorTitle:databaseTimeout?'The request took too long':err.code==='billing_unavailable'?'Billing is temporarily unavailable':err.code==='checkout_paused'?'Plan changes are paused':status===402?'Upgrade your plan':null,
           status,
           message,
           detail: null,
@@ -603,7 +604,7 @@ function errorHandler(isProduction) {
       return res.type('text/plain').send(message);
     }
 
-    return res.status(status).json({ error: { code: err.code || 'error', message } });
+    return res.status(status).json({ error: { code: databaseTimeout?'request_timeout':err.code || 'error', message } });
   };
 }
 

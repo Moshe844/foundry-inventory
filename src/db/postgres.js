@@ -3,6 +3,10 @@
 const { Pool } = require('pg');
 
 function connectionOptions(connectionString, options = {}) {
+  const statementTimeoutMs=options.statementTimeoutMs??30000;
+  if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1||statementTimeoutMs>2147483647){
+    throw new TypeError('PostgreSQL statement timeout must be a positive bounded integer.');
+  }
   if (options.min !== undefined && (!Number.isSafeInteger(options.min) || options.min < 0 || options.min > (options.max || 10))) {
     throw new Error('PostgreSQL minimum connections must fit the configured pool.');
   }
@@ -28,6 +32,7 @@ function connectionOptions(connectionString, options = {}) {
     connectionTimeoutMillis: options.connectionTimeoutMillis || 10000,
     idleTimeoutMillis: options.idleTimeoutMillis || 30000,
     application_name: options.applicationName || 'stockchief',
+    statement_timeout: statementTimeoutMs,
     ssl };
 }
 

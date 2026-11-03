@@ -928,7 +928,10 @@ function createPostgresCommerceRouter(database,options={}){
   // City and state for a ZIP or postal code, for the address boxes.
   router.get('/address/postal',requirePermission(permissions.VIEW_SALES,'look up an address'),asyncRoute(async(req,res)=>{
     res.set('Cache-Control','private, max-age=86400');
-    return res.json({places:await require('../../lib/postal-lookup').towns(req.query.country,req.query.code)});
+    const places=await require('../../commercial/operations').run(database,req.ctx.workspaceId,
+      {capability:'sales_orders.core',key:newId('postal-lookup'),provider:'zippopotam',operation:'address_lookup'},
+      ()=>require('../../lib/postal-lookup').towns(req.query.country,req.query.code));
+    return res.json({places});
   }));
   router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>customerEntry(req,res,{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''}));
 

@@ -20,14 +20,14 @@ const expected={
  'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
  'connections/providers/common.js':1,'connections/providers/store-network.js':1,'connections/reply-drafting.js':1,
  'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,'imports/workbook-relations.js':1,
- 'lib/provider-http.js':1,'manager/operating-instructions.js':1,
+ 'lib/provider-http.js':1,'lib/postal-lookup.js':1,'manager/operating-instructions.js':1,
  'manager/postgres-operating-instructions.js':1,'operations/email.js':1,'operations/monitoring.js':1,
  'operations/postgres-monitoring.js':1,'payments/connect.js':3,'payments/providers/stripe.js':1,
  'product-brain/navigation.js':1,'purchasing/supplier-document-extractor.js':1,
  'sales/order-from-email.js':1,'shipping/providers/easypost-partner.js':1,
  'shipping/providers/easypost.js':1,'shipping/providers/shipengine.js':2,
  'shipping/providers/shippo.js':1,'shipping/providers/shipstation.js':1,
- 'shipping/shipengine-platform.js':1,
+ 'shipping/shipengine-platform.js':1,'shipping/shippo-link.js':1,
 };
 test('PostgreSQL production dependency graph has no unclassified direct provider boundary',()=>{
  const {boundaries}=scan();const actual={};for(const item of boundaries)actual[item.file]=(actual[item.file]||0)+1;

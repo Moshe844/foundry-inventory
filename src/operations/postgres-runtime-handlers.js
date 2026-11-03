@@ -207,7 +207,8 @@ async function runtimeSweep(job,client,options={}){
   }
   const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN EXISTS(SELECT 1 FROM import_plans p WHERE p.workspace_id=import_executions.workspace_id AND p.id=import_executions.import_id AND (p.apply_checkpoint->>'cataloguePrepared'='true' OR p.apply_checkpoint->>'catalogueStarted'='true')) THEN 'paused' ELSE 'recovered_after_interruption' END,
     error_message='The worker stopped before this import completed. Previously verified batches remain saved; continue the remaining approved rows.',finished_at=$2
-    WHERE status='EXECUTING' AND started_at<$1 AND NOT EXISTS(
+    WHERE status='EXECUTING' AND greatest(started_at,coalesce((SELECT p.apply_checkpoint->>'updatedAt'
+      FROM import_plans p WHERE p.workspace_id=import_executions.workspace_id AND p.id=import_executions.import_id),started_at))<$1 AND NOT EXISTS(
       SELECT 1 FROM stockchief_runtime.jobs job WHERE job.workspace_id=import_executions.workspace_id
        AND job.kind='import.execute-approved' AND job.payload->>'planId'=import_executions.import_id
        AND job.status='RUNNING' AND job.lease_expires_at>$3)
@@ -362,6 +363,7 @@ async function runtimeSweep(job,client,options={}){
       ${billingFilter}
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active WHERE active.workspace_id=w.id
         AND active.kind='autopilot.evaluate' AND active.status IN ('PENDING','RETRY','RUNNING'))
+      AND NOT ${require('../purchasing/postgres-replenishment-cycle').activeImportSql.replaceAll('$1','w.id')}
       AND (a.next_evaluation_at IS NULL OR a.next_evaluation_at<=$1)`,[at])).rows;
   let scheduledAutopilotChecks=0;
   for(const due of autonomyDue){
@@ -413,13 +415,15 @@ async function autopilotEvaluate(job,client){
   const subscription=await entitlements.subscriptionFor(client,scope.accountId);
   if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription).canOperate)
     return {skipped:'subscription_read_only'};
+  const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
+  const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
+  if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
   if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
-    .refreshRecommendations(scopedDatabase(client),job.workspaceId,{afterSkuId:job.payload.afterSkuId||null,limitSkus:250});
-  const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
+    .refreshRecommendations(scopedDatabase(client),job.workspaceId,{afterSkuId:job.payload.afterSkuId||null,limitSkus:250,cycleId});
   const result=await autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId},
-   {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0),refreshRequested:job.payload.refreshRequested===true,planningRevision:job.payload.planningRevision??null});
+   {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0),refreshRequested:job.payload.refreshRequested===true,planningRevision:cycle.planningRevision,cycleId});
   if(result.partial)await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'autopilot.evaluate',
    idempotencyKey:'autopilot-cycle:'+cycleId+':'+result.nextAfterSkuId,payload:{actorId:job.payload.actorId,cycleId,cycleStartedAt,
     afterSkuId:result.nextAfterSkuId,processedSkus:result.processedSkus,refreshRequested:result.refreshRequested,planningRevision:result.planningRevision},priority:39,maxAttempts:3});
