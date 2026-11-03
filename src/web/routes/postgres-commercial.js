@@ -118,6 +118,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(String(latest?.updated_at)!==String(summary.subscription?.updated_at)){
       summary=await entitlements.summary(database,scope);usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     }
+    // An upgrade placed in this browser: say plainly when it was paid or declined.
+    let upgradeOutcome=null;if(req.session.planChangeWatch){const watched=(await database.query(`SELECT change.status,change.proration_amount_minor,change.request_quote,plan.public_name
+      FROM commercial_subscription_changes change JOIN commercial_plans plan ON plan.id=change.to_plan_id WHERE change.account_id=$1 AND change.id=$2`,
+      [scope.accountId,req.session.planChangeWatch])).rows[0];
+      if(!watched||watched.status!=='PENDING'){delete req.session.planChangeWatch;if(watched)upgradeOutcome={status:watched.status,plan:watched.public_name,
+        amountMinor:watched.request_quote?.amountDueMinor??watched.proration_amount_minor,currency:watched.request_quote?.target?.currency||'USD'};}}
     for(const change of pendingChanges){if(change.to_plan_id)change.excess=await commercialControl.resourceExcess(database,{accountId:scope.accountId,workspaceId:null},change.to_plan_id,{planVersionId:change.target_plan_version_id||null});}
     // Billing and downgrade checks describe the whole subscription. Locations
     // are capped per inventory: show the highest use across owned inventories,
@@ -126,7 +132,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(localLocations&&scope.workspaceId){const accountLocations=await entitlements.meterState(database,{accountId:scope.accountId,workspaceId:null},'locations',{subscription:summary.subscription});
       summary.meters=summary.meters.map(m=>m.meter==='locations'?{...accountLocations,currentInventoryUsed:localLocations.used}:m);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
-      pendingChanges,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
+      pendingChanges,upgradeOutcome,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
       packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
@@ -188,8 +194,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const scope=commercialScope(req);const changed=await commercial.requestSubscriptionChange(database,scope.accountId,{planId:req.body.planId,
       interval:req.body.interval,idempotencyKey:req.body.changeKey,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
     req.flash('success',changed.status==='APPLIED'?`${changed.quote.target.public_name} is active.`:changed.quote.downgrade?
-      `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}.`:
-      `Stripe is confirming your change to ${changed.quote.target.public_name}. Your features unlock as soon as payment is confirmed. Refresh this page in a moment.`);
+      `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}. Nothing was charged.`:
+      `Taking payment for ${changed.quote.target.public_name} now. This page updates by itself when it goes through.`);
+    // The plan page reports the outcome of this upgrade once Stripe settles it.
+    if(!changed.quote.downgrade)req.session.planChangeWatch=changed.changeId;
     return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/cancel',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,true,{provider,providerOptions:options.providerOptions});

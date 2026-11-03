@@ -1028,3 +1028,78 @@ div.ox-order { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 
 @media (max-width: 819px) { .ox-review .card.section.ox-action { padding: 16px 14px; } }
 .ox-todo li strong { font-weight: 600; color: var(--ox-text); }
 .ox-todo li span a { font-weight: 500; color: var(--ox-primary); white-space: nowrap; }
+
+/* File imports: what needs you first, then work in progress, then the past. */
+.ox-imports__add { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; margin: 0 0 12px; }
+.ox-review .ox-imports__add .card { margin: 0; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; justify-content: space-between; }
+.ox-imports__add .field { margin: 0; }
+.ox-imports__add .btn { align-self: flex-start; }
+.ox-imports__add textarea.input { height: auto; min-height: 64px; padding: 8px 12px; max-width: none; font-family: inherit; }
+.ox-imports__add input[type=file].input { height: auto; padding: 8px; }
+.ox-imports__group .card-head .badge { margin-left: auto; }
+.ox-imports__group.is-needs { border-color: #C9C4FB; box-shadow: 0 0 0 3px rgba(79,70,229,.08), var(--ox-shadow); }
+.ox-imports__list { list-style: none; margin: 0; padding: 0; }
+.ox-imports__list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 20px; border-top: 1px solid var(--ox-divider); }
+.ox-imports__list li:first-child { border-top: 0; }
+.ox-imports__list li > div { display: flex; flex-direction: column; min-width: 0; }
+.ox-imports__name { font-weight: 600; color: var(--ox-text) !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 819px) { .ox-imports__add { grid-template-columns: 1fr; } .ox-imports__list li { grid-template-columns: minmax(0, 1fr) auto; padding: 12px 14px; } .ox-imports__list li > .badge { display: none; } }
+
+/* Plan & billing: your plan, then the plans with prices, each leading to a
+   review that states the amount due today. */
+.ox-billing { max-width: none; margin: 0 0 18px; padding: 0; }
+.ox-plan-now { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; padding: 18px 20px; margin: 0 0 16px; }
+.ox-plan-now__eyebrow { display: block; font-size: 12px; font-weight: 600; color: var(--ox-text-3); text-transform: uppercase; letter-spacing: .04em; }
+.ox-plan-now h3 { margin: 2px 0 2px; font-size: 20px; font-weight: 700; }
+.ox-plan-now h3 small { font-size: 14px; font-weight: 500; color: var(--ox-text-2); }
+.ox-plan-now p { margin: 0; color: var(--ox-text-2); text-transform: none; }
+.ox-plan-now__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ox-plan-now__actions form { margin: 0; }
+.ox-plan-now > .notice, .ox-plan-now > p.notice { flex-basis: 100%; margin: 0; }
+.ox-plans__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.ox-plans__head h3 { margin: 0; font-size: 17px; font-weight: 650; }
+.ox-plans__rule { margin: 4px 0 12px; color: var(--ox-text-2); font-size: 13.5px; }
+.ox-plans__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.ox-plan { display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #fff; border: 1px solid var(--ox-border); border-radius: var(--ox-r-card); box-shadow: var(--ox-shadow); }
+.ox-plan.is-current { border-color: var(--ox-primary); box-shadow: 0 0 0 3px rgba(79,70,229,.10); }
+.ox-plan h4 { margin: 0; font-size: 15px; font-weight: 650; }
+.ox-plan__price { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
+.ox-plan__price small { font-size: 13px; font-weight: 500; color: var(--ox-text-3); }
+.ox-plan__limits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ox-text-2); flex: 1; }
+.ox-plan__limits b { color: var(--ox-text); font-weight: 600; }
+.ox-plan__current { display: inline-flex; justify-content: center; align-items: center; height: 40px; border-radius: var(--ox-r); background: var(--ox-primary-soft); color: #4338CA; font-weight: 600; font-size: 13.5px; }
+.ox-plan__what { margin: -4px 0 0; font-size: 12.5px; color: var(--ox-text-3); text-align: center; }
+.ox-plan__alt { font-size: 12.5px; text-align: center; }
+.ox-billing-note { margin: 0 0 16px; font-size: 12.5px; color: #7A839C; }
+.ox-billing-section { margin-top: 16px; }
+details.ox-billing-section > summary { cursor: pointer; list-style: none; }
+details.ox-billing-section > summary::-webkit-details-marker { display: none; }
+details.ox-billing-section > summary h2::after { content: " +"; color: #7A839C; font-weight: 400; }
+details.ox-billing-section[open] > summary h2::after { content: " −"; }
+
+.ox-change { max-width: 640px; }
+.ox-change__back { display: inline-block; margin-bottom: 8px; font-size: 13px; }
+.ox-change__order { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.ox-change__due { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 14px; border-bottom: 1px solid var(--ox-divider); }
+.ox-change__due span { font-size: 15px; font-weight: 600; color: var(--ox-text-2); }
+.ox-change__due strong { font-size: 32px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.ox-change__lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ox-change__lines li { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+.ox-change__lines span { color: var(--ox-text-2); }
+.ox-change__lines b { font-weight: 600; text-align: right; }
+.ox-change__fine { margin: 0; font-size: 12.5px; color: var(--ox-text-3); }
+.ox-change__actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 6px; }
+.ox-change__actions form { margin: 0; }
+@media (max-width: 819px) { .ox-change__actions { flex-direction: column-reverse; align-items: stretch; } .ox-change__actions .ox-btn { width: 100%; } .ox-plan-now__actions { width: 100%; } }
+.ox-plans__grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.ox-billing-section > div:has(> [data-usage-category]) { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.ox-billing-section > div:has(> [data-usage-category]) > .notice { grid-column: 1 / -1; margin: 0; }
+.ox-billing-section [data-usage-category] { margin: 0 !important; padding: 12px 14px; border: 1px solid #EEF0F6; border-radius: 10px; }
+.ox-billing-section [data-usage-category] h3 { margin: 0 0 4px; font-size: 14px; }
+.ox-billing-section [data-usage-category] p { margin: 0 0 2px; font-size: 13px; }
+.ox-billing-section [data-usage-category] small { color: #7A839C; font-size: 12px; }
+[data-plan-capacity] dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; margin: 10px 0; font-size: 13.5px; }
+[data-plan-capacity] dt { color: #475069; }
+[data-plan-capacity] dd { margin: 0; text-align: right; font-weight: 600; }
+[data-plan-capacity] dd { overflow-wrap: anywhere; }
+@media (max-width: 819px) { [data-plan-capacity] dl { grid-template-columns: 1fr; gap: 2px; } [data-plan-capacity] dd { text-align: left; margin-bottom: 8px; } }
