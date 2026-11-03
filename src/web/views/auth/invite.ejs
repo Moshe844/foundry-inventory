@@ -1,12 +1,24 @@
 <!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workspace invitation · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
+<style>.auth-invite h1{font-size:clamp(28px,4vw,38px);line-height:1.12;letter-spacing:-.03em;overflow-wrap:anywhere}.auth-invite>p{font-size:16px;margin-bottom:18px}.auth-invite .auth-note{margin:0 0 6px;padding:10px 12px;border-radius:9px;background:#eef0f8;font-size:14px;text-align:left}.auth-invite .auth-between{justify-content:center}</style>
 </head>
-<body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a><div class="auth-centered__card">
-<% if(invitation&&invitation.status==='PENDING'){ %><span class="pub-eyebrow">WORKSPACE INVITATION</span><h1>Join <%= invitation.workspace_name %>.</h1><p><%= invitation.inviter_name %> invited <strong><%= invitation.email %></strong> as <%= invitation.role %>.</p>
-<% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>"><%= message.message %></div><%});}%>
+<body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a><div class="auth-centered__card auth-invite">
+<% if(invitation&&invitation.status==='PENDING'){
+   // Who is answering: the invited account itself, an existing account that
+   // signs in here, or a new person who sets a password.
+   const invitedEmail=String(invitation.email).toLowerCase(),signedInAsInvitee=Boolean(account&&String(account.email).toLowerCase()===invitedEmail),otherAccount=account&&!signedInAsInvitee?account:null; %>
+<span class="pub-eyebrow">WORKSPACE INVITATION</span><h1>Join <%= invitation.workspace_name %></h1><p><%= invitation.inviter_name %> invited <strong><%= invitation.email %></strong> as <%= invitation.role %>.</p>
+<% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><%});}%>
+<% if(otherAccount){ %><p class="auth-note">You’re signed in as <strong><%= otherAccount.email %></strong>. Joining signs you in as <strong><%= invitation.email %></strong> on this browser instead.</p><% } %>
 <form method="post" action="/invite" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="token" value="<%= token %>">
-<% if(!account){ %><label class="auth-field"><span>Your name</span><input name="name" value="<%= invitation.name||'' %>" required autocomplete="name"></label><label class="auth-field"><span>Create a password</span><input name="password" type="password" minlength="12" maxlength="200" pattern="(?=.*[A-Za-z])(?=.*[^A-Za-z0-9\s]).{12,200}" title="Use at least 12 characters with at least one letter and one symbol." required autocomplete="new-password" aria-describedby="password-help"><small id="password-help">Use at least 12 characters with at least one letter and one symbol.</small></label><% } %>
+<% if(signedInAsInvitee){ %>
+<% } else if(inviteeHasAccount){ %><label class="auth-field"><span>Password for <%= invitation.email %></span><span class="password-field"><input id="invite-password" name="password" type="password" required maxlength="200" autocomplete="current-password" autofocus><button type="button" data-password-toggle="invite-password" aria-pressed="false">Show</button></span><small>This email already has a StockChief account. Enter its password to join.</small></label>
+<% } else { %><label class="auth-field"><span>Your name</span><input name="name" value="<%= invitation.name||'' %>" required autocomplete="name"></label>
+<label class="auth-field"><span>Create a password</span><span class="password-field"><input id="invite-password" name="password" type="password" minlength="12" maxlength="200" pattern="(?=.*[A-Za-z])(?=.*[^A-Za-z0-9\s]).{12,200}" title="Use at least 12 characters with at least one letter and one symbol." required autocomplete="new-password" aria-describedby="password-help" autofocus><button type="button" data-password-toggle="invite-password" aria-pressed="false">Show</button></span><small id="password-help">Use at least 12 characters with at least one letter and one symbol.</small></label>
+<label class="auth-field"><span>Confirm password</span><span class="password-field"><input id="invite-confirm" name="confirmPassword" type="password" required minlength="12" maxlength="200" autocomplete="new-password" data-confirm-password="invite-password"><button type="button" data-password-toggle="invite-confirm" aria-pressed="false">Show</button></span></label>
+<% } %>
 <button class="pub-btn pub-btn--block" type="submit">Accept invitation</button></form>
+<% if(inviteeHasAccount&&!signedInAsInvitee){ %><div class="auth-between"><a href="/forgot-password">Forgot your password?</a></div><% } %>
 <% } else { %><span class="auth-mail">!</span><h1>This invitation is no longer available.</h1><p>It may have expired, been revoked or already been accepted. Ask the workspace owner to send a new invitation.</p><a class="pub-btn pub-btn--secondary pub-btn--block" href="/login">Sign in</a><% } %>
 </div></main><script src="/commercial.js?v=auth" defer></script></body></html>

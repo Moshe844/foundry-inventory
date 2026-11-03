@@ -176,14 +176,26 @@ function createPostgresAuthRouter(database,options={}) {
       origin:res.locals.origin});return next(error);}});
   router.get('/invite',async(req,res,next)=>{try{const invitation=await accountLifecycle.inspectInvitation(database,req.query.token||'');
     return res.status(invitation?.status==='PENDING'?200:400).render('auth/invite',{title:'Join a StockChief workspace',
-      csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,invitation,token:req.query.token||'',account:req.account});}
+      csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,invitation,token:req.query.token||'',account:req.account,
+      inviteeHasAccount:Boolean(invitation?.invitee_has_account)});}
     catch(error){return next(error);}});
-  router.post('/invite',async(req,res,next)=>{try{const accepted=await accountLifecycle.acceptInvitation(database,req.body.token||'',{
-      accountId:req.account?.id||null,name:req.body.name,password:req.body.password});if(!req.account){await sessionCall(req,'regenerate');req.session.accountId=accepted.accountId;await require('../../domain/postgres-account-access').stampSession(database,req.session,accepted.accountId);}
-    req.session.workspaceId=accepted.workspaceId;await sessionCall(req,'save');return res.redirect(303,'/');}catch(error){if(error.status&&error.status<500){
-      const invitation=await accountLifecycle.inspectInvitation(database,req.body.token||'');return res.status(error.status).render('auth/invite',{
+  // The invited person sets a password (or, if their email already has an
+  // account, enters it) and is signed in to the workspace. Whoever else is
+  // signed in on this browser is replaced, never joined in their place.
+  router.post('/invite',async(req,res,next)=>{const token=req.body.token||'';try{
+    const invitation=await accountLifecycle.inspectInvitation(database,token);
+    if(!invitation||invitation.status!=='PENDING')throw new ValidationError('That invitation is invalid, expired or was already used.');
+    const invitedEmail=String(invitation.email).toLowerCase();let accountId=null;
+    if(req.account&&String(req.account.email).toLowerCase()===invitedEmail)accountId=req.account.id;
+    else if(invitation.invitee_has_account){const existing=await auth.authenticate(database,invitedEmail,req.body.password,{ip:req.ip||req.socket.remoteAddress});
+      if(!existing)throw new ValidationError(`That password doesn’t match the StockChief account for ${invitation.email}.`);accountId=existing.id;}
+    else if(String(req.body.password||'')!==String(req.body.confirmPassword||''))throw new ValidationError('The two passwords don’t match.');
+    const accepted=await accountLifecycle.acceptInvitation(database,token,{accountId,name:req.body.name,password:req.body.password});
+    if(req.account?.id!==accepted.accountId){await sessionCall(req,'regenerate');req.session.accountId=accepted.accountId;await require('../../domain/postgres-account-access').stampSession(database,req.session,accepted.accountId);}
+    req.session.workspaceId=accepted.workspaceId;req.flash('success',`Welcome to ${invitation.workspace_name}.`);await sessionCall(req,'save');return res.redirect(303,'/');}catch(error){if(error.status&&error.status<500){
+      const invitation=await accountLifecycle.inspectInvitation(database,token);return res.status(error.status).render('auth/invite',{
         title:'Join a StockChief workspace',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],origin:res.locals.origin,
-        invitation,token:req.body.token||'',account:req.account});}return next(error);}});
+        invitation,token,account:req.account,inviteeHasAccount:Boolean(invitation?.invitee_has_account)});}return next(error);}});
   router.get('/forgot-password',(req,res)=>res.render('auth/forgot-password',{
     title:'Reset your password',csrfToken:res.locals.csrfToken,flash:res.locals.flash,appName:res.locals.appName,
   }));
