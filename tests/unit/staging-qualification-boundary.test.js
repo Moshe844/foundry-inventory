@@ -11,3 +11,8 @@ test('hosted qualification cannot select production, arbitrary commands, another
  assert(specification({...million,payload:{...million.payload,mode:'remeasure'}},env).args.includes('remeasure'));
  for(const payload of [{...million.payload,run:'../../private'},{...million.payload,mode:'execute'},{...million.payload,release:'$(secret)'}])assert.throws(()=>specification({...million,payload},env));
 });
+test('qualification reports a measured speed failure instead of unrelated deprecation output',()=>{
+ const {failureReason}=require('../../src/operations/postgres-staging-qualification'),evidence={mode:'remeasure',latestStock150k:'fresh',imports:{fresh:{verified:true,rows:150000,elapsedMs:459370}}};
+ const reason=failureReason(1,null,evidence,'(Use node --trace-deprecation to show the warning)');assert.match(reason,/150,000 rows were verified/);assert.match(reason,/459\.4 seconds/);assert.match(reason,/target is not met/);assert.doesNotMatch(reason,/deprecation/);
+ assert.equal(failureReason(0,null,evidence),null);assert.equal(failureReason(1,null,null,'{"message":"Not enough database headroom"}'),'Not enough database headroom');assert.match(failureReason(null,'SIGTERM',null),/worker stopped/);
+});

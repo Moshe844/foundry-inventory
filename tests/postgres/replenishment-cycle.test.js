@@ -65,4 +65,21 @@ test('replenishment coalesces stock changes, defers imports and avoids the quota
   const plan=await db.transaction(async c=>{await c.query('SET LOCAL enable_seqscan=off');return (await c.query(`EXPLAIN (FORMAT JSON) SELECT sku_id FROM stockchief_runtime.replenishment_demand_events WHERE workspace_id=$1 AND occurred_at>=CURRENT_TIMESTAMP-interval '90 days' AND occurred_at<=CURRENT_TIMESTAMP`,[ctx.workspaceId])).rows;},{readOnly:true});
   const text=JSON.stringify(plan);assert.match(text,/replenishment_demand_window/);assert.match(text,/Index Cond.*occurred_at/);
  });
+ await t.test('cancelling a paid-plan decision and receiving its stock cannot invert the quota/work-item lock order',async()=>{
+  const version=(await db.query("SELECT id FROM commercial_plan_versions WHERE plan_id='pro' AND configuration->>'offerId' IS NOT NULL ORDER BY created_at DESC LIMIT 1")).rows[0];assert(version);
+  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,source) VALUES('cycle-paid-locks',$1,'pro',$2,'COMP','ISOLATED_TEST')",[f.owner.accountId,version.id]);
+  const item=await catalog.createItem(db,ctx,{name:'Paid lock order',baseCode:'PAID-LOCK',trackingMode:'quantity'}),sku=item.skuIds[0];
+  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId:sku,lastUnitCost:40,isPreferred:true});
+  await db.transaction(c=>require('../../src/operations/postgres-reorder-policies').setManyInTransaction(c,ctx,[{skuId:sku,locationId:f.location.id,reorderPoint:5,targetStock:10}]));
+  const work=(await auto.plan(db,ctx.workspaceId)).created.find(w=>w.recommendedAction.skuId===sku);assert(work);
+  let quotaReady,cancelPidReady;const quotaHeld=new Promise(r=>quotaReady=r),pidReady=new Promise(r=>cancelPidReady=r);
+  const receive=db.transaction(async c=>{const holder=(await c.query('SELECT pg_backend_pid() pid')).rows[0].pid;await cycle.lockStorageOwner(c,ctx.workspaceId);quotaReady();const cancelPid=await pidReady;
+   let waiting=false;for(let n=0;n<300;n++){const row=(await c.query('SELECT $2::int=ANY(pg_blocking_pids($1::int)) waiting',[cancelPid,holder])).rows[0];if(row.waiting){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}assert(waiting,'The cancel request must reach the held account lock');
+   await receipt.receive({query:c.query.bind(c),transaction:fn=>fn(c)},ctx,{skuId:sku,locationId:f.location.id,quantity:12,unitCost:'40',idempotencyKey:'paid-lock-receipt'});
+  },{isolation:'READ COMMITTED',statementTimeoutMs:5000,lockTimeoutMs:3000});
+  await quotaHeld;
+  const cancel=db.transaction(async c=>{cancelPidReady((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);return auto.cancel({query:c.query.bind(c),transaction:fn=>fn(c)},ctx,{role:'owner'},work.id);},{isolation:'READ COMMITTED',statementTimeoutMs:5000,lockTimeoutMs:3000});
+  const [,cancelled]=await Promise.all([receive,cancel]);assert.equal(cancelled.execution_status,'CANCELLED');
+  assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,sku,f.location.id])).rows[0].on_hand),12);
+ });
 });

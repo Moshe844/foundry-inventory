@@ -12,6 +12,9 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('A4 mixed lots require identifiers only on lot-tracked products',async()=>{const rows=(await db.query("SELECT i.tracking_mode,count(*)::int n,count(m.lot_id)::int tracked FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id WHERE m.workspace_id=$1 GROUP BY i.tracking_mode ORDER BY i.tracking_mode",[ctx.workspaceId])).rows;assert.deepEqual(rows,[{tracking_mode:'lot',n:37500,tracked:37500},{tracking_mode:'quantity',n:112500,tracked:0}]);});
  await t.test('A7 Shopify option pairs retain 5,000 products and 50,000 variants',async()=>{assert.equal((await db.query('SELECT count(*)::int n FROM sku_option_values v JOIN skus s ON s.id=v.sku_id WHERE s.workspace_id=$1',[ctx.workspaceId])).rows[0].n,100000);});
  await t.test('A8 categories survive the full catalogue import',async()=>{const rows=(await db.query('SELECT category,count(*)::int n FROM catalogue_item_facts WHERE workspace_id=$1 GROUP BY category ORDER BY category',[ctx.workspaceId])).rows;assert.deepEqual(rows,['Apparel','Electronics','Grocery','Hardware'].map(category=>({category,n:1250})));});
+ await t.test('A3 source reference details survive all 150,000 stock rows without expanding legacy-field scans',async()=>{
+  const rows=(await db.query(`SELECT count(*)::int n,count(DISTINCT attributes->>'Source reference')::int refs FROM catalog_source_facts WHERE workspace_id=$1 AND source_import_id=$2 AND attributes ? 'Source reference'`,[ctx.workspaceId,f.stockPlan.id])).rows[0];assert.deepEqual(rows,{n:150000,refs:150000});
+ });
  await t.test('C13 opening stock is an asset, never profit',async()=>{const pnl=await require('../../src/accounting/postgres-reports').profitAndLoss(db,ctx.workspaceId,{});assert.equal(pnl.revenueMinor,0);assert.equal(pnl.netIncomeMinor,0);});
  await t.test('Ask one interpretation and one bounded database batch count all 50,000 SKUs and 150,000 positions without a browser',async()=>{
   const reads=require('../../src/assistant/bounded-business-read'),actor={role:'owner',permissions:{}};let models=0;
@@ -24,6 +27,9 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  async function isolated(work){const rollback=Error('End isolated scale scenario');await assert.rejects(db.transaction(async c=>{await work({query:c.query.bind(c),transaction:fn=>fn(c)});throw rollback;}),error=>error===rollback);}
  await t.test('A3 replenishment evaluates demand once per durable cycle across forecast and planning pages at 50,000 SKUs / 150,000 positions',async()=>isolated(async c=>{
   const result=await require('../helpers/replenishment-cycle-checks').check(c,ctx);t.diagnostic(JSON.stringify({replenishmentCycle:result}));
+ }));
+ await t.test('A3 stock changes expire only the affected 2,000 decisions among 50,000 pending variants',async()=>isolated(async c=>{
+  t.diagnostic(JSON.stringify({replenishmentExpiry:await require('../helpers/replenishment-expiry-checks').check(c,ctx)}));
  }));
  await t.test('A5 a lot-count preview can change from unsupported set counts to additive receipts',async()=>isolated(async c=>{
   let plan=await f.imports.analyse(c,ctx,{text:'Product,SKU,Location,Quantity,Unit cost,Lot\nGrocery product 1,R17-1-0,NJ-Main,1,2,R17-NEW-LOT',allowModel:false});

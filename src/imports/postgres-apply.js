@@ -18,14 +18,14 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));
   const imported=saved.catalogueStarted&&!saved.cataloguePrepared?0:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
   if(saved.cataloguePrepared){if(Number(saved.savedRows)!==imported)throw new ValidationError('Saved import progress does not match its recorded rows. Its existing records remain safe.');return saved;}
-  if(!saved.catalogueStatsPrepared&&plan.recordsValid>=5000){await client.query('ANALYZE import_execution_identities,import_rows');saved.catalogueStatsPrepared=true;}
+  if(!saved.catalogueStatsPrepared&&plan.recordsValid>=5000){await client.query('ANALYZE import_execution_identities (workspace_id,import_id,row_id,row_number,product_key,variant_key,existing_sku_id,existing_item_id), import_rows (id,workspace_id,import_id,row_number,status,item_id,sku_id,location_id)');saved.catalogueStatsPrepared=true;}
   if(imported)throw new ValidationError('This import has saved records without a matching execution checkpoint. Review its saved result.');
   // New SKUs are what preparing creates; progress is shown against them.
   if(!saved.catalogueStarted){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);saved.skusPlanned=capacity.skus;
    await entitlements.assertMeterCapacity(client,scope,'active_skus',capacity.skus);}
   const locations=saved.locations||Object.fromEntries(await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]));
   const created=await require('./postgres-prepare-catalogue').prepare(client,ctx,plan,options,deps,saved);
-  if(created.cataloguePrepared&&plan.recordsValid>=5000)await client.query('ANALYZE skus,items,import_catalogue_bindings');
+  if(created.cataloguePrepared&&plan.recordsValid>=5000)await client.query('ANALYZE skus (id,workspace_id,item_id,is_active), items (id,workspace_id,is_active), import_catalogue_bindings (workspace_id,import_id,product_key,variant_key,item_id,sku_id)');
   return save(client,{...saved,version:3,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
  });await emit('preparing',checkpoint.skusCreated);
  }while(!checkpoint.cataloguePrepared);
