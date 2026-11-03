@@ -242,13 +242,16 @@ function parseWorkbook(buffer) {
 function decodeText(buffer){
   const encoding=buffer[0]===0xff&&buffer[1]===0xfe?'utf-16le':buffer[0]===0xfe&&buffer[1]===0xff?'utf-16be':'utf-8';
   const unreadable=()=>new SpreadsheetError('StockChief could not read this file type. Upload it as Excel, CSV, PDF or a photo. No inventory changed.');
+  const malformed=()=>new SpreadsheetError('This text file’s character encoding could not be read safely. Save it as UTF-8 or UTF-16 and upload it again. No inventory changed.');
   // Text has no NUL bytes; an unknown binary format does.
   if(encoding==='utf-8'&&buffer.subarray(0,65536).includes(0))throw unreadable();
-  try{return new TextDecoder(encoding,{fatal:true}).decode(buffer);}
+  try{return {text:new TextDecoder(encoding,{fatal:true}).decode(buffer)};}
   catch{
-    // Excel's "CSV" and most older systems save Windows-1252 text.
-    if(encoding!=='utf-8')throw unreadable();
-    return new TextDecoder('windows-1252').decode(buffer);
+    // Excel's "CSV" and most older systems save Windows-1252 text. It is read
+    // as that, and the preview says so, so accented names are checked.
+    if(encoding!=='utf-8')throw malformed();
+    return {text:new TextDecoder('windows-1252').decode(buffer),
+      note:'This file was saved as older Windows text (for example Excel’s “CSV”), so it was read that way. Check accented letters in product names before approving.'};
   }
 }
 
@@ -277,7 +280,8 @@ function parse(input) {
   if(['heic','heif','tif','tiff'].includes(extension))throw new SpreadsheetError('This '+extension.toUpperCase()+' file could not be opened as a readable image. Upload a fresh copy. No inventory changed.');
   // Decode text only. Binary archives retain their bytes and do not allocate a
   // second, lossy UTF-8 copy before the bounded workbook reader opens them.
-  const sourceText=input.text ?? (looksXlsx||looksLegacyExcel?'':decodeText(input.buffer||Buffer.alloc(0)));
+  const decoded=input.text==null&&!looksXlsx&&!looksLegacyExcel?decodeText(input.buffer||Buffer.alloc(0)):null;
+  const sourceText=input.text ?? (decoded?decoded.text:'');
   const markup=!looksXlsx&&!looksLegacyExcel&&/^\s*</.test(sourceText);
   // Web systems often export an HTML table and name it .xls; Excel 2003 saved
   // its own XML. Both are spreadsheets. Any other XML is a list of records.
@@ -310,7 +314,7 @@ function parse(input) {
     (best, sheet, index) => (sheet.rows.length > sheets[best].rows.length ? index : best),
     0
   );
-  return { sheets, primarySheet: primary, format: looksXlsx||looksLegacyExcel||spreadsheetMarkup ? 'xlsx' : 'delimited' };
+  return { sheets, primarySheet: primary, format: looksXlsx||looksLegacyExcel||spreadsheetMarkup ? 'xlsx' : 'delimited', ...(decoded?.note?{encodingNote:decoded.note}:{}) };
 }
 
 module.exports = {

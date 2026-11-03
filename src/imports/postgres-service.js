@@ -483,6 +483,15 @@ async function analyse(database, ctx, input) {
       mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(!analysisNotice&&proposal.aiError)analysisNotice={code:'interpretation_unavailable',message:proposal.aiError};
+  // A model reading a whole workbook can leave out a column whose heading
+  // already says what it is ("On Hand"). A confident heading match fills a
+  // field it left empty, never one it chose or a person mapped.
+  if(workbook&&!input.mappings&&!input.workbookContract){
+    const heading=fields.guessMappings(sheet.columns,sheet.rows),taken=new Set([...Object.values(proposal.mappings),...(proposal.variantColumns||[]).map(column=>column.index),
+      proposal.provenanceIndex,proposal.problemsIndex]);
+    for(const field of heading.confident||[]){const index=heading.mappings[field];
+      if(proposal.mappings[field]===undefined&&Number.isInteger(index)&&!taken.has(index)){proposal.mappings={...proposal.mappings,[field]:index};taken.add(index);}}
+  }
   // An uncertain interpretation is a review task, not an upload failure. Keep
   // the source columns and rows in an unapproved preview so the operator can
   // identify the product column without editing and re-uploading the file.
@@ -519,7 +528,7 @@ async function analyse(database, ctx, input) {
       unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations,...(input.importMode?{importMode:input.importMode}:{})},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:streaming?sheet.rows.length:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-    warnings:[...(parsedWorkbook.sheets.length>1&&!workbook?[`Only “${sheet.name}” was interpreted. The other ${parsedWorkbook.sheets.length-1} sheets have not been linked or imported; review the complete workbook before approval.`]:[]),
+    warnings:[...(parsedWorkbook.encodingNote?[parsedWorkbook.encodingNote]:[]),...(parsedWorkbook.sheets.length>1&&!workbook?[`Only “${sheet.name}” was interpreted. The other ${parsedWorkbook.sheets.length-1} sheets have not been linked or imported; review the complete workbook before approval.`]:[]),
       ...previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,
       hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric})],
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',

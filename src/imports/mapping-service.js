@@ -356,6 +356,20 @@ async function proposeMappings(sheet, options = {}) {
    * silently undid it. Nothing named a product, and every row was rejected
    * underneath StockChief's own note explaining what the column was.
    */
+  // The same on an old stock list: "Item" holding "Air Max 90 Black 8" was
+  // filed as a size, which left every product without a name. A variant's
+  // values repeat across products; a column whose values are nearly all
+  // different is what the headings said it was, the name.
+  const headingName = guess.mappings.name;
+  const filedAs = Object.keys(reconciled.mappings).find((field) => reconciled.mappings[field] === headingName);
+  const profile = profilesByIndex[headingName];
+  if (reconciled.mappings.name === undefined && headingName !== undefined && fields.VARIANT_FIELDS.includes(filedAs)
+    && profile && profile.filled > 1 && profile.distinct / profile.filled > 0.8) {
+    delete reconciled.mappings[filedAs];
+    delete reconciled.axisNames?.[filedAs];
+    reconciled.mappings.name = headingName;
+  }
+
   const recovered = fields.ensureIdentity(reconciled.mappings, {
     columns: sheet.columns,
     profilesByIndex: profilesByIndex,
