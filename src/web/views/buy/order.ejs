@@ -1,0 +1,281 @@
+<%
+  /*
+   * One purchase order: where it stands, the one next step, and the money.
+   *
+   * Every action posts to the same route with the same fields as before; the
+   * forms that used to sit open down the page (bill, payment, return, cancel,
+   * mark as sent) open in side panels from the step that needs them.
+   */
+  var V = view;
+  var cur = order.currency || 'USD';
+  var m = function (minor) { return helpers.money(minor, cur); };
+  var each = function (value) { return value == null ? '—' : helpers.money(Math.round(Number(value) * 10 ** helpers.currencyExponent(cur)), cur); };
+  var returnLines = order.lines.filter(function (line) { return line.quantityReceivedUnits > 0; });
+  var missingCost = order.lines.filter(function (line) { return line.unitCost === null || line.unitCost === undefined; });
+  var nextButton = function (cls) {
+    if (!V.next) return '';
+    if (V.next.href) return '<a class="ox-btn ox-btn--primary ' + (cls || '') + '" href="' + V.next.href + '">' + V.next.label + '</a>';
+    // Approve posts from a form of its own, wherever the button sits.
+    if (V.next.kind === 'approve') return '<form class="ox-inline-form" method="post" action="/purchasing/orders/' + order.id + '/approve" data-busy><input type="hidden" name="_csrf" value="' + csrfToken + '"><input type="hidden" name="integrityHash" value="' + order.integrityHash + '"><button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="submit">' + V.next.label + '</button></form>';
+    var panel = { place: 'ox-place', bill: 'ox-bill', pay: V.openBills[0] ? 'ox-pay-' + V.openBills[0].id : '' }[V.next.kind];
+    return '<button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="button" data-modal-open="' + panel + '">' + V.next.label + '</button>';
+  };
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="purchase-order">
+  <header class="ox-head">
+    <div>
+      <a class="ox-back" href="/purchasing/orders"><span aria-hidden="true">←</span> Purchase orders</a>
+      <h1 class="ox-title"><%= order.poNumber %> <span class="ox-badge ox-badge--<%= V.badge.tone %> ox-title__badge"><%= V.badge.text %></span></h1>
+      <p class="ox-sub"><%= V.subtitle %><% if (V.late) { %> · <span class="ox-amber">late</span><% } %></p>
+    </div>
+    <div class="ox-head__actions">
+      <a class="ox-btn ox-btn--ghost ox-hide-sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">Print</a>
+      <%- nextButton() %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing/orders' }) %>
+
+
+  <% if (V.cancelled) { %>
+    <div class="ox-note ox-note--grey">Cancelled<%= order.cancelReason ? ': ' + order.cancelReason : '.' %><% if (order.receivedUnits) { %> The <%= order.receivedUnits %> unit<%= order.receivedUnits === 1 ? '' : 's' %> already received stay in stock.<% } %></div>
+  <% } else { %>
+    <ol class="ox-steps" aria-label="Where this order stands">
+      <% V.steps.forEach(function (s) { %><li class="<%= s.done ? 'is-done' : '' %> <%= s.now ? 'is-now' : '' %>"<%- s.now ? ' aria-current="step"' : '' %>><b><%= s.label %></b><%= s.note %></li><% }) %>
+    </ol>
+    <% if (V.draft) { %><p class="ox-fine ox-fine--top">Nothing has been sent to <%= order.supplierName %>.<% if (!order.hasCosts) { %> Add the missing price below, then approve.<% } else { %> Approving records the order; you send it to them.<% } %></p><% } %>
+  <% } %>
+
+  <div class="ox-2col">
+    <div class="ox-2col__main">
+      <% if (order.isEditable && missingCost.length) { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/prices" class="ox-card ox-card--step">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="ox-card__h"><h2>Add the missing price</h2></div>
+          <div class="ox-card__b ox-grid2">
+            <% missingCost.forEach(function (line) { %><label class="ox-field"><span><%= line.displayName %> · cost for one <%= line.unitLabel %></span><input type="number" min="0" step="0.01" name="unitCost[<%= line.id %>]" placeholder="$0.00" required></label><% }) %>
+          </div>
+          <div class="ox-card__f"><button class="ox-btn ox-btn--primary" type="submit">Save prices and continue</button></div>
+        </form>
+      <% } %>
+
+      <section class="ox-card" aria-labelledby="ox-h-items">
+        <div class="ox-card__h"><h2 id="ox-h-items">Items</h2><span class="ox-muted ox-small">Ordered → received</span></div>
+        <table class="ox-table ox-poitems" data-preserve-grid>
+          <thead><tr><th scope="col">Product</th><th scope="col" class="ox-c">Ordered</th><th scope="col" class="ox-c ox-hide-sm">Received</th><th scope="col" class="ox-r ox-hide-sm">Unit cost</th><th scope="col" class="ox-r">Total</th></tr></thead>
+          <tbody>
+            <% order.lines.forEach(function (line) { var onHand = V.stock[line.sku_id] || 0; %>
+              <tr>
+                <td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= line.displayName %></b>
+                  <small><%= [line.supplierSku, onHand > 0 ? onHand + ' in stock' : 'out of stock'].filter(Boolean).join(' · ') %><% if (line.unitsPerPurchaseUnit > 1) { %> · <%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %> of <%= line.unitsPerPurchaseUnit %><% } %></small>
+                  <small class="ox-show-sm"><%= line.quantityUnits %> × <%= each(line.unitCost) %> · <%= line.quantityReceivedUnits %> received</small></div></div></td>
+                <td class="ox-c ox-num"><%= line.quantityUnits %></td>
+                <td class="ox-c ox-num ox-hide-sm <%= line.quantityReceivedUnits ? '' : 'ox-muted' %>"><%= line.quantityReceivedUnits %></td>
+                <td class="ox-r ox-num ox-hide-sm"><%= each(line.unitCost) %></td>
+                <td class="ox-r ox-num"><%= each(line.lineTotal) %></td>
+              </tr>
+            <% }) %>
+            <% (locals.charges || []).forEach(function (charge) { %><tr><td colspan="4" class="ox-hide-sm-cs"><%= charge.label %> <span class="ox-muted">· <%= charge.kind %></span></td><td class="ox-r ox-num"><%= m(charge.amountMinor) %></td></tr><% }) %>
+          </tbody>
+          <tfoot><tr><td><b>Total</b> <span class="ox-muted ox-small"><%= order.orderedUnits %> unit<%= order.orderedUnits === 1 ? '' : 's' %></span></td><td class="ox-c ox-num"><b><%= order.orderedUnits %></b></td><td class="ox-c ox-num ox-hide-sm"><b><%= order.receivedUnits %></b></td><td class="ox-hide-sm"></td>
+            <td class="ox-r ox-num"><b><%= order.hasCosts ? m(V.moneyRows.totalMinor + (locals.charges || []).reduce(function (s, c) { return s + c.amountMinor; }, 0)) : '—' %></b></td></tr></tfoot>
+        </table>
+      </section>
+
+      <section class="ox-card" aria-labelledby="ox-h-deliveries" id="receipts">
+        <div class="ox-card__h"><h2 id="ox-h-deliveries">Deliveries</h2><% if (receipts.length) { %><a class="ox-linkbtn" href="/activity">See in activity</a><% } %></div>
+        <div class="ox-card__b">
+          <% if (!receipts.length) { %>
+            <p class="ox-empty-line ox-empty-line--flush">Nothing received yet.<% if (!V.draft && !V.cancelled) { %> When boxes arrive, tap <b>Receive delivery</b>.<% } %></p>
+          <% } else { %>
+            <ul class="ox-rows">
+              <% receipts.forEach(function (receipt) { var where = [...new Set(receipt.lines.map(function (l) { return l.locationName; }))].join(', '); %>
+                <li><details><summary><span><b><%= shortDate(receipt.receivedAt) %></b><% if (receipt.reference) { %> · <%= receipt.reference %><% } %> · <span class="ox-green">+<%= receipt.totalUnits %></span> → <%= where %><% if (receipt.overReceiptApproved) { %> · <span class="ox-amber">more than ordered</span><% } %></span></summary>
+                  <ul class="ox-sublines"><% receipt.lines.forEach(function (l) { %><li><span><%= l.displayName %> → <%= l.locationName %><% if (l.lotCode) { %> · lot <%= l.lotCode %><% } %><% if (l.serials.length) { %> · <%= l.serials.join(', ') %><% } %></span><b class="ox-num">+<%= l.quantityUnits %></b></li><% }) %></ul>
+                </details></li>
+              <% }) %>
+            </ul>
+          <% } %>
+        </div>
+      </section>
+
+      <% if (supplierBills.length) { %>
+      <section class="ox-card" aria-labelledby="ox-h-bills">
+        <div class="ox-card__h"><h2 id="ox-h-bills">Bills</h2></div>
+        <ul class="ox-rows">
+          <% supplierBills.forEach(function (bill) { var paid = Number(bill.total_minor) - Number(bill.balance_minor); var open = ['OPEN', 'PARTIALLY_PAID'].includes(bill.status);
+             var b = bill.status === 'PAID' || (!open && Number(bill.balance_minor) === 0 && bill.status !== 'DISPUTED' && bill.status !== 'DRAFT') ? { t: 'Paid', c: 'green' } : bill.status === 'DISPUTED' || bill.status === 'DRAFT' ? { t: 'Needs review', c: 'amber' } : paid > 0 ? { t: 'Partly paid', c: 'amber' } : { t: 'Unpaid', c: 'rose' }; %>
+            <li class="ox-billrow">
+              <span><b><%= bill.supplier_invoice_number || bill.bill_number %></b><small><%= m(bill.total_minor) %> · <%= m(paid) %> paid<%= bill.due_date ? ' · due ' + shortDate(bill.due_date) : '' %></small></span>
+              <span class="ox-badge ox-badge--<%= b.c %>"><%= b.t %></span>
+              <b class="ox-num"><%= m(bill.balance_minor) %></b>
+              <% if (open && permissions.payments) { %><button class="ox-btn ox-btn--sm ox-btn--secondary" type="button" data-modal-open="ox-pay-<%= bill.id %>">Record payment</button><% } else { %><span></span><% } %>
+            </li>
+          <% }) %>
+        </ul>
+      </section>
+      <% } %>
+
+      <% if ((locals.supplierReturns || []).length) { %>
+      <section class="ox-card" aria-labelledby="ox-h-returns">
+        <div class="ox-card__h"><h2 id="ox-h-returns">Returns to supplier</h2></div>
+        <ul class="ox-rows"><% supplierReturns.forEach(function (r) { %><li class="ox-billrow"><a href="/supplier-returns/<%= r.id %>"><b><%= r.return_number %></b></a><span class="ox-badge ox-badge--<%= returnBadge(r.status).tone %>"><%= returnBadge(r.status).text %></span><span></span><span></span></li><% }) %></ul>
+      </section>
+      <% } %>
+
+      <% var assumptions = order.sourceDetail && order.sourceDetail.assumptions || []; %>
+      <details class="ox-card ox-more">
+        <summary><span><h2>History</h2><% var latest = V.history[V.history.length - 1]; %><small><%= latest ? latest.text + ' · ' + latest.when : 'Nothing recorded yet' %></small></span><span class="ox-more__pm" aria-hidden="true"></span></summary>
+        <div class="ox-card__b">
+          <ul class="ox-tl">
+            <% V.history.forEach(function (h) { %><li class="is-done"><b><%= h.text %></b><small><%= h.when %></small></li><% }) %>
+            <% supplierDocuments.forEach(function (d) { %><li><b><%= d.document_type.replaceAll('_', ' ') %> from <%= d.sender %></b><small><%= d.status === 'NEEDS_REVIEW' ? 'Needs your decision' : d.status === 'IGNORED' ? 'Ignored, no effect' : 'Matched to this order' %></small></li><% }) %>
+            <% assumptions.forEach(function (a) { %><li><b>StockChief assumed</b><small><%= a %></small></li><% }) %>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <aside class="ox-2col__side">
+      <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-money" style="padding-top:18px">
+        <h2 id="ox-h-money">Money</h2>
+        <div class="ox-sum__row"><span>Order total</span><b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></div>
+        <div class="ox-sum__row"><span>Billed by supplier</span><b class="ox-num <%= V.moneyRows.billedMinor ? '' : 'ox-muted' %>"><%= m(V.moneyRows.billedMinor) %></b></div>
+        <div class="ox-sum__row"><span>Paid</span><b class="ox-num <%= V.moneyRows.paidMinor ? '' : 'ox-muted' %>"><%= m(V.moneyRows.paidMinor) %></b></div>
+        <div class="ox-sum__total"><span>Still owed</span><b class="ox-num"><%= m(V.moneyRows.owedMinor) %></b></div>
+        <% if (V.unbilled && order.receivedUnits > 0 && permissions.accounting && !(V.next && V.next.kind === 'bill')) { %><button class="ox-btn ox-btn--secondary ox-btn--block" type="button" data-modal-open="ox-bill">Add supplier bill</button><% } %>
+        <p class="ox-fine">Receiving changes stock. A bill sets what you owe. A payment lowers what you owe. Each is tracked on its own.</p>
+      </section>
+
+      <section class="ox-card ox-card__b" aria-labelledby="ox-h-supplier">
+        <h2 id="ox-h-supplier" class="ox-h2">Supplier</h2>
+        <div class="ox-chipcard ox-chipcard--flat">
+          <span class="ox-avatar" aria-hidden="true"><%= V.supplier.initials %></span>
+          <div class="ox-chipcard__main"><% if (V.supplier.id) { %><a href="/suppliers/<%= V.supplier.id %>"><strong><%= V.supplier.name %></strong></a><% } else { %><strong><%= V.supplier.name %></strong><% } %>
+            <span><%= [V.supplier.contactName, V.supplier.email || 'No email yet'].filter(Boolean).join(' · ') %></span>
+            <% if (V.supplier.leadDays != null || V.supplier.terms) { %><span><%= [V.supplier.leadDays != null ? 'Usually ' + V.supplier.leadDays + ' days' : null, V.supplier.terms].filter(Boolean).join(' · ') %></span><% } %></div>
+        </div>
+      </section>
+
+      <% var canReturn = returnLines.length && permissions.returns; var canCancel = order.canCancel && permissions.approve; %>
+      <% if (canReturn || canCancel) { %>
+      <section class="ox-card ox-card__b" aria-labelledby="ox-h-more">
+        <h2 id="ox-h-more" class="ox-h2">More actions</h2>
+        <div class="ox-stack">
+          <a class="ox-btn ox-btn--secondary ox-btn--block ox-show-sm-flex" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">Print</a>
+          <% if (canReturn) { %><button class="ox-btn ox-btn--secondary ox-btn--block" type="button" data-modal-open="ox-return">Return goods to supplier</button><% } %>
+          <% if (canCancel) { %><button class="ox-btn ox-btn--secondary ox-btn--block ox-rose" type="button" data-modal-open="ox-cancel-po">Cancel order</button><% } %>
+        </div>
+      </section>
+      <% } %>
+    </aside>
+  </div>
+
+  <% if (V.next) { %>
+  <div class="ox-mbar" aria-label="Purchase order next step">
+    <span class="ox-mbar__t">Total<b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></span>
+    <%- nextButton() %>
+  </div>
+  <% } %>
+
+  <%# ---------------- Side panels ---------------- %>
+  <% if (order.status === 'APPROVED' && permissions.approve) { %>
+  <dialog class="ox ox-drawer" id="ox-place" aria-labelledby="ox-place-h">
+    <form method="post" action="/purchasing/orders/<%= order.id %>/place" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="ox-drawer__h"><h2 id="ox-place-h">Mark as sent to <%= order.supplierName %></h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <p class="ox-fine ox-fine--flush">Do this once <%= order.supplierName %> has the order: you emailed the printed order, called it in, or they confirmed it. Stock on hand does not change until it arrives.</p>
+        <a class="ox-linkbtn" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">Open the printable order</a>
+        <label class="ox-field"><span>Their confirmation number <small>optional</small></span><input name="externalReference" aria-label="Supplier confirmation" placeholder="e.g. SO-48812"></label>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Not yet</button><button class="ox-btn ox-btn--primary" type="submit">Record as sent to supplier</button></div>
+    </form>
+  </dialog>
+  <% } %>
+
+  <% if (V.unbilled && order.receivedUnits > 0 && permissions.accounting) { %>
+  <dialog class="ox ox-drawer" id="ox-bill" aria-labelledby="ox-bill-h">
+    <form method="post" action="/purchasing/orders/<%= order.id %>/invoices" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= returnFormKey %>:invoice">
+      <div class="ox-drawer__h"><h2 id="ox-bill-h">Add supplier bill</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <label class="ox-field"><span>Supplier invoice number</span><input name="supplierInvoiceNumber" required></label>
+        <div class="ox-grid2"><label class="ox-field"><span>Invoice date</span><input type="date" name="issueDate" value="<%= locals.today %>" required></label><label class="ox-field"><span>Due date</span><input type="date" name="dueDate"></label></div>
+        <table class="ox-lines ox-billlines" data-preserve-grid aria-label="Received lines to bill">
+          <thead><tr><th scope="col">Product</th><th scope="col" class="ox-c">On this bill</th><th scope="col" class="ox-r">Cost each</th></tr></thead>
+          <tbody><% order.lines.filter(function (l) { return l.quantityUnbilledUnits > 0; }).forEach(function (l) { %>
+            <tr><td><b><%= l.displayName %></b><small class="ox-block ox-muted"><%= l.quantityReceivedUnits %> received · <%= l.quantityBilledUnits %> already billed</small></td>
+              <td class="ox-c"><input class="ox-input ox-mini" type="number" name="invoiceQuantity[<%= l.id %>]" min="0" step="any" max="<%= l.quantityUnbilledUnits %>" value="<%= l.quantityUnbilledUnits %>" aria-label="Billed quantity for <%= l.displayName %>" required></td>
+              <td class="ox-r"><input class="ox-input ox-price" name="invoiceUnitCost[<%= l.id %>]" inputmode="decimal" value="<%= Number(l.unitCost || 0).toFixed(2) %>" aria-label="Billed unit cost for <%= l.displayName %>" required></td></tr>
+          <% }) %></tbody>
+        </table>
+        <label class="ox-field"><span>Tax</span><input type="number" name="tax" min="0" step="0.01" value="0.00"></label>
+        <p class="ox-fine ox-fine--flush">This sets what you owe <%= order.supplierName %>. Stock does not change.</p>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Save bill</button></div>
+    </form>
+  </dialog>
+  <% } %>
+
+  <% if (permissions.payments) { V.openBills.forEach(function (bill) { %>
+  <dialog class="ox ox-drawer" id="ox-pay-<%= bill.id %>" aria-labelledby="ox-pay-<%= bill.id %>-h" data-ox-pay-bill>
+    <form method="post" action="/accounting/payables/<%= bill.id %>/payment" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= bill.id %>-<%= Date.now() %>"><input type="hidden" name="returnTo" value="/purchasing/orders/<%= order.id %>">
+      <div class="ox-drawer__h"><h2 id="ox-pay-<%= bill.id %>-h">Record payment</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <p class="ox-fine ox-fine--flush"><%= bill.supplier_invoice_number || bill.bill_number %> · <%= m(bill.balance_minor) %> still owed to <%= order.supplierName %></p>
+        <label class="ox-field"><span>Amount actually paid</span><input name="amount" inputmode="decimal" value="<%= (bill.balance_minor / 100).toFixed(2) %>" required></label>
+        <div class="ox-grid2"><label class="ox-field"><span>Payment date</span><input type="date" name="paymentDate" value="<%= helpers.dateInputValue(new Date()) %>" required></label>
+          <label class="ox-field"><span>Method</span><select name="method"><option value="bank transfer">Bank transfer</option><option value="check">Check</option><option value="card">Card</option><option value="cash">Cash</option><option value="other">Other</option></select></label></div>
+        <label class="ox-field"><span>Reference</span><input name="reference" placeholder="Check number, transfer reference…"></label>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Record payment</button></div>
+    </form>
+  </dialog>
+  <% }) } %>
+
+  <% if (returnLines.length && permissions.returns) { var returnBills = V.openBills; %>
+  <dialog class="ox ox-drawer" id="ox-return" aria-labelledby="ox-return-h">
+    <form method="post" action="/purchasing/orders/<%= order.id %>/returns" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= returnFormKey %>">
+      <div class="ox-drawer__h"><h2 id="ox-return-h">Return goods to supplier</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <% if (!returnBills.length) { %>
+          <p class="ox-note">Add the supplier bill first. A return is credited against an open bill.</p>
+        <% } else { %>
+          <table class="ox-lines" data-preserve-grid><thead><tr><th scope="col">Product</th><th scope="col" class="ox-c">Return</th></tr></thead><tbody>
+            <% returnLines.forEach(function (l) { %><tr><td><b><%= l.displayName %></b><small class="ox-block ox-muted"><%= l.quantityReceivedUnits %> received<%= l.destinationLocationName ? ' · ' + l.destinationLocationName : '' %></small>
+              <% if (l.trackingMode === 'lot') { %><label class="ox-field ox-field--sm"><span>Lot / batch</span><input name="lot_<%= l.id %>"></label><% } %>
+              <% if (l.trackingMode === 'serial') { %><label class="ox-field ox-field--sm"><span>Serial numbers</span><input name="serials_<%= l.id %>" placeholder="Comma-separated, one per unit"></label><% } %></td>
+              <td class="ox-c"><input class="ox-input ox-mini" type="number" name="quantity_<%= l.id %>" min="0" max="<%= l.quantityReceivedUnits %>" value="0" aria-label="Return <%= l.displayName %> to supplier quantity"></td></tr><% }) %>
+          </tbody></table>
+          <div class="ox-grid2">
+            <label class="ox-field"><span>Credit against</span><select name="supplierBillId" aria-label="Bill the supplier credit will reduce" required><% returnBills.forEach(function (bill) { %><option value="<%= bill.id %>"><%= bill.supplier_invoice_number || bill.bill_number %> · <%= m(bill.balance_minor) %> open</option><% }) %></select></label>
+            <label class="ox-field"><span>Expected credit</span><input type="number" name="expectedCredit" min="0.01" step="0.01" aria-label="Expected supplier credit" required placeholder="$0.00"></label>
+          </div>
+          <label class="ox-field"><span>Reason</span><select name="reason"><option>Damaged</option><option>Wrong item</option><option>Too many sent</option><option>Other</option></select></label>
+          <p class="ox-fine ox-fine--flush">Stock goes down only when the goods are shipped back. The credit is recorded when the supplier confirms it.</p>
+        <% } %>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><% if (returnBills.length) { %><button class="ox-btn ox-btn--primary" type="submit">Create return</button><% } %></div>
+    </form>
+  </dialog>
+  <% } %>
+
+  <% if (order.canCancel && permissions.approve) { %>
+  <dialog class="ox ox-modal" id="ox-cancel-po" aria-labelledby="ox-cancel-po-h">
+    <form method="post" action="/purchasing/orders/<%= order.id %>/cancel">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="ox-modal__h"><h2 id="ox-cancel-po-h">Cancel <%= order.poNumber %>?</h2><button class="ox-modal__x" type="button" data-modal-close aria-label="Close">×</button></div>
+      <div class="ox-modal__b">
+        <p><%= order.receivedUnits ? 'The order stops expecting the rest. The ' + order.receivedUnits + ' unit' + (order.receivedUnits === 1 ? '' : 's') + ' already received stay in stock.' : 'The order stops here. Nothing was received, so stock does not change.' %></p>
+        <label class="ox-field"><span>Reason</span><input name="reason" maxlength="200" aria-label="Reason for cancelling" placeholder="e.g. ordered twice" required></label>
+      </div>
+      <div class="ox-modal__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Keep order</button><button class="ox-btn ox-btn--danger" type="submit">Cancel order</button></div>
+    </form>
+  </dialog>
+  <% } %>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

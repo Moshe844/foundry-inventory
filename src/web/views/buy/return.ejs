@@ -1,0 +1,86 @@
+<%
+  /*
+   * One supplier return: Requested → Approved → Shipped back → Credited, the
+   * lines, where the goods and the credit stand, and the one next step. Each
+   * step posts to the same route with the same fields as before.
+   */
+  var r = supplierReturn;
+  var cur = r.currency || 'USD';
+  var m = function (minor) { return helpers.money(Number(minor || 0), cur); };
+  var units = r.lines.reduce(function (s, l) { return s + Number(l.quantity); }, 0);
+  var from = [...new Set(r.lines.map(function (l) { return l.location_name; }))].join(', ');
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="supplier-return">
+  <header class="ox-head">
+    <div>
+      <a class="ox-back" href="/supplier-returns"><span aria-hidden="true">←</span> Supplier returns</a>
+      <h1 class="ox-title"><%= r.return_number %> <span class="ox-badge ox-badge--<%= badge.tone %> ox-title__badge"><%= badge.text %></span></h1>
+      <p class="ox-sub"><%= r.supplier_name %><% if (r.purchase_order_id) { %> · from <a href="/purchasing/orders/<%= r.purchase_order_id %>"><%= r.po_number %></a><% } %></p>
+    </div>
+    <div class="ox-head__actions">
+      <% if (r.status === 'REQUESTED') { %>
+        <form class="ox-inline-form" method="post" action="/supplier-returns/<%= r.id %>/authorize" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-authorize"><button class="ox-btn ox-btn--primary" type="submit">Supplier approved it</button></form>
+      <% } else if (r.status === 'AUTHORIZED') { %>
+        <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-ship-back">Mark shipped back</button>
+      <% } else if (r.status === 'AWAITING_CREDIT') { %>
+        <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-credit">Record credit</button>
+      <% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/supplier-returns' }) %>
+
+  <% if (r.status !== 'CANCELLED') { %>
+  <ol class="ox-steps" aria-label="Where this return stands">
+    <% steps.forEach(function (s) { %><li class="<%= s.done ? 'is-done' : '' %> <%= s.now ? 'is-now' : '' %>"<%- s.now ? ' aria-current="step"' : '' %>><b><%= s.label %></b><%= s.note %></li><% }) %>
+  </ol>
+  <% } %>
+  <% if (r.status === 'CREDIT_MISMATCH') { %><p class="ox-note ox-note--amber">The credit was <%= m(r.actual_credit_minor) %>, not the <%= m(r.expected_credit_minor) %> expected. It is recorded; the difference stays open for you to follow up.</p><% } %>
+
+  <section class="ox-card" aria-labelledby="ox-h-lines">
+    <div class="ox-card__h"><h2 id="ox-h-lines">What goes back</h2><span class="ox-muted ox-small"><%= r.reason || '' %></span></div>
+    <table class="ox-table ox-poitems" data-preserve-grid>
+      <thead><tr><th scope="col">Product</th><th scope="col" class="ox-hide-sm">From</th><th scope="col" class="ox-c">Units</th></tr></thead>
+      <tbody><% r.lines.forEach(function (l) { %><tr><td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= l.item_name %><%= l.variant_label ? ' / ' + l.variant_label : '' %></b><small><%= l.code %></small></div></div></td><td class="ox-hide-sm"><%= l.location_name %></td><td class="ox-c ox-num"><%= l.quantity %></td></tr><% }) %></tbody>
+    </table>
+  </section>
+
+  <div class="ox-grid2 ox-grid2--cards">
+    <section class="ox-card ox-card__b" aria-labelledby="ox-h-goods"><h2 id="ox-h-goods" class="ox-h2">Goods</h2>
+      <p class="ox-big ox-num"><%= units %> <small>unit<%= units === 1 ? '' : 's' %></small></p>
+      <p class="ox-muted ox-small"><%= r.shipped_at ? 'Left ' + from + ' on ' + shortDate(r.shipped_at) + '.' : 'Still at ' + from + '. Not shipped yet.' %></p></section>
+    <section class="ox-card ox-card__b" aria-labelledby="ox-h-credit"><h2 id="ox-h-credit" class="ox-h2">Credit</h2>
+      <p class="ox-big ox-num"><%= r.actual_credit_minor == null ? m(r.expected_credit_minor) : m(r.actual_credit_minor) %></p>
+      <p class="ox-muted ox-small"><%= r.actual_credit_minor == null ? 'Expected. Waiting for the supplier.' : 'Recorded' + (r.supplier_invoice_number || r.bill_number ? ' against ' + (r.supplier_invoice_number || r.bill_number) : '') + '.' %></p></section>
+  </div>
+  <p class="ox-fine">Stock goes down only when the goods are shipped back. The credit is recorded when the supplier confirms it.</p>
+
+  <% if (r.status === 'AUTHORIZED') { %>
+  <dialog class="ox ox-drawer" id="ox-ship-back" aria-labelledby="ox-ship-back-h">
+    <form method="post" action="/supplier-returns/<%= r.id %>/ship" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-ship">
+      <div class="ox-drawer__h"><h2 id="ox-ship-back-h">Mark shipped back</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <p class="ox-fine ox-fine--flush">Do this when the goods actually leave. <%= units %> unit<%= units === 1 ? '' : 's' %> come off stock at <%= from %>.</p>
+        <label class="ox-field"><span>Shipped on</span><input type="date" name="shippedAt" value="<%= today %>"></label>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Record goods shipped to supplier</button></div>
+    </form>
+  </dialog>
+  <% } %>
+  <% if (r.status === 'AWAITING_CREDIT') { %>
+  <dialog class="ox ox-drawer" id="ox-credit" aria-labelledby="ox-credit-h">
+    <form method="post" action="/supplier-returns/<%= r.id %>/reconcile" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-reconcile">
+      <div class="ox-drawer__h"><h2 id="ox-credit-h">Record the supplier’s credit</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
+      <div class="ox-drawer__b">
+        <p class="ox-fine ox-fine--flush">Expected <%= m(r.expected_credit_minor) %>. Enter what their credit note says.</p>
+        <label class="ox-field"><span>Credit amount</span><input type="number" name="amount" min="0.01" step="0.01" required aria-label="Actual supplier credit" placeholder="$0.00"></label>
+        <div class="ox-grid2"><label class="ox-field"><span>Credit memo number</span><input name="creditNumber" required></label><label class="ox-field"><span>Credit date</span><input type="date" name="creditDate" value="<%= today %>"></label></div>
+      </div>
+      <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Record and reconcile credit</button></div>
+    </form>
+  </dialog>
+  <% } %>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

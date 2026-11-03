@@ -1,0 +1,169 @@
+<%
+  /*
+   * New purchase order, on one page.
+   *
+   * The supplier is chosen first (the page reloads with ?supplier=, which is
+   * also how Suppliers and What to order open it), because the products, pack
+   * sizes and costs all belong to that supplier. Every product linked to the
+   * supplier has its quantity[sku] / unitCost[sku] row in the form, as before;
+   * rows the person has not added are hidden, and an empty quantity is not
+   * ordered, exactly as the server has always read it.
+   */
+  var chosen = supplierId ? (buy.suppliers.find(function (s) { return s.id === supplierId; }) || null) : null;
+  var cur = (chosen && chosen.currency) || 'USD';
+  var sub = function (key) { return submitted && submitted[key]; };
+  var qtyOf = function (sku) { var q = sub('quantity'); return q && q[sku] !== undefined ? q[sku] : ''; };
+  var costOf = function (item) { var c = sub('unitCost'); return c && c[item.skuId] !== undefined ? c[item.skuId] : item.lastUnitCost == null ? '' : Number(item.lastUnitCost).toFixed(2); };
+  var weightOf = function (sku) { var w = sub('secondaryQuantity'); return (w && w[sku]) || ''; };
+  var supplierLine = function (s) {
+    var parts = [s.contactName || (s.email ? null : 'No email yet')];
+    if (s.defaultLeadTimeDays != null) parts.push(s.defaultLeadTimeDays + ' days');
+    if (s.paymentTerms) parts.push(s.paymentTerms);
+    parts.push(s.itemCount + ' product' + (s.itemCount === 1 ? '' : 's'));
+    return parts.filter(Boolean).join(' · ');
+  };
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="po-entry">
+ <form method="post" action="/purchasing/orders" id="po-entry" data-purchase-entry data-currency="<%= cur %>" data-currency-exponent="<%= helpers.currencyExponent ? helpers.currencyExponent(cur) : 2 %>" data-today="<%= locals.today || helpers.dateInputValue(new Date()) %>" data-busy>
+  <header class="ox-head ox-head--form">
+   <div>
+    <a class="ox-back" href="/purchasing/orders"><span aria-hidden="true">←</span> Purchase orders</a>
+    <h1 class="ox-title">New purchase order</h1>
+   </div>
+   <div class="ox-head__actions">
+    <a class="ox-btn ox-btn--ghost" href="/purchasing/orders">Cancel</a>
+    <% if (chosen) { %><button class="ox-btn ox-btn--primary" type="submit">Create draft</button><% } %>
+   </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing/orders' }) %>
+
+  <% if (orderErrors && orderErrors.length) { %><div class="ox-error" role="alert"><strong>Not saved.</strong> <% orderErrors.forEach(function (e) { %><%= e %> <% }) %></div><% } %>
+
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if (chosen) { %><input type="hidden" name="supplierId" value="<%= chosen.id %>"><input type="hidden" name="expectedDateAuto" value="<%= sub('expectedDateAuto') ?? '1' %>"><% } %>
+
+  <div class="ox-form">
+   <div class="ox-col">
+    <section class="ox-card" aria-labelledby="ox-h-supplier">
+     <div class="ox-card__h"><h2 id="ox-h-supplier">Supplier</h2></div>
+     <div class="ox-card__b">
+      <% if (chosen) { %>
+       <div class="ox-chipcard">
+        <span class="ox-avatar" aria-hidden="true"><%= chosen.initials %></span>
+        <div class="ox-chipcard__main"><strong><%= chosen.name %></strong>
+         <span><%= [chosen.contactName, chosen.email || 'No email yet'].filter(Boolean).join(' · ') %></span>
+         <span><%= [chosen.defaultLeadTimeDays != null ? 'Usually ' + chosen.defaultLeadTimeDays + ' days' : null, chosen.paymentTerms].filter(Boolean).join(' · ') || 'No lead time or terms set' %></span></div>
+        <div class="ox-chipcard__links"><a class="ox-linkbtn" href="/purchasing/orders/new">Change</a></div>
+       </div>
+      <% } else { %>
+       <div class="ox-combo" data-ox-pick>
+        <svg class="ox-combo__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input class="ox-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ox-supplier-list" aria-label="Search suppliers" placeholder="Search suppliers" autocomplete="off" autofocus data-ox-pick-input value="<%= locals.supplierQuery || '' %>">
+        <ul class="ox-pop ox-pop--open" id="ox-supplier-list" role="listbox" aria-label="Suppliers" data-ox-pick-list>
+         <% buy.suppliers.forEach(function (s) { %>
+          <li role="option" aria-selected="false"><a class="ox-opt" href="/purchasing/orders/new?supplier=<%= s.id %>" data-ox-search-text="<%= (s.name + ' ' + (s.contactName || '') + ' ' + (s.email || '')).toLowerCase() %>"><span class="ox-avatar" aria-hidden="true"><%= s.initials %></span><span class="ox-opt__t"><b><%= s.name %></b><small><%= supplierLine(s) %></small></span></a></li>
+         <% }) %>
+         <% if ((locals.supplierPage || 1) > 1 || locals.supplierHasMore) { %><li class="ox-pick-more" role="presentation" data-ox-pick-keep><% if ((locals.supplierPage || 1) > 1) { %><a href="/purchasing/orders/new?<%= new URLSearchParams({ q: locals.supplierQuery || '', page: supplierPage - 1 }) %>">Previous suppliers</a><% } %><% if (locals.supplierHasMore) { %><a href="/purchasing/orders/new?<%= new URLSearchParams({ q: locals.supplierQuery || '', page: (supplierPage || 1) + 1 }) %>">More suppliers</a><% } %></li><% } %>
+         <% if (permissions.suppliers) { %><li role="option" aria-selected="false" data-ox-pick-keep><button class="ox-opt ox-opt--add" type="button" data-modal-open="ox-supplier-drawer"><span class="ox-avatar ox-avatar--add" aria-hidden="true">+</span><span class="ox-opt__t"><b>Add new supplier</b><small>Name, email, lead time</small></span></button></li><% } %>
+        </ul>
+        <p class="ox-pick-none" data-ox-pick-none hidden>No supplier on this list matches. Press Enter to search them all. <% if (permissions.suppliers) { %><button class="ox-linkbtn" type="button" data-modal-open="ox-supplier-drawer">Add a new supplier</button><% } %></p>
+       </div>
+      <% } %>
+     </div>
+    </section>
+
+    <section class="ox-card" aria-labelledby="ox-h-items">
+     <div class="ox-card__h"><h2 id="ox-h-items">Items</h2>
+      <% if (chosen && supplierItems.length) { %><%- include('../inventory/quantity-grid-picker', { gridKind: 'purchase', gridSupplier: supplierId, gridLabel: 'Add many sizes at once', gridButtonClass: 'ox-linkbtn' }) %><% } %>
+     </div>
+     <div class="ox-card__b">
+      <% if (!chosen) { %>
+       <p class="ox-empty-line">No items yet. Pick a supplier, then search or tap a suggestion.</p>
+      <% } else if (!supplierItems.length) { %>
+       <p class="ox-empty-line">Nothing is linked to <%= chosen.name %> yet. <a href="/suppliers/<%= chosen.id %>#link-product">Link their products</a> so StockChief knows the pack size and cost.</p>
+      <% } else { %>
+       <% if (buy.suggestions.length) { %>
+        <div class="ox-chips" aria-label="Running low at <%= chosen.name %>">
+         <% buy.suggestions.slice(0, 6).forEach(function (s) { %><button type="button" class="ox-chip-add" data-ox-suggest="<%= s.skuId %>" data-qty="<%= s.quantity %>">+ <%= s.label %> · <%= s.onHand > 0 ? s.onHand + ' left' : 'out' %></button><% }) %>
+         <% if (buy.suggestions.length > 1) { %><button type="button" class="ox-chip-add" data-ox-suggest-all>+ Add all <%= buy.suggestions.length %> low items</button><% } %>
+        </div>
+       <% } %>
+       <div class="ox-combo" data-ox-po-search>
+        <svg class="ox-combo__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input class="ox-input" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-po-products" aria-label="Add product" placeholder="Search this supplier’s products or scan a barcode" autocomplete="off" data-ox-po-input>
+        <ul class="ox-pop" id="ox-po-products" role="listbox" aria-label="<%= chosen.name %> products" hidden>
+         <% supplierItems.forEach(function (item) { %>
+          <li role="option" aria-selected="false" data-ox-po-option="<%= item.skuId %>" data-ox-search-text="<%= (item.displayName + ' ' + (item.supplierSku || '') + ' ' + (item.code || '')).toLowerCase() %>">
+           <span class="ox-thumb" aria-hidden="true"></span>
+           <span class="ox-opt__t"><b><%= item.displayName %></b><small><%= item.supplierSku ? 'Their code ' + item.supplierSku + ' · ' : '' %>pack: <%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></small></span>
+           <span class="ox-opt__r"><b class="ox-num"><%= item.lastUnitCost == null ? '—' : helpers.money(Math.round(Number(item.lastUnitCost) * 100), cur) %></b><small class="<%= item.low ? 'ox-rose' : 'ox-green' %>"><%= item.onHand > 0 ? item.onHand + ' in stock' : '0 in stock' %></small></span>
+          </li>
+         <% }) %>
+        </ul>
+       </div>
+       <table class="ox-lines ox-polines" data-preserve-grid>
+        <thead><tr><th scope="col">Product</th><th scope="col">Qty</th><th scope="col" class="ox-r">Unit cost</th><th scope="col" class="ox-r">Total</th><th scope="col"><span class="ox-sr">Remove</span></th></tr></thead>
+        <tbody>
+         <% supplierItems.forEach(function (item) { var q = qtyOf(item.skuId); var on = String(q).trim() !== '' && Number(q) !== 0; %>
+          <tr class="ox-line" data-purchase-line data-sku="<%= item.skuId %>" data-pack-units="<%= item.unitsPerPurchaseUnit || 1 %>" data-lead-days="<%= item.leadTimeDays ?? '' %>" data-name="<%= item.displayName %>" <%= on ? '' : 'hidden' %>>
+           <td class="ox-line__pc"><div class="ox-line__p"><span class="ox-thumb" aria-hidden="true"></span><span class="ox-line__name"><strong><%= item.displayName %></strong><small><%= [item.supplierSku, item.onHand + ' in stock'].filter(Boolean).join(' · ') %></small></span></div>
+            <% if (item.secondaryUnit) { %><label class="ox-weight"><span>Actual <%= item.secondaryUnit %></span><input name="secondaryQuantity[<%= item.skuId %>]" inputmode="decimal" aria-label="Actual weight for <%= item.displayName %>" value="<%= weightOf(item.skuId) %>"></label>
+            <% } else { %><details class="ox-more-line"><summary aria-label="More for <%= item.displayName %>">⋯</summary><label class="ox-weight"><span>Actual weight if also weighed</span><input name="secondaryQuantity[<%= item.skuId %>]" inputmode="decimal" aria-label="Actual weight for <%= item.displayName %>" value="<%= weightOf(item.skuId) %>"></label></details><% } %>
+           </td>
+           <td class="ox-line__qty"><span class="ox-step"><button type="button" data-ox-dec aria-label="One fewer <%= item.purchaseUnit %> of <%= item.displayName %>">−</button><input type="number" min="0" step="any" name="quantity[<%= item.skuId %>]" aria-label="Packs of <%= item.displayName %>" value="<%= q %>"><button type="button" data-ox-inc aria-label="One more <%= item.purchaseUnit %> of <%= item.displayName %>">+</button></span>
+            <% if (item.unitsPerPurchaseUnit > 1) { %><small class="ox-packhint" data-ox-packhint></small><% } %></td>
+           <td class="ox-r"><input class="ox-input ox-price" id="unit-cost-<%= item.skuId %>" name="unitCost[<%= item.skuId %>]" type="number" min="0" step="0.01" inputmode="decimal" aria-label="Unit cost for <%= item.displayName %>" value="<%= costOf(item) %>" placeholder="$0.00"></td>
+           <td class="ox-r ox-num ox-line__tot" data-line-total>—</td>
+           <td class="ox-r"><button class="ox-remove" type="button" data-ox-remove aria-label="Remove <%= item.displayName %>">✕</button></td>
+          </tr>
+         <% }) %>
+        </tbody>
+       </table>
+       <%# One confirmation for every $0 line; the script shows it under the first of them. %>
+       <label class="ox-zero" data-ox-zero hidden><input type="checkbox" name="confirmZeroCost" value="1" <%= sub('confirmZeroCost') === '1' ? 'checked' : '' %>> I confirm selected $0 lines are free of charge</label>
+       <p class="ox-empty-line" data-ox-lines-empty>No items yet. Search above or tap a suggestion.</p>
+      <% } %>
+     </div>
+    </section>
+
+    <section class="ox-card" aria-labelledby="ox-h-delivery">
+     <div class="ox-card__h"><h2 id="ox-h-delivery">Delivery</h2></div>
+     <div class="ox-card__b ox-grid2">
+      <label class="ox-field"><span>Deliver to</span><select name="destinationLocationId" data-ox-deliver><% locations.forEach(function (l) { %><option value="<%= l.id %>" <%= sub('destinationLocationId') === l.id ? 'selected' : '' %>><%= l.name %></option><% }) %></select><small class="ox-help">Where the boxes arrive. You can split it when you receive.</small></label>
+      <label class="ox-field"><span>Expected</span><input type="date" name="expectedDate" value="<%= sub('expectedDate') ?? locals.expectedDate ?? '' %>"><small class="ox-help"><% if (chosen && buy.leadDays != null) { %>Worked out from <%= chosen.name %>’s <%= buy.leadDays %>-day lead time.<% } else { %>Leave blank and StockChief works it out from the lead time.<% } %></small></label>
+     </div>
+    </section>
+
+    <details class="ox-card ox-more rm-work">
+     <summary><span><h2>More details</h2><small>Note to supplier</small></span><span class="ox-more__pm" aria-hidden="true"></span></summary>
+     <div class="ox-card__b">
+      <label class="ox-field"><span>Note to supplier</span><textarea name="notes" maxlength="300" rows="2" placeholder="Printed on the purchase order"><%= sub('notes') || '' %></textarea></label>
+     </div>
+    </details>
+   </div>
+
+   <aside class="ox-side">
+    <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-summary" style="padding-top:18px">
+     <h2 id="ox-h-summary">Summary</h2>
+     <div aria-live="polite">
+      <div class="ox-sum__row"><span>Subtotal<small data-ox-units>0 units</small></span><b class="ox-num" data-ox-subtotal>$0.00</b></div>
+      <div class="ox-sum__total"><span>Total</span><b class="ox-num" data-purchase-total>$0.00</b></div>
+     </div>
+     <p class="ox-sum__stock" role="status"><span class="ox-dot ox-dot--<%= chosen ? 'green' : 'grey' %>" aria-hidden="true"></span><span data-ox-arrives><%= chosen ? 'Add items to see when they arrive' : 'Pick a supplier and add items' %></span></p>
+     <div class="ox-sum__btns"><button class="ox-btn ox-btn--primary ox-btn--block" type="submit" aria-label="Create draft purchase order" <%= chosen && supplierItems.length ? '' : 'disabled' %>>Create draft</button></div>
+     <p class="ox-fine">A draft is saved only for you. Nothing is sent to the supplier until you approve it.</p>
+    </section>
+   </aside>
+  </div>
+
+  <div class="ox-mbar" aria-label="Purchase order total">
+   <span class="ox-mbar__t">Total<b class="ox-num" data-ox-mbar-total>$0.00</b></span>
+   <button class="ox-btn ox-btn--primary" type="submit" aria-label="Create draft purchase order" <%= chosen && supplierItems.length ? '' : 'disabled' %>>Create draft</button>
+  </div>
+ </form>
+
+ <% if (permissions.suppliers && !chosen) { %><%- include('_supplier-drawer', { action: '/suppliers', returnTo: '/purchasing/orders/new', supplier: null }) %><% } %>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
+<script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

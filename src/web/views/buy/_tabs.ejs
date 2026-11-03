@@ -1,0 +1,11 @@
+<%
+  /*
+   * The Buy section's tabs, drawn under each Buy page's own header (the layout
+   * leaves them out when ownSectionTabs is set, so they appear once).
+   * `active` is the tab's href; detail pages pass the list they belong to.
+   */
+  var buyTabs = (locals.pageSection && pageSection.id === 'buy' && pageSection.tabs) || [];
+%>
+<nav class="sc-section-tabs ox-subtabs" aria-label="Buy navigation">
+  <% buyTabs.forEach(function (t) { %><a <%- t.href === active ? 'class="is-on" aria-current="page"' : '' %> href="<%= t.href %>"><%= t.label %></a><% }) %>
+</nav>

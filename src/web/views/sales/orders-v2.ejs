@@ -70,7 +70,7 @@
     <% } else if (!L.rows.length) { %>
       <div class="ox-empty"><strong>No orders match</strong><p><a href="/orders">Show every order</a></p></div>
     <% } else { %>
-      <table class="ox-table">
+      <table data-preserve-grid class="ox-table">
         <thead><tr>
           <th scope="col">Order</th><th scope="col" class="ox-hide-sm">Customer</th><th scope="col" class="ox-hide-sm">Date</th>
           <th scope="col">Status</th><th scope="col" class="ox-hide-sm">Payment</th><th scope="col" class="ox-r">Total</th>

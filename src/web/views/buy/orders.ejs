@@ -1,0 +1,100 @@
+<%
+  /*
+   * Purchase orders: one list, one primary action.
+   *
+   * The tabs are mutually exclusive buckets computed in buy-view.js, so
+   * To approve + On the way + To pay + Done is always All. Receiving, suppliers
+   * and what to order each have their own tab; nothing here repeats them.
+   */
+  var L = list;
+  var m = function (minor) { return helpers.money(minor, L.currency); };
+  var qs = function (over) {
+    var p = { status: L.tab === 'all' ? '' : L.tab, q: L.q, page: '' };
+    Object.keys(over || {}).forEach(function (k) { p[k] = over[k]; });
+    var parts = Object.keys(p).filter(function (k) { return p[k]; }).map(function (k) { return k + '=' + encodeURIComponent(p[k]); });
+    return '/purchasing/orders' + (parts.length ? '?' + parts.join('&') : '');
+  };
+  var tabs = [['all', 'All'], ['approve', 'To approve'], ['way', 'On the way'], ['pay', 'To pay'], ['done', 'Done']];
+%>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy" data-ox-page="purchase-orders">
+  <header class="ox-head">
+    <div>
+      <h1 class="ox-title">Purchase orders</h1>
+      <p class="ox-sub"><%= L.counts.all %> order<%= L.counts.all === 1 ? '' : 's' %><% if (L.counts.approve) { %> · <span class="ox-dot ox-dot--amber" aria-hidden="true"></span> <%= L.counts.approve %> draft<%= L.counts.approve === 1 ? '' : 's' %> to approve<% } %><% if (L.counts.way) { %> · <%= L.counts.way %> on the way<% } %></p>
+    </div>
+    <div class="ox-head__actions">
+      <% if (permissions.receive) { %><a class="ox-btn ox-btn--ghost ox-hide-sm" href="/purchasing/receive">Receive delivery</a><% } %>
+      <% if (permissions.create) { %><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new" data-ox-new-po><span aria-hidden="true">+</span> New purchase order</a><% } %>
+    </div>
+  </header>
+  <%- include('_tabs', { active: '/purchasing/orders' }) %>
+
+  <% if (L.counts.all) { %>
+  <section class="ox-kpis" aria-label="Purchase totals">
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">On order</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.onOrder.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.onOrder.orders %> order<%= L.kpis.onOrder.orders === 1 ? '' : 's' %> · <%= L.kpis.onOrder.units %> unit<%= L.kpis.onOrder.units === 1 ? '' : 's' %></span></div>
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Arriving this week</span><strong class="ox-kpi__n ox-num"><%= L.kpis.arriving.count %></strong><span class="ox-kpi__s"><%= L.kpis.arriving.next || 'Nothing due this week' %></span></div>
+    <% if (L.kpis.owed) { %><div class="ox-card ox-kpi"><span class="ox-kpi__k">Owed to suppliers</span><strong class="ox-kpi__n ox-num <%= L.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(L.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.owed.bills %> bill<%= L.kpis.owed.bills === 1 ? '' : 's' %><%= L.kpis.owed.who ? ' · ' + L.kpis.owed.who : '' %></span></div><% } %>
+    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Bought this month</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.month.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.month.orders %> order<%= L.kpis.month.orders === 1 ? '' : 's' %></span></div>
+  </section>
+  <% } %>
+
+  <section class="ox-card ox-list" aria-label="Purchase order list">
+    <% if (!L.counts.all) { %>
+      <div class="ox-empty">
+        <strong>Nothing is on order.</strong>
+        <p>Start a purchase order for a supplier. Nothing is sent until you approve it.</p>
+        <% if (permissions.create) { %><div class="ox-empty__actions"><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new"><span aria-hidden="true">+</span> New purchase order</a></div><% } %>
+      </div>
+    <% } else { %>
+    <div class="ox-toolbar">
+      <nav class="ox-tabs" aria-label="Filter by status">
+        <% tabs.forEach(function (t) { %>
+          <a class="ox-tab <%= L.tab === t[0] ? 'is-on' : '' %>" href="<%= qs({ status: t[0] === 'all' ? '' : t[0], page: '' }) %>"<%- L.tab === t[0] ? ' aria-current="page"' : '' %> data-ox-tab="<%= t[0] %>"><%= t[1] %> <span class="ox-chip<%= t[0] === 'approve' && L.counts.approve ? ' ox-chip--rose' : '' %>" data-ox-count><%= L.counts[t[0]] %></span></a>
+        <% }) %>
+      </nav>
+      <form class="ox-search" method="get" action="/purchasing/orders" role="search" data-ox-search>
+        <% if (L.tab !== 'all') { %><input type="hidden" name="status" value="<%= L.tab %>"><% } %>
+        <svg class="ox-search__icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m14 14 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input class="ox-input" type="search" name="q" value="<%= L.q %>" placeholder="Search PO #, supplier, product" aria-label="Search purchase orders" autocomplete="off">
+      </form>
+    </div>
+
+    <% if (!L.rows.length) { %>
+      <div class="ox-empty"><strong>No purchase orders match</strong><p><a href="/purchasing/orders">Show every purchase order</a></p></div>
+    <% } else { %>
+      <table data-preserve-grid class="ox-table ox-potable">
+        <thead><tr>
+          <th scope="col">PO</th><th scope="col" class="ox-hide-sm">Supplier</th><th scope="col" class="ox-hide-sm">Expected</th>
+          <th scope="col">Status</th><th scope="col" class="ox-hide-sm">Received</th><th scope="col" class="ox-hide-sm">Bill</th>
+          <th scope="col" class="ox-r">Total</th><th scope="col" class="ox-hide-sm"><span class="ox-sr">Next step</span></th>
+        </tr></thead>
+        <tbody>
+          <% L.rows.forEach(function (row) { %>
+            <tr class="ox-row<%= row.tab === 'approve' ? ' is-attention' : '' %><%= row.cancelled ? ' is-muted' : '' %>" data-href="/purchasing/orders/<%= row.id %>">
+              <td><a class="ox-order" href="/purchasing/orders/<%= row.id %>"><%= row.number %></a><span class="ox-show-sm ox-cell-sub"><%= row.phone %></span></td>
+              <td class="ox-hide-sm"><span class="ox-cust"><span class="ox-avatar" aria-hidden="true"><%= row.initials %></span><span><%= row.supplierName %></span></span></td>
+              <td class="ox-hide-sm <%= row.expectedMuted ? 'ox-muted' : '' %>"><%= row.cancelled ? '—' : (row.expected || '—') %></td>
+              <td><span class="ox-badge ox-badge--<%= row.badge.tone %>"><%= row.badge.text %></span></td>
+              <td class="ox-hide-sm"><% if (row.cancelled || !row.orderedUnits) { %><span class="ox-muted">—</span><% } else { %><span class="ox-prog" role="img" aria-label="<%= row.receivedUnits %> of <%= row.orderedUnits %> received"><span class="ox-bar"><i class="<%= row.receivedUnits >= row.orderedUnits ? 'is-done' : '' %>" style="width:<%= row.progress %>%"></i></span><small class="ox-num"><%= row.receivedUnits %> / <%= row.orderedUnits %></small></span><% } %></td>
+              <td class="ox-hide-sm"><% if (row.billBadge) { %><span class="ox-badge ox-badge--<%= row.billBadge.tone %>"><%= row.billBadge.text %></span><% } else { %><span class="ox-muted">—</span><% } %></td>
+              <td class="ox-r ox-num"><%= row.cancelled ? '—' : m(row.totalMinor) %></td>
+              <td class="ox-r ox-hide-sm"><% if (row.action) { %><a class="ox-btn ox-btn--sm ox-btn--<%= row.action.ghost ? 'ghost' : 'secondary' %>" href="<%= row.action.href %>" aria-label="<%= row.action.label %> <%= row.number %>"><%= row.action.label %></a><% } %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <footer class="ox-foot">
+      <span class="ox-muted">Showing <%= L.rows.length %> of <%= L.matching %><% if (L.pages > 1) { %> ·
+        <% if (L.page > 1) { %><a href="<%= qs({ page: L.page - 1 }) %>">Previous</a><% } %>
+        Page <%= L.page %> of <%= L.pages %>
+        <% if (L.page < L.pages) { %><a href="<%= qs({ page: L.page + 1 }) %>">Next</a><% } %>
+      <% } %></span>
+      <% if (locals.lowCount) { %><a href="/purchasing"><%= lowCount %> item<%= lowCount === 1 ? ' is' : 's are' %> running low. See what to order →</a><% } %>
+    </footer>
+    <% } %>
+  </section>
+</div>
+<script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

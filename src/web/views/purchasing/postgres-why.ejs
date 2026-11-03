@@ -1,38 +1,44 @@
-<div class="page-head"><div>
-  <a class="back-link" href="/inventory/<%= sku.item_id %>">Back to <%= sku.product %></a>
-  <h1>Reorder settings · <%= sku.product %></h1>
-  <p class="lede"><%= sku.code %> · Settings saved in this inventory, shown separately for each location.</p>
-</div></div>
+<link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
+<div class="ox ox-buy ox-narrow" data-ox-page="reorder-settings">
+  <header class="ox-head">
+    <div>
+      <a class="ox-back" href="/purchasing"><span aria-hidden="true">←</span> What to order</a>
+      <h1 class="ox-title">Reorder settings · <%= sku.product %></h1>
+      <p class="ox-sub"><%= sku.code %> · <a href="/inventory/<%= sku.item_id %>">Open the product</a></p>
+    </div>
+  </header>
 
-<section class="card"><div class="card-head"><h2>Current stock</h2></div><div class="card-body">
-  <% if(!positions.length){ %><p>No physical stock positions have been recorded for this SKU.</p><% } else { %>
-  <table><thead><tr><th>Location</th><th>On hand</th></tr></thead><tbody>
-    <% positions.forEach(function(row){ %><tr><td><%= row.location_name %></td><td><%= row.on_hand %></td></tr><% }) %>
-  </tbody></table><% } %>
-</div></section>
-<% if(locals.canManage){ %><section class="card"><div class="card-head"><h2>Change reorder settings</h2></div><div class="card-body">
-<form method="post" action="/purchasing/why/<%= sku.id %>/propose" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label class="field"><span>Location</span><select class="select" name="locationId"><option value="">All locations</option><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }); %></select></label>
-<label class="field"><span>Reorder when stock reaches</span><input class="input" name="reorderPoint" type="number" min="0" step="1"></label>
-<label class="field"><span>Order up to this stock level</span><input class="input" name="targetStock" type="number" min="0" step="1"></label>
-<label class="field"><span>Safety stock</span><input class="input" name="safetyStock" type="number" min="0" step="1"></label>
-<p>Blank fields keep their existing setting. Review the exact proposal next; saving a reorder rule does not authorize purchases or email.</p><button class="btn btn--primary" type="submit">Review reorder settings</button></form>
-</div></section><% } %>
+  <% if (locals.canManage) { %>
+  <form method="post" action="/purchasing/why/<%= sku.id %>/propose" class="ox-card ox-card__b ox-formcard">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <h2 class="ox-h2">Change the levels</h2>
+    <label class="ox-field ox-field--half"><span>Location</span><select name="locationId"><option value="">All locations</option><% locations.forEach(function (l) { %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label>
+    <div class="ox-grid3">
+      <label class="ox-field"><span>Reorder when stock reaches</span><input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="ox-field"><span>Order up to</span><input name="targetStock" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="ox-field"><span>Safety stock</span><input name="safetyStock" type="number" min="0" step="1" inputmode="numeric"></label>
+    </div>
+    <p class="ox-fine ox-fine--flush">Leave a box empty to keep the current value.</p>
+    <div class="ox-formcard__f"><button class="ox-btn ox-btn--primary" type="submit">Review reorder settings</button></div>
+  </form>
+  <% } %>
 
-<section class="card"><div class="card-head"><h2>Approved reorder rules</h2></div><div class="card-body">
-  <% if(!policies.length){ %><p>No reorder point or target is set for this SKU.</p><% } else { %>
-  <table><thead><tr><th>Scope</th><th>Reorder at</th><th>Target</th><th>Safety stock</th><th>Source</th></tr></thead><tbody>
-    <% policies.forEach(function(row){ %><tr><td><%= row.location_name %></td>
-      <td><%= row.reorder_point===null?'—':row.reorder_point %></td>
-      <td><%= row.target_stock===null?'—':row.target_stock %></td>
-      <td><%= row.safety_stock===null?'—':row.safety_stock %></td>
-      <td><%= row.source||'Recorded setting' %></td></tr><% }) %>
-  </tbody></table><% } %>
-  <p>These levels identify replenishment needs. They do not authorize an automatic purchase or send an email.</p>
-</div></section>
+  <section class="ox-card ox-list" aria-labelledby="ox-h-rules">
+    <div class="ox-card__h"><h2 id="ox-h-rules">Current levels</h2></div>
+    <% if (!policies.length) { %><p class="ox-empty-line" style="margin:12px 20px 20px">No reorder level is set for this product yet.</p>
+    <% } else { %>
+    <table class="ox-table" data-preserve-grid style="margin-top:12px"><thead><tr><th scope="col">Where</th><th scope="col" class="ox-c">Reorder at</th><th scope="col" class="ox-c">Order up to</th><th scope="col" class="ox-c">Safety</th></tr></thead><tbody>
+      <% policies.forEach(function (row) { %><tr><td><%= row.location_name %></td><td class="ox-c ox-num"><%= row.reorder_point === null ? '—' : row.reorder_point %></td><td class="ox-c ox-num"><%= row.target_stock === null ? '—' : row.target_stock %></td><td class="ox-c ox-num"><%= row.safety_stock === null ? '—' : row.safety_stock %></td></tr><% }) %>
+    </tbody></table>
+    <% } %>
+  </section>
 
-<section class="card"><div class="card-head"><h2>Linked suppliers</h2></div><div class="card-body">
-  <% if(!suppliers.length){ %><p>No active supplier is linked to this SKU.</p><% } else { %>
-  <ul><% suppliers.forEach(function(row){ %><li><%= row.supplier_name %><% if(row.lead_time_days!=null){ %> · <%= row.lead_time_days %>-day lead time<% } %><% if(row.minimum_order_quantity!=null){ %> · minimum <%= row.minimum_order_quantity %><% } %></li><% }) %></ul><% } %>
-  <a class="button button--secondary" href="/ask?from=<%= encodeURIComponent('/inventory/'+sku.item_id) %>&amp;about=<%= encodeURIComponent(sku.product) %>">Ask StockChief to change a rule</a>
-</div></section>
+  <div class="ox-grid2 ox-grid2--cards">
+    <section class="ox-card ox-card__b" aria-labelledby="ox-h-stock"><h2 id="ox-h-stock" class="ox-h2">In stock</h2>
+      <% if (!positions.length) { %><p class="ox-muted ox-small">No stock recorded yet.</p><% } else { %><dl class="ox-kv"><% positions.forEach(function (row) { %><dt><%= row.location_name %></dt><dd class="ox-num"><%= row.on_hand %></dd><% }) %></dl><% } %>
+    </section>
+    <section class="ox-card ox-card__b" aria-labelledby="ox-h-bought"><h2 id="ox-h-bought" class="ox-h2">Bought from</h2>
+      <% if (!suppliers.length) { %><p class="ox-muted ox-small">No supplier linked. <a href="/purchasing/supplier-for/<%= sku.id %>">Link a supplier</a></p><% } else { %><ul class="ox-plain"><% suppliers.forEach(function (row) { %><li><%= row.supplier_name %><span class="ox-muted"><% if (row.lead_time_days != null) { %> · <%= row.lead_time_days %> days<% } %><% if (row.minimum_order_quantity != null) { %> · min <%= row.minimum_order_quantity %><% } %></span></li><% }) %></ul><% } %>
+    </section>
+  </div>
+</div>

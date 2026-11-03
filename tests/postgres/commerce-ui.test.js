@@ -53,72 +53,61 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM sales_orders')).rows[0].count,'0');
 
     await page.goto(`${base}/suppliers`);
-    await page.getByText('Add a supplier',{exact:true}).first().click();
-    const supplierForm=page.locator('details').filter({hasText:'Add a supplier'});
+    await page.getByRole('button',{name:'Add supplier'}).click();
+    const supplierForm=page.locator('#ox-supplier-drawer');
     await supplierForm.getByLabel('Name').fill('Boot Supply');await supplierForm.getByLabel('Email').fill('orders@boots.test');
-    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Create supplier and continue'}).click()]);
+    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Save supplier'}).click()]);
     assert.match(page.url(),/\/suppliers\/sup_/);
     const supplierPageText=await page.locator('main').innerText();
-    assert.match(supplierPageText,/Boot Supply/);assert.match(supplierPageText,/Supplier setup/i);
-    await page.locator('select[name="skuId"]').selectOption(item.skuIds[0]);
+    assert.match(supplierPageText,/Boot Supply/);assert.match(supplierPageText,/Setup/);
+    await page.getByRole('button',{name:'Link a product'}).click();await page.locator('#link-product select[name="skuId"]').selectOption(item.skuIds[0]);
     await page.getByLabel('Supplier code').fill('SUP-BOOT-1');
     await page.getByLabel('How many per pack').fill('2');
     await page.getByLabel('Cost per unit').fill('8.00');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
 
-    assert.equal(await page.getByRole('heading',{name:'Ask or tell StockChief.'}).count(),1);
-    await page.locator('#suppliers > summary').click();
-    await page.getByText('Add a supplier',{exact:true}).click();
-    const quickSupplier=page.locator('#suppliers details').filter({hasText:'Add a supplier'});
-    const supplierInputWidths=await quickSupplier.locator('input[name="name"], input[name="email"]').evaluateAll(
-      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
-    assert.equal(supplierInputWidths.length,2);
-    assert.ok(supplierInputWidths.every((width)=>width>300),`Supplier form controls were ${supplierInputWidths.join(', ')}px wide.`);
-    assert.ok(Math.abs(supplierInputWidths[0]-supplierInputWidths[1])<=2,'Supplier form columns must align.');
-    await page.setViewportSize({width:753,height:900});
-    const compactSupplierWidths=await quickSupplier.locator('input[name="name"], input[name="email"], input[name="currency"]').evaluateAll(
-      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
-    assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
+    // What to order groups shortages by supplier; adding a supplier lives on Suppliers.
+    assert.equal(await page.getByRole('heading',{name:'What to order'}).count(),1);
     await page.setViewportSize({width:1440,height:1000});
     await page.goto(base+'/purchasing/orders/new');await page.getByRole('link').filter({hasText:'Boot Supply'}).click();
-    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');
+    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('[data-ox-po-input]').click();await page.locator('[data-ox-po-option="'+item.skuIds[0]+'"]').click();await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');
     await page.locator('input[name="unitCost['+item.skuIds[0]+']"]').fill('8.00');
-    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft order'}).click()]);
+    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft',exact:true}).click()]);
     const purchaseOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Nothing has been sent to Boot Supply/);
     assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,purchaseOrderId])).rows[0].status,'DRAFT');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve order'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.locator('.ox-head').getByRole('button',{name:'Approve',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/has not been sent yet/);
-    await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
+    await page.locator('.ox-head').getByRole('button',{name:'Mark as sent'}).click();await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record as sent to supplier'}).click()]);
     assert.match(await page.locator('main').innerText(),/on-hand stock did not/i);
     await page.goto(`${base}/purchasing/orders`);
     assert.match(await page.locator('main').innerText(),/Boot Supply/);
     assert.match(await page.locator('main').innerText(),/PO-00001/);
     await page.goto(`${base}/purchasing/receive`);
-    assert.match(await page.locator('main').innerText(),/Book in a delivery/);
+    assert.match(await page.locator('main').innerText(),/waiting for a delivery/);
     await Promise.all([page.waitForURL(new RegExp(`/purchasing/orders/${purchaseOrderId}/receive$`)),
-      page.getByRole('link',{name:'Receive'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Arrived \(pairs\)/);
-    await page.getByLabel('Arrived (pairs)').fill('10');await page.getByLabel('Delivery note or reference').fill('DOCK-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Book it in'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Physical receipt recorded through the inventory ledger/);
+      page.getByRole('link',{name:'Receive PO-00001'}).click()]);
+    await page.locator('[name^="qty_"]').first().fill('10');
+    await page.locator('summary',{hasText:'Packing slip'}).click();await page.getByLabel('Delivery note or reference').fill('DOCK-1');
+    await Promise.all([page.waitForNavigation(),page.locator('.ox-head [data-ox-rcv-label]').click()]);
+    assert.match(await page.locator('main').innerText(),/10 units received/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
 
-    await page.getByText('Record a supplier invoice',{exact:true}).click();
+    await page.locator('.ox-head').getByRole('button',{name:'Add supplier bill'}).click();
     await page.getByLabel('Supplier invoice number').fill('SUP-INV-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record invoice, not receipt'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.locator('#ox-bill').getByRole('button',{name:'Save bill'}).click()]);
     assert.match(await page.locator('main').innerText(),/without receiving stock again/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
-    await page.locator('summary').filter({hasText:'Record payment'}).click();
-    await page.getByLabel('Amount actually paid').fill('30.00');await page.getByLabel('Reference').fill('ACH');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record payment'}).click()]);
-    assert.match(await page.locator('main').innerText(),/payment reduces only the bill/i);
+    await page.locator('.ox-head').getByRole('button',{name:'Record payment'}).click();const payPanel=page.locator('[data-ox-pay-bill][open]');
+    await payPanel.getByLabel('Amount actually paid').fill('30.00');await payPanel.getByLabel('Reference').fill('ACH');
+    await Promise.all([page.waitForNavigation(),payPanel.getByRole('button',{name:'Record payment'}).click()]);
+    assert.match(await page.locator('main').innerText(),/A payment lowers what you owe/i);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
 

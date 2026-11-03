@@ -258,8 +258,11 @@ function createPostgresCommerceRouter(database,options={}){
       href:collection.path+'/'+encodeURIComponent(row.id),
       orderHref:collection.customer?'/orders/'+encodeURIComponent(row.sales_order_id):row.purchase_order_id?'/purchasing/orders/'+encodeURIComponent(row.purchase_order_id):null,
       orderLabel:collection.customer?row.order_number:'Purchase order'}));
-    return res.page('returns/list',{title:collection.title,nav:collection.nav,collection,records,
-      previous:offset?Math.max(0,offset-50):null,next:found.length>50?offset+50:null});
+    const previous=offset?Math.max(0,offset-50):null,next=found.length>50?offset+50:null;
+    if(!collection.customer){const buyView=require('../buy-view');
+      return res.page('buy/returns',{title:collection.title,nav:collection.nav,list:await buyView.supplierReturnsList(database,req.ctx.workspaceId,found.slice(0,50),req.query),
+        previous,next,shortDate:buyView.shortDay,canStart:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN),ownSectionTabs:true,suppressBack:true,screenGuide:null});}
+    return res.page('returns/list',{title:collection.title,nav:collection.nav,collection,records,previous,next});
   }));
 
   router.get('/suppliers',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
@@ -274,11 +277,15 @@ function createPostgresCommerceRouter(database,options={}){
     const prefill=['name','email','phone','contactName'].some((field)=>trimOrNull(req.query[field]))
       ?{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',
         contactName:trimOrNull(req.query.contactName)||''}:null;
-    return res.page('purchasing/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,prefill,
-      permissions:purchasingPermissions(req)});
+    const list=await require('../buy-view').suppliersList(database,req.ctx.workspaceId,suppliers,req.query);
+    return res.page('buy/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,list,prefill,
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }));
   router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
-    try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);return res.redirect(303,`/suppliers/${supplier.id}`);}
+    try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);
+      // Added from a new purchase order: go straight back to it with the supplier chosen.
+      if(req.body.returnTo==='/purchasing/orders/new')return res.redirect(303,`/purchasing/orders/new?supplier=${encodeURIComponent(supplier.id)}`);
+      return res.redirect(303,`/suppliers/${supplier.id}`);}
     catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).page('purchasing/supplier-new',{title:'Add supplier',nav:'purchasing',prefill:req.body,formError:error.message,formOrigin:'/suppliers/new'});}
   }));
 
@@ -325,10 +332,13 @@ function createPostgresCommerceRouter(database,options={}){
       minimumOrderQuantity:row.minimum_order_quantity===null?null:Number(row.minimum_order_quantity),
       orderMultiple:row.order_multiple===null?null:Number(row.order_multiple),isPreferred:Boolean(Number(row.is_preferred)),
       isActive:Boolean(Number(row.is_active))}));
-    return res.page('purchasing/supplier',{title:supplier.name,nav:'purchasing',supplier,items,
+    const buyView=require('../buy-view');
+    const view=await buyView.supplierView(database,req.ctx.workspaceId,supplier,orderRows,purchasingPermissions(req),dateToday(req));
+    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
+      ownSectionTabs:true,suppressBack:true,screenGuide:null,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
-      codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
+      codeMappings:[],catalogue:catalogueRows.rows.filter(s=>!buyView.demoHidden(req.workspace?.name)(s.item_name)).map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
       permissions:purchasingPermissions(req)});
   }));
 
@@ -446,36 +456,72 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const result=await presenters.purchasing(database,req.ctx.workspaceId);
     const reorderOverview=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,req.query);
-    return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,reorderOverview,postgresQuickEntry:true,
-      permissions:{create:permissions.can(req.user,permissions.CREATE_PO),
-        receive:permissions.can(req.user,permissions.RECEIVE_PO)}});
+    const reorder=await require('../buy-view').reorderView(database,req.ctx.workspaceId,reorderOverview);
+    return res.page('buy/reorder',{title:'What to order',nav:'purchasing',room:true,reorder,reorderOverview,draftKey:newId('reorder-drafts'),
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
+  }));
+
+  /*
+   * Draft purchase orders straight from What to order: one per chosen supplier,
+   * through the same createPurchaseOrder the New purchase order form uses, with
+   * the same cost fallback. Drafts only — approving and sending stay separate.
+   */
+  router.post('/purchasing/reorder/drafts',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
+    const chosen=trimOrNull(req.body.only)?[trimOrNull(req.body.only)]:[].concat(req.body.group||[]).map(String);
+    const lines=req.body.line&&typeof req.body.line==='object'?req.body.line:{},on=req.body.on&&typeof req.body.on==='object'?req.body.on:{};
+    if(!chosen.length)throw new ValidationError('Choose at least one supplier to order from.');
+    const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate;
+    const created=[];
+    for(const supplierId of chosen){
+      const wanted=Object.entries(lines[supplierId]||{}).filter(([skuId,q])=>on[supplierId]?.[skuId]==='1'&&Number(q)>0);
+      if(!wanted.length)continue;
+      const supplier=(await database.query('SELECT id,name FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,supplierId])).rows[0];
+      if(!supplier)throw new ValidationError('Choose a supplier from this inventory.');
+      const linked=(await database.query('SELECT sku_id,last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND is_active=1',[req.ctx.workspaceId,supplierId])).rows;
+      const destinationLocationId=trimOrNull(req.body.deliver?.[supplierId]);
+      const orderLines=wanted.map(([skuId,quantity])=>{const link=linked.find(l=>l.sku_id===skuId);
+        if(!link)throw new ValidationError('Choose products linked to this supplier.');
+        return {skuId,quantityPurchaseUnits:quantity,unitCost:link.last_unit_cost==null?undefined:link.last_unit_cost,destinationLocationId};});
+      const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId,orderDate:today,expectedDate:null,destinationLocationId,
+        idempotencyKey:`${key(req,'reorder-drafts')}:${supplierId}`,lines:orderLines});
+      created.push({id:result.purchaseOrderId,name:supplier.name});
+    }
+    if(!created.length)throw new ValidationError('Enter an amount to order for at least one item.');
+    if(created.length===1){req.flash('success',`Draft saved. Nothing was sent to ${created[0].name}.`);return res.redirect(303,`/purchasing/orders/${created[0].id}`);}
+    req.flash('success',`${created.length} drafts saved. Nothing was sent to ${created.map(c=>c.name).join(' or ')}.`);
+    return res.redirect(303,'/purchasing/orders?status=approve');
   }));
 
   router.get(['/purchasing/supplier-for/:skuId','/suppliers/for/:skuId'],requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
     const sku=(await database.query('SELECT s.id,s.item_id,s.code,s.variant_label,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1',[req.ctx.workspaceId,req.params.skuId])).rows[0];if(!sku)throw new NotFoundError('Choose an active variant in this inventory.');
     const supplierQuery=String(req.query.q||'').trim().slice(0,120),suppliers=(await database.query("SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY lower(name),id LIMIT 50",[req.ctx.workspaceId,supplierQuery])).rows;
-    return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers,supplierQuery});
+    const hiddenSupplier=require('../buy-view').demoHidden(req.workspace?.name);
+    return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers:suppliers.filter(x=>!hiddenSupplier(x.name)),supplierQuery});
   }));
   router.post('/purchasing/supplier-for/:skuId',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
-    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true});req.flash('success','Supplier linked to this variant.');return res.redirect(303,'/purchasing');
+    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true,
+      ...(trimOrNull(req.body.supplierSku)?{supplierSku:req.body.supplierSku}:{}),...(String(req.body.minimumOrderQuantity||'').trim()?{minimumOrderQuantity:req.body.minimumOrderQuantity}:{})});req.flash('success','Supplier linked to this variant.');return res.redirect(303,'/purchasing');
   }));
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const orders=(await commerce.purchaseOrders(database,req.ctx.workspaceId,{q:req.query.q})).map(purchaseOrderForView);
-    return res.page('purchasing/orders',{title:'Purchases',nav:'purchasing',room:true,orders:orders.slice(0,200),
-      q:String(req.query.q||'').slice(0,120),truncated:orders.length>200,view:['late','waiting','open','done'].includes(req.query.view)?req.query.view:'all',
-      status:null,statuses:['DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED','CANCELLED'],
-      permissions:purchasingPermissions(req)});
+    const can=purchasingPermissions(req);
+    const list=await require('../buy-view').purchaseOrdersList(database,req.ctx.workspaceId,
+      await commerce.purchaseOrders(database,req.ctx.workspaceId),req.query,can,dateToday(req));
+    const lowCount=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,{})
+      .then((found)=>found.rows.length).catch(()=>0);
+    return res.page('buy/orders',{title:'Purchase orders',nav:'purchasing',room:true,list,lowCount,suppressBack:true,
+      ownSectionTabs:true,screenGuide:null,permissions:can});
   }));
   router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),asyncRoute(async(req,res)=>{
     const supplierName=trimOrNull(req.query.supplier);const all=(await commerce.purchaseOrders(database,req.ctx.workspaceId))
       .filter((row)=>['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(row.status)&&Number(row.units_outstanding)>0)
       .map((row)=>({...row,outstanding_units:Number(row.units_outstanding)}));
     const matched=supplierName?all.filter((row)=>row.supplier_name.toLowerCase().includes(supplierName.toLowerCase())):all;
-    return res.page('purchasing/receive-pick',{title:'Book in a delivery',nav:'purchasing',orders:matched.length?matched:all,
-      supplierName,noMatch:Boolean(supplierName)&&matched.length===0,permissions:purchasingPermissions(req),screenGuide:null});
+    const buyView=require('../buy-view');
+    return res.page('buy/receive-list',{title:'Receive',nav:'purchasing',orders:matched.length?matched:all,
+      supplierName,noMatch:Boolean(supplierName)&&matched.length===0,permissions:purchasingPermissions(req),screenGuide:null,
+      today:dateToday(req),shortDate:buyView.shortDay,initials:buyView.initials,ownSectionTabs:true,suppressBack:true});
   }));
   router.get('/purchasing/setup',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const [rows,supplierRows]=await Promise.all([planning.position(database,req.ctx.workspaceId,{afterSkuId:req.query.after||null,limitSkus:250}),commerce.suppliers(database,req.ctx.workspaceId)]);
@@ -562,6 +608,7 @@ function createPostgresCommerceRouter(database,options={}){
     const [detail,locations]=await Promise.all([commerce.purchaseOrder(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId)]);
     const order={...detail.order,id:detail.order.id,poNumber:detail.order.po_number,supplierName:detail.order.supplier_name,
+      orderedUnits:detail.lines.reduce((sum,line)=>sum+Number(line.quantity_units),0),
       outstandingUnits:detail.lines.reduce((sum,line)=>sum+Math.max(0,Number(line.quantity_units)-Number(line.quantity_received_units)),0)};
     const lines=detail.lines.filter((line)=>Number(line.quantity_received_units)<Number(line.quantity_units)).map((line)=>({
       id:line.id,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),skuCode:line.code,
@@ -570,9 +617,11 @@ function createPostgresCommerceRouter(database,options={}){
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
-    return res.page('purchasing/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
+    const hiddenPlace=require('../buy-view').demoHidden(req.workspace?.name);
+    const pickLocations=locations.filter(l=>lines.some(line=>line.destinationLocationId===l.id)||!hiddenPlace(l.name));
+    return res.page('buy/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations:pickLocations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
-      permissions:purchasingPermissions(req),screenGuide:null});
+      permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
   }));
   async function purchaseEntry(req,res,{submitted=null,errors=[],status=200}={}){
     const supplierId=trimOrNull(submitted?.supplierId||req.query.supplier),supplierQuery=String(req.query.q||'').trim().slice(0,200),supplierPage=Math.max(1,Math.min(1000000,Number.parseInt(req.query.page,10)||1));
@@ -590,7 +639,11 @@ function createPostgresCommerceRouter(database,options={}){
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
     const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
-    return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
+    const buy=await require('../buy-view').purchaseEntryExtras(database,req.ctx.workspaceId,supplierId,supplierItems,supplierRows);
+    const hidden=require('../buy-view').demoHidden(req.workspace?.name);buy.suppliers=buy.suppliers.filter(s=>s.id===supplierId||!hidden(s.name));
+    const entryLocations=(await commerce.locations(database,req.ctx.workspaceId)).filter(l=>l.id===submitted?.destinationLocationId||!hidden(l.name));
+    return res.status(status).page('buy/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems:buy.items,buy:{...buy,leadDays},locations:entryLocations,orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today,
+      permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }
   router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute((req,res)=>purchaseEntry(req,res)));
 
@@ -608,7 +661,8 @@ function createPostgresCommerceRouter(database,options={}){
       for(const line of lines){if(line.unitCost==null||String(line.unitCost).trim()===''){const supplier=(await database.query('SELECT currency FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0],linked=(await database.query('SELECT last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId,line.skuId])).rows[0];if(linked?.last_unit_cost!=null)line.unitCost=linked.last_unit_cost;else{const fallback=await require('../../pricing/postgres-service').purchaseCost(database,req.ctx.workspaceId,line.skuId);if(fallback?.currency===supplier?.currency)line.unitCost=require('../../domain/currency').fromMinor(fallback.amount_minor,fallback.currency);}}}
       if(lines.some(l=>l.unitCost!==undefined&&Number(l.unitCost)===0)&&req.body.confirmZeroCost!=='1')return purchaseEntry(req,res,{submitted:req.body,errors:['One or more selected lines have a $0 unit cost. Confirm that these are free before saving.'],status:400});
       const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,orderDate:req.body.orderDate||require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,expectedDate:req.body.expectedDateAuto==='1'?null:trimOrNull(req.body.expectedDate),destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||undefined,notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
-      req.flash('success',result.poNumber+' was prepared. Nothing was sent to the supplier.');return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
+      const supplierName=(await database.query('SELECT name FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0]?.name||'the supplier';
+      req.flash('success',`Draft saved. Nothing was sent to ${supplierName}.`);return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
     }catch(e){if(!(e instanceof ValidationError)||!req.body.quantity||typeof req.body.quantity!=='object')throw e;return purchaseEntry(req,res,{submitted:req.body,errors:[e.message],status:400});}
   }));
 
@@ -617,12 +671,15 @@ function createPostgresCommerceRouter(database,options={}){
       purchaseOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listSupplierReturns(database,req.ctx.workspaceId,req.params.id),
     ]);
-    return res.page('purchasing/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
+    const buyView=require('../buy-view');
+    const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+      returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
+    const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
+    return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
-      charges:page.charges,documentTotalMinor:null,locations:await commerce.locations(database,req.ctx.workspaceId),
-      permissions:purchasingPermissions(req),expectedInFuture:Boolean(page.order.expectedDate&&page.order.expectedDate>dateToday(req)),
-      communications:page.communications,supplierDocuments:page.supplierDocuments,supplierResponsePlans:[],
-      supplierBills:page.supplierBills,billSummary:page.billSummary,landedCostDocuments:[],supplierReturns,
+      charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
+      permissions:can,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));
 
@@ -687,17 +744,25 @@ function createPostgresCommerceRouter(database,options={}){
       return res.redirect(303,`/supplier-returns/${result.supplierReturnId}`);
     }));
 
+  // + New return: pick the purchase order, then that order's own return panel opens.
+  router.get('/supplier-returns/start',requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
+    const po=(await database.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,String(req.query.po||'')])).rows[0];
+    if(!po){if(req.query.po)req.flash('error','Choose a purchase order from this inventory.');return res.redirect(303,'/supplier-returns');}
+    return res.redirect(303,`/purchasing/orders/${encodeURIComponent(po.id)}?return=1`);
+  }));
+
   router.get('/supplier-returns/:id',requirePermission(permissions.VIEW_PURCHASING,'see supplier returns'),
     asyncRoute(async(req,res)=>{
       const supplierReturn=await returns.getSupplierReturn(database,req.ctx.workspaceId,req.params.id);
-      return res.page('purchasing/postgres-supplier-return',{title:supplierReturn.return_number,nav:'purchasing',
-        supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step')});
+      const buyView=require('../buy-view');
+      return res.page('buy/return',{title:supplierReturn.return_number,nav:'purchasing',supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step'),
+        badge:buyView.returnBadge(supplierReturn.status),steps:buyView.supplierReturnSteps(supplierReturn),shortDate:buyView.shortDay,ownSectionTabs:true,suppressBack:true,screenGuide:null});
     }));
 
   router.post('/supplier-returns/:id/authorize',
     requirePermission(permissions.AUTHORIZE_SUPPLIER_RETURN,'authorize supplier returns'),asyncRoute(async(req,res)=>{
       await returns.authorizeSupplierReturn(database,req.ctx,req.params.id,{idempotencyKey:key(req,'supplier-return-authorize')});
-      req.flash('success','Supplier return authorized. Nothing has left inventory yet.');
+      req.flash('success','Marked as approved by the supplier. Nothing has left stock yet.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 
@@ -705,7 +770,7 @@ function createPostgresCommerceRouter(database,options={}){
     requirePermission(permissions.SHIP_SUPPLIER_RETURN,'ship supplier returns'),asyncRoute(async(req,res)=>{
       await returns.shipSupplierReturn(database,req.ctx,req.params.id,{shippedAt:req.body.shippedAt||nowIso(),
         idempotencyKey:key(req,'supplier-return-ship')});
-      req.flash('success','Supplier return shipped. Physical stock and inventory value left together; the supplier credit is still outstanding.');
+      req.flash('success','Shipped back. The goods left stock; the supplier credit is still to come.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 
@@ -716,8 +781,8 @@ function createPostgresCommerceRouter(database,options={}){
         amountMinor:minor(req.body.amount,'Supplier credit',record.currency||await entryCurrency(req)),creditNumber:trimOrNull(req.body.creditNumber),
         creditDate:req.body.creditDate||dateToday(req),idempotencyKey:key(req,'supplier-return-reconcile')});
       req.flash(result.status==='CREDIT_MISMATCH'?'warn':'success',result.status==='CREDIT_MISMATCH'
-        ?'Supplier credit was recorded, but it differs from the expected amount and remains an exception.'
-        :'Supplier credit reconciled to the open bill. Inventory did not move again.');
+        ?'Credit recorded, but it differs from the expected amount. The difference stays open.'
+        :'Credit recorded against the bill. Stock did not change again.');
       return res.redirect(303,`/supplier-returns/${req.params.id}`);
     }));
 
@@ -742,10 +807,24 @@ function createPostgresCommerceRouter(database,options={}){
         serials:String(req.body[`serials_${line.id}`]||'').split(/[\n,]+/).map((value)=>value.trim()).filter(Boolean)}))
         .filter((line)=>Number(line.quantity)>0);
     if(!lines.length)throw new ValidationError('Say how much of the order physically arrived.');
-    await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'po-receive'),
+    const receiptKey=key(req,'po-receive');
+    await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:receiptKey,
       reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),
       overReceiptApproved:req.body.overReceiptApproved==='1'||req.body.approveOverReceipt==='1',lines});
-    req.flash('success','Physical receipt recorded through the inventory ledger.');
+    // Units marked damaged arrived and are written off at once through the
+    // stock-removal path's own "damaged" reason, so they never count as
+    // sellable. Batch and serial lines are always received as good.
+    let damaged=0;
+    for(const line of lines){const source=detail.lines.find((candidate)=>candidate.id===line.lineId);
+      if(req.body[`condition_${line.lineId}`]!=='damaged'||!source||source.secondary_unit_label||['lot','serial'].includes(source.tracking_mode))continue;
+      await require('../../accounting/postgres-stock-removal').issue(database,req.ctx,{skuId:source.sku_id,locationId:line.locationId,
+        quantity:line.quantity,reasonCode:'damaged',notes:`Arrived damaged on ${detail.order.po_number}`,reference:detail.order.po_number,
+        idempotencyKey:`${receiptKey}:damaged:${line.lineId}`});
+      damaged+=Number(line.quantity);}
+    const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
+    const places=[...new Set(lines.map((line)=>line.locationId))];
+    const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
+    req.flash('success',`${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 

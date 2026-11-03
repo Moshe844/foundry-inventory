@@ -42,7 +42,7 @@
    * stay where the person was working.
    */
   function toasts() {
-    if (!ORDER_PAGE.test(window.location.pathname)) return;
+    if (!ORDER_PAGE.test(window.location.pathname) && !$('.ox-buy')) return;
     $$('[data-flash-stack] .flash').forEach(function (flash) {
       flash.classList.add('ox-toast');
       var close = document.createElement('button');
@@ -206,7 +206,8 @@
     var pay = (window.location.search.match(/[?&]pay=(cash|card|transfer|cheque)/) || [])[1];
     if (pay) openPay(pay);
     var page = $('[data-ox-page]');
-    if (page && page.getAttribute('data-ox-page') === 'orders') ordersList();
+    // Every list page in the kit: rows open their record, the search box searches as you type.
+    if (page && ['orders', 'purchase-orders', 'suppliers', 'supplier-returns'].indexOf(page.getAttribute('data-ox-page')) >= 0) ordersList();
     afterCreate();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
