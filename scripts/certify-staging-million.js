@@ -23,13 +23,15 @@ async function execute(kind,count){const ctx=state.ctx,key=kind+':'+count;state.
  const health=await (await fetch('https://stockchief-staging-web.onrender.com/healthz')).json();if(!health.ok||health.releaseRef!==arg('release'))throw Error('Exact healthy staging release required.');
  if(!state.ctx){
   if(mode!=='prepare')throw Error('Prepare this synthetic run first.');state.beforeBytes=await capacity();
-  const auth=require('../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'Synthetic scale owner',businessName:'Synthetic ERP release million '+run,email:'stockchief-million-'+run+'@example.test',password:crypto.randomBytes(32).toString('base64url')+'!Aa7'});
+  const owner=await require('./lib/staging-million-fixture').provision(db,run);
   state.ctx={workspaceId:owner.workspaceId,actorId:owner.userId};state.accountId=owner.accountId;state.releaseRef=health.releaseRef;save();
-  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,current_period_start,current_period_end,source) VALUES($1,$2,'pro','approved-2026-11-02:pro','COMP','MONTHLY',now(),now()+interval '1 month','ISOLATED_STAGING_QUALIFICATION')",['million-sub-'+run,owner.accountId]);
-  await require('../src/accounting/postgres-ledger').configure(db,state.ctx,{currency:'USD',startDate:'2026-01-01'});
-  for(const name of warehouses)await require('../src/domain/postgres-location-service').createLocation(db,state.ctx,{name,kind:'warehouse'});
  }
  const owner=(await db.query('SELECT w.name,a.email FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1 AND a.id=$2',[state.ctx.workspaceId,state.accountId])).rows[0];if(owner?.name!=='Synthetic ERP release million '+run||owner.email!=='stockchief-million-'+run+'@example.test')throw Error('Synthetic identity guard');
+ if(!state.configured){
+  await require('../src/accounting/postgres-ledger').configure(db,state.ctx,{currency:'USD',startDate:'2026-01-01'});
+  for(const name of warehouses)if(!(await db.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND name=$2 AND kind=\'warehouse\'',[state.ctx.workspaceId,name])).rows.length)await require('../src/domain/postgres-location-service').createLocation(db,state.ctx,{name,kind:'warehouse'});
+  state.configured=true;save();
+ }
  if(mode==='prepare'){await execute('catalogue',50000);const measured=(await db.query("SELECT item_id FROM skus WHERE workspace_id=$1 AND code='MILLION-4999-9'",[state.ctx.workspaceId])).rows[0];await db.transaction(c=>require('../src/domain/stock-quantity').save(c,state.ctx,measured.item_id,{unitLabel:'m',quantityPrecision:3,quantityIncrement:'0.001'}));await capacity();const benchmark=await execute('stock150k',150000);state.stock150kPassed=benchmark.elapsedMs<300000;}
  if(mode==='million'){if(!state.imports?.['stock150k:150000']?.verified)throw Error('Prepare and verify the synthetic opening stock first.');await capacity();
   for(const bin of require('./lib/staging-million-source').bins){const found=(await db.query('SELECT id FROM locations WHERE workspace_id=$1 AND name=$2',[state.ctx.workspaceId,bin.name])).rows[0];if(!found){const parent=(await db.query('SELECT id FROM locations WHERE workspace_id=$1 AND name=$2 AND parent_location_id IS NULL',[state.ctx.workspaceId,bin.warehouse])).rows[0];if(!parent)throw Error('The synthetic warehouse is missing.');await require('../src/domain/postgres-location-service').createLocation(db,state.ctx,{name:bin.name,kind:'bin',parentLocationId:parent.id});}}
@@ -38,4 +40,4 @@ async function execute(kind,count){const ctx=state.ctx,key=kind+':'+count;state.
  if(state.imports?.['stockMillion:1000000']?.verified){assert.equal(actual.skus,50000);assert.equal(actual.products,5000);assert.equal(actual.suppliers,200);assert.equal(actual.positions,1150000);assert.equal(Number(actual.units),2650000.25);assert.equal(Number(actual.value_minor),530000050);const pnl=await require('../src/accounting/postgres-reports').profitAndLoss(db,state.ctx.workspaceId,{});assert.equal(pnl.netIncomeMinor,0);state.millionPassed=true;}
  state.actual=actual;state.afterBytes=await capacity(44000000000);save();console.log(JSON.stringify({mode,run,releaseRef:state.releaseRef,workspaceId:state.ctx.workspaceId,stock150kPassed:state.stock150kPassed,millionPassed:state.millionPassed||false,imports:state.imports,actual,beforeBytes:state.beforeBytes,afterBytes:state.afterBytes,paidCalls:0}));
  if(mode==='prepare'&&!state.stock150kPassed)process.exitCode=1;
- }finally{await db.close();}})().catch(error=>{console.error(error.code||error.message);process.exitCode=1;});
+ }finally{await db.close();}})().catch(error=>{console.error(JSON.stringify({code:error.code||'qualification_failed',message:error.message,mode}));process.exitCode=1;});
