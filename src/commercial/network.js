@@ -59,9 +59,15 @@ async function before(context,url,init,provider){const def=definition(url);if(pr
  if(def.host==='gmail.googleapis.com')await reserveGmailQuota(context.database,gmailQuota(url,init.method));
  if(context.system)return {def,key:newId('system-providerattempt'),funded:true,url,method:init.method||'GET'};
  const key=newId('providerattempt');
- if(!context.funded)await entitlements.reserveUsage(context.database,context.scope,{meter:'connected_operations',units:1,idempotencyKey:key,
- detail:{operation:'provider_http',provider:def.provider,method:init.method||'GET',requestId:context.requestId}});
- return {def,key,funded:context.funded,url,method:init.method||'GET'};}
+ const method=String(init.method||'GET').toUpperCase();
+ const oauth=def.provider==='google_oauth'||/\/(?:oauth|oauth2)(?:\/|$)/.test(address.pathname);
+ const qualifiedOdooRead=provider==='Odoo ERP'&&/\/(?:search_read|search_count|fields_get|read)$/.test(address.pathname);
+ if(!context.funded&&!['GET','HEAD','OPTIONS'].includes(method)&&!oauth&&!qualifiedOdooRead)
+  throw new ValidationError('An external change requires its registered business operation. No provider request was sent.');
+ // Customer usage belongs to the committed business-object operation, never
+ // to an HTTP page, poll, retry or mirror. Preserve provider attempt/quota
+ // accounting below even when there is no customer-billable operation.
+ return {def,key,funded:true,resourceOnly:true,url,method:init.method||'GET'};}
 async function after(context,attempt,success,detail){
  if(!attempt.billing&&!attempt.funded){if(success)await entitlements.commitUsage(context.database,context.scope,
  {meter:'connected_operations',idempotencyKey:attempt.key});else await entitlements.reverseUsage(context.database,context.scope,

@@ -17,7 +17,7 @@ async function saveRole(db,ctx,input){return db.transaction(async c=>{
  if(input.id&&!prior)throw new NotFoundError('That role was not found in this inventory.');
  if(prior&&Number(input.revision)!==prior.revision)throw new ValidationError('This role changed. Reload the Team page before saving.');
  if((await c.query('SELECT 1 FROM workspace_custom_roles WHERE workspace_id=$1 AND lower(name)=lower($2) AND id<>$3',[ctx.workspaceId,name,prior?.id||''])).rowCount)throw new ValidationError('A role already uses that name.');
- if(!prior&&Number((await c.query('SELECT count(*) n FROM workspace_custom_roles WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n)>=50)throw new ValidationError('This inventory already has 50 custom roles. Reuse or edit an existing role.');
+ if(!prior){const ent=require('../commercial/entitlements'),state=await ent.assertMeterCapacity(c,await ent.ownerScopeForWorkspace(c,ctx.workspaceId),'custom_roles',1);if(state.hardLimit===null&&state.used>=50)throw new ValidationError('This inventory already has its 50 custom roles. Reuse or edit an existing role.');}
  const id=prior?.id||newId('teamrole');
  if(prior){await c.query('UPDATE workspace_custom_roles SET name=$3,permissions=$4,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,name,encoded]);await c.query("UPDATE users SET permissions=$3,access_revision=access_revision+1 WHERE workspace_id=$1 AND custom_role_id=$2 AND role<>'owner'",[ctx.workspaceId,id,encoded]);}
  else await c.query('INSERT INTO workspace_custom_roles(id,workspace_id,name,permissions) VALUES($1,$2,$3,$4)',[id,ctx.workspaceId,name,encoded]);

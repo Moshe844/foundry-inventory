@@ -42,6 +42,7 @@ function hydrate(row,now){
 }
 
 const SELECT=`SELECT connector.*,
+  (SELECT (v.configuration->>'syncIntervalSeconds')::integer FROM workspaces w JOIN account_subscriptions s ON s.account_id=w.owner_account_id JOIN commercial_plan_versions v ON v.id=s.plan_version_id AND v.plan_id=s.plan_id WHERE w.id=connector.workspace_id) AS plan_sync_seconds,
   (SELECT COUNT(*) FROM connection_issues issue WHERE issue.workspace_id=connector.workspace_id
     AND issue.connector_id=connector.id AND issue.status='OPEN') AS open_issues,
   (SELECT COUNT(*) FROM connection_mappings mapping WHERE mapping.workspace_id=connector.workspace_id

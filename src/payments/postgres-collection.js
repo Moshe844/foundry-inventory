@@ -137,22 +137,24 @@ async function executeRequestEffect(database,workspaceId,effectId,options={}){
       ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,request.customer_id,effect.provider])).rows[0];
     providerCalled=true;
     const operations=require('../commercial/operations');
-    const externalCustomerId=previous?.external_customer_id||(await operations.run(database,workspaceId,{capability:'payments.customer',
-      key:`${effect.idempotencyKey}:customer`,provider:effect.provider,operation:'customer_create'},()=>provider.createCustomer(ctx,
-      {name:request.customer_name,email:request.customer_email}))).externalCustomerId;
-    // Persist this verified intermediate result before reserving the invoice
-    // operation; exhaustion must not create a second Stripe customer later.
-    await database.query(`UPDATE payment_requests SET external_customer_id=$3 WHERE workspace_id=$1 AND id=$2
-      AND external_customer_id IS NULL`,[workspaceId,request.id,externalCustomerId]);
+    let externalCustomerId=previous?.external_customer_id;
     const created=await operations.run(database,workspaceId,{capability:'payments.customer',key:effect.idempotencyKey,
-      provider:effect.provider,operation:'invoice_create'},()=>provider.createInvoice(ctx,{externalCustomerId,attemptId:request.id,
+      provider:effect.provider,operation:'invoice_create'},async()=>{
+      // The prerequisite customer and hosted invoice form one requested
+      // business action. Reserve once before either provider call.
+      if(!externalCustomerId){externalCustomerId=(await provider.createCustomer(ctx,{name:request.customer_name,email:request.customer_email,idempotencyKey:effect.idempotencyKey+':customer'}))?.externalCustomerId;
+        if(!externalCustomerId)throw Object.assign(new ValidationError('The payment provider did not confirm the customer record.'),{providerOutcomeUncertain:true});}
+      // Preserve verified intermediate identity across reconciliation/retries.
+      await database.query(`UPDATE payment_requests SET external_customer_id=$3 WHERE workspace_id=$1 AND id=$2 AND external_customer_id IS NULL`,[workspaceId,request.id,externalCustomerId]);
+      const result=await provider.createInvoice(ctx,{externalCustomerId,attemptId:request.id,
       amountMinor:Number(request.amount_minor),currency:request.currency,
       description:request.purpose==='DEPOSIT'?`Deposit for ${request.order_number}`:request.order_number,
       reference:request.invoice_number||`${request.order_number}-deposit`,dueDate:request.due_date||null,
-      idempotencyKey:effect.idempotencyKey}));
-    if(!created?.externalInvoiceId||!created?.hostedUrl)throw Object.assign(
+      idempotencyKey:effect.idempotencyKey});
+      if(!result?.externalInvoiceId||!result?.hostedUrl)throw Object.assign(
       new ValidationError('The payment provider did not confirm a hosted payment page. Nothing was sent to the customer.'),
-      {code:'payment_hosted_page_missing',status:422});
+      {code:'payment_hosted_page_missing',status:422,providerOutcomeUncertain:true});
+      return result;});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{
       customerId:externalCustomerId,invoiceId:created.externalInvoiceId},result:{hostedUrl:created.hostedUrl},
     apply:async(client)=>{const at=nowIso();await client.query(`UPDATE payment_requests SET status='OPEN',

@@ -130,7 +130,7 @@ async function capture(database,connection,message){
         payload:{missionId:mission.id,actorId:mission.actor_user_id},priority:15,maxAttempts:5});
     }
     if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,
-      workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
+      workspaceId:connection.workspace_id},{id:newId('usage'),meter:await require('../commercial/usage-categories').incomingMeter(client,{accountId:owner.owner_account_id,workspaceId:connection.workspace_id}),units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
     const nativeReviewGranted=match.kind==='supplier'&&await require('./postgres-document-review').granted(client,connection.workspace_id);
@@ -376,8 +376,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send replies.'),{code:'email_send_unavailable'});
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,provider);
     providerCalled=true;const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
-      key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},()=>provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
-      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id},idempotencyKey:effect.idempotencyKey}));
+      key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},async()=>{const accepted=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
+      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id},idempotencyKey:effect.idempotencyKey});if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{const at=nowIso();
       await client.query(`UPDATE stockchief_runtime.email_reply_outbox SET status='SENT',provider_message_id=$2,

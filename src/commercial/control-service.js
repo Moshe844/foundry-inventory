@@ -179,13 +179,18 @@ async function usageWarnings(database,scope,options={}){
   return warnings;
 }
 
-async function resourceExcess(database,scope,targetPlanId){
-  const rows=(await database.query(`SELECT policy.meter,policy.hard_limit FROM commercial_plan_meters policy
-    JOIN commercial_meter_definitions definition ON definition.meter=policy.meter
-    WHERE policy.plan_id=$1 AND policy.hard_limit IS NOT NULL AND definition.kind='STRUCTURAL'`,
-    [targetPlanId])).rows;const excess={},subscription={...(await entitlements.subscriptionFor(database,scope.accountId)),plan_id:targetPlanId,plan_version_id:null};
-  for(const row of rows){catalog.assertMeterKey(row.meter);const current=await entitlements.meterState(database,scope,row.meter,{subscription});
-    if(current.hardLimit!==null&&current.capacityUsed>current.hardLimit)excess[row.meter]={used:current.capacityUsed,allowed:current.hardLimit,label:current.label};}
+async function resourceExcess(database,scope,targetPlanId,options={}){
+  const version=options.planVersionId?(await database.query('SELECT * FROM commercial_plan_versions WHERE id=$1 AND plan_id=$2',[options.planVersionId,targetPlanId])).rows[0]:await require('./published-plans').active(database,targetPlanId);
+  if(options.planVersionId&&!version)throw new ValidationError('The accepted downgrade terms could not be verified. No plan change was made.');
+  const rows=version?version.meters.filter(m=>m.hard_limit!==null&&catalog.assertMeterKey(m.meter).kind==='STRUCTURAL'):(await database.query(`SELECT policy.meter,policy.hard_limit FROM commercial_plan_meters policy
+    JOIN commercial_meter_definitions definition ON definition.meter=policy.meter WHERE policy.plan_id=$1 AND policy.hard_limit IS NOT NULL AND definition.kind='STRUCTURAL'`,[targetPlanId])).rows;
+  const excess={},subscription={...(await entitlements.subscriptionFor(database,scope.accountId)),plan_id:targetPlanId,plan_version_id:version?.id||null,plan_configuration:version?.configuration||{}};
+  const inventories=(await database.query('SELECT id,name FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL',[scope.accountId])).rows;
+  for(const row of rows){catalog.assertMeterKey(row.meter);const perInventory=['locations','sublocations','custom_roles'].includes(row.meter),scopes=perInventory?inventories.map(w=>({...scope,workspaceId:w.id,inventoryName:w.name})):[scope];
+    for(const checkedScope of scopes){const current=await entitlements.meterState(database,checkedScope,row.meter,{subscription});
+      if(current.hardLimit!==null&&current.capacityUsed>current.hardLimit){const detail={used:current.capacityUsed,allowed:current.hardLimit,label:current.label,...(perInventory?{workspaceId:checkedScope.workspaceId,inventoryName:checkedScope.inventoryName}:{})};
+        if(!excess[row.meter]||current.capacityUsed-current.hardLimit>excess[row.meter].used-excess[row.meter].allowed)excess[row.meter]=detail;}}
+  }
   return excess;
 }
 
@@ -204,9 +209,9 @@ async function snapshotPlanVersion(database,planId,input={}){
         WHERE id=$1`,[prior.id,at]);
       const created=(await client.query(`INSERT INTO commercial_plan_versions
         (id,plan_id,version_number,status,currency,monthly_amount_minor,annual_amount_minor,entitlements,meters,effective_from,
-         approved_by_account_id) VALUES($1,$2,$3,'ACTIVE',$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10) RETURNING *`,
+         approved_by_account_id,configuration) VALUES($1,$2,$3,'ACTIVE',$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11::jsonb) RETURNING *`,
       [newId('planver'),planId,versionNumber,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor,
-        JSON.stringify(entitlements),JSON.stringify(meters),at,input.actorAccountId||null])).rows[0];
+        JSON.stringify(entitlements),JSON.stringify(meters),at,input.actorAccountId||null,JSON.stringify(prior?.configuration||{})])).rows[0];
       await audit(client,{actorAccountId:input.actorAccountId,subjectType:'plan_version',subjectId:created.id,
         action:'created',beforeState:prior,afterState:created,reason:input.reason,sourceIp:input.sourceIp});
       return created;

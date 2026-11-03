@@ -25,7 +25,9 @@ async function listPlans(database, options = {}) {
   const filters = [options.includeDrafts ? 'status<>\'ARCHIVED\'' : "status='ACTIVE'"];
   if (!options.includePrivate) filters.push('is_public=1');
   const plans = (await database.query(`SELECT * FROM commercial_plans WHERE ${filters.join(' AND ')} ORDER BY display_order,id`)).rows.map(normalizePlan);
+  const versions=(await database.query("SELECT DISTINCT ON(plan_id) * FROM commercial_plan_versions WHERE status='ACTIVE' ORDER BY plan_id,version_number DESC")).rows;
   for (const plan of plans) {
+    const version=versions.find(row=>row.plan_id===plan.id);if(version){Object.assign(plan,require('./published-plans').present(plan,version));continue;}
     plan.entitlements = (await database.query(`SELECT capability,enabled,configuration FROM commercial_plan_entitlements
       WHERE plan_id=$1 ORDER BY capability`,[plan.id])).rows;
     plan.meters = (await database.query(`SELECT policy.*,definition.kind,definition.customer_visible,
@@ -39,7 +41,7 @@ async function listPlans(database, options = {}) {
 async function getPlan(database, planId) {
   const plan=normalizePlan((await database.query(`SELECT * FROM commercial_plans WHERE id=$1 AND status='ACTIVE'`,[planId])).rows[0]);
   if(!plan)throw new NotFoundError('That plan is not available.');
-  return plan;
+  return require('./published-plans').present(plan,await require('./published-plans').active(database,planId));
 }
 
 async function getSelfServicePlan(database,planId,options={}){
@@ -48,7 +50,7 @@ async function getSelfServicePlan(database,planId,options={}){
   if(!plan)throw new ValidationError('That plan is not available for self-service signup. Email support@stockchiefhq.com about a Custom plan.');
   if(options.requireApproved!==false&&plan.packaging_status!=='APPROVED'&&!release.stagingTestCheckout())throw new ValidationError(
     'Checkout is not open for this plan until its feature and pricing review is approved.');
-  return plan;
+  return require('./published-plans').present(plan,await require('./published-plans').active(database,planId));
 }
 
 async function validatePromotion(database,codeInput,planId,options={}){
@@ -75,17 +77,20 @@ async function beginCheckout(database, account, input, options = {}) {
       throw new ValidationError('The billing price differs from the selected plan. No checkout was created.');
   }else if(!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('The billing price could not be verified. No payment was taken.');
   const current=await entitlements.subscriptionFor(database,account.id);
+  if(await require('../domain/postgres-account-access').disabled(database,account.id))throw new ValidationError('This account is disabled. Contact support before starting a subscription; no payment was taken.');
+  if(current?.stripe_subscription_id&&entitlements.operationalAccess(current).canOperate)throw new ValidationError('You already have an active subscription. Use Change plan to update it; no second subscription was created.');
+  if(Object.keys(await control.resourceExcess(database,{accountId:account.id,workspaceId:null},plan.id)).length)throw new ValidationError('Your saved inventory exceeds this plan. Choose a plan that covers your current resources; no payment was taken.');
   if(current?.refunded_at&&(await database.query("SELECT 1 FROM commercial_subscription_refund_retention WHERE account_id=$1 AND status<>'PURGED' LIMIT 1",[account.id])).rows.length)throw new ValidationError('Your refunded inventories are read-only during their retention period. Export your records before the displayed deletion date. A new subscription can start after deletion finishes; no card has been charged.');
   const attemptId=newId('checkout');const promoCode=String(input.promoCode||'').trim().toUpperCase();let promotion=null;
   await database.transaction(async(client)=>{
     if(promoCode){promotion=await validatePromotion(client,promoCode,plan.id,{lock:true});
       await client.query('UPDATE commercial_promo_codes SET redeemed_count=redeemed_count+1 WHERE code=$1',[promoCode]);}
     await client.query(`INSERT INTO commercial_checkout_attempts
-      (id,account_id,plan_id,billing_interval,status,return_path,promo_code,promo_status)
-      VALUES($1,$2,$3,$4,'CREATED',$5,$6,$7)`,[attemptId,account.id,plan.id,interval,input.returnPath||'/onboarding',
-      promotion?.code||null,promotion?'RESERVED':null]);
+      (id,account_id,plan_id,billing_interval,status,return_path,promo_code,promo_status,plan_version_id)
+      VALUES($1,$2,$3,$4,'CREATED',$5,$6,$7,$8)`,[attemptId,account.id,plan.id,interval,input.returnPath||'/onboarding',
+      promotion?.code||null,promotion?'RESERVED':null,plan.active_plan_version_id||null]);
   },{isolation:'SERIALIZABLE'});
-  let session;try{session=await (options.provider||stripe).createCheckout({attemptId,accountId:account.id,planId:plan.id,
+  let session;try{session=await (options.provider||stripe).createCheckout({attemptId,accountId:account.id,planId:plan.id,planVersionId:plan.active_plan_version_id,
       email:account.email,customerId:current?.stripe_customer_id || null,priceId,
       trialDays:0,
       promotionCodeId:promotion?.stripe_promotion_code_id||null,
@@ -147,11 +152,11 @@ async function requestSubscriptionChange(database,accountId,input,options={}){
     'Current usage exceeds the lower plan. Reduce the listed resources before scheduling this downgrade.');
   const requestKey=input.idempotencyKey||`${quote.current.stripe_subscription_id}:${quote.current.current_period_end}:${quote.target.id}:${quote.interval}`;
   const changeId=newId('subchange');const inserted=await database.query(`INSERT INTO commercial_subscription_changes
-    (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,resource_excess,requested_by_account_id,request_key,request_quote)
-    VALUES($1,$2,$3,$4,$5,'PENDING',$6,$7::jsonb,$8,$9,$10::jsonb)
+    (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,resource_excess,requested_by_account_id,request_key,request_quote,target_plan_version_id)
+    VALUES($1,$2,$3,$4,$5,'PENDING',$6,$7::jsonb,$8,$9,$10::jsonb,$11)
     ON CONFLICT(account_id,request_key) WHERE request_key IS NOT NULL DO NOTHING RETURNING id`,
     [changeId,accountId,quote.current.id,quote.current.plan_id,quote.target.id,quote.effectiveAt,JSON.stringify(quote.excess),
-      input.requestedByAccountId||accountId,requestKey,JSON.stringify(quote)]);
+      input.requestedByAccountId||accountId,requestKey,JSON.stringify(quote),quote.target.active_plan_version_id||null]);
   if(!inserted.rows.length){const prior=(await database.query(`SELECT * FROM commercial_subscription_changes
     WHERE account_id=$1 AND request_key=$2`,[accountId,requestKey])).rows[0];
     if(prior.to_plan_id!==quote.target.id||prior.request_quote?.interval!==quote.interval)
@@ -236,6 +241,10 @@ async function upsertSubscription(client, data, options={}) {
   const eventPeriodStart=periodStart?new Date(Number(periodStart)*1000):new Date();
   const deferPlan=Boolean(pending?.is_downgrade&&pending.effective_at&&eventPeriodStart<new Date(pending.effective_at));
   const planId=deferPlan?existing.plan_id:requestedPlanId;
+  const attemptId=data.metadata?.stockchief_checkout_attempt_id;
+  const accepted=attemptId?(await client.query('SELECT plan_id,plan_version_id FROM commercial_checkout_attempts WHERE id=$1 AND account_id=$2',[attemptId,accountId])).rows[0]:null;
+  if(attemptId&&!accepted)throw new ValidationError('The subscription does not match its saved checkout terms.');
+  const versionId=deferPlan?existing.plan_version_id:pending?.target_plan_version_id||(accepted?.plan_id===planId?accepted.plan_version_id:null)||null;
   const plan=(await client.query('SELECT grace_days FROM commercial_plans WHERE id=$1',[planId])).rows[0];
   if(!plan)return null;
   const status=statusFromStripe(data);const now=new Date();
@@ -244,7 +253,7 @@ async function upsertSubscription(client, data, options={}) {
     (id,account_id,plan_id,plan_version_id,status,billing_interval,stripe_customer_id,stripe_subscription_id,current_period_start,
      current_period_end,trial_ends_at,grace_ends_at,cancel_at_period_end,cancelled_at,source,provider_state,
      last_provider_event_created_at,updated_at)
-    VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1),
+    VALUES($1,$2,$3,COALESCE($16::text,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1)),
       $4,$5,$6,$7,to_timestamp($8),to_timestamp($9),to_timestamp($10),$11,$12,to_timestamp($13),
       'SELF_SERVICE',$14::jsonb,$15::timestamptz,now())
     ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,source=EXCLUDED.source,
@@ -263,7 +272,7 @@ async function upsertSubscription(client, data, options={}) {
     typeof data.customer==='string'?data.customer:data.customer?.id, data.id,
     periodStart || null,periodEnd || null,data.trial_end || null,graceEnds,
     data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status,stripePlanId:requestedPlanId,
-      scheduledPlanId:deferPlan?requestedPlanId:null,scheduleId:typeof data.schedule==='string'?data.schedule:data.schedule?.id||null}),providerCreatedAt]);
+      scheduledPlanId:deferPlan?requestedPlanId:null,scheduleId:typeof data.schedule==='string'?data.schedule:data.schedule?.id||null}),providerCreatedAt,versionId]);
   let saved={...result.rows[0],scheduledChange:deferPlan?pending:null};
   if(pending&&!deferPlan&&existing?.plan_id===saved.plan_id&&saved.plan_id===pending.to_plan_id&&saved.billing_interval===pending.request_quote?.interval){
     await client.query("UPDATE commercial_subscription_changes SET status='APPLIED',provider_reference=COALESCE(provider_reference,$2),updated_at=now() WHERE id=$1",[pending.id,data.id]);

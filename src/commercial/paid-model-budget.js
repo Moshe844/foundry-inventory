@@ -56,7 +56,7 @@ async function createGrantBudget(client,purchase,grant){
  await client.query(`INSERT INTO commercial_model_grant_budgets
   (grant_id,purchase_id,account_id,workspace_id,budget_minor,pack_units,purchase_amount_minor,cost_model_key,source,approved_model_rate_ceiling)
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT(purchase_id) DO NOTHING`,
-  [grant.id,purchase.id,purchase.account_id,purchase.workspace_id,purchase.provider_cost_budget_minor,
+  [grant.id,purchase.id,purchase.account_id,grant.workspace_id,purchase.provider_cost_budget_minor,
    purchase.units,purchase.amount_minor,purchase.cost_model_key,purchase.cost_budget_source,
    JSON.stringify(purchase.approved_model_rate_ceiling)]);
  const saved=(await client.query('SELECT * FROM commercial_model_grant_budgets WHERE purchase_id=$1',[purchase.id])).rows[0];

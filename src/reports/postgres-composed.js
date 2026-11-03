@@ -241,9 +241,9 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false,dateContext
 }
 async function checkEntitlements(database,ctx,config){
   const required=[...new Set(config.metrics.map((metric)=>registry.get(metric.dataset).commercialCapability).filter(Boolean))];
-  if(!required.length)return;
   const entitlements=require('../commercial/entitlements');
   const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+    if((await entitlements.subscriptionFor(database,scope.accountId))?.plan_configuration?.offerId)required.push('reports.advanced');
   for(const capability of required)await entitlements.assertCapability(database,scope,capability,{allowReadOnly:true});
 }
 async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){

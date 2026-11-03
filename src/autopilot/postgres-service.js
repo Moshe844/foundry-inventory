@@ -359,8 +359,9 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
   const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
+  const chargeAutomatic=automatic&&!(await entitlements.subscriptionFor(client,scope.accountId))?.plan_configuration?.offerId;
   if(automatic){await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'automation.transfers':'automation.purchasing');
-    await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
+    if(chargeAutomatic)await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
       detail:{operation:'autopilot_action',workId:item.id}});}
   await revalidate(scoped,ctx.workspaceId,item.recommendedAction);const at=nowIso();
   await client.query(`UPDATE work_items SET execution_status='EXECUTING',approved_by_user_id=COALESCE(approved_by_user_id,$3),
@@ -392,7 +393,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
         VALUES($1,$2,$3,'outcome_in_progress',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,
         JSON.stringify({effectId:result.effectId,purchaseOrderId:result.purchaseOrderId}),ctx.actorId,nowIso()]);
-      if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+      if(automatic){if(chargeAutomatic)await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
         await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
           unit:'operation',quantity:1,idempotencyKey:usageKey});}
       return getWork(scoped,ctx.workspaceId,item.id);
@@ -402,7 +403,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     [ctx.workspaceId,item.id,JSON.stringify(result.movementIds||[]),result.purchaseOrderId||null,JSON.stringify(result),nowIso()]);
     await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
       VALUES($1,$2,$3,'completed',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,JSON.stringify(result),ctx.actorId,nowIso()]);
-    if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+    if(automatic){if(chargeAutomatic)await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
       await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
         unit:'operation',quantity:1,idempotencyKey:usageKey});}
     const commercialScope=scope;

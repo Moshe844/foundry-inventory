@@ -147,6 +147,7 @@ async function assertWritableCapabilities(database,ctx,spec,actor){
   const config=normalize(spec,actor);
   const sourceKeys=config.dataset==='composed'?config.metrics.map(metric=>metric.dataset):[config.dataset];
   const required=[...new Set(sourceKeys.map(key=>registry.get(key)?.commercialCapability).filter(Boolean))];
+  if(config.dataset==='composed'){const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);if((await entitlements.subscriptionFor(database,scope.accountId))?.plan_configuration?.offerId)required.push('reports.advanced');}
   if(required.length){
     const entitlements=require('../commercial/entitlements');
     const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
@@ -229,7 +230,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
   return {sql,values};
 }
 async function run(database,ctx,actor,spec,options={}){
-  if(spec?.dataset==='composed')return composed.run(database,ctx,actor,spec,options);
+  if(spec?.dataset==='composed'){await assertWritableCapabilities(database,ctx,spec,actor);return composed.run(database,ctx,actor,spec,options);}
   const config=normalize(spec,actor);const limit=Math.min(20001,Math.max(2,Number(options.limit)||201));
   const dataset=registry.get(config.dataset);
   if(dataset.commercialCapability){const entitlements=require('../commercial/entitlements');
@@ -346,6 +347,7 @@ async function save(database,ctx,actor,spec,{id=null,schedule=null,expectedRevis
  const work=async client=>{const config=await assertWritableCapabilities(client,ctx,spec,actor),prior=id?(await client.query('SELECT * FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0]:null;if(id&&!prior)invalid('That report template is not yours to edit.');if(prior&&expectedRevision!==null&&Number(prior.revision)!==Number(expectedRevision))invalid('This saved report changed. Review its current settings first.');
  const local=require('./local-schedule'),defaultZone=(await require('../lib/business-time').forWorkspace(client,ctx.workspaceId)).timeZone,delivery=schedule|| (prior?local.fromTemplate(prior):{}),normalized=local.normalize(delivery,defaultZone),recipient=safeText(delivery.recipient||prior?.delivery_email||actor.email,200);if(!recipient||!actor.email||recipient.toLowerCase()!==actor.email.toLowerCase())invalid('Reports can only be delivered to your account email.');
  const paused=delivery.paused??prior?.schedule_paused??false,next=paused?null:local.next(normalized),reportId=id||newId('report');
+ if(!prior){const entitlements=require('../commercial/entitlements');await entitlements.assertMeterCapacity(client,await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),'saved_reports',1);}
  if(normalized.frequency!=='none'&&(!prior||prior.schedule_frequency==='none')){
   const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertMeterCapacity(client,scope,'scheduled_reports',1);

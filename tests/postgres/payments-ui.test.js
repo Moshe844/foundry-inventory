@@ -131,7 +131,7 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       {owner:'payment-worker',leaseMs:30000});
     assert.equal(completed.status,'COMPLETED');assert.equal(providerCalls,3);
     assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
-      {owner:'payment-worker',leaseMs:30000}),null);assert.equal(providerCalls,3);
+      {owner:'payment-worker',leaseMs:30000,kinds:['provider.effect']}),null);assert.equal(providerCalls,3);
     await page.reload();
     assert.match(await page.locator('main').innerText(),/Ready for customer/);
     assert.equal(await page.getByRole('link',{name:'Open secure page'}).getAttribute('href'),

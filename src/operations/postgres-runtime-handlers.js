@@ -39,6 +39,8 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   if(!provider?.poll)throw Object.assign(new Error('This mailbox provider has no polling implementation.'),
     {code:'mailbox_poll_unavailable',retryable:false});
   const database=scopedDatabase(client);
+  const pollScope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId),incoming=await require('../commercial/usage-categories').incomingMeter(database,pollScope);
+  if(incoming==='incoming_emails'&&(await entitlements.meterState(database,pollScope,incoming)).remaining<=0)throw new entitlements.EntitlementError('Incoming email processing has reached the current allowance. Add a pack or upgrade to resume processing.',{meter:incoming});
   const startedAt=nowIso();
   let credentials;
   const result=await require('../commercial/operations').run(database,job.workspaceId,{capability:'communications.email_ingestion',
@@ -158,6 +160,7 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
 }
 
 async function runtimeSweep(job,client,options={}){
+  await require('../commercial/storage-capacity').schedule(scopedDatabase(client));
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   await client.query('DELETE FROM connection_authorization_states WHERE id IN (SELECT id FROM connection_authorization_states WHERE used_at IS NULL AND expires_at::timestamptz<$1::timestamptz ORDER BY expires_at LIMIT 500)',[at]);
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
@@ -269,10 +272,11 @@ async function runtimeSweep(job,client,options={}){
   await require('../shipping/postgres-label-voids').recover(client,{providerResolver:options.shippingProviderResolver});
   await require('../shipping/postgres-tracking').schedule(client);
   await require('../shipping/postgres-webhook-setup').schedule(client,{publicOrigin:options.publicOrigin});
-  const connectors=(await client.query(`SELECT id,workspace_id,display_name,provider_type,expected_interval_minutes,
-      GREATEST(COALESCE(last_activity_at,''),COALESCE(last_synced_at,''),created_at) AS evidence_at,
-      last_synced_at,created_at,status,paused_at,config
-    FROM workspace_connectors WHERE status='connected' AND paused_at IS NULL AND expected_interval_minutes>0`)).rows;
+  const connectors=(await client.query(`SELECT c.*,(v.configuration->>'syncIntervalSeconds')::integer AS plan_sync_seconds,
+      GREATEST(COALESCE(c.last_activity_at,''),COALESCE(c.last_synced_at,''),c.created_at) AS evidence_at
+    FROM workspace_connectors c JOIN workspaces w ON w.id=c.workspace_id LEFT JOIN account_subscriptions s ON s.account_id=w.owner_account_id
+    LEFT JOIN commercial_plan_versions v ON v.id=s.plan_version_id AND v.plan_id=s.plan_id
+    WHERE c.status='connected' AND c.paused_at IS NULL AND c.expected_interval_minutes>0`)).rows;
   let staleConnectors=0;let recoveredConnectors=0;let scheduledMailboxPolls=0;let scheduledMailboxRenewals=0;let scheduledProviderChecks=0;
   for(const connector of connectors){
     const adapter=(options.providers||defaultProviders).get(connector.provider_type);
@@ -435,9 +439,10 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   if(capability&&effect.status==='PENDING'){
     const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
     await entitlements.assertCapability(database,scope,capability);
-    const budget=await entitlements.meterState(database,scope,'connected_operations');
+    const meter=effect.kind.startsWith('mail.')?'emails_sent':'connected_operations';
+    const budget=await entitlements.meterState(database,scope,meter);
     if(budget.remaining!==null&&budget.remaining<1)throw new entitlements.EntitlementError(
-      'Connected Operations are exhausted. This pending operation is paused.',{meter:'connected_operations',units:1,capability});
+      `${budget.label} are exhausted. This pending operation is paused.`,{meter,units:1,capability});
   }
   if(effect.kind==='shipping.label.purchase')return shipping.executeLabelPurchaseEffect(database,job.workspaceId,effectId,{
     provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
@@ -490,9 +495,11 @@ async function alertDelivery(job,database,options={}){
 
 async function systemEmail(job,database,options={}){
   const message=email.unseal(job.payload);const sender=options.emailSender||email.sendResend;
-  const accountId=job.payload?.accountId||(await database.query('SELECT id FROM accounts WHERE lower(email)=lower($1)',[message.to])).rows[0]?.id;
+  const recipientAddresses=require('../commercial/usage-categories').addresses([message.to,message.cc,message.bcc]);
+  const accountId=job.workspaceId?(await require('../commercial/entitlements').ownerScopeForWorkspace(database,job.workspaceId)).accountId:
+    job.payload?.accountId||(await database.query('SELECT id FROM accounts WHERE lower(email)=lower($1)',[recipientAddresses[0]||null])).rows[0]?.id;
   const recordAttempt=attempt=>require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
-    unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${attempt}`,detail:{messageType:job.payload?.messageType}});
+    unit:'message',quantity:recipientAddresses.length,idempotencyKey:`${job.id}:attempt:${attempt}`,detail:{messageType:job.payload?.messageType}});
   const accepted=async result=>{
     if(job.workspaceId&&require('../commercial/email-allowance').systemMessageTypes.has(job.payload?.messageType))await require('../commercial/email-allowance').completeRecorded(database,job.workspaceId,'system-email:'+job.id);
     if(job.payload?.messageType==='scheduled_report')await require('../reports/postgres-scheduling').recordEmailAcceptance(database,job.workspaceId,job.id);
@@ -518,7 +525,7 @@ async function systemEmail(job,database,options={}){
     throw Object.assign(new Error('Email acceptance is uncertain and the retry window expired. Reconcile before resending.'),
       {code:'email_delivery_uncertain',retryable:false});
   }
-  const emailAllowance=require('../commercial/email-allowance'),held=emailAllowance.systemMessageTypes.has(job.payload?.messageType)?await emailAllowance.begin(database,job.workspaceId,'system-email:'+job.id):null;
+  const emailAllowance=require('../commercial/email-allowance'),held=emailAllowance.systemMessageTypes.has(job.payload?.messageType)?await emailAllowance.begin(database,job.workspaceId,'system-email:'+job.id,require('../commercial/usage-categories').recipients([message.to,message.cc,message.bcc])):null;
   let result;try{result=await sender(message,{...options.emailOptions,idempotencyKey:`stockchief-email:${job.id}`});
     if(!result.externalId)throw Object.assign(new Error('Email provider did not return an acceptance identity.'),{retryable:true});
     await database.query('UPDATE commercial_email_deliveries SET provider_id=$2,accepted_at=now(),accepted_attempt=$3 WHERE job_id=$1',
@@ -627,6 +634,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
+  'commercial.storage-baseline':external(async(job,database)=>{let lost=false,pending=Promise.resolve();const timer=job.leaseToken?setInterval(()=>{pending=pending.then(async()=>{if(!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs:120000}))lost=true;}).catch(()=>{lost=true;});},5000):null;if(timer)timer.unref();try{const result=await require('../commercial/storage-capacity').baseline(database,job.workspaceId,job.payload.relation);await pending;if(lost)throw Object.assign(new Error('The storage measurement lease expired; saved byte counters remain intact.'),{retryable:true});return result;}finally{if(timer)clearInterval(timer);await pending;}},'bulk'),
   'commercial.capacity-reconcile':external(async(job,database)=>{const sub=await require('../commercial/entitlements').subscriptionFor(database,job.payload.accountId);if(!sub?.cancel_at_period_end&&!sub?.refunded_at&&sub?.status!=='CANCELLED')return {skipped:'base_subscription_renewing'};return require('../commercial/capacity-addons').cancelAll(database,job.payload.accountId,options.commercialOptions||{});}),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),

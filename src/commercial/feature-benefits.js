@@ -56,10 +56,10 @@ async function set(database,input){
       const active=prior.status==='ACTIVE';
       if(active)await client.query("UPDATE commercial_plan_versions SET status='RETIRED',effective_until=now() WHERE id=$1",[prior.id]);
       const next=(await client.query(`INSERT INTO commercial_plan_versions
-        (id,plan_id,version_number,status,currency,monthly_amount_minor,annual_amount_minor,entitlements,meters,approved_by_account_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10) RETURNING *`,
+        (id,plan_id,version_number,status,currency,monthly_amount_minor,annual_amount_minor,entitlements,meters,approved_by_account_id,configuration)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11::jsonb) RETURNING *`,
         [id,prior.plan_id,number,active?'ACTIVE':'RETIRED',prior.currency,prior.monthly_amount_minor,prior.annual_amount_minor,
-          JSON.stringify(change(prior.entitlements,key,input.enabled)),JSON.stringify(prior.meters),input.actorAccountId||null])).rows[0];
+          JSON.stringify(change(prior.entitlements,key,input.enabled)),JSON.stringify(prior.meters),input.actorAccountId||null,JSON.stringify(prior.configuration||{})])).rows[0];
       await control.audit(client,{...input,subjectType:'plan_version',subjectId:id,action:'feature_benefit_version',
         beforeState:prior,afterState:{...next,featureBenefitBatchId:batchId}});
       const moved=(await client.query(`UPDATE account_subscriptions SET plan_version_id=$2,updated_at=now()

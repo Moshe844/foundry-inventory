@@ -44,8 +44,7 @@ async function listHierarchy(database,workspaceId,{includeInactive=false,include
 async function createLocationInTransaction(client,ctx,input){
   const name=requireText(input.name,'Location name',{max:120});
   const kind=requireOneOf(input.kind,LOCATION_KIND_IDS,'Location type');
-    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
-    await entitlements.assertMeterCapacity(client,commercialScope,'locations',1);
+    await require('../commercial/location-capacity').assertChange(client,ctx,null,{kind,parentLocationId:input.parentLocationId,is_active:1});
     const parent=input.parentLocationId?await requireLocation(client,ctx.workspaceId,input.parentLocationId,'parent location'):null;
     if(parent && !Number(parent.is_active))throw new ValidationError(`${parent.name} is archived and cannot contain another location.`);
     const barcode=trimOrNull(input.barcode);
@@ -80,6 +79,7 @@ async function updateLocation(database,ctx,id,input){
       if(descendants.rows.length)throw new ValidationError('That would create a loop in the warehouse layout.');
     }
     const barcode=input.barcode===undefined?current.barcode:trimOrNull(input.barcode);
+    await require('../commercial/location-capacity').assertChange(client,ctx,current,{...current,kind,parent_location_id:parentId});
     const clash=await client.query(`SELECT 1 FROM locations WHERE workspace_id=$1 AND id<>$2
       AND (name=$3 OR ($4::text IS NOT NULL AND barcode=$4)) LIMIT 1`,[ctx.workspaceId,id,name,barcode]);
     if(clash.rows.length)throw new ValidationError('Another location already uses that name or scan code.');
@@ -95,8 +95,7 @@ async function updateLocation(database,ctx,id,input){
 async function setLocationActive(database,ctx,id,isActive){
   return database.transaction(async(client)=>{
     const location=await requireLocation(client,ctx.workspaceId,id);
-    if(isActive&&!Number(location.is_active))await entitlements.assertMeterCapacity(client,
-      await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),'locations',1);
+    if(isActive&&!Number(location.is_active))await require('../commercial/location-capacity').assertChange(client,ctx,location,{...location,is_active:1});
     if(!isActive){
       const children=await client.query('SELECT name FROM locations WHERE workspace_id=$1 AND parent_location_id=$2 AND is_active=1 LIMIT 1',[ctx.workspaceId,id]);
       if(children.rows.length)throw new InvariantError(`${location.name} still contains ${children.rows[0].name}. Move or archive its sublocations first.`,'location_has_children');

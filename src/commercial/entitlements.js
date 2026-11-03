@@ -20,12 +20,12 @@ async function subscriptionFor(database, accountId) {
   if (!accountId) return null;
   const subscription = (await database.query(`SELECT subscription.*,access.disabled_at AS platform_access_disabled_at,version.plan_id AS version_plan_id,
       plan.public_name AS plan_name,plan.outcome AS plan_outcome,
-      plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor
+      plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor,version.configuration AS plan_configuration
       FROM account_subscriptions subscription JOIN commercial_plans plan ON plan.id=subscription.plan_id LEFT JOIN platform_account_access access ON access.account_id=subscription.account_id
       LEFT JOIN commercial_plan_versions version ON version.id=subscription.plan_version_id
       WHERE subscription.account_id=$1`, [accountId])).rows[0] || null;
   if(!subscription)return null;
-  if(subscription.plan_version_id&&subscription.version_plan_id!==subscription.plan_id)subscription.plan_version_id=null;
+  if(subscription.plan_version_id&&subscription.version_plan_id!==subscription.plan_id){subscription.plan_version_id=null;subscription.plan_configuration={};}
   return {...subscription,cancel_at_period_end:Boolean(Number(subscription.cancel_at_period_end))};
 }
 
@@ -56,7 +56,7 @@ async function capabilitySnapshot(database,scope,keys,now){
  wallet.assertScopeMatch(scope,true);
  const found=(await database.query(`WITH base AS (
   SELECT ($2::text IS NULL OR EXISTS(SELECT 1 FROM workspaces WHERE id=$2 AND owner_account_id=$1)) AS scope_valid,
-   subscription.*,access.disabled_at AS platform_access_disabled_at,version.plan_id AS version_plan_id,version.entitlements AS version_entitlements,
+   subscription.*,access.disabled_at AS platform_access_disabled_at,version.plan_id AS version_plan_id,version.entitlements AS version_entitlements,version.configuration AS plan_configuration,
    plan.public_name AS plan_name,plan.outcome AS plan_outcome,plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor
   FROM (SELECT 1) anchor LEFT JOIN account_subscriptions subscription ON subscription.account_id=$1
   LEFT JOIN platform_account_access access ON access.account_id=$1
@@ -78,7 +78,7 @@ async function capabilitySnapshot(database,scope,keys,now){
  wallet.assertScopeMatch(scope,found[0]?.scope_valid===true);
  const {scope_valid,version_entitlements,snapshot_capability,snapshot_override,snapshot_plan,...value}=found[0];
  let subscription=value.id?value:null;
- if(subscription){if(subscription.plan_version_id&&subscription.version_plan_id!==subscription.plan_id)subscription.plan_version_id=null;
+ if(subscription){if(subscription.plan_version_id&&subscription.version_plan_id!==subscription.plan_id){subscription.plan_version_id=null;subscription.plan_configuration={};}
   subscription.cancel_at_period_end=Boolean(Number(subscription.cancel_at_period_end));}
  const overrides=found.filter(r=>r.snapshot_override).map(r=>{const o=r.snapshot_override;
   for(const k of ['starts_at','ends_at','created_at'])if(o[k]!==null&&o[k]!==undefined)o[k]=new Date(o[k]);return o;});
@@ -122,9 +122,9 @@ async function assertCapability(database, scope, capability, options = {}) {
   capability=catalog.canonicalCapability(capability);
   const state = await capabilityState(database, scope, capability, options);
   if (state.enabled) return state;
-  const minimum = (await database.query(`SELECT plan.public_name,plan.id FROM commercial_plan_entitlements entitlement
-    JOIN commercial_plans plan ON plan.id=entitlement.plan_id
-    WHERE entitlement.capability=$1 AND entitlement.enabled=1 AND plan.is_public=1 AND plan.status='ACTIVE'
+  const minimum = (await database.query(`SELECT plan.public_name,plan.id FROM commercial_plan_versions version
+    JOIN commercial_plans plan ON plan.id=version.plan_id CROSS JOIN LATERAL jsonb_array_elements(version.entitlements) entitlement
+    WHERE version.status='ACTIVE' AND entitlement->>'capability'=$1 AND (entitlement->>'enabled')::bigint=1 AND plan.is_public=1 AND plan.status='ACTIVE'
     ORDER BY plan.display_order LIMIT 1`, [capability])).rows[0];
   throw new EntitlementError(options.message || (minimum ? `${state.definition.label||'This feature'} requires the ${minimum.id==='enterprise'?'Custom':minimum.public_name||minimum.name||minimum.id} plan. Upgrade to unlock it.` : 'This feature is unavailable on your current plan. Contact support for access.'), {
     capability,currentPlan:state.subscription?.plan_id || null,recommendedPlan:minimum || null,
@@ -158,6 +158,12 @@ async function meterState(database, scope, meter, options = {}) {
   await wallet.assertScope(database,scope);
   const definition=catalog.assertMeterKey(meter);
   const subscription = options.subscription || await subscriptionFor(database,scope.accountId);
+  if(!scope.workspaceId&&subscription?.plan_configuration?.locationAccounting==='sites_and_sublocations'&&['locations','sublocations','custom_roles'].includes(meter)){
+    const inventories=(await database.query('SELECT id,name FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL',[scope.accountId])).rows;
+    let highest=null;for(const inventory of inventories){const state=await meterState(database,{...scope,workspaceId:inventory.id},meter,{...options,subscription});const ratio=state.hardLimit===null?0:state.used/Math.max(1,state.hardLimit);
+      if(!highest||ratio>highest.ratio)highest={...state,inventoryName:inventory.name,workspaceId:inventory.id,ratio};}
+    if(highest){delete highest.ratio;return highest;}
+  }
   if (!subscription && !config.commercial.requirePaidWorkspace) return {meter,label:definition.label,definition,used:0,reserved:0,
     capacityUsed:0,included:null,hardLimit:null,remaining:null,overageUnits:0,overageAmountMinor:0,periodStart:null,periodEnd:null};
   if (!subscription) return {meter,used:0,included:0,hardLimit:0,remaining:0,overageUnits:0,overageAmountMinor:0};
@@ -173,6 +179,8 @@ async function meterState(database, scope, meter, options = {}) {
     ORDER BY CASE WHEN workspace_id IS NOT NULL THEN 0 ELSE 1 END,created_at DESC LIMIT 1`,
   [scope.accountId,scope.workspaceId || null,meter,options.now || null])).rows[0];
   const {start,end} = periodBounds(subscription,options.now ? new Date(options.now) : new Date());
+  const separateSites=subscription?.plan_configuration?.locationAccounting==='sites_and_sublocations';
+  const sublocationPredicate=require('./location-capacity').sublocationPredicate();
   const liveQueries={
     active_skus:`SELECT COALESCE(SUM(capacity.active_skus),0) AS used FROM stockchief_runtime.inventory_capacity capacity
       JOIN workspaces workspace ON workspace.id=capacity.workspace_id
@@ -186,9 +194,14 @@ async function meterState(database, scope, meter, options = {}) {
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND invitation.status='PENDING' AND invitation.expires_at>now()
     ) people`,
     locations:`SELECT COALESCE(MAX(per_inventory.used),0) AS used FROM (SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
-      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1 AND ($2::text IS NULL OR location.workspace_id=$2) GROUP BY location.workspace_id) per_inventory`,
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1 AND ($2::text IS NULL OR location.workspace_id=$2) ${separateSites?'AND NOT '+sublocationPredicate:''} GROUP BY location.workspace_id) per_inventory`,
+    sublocations:`SELECT COALESCE(MAX(per_inventory.used),0) AS used FROM (SELECT COUNT(*) AS used FROM locations location JOIN workspaces workspace ON workspace.id=location.workspace_id
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1 AND ($2::text IS NULL OR location.workspace_id=$2) AND ${sublocationPredicate} GROUP BY location.workspace_id) per_inventory`,
     products:`SELECT COALESCE(SUM(capacity.active_products),0) AS used FROM stockchief_runtime.inventory_capacity capacity JOIN workspaces workspace ON workspace.id=capacity.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL`,
     scheduled_reports:`SELECT COUNT(*) AS used FROM stockchief_runtime.report_templates report JOIN workspaces workspace ON workspace.id=report.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND report.deleted_at IS NULL AND report.schedule_frequency<>'none'`,
+    saved_reports:`SELECT COUNT(*) AS used FROM stockchief_runtime.report_templates report JOIN workspaces workspace ON workspace.id=report.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND report.deleted_at IS NULL`,
+    api_keys:`SELECT COUNT(*) AS used FROM public_api_clients token JOIN workspaces workspace ON workspace.id=token.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND token.revoked_at IS NULL`,
+    custom_roles:`SELECT COALESCE(MAX(per_inventory.used),0) AS used FROM (SELECT COUNT(*) AS used FROM workspace_custom_roles role JOIN workspaces workspace ON workspace.id=role.workspace_id WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND ($2::text IS NULL OR role.workspace_id=$2) GROUP BY role.workspace_id) per_inventory`,
     sales_channels:require('./connection-capacity').countQuery('sales_channels'),
     shipping_accounts:require('./connection-capacity').countQuery('shipping_accounts'),
     connections:`SELECT COUNT(*) AS used FROM workspace_connectors connector JOIN workspaces workspace ON workspace.id=connector.workspace_id
@@ -196,8 +209,11 @@ async function meterState(database, scope, meter, options = {}) {
         AND ${require('./connection-capacity').predicate}`,
   };
   let used;let reserved=0;
-  if(definition.kind==='PER_OPERATION')used=0;
-  else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],meter==='locations'?[scope.accountId,scope.workspaceId||null]:[scope.accountId])).rows[0].used);
+  if(meter==='storage_bytes')used=await require('./storage-capacity').state(database,scope.accountId);
+  else if(['agent_jobs','active_imports'].includes(meter))used=Number((await database.query(`SELECT count(*) AS used FROM stockchief_runtime.jobs j JOIN workspaces w ON w.id=j.workspace_id WHERE w.owner_account_id=$1 AND j.status='RUNNING' AND j.kind=ANY($2::text[])`,[scope.accountId,meter==='agent_jobs'?['assistant.run-goal','assistant.run-codex-goal']:['import.analyse-source','import.execute-approved','import.revise-preview']])).rows[0].used);
+  else if(definition.kind==='PER_OPERATION')used=0;
+  else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],['locations','sublocations','custom_roles'].includes(meter)?[scope.accountId,scope.workspaceId||null]:[scope.accountId])).rows[0].used);
+  else if(definition.kind==='STRUCTURAL')throw new (require('../domain/errors').ValidationError)('This capacity counter is not configured. New capacity was not granted.');
   else {const usage=(await database.query(`SELECT
       COALESCE(SUM(units) FILTER(WHERE status='COMMITTED'),0) AS used,
       COALESCE(SUM(units) FILTER(WHERE status='RESERVED'),0) AS reserved
@@ -206,10 +222,10 @@ async function meterState(database, scope, meter, options = {}) {
   let included = override?.limit_units === null || override?.limit_units === undefined
     ? (policy.included_units === null || policy.included_units === undefined ? null : Number(policy.included_units))
     : Number(override.limit_units);
-  const structural=new Set(['workspaces','members','locations','connections','products','scheduled_reports','sales_channels','shipping_accounts','active_skus','import_rows']);
+  const structural=new Set(catalog.METERS.filter(row=>['STRUCTURAL','PER_OPERATION'].includes(row[2])).map(row=>row[0]));
   let hardLimit = override&&structural.has(meter)?(override.limit_units===null?null:Number(override.limit_units)):
     policy.hard_limit === null || policy.hard_limit === undefined ? null : Number(policy.hard_limit);
-  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(o.units),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND (p.meter=$2 OR ($2='active_skus' AND p.meter='products')) AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
+  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(CASE WHEN o.entitlements ? $2 THEN (o.entitlements->>$2)::bigint*o.quantity WHEN p.meter=$2 OR ($2='active_skus' AND p.meter='products' AND o.entitlements='{}'::jsonb) THEN o.units ELSE 0 END),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND (o.workspace_id IS NULL OR o.workspace_id=$4) AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null,scope.workspaceId||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
   const overageMode=policy.overage_mode||'PAUSE';
   if(!structural.has(meter)&&hardLimit===null&&included!==null&&['PAUSE','PURCHASE'].includes(overageMode))hardLimit=included;
   const overageUnits = included === null ? 0 : Math.max(0,used-included);

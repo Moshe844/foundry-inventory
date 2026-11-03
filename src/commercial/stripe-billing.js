@@ -52,6 +52,8 @@ async function createCheckout(input, options = {}) {
       'line_items[0][quantity]':1,
       'subscription_data[metadata][stockchief_account_id]':input.accountId,
       'subscription_data[metadata][stockchief_plan_id]':input.planId,
+      'subscription_data[metadata][stockchief_checkout_attempt_id]':input.attemptId,
+      'subscription_data[metadata][stockchief_plan_version_id]':input.planVersionId,
       'metadata[stockchief_account_id]':input.accountId,
       'metadata[stockchief_plan_id]':input.planId,
       'metadata[stockchief_checkout_attempt_id]':input.attemptId,
