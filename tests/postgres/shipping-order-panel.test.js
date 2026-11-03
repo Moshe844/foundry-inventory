@@ -76,6 +76,22 @@ test('shipping: link Shippo, no new EasyPost, weight to rates from the order, an
   assert.equal(await page.locator('select[data-part=state]').inputValue(),'NY');
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create customer',exact:true}).click()]);
   assert.match((await db.query("SELECT shipping_address FROM customers WHERE workspace_id=$1 AND name='Moshe'",[ctx.workspaceId])).rows[0].shipping_address,/18 Forshay Rd[\s\S]*Monsey, NY 10952/);
+
+  // New order: a customer saved as one line with no commas still fills Ship to box by box.
+  await db.query("INSERT INTO customers(id,workspace_id,name,shipping_address,record_state,created_by_user_id,created_at,updated_at) VALUES('plain',$1,'Plain Text',$2,'ACTIVE',$3,$4,$4)",[ctx.workspaceId,'18 Forshay Rd Monsey NY 10952',ctx.actorId,at]);
+  await page.goto(base+'/orders/new');const shipTo=page.locator('[data-address-target=order-customer-address]');
+  await page.locator('#order-customer').selectOption('plain');
+  await page.waitForFunction(()=>document.querySelector('[data-address-target=order-customer-address] [data-part=city]').value==='Monsey');
+  assert.equal(await shipTo.locator('[data-part=line1]').inputValue(),'18 Forshay Rd');assert.equal(await shipTo.locator('select[data-part=state]').inputValue(),'NY');
+
+  // The New customer pop-up has the same boxes, and the customer it saves fills Ship to.
+  await page.getByRole('button',{name:'+ New customer',exact:true}).click();const dialog=page.locator('#new-order-customer');
+  await dialog.locator('[name=name]').fill('Dina');await dialog.getByLabel('Street address').fill('5 Main St');await dialog.getByLabel('ZIP code').fill('10952');
+  await page.waitForFunction(()=>document.querySelector('#new-order-customer [data-part=city]').value==='Monsey');
+  await dialog.getByRole('button',{name:'Save customer'}).click();await dialog.waitFor({state:'hidden'});
+  assert.equal(await page.locator('#order-customer option:checked').innerText(),'Dina');
+  assert.match(await page.locator('#order-customer-address').inputValue(),/5 Main St[\s\S]*Monsey, NY 10952/);
+  assert.equal(await shipTo.locator('[data-part=city]').inputValue(),'Monsey');
   assert.equal(exchanges,1,'The one-time authorization code is exchanged exactly once');assert.equal(postalLookups,1);
   assert.equal((await db.query("SELECT count(*)::int n FROM commercial_usage_events WHERE workspace_id=$1 AND meter='connected_operations'",[ctx.workspaceId])).rows[0].n,0,'Authorization, carrier verification and postal lookup do not charge Connected Operations');
   assert.deepEqual(errors,[]);

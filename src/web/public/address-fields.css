@@ -1,7 +1,7 @@
 /* Address boxes: street and unit across, then ZIP, city, state; country last. */
 .addr { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 12px; width: 100%; }
 .addr__f { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 13px; font-weight: 500; color: #475069; min-width: 0; }
-.addr__f small { font-weight: 400; color: #7A839C; }
+.addr__f small, .ox-field > span > small { font-weight: 400; color: #7A839C; }
 .addr__f input, .addr__f select { width: 100%; height: 40px; padding: 0 11px; border: 1px solid #DCE0EA; border-radius: 10px; background: #fff; font: inherit; font-size: 14px; color: #0F172A; box-sizing: border-box; }
 .addr__f input:focus, .addr__f select:focus { outline: none; border-color: #4F46E5; box-shadow: 0 0 0 3px rgba(79,70,229,.15); }
 .addr__line1 { grid-column: span 4; }
