@@ -84,12 +84,12 @@ jobs:
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/hosted-ask-read-worker.test.js tests/postgres/hosted-business-agent.test.js tests/postgres/mail-native-processing.test.js tests/postgres/ask-direct-query-budget.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/hosted-ask-read-worker.test.js tests/postgres/hosted-business-agent.test.js tests/postgres/mail-native-processing.test.js tests/postgres/ask-direct-query-budget.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js tests/postgres/ask-chat-preferences.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Approved subscription packaging, metering and billing isolation
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js tests/postgres/older-plan-custom-roles.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
       - name: Combined onboarding, invitations and real import approval
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
