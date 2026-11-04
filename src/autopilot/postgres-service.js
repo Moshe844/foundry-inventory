@@ -508,7 +508,7 @@ async function lowestStockDraft(database,workspaceId){
  const supplier=await supplierChoice(database,workspaceId,shortage);if(!supplier)return {...base,question:selected.name+' has the lowest stock. Link a supplier before preparing its purchase order.'};
  const today=await require('../lib/business-time').today(database,workspaceId),date=new Date(today+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Number(supplier.effective_lead));return {...base,sku:selected.code,supplier:supplier.supplier_name,location:place.name,quantity:supplier.quantity,unitCost:supplier.unitCost,currency:supplier.currency,expectedDate:date.toISOString().slice(0,10)};
 }
-module.exports={lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
+module.exports={supplierDeliveryReadiness,lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
   supplierDeliveryReadiness,reconcileSupplierFollowThrough};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{plan:'planning.basic',run:'planning.basic'});

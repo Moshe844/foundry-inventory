@@ -155,8 +155,8 @@ function createPostgresProjectionsRouter(database){
       if(entry.kind!=='navigation'&&entry.name!=='read.capabilities')offer(entry);
     }
     res.locals.attentionCount=result.brief.needs.length;
-    const homeSales=permissions.can(req.user,permissions.VIEW_ACCOUNTING)?await require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):null;
-    return res.page('foundry/brief',{homeSales,title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
+    const seesMoney=permissions.can(req.user,permissions.VIEW_ACCOUNTING),homeSales=seesMoney?await require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):null,homeSummary=await require('../../projections/postgres-home-summary').read(database,req.ctx.workspaceId,{seesMoney,sales:homeSales});
+    return res.page('foundry/brief',{homeSales,homeSummary,title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
       askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:require('../presentation/importance').mostImportantFirst(result.brief.needs.filter(item=>!item.approval)).slice(0,18),homeLevels:require('../presentation/importance').counts(result.brief.needs),
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
@@ -166,6 +166,15 @@ function createPostgresProjectionsRouter(database){
   router.get('/needs-you/work',requireAuth,asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
     const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});
+  }));
+  router.post('/needs-you/work/approve',requireAuth,asyncRoute(async(req,res)=>{
+    const autonomy=require('../../autopilot/postgres-service'),ids=[].concat(req.body.ids||[]).filter(id=>typeof id==='string'&&id).slice(0,75),back='/needs-you/work?'+new URLSearchParams({kind:String(req.body.kind||''),location:String(req.body.location||''),currency:String(req.body.currency||'')});
+    if(!ids.length){req.flash('error','Choose at least one decision to approve.');return res.redirect(303,back);}
+    let approved=0;const problems=[];
+    for(const id of ids){try{await autonomy.approve(database,req.ctx,req.user,id,{destinationLocationId:req.body.destinationLocationId||null});approved++;}catch(error){if(error.code==='permission_denied'||error.status===403)throw error;problems.push(error.message);}}
+    if(approved)req.flash('success',approved.toLocaleString()+(approved===1?' decision':' decisions')+' approved. StockChief will follow each one through.');
+    if(problems.length)req.flash('error',problems.length.toLocaleString()+(problems.length===1?' decision':' decisions')+' could not be approved: '+[...new Set(problems)].slice(0,2).join(' '));
+    return res.redirect(303,back);
   }));
   router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{

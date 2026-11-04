@@ -4,6 +4,11 @@ function number(value){return Number(value || 0);}
 // Urgent: something is already wrong or overdue. Important: time or money is really at stake.
 // Everything else simply waits for a decision and is not dressed up as an alarm.
 const olderThanDays=(value,days)=>{const at=Date.parse(value||'');return Number.isFinite(at)&&Date.now()-at>days*86400000;};
+// What is actually wrong with a product, from the facts the decision was made on.
+function stockSentence(row,action){let facts=[];try{facts=typeof row.source_evidence==='string'?JSON.parse(row.source_evidence||'[]'):row.source_evidence||[];}catch{facts=[];}
+ const fact=name=>facts.find(entry=>entry.fact===name)?.value,available=fact('available'),incoming=fact('incoming')??action.incoming,point=fact('reorder_point')??action.reorderPoint;
+ if(available===undefined||point===undefined)return 'Prepare '+number(action.quantity)+' units from '+(action.supplierName||'the selected supplier')+'.';
+ return (Number(available)<=0?'Nothing is available':available+' available')+(Number(incoming)>0?' and '+incoming+' on the way':Number(incoming)===0?', and nothing is on the way':'')+'. Your reorder point is '+point+'.';}
 function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=new Date().toISOString().slice(0,10);if(neededBy<today)return 'Urgent';
  return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
@@ -123,7 +128,7 @@ async function needsUncached(database,workspaceId,actorId=null){
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
     actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
-  for(const row of work.rows){if(row.summary){items.push({kind:'approval',grouped:true,requiredPermissions:[row.kind==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],importance:'Needs You',priority:70+number(row.priority),title:row.title,happened:row.count.toLocaleString()+' '+row.groupLabel+' await review.',why:'Open the list to search all decisions. The largest known purchase values appear first; unpriced transfers follow by urgency.',recommendation:'Review the current stock and approve each proposed change.',href:row.href,actionLabel:'Review group',sourceId:row.id,createdAt:row.created_at,at:row.created_at});continue;}const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
+  for(const row of work.rows){if(row.summary){const shown=row.names||[],others=row.count-shown.length;items.push({kind:'approval',grouped:true,requiredPermissions:[row.kind==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],importance:row.urgentCount?'Urgent':'Important',priority:70+number(row.priority),title:row.title,happened:(row.urgentCount?row.urgentCount.toLocaleString()+' urgent. ':'')+(shown.length?'Includes '+shown.join(', ')+(others>0?' and '+others.toLocaleString()+' more.':'.'):row.count.toLocaleString()+' '+row.groupLabel+' await review.'),why:row.kind==='transfer'?'These locations are at or below their reorder points while another location has stock to spare.':'These products are at or below their reorder points, so they could run out.',recommendation:row.kind==='transfer'?'Move the stock rather than buying more. Approve them together, or review each one.':'Order them from their suppliers. Approve them together, or review each one.',href:row.href,actionLabel:'Review and approve',sourceId:row.id,createdAt:row.created_at,at:row.created_at});continue;}const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
     if(outcome.decision&&preparedLinks.has(outcome.reviewHref))continue;
     if(outcome.decision){const d=outcome.decision,permission=action.type==='customer_order'?require('../actions/permissions').VIEW_SALES:action.type==='supplier_invoice'?require('../actions/permissions').VIEW_ACCOUNTING:require('../actions/permissions').VIEW_PURCHASING;
       items.push({kind:'approval',requiredPermissions:[permission],importance:'Needs You',priority:90,title:(outcome.reference||action.displayName||'Business work')+': '+outcome.nextAction,happened:d.happened,why:d.impact,recommendation:d.recommendation+' '+d.required,checked:d.checked,alternatives:d.alternatives,href:outcome.reviewHref||outcome.href||action.href||'/autopilot/work/'+row.id,actionLabel:'Review next step',sourceId:row.id,createdAt:row.created_at,at:outcome.deadline||row.created_at});continue;}
@@ -132,9 +137,9 @@ async function needsUncached(database,workspaceId,actorId=null){
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
     happened:action.summary || (action.type==='transfer'
       ? `Move ${number(action.quantity)} units from ${action.sourceLocationName} to ${action.destinationLocationName}.`
-      : `Prepare ${number(action.quantity)} units from ${action.supplierName || 'the selected supplier'}.`),
+      : stockSentence(row,action)),
     why:row.error_message || authority.reason || 'Your authority policy requires approval.',
-    recommendation:action.reason || 'Review the prepared work and its evidence.',href:`/autopilot/work/${row.id}`,
+    recommendation:action.type==='transfer'?(action.reason||'Review the prepared work and its evidence.'):'Order '+number(action.quantity)+' '+(number(action.quantity)===1?'unit':'units')+' from '+(action.supplierName||'the selected supplier')+'.',href:`/autopilot/work/${row.id}`,
     actionLabel:'Review decision',sourceId:row.id,createdAt:row.created_at,timeLabel:'Proposed',at:row.created_at});}
   for(const row of imports.rows)items.push({kind:'import',importance:'Important',priority:80,title:`Import failed: ${row.source_name}`,
     happened:'Completed import batches are saved. Open the import to see the stopping reason and resume from its checkpoint.',why:row.error_message || 'The import could not be verified.',
@@ -164,7 +169,7 @@ async function needsUncached(database,workspaceId,actorId=null){
     why:'Until more stock is available, this order can only go out in part.',recommendation:'Move stock from another location or buy more.',
     href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
   for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
-    happened:`${row.supplier_name} was expected on ${row.expected_date}.`,why:'StockChief has no complete receipt for this purchase order.',
+    happened:`${row.supplier_name} was expected on ${new Date(row.expected_date+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'})}.`,why:'StockChief has no complete receipt for this purchase order.',
     recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,timeLabel:'Purchase order created',dueDate:row.expected_date,at:row.expected_date});
   for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Needs You',
     priority:row.materiality==='high'?97:86,title:row.symptom,happened:row.failed_invariant,

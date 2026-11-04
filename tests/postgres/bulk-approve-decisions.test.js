@@ -1,0 +1,20 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest'),{randomUUID}=require('node:crypto');
+test('approving several decisions reports what worked and what did not, and caps the batch',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);let app;
+ t.after(async()=>{if(app)await app.locals.sessionStore.close();await db.close();await cluster.stop();});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const password='Bulk-'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Bulk shop',email:randomUUID()+'@example.test',password});
+ const autonomy=require('../../src/autopilot/postgres-service'),{ValidationError}=require('../../src/domain/errors'),real=autonomy.approve,calls=[];
+ autonomy.approve=async(_db,_ctx,_user,id,options)=>{calls.push([id,options.destinationLocationId]);if(id==='bad')throw new ValidationError('The selected supplier has no verified order email address.');};
+ t.after(()=>{autonomy.approve=real;});
+ app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
+ const agent=request.agent(app),csrf=text=>/name="_csrf" value="([^"]+)"/.exec(text)[1],login=await agent.get('/login');
+ await agent.post('/login').type('form').send({_csrf:csrf(login.text),email:owner.email,password});
+ const page=await agent.get('/needs-you/work?kind=purchase&location=&currency=USD');assert.equal(page.status,200);assert.match(page.text,/Approve selected/);
+ const one=await agent.post('/needs-you/work/approve').type('form').send({_csrf:csrf(page.text),kind:'purchase',currency:'USD',ids:['good','bad','good2'],destinationLocationId:'loc-1'});
+ assert.equal(one.status,303);assert.match(one.headers.location,/^\/needs-you\/work\?/);assert.deepEqual(calls,[['good','loc-1'],['bad','loc-1'],['good2','loc-1']]);
+ const after=await agent.get(one.headers.location);assert.match(after.text,/2 decisions approved/);assert.match(after.text,/1 decision could not be approved: The selected supplier has no verified order email address\./);
+ calls.length=0;const none=await agent.post('/needs-you/work/approve').type('form').send({_csrf:csrf(after.text),kind:'purchase'});assert.equal(none.status,303);assert.equal(calls.length,0);
+ const many=await agent.post('/needs-you/work/approve').type('form').send({_csrf:csrf(after.text),kind:'purchase',ids:Array.from({length:90},(_,i)=>'id'+i)});assert.equal(many.status,303);assert.equal(calls.length,75,'one batch is one page at most');
+});

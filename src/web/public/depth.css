@@ -185,6 +185,78 @@ html:root body .rm-composer__voice[aria-pressed=true] { background:var(--d-urgen
 html:root body.page-ask .rm-chat > .rm-composer .rm-composer__send { border:0; min-height:32px; border-radius:8px; background:var(--d-action) #4F46E5; box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 5px rgba(55,48,163,.35); }
 html:root body .ask-history .sc-conversation-row { border-color:rgba(17,21,46,.07); }
 
+/* The top bar stays put on every page. */
+html:root body main.rm-canvas > .sc-toolbar,html:root body .sc-toolbar { position:sticky; top:0; z-index:60; }
+html:root body .rm-canvas { scroll-padding-top:90px; }
+html:root body .sc-sidebar { z-index:70; }
+
+/* A top card that leads somewhere looks and behaves like it. */
+html:root body .rm-canvas a.ox-kpi { color:inherit; text-decoration:none; transition:transform .18s var(--d-ease),box-shadow .18s; }
+html:root body .rm-canvas a.ox-kpi:hover { transform:translateY(-2px); box-shadow:var(--d-2); }
+html:root body .rm-canvas a.ox-kpi:focus-visible { outline:2px solid #4F46E5; outline-offset:2px; }
+
+/* Home: small print under a number, and StockChief's own work. */
+html:root body .hm .hm-metrics .sc-metric small.hm-sub { display:block; margin-top:1px; font-size:12px; color:#7A839C; }
+html:root body .hm .hm-metrics .sc-metric small.hm-sub::before { content:none; }
+html:root body .hm-work__panel { padding:6px 14px 12px; border-radius:12px; background:#fff; box-shadow:var(--d-1); animation:d-rise .32s var(--d-ease) .04s backwards; }
+html:root body .hm-work dl { margin:0; }
+html:root body .hm-work dl > div { display:flex; justify-content:space-between; gap:12px; padding:7px 0; box-shadow:inset 0 -1px 0 rgba(17,21,46,.06); }
+html:root body .hm-work dt { font-size:13px; font-weight:400; color:#475069; }
+html:root body .hm-work dd { margin:0; font-size:13px; font-weight:600; color:var(--d-ink); font-variant-numeric:tabular-nums; }
+html:root body .hm-work__mode { margin:9px 0 0; font-size:12.5px; line-height:1.4; color:#6A7188; }
+
+/* Needs you: what's wrong, why, what's recommended, what's needed. */
+html:root body .ny-explain { margin:6px 0 2px; }
+html:root body .ny-explain > div { display:grid; grid-template-columns:190px minmax(0,1fr); gap:10px; padding:3px 0; }
+html:root body .ny-explain dt { font-size:12.5px; font-weight:500; color:#6A7188; }
+html:root body .ny-explain dd { margin:0; font-size:13px; color:var(--d-ink); }
+
+/* Decisions you can approve together. */
+html:root body .wi-search { margin:0 0 12px; }
+html:root body .wi-search .input { width:320px; max-width:100%; }
+html:root body .wi-bar { position:sticky; top:82px; z-index:20; display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; margin:0 0 10px; padding:10px 14px; border-radius:12px; background:#fff; box-shadow:var(--d-2); font-size:13px; color:var(--d-text); }
+html:root body .wi-all { display:inline-flex; align-items:center; gap:8px; margin:0; font-size:13px; }
+html:root body .wi-where { display:inline-flex; align-items:center; gap:8px; margin:0 0 0 auto; font-size:13px; white-space:nowrap; }
+html:root body .wi-bar [data-bulk-submit] { margin-left:auto; }
+html:root body .wi-where + [data-bulk-submit] { margin-left:0; }
+html:root body .rm-canvas [data-bulk-approve] .table-wrap { border-radius:12px; background:#fff; box-shadow:var(--d-1); }
+
+/* The approval page. */
+html:root body .aw { max-width:1120px; }
+html:root body .aw-head { margin:0 0 18px; }
+html:root body .aw-kicker { margin:0 0 8px; }
+html:root body .aw-head h1 { margin:0; font-size:24px; }
+html:root body .aw-head > p:last-child { margin:4px 0 0; font-size:14px; color:#475069; }
+html:root body .aw-cols { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; align-items:start; }
+html:root body .aw-main { display:flex; flex-direction:column; gap:16px; min-width:0; }
+html:root body .aw-card { padding:18px 20px; }
+html:root body .aw-card h2 { margin:0 0 10px; font-size:14.5px; color:var(--d-ink); }
+html:root body .aw-lead { margin:0 0 14px; font-size:14.5px; line-height:1.5; color:var(--d-ink); }
+html:root body .aw-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
+html:root body .aw-facts > div { padding:10px 12px; border-radius:10px; background:#F6F7FA; }
+html:root body .aw-facts span { display:block; font-size:12px; color:#6A7188; }
+html:root body .aw-facts strong { display:block; margin-top:1px; font-size:18px; color:var(--d-ink); }
+html:root body .aw-list { margin:0; }
+html:root body .aw-list > div { display:grid; grid-template-columns:110px minmax(0,1fr); gap:12px; padding:8px 0; box-shadow:inset 0 -1px 0 rgba(17,21,46,.06); }
+html:root body .aw-list > div:last-child { box-shadow:none; }
+html:root body .aw-list dt { font-size:13px; font-weight:400; color:#6A7188; }
+html:root body .aw-list dd { margin:0; font-size:13.5px; color:var(--d-ink); }
+html:root body .aw-warn { font-weight:600; color:#B45309; }
+html:root body .aw-side { position:sticky; top:96px; }
+html:root body .aw-why { margin:0 0 14px; font-size:13.5px; line-height:1.45; color:#475069; }
+html:root body .aw-decision form { margin:0; }
+html:root body .aw-approve { display:flex; flex-direction:column; gap:10px; }
+html:root body .aw-approve label { display:flex; flex-direction:column; gap:5px; margin:0; font-size:13px; color:#475069; }
+html:root body .aw-approve select { width:100%; }
+html:root body .aw-approve .btn { width:100%; justify-content:center; min-height:38px; }
+html:root body .aw-discard { width:100%; justify-content:center; margin-top:6px; }
+html:root body .aw-fix { width:100%; justify-content:center; margin-top:10px; text-align:center; }
+html:root body .aw-note { margin:8px 0 0; font-size:12.5px; text-align:center; color:#6A7188; }
+@media (max-width:1000px) { html:root body .aw-cols { grid-template-columns:minmax(0,1fr); } html:root body .aw-side { position:static; } html:root body .wi-bar { top:70px; } }
+@media (max-width:760px) { html:root body .sc-toolbar .sc-toolbar-actions { flex-wrap:nowrap !important; overflow-x:auto; white-space:nowrap; max-width:100%; scrollbar-width:none; }
+  html:root body .sc-toolbar .sc-toolbar-actions > * { flex:none; white-space:nowrap; } html:root body .wi-bar { top:112px; } }
+@media (max-width:640px) { html:root body .ny-explain > div { grid-template-columns:minmax(0,1fr); gap:0; } html:root body .aw-list > div { grid-template-columns:90px minmax(0,1fr); } }
+
 @media (max-width:640px) {
   html:root body .hm .hm-metrics { gap:10px; }
   html:root body .hm .hm-metrics .sc-metric { padding:13px 14px; border-top:0; border-left:0; }
