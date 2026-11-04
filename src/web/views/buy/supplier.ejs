@@ -41,10 +41,10 @@
   <%- include('_tabs', { active: '/suppliers' }) %>
 
   <section class="ox-kpis" aria-label="<%= supplier.name %> in numbers">
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Open orders</span><strong class="ox-kpi__n ox-num"><%= V.kpis.open.count %></strong><span class="ox-kpi__s"><%= V.kpis.open.first || 'Nothing open' %></span></div>
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Owed</span><strong class="ox-kpi__n ox-num <%= V.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(V.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.owed.bills %> bill<%= V.kpis.owed.bills === 1 ? '' : 's' %><%= V.kpis.owed.due ? ' · due ' + V.kpis.owed.due : '' %></span></div>
+    <a class="ox-card ox-kpi" href="/purchasing/orders?q=<%= encodeURIComponent(supplier.name) %>"><span class="ox-kpi__k">Open orders</span><strong class="ox-kpi__n ox-num"><%= V.kpis.open.count %></strong><span class="ox-kpi__s"><%= V.kpis.open.first || 'Nothing open' %></span></a>
+    <a class="ox-card ox-kpi" href="/money/bills?party=<%= encodeURIComponent(supplier.id) %>"><span class="ox-kpi__k">Owed</span><strong class="ox-kpi__n ox-num <%= V.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(V.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.owed.bills %> bill<%= V.kpis.owed.bills === 1 ? '' : 's' %><%= V.kpis.owed.due ? ' · due ' + V.kpis.owed.due : '' %></span></a>
     <div class="ox-card ox-kpi"><span class="ox-kpi__k">Real lead time</span><strong class="ox-kpi__n ox-num"><%= V.kpis.lead.days == null ? '—' : V.kpis.lead.days + ' day' + (V.kpis.lead.days === 1 ? '' : 's') %></strong><span class="ox-kpi__s"><%= V.kpis.lead.note %></span></div>
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Bought this year</span><strong class="ox-kpi__n ox-num"><%= m(V.kpis.year.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.year.orders %> order<%= V.kpis.year.orders === 1 ? '' : 's' %></span></div>
+    <a class="ox-card ox-kpi" href="/purchasing/orders?q=<%= encodeURIComponent(supplier.name) %>"><span class="ox-kpi__k">Bought this year</span><strong class="ox-kpi__n ox-num"><%= m(V.kpis.year.minor) %></strong><span class="ox-kpi__s"><%= V.kpis.year.orders %> order<%= V.kpis.year.orders === 1 ? '' : 's' %></span></a>
   </section>
 
   <div class="ox-2col">

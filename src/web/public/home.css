@@ -185,7 +185,7 @@
 .hm-main { grid-area:main; min-width:0; display:flex; flex-direction:column; gap:20px; }
 .hm-side { display:contents; }
 .hm-side > .hm-metrics { grid-area:numbers; }
-.hm-side > .hm-block { grid-area:side; min-width:0; }
+.hm-side > .hm-rail { grid-area:side; min-width:0; display:flex; flex-direction:column; gap:20px; }
 .hm .hm-block { margin:0; }
 .hm .hm-block > header, .hm .hm-ask > header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 0 8px; }
 .hm .hm-block > header .level-counts { margin-left:4px; }

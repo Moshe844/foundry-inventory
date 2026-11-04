@@ -32,10 +32,10 @@
 
   <% if (L.counts.all) { %>
   <section class="ox-kpis" aria-label="Purchase totals">
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">On order</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.onOrder.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.onOrder.orders %> order<%= L.kpis.onOrder.orders === 1 ? '' : 's' %> · <%= L.kpis.onOrder.units %> unit<%= L.kpis.onOrder.units === 1 ? '' : 's' %></span></div>
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Arriving this week</span><strong class="ox-kpi__n ox-num"><%= L.kpis.arriving.count %></strong><span class="ox-kpi__s"><%= L.kpis.arriving.next || 'Nothing due this week' %></span></div>
-    <% if (L.kpis.owed) { %><div class="ox-card ox-kpi"><span class="ox-kpi__k">Owed to suppliers</span><strong class="ox-kpi__n ox-num <%= L.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(L.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.owed.bills %> bill<%= L.kpis.owed.bills === 1 ? '' : 's' %><%= L.kpis.owed.who ? ' · ' + L.kpis.owed.who : '' %></span></div><% } %>
-    <div class="ox-card ox-kpi"><span class="ox-kpi__k">Bought this month</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.month.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.month.orders %> order<%= L.kpis.month.orders === 1 ? '' : 's' %></span></div>
+    <a class="ox-card ox-kpi" href="/purchasing/orders?status=way"><span class="ox-kpi__k">On order</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.onOrder.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.onOrder.orders %> order<%= L.kpis.onOrder.orders === 1 ? '' : 's' %> · <%= L.kpis.onOrder.units %> unit<%= L.kpis.onOrder.units === 1 ? '' : 's' %></span></a>
+    <a class="ox-card ox-kpi" href="/purchasing/receive"><span class="ox-kpi__k">Arriving this week</span><strong class="ox-kpi__n ox-num"><%= L.kpis.arriving.count %></strong><span class="ox-kpi__s"><%= L.kpis.arriving.next || 'Nothing due this week' %></span></a>
+    <% if (L.kpis.owed) { %><a class="ox-card ox-kpi" href="/money/bills"><span class="ox-kpi__k">Owed to suppliers</span><strong class="ox-kpi__n ox-num <%= L.kpis.owed.minor ? 'ox-amber' : '' %>"><%= m(L.kpis.owed.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.owed.bills %> bill<%= L.kpis.owed.bills === 1 ? '' : 's' %><%= L.kpis.owed.who ? ' · ' + L.kpis.owed.who : '' %></span></a><% } %>
+    <a class="ox-card ox-kpi" href="/reports/business/suppliers"><span class="ox-kpi__k">Bought this month</span><strong class="ox-kpi__n ox-num"><%= m(L.kpis.month.minor) %></strong><span class="ox-kpi__s"><%= L.kpis.month.orders %> order<%= L.kpis.month.orders === 1 ? '' : 's' %></span></a>
   </section>
   <% } %>
 

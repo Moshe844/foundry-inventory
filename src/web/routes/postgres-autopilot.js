@@ -1,4 +1,5 @@
 'use strict';
+const {ValidationError}=require('../../domain/errors');
 
 const express=require('express');
 const autonomy=require('../../autopilot/postgres-service');
@@ -70,11 +71,17 @@ function createPostgresAutopilotRouter(database){
     req.flash('success','Business review queued. You can leave this page; completed batches are saved automatically.');
     return res.redirect(303,req.body.returnToHome==='1'?'/':'/autopilot');
   }));
-  router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');return res.page('autopilot/postgres-work',{
+  router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');let approvalBlock=null;const action=item.recommendedAction;
+    // Say what is in the way before the person presses Approve, not after.
+    if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type!=='transfer'&&action.supplierId){const ready=await autonomy.supplierDeliveryReadiness(database,req.ctx.workspaceId,action.supplierId);
+      if(!ready.ready)approvalBlock=/email address/.test(ready.reason||'')?{reason:(action.supplierName||'This supplier')+' has no order email address yet, so the order can’t be sent.',href:'/suppliers/'+encodeURIComponent(action.supplierId)+'?edit=1',label:'Add the supplier’s email'}:{reason:ready.reason,href:'/settings/connections',label:'Fix the connection'};}
+    return res.page('autopilot/postgres-work',{
     title:'Review StockChief’s decision',nav:'autopilot',backTo:{href:'/needs-you',label:'Needs you'},
-    item});}));
+    item,approvalBlock});}));
   router.post('/autopilot/work/:id/approve',requireAuth,asyncRoute(async(req,res)=>{
-    await autonomy.approve(database,req.ctx,req.user,req.params.id,{destinationLocationId:req.body.destinationLocationId||null});req.flash('success','The approved preparation was recorded. StockChief will keep following the linked order or transfer through its remaining work.');
+    try{await autonomy.approve(database,req.ctx,req.user,req.params.id,{destinationLocationId:req.body.destinationLocationId||null});}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);return res.redirect(303,`/autopilot/work/${req.params.id}`);}
+    req.flash('success','The approved preparation was recorded. StockChief will keep following the linked order or transfer through its remaining work.');
     return res.redirect(303,`/autopilot/work/${req.params.id}`);
   }));
   router.post('/autopilot/work/:id/cancel',requireAuth,asyncRoute(async(req,res)=>{

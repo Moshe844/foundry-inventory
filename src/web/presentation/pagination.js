@@ -1,4 +1,5 @@
 'use strict';
+const {ValidationError}=require('../../domain/errors');
 // One way to page through a long list: 25 rows unless the person chose more.
 const SIZES=Object.freeze([25,50,75]);
 const MAX_PAGE=1000000;
@@ -32,7 +33,9 @@ function slice(req,rows,size=pageSize(req)){
   return {rows:shown,pager:pager(req,{page,size,total:rows.length,shown:shown.length})};
 }
 // A query that reads one row more than it shows, to learn whether more follow.
-function window(req){const size=pageSize(req),page=pageNumber(req);return {size,page,limit:size+1,offset:(page-1)*size};}
+function window(req){const size=pageSize(req);
+  if(req.query?.offset!==undefined){const offset=Number(req.query.offset);if(!Number.isSafeInteger(offset)||offset<0||offset>MAX_PAGE)throw new ValidationError('Choose a valid list page.');return {size,page:Math.floor(offset/size)+1,limit:size+1,offset};}
+  const page=pageNumber(req);return {size,page,limit:size+1,offset:(page-1)*size};}
 function fromWindow(req,found,{size,page},total=null){
   const rows=found.slice(0,size);
   return {rows,pager:pager(req,{page,size,total,hasMore:found.length>size,shown:rows.length})};

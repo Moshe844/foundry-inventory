@@ -94,7 +94,7 @@ async function matchingOrderIds(database, workspaceId, q) {
 
 async function ordersList(database, workspaceId, result, query = {}) {
   const requested = String(query.status || LEGACY_VIEWS[query.view] || 'all');
-  const tab = TABS.includes(requested) ? requested : 'all';
+  const tab = TABS.includes(requested) || requested === 'open' ? requested : 'all';
   const q = String(query.q || '').trim().slice(0, 120);
   const invoicedRows = (await database.query(`SELECT DISTINCT sales_order_id FROM accounting_customer_invoices
     WHERE workspace_id=$1 AND sales_order_id IS NOT NULL AND status<>'VOID'`, [workspaceId])).rows;
@@ -120,7 +120,8 @@ async function ordersList(database, workspaceId, result, query = {}) {
   all.forEach((row) => { counts[row.tab] += 1; });
 
   const matches = q ? await matchingOrderIds(database, workspaceId, q) : null;
-  const filtered = all.filter((row) => (tab === 'all' || row.tab === tab) && (!matches || matches.has(row.id)));
+  const OPEN = ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'];
+  const filtered = all.filter((row) => (tab === 'all' || row.tab === tab || (tab === 'open' && OPEN.includes(row.status))) && (!matches || matches.has(row.id)));
   const size = query.pageSize || PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const page = Math.min(pages, Math.max(1, Number.parseInt(query.page, 10) || 1));

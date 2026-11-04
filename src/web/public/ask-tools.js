@@ -17,6 +17,15 @@
   });
   var form = document.querySelector('[data-chat-composer]'), box = form && form.querySelector('[data-ask-input]');
   if (!form || !box) return;
+  // A suggestion or Ask again goes to the conversation on screen, not whichever another tab opened last.
+  document.addEventListener('submit', function (event) {
+    if (!event.target.classList.contains('ask-send')) return;
+    ['chatId', 'chatContext'].forEach(function (name) {
+      var from = form.querySelector('[name=' + name + ']');
+      if (!from || event.target.querySelector('[name=' + name + ']')) return;
+      var copy = document.createElement('input'); copy.type = 'hidden'; copy.name = name; copy.value = from.value; event.target.appendChild(copy);
+    });
+  }, true);
   function grow() { box.style.height = 'auto'; box.style.height = Math.min(220, box.scrollHeight + 2) + 'px'; }
   box.addEventListener('input', grow); if (box.value) grow();
   // A file dropped anywhere on the box is attached the same way as the Attach button.

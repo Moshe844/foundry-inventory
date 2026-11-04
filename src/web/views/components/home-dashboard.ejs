@@ -44,19 +44,24 @@
 
   </div><aside class="hm-side">
   <section class="sc-home-block sc-metrics hm-metrics" data-home-section="numbers" aria-label="Business numbers">
-    <% if(locals.homeSales){ %><a class="sc-metric" data-tone="ok" href="/money/profit"><span>Sales this month</span><strong data-home-number="sales"><%= helpers.money(homeSales.minor,homeSales.currency) %></strong></a>
+    <% if(locals.homeSales){ %><a class="sc-metric" data-tone="ok" href="/money/profit"><span>Sales this month</span><strong data-home-number="sales"><%= helpers.money(homeSales.minor,homeSales.currency) %></strong><% if(locals.homeSummary?.salesChange!==null&&locals.homeSummary?.salesChange!==undefined){ %><small class="hm-sub"><%= homeSummary.salesChange>=0?'Up ':'Down ' %><%= Math.abs(homeSummary.salesChange) %>% on this point last month</small><% } %></a>
     <% }else{ %><a class="sc-metric" href="/inventory"><span>Products</span><strong data-home-number="products"><%= helpers.qty(stats.itemCount) %></strong></a><% } %>
-    <a class="sc-metric" data-tone="normal" href="/orders"><span>Open orders</span><strong data-home-number="orders"><%= helpers.qty(stats.openOrders) %></strong></a>
-    <a class="sc-metric" data-tone="<%= stats.zeroCount>0?'urgent':'ok' %>" href="/inventory/table?view=flat&amp;group=empty"><span>Out of stock</span><strong data-home-number="low"><%= helpers.qty(stats.zeroCount) %></strong></a>
-    <a class="sc-metric" data-tone="stock" href="/inventory/table"><span>Units on hand<% if(stats.hasMeasuredStock){ %> <small>plus measured stock</small><% } %></span><strong data-home-number="units"><%= helpers.qty(stats.unitsOnHand) %></strong></a>
+    <a class="sc-metric" data-tone="normal" href="/orders"><span>Open orders</span><strong data-home-number="orders"><%= helpers.qty(stats.openOrders) %></strong><% if(locals.homeSummary){ %><small class="hm-sub"><%= homeSummary.readyToShip?helpers.qty(homeSummary.readyToShip)+' ready to ship':'None ready to ship' %></small><% } %></a>
+    <a class="sc-metric" data-tone="<%= stats.zeroCount>0?'urgent':'ok' %>" href="/inventory/table?view=flat&amp;group=empty"><span>Out of stock</span><strong data-home-number="low"><%= helpers.qty(stats.zeroCount) %></strong><small class="hm-sub">of <%= helpers.qty(stats.skuCount||stats.itemCount) %> products</small></a>
+    <a class="sc-metric" data-tone="stock" href="/inventory/table"><span>Units on hand<% if(stats.hasMeasuredStock){ %> <small>plus measured stock</small><% } %></span><strong data-home-number="units"><%= helpers.qty(stats.unitsOnHand) %></strong><% if(locals.homeSummary?.stockValue){ %><small class="hm-sub">Worth <%= helpers.money(homeSummary.stockValue.minor,homeSummary.stockValue.currency) %></small><% } %></a>
   </section>
 
+  <div class="hm-rail">
+  <% if(locals.homeSummary){ %><section class="hm-block hm-work" aria-labelledby="home-work-title"><header><h2 id="home-work-title">StockChief this week</h2><a href="/autopilot/history">See its work</a></header>
+    <div class="hm-work__panel"><dl><div><dt>Watching</dt><dd><%= helpers.qty(homeSummary.watching) %> <%= homeSummary.watching===1?'product':'products' %></dd></div><div><dt>Found</dt><dd><%= helpers.qty(homeSummary.found) %> <%= homeSummary.found===1?'issue':'issues' %></dd></div><div><dt>Resolved</dt><dd><%= helpers.qty(homeSummary.resolved) %></dd></div><div><dt>Finished on its own</dt><dd><%= helpers.qty(homeSummary.doneAlone) %></dd></div><div><dt>Finished after your approval</dt><dd><%= helpers.qty(homeSummary.doneApproved) %></dd></div></dl>
+    <p class="hm-work__mode"><%= homeSummary.canAutomate?'StockChief acts on its own within the limits you set.':'StockChief asks you before anything consequential.' %> <a href="/autopilot">Change this</a></p></div>
+  </section><% } %>
   <% if(handling.length){ %><section class="sc-home-block hm-block" data-home-section="progress" aria-labelledby="home-progress-title">
     <header><h2 id="home-progress-title">In progress</h2><a href="/autopilot/history">Work history</a></header>
     <div class="sc-decision-list hm-lines"><% for(const work of handling.slice(0,3)){ %><article class="hm-line"><h3><a href="<%= work.link %>"><%= work.title %></a></h3><p><%= work.detail||work.because %></p></article><% } %></div>
   </section><% } %>
 
-  </aside></div>
+  </div></aside></div>
   <section class="sc-home-block sc-ask-card hm-ask" data-home-section="ask" aria-labelledby="home-ask-title">
     <header><h2 id="home-ask-title">Ask StockChief</h2><a href="/ask/history">Your conversations</a></header>
     <%- include('../partials/composer',{composerPlaceholder:'What would you like to know or do?',homeHandoff:!!locals.postgresAsk,hideAttachment:!!locals.postgresAsk}) %>
