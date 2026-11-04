@@ -1,6 +1,16 @@
 'use strict';
 const zone="(SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1)";
 const instant='stockchief_movement_instant(m.occurred_at)';
+const boundsMarker='/* movement_date_bounds */';
+// A receipt batch often contains many movements at the same instant. Preserve
+// exact additive quantities, then convert each distinct timestamp once. Counts,
+// averages and row-value filters must continue to read individual events.
+const additiveSource=`WITH movement_instants AS MATERIALIZED (
+ SELECT m.occurred_at,sum(m.quantity_delta)::numeric AS quantity_delta
+ FROM movements m WHERE m.workspace_id=$1 ${boundsMarker}
+ GROUP BY m.occurred_at
+) SELECT m.quantity_delta,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE ${zone},'YYYY-MM-DD') AS occurred_on
+ FROM movement_instants m`;
 function applied(filter){return filter.field==='occurred_on'&&['after','at_least','before','at_most','equals','greater_than','less_than','is_null'].includes(filter.operator);}
 function bound(source,config,{parameterBase=1}={}){
  let parameter=parameterBase;const predicates=[];
@@ -21,7 +31,8 @@ function bound(source,config,{parameterBase=1}={}){
   if(filter.operator==='less_than')predicates.push(`${instant}<${start}`);
   if(filter.operator==='is_null')predicates.push(`${instant} IS NULL`);
  }
- return predicates.length?source+' AND '+predicates.join(' AND '):source;
+ const bounds=predicates.length?' AND '+predicates.join(' AND '):'';
+ return source.includes(boundsMarker)?source.replace(boundsMarker,bounds):source+bounds;
 }
 async function warnings(database,workspaceId){
  const rows=(await database.query(`SELECT coalesce(nullif(s.code,''),i.name,'an item') label
@@ -31,4 +42,4 @@ async function warnings(database,workspaceId){
   LIMIT 3`,[workspaceId])).rows;
  return rows.length?['Some stock movement dates need review: '+rows.map(r=>r.label).join(', ')+'. These movements are excluded from date-filtered totals.']:[];
 }
-module.exports={bound,applied,warnings};
+module.exports={bound,applied,warnings,additiveSource};

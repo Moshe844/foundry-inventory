@@ -47,6 +47,7 @@ test('movement sums preserve local dates while counts, averages and quantity fil
   assert.equal(Number((await reports.run(uncached,ctx,actor,{...january,aggregate:'sum'})).rows[0].total),103);
   assert.equal(Number((await reports.run(uncached,ctx,actor,{...january,aggregate:'count'})).rows[0].count),101);
  });
+ await t.test('timestamp rollups retain exact totals and put date conversion after the bounded source',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/movement-rollup-read-checks').check(db,ctx)));});
 });
 test('valuation sums use exact totals without changing row-value filters, averages, counts or empty inventories',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,catalog=require('../../src/domain/postgres-catalog-service'),reports=require('../../src/reports/postgres-service'),actor={role:'owner'},item=await catalog.createItem(db,ctx,{name:'Valuation lot',trackingMode:'quantity',purchaseCost:'1.25'});await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:item.skuIds[0],locationId:f.location.id,quantity:2,idempotencyKey:'valuation-projection-extra'});

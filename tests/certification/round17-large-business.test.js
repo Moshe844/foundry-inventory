@@ -23,6 +23,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
    },{readOnly:true,isolation:'READ COMMITTED',statementTimeoutMs:1500});
   }
  });
+ await t.test('D19 movement charts convert distinct timestamps while retaining exact totals at 150,000 stock rows',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/movement-rollup-read-checks').check(db,ctx)));});
  await t.test('A3 indexed source history reads exact rows under the large-import generic plan',async()=>{
   const expected=(await db.query("SELECT row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED' ORDER BY row_number DESC LIMIT 10",[ctx.workspaceId,f.stockPlan.id])).rows,started=performance.now();
   const rows=await db.transaction(async c=>{await c.query("SET LOCAL plan_cache_mode='force_generic_plan'");return require('../../src/imports/postgres-source-history').read(c,ctx.workspaceId,f.stockPlan.sourceHash,expected.map(r=>r.row_number));},{readOnly:true,isolation:'REPEATABLE READ'});

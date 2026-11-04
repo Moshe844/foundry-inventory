@@ -17,7 +17,9 @@ async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answ
  'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
  'goalExpired',COALESCE(checkpoint#>>'{harness,failure,code}'='GOAL_EXPIRED',false),
  'completionSource',checkpoint#>'{harness,completionSource}','admissionBlock',checkpoint#>'{harness,admissionBlock}',
- 'modelUsagePending',COALESCE(checkpoint#>>'{harness,codexDelivery,state}'='PENDING',false) OR COALESCE(checkpoint#>>'{harness,helperDelivery,state}'='PENDING',false)),
+ 'modelUsagePending',COALESCE(checkpoint#>>'{harness,codexDelivery,state}'='PENDING',false) OR COALESCE(checkpoint#>>'{harness,helperDelivery,state}'='PENDING',false),
+ 'readQueryInvalid',COALESCE(checkpoint->>'boundedRead'='true' AND tool_calls=0 AND checkpoint#>>'{harness,helperDelivery,state}'='SETTLED'
+  AND checkpoint#>>'{harness,interruption,code}'='validation_error' AND COALESCE(checkpoint#>'{harness,inflight}','null'::jsonb)='null'::jsonb,false)),
  'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
  'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
