@@ -204,6 +204,7 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  orderedTimeZones: require('./presentation/time-zones').ordered,
   businessDay,
   displayName,
   customerCopy,

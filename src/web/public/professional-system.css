@@ -34,3 +34,18 @@ body a{color:#4F46E5}
 @media(max-width:1320px) and (min-width:761px){.sc-toolbar{flex-wrap:nowrap;gap:10px}.sc-toolbar .sc-global-search{flex:1 1 120px;min-width:110px;width:auto}.sc-toolbar-actions{flex-wrap:nowrap!important;flex:none;gap:2px}.sc-toolbar-actions .btn{padding:6px 8px;font-size:13px;white-space:nowrap;min-height:32px}.sc-global-search kbd{display:none}}
 @media(max-width:1180px) and (min-width:761px){.sc-toolbar-actions .sc-usage-link{display:none}.sc-toolbar-actions a[href='/ask'] .sc-ask-word{display:none}.sc-toolbar-actions a[href='/ask']::after{content:'Ask'}}
 @media(max-width:1000px) and (min-width:761px){.sc-toolbar-actions .sc-upgrade-link{display:none}.sc-toolbar-actions .sc-support-link span{display:none}.sc-toolbar-actions .sc-support-link::after{content:'Help'}}
+
+/* One pager for every long list. */
+.pager-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; width:100%; padding:10px 2px 0; font-size:13px; color:#475467; }
+.pager-bar__count { font-variant-numeric:tabular-nums; }
+.pager-bar__size { display:flex; align-items:center; margin:0; }
+.pager-bar__size label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; margin:0; white-space:nowrap; font-size:13px; font-weight:400; color:#475467; }
+.pager-bar .pager-bar__size select { flex:none; width:68px; min-height:30px; padding:2px 22px 2px 8px; font-size:13px; }
+.pager-bar__go { display:flex; align-items:center; gap:8px; margin-left:auto; }
+.pager-bar__page { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.pager-bar .btn { min-height:30px; padding:0 11px; font-size:13px; }
+.ox-foot .pager-bar { padding-top:0; }
+.live-search__submit { position:absolute; width:1px; height:1px; min-height:0; margin:0; padding:0; border:0; overflow:hidden; opacity:0; }
+form.is-live-search[aria-busy=true] input[type=search] { background-image:linear-gradient(90deg,#E0EAFF,#fff,#E0EAFF); background-size:200% 100%; }
+.customers-search { margin:0; }
+.customers-search .input { width:340px; max-width:100%; min-height:32px; font-size:13px; }

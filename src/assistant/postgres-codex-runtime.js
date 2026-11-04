@@ -234,7 +234,7 @@ async function run(database,ctx,id,options={}){
    const reads=require('./bounded-business-read'),currentAccess=await authorize({catalogue:false});
    const began=Date.now(),modelStarted=Date.now();
    let plan;
-   try{plan=await reads.interpret(helper,currentAccess.actor,goal.original_request,{clock:currentAccess.environment?.clock,
+   try{plan=await reads.interpret(helper,currentAccess.actor,goal.original_request,{clock:await reads.businessClock(database,ctx.workspaceId,currentAccess.environment?.clock),
     conversation:(goal.checkpoint.messages||[]).slice(-4)});}
    finally{audit({kind:'bounded_read_model',timings:{modelMs:Date.now()-modelStarted}});}
    if(plan.status==='clarify'){

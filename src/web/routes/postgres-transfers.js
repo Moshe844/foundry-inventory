@@ -27,7 +27,7 @@ function createPostgresTransfersRouter(database) {
   router.get('/transfers', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
     return res.page('transfers/index', { title: 'Transfers', nav: 'transfers', room: true,
-      transfers: await transfers.list(database, req.ctx.workspaceId), ...access(req.user) });
+      transfers: await transfers.list(database, req.ctx.workspaceId), pageOf: (rows) => require('../presentation/pagination').slice(req, rows), ...access(req.user) });
   }));
   router.get('/transfers/availability',asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,permissions.REQUEST_TRANSFER,'check transfer availability');

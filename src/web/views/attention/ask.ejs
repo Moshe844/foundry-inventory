@@ -79,10 +79,10 @@
   }
 %>
 
-<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">All conversations</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="<%= request.href %>"><strong><%= request.original_request %></strong><time data-local-time datetime="<%= new Date(request.created_at).toISOString() %>"><%= helpers.dateTime(request.created_at) %></time></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><% if((locals.recentRequests||[]).length>3){ %><label class="ask-filter"><span class="visually-hidden">Find a conversation</span><input class="input" type="search" data-chat-filter placeholder="Find a conversation" autocomplete="off"></label><% } %><div class="ask-chats" data-chat-list><% for(const group of (locals.chatGroups||[])){ %><section data-chat-group><h3><%= group.label %></h3><% for(const chat of group.rows){ %><%- include('chat-row',{chat}) %><% } %></section><% } %><p class="ask-chats__none" data-chat-none hidden>No conversation matches.</p></div><a href="/ask/history" class="ask-all">All conversations</a><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
 
 </aside>
-<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
+<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/chats/<%= encodeURIComponent(currentChat.chat_id) %>/download" download>Download</a><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
 <p class="notice notice--warn" role="status" data-ask-health hidden></p>
 <div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
   <% if(locals.showAgentDiagnostics===true&&locals.codexPilot){ %>
@@ -164,6 +164,7 @@
       <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>
     </div>
     <% if(turn.agentGoal){ %><%- include('../partials/adaptive-goal',{goal:turn.agentGoal,codexApprovals:turn.agentGoal.approvalCards||[],isLatest:locals.focusedGoalId?turn.agentGoal.id===locals.focusedGoalId:turnIndex===latestIndex}) %><% } %>
+    <% if(turn.agentGoal&&turn.agentGoal.status==='COMPLETED'&&turn.agentGoal.answer){ %><%- include('answer-actions',{answerText:turn.agentGoal.answer,question:turn.message}) %><% } %>
     <% if(turn.agentGoal&&turn.goals.length){ %><details class="rm-agent-results"><summary>Activity · <%= turn.goals.length %></summary><% } %>
     <% turn.goals.forEach(function (goal) { %>
       <% if (goal.id === currentGoalId && error) { %>
@@ -192,10 +193,11 @@
         var record = said === result.answer ? null : result.answer;
         var sections = (result.sections || []).filter(function (s) { return s.rows.length || s.handoff; });
         var answerIsSummary = result.columns && result.columns[0] === 'measure' && result.columns[1] === 'value';
-        var hasRows = result.rows && result.rows.length;
+        var hasRows = result.rows && result.rows.length && !(result.columns || []).includes('grossProfit');
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said, locals.protectedNames || []) %></p>
+        <%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id}) %>
         <p class="rm-said__meta"><% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify' && !result.emailFlow) { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
         <% if (result.emailFlow && result.needsClarification) { %>
           <form method="post" action="/ask/email/continue" class="rm-email-flow" data-busy>
@@ -400,6 +402,7 @@
         <% if (saidText.length > 600) { %>
           <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
         <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
+        <%- include('answer-actions',{answerText:saidText,question:turn.message,interactionId:goal.id}) %>
         <p class="rm-said__meta">
           <% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %>
           <% if (goal.resultHref) { %><a href="<%= goal.resultHref %>"><%= goal.resultLabel || 'Open' %> →</a><% } %>
@@ -438,15 +441,19 @@
     </div>
   <% }) %>
 
+  <% if (started && !guidedEmailStep && !locals.continuationGoalId && transcript.length) { var nextQuestions = examples.filter(function (example) { return !transcript.some(function (turn) { return turn.message === example; }); }).slice(0, 3); if (nextQuestions.length) { %>
+    <div class="ask-next" aria-label="Ask next"><span>Ask next</span><% nextQuestions.forEach(function (example) { %><%- include('ask-send',{message:example,label:example}) %><% }) %></div>
+  <% }} %>
   <% if (!aiConfigured) { %>
     <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
       Broader free-form language needs a model connection. Grounded questions and deterministic workflows still work without one.
     </p>
   <% } %>
   <% if (!started) { %>
-    <div class="rm-suggest">
+    <p class="ask-try">Try asking</p>
+    <div class="rm-suggest ask-starters">
       <% examples.forEach(function (example) { %>
-        <a href="<%= suggestionHref(example) %>"><%= example %></a>
+        <%- include('ask-send',{message:example,label:example}) %>
       <% }) %>
     </div>
   <% } %>
@@ -485,3 +492,4 @@
 
 
 <script src="/ask-health.js?v=<%= locals.assetVersion || '' %>" defer></script>
+<script src="/ask-tools.js?v=<%= locals.assetVersion || '' %>" defer></script>

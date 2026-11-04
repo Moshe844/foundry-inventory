@@ -145,9 +145,10 @@ async function purchaseOrdersList(database, workspaceId, rows, query = {}, can =
 
   const matches = q ? await matchingOrderIds(database, workspaceId, q) : null;
   const filtered = all.filter((order) => (tab === 'all' || order.tab === tab) && (!matches || matches.has(order.id)));
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const size = query.pageSize || PAGE_SIZE;
+  const pages = Math.max(1, Math.ceil(filtered.length / size));
   const page = Math.min(pages, Math.max(1, Number.parseInt(query.page, 10) || 1));
-  const shown = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const shown = filtered.slice((page - 1) * size, page * size);
 
   const open = all.filter((order) => OPEN.includes(order.status) && order.outstandingUnits > 0);
   const weekEnd = isoDay(new Date(Date.parse(`${today}T00:00:00Z`) + 7 * 86400000));

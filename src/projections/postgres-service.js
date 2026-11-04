@@ -160,7 +160,7 @@ async function needsUncached(database,workspaceId,actorId=null){
     recommendation:'Read the message first. Review or write a reply only if one is needed.',href:`/mail/${row.id}`,
     actionLabel:'Read email',sourceId:row.id,createdAt:row.received_at,timeLabel:'Received',at:row.received_at});
   for(const row of orders.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'order',importance:orderImportance(row.needed_by),
-    priority:92,title:`${row.order_number} can’t be filled yet`,happened:`${row.customer_name} needs ${number(row.remaining)} units; only ${number(row.allocated)} are set aside for this order.`,
+    priority:92,title:`${row.order_number} can’t be filled yet`,happened:`${row.customer_name} needs ${number(row.remaining)} ${number(row.remaining)===1?'unit':'units'}; only ${number(row.allocated)} ${number(row.allocated)===1?'is':'are'} set aside for this order.`,
     why:'Until more stock is available, this order can only go out in part.',recommendation:'Move stock from another location or buy more.',
     href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
   for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
@@ -182,6 +182,8 @@ async function needsUncached(database,workspaceId,actorId=null){
         row.payment_order_id?`/orders/${row.payment_order_id}`:
           `/settings/operations/provider-effects/${row.id}`,
     actionLabel:'Verify provider outcome',sourceId:row.id,createdAt:row.created_at,updatedAt:row.completed_at,at:row.completed_at});
+  const zone=(await require('../lib/business-time').forWorkspace(database,workspaceId)).timeZone,{readableTimes}=require('../web/presentation/time-zones');
+  for(const item of items)for(const field of ['title','happened','why','recommendation'])if(item[field])item[field]=readableTimes(item[field],zone);
   return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
 }
 

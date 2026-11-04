@@ -121,9 +121,10 @@ async function ordersList(database, workspaceId, result, query = {}) {
 
   const matches = q ? await matchingOrderIds(database, workspaceId, q) : null;
   const filtered = all.filter((row) => (tab === 'all' || row.tab === tab) && (!matches || matches.has(row.id)));
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const size = query.pageSize || PAGE_SIZE;
+  const pages = Math.max(1, Math.ceil(filtered.length / size));
   const page = Math.min(pages, Math.max(1, Number.parseInt(query.page, 10) || 1));
-  const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const rows = filtered.slice((page - 1) * size, page * size);
 
   const open = result.orders.filter((order) => ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'].includes(order.status));
   const readyToShip = all.filter((row) => row.status === 'CONFIRMED');

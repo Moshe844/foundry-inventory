@@ -58,9 +58,7 @@
       </tbody>
     </table>
     <% } %>
-    <footer class="ox-foot"><span class="ox-muted">Requested → approved by supplier → shipped back → credited</span><span>
-      <% if (previous !== null) { %><a href="/supplier-returns?offset=<%= previous %>">Previous</a><% } %>
-      <% if (next !== null) { %><a href="/supplier-returns?offset=<%= next %>">Next</a><% } %></span></footer>
+    <footer class="ox-foot"><span class="ox-muted">Requested → approved by supplier → shipped back → credited</span><%- include('../partials/pager') %></footer>
     <% } %>
   </section>
 

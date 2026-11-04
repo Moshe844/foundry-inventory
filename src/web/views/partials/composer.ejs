@@ -46,6 +46,7 @@
       <input type="file" name="file" accept="<%= locals.postgresAsk ? helpers.importSourceFormats.accept : '.csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*' %>" data-operator-attachment>
       <%- helpers.icon('paperclip', { size: 16 }) %><span>Attach</span>
     </label><% } %>
+    <% if (locals.chatComposer) { %><button class="rm-composer__voice" type="button" data-voice-input hidden aria-pressed="false" title="Speak your question"><%- helpers.icon('chat', { size: 16 }) %><span>Speak</span></button><% } %>
     <span class="right"><button class="rm-btn rm-btn--sm rm-composer__send" type="submit" aria-label="Continue" data-ask-submit><span>Send</span><%- helpers.icon('send', { size: 16 }) %></button></span>
   </div>
   <p class="rm-composer__pending" data-ask-pending role="status" aria-live="polite" hidden>

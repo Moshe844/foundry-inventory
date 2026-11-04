@@ -9,7 +9,6 @@
  const statusTone=paused||home.status.checkStale?'warn':home.status.lastLookedAt?'ok':'idle';
  const chips=(locals.askSuggestions||[]).filter(entry=>entry.href!=='/needs-you').slice(0,3);
  const next=home.guidance?.next&&!locals.activeMigration?home.guidance.next:null;
- const iconOf=item=>({order:'box',shipping:'ship',purchase:'purchasing',inventory:'box',accounting:'wallet',mail:'chat',connection:'bolt',import:'import',approval:'check',recovery:'alert',clarification:'question',provider:'alert',repair:'alert'})[item.kind]||'attention';
  const toneOf=item=>item.importance==='Urgent'?'urgent':item.importance==='Important'?'important':'normal';
  const countTone=needs.some(item=>item.importance==='Urgent')?'urgent':needs.some(item=>item.importance==='Important')?'important':'normal';
 %>
@@ -33,14 +32,14 @@
 
   <div class="hm-cols"><div class="hm-main">
   <section class="sc-home-block hm-block" data-home-section="needs" id="needs-you" aria-labelledby="home-needs-title">
-    <header><h2 id="home-needs-title">Needs you <span class="badge hm-count" data-tone="<%= waiting?countTone:'ok' %>"><%= waiting %></span></h2><% if(waiting){ %><a href="/needs-you">View all</a><% } %></header>
-    <% if(needs.length){ %><div class="sc-decision-list hm-rows"><% for(const decision of needs){ %><article class="sc-decision hm-row" data-tone="<%= toneOf(decision) %>"><span class="hm-icon" aria-hidden="true"><%- helpers.icon(iconOf(decision),{size:18}) %></span><div class="hm-row__text"><div class="hm-row__title"><h3><%= decision.title %></h3><% if(toneOf(decision)==='urgent'){ %><span class="badge badge--danger">Urgent</span><% }else if(toneOf(decision)==='important'){ %><span class="badge badge--warn">Important</span><% } %></div><p><%= decision.happened&&decision.happened!==decision.title?decision.happened:decision.why||decision.because %></p></div><% const deadline=helpers.deadlineTag(decision,helpers.businessDay(new Date(),account.timeZone||'UTC'));if(deadline){ %><span class="sc-due-tag"><%= deadline %></span><% } %><a class="btn btn--primary btn--sm" href="<%= decision.href||decision.link||'/needs-you' %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div>
+    <header><h2 id="home-needs-title">Needs you <span class="badge hm-count" data-tone="<%= waiting?countTone:'ok' %>"><%= waiting %></span></h2><% if(waiting){ %><div class="level-counts" aria-label="By level"><% for(const entry of locals.homeLevels||[]){ if(entry.count){ %><a class="level-count" data-tone="<%= entry.key %>" href="/needs-you?level=<%= entry.key %>"><%= entry.count %> <%= entry.label %></a><% }} %></div><a href="/needs-you">View all</a><% } %></header>
+    <% if(needs.length){ %><div class="sc-decision-list hm-rows" data-show-batch="6"><% for(const decision of needs){ %><article class="sc-decision hm-row" data-tone="<%= toneOf(decision) %>"><div class="hm-row__text"><div class="hm-row__title"><h3><%= decision.title %></h3><span class="level-label" data-tone="<%= toneOf(decision) %>"><%= toneOf(decision)==='urgent'?'Urgent':toneOf(decision)==='important'?'Important':'Normal' %></span></div><p><%= decision.happened&&decision.happened!==decision.title?decision.happened:decision.why||decision.because %></p></div><% const deadline=helpers.deadlineTag(decision,helpers.businessDay(new Date(),account.timeZone||'UTC'));if(deadline){ %><span class="sc-due-tag"><%= deadline %></span><% } %><a class="btn btn--sm hm-row__action" href="<%= decision.href||decision.link||'/needs-you' %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div>
     <% }else if(!suggestions.length){ %><p class="sc-home__quiet hm-quiet">You’re all caught up. No known decisions are waiting for you.</p><% } %>
   </section>
 
   <% if(suggestions.length){ %><section class="sc-home-block hm-block" data-home-section="suggestions" id="suggestions" aria-labelledby="home-suggestions-title">
     <header><h2 id="home-suggestions-title">Ready for your approval</h2></header>
-    <div class="sc-suggestion-grid hm-rows"><% for(const suggestion of suggestions.slice(0,6)){ %><%- include('home-suggestion',{suggestion}) %><% } %></div>
+    <div class="sc-suggestion-grid hm-rows" data-show-batch="6"><% for(const suggestion of suggestions.slice(0,18)){ %><%- include('home-suggestion',{suggestion}) %><% } %></div>
   </section><% } %>
 
   </div><aside class="hm-side">

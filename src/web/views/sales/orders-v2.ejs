@@ -93,11 +93,7 @@
     <% } %>
 
     <footer class="ox-foot">
-      <span class="ox-muted">Showing <%= L.shown %> of <%= L.matching %><% if (L.pages > 1) { %> ·
-        <% if (L.page > 1) { %><a href="<%= qs({ page: L.page - 1 }) %>">Previous</a><% } %>
-        Page <%= L.page %> of <%= L.pages %>
-        <% if (L.page < L.pages) { %><a href="<%= qs({ page: L.page + 1 }) %>">Next</a><% } %>
-      <% } %></span>
+      <% if (locals.pager && pager.show) { %><%- include('../partials/pager') %><% } else { %><span class="ox-muted">Showing <%= L.shown %> of <%= L.matching %></span><% } %>
       <% if (!sellingConnectionCount) { %><a href="/settings/connections">Connect a shop so web orders arrive here on their own →</a><% } %>
     </footer>
   </section>

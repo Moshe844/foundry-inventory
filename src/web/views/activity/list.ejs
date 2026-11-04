@@ -111,6 +111,7 @@
           </li>
         <% }) %>
       </ol>
+      <%- include('../partials/pager') %>
     </div>
 
     <% if (stream === 'all' && log.quietChecks) { %>
@@ -140,19 +141,6 @@
           </p>
         <% } else { %>
           <%- include('../partials/ledger', { groups: groups, helpers: helpers, ledgerClass: 'raw-movement-ledger' }) %>
-          <% if (page > 1 || hasMore) { %>
-            <div class="pager">
-              <span class="t-muted">Page <%= page %></span>
-              <span class="pager__go">
-                <% if (page > 1) { %>
-                  <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
-                <% } %>
-                <% if (hasMore) { %>
-                  <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
-                <% } %>
-              </span>
-            </div>
-          <% } %>
         <% } %>
       </div>
     </details>

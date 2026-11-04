@@ -1,61 +1,75 @@
-/* Needs you: one card per item, with space between them. */
-.ny-head { display: block; margin: 0 0 18px; }
-.ny-head h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -.02em; color: #141A33; }
-.ny-summary { margin: 6px 0 0; font-size: 16px; color: #475069; }
-.ny-summary strong { font-weight: 650; color: #141A33; }
-.ny-summary .ny-urgent { color: #D92D20; }
-.ny-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
-.ny-filters { display: flex; gap: 6px; flex-wrap: wrap; }
-.ny-filters a { display: inline-flex; gap: 6px; align-items: center; padding: 7px 13px; border: 1px solid #E5E8F1; border-radius: 999px; background: #fff; color: #475069; font-size: 13.5px; font-weight: 500; text-decoration: none; }
-.ny-filters a span { color: #7A839C; font-size: 12.5px; }
-.ny-filters a[aria-current=page] { background: #4F46E5; border-color: #4F46E5; color: #fff; }
-.ny-filters a[aria-current=page] span { color: #E0E2FF; }
-.ny-search { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
-.ny-search label { margin: 0; }
-.ny-search .input { width: 200px; }
-.ny-list { display: flex; flex-direction: column; gap: 10px; }
-.ny-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #fff; border: 1px solid #E5E8F1; border-radius: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.05); scroll-margin-top: 90px; }
-.ny-card:hover { box-shadow: 0 4px 12px rgba(16,24,40,.08); }
-.ny-card.is-focused { border-color: #4F46E5; box-shadow: 0 0 0 3px #EEF0FE; }
-.ny-icon { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: #EEF0FE; color: #4F46E5; }
-.ny-card[data-tone=important] .ny-icon { background: #FEF0C7; color: #DC6803; }
-.ny-card[data-tone=urgent] { border-color: #FDA29B; background: #FFFBFA; }
-.ny-card[data-tone=urgent] .ny-icon { background: #FEE4E2; color: #D92D20; }
-.ny-card-main { flex: 1; min-width: 0; }
-.ny-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ny-card h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; color: #141A33; }
-.ny-title .badge { padding: 1px 8px; font-size: 11.5px; font-weight: 650; color: #fff; border: 0; }
-.ny-title .badge--danger { background: #D92D20; }
-.ny-title .badge--warn { background: #F79009; }
-.ny-context { margin: 3px 0 0; font-size: 13.5px; line-height: 1.4; color: #475069; }
-.ny-card-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: #7A839C; }
-.ny-kind { font-weight: 600; color: #4F46E5; }
-.ny-times::before { content: "·"; margin-right: 6px; }
-.ny-why { margin-top: 3px; font-size: 12.5px; }
-.ny-why summary { cursor: pointer; color: #5D6780; font-weight: 500; }
-.ny-why p { margin: 4px 0 0; font-size: 13px; line-height: 1.4; color: #475069; }
-.ny-next { font-weight: 500; color: #141A33; }
-.ny-actions { flex: none; display: flex; align-items: center; gap: 8px; }
-.ny-actions form { margin: 0; }
-.ny-empty { padding: 36px 24px; text-align: center; background: #fff; border: 1px solid #E5E8F1; border-radius: 14px; }
-.ny-empty h2 { margin: 0; font-size: 18px; font-weight: 650; color: #141A33; }
-.ny-empty p { margin: 6px 0 14px; color: #5D6780; }
-.ny-foot { margin: 14px 2px 0; font-size: 12.5px; color: #7A839C; }
-@media (max-width: 640px) {
-  .ny-card { flex-wrap: wrap; }
-  .ny-card-main { flex-basis: calc(100% - 54px); }
-  .ny-actions { width: 100%; }
-  .ny-actions .btn { flex: 1; }
-  .ny-search { margin-left: 0; width: 100%; }
-  .ny-search label:first-of-type { flex: 1; }
-  .ny-search .input { width: 100%; }
+/* Needs you: separate rows, each marked along its edge by how much it matters. */
+.ny-head { display:block; margin:0 0 16px; }
+.ny-head .level-counts { margin-top:8px; }
+.ny-head h1 { margin:0; font-size:22px; font-weight:600; letter-spacing:-.015em; color:#101828; }
+.ny-summary { margin:3px 0 0; font-size:14px; color:#667085; }
+.ny-summary strong { font-weight:600; color:#101828; }
+.ny-summary .ny-urgent { color:#D92D20; }
+.ny-tools { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; }
+.ny-filters { display:flex; gap:4px; flex-wrap:wrap; }
+.ny-filters a { display:inline-flex; gap:5px; align-items:center; padding:5px 10px; border:1px solid #E4E7EC; border-radius:6px; background:#fff; color:#344054; font-size:13px; font-weight:500; text-decoration:none; }
+.ny-filters a:hover { background:#F9FAFB; }
+.ny-filters a span { color:#667085; font-size:12px; }
+.ny-filters a[aria-current=page] { background:#101828; border-color:#101828; color:#fff; }
+.ny-filters a[aria-current=page] span { color:#D0D5DD; }
+.ny-search { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+.ny-search label { margin:0; }
+.ny-search .input { width:200px; min-height:32px; padding:4px 10px; font-size:13px; }
+.ny-search .select { min-height:32px; padding-block:4px; font-size:13px; }
+.ny-list { display:flex; flex-direction:column; gap:6px; }
+.ny-card { display:flex; align-items:center; gap:14px; padding:10px 12px 10px 14px; border:1px solid #D6DEFA; border-left:5px solid #3B5BDB; border-radius:6px; background:#F7F9FF; scroll-margin-top:90px; }
+.ny-card:hover { box-shadow:0 1px 4px rgba(16,24,40,.1); }
+.ny-card[data-tone=important] { border-color:#FBD9A8; border-left-color:#E8710A; background:#FFF8EE; }
+.ny-card[data-tone=urgent] { border-color:#FBC4BE; border-left-color:#D92D20; background:#FEF3F2; }
+.ny-card.is-focused { box-shadow:0 0 0 3px #E0EAFF; }
+.ny-card[hidden] { display:none; }
+.ny-card-main { flex:1; min-width:0; }
+.ny-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.ny-card h2 { margin:0; font-size:14px; font-weight:600; line-height:1.35; color:#101828; }
+.ny-context { margin:1px 0 0; font-size:13px; line-height:1.4; color:#475467; }
+.ny-card-top { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:2px; font-size:12px; color:#667085; }
+.ny-kind { font-weight:500; color:#475467; }
+.ny-times::before { content:"·"; margin-right:6px; }
+.ny-why { font-size:12px; }
+.ny-why::before { content:"·"; margin-right:6px; }
+.ny-why[open] { flex-basis:100%; }
+.ny-why[open]::before { content:none; }
+.ny-why summary { cursor:pointer; color:#667085; font-weight:500; }
+.ny-why p { margin:3px 0 0; font-size:12.5px; line-height:1.4; color:#475467; }
+.ny-next { font-weight:500; color:#101828; }
+.ny-actions { flex:none; display:flex; align-items:center; gap:6px; }
+.ny-actions form { margin:0; }
+.ny-actions .btn { min-height:30px; padding:0 11px; border-radius:6px; font-size:13px; font-weight:500; }
+.ny-action { border:1px solid #D0D5DD; background:#fff; color:#101828; }
+.ny-action:hover { border-color:#444CE7; background:#444CE7; color:#fff; }
+.ny-empty { padding:32px 24px; text-align:center; border:1px solid #E4E7EC; border-radius:8px; background:#fff; }
+.ny-empty h2 { margin:0; font-size:15px; font-weight:600; color:#101828; }
+.ny-empty p { margin:4px 0 12px; font-size:13.5px; color:#667085; }
+.ny-foot { margin:12px 2px 0; font-size:12px; color:#667085; }
+/* Levels: red urgent, orange important, blue normal. Always labelled, never only an edge. */
+.level-label { flex:none; display:inline-block; padding:1px 7px; border-radius:4px; font-size:11.5px; font-weight:600; line-height:17px; color:#fff; }
+.level-label[data-tone=urgent] { background:#D92D20; }
+.level-label[data-tone=important] { background:#E8710A; }
+.level-label[data-tone=normal] { background:#3B5BDB; }
+.level-counts { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-right:auto; }
+.level-count { display:inline-flex; align-items:center; padding:2px 9px; border:1px solid transparent; border-radius:5px; font-size:12.5px; font-weight:600; line-height:18px; text-decoration:none !important; color:#fff !important; }
+.level-count[data-tone=urgent] { background:#D92D20; }
+.level-count[data-tone=important] { background:#E8710A; }
+.level-count[data-tone=normal] { background:#3B5BDB; }
+.level-count:hover { filter:brightness(.92); }
+.level-count[aria-current] { box-shadow:0 0 0 2px #fff,0 0 0 4px #101828; }
+.level-clear { font-size:12.5px; margin-left:4px; }
+
+.show-batch__more { display:flex; align-items:center; gap:12px; margin-top:8px; }
+.show-batch__more button { padding:0; border:0; background:none; color:#3538CD; font:500 13px var(--f,inherit); cursor:pointer; }
+.show-batch__more button:hover { text-decoration:underline; }
+.show-batch__more button[hidden] { display:none; }
+.show-batch__more span { font-size:12.5px; color:#667085; }
+@media (max-width:640px) {
+  .ny-card { flex-wrap:wrap; }
+  .ny-card-main { flex-basis:100%; }
+  .ny-actions { margin-left:auto; }
+  .ny-search { margin-left:0; width:100%; }
+  .ny-search label:first-of-type { flex:1; }
+  .ny-search .input { width:100%; }
 }
-/* Tiles rather than long strips: the text and its button stay close together. */
-.ny-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
-.ny-card { flex-wrap: wrap; align-items: flex-start; align-content: space-between; }
-.ny-card-main { flex: 1 1 calc(100% - 54px); }
-.ny-actions { margin-left: auto; }
-@media (max-width: 640px) { .ny-list { grid-template-columns: minmax(0, 1fr); } .ny-actions { width: auto; } .ny-actions .btn { flex: none; } }
-/* One column: the button sits beside the text instead of on its own line. */
-.ny-list { container-type: inline-size; }
-@container (max-width: 700px) and (min-width: 480px) { .ny-card { flex-wrap: nowrap; align-items: center; } .ny-card-main { flex: 1 1 auto; } .ny-actions { margin-left: 0; } }
