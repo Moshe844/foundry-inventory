@@ -60,7 +60,9 @@ jobs:
       - name: Audit runtime and development dependencies
         run: npm audit --audit-level=moderate
       - id: test_ready
-        run: npx playwright install --with-deps chromium
+        run: |
+          npx playwright install --with-deps chromium
+          mkdir -p output/inventory-ci
       - name: Query deadlines, recovery and dense catalogue regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
         run: node --test --test-concurrency=2 tests/postgres/import-legacy-lookup-scale.test.js tests/postgres/replenishment-expiry-scale.test.js tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js
