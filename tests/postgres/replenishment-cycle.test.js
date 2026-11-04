@@ -4,6 +4,12 @@ test('replenishment coalesces stock changes, defers imports and avoids the quota
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
  const auto=require('../../src/autopilot/postgres-service'),cycle=require('../../src/purchasing/postgres-replenishment-cycle');
  const catalog=require('../../src/domain/postgres-catalog-service'),receipt=require('../../src/accounting/postgres-stock-receipt');
+ const bounded={query:db.query.bind(db),transaction:(fn,options)=>db.transaction(fn,{...options,statementTimeoutMs:5000,lockTimeoutMs:1000})};
+ async function whileObsoleteQuotaHeld(operation){
+  let ready,release;const started=new Promise(r=>ready=r),unblock=new Promise(r=>release=r);
+  const holder=db.transaction(async c=>{await c.query("SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||$1,0))",[f.owner.accountId]);ready();await unblock;},{isolation:'READ COMMITTED'});
+  try{await Promise.race([started,holder]);return await operation();}finally{release();await holder;}
+ }
  const item=await catalog.createItem(db,ctx,{name:'Cycle coffee',baseCode:'CYCLE',trackingMode:'quantity'}),skuId=item.skuIds[0];
  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId,lastUnitCost:40,isPreferred:true});
  await db.transaction(c=>require('../../src/operations/postgres-reorder-policies').setManyInTransaction(c,ctx,[{skuId,locationId:f.location.id,reorderPoint:5,targetStock:10}]));
@@ -40,17 +46,14 @@ test('replenishment coalesces stock changes, defers imports and avoids the quota
   const finished=await queue.processOne(db,{'autopilot.evaluate':handlers['autopilot.evaluate']},{owner:'manual-review-regression'});
   assert.equal(finished.status,'COMPLETED');assert.equal(finished.result.skipped,undefined,'A manual request must actually plan, not report a throttled check as complete');
  });
- await t.test('a planner waiting on an account quota never holds the source-version lock needed by a stock writer',async()=>{
+ await t.test('a held obsolete account quota lock cannot block planning or a concurrent stock receipt',async()=>{
   await require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId,locationId:f.location.id,quantity:5,idempotencyKey:'cycle-before-lock-order'});
   await auto.plan(db,ctx.workspaceId); // Clear the dirty flag before this interleaving.
-  let holdReady,persistReady;const holding=new Promise(r=>holdReady=r),persisting=new Promise(r=>persistReady=r);
-  const stock=db.transaction(async c=>{await cycle.lockStorageOwner(c,ctx.workspaceId);holdReady();await persisting;
-   await receipt.receive({query:c.query.bind(c),transaction:fn=>fn(c)},ctx,{skuId,locationId:f.location.id,quantity:1,unitCost:'40',idempotencyKey:'cycle-lock-order'});
-  },{isolation:'READ COMMITTED',statementTimeoutMs:5000,lockTimeoutMs:3000});
-  await holding;
-  const wrapped={query:async(sql,args)=>{if(sql.includes('pg_advisory_xact_lock'))persistReady();return db.query(sql,args);},transaction:(fn,options)=>db.transaction(c=>fn({query:async(sql,args)=>{if(sql.includes('WITH quota_lock AS'))persistReady();return c.query(sql,args);}}),options)};
-  const planning=auto.plan(wrapped,ctx.workspaceId);
-  await Promise.all([stock,planning]);
+  await whileObsoleteQuotaHeld(()=>Promise.all([
+   receipt.receive(bounded,ctx,{skuId,locationId:f.location.id,quantity:1,unitCost:'40',idempotencyKey:'cycle-lock-order'}),
+   auto.plan(bounded,ctx.workspaceId)
+  ]));
+  await auto.plan(db,ctx.workspaceId);
   const live=(await db.query("SELECT recommended_action::jsonb action FROM work_items WHERE workspace_id=$1 AND execution_status IN('AUTHORIZED','WAITING_FOR_APPROVAL') AND recommended_action::jsonb->>'skuId'=$2",[ctx.workspaceId,skuId])).rows;
   assert.equal(live.length,1);assert.equal(live[0].action.quantity,8,'The new suggestion includes the concurrent receipt');
  });
@@ -65,21 +68,17 @@ test('replenishment coalesces stock changes, defers imports and avoids the quota
   const plan=await db.transaction(async c=>{await c.query('SET LOCAL enable_seqscan=off');return (await c.query(`EXPLAIN (FORMAT JSON) SELECT sku_id FROM stockchief_runtime.replenishment_demand_events WHERE workspace_id=$1 AND occurred_at>=CURRENT_TIMESTAMP-interval '90 days' AND occurred_at<=CURRENT_TIMESTAMP`,[ctx.workspaceId])).rows;},{readOnly:true});
   const text=JSON.stringify(plan);assert.match(text,/replenishment_demand_window/);assert.match(text,/Index Cond.*occurred_at/);
  });
- await t.test('cancelling a paid-plan decision and receiving its stock cannot invert the quota/work-item lock order',async()=>{
+ await t.test('a held obsolete account quota lock cannot block cancelling a paid-plan decision or receiving stock',async()=>{
   const version=(await db.query("SELECT id FROM commercial_plan_versions WHERE plan_id='pro' AND configuration->>'offerId' IS NOT NULL ORDER BY created_at DESC LIMIT 1")).rows[0];assert(version);
   await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,source) VALUES('cycle-paid-locks',$1,'pro',$2,'COMP','ISOLATED_TEST')",[f.owner.accountId,version.id]);
   const item=await catalog.createItem(db,ctx,{name:'Paid lock order',baseCode:'PAID-LOCK',trackingMode:'quantity'}),sku=item.skuIds[0];
   await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId:sku,lastUnitCost:40,isPreferred:true});
   await db.transaction(c=>require('../../src/operations/postgres-reorder-policies').setManyInTransaction(c,ctx,[{skuId:sku,locationId:f.location.id,reorderPoint:5,targetStock:10}]));
   const work=(await auto.plan(db,ctx.workspaceId)).created.find(w=>w.recommendedAction.skuId===sku);assert(work);
-  let quotaReady,cancelPidReady;const quotaHeld=new Promise(r=>quotaReady=r),pidReady=new Promise(r=>cancelPidReady=r);
-  const receive=db.transaction(async c=>{const holder=(await c.query('SELECT pg_backend_pid() pid')).rows[0].pid;await cycle.lockStorageOwner(c,ctx.workspaceId);quotaReady();const cancelPid=await pidReady;
-   let waiting=false;for(let n=0;n<300;n++){const row=(await c.query('SELECT $2::int=ANY(pg_blocking_pids($1::int)) waiting',[cancelPid,holder])).rows[0];if(row.waiting){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}assert(waiting,'The cancel request must reach the held account lock');
-   await receipt.receive({query:c.query.bind(c),transaction:fn=>fn(c)},ctx,{skuId:sku,locationId:f.location.id,quantity:12,unitCost:'40',idempotencyKey:'paid-lock-receipt'});
-  },{isolation:'READ COMMITTED',statementTimeoutMs:5000,lockTimeoutMs:3000});
-  await quotaHeld;
-  const cancel=db.transaction(async c=>{cancelPidReady((await c.query('SELECT pg_backend_pid() pid')).rows[0].pid);return auto.cancel({query:c.query.bind(c),transaction:fn=>fn(c)},ctx,{role:'owner'},work.id);},{isolation:'READ COMMITTED',statementTimeoutMs:5000,lockTimeoutMs:3000});
-  const [,cancelled]=await Promise.all([receive,cancel]);assert.equal(cancelled.execution_status,'CANCELLED');
+  const [,cancelled]=await whileObsoleteQuotaHeld(()=>Promise.all([
+   receipt.receive(bounded,ctx,{skuId:sku,locationId:f.location.id,quantity:12,unitCost:'40',idempotencyKey:'paid-lock-receipt'}),
+   auto.cancel(bounded,ctx,{role:'owner'},work.id)
+  ]));assert.equal(cancelled.execution_status,'CANCELLED');
   assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,sku,f.location.id])).rows[0].on_hand),12);
  });
 });

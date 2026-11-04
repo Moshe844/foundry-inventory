@@ -168,7 +168,7 @@ test('a restarted application serves the same numbers to the browser', async () 
    * number has to survive a restart.
    */
   const held = plain((await agent.get('/inventory')).text);
-  assert.match(held, /units on hand/i);
+  assert.match(held, /On hand 326 units/i);
 
   const activity = plain((await agent.get('/activity')).text);
   assert.match(activity, /Transferred 25 × Copper Elbow from Main Warehouse to Downtown Store\./);

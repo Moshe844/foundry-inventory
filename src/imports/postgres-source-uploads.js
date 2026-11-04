@@ -27,6 +27,7 @@ async function enqueue(database,ctx,input){
   if(prior){if(prior.source_hash!==sourceHash||JSON.stringify(Object.entries(prior.input_options).sort())!==JSON.stringify(Object.entries(options).sort()))throw new ValidationError('That upload request already belongs to another file or set of choices. Select the file again to start a separate preview.');return prior.id;}
   if(options.defaultLocationId&&!(await client.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[ctx.workspaceId,options.defaultLocationId])).rows.length)throw new ValidationError('Choose a location in this inventory.');
   const uploadId=newId('upl'),scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)},queued=await jobs.enqueue(scoped,{workspaceId:ctx.workspaceId,kind:'import.analyse-source',idempotencyKey:`source:${ctx.actorId}:${key}`,payload:{uploadId,actorId:ctx.actorId},priority:35,maxAttempts:1});
+  await require('../commercial/storage-capacity').reserve(client,ctx.workspaceId,'upload:'+uploadId,bytes.length+16384,{finished:true});
   await client.query(`INSERT INTO import_source_uploads(id,workspace_id,actor_id,job_id,request_key,source_name,source_hash,source_bytes,source_content,input_options) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,[uploadId,ctx.workspaceId,ctx.actorId,queued.job.id,key,String(input.filename||'Pasted inventory data').slice(0,500),sourceHash,bytes.length,bytes,JSON.stringify(options)]);return uploadId;
  },{isolation:'READ COMMITTED'});
  return get(database,ctx.workspaceId,id);

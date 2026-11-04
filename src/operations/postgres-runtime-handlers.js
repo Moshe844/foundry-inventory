@@ -160,8 +160,6 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
 }
 
 async function runtimeSweep(job,client,options={}){
-  await require('../lib/versioned-read-model').foldChanges(client);
-  await require('../commercial/storage-capacity').schedule(scopedDatabase(client));
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   await client.query('DELETE FROM connection_authorization_states WHERE id IN (SELECT id FROM connection_authorization_states WHERE used_at IS NULL AND expires_at::timestamptz<$1::timestamptz ORDER BY expires_at LIMIT 500)',[at]);
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
@@ -642,7 +640,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
-  'commercial.storage-baseline':external(async(job,database)=>{let lost=false,pending=Promise.resolve();const timer=job.leaseToken?setInterval(()=>{pending=pending.then(async()=>{if(!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs:120000}))lost=true;}).catch(()=>{lost=true;});},5000):null;if(timer)timer.unref();try{const result=await require('../commercial/storage-capacity').baseline(database,job.workspaceId||job.payload.workspaceId,job.payload.relation);await pending;if(lost)throw Object.assign(new Error('The storage measurement lease expired; saved byte counters remain intact.'),{retryable:true});return result;}finally{if(timer)clearInterval(timer);await pending;}},'bulk'),
+  'commercial.storage-baseline':external(async(job,database)=>{let lost=false,pending=Promise.resolve();const timer=job.leaseToken?setInterval(()=>{pending=pending.then(async()=>{if(!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs:120000}))lost=true;}).catch(()=>{lost=true;});},5000):null;if(timer)timer.unref();try{const result=await (job.payload.relation?require('../commercial/storage-capacity').baseline(database,job.workspaceId||job.payload.workspaceId,job.payload.relation):require('../commercial/storage-capacity').refresh(database,job.workspaceId||job.payload.workspaceId));await pending;if(lost)throw Object.assign(new Error('The storage measurement lease expired; saved byte counters remain intact.'),{retryable:true});return result;}finally{if(timer)clearInterval(timer);await pending;}},'bulk'),
   'commercial.capacity-reconcile':external(async(job,database)=>{const sub=await require('../commercial/entitlements').subscriptionFor(database,job.payload.accountId);if(!sub?.cancel_at_period_end&&!sub?.refunded_at&&sub?.status!=='CANCELLED')return {skipped:'base_subscription_renewing'};return require('../commercial/capacity-addons').cancelAll(database,job.payload.accountId,options.commercialOptions||{});}),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),

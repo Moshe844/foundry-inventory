@@ -209,7 +209,7 @@ async function meterState(database, scope, meter, options = {}) {
         AND ${require('./connection-capacity').predicate}`,
   };
   let used;let reserved=0;
-  if(meter==='storage_bytes')used=await require('./storage-capacity').state(database,scope.accountId);
+  if(meter==='storage_bytes'){const storage=require('./storage-capacity');used=await storage.state(database,scope.accountId);reserved=await storage.reserved(database,scope.accountId);}
   else if(['agent_jobs','active_imports'].includes(meter))used=Number((await database.query(`SELECT count(*) AS used FROM stockchief_runtime.jobs j JOIN workspaces w ON w.id=j.workspace_id WHERE w.owner_account_id=$1 AND j.status='RUNNING' AND j.kind=ANY($2::text[])`,[scope.accountId,meter==='agent_jobs'?['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read']:['import.analyse-source','import.execute-approved','import.revise-preview']])).rows[0].used);
   else if(definition.kind==='PER_OPERATION')used=0;
   else if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],['locations','sublocations','custom_roles'].includes(meter)?[scope.accountId,scope.workspaceId||null]:[scope.accountId])).rows[0].used);

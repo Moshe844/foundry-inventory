@@ -1,6 +1,5 @@
 'use strict';const assert=require('node:assert/strict');
 async function check(database,ctx){
- await require('../../src/purchasing/postgres-replenishment-cycle').lockStorageOwner(database,ctx.workspaceId);
  await database.query(`INSERT INTO work_items(id,workspace_id,category,source,recommended_action,execution_status,priority,idempotency_key,created_at)
   SELECT 'expiry-scale-'||s.id,$1,'replenishment_plan','postgres_autopilot',jsonb_build_object('skuId',s.id,'type','purchase','quantity',1)::text,
    'WAITING_FOR_APPROVAL',88,'expiry-scale-key-'||s.id,now() FROM skus s WHERE s.workspace_id=$1 ORDER BY s.id`,[ctx.workspaceId]);

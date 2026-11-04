@@ -42,6 +42,17 @@ function openPostgres(connectionString, options = {}) {
     privateNetwork: options.privateNetwork ?? process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK === 'true',
   };
   const pool = new Pool(connectionOptions(connectionString, resolvedOptions));
+  const subscriptions=new Set(),committedWrites=new Set();
+  let readModelTargets=null;
+  const changed=(workspaces,business)=>{for(const callback of committedWrites){try{callback(workspaces?.size?workspaces:null,business);}catch{errors.push({code:'cache_invalidation_failed',at:new Date().toISOString()});if(errors.length>20)errors.shift();}}};
+  const workspaceIds=values=>new Set(values.filter(v=>typeof v==='string'&&/^wsp_[a-z0-9]+$/.test(v)));
+  const writes=statement=>/\b(?:INSERT\s+INTO|UPDATE\s+[a-z_"\[]|DELETE\s+FROM|TRUNCATE\s)/i.test(statement);
+  const affectsBusiness=statement=>!/^\s*(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:public\.)?(?:work_items|workspace_autopilot|attention_items)\b/i.test(statement);
+  const mutated=(statement,result)=>{
+    if(!readModelTargets||!writes(statement)||(['INSERT','UPDATE','DELETE'].includes(result.command)&&result.rowCount===0))return false;
+    for(const match of String(statement).matchAll(/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi))if(readModelTargets.has(match[1].toLowerCase()))return true;
+    return false;
+  };
   const errors = [];
   pool.on('error', (error) => {
     errors.push({ code: error.code || 'connection_error', at: new Date().toISOString() });
@@ -56,12 +67,12 @@ function openPostgres(connectionString, options = {}) {
         throw new (require('../commercial/entitlements').EntitlementError)(error.message,{constraint:error.constraint});
       throw error;
     }finally{require('../commercial/resource-metrics').queryFinished(start);}};
-  const query = (statement, values = []) => measuredQuery(pool,statement,values);
+  const query = async(statement, values = []) => {const result=await measuredQuery(pool,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;};
   async function withSessionLock(key,operation){
     const client=await pool.connect();let locked=false,discard=false;
     try{locked=(await client.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[key])).rows[0].locked;
       if(!locked)return {busy:true};
-      return await operation({query:(statement,values=[])=>measuredQuery(client,statement,values),transaction:(fn,settings)=>transaction(fn,settings,client)});
+      return await operation({query:async(statement,values=[])=>{const result=await measuredQuery(client,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;},transaction:(fn,settings)=>transaction(fn,settings,client)});
     }finally{try{if(locked)await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);}catch{discard=true;}client.release(discard);}
   }
   async function listen(channel,onNotification){
@@ -103,8 +114,10 @@ function openPostgres(connectionString, options = {}) {
           ` SET LOCAL statement_timeout = '${statementTimeoutMs}ms';` +
           ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`+
           (settings.jit===undefined?'':`; SET LOCAL jit = '${settings.jit?'on':'off'}'`));
-        const result = await operation({ query: (statement, values = []) => measuredQuery(client,statement,values) });
+        let wrote=false,business=false;const workspaces=new Set();
+        const result = await operation({ query: async(statement, values = []) => {const result=await measuredQuery(client,statement,values);if(mutated(statement,result)){wrote=true;business||=affectsBusiness(statement);for(const id of workspaceIds(values))workspaces.add(id);}return result;} });
         await client.query('COMMIT');
+        if(wrote)changed(workspaces,business);
         return result;
       } catch (error) {
         try { await client.query('ROLLBACK'); } catch { discard = true; }
@@ -120,7 +133,15 @@ function openPostgres(connectionString, options = {}) {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-  return { query, transaction, listen, withSessionLock, close: () => pool.end(), connectionErrors: errors,
+  return { query, transaction, listen, withSessionLock,
+    subscribe:(channel,notify,settings={})=>{const subscription=require('./postgres-subscription').subscribe(connectionOptions(connectionString,resolvedOptions),channel,notify,{...settings,onConnect:async client=>{
+      // Discover the authoritative trigger targets once at listener startup,
+      // not on cached reads. Telemetry/session/commercial writes are excluded.
+      if(channel==='stockchief_read_models')readModelTargets=new Set((await client.query("SELECT DISTINCT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND p.proname IN('stockchief_changed_read_model','stockchief_changed_workspace_read_model','stockchief_changed_account_business_time')")).rows.map(r=>r.relname));
+      await settings.onConnect?.(client);
+    }});subscriptions.add(subscription);return subscription;},
+    onCommittedWrite:callback=>{committedWrites.add(callback);return()=>committedWrites.delete(callback);},
+    close:async()=>{await Promise.all([...subscriptions].map(s=>s.stop()));committedWrites.clear();await pool.end();},connectionErrors: errors,
     poolMetrics:()=>({max:pool.options.max,total:pool.totalCount,idle:pool.idleCount,waiting:pool.waitingCount}),
     topology: Object.freeze({ engine: 'postgresql', shared: true, multiWriter: true }) };
 }
