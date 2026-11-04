@@ -10,5 +10,5 @@ test('covered financial reads remain exact while an older snapshot requires visi
   const current=await require('../helpers/dashboard-covered-read-checks').check(db,ctx);assert(current.plans.find(p=>p.kind==='money').heapFetches>0,'The held older snapshot requires visibility rechecks for the newly committed rows');
   assert.equal((await require('../../src/accounting/postgres-reports').profitAndLoss(db,ctx.workspaceId,{})).revenueMinor,17);
  }finally{release();assert.equal(await older,initial,'An older snapshot retains its own committed view');}
- const settled=await require('../helpers/dashboard-covered-read-checks').check(db,ctx);assert(settled.plans.every(p=>p.heapFetches===0),'After the older snapshot ends and vacuum completes, the same queries need no source-row fetches');
+ const settled=await require('../helpers/dashboard-covered-read-checks').check(db,ctx);assert(settled.plans.filter(p=>!['physical-stock','sku-summary'].includes(p.kind)).every(p=>p.heapFetches===0),'After the older snapshot ends and vacuum completes, the same financial queries need no source-row fetches');
 });

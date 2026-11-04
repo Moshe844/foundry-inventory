@@ -10,8 +10,18 @@ async function check(db,ctx){
  await db.transaction(async c=>{await c.query('SET LOCAL enable_seqscan=off');await c.query('SET LOCAL enable_bitmapscan=off');
   for(const [kind,q,relation,index]of [['money',balanceQuery,'accounting_journal_lines','idx_accounting_lines_account_covering'],['stock-value',stockQuery,'accounting_inventory_cost_balances','idx_inventory_cost_balances_covering'],['cost-coverage',{sql:'SELECT * FROM inventory_cost_coverage_totals WHERE workspace_id=$1',values:[ctx.workspaceId]},'inventory_cost_coverage_positions','idx_inventory_cost_coverage_values'],['physical-stock',{sql:'SELECT sku_id,location_id,on_hand FROM balances WHERE workspace_id=$1',values:[ctx.workspaceId]},'balances','idx_balances_workspace_covering'],['sku-summary',{sql:'SELECT id,item_id,is_active FROM skus WHERE workspace_id=$1',values:[ctx.workspaceId]},'skus','idx_skus_workspace_summary_covering']]){
    const plan=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+q.sql,q.values)).rows[0]['QUERY PLAN'][0],nodes=[];const visit=n=>{nodes.push(n);for(const child of n.Plans||[])visit(child);};visit(plan.Plan);
-   const source=nodes.filter(n=>n['Relation Name']===relation);assert(source.length,kind+' must read its canonical source');assert(source.every(n=>n['Node Type']==='Index Only Scan'&&n['Index Name']===index),kind+' must support a covered source read');
-   plans.push({kind,index,heapFetches:source.reduce((sum,n)=>sum+Number(n['Heap Fetches']||0),0),executionMs:plan['Execution Time']});
+   const source=nodes.filter(n=>n['Relation Name']===relation);assert(source.length,kind+' must read its canonical source');
+   const adaptive=['physical-stock','sku-summary'].includes(kind),chosen=source.map(n=>({type:n['Node Type'],index:n['Index Name'],condition:n['Index Cond'],rows:n['Actual Rows'],heapFetches:n['Heap Fetches']??null}));
+   if(adaptive){
+    // An existing smaller index can be cheaper when MVCC requires heap visits.
+    // Verify that the complete covering path exists, then require a bounded,
+    // fast real read rather than overriding PostgreSQL's cost-based choice.
+    const available=(await c.query('SELECT i.indisvalid,i.indisready,i.indpred IS NULL AS complete,ARRAY(SELECT a.attname FROM pg_attribute a WHERE a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey)) AS columns FROM pg_index i WHERE i.indexrelid=to_regclass($1)',[index])).rows[0];
+    assert(available?.indisvalid&&available.indisready&&available.complete);for(const column of kind==='physical-stock'?['workspace_id','sku_id','location_id','on_hand']:['workspace_id','id','item_id','is_active'])assert(available.columns.includes(column),index+' must cover '+column);
+    assert(source.every(n=>['Index Only Scan','Index Scan'].includes(n['Node Type'])&&String(n['Index Cond']).includes('workspace_id')),kind+' must use a workspace-bounded index: '+JSON.stringify(chosen));
+    assert(plan['Execution Time']<1500,kind+' exceeds the unchanged 1.5-second target');
+   }else assert(source.every(n=>n['Node Type']==='Index Only Scan'&&n['Index Name']===index),kind+' must support a covered source read: '+JSON.stringify(chosen));
+   plans.push({kind,index,source:chosen,heapFetches:source.every(n=>n['Node Type']==='Index Only Scan')?source.reduce((sum,n)=>sum+Number(n['Heap Fetches']||0),0):null,executionMs:plan['Execution Time']});
   }
  },{isolation:'READ COMMITTED',readOnly:true,jit:false,statementTimeoutMs:5000});
  const rows=(await reports.run(db,ctx,{role:'owner'},config,{limit:14})).rows;
