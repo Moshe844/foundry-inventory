@@ -1,3 +1,4 @@
+<% if(locals.finding){ %><aside class="notice notice--warn section" data-item-finding><div><strong><%= finding.title %></strong><p style="margin:4px 0 0"><%= finding.concise_summary %> <%= finding.recommendation %></p><p class="btn-row" style="margin:10px 0 0"><a class="btn btn--primary btn--sm" href="/purchasing">See what to order</a> <a class="btn btn--sm" href="/transfers/new">Move stock</a></p></div></aside><% } %>
 <%
   /*
    * One product, read top to bottom.

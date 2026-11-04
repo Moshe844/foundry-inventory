@@ -1,1 +1,61 @@
-.ny-head{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}.ny-head h1{font-size:34px;letter-spacing:-1px;margin:2px 0 8px}.ny-head p{color:var(--muted,#62657c);margin:0}.ny-summary{display:flex;gap:32px;align-items:center;padding:20px 24px;border:1px solid #e2e3f1;border-radius:18px;background:linear-gradient(120deg,#fff,#f1efff);margin:20px 0}.ny-summary>div{display:grid;gap:2px;flex-shrink:0}.ny-summary strong{font-size:28px;line-height:1.1}.ny-summary span,.ny-summary p{font-size:13px;color:#656980}.ny-summary p{margin-left:auto;max-width:360px}.ny-filters{display:flex;gap:8px;flex-wrap:wrap;margin:24px 0 18px}.ny-filters a{display:inline-flex;gap:8px;align-items:center;padding:9px 13px;border:1px solid #dedfeb;border-radius:24px;text-decoration:none;color:inherit;background:#fff}.ny-filters a[aria-current=page]{background:#4f3fe0;border-color:#4f3fe0;color:white}.ny-filters span{font-size:12px;opacity:.8}.ny-search{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px}.ny-search>label:first-of-type{flex:1;min-width:180px}.ny-sort{display:flex;align-items:center;gap:8px;font-size:13px}.ny-sort select{padding:9px;border:1px solid #dedfeb;border-radius:8px;background:#fff}.ny-count{font-size:13px;color:#656980}.ny-list{display:grid;gap:16px}.ny-card{background:#fff;border:1px solid #e0e2ed;border-radius:18px;padding:22px 24px;box-shadow:0 3px 12px #24234f04;scroll-margin-top:100px;min-width:0}.ny-card.is-focused{border-color:#7161ff;box-shadow:0 0 0 3px #7161ff14}.ny-card-top{display:flex;align-items:center;justify-content:space-between;gap:12px}.ny-kind{font-size:12px;font-weight:650;color:#6455bf}.ny-card h2{font-size:19px;line-height:1.4;margin:10px 0 8px;overflow-wrap:anywhere}.ny-times{display:flex;flex-wrap:wrap;gap:5px 18px;color:#74788a;font-size:12px;margin-bottom:14px;font-variant-numeric:tabular-nums}.ny-card p{font-size:14px;line-height:1.65;margin:8px 0;overflow-wrap:anywhere}.ny-context{color:#43495c}.ny-reason{color:#696f80}.ny-next{background:#f6f5ff;border-radius:10px;padding:11px 14px;color:#4a4564}.ny-next strong{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6658a5;margin-bottom:2px}.ny-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}.ny-actions form{margin:0}.ny-empty{padding:45px 20px;text-align:center;border:1px solid #e0e2ed;border-radius:18px;background:white}.ny-empty p{color:#656980}@media(max-width:650px){.ny-head{align-items:flex-start}.ny-head h1{font-size:29px}.ny-summary{flex-wrap:wrap;gap:16px 26px;padding:18px}.ny-summary p{width:100%;margin:0}.ny-card{padding:18px}.ny-times{flex-direction:column}.ny-search>label:first-of-type{flex-basis:100%}.ny-filters{gap:6px}.ny-filters a{font-size:13px;padding:8px 10px}.ny-actions .btn{max-width:100%;white-space:normal}}
+/* Needs you: one card per item, with space between them. */
+.ny-head { display: block; margin: 0 0 18px; }
+.ny-head h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -.02em; color: #141A33; }
+.ny-summary { margin: 6px 0 0; font-size: 16px; color: #475069; }
+.ny-summary strong { font-weight: 650; color: #141A33; }
+.ny-summary .ny-urgent { color: #D92D20; }
+.ny-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.ny-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.ny-filters a { display: inline-flex; gap: 6px; align-items: center; padding: 7px 13px; border: 1px solid #E5E8F1; border-radius: 999px; background: #fff; color: #475069; font-size: 13.5px; font-weight: 500; text-decoration: none; }
+.ny-filters a span { color: #7A839C; font-size: 12.5px; }
+.ny-filters a[aria-current=page] { background: #4F46E5; border-color: #4F46E5; color: #fff; }
+.ny-filters a[aria-current=page] span { color: #E0E2FF; }
+.ny-search { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+.ny-search label { margin: 0; }
+.ny-search .input { width: 200px; }
+.ny-list { display: flex; flex-direction: column; gap: 10px; }
+.ny-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: #fff; border: 1px solid #E5E8F1; border-radius: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.05); scroll-margin-top: 90px; }
+.ny-card:hover { box-shadow: 0 4px 12px rgba(16,24,40,.08); }
+.ny-card.is-focused { border-color: #4F46E5; box-shadow: 0 0 0 3px #EEF0FE; }
+.ny-icon { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: #EEF0FE; color: #4F46E5; }
+.ny-card[data-tone=important] .ny-icon { background: #FEF0C7; color: #DC6803; }
+.ny-card[data-tone=urgent] { border-color: #FDA29B; background: #FFFBFA; }
+.ny-card[data-tone=urgent] .ny-icon { background: #FEE4E2; color: #D92D20; }
+.ny-card-main { flex: 1; min-width: 0; }
+.ny-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ny-card h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; color: #141A33; }
+.ny-title .badge { padding: 1px 8px; font-size: 11.5px; font-weight: 650; color: #fff; border: 0; }
+.ny-title .badge--danger { background: #D92D20; }
+.ny-title .badge--warn { background: #F79009; }
+.ny-context { margin: 3px 0 0; font-size: 13.5px; line-height: 1.4; color: #475069; }
+.ny-card-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: #7A839C; }
+.ny-kind { font-weight: 600; color: #4F46E5; }
+.ny-times::before { content: "·"; margin-right: 6px; }
+.ny-why { margin-top: 3px; font-size: 12.5px; }
+.ny-why summary { cursor: pointer; color: #5D6780; font-weight: 500; }
+.ny-why p { margin: 4px 0 0; font-size: 13px; line-height: 1.4; color: #475069; }
+.ny-next { font-weight: 500; color: #141A33; }
+.ny-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.ny-actions form { margin: 0; }
+.ny-empty { padding: 36px 24px; text-align: center; background: #fff; border: 1px solid #E5E8F1; border-radius: 14px; }
+.ny-empty h2 { margin: 0; font-size: 18px; font-weight: 650; color: #141A33; }
+.ny-empty p { margin: 6px 0 14px; color: #5D6780; }
+.ny-foot { margin: 14px 2px 0; font-size: 12.5px; color: #7A839C; }
+@media (max-width: 640px) {
+  .ny-card { flex-wrap: wrap; }
+  .ny-card-main { flex-basis: calc(100% - 54px); }
+  .ny-actions { width: 100%; }
+  .ny-actions .btn { flex: 1; }
+  .ny-search { margin-left: 0; width: 100%; }
+  .ny-search label:first-of-type { flex: 1; }
+  .ny-search .input { width: 100%; }
+}
+/* Tiles rather than long strips: the text and its button stay close together. */
+.ny-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.ny-card { flex-wrap: wrap; align-items: flex-start; align-content: space-between; }
+.ny-card-main { flex: 1 1 calc(100% - 54px); }
+.ny-actions { margin-left: auto; }
+@media (max-width: 640px) { .ny-list { grid-template-columns: minmax(0, 1fr); } .ny-actions { width: auto; } .ny-actions .btn { flex: none; } }
+/* One column: the button sits beside the text instead of on its own line. */
+.ny-list { container-type: inline-size; }
+@container (max-width: 700px) and (min-width: 480px) { .ny-card { flex-wrap: nowrap; align-items: center; } .ny-card-main { flex: 1 1 auto; } .ny-actions { margin-left: 0; } }

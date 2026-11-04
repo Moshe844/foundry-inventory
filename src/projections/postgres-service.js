@@ -1,6 +1,11 @@
 'use strict';
 
 function number(value){return Number(value || 0);}
+// Urgent: something is already wrong or overdue. Important: time or money is really at stake.
+// Everything else simply waits for a decision and is not dressed up as an alarm.
+const olderThanDays=(value,days)=>{const at=Date.parse(value||'');return Number.isFinite(at)&&Date.now()-at>days*86400000;};
+function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=new Date().toISOString().slice(0,10);if(neededBy<today)return 'Urgent';
+ return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
 async function membership(database,workspaceId,actorId){return actorId?(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[workspaceId,actorId])).rows[0]:null;}
 function visible(item,actor){const p=require('../actions/permissions'),required={accounting:p.VIEW_ACCOUNTING,order:p.VIEW_SALES,shipping:p.VIEW_SALES,purchase:p.VIEW_PURCHASING,repair:p.ADMIN,provider:p.ADMIN};return (item.requiredPermissions||[required[item.kind]||p.VIEW]).every(key=>p.can(actor,key));}
@@ -101,13 +106,13 @@ async function needsUncached(database,workspaceId,actorId=null){
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
   if(batchExpiry.expired||batchExpiry.soon)items.push({kind:'inventory',grouped:true,importance:batchExpiry.expired?'Urgent':'Important',priority:batchExpiry.expired?94:70,title:batchExpiry.expired?batchExpiry.expired+' batches have expired':batchExpiry.soon+' batches expire within 30 days',happened:batchExpiry.expired+' expired batches; '+batchExpiry.soon+' more expire within 30 days.',why:'Expired stock is blocked from sale. Review batch stock before picking or disposing of it.',recommendation:'Review the batches and their locations. Use unexpired stock with the earliest expiry first.',href:'/warehouse/batches',actionLabel:'Review batch expiry',sourceId:'batch-expiry'});
-  for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Important',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
-  for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Important',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
+  for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Needs You',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
+  for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Needs You',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
-    recommendation:row.recommendation,grouped:Boolean(row.summary),href:row.href||(row.item_id?`/inventory/${row.item_id}`:'/inventory'),actionLabel:row.summary?'Review group':'Review inventory',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
+    recommendation:row.recommendation,grouped:Boolean(row.summary),href:row.href||(row.item_id?`/inventory/${row.item_id}?finding=${encodeURIComponent(row.id)}`:'/needs-you/findings'),actionLabel:row.summary?'Review group':'See what to do',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
   for(const row of await require('../sales/postgres-deposit-refunds').due(database,workspaceId)){const amount=require('../pricing/postgres-service').formatMinor(row.toRefundMinor,row.currency);
-    items.push({kind:'accounting',importance:'Important',priority:88,title:'Deposit to refund: '+amount+' to '+row.customerName,happened:row.orderNumber+' was cancelled after the customer paid.',
+    items.push({kind:'accounting',importance:olderThanDays(row.cancelledAt,3)?'Important':'Needs You',priority:88,title:'Deposit to refund: '+amount+' to '+row.customerName,happened:row.orderNumber+' was cancelled after the customer paid.',
       why:'That money is still theirs. It stays on your books as a customer deposit until it is returned.',recommendation:'Send the money back, then record the refund on the order.',
       href:'/orders/'+row.orderId+'#deposit-refund',actionLabel:'Refund deposit',sourceId:'deposit-refund:'+row.orderId,createdAt:row.cancelledAt,timeLabel:'Cancelled',updatedAt:row.cancelledAt,at:row.cancelledAt});}
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
@@ -118,12 +123,12 @@ async function needsUncached(database,workspaceId,actorId=null){
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
     actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
-  for(const row of work.rows){if(row.summary){items.push({kind:'approval',grouped:true,requiredPermissions:[row.kind==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],importance:'Important',priority:70+number(row.priority),title:row.title,happened:row.count.toLocaleString()+' '+row.groupLabel+' await review.',why:'Open the list to search all decisions. The largest known purchase values appear first; unpriced transfers follow by urgency.',recommendation:'Review the current stock and approve each proposed change.',href:row.href,actionLabel:'Review group',sourceId:row.id,createdAt:row.created_at,at:row.created_at});continue;}const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
+  for(const row of work.rows){if(row.summary){items.push({kind:'approval',grouped:true,requiredPermissions:[row.kind==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],importance:'Needs You',priority:70+number(row.priority),title:row.title,happened:row.count.toLocaleString()+' '+row.groupLabel+' await review.',why:'Open the list to search all decisions. The largest known purchase values appear first; unpriced transfers follow by urgency.',recommendation:'Review the current stock and approve each proposed change.',href:row.href,actionLabel:'Review group',sourceId:row.id,createdAt:row.created_at,at:row.created_at});continue;}const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
     if(outcome.decision&&preparedLinks.has(outcome.reviewHref))continue;
     if(outcome.decision){const d=outcome.decision,permission=action.type==='customer_order'?require('../actions/permissions').VIEW_SALES:action.type==='supplier_invoice'?require('../actions/permissions').VIEW_ACCOUNTING:require('../actions/permissions').VIEW_PURCHASING;
-      items.push({kind:'approval',requiredPermissions:[permission],importance:'Important',priority:90,title:(outcome.reference||action.displayName||'Business work')+': '+outcome.nextAction,happened:d.happened,why:d.impact,recommendation:d.recommendation+' '+d.required,checked:d.checked,alternatives:d.alternatives,href:outcome.reviewHref||outcome.href||action.href||'/autopilot/work/'+row.id,actionLabel:'Review next step',sourceId:row.id,createdAt:row.created_at,at:outcome.deadline||row.created_at});continue;}
+      items.push({kind:'approval',requiredPermissions:[permission],importance:'Needs You',priority:90,title:(outcome.reference||action.displayName||'Business work')+': '+outcome.nextAction,happened:d.happened,why:d.impact,recommendation:d.recommendation+' '+d.required,checked:d.checked,alternatives:d.alternatives,href:outcome.reviewHref||outcome.href||action.href||'/autopilot/work/'+row.id,actionLabel:'Review next step',sourceId:row.id,createdAt:row.created_at,at:outcome.deadline||row.created_at});continue;}
     items.push({kind:'approval',requiredPermissions:[action.type==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],
-    importance:row.urgency==='immediate'?'Urgent':'Important',priority:70+number(row.priority),
+    importance:row.urgency==='immediate'?'Urgent':'Needs You',priority:70+number(row.priority),
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
     happened:action.summary || (action.type==='transfer'
       ? `Move ${number(action.quantity)} units from ${action.sourceLocationName} to ${action.destinationLocationName}.`
@@ -135,11 +140,11 @@ async function needsUncached(database,workspaceId,actorId=null){
     happened:'Completed import batches are saved. Open the import to see the stopping reason and resume from its checkpoint.',why:row.error_message || 'The import could not be verified.',
     recommendation:'Correct the source or setup, then run the same approved preview again.',href:`/imports/${row.import_id}`,
     actionLabel:'Open import',sourceId:row.id,createdAt:row.finished_at,timeLabel:'Failed',at:row.finished_at});
-  for(const row of bills.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'accounting',importance:'Important',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
+  for(const row of bills.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'accounting',importance:'Needs You',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
     happened:`${row.supplier_name} has ${row.currency} ${(number(row.balance_minor)/100).toFixed(2)} unresolved.`,
     why:'The supplier document and expected purchase do not agree.',recommendation:'Review the discrepancy before paying or posting a correction.',
     href:`/accounting/payables/${row.id}/review`,actionLabel:'Review invoice',sourceId:row.id,createdAt:row.created_at,timeLabel:'Invoice recorded',updatedAt:row.updated_at,dueDate:row.due_date,at:row.updated_at});
-  for(const row of supplierReturns.rows)items.push({kind:'accounting',importance:'Important',priority:89,
+  for(const row of supplierReturns.rows)items.push({kind:'accounting',importance:'Needs You',priority:89,
     title:`Resolve supplier credit mismatch on ${row.return_number}`,
     happened:`${row.supplier_name} credited ${row.currency} ${(number(row.actual_credit_minor)/100).toFixed(2)}; expected ${row.currency} ${(number(row.expected_credit_minor)/100).toFixed(2)}.`,
     why:'The physical return is complete, but the supplier credited a different amount.',
@@ -150,18 +155,18 @@ async function needsUncached(database,workspaceId,actorId=null){
     why:row.exception_reason||row.tracking_status_detail||'The carrier reported a delivery exception.',
     recommendation:'Review the parcel and contact the customer if the promise is at risk.',
     href:`/fulfilment/${row.id}`,actionLabel:'Review shipment',sourceId:row.id,createdAt:row.created_at,updatedAt:row.tracked_at,timeLabel:'Shipment created',at:row.tracked_at});
-  for(const row of mail.rows)items.push({kind:'mail',importance:'Important',priority:82,title:row.subject || `Reply to ${row.sender}`,
+  for(const row of mail.rows)items.push({kind:'mail',importance:olderThanDays(row.received_at,2)?'Important':'Needs You',priority:82,title:row.subject || `Reply to ${row.sender}`,
     happened:`${row.sender} is waiting for a response.`,why:row.reply_reason || 'A known customer or supplier sent a business message.',
     recommendation:'Read the message first. Review or write a reply only if one is needed.',href:`/mail/${row.id}`,
     actionLabel:'Read email',sourceId:row.id,createdAt:row.received_at,timeLabel:'Received',at:row.received_at});
-  for(const row of orders.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
-    priority:92,title:`${row.order_number} does not have enough allocated stock`,happened:`${row.customer_name} needs ${number(row.remaining)} units; ${number(row.allocated)} are allocated.`,
-    why:'The order cannot be fulfilled completely from its current allocations.',recommendation:'Review transfer or replenishment options before the promised date.',
+  for(const row of orders.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'order',importance:orderImportance(row.needed_by),
+    priority:92,title:`${row.order_number} can’t be filled yet`,happened:`${row.customer_name} needs ${number(row.remaining)} units; only ${number(row.allocated)} are set aside for this order.`,
+    why:'Until more stock is available, this order can only go out in part.',recommendation:'Move stock from another location or buy more.',
     href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
   for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
     happened:`${row.supplier_name} was expected on ${row.expected_date}.`,why:'StockChief has no complete receipt for this purchase order.',
     recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,timeLabel:'Purchase order created',dueDate:row.expected_date,at:row.expected_date});
-  for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Important',
+  for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Needs You',
     priority:row.materiality==='high'?97:86,title:row.symptom,happened:row.failed_invariant,
     why:row.error_message||`The governed repair is ${String(row.status).toLowerCase().replaceAll('_',' ')} with ${row.confidence} confidence.`,
     recommendation:row.status==='AUTHORIZED'||row.status==='FAILED'?'Run and verify the approved correction.':
@@ -190,7 +195,10 @@ async function briefData(database,workspaceId){
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
-      (SELECT COALESCE(SUM(on_hand),0) FROM balances WHERE workspace_id=$1) AS units_on_hand,
+      CASE WHEN EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) THEN
+        (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE b.workspace_id=$1 AND i.quantity_precision=0)
+        ELSE (SELECT COALESCE(SUM(on_hand),0) FROM balances WHERE workspace_id=$1) END AS units_on_hand,
+      EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) AS has_measured_stock,
       (SELECT COUNT(*) FROM skus s LEFT JOIN(SELECT sku_id,sum(on_hand) quantity FROM balances WHERE workspace_id=$1 GROUP BY sku_id) b ON b.sku_id=s.id
         WHERE s.workspace_id=$1 AND s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
@@ -213,10 +221,10 @@ async function briefData(database,workspaceId){
   ]);
   const row=stats.rows[0];
   return {stats:{itemCount:number(row.item_count),skuCount:number(row.sku_count),locationCount:number(row.location_count),
-    unitsOnHand:number(row.units_on_hand),zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
+    unitsOnHand:number(row.units_on_hand),hasMeasuredStock:Boolean(row.has_measured_stock),zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
     available:totalAvailable,openOrders:number(openOrders.rows[0].count),
     openPurchases:number(openPurchases.rows[0].count)},locations:locations.rows.map((entry)=>({...entry,onHand:number(entry.on_hand)})),
     activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)}))};
 }
 
-module.exports={brief,needs,needsCount,runtimeFailures};
+module.exports={brief,needs,needsCount,runtimeFailures,orderImportance};

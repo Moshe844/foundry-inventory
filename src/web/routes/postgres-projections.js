@@ -151,7 +151,8 @@ function createPostgresProjectionsRouter(database){
       if(entry.kind!=='navigation'&&entry.name!=='read.capabilities')offer(entry);
     }
     res.locals.attentionCount=result.brief.needs.length;
-    return res.page('foundry/brief',{title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
+    const homeSales=permissions.can(req.user,permissions.VIEW_ACCOUNTING)?await require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):null;
+    return res.page('foundry/brief',{homeSales,title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
       askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:result.brief.needs.filter(item=>!item.approval).slice(0,4),
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,

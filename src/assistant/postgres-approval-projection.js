@@ -56,7 +56,7 @@ async function pending(database,workspaceId,actorId){
    if(!state.canReply||!state.input?.question)continue;
    const askedAt=state.history.findLast(m=>m.role==='assistant'&&m.phase==='clarification'&&m.text===state.input.question)?.at||null;
    const sourceId=row.goal_id+':question:'+state.input.id;
-   items.set(sourceId,{kind:'clarification',requiredPermissions:[permissions.VIEW],importance:'Important',priority:85,
+   items.set(sourceId,{kind:'clarification',requiredPermissions:[permissions.VIEW],importance:'Needs You',priority:85,
     sourceId,title:state.input.question,happened:state.input.question,
     why:'Your request is waiting for information or a business choice.',
     recommendation:'Answer the question to continue the same request.',question:{goalId:row.goal_id,id:state.input.id,text:state.input.question},
@@ -96,7 +96,7 @@ async function pending(database,workspaceId,actorId){
   // step. Conversely it does not prove a changed/underspecified step fits.
   // Expose recovery for review, never infer a new grant or auto-execute here.
   const recovery=Boolean(recordedMission&&!incompleteScope);
-  items.set(key,{kind:recovery?'recovery':'approval',requiredPermissions,importance:'Important',priority:85,title:require('../web/proposal-presentation').summary(p),
+  items.set(key,{kind:recovery?'recovery':'approval',requiredPermissions,importance:'Needs You',priority:85,title:require('../web/proposal-presentation').summary(p),
    happened:require('../web/proposal-presentation').summary(p),why:recovery?'This workflow has a recorded approval, but its execution is unfinished. Review its current scope and recovery status.':
      incompleteScope?'The frozen workflow was approved, but this step needs additional scope before it can continue.':'This proposed change still needs your decision.',
    recommendation:recovery?'Open the saved workflow to review its recorded authority and unfinished work.':

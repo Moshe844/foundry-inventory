@@ -38,6 +38,9 @@ test('cancelled orders, deposits, one sales total, plan locks, number order and 
   assert.equal((await deposits.forOrder(db,ctx.workspaceId,id)).toRefundMinor,5000);
   const needs=await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,ctx.actorId);
   assert(needs.some(item=>/Deposit to refund: \$50\.00 to Sarah/.test(item.title)&&item.href==='/orders/'+id+'#deposit-refund'));
+  assert.equal(needs.find(item=>/Deposit to refund/.test(item.title)).importance,'Needs You','a deposit cancelled just now is not an alarm');
+  const importance=require('../../src/projections/postgres-service').orderImportance,day=n=>new Date(Date.now()+n*86400000).toISOString().slice(0,10);
+  assert.equal(importance(null),'Needs You');assert.equal(importance(day(30)),'Needs You');assert.equal(importance(day(2)),'Important');assert.equal(importance(day(-1)),'Urgent');
   await assert.rejects(()=>wf.refundCustomerDeposit(db,ctx,{salesOrderId:id,amountMinor:5001,idempotencyKey:'too-much'}),/more than/);
   const cashBefore=await require('../../src/accounting/postgres-reports').balanceSheet(db,ctx.workspaceId,{});
   await wf.refundCustomerDeposit(db,ctx,{salesOrderId:id,amountMinor:2000,idempotencyKey:'part'});
