@@ -195,6 +195,11 @@
           </div>
         <% } %>
 
+        <% if(locals.stockOpKeys){ %><div class="field">
+          <label class="label" for="receive-unit-cost">Unit cost</label>
+          <input class="input" id="receive-unit-cost" name="unitCost" inputmode="decimal" placeholder="Use saved purchase cost">
+          <small>Leave blank to use the saved purchase cost. Enter 0 only for stock that cost nothing.</small>
+        </div><% } %>
         <div class="field-row">
           <div class="field">
             <label class="label" for="receive-reference">Reference <span class="optional">optional</span></label>

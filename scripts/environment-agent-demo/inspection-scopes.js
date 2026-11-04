@@ -40,7 +40,7 @@ async function createRole(database,{role,password,ctx,accountId,kind,scopeView,t
  if(!/^demo_(read|metrics)_[a-f0-9]{16}$/.test(role)||!['read','metrics'].includes(kind))throw Error('INVALID_INSPECTION_ROLE');const expires=require('./inspection-role-lifecycle').expires();
  return require('./inspection-metadata').transaction(database,async client=>{
   const derived=['public.inventory_cost_coverage_totals','public.accounting_daily_account_totals',
-   'public.inventory_movement_second_totals','stockchief_runtime.inventory_capacity'];
+   'public.inventory_movement_second_totals','stockchief_runtime.inventory_capacity','public.sales_shipment_stock_lines'];
   if(kind==='read'){
    const checked=(await client.query("SELECT count(*)::int AS n FROM pg_class WHERE oid=ANY($1::regclass[]) AND relkind='v' AND 'security_invoker=true'=ANY(reloptions)",[derived])).rows[0];
    if(checked.n!==derived.length)throw Error('UNSAFE_INSPECTION_TOTALS_VIEW');

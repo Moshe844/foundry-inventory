@@ -29,6 +29,7 @@
     </div>
   </header>
   <%- include('_tabs', { active: '/purchasing/orders' }) %>
+  <% if (locals.lowCount) { %><a class="ox-callout" href="/purchasing"><span class="ox-callout__icon" aria-hidden="true"><%- helpers.icon('trendUp',{size:16}) %></span><span><strong><%= lowCount %> item<%= lowCount === 1 ? ' is' : 's are' %> running low</strong><small>Check what to reorder, grouped by supplier.</small></span><b>See what to order →</b></a><% } %>
 
   <% if (L.counts.all) { %>
   <section class="ox-kpis" aria-label="Purchase totals">
@@ -88,7 +89,6 @@
 
     <footer class="ox-foot">
       <% if (locals.pager && pager.show) { %><%- include('../partials/pager') %><% } else { %><span class="ox-muted">Showing <%= L.rows.length %> of <%= L.matching %></span><% } %>
-      <% if (locals.lowCount) { %><a href="/purchasing"><%= lowCount %> item<%= lowCount === 1 ? ' is' : 's are' %> running low. See what to order →</a><% } %>
     </footer>
     <% } %>
   </section>

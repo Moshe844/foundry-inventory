@@ -29,7 +29,11 @@ test('real website form remains verifiable after navigation chrome changes; actu
  await tools.page.evaluate(()=>{const chrome=document.createElement('p');chrome.id='offline-chrome';chrome.innerText='Earlier page\nReturn to list';document.querySelector('main').prepend(chrome);});
  const observed=await session.execute('environment_browser',{action:'changed-chrome'},()=>tools.inspect());
  const current=await store.get(db,ctx,goal.id),evidence=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='environment_browser');
- const claims=fixture.claims.map(claim=>{
+ // The builder was redesigned after the recorded trace, so the recorded wording
+ // no longer exists. Claim the same kinds of fact from the same form as it reads
+ // today: the chosen source, section headings and repeated option labels.
+ const formFacts=['Stock levels and locations','Report on','Show as','A list','Totals by group','One total','Columns','Add or remove columns','Filter','Add a filter','Sort and limit','Save and delivery','Report title'];
+ const claims=formFacts.map(value=>({value})).map(claim=>{
   const found=Object.entries(observed.textBlocks).filter(([,value])=>value===claim.value);
   // Repeated option labels are all within the unchanged full form.
   assert(found.length,'Recorded form value is present in the actual renderer: '+claim.value);

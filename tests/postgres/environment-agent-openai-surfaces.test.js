@@ -21,7 +21,9 @@ test('certification browser surfaces render with real tenant-scoped SELECT-only 
   const response=await ui.page.goto(server.origin+url,{waitUntil:'domcontentloaded'});
   // Evaluator-only reachability setup: exercise the real intermediate screen,
   // never supply this route or interaction sequence to a paid agent.
-  if(url==='/purchasing/orders/new')await ui.page.getByRole('link').filter({hasText:f.task.supplierName}).first().click();
+  if(url==='/purchasing/orders/new')await Promise.all([ui.page.waitForURL(/[?&]supplier=/,{waitUntil:'domcontentloaded'}),ui.page.getByRole('link').filter({hasText:f.task.supplierName}).first().click()]);
+  // The builder opens on its describe-it step; the real form is one link away.
+  if(url==='/reports/builder')await ui.page.getByRole('link',{name:'Build manually',exact:true}).click();
   if(url==='/locations')await ui.page.locator('[data-modal-open="modal-location"]').click();
   if(url==='/pricing/new')await ui.page.getByRole('link',{name:'Set price',exact:true}).first().click();
   const screen=await ui.inspect();

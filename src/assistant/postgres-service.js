@@ -121,6 +121,7 @@ async function explainProfitChange(database,ctx){
     {measure:'Cost of goods sold',current:current.cogsMinor,previous:previous.cogsMinor,impact:-(current.cogsMinor-previous.cogsMinor)},
     {measure:'Operating expenses',current:current.operatingExpenseMinor,previous:previous.operatingExpenseMinor,
       impact:-(current.operatingExpenseMinor-previous.operatingExpenseMinor)},
+    {measure:'Stock count gains and losses',current:current.stockCountMinor,previous:previous.stockCountMinor,impact:current.stockCountMinor-previous.stockCountMinor},
   ];const netChange=current.netIncomeMinor-previous.netIncomeMinor;
   const drivers=metrics.filter((entry)=>entry.impact!==0).sort((left,right)=>Math.abs(right.impact)-Math.abs(left.impact)).slice(0,3)
     .map((entry)=>`${entry.measure} ${entry.impact>0?'improved':'reduced'} profit by ${money(entry.impact)}`);
@@ -1021,10 +1022,11 @@ async function lookupRecords(database,ctx,request,options={}) {
       const rows=[
         {measure:'Revenue',value:money(report.revenueMinor),amountMinor:Number(report.revenueMinor),currency:report.currency},
         {measure:'Cost of goods sold',value:money(report.cogsMinor),amountMinor:Number(report.cogsMinor),currency:report.currency},
+        ...(report.stockCountMinor?[{measure:'Stock count gains / losses',value:money(report.stockCountMinor),amountMinor:Number(report.stockCountMinor),currency:report.currency}]:[]),
         {measure:'Operating expenses',value:money(report.operatingExpenseMinor),amountMinor:Number(report.operatingExpenseMinor),currency:report.currency},
         {measure:'Net income',value:money(report.netIncomeMinor),amountMinor:Number(report.netIncomeMinor),currency:report.currency},
       ];
-      return {answer:`${outcome} Revenue is ${money(report.revenueMinor)}, cost of goods sold is ${money(report.cogsMinor)}, and operating expenses are ${money(report.operatingExpenseMinor)} for ${report.from} through ${report.to}.`,
+      return {answer:`${outcome} Revenue is ${money(report.revenueMinor)}, cost of goods sold is ${money(report.cogsMinor)}, ${report.stockCountMinor?`stock count gains / losses are ${money(report.stockCountMinor)}, `:''}and operating expenses are ${money(report.operatingExpenseMinor)} for ${report.from} through ${report.to}.`,
         rows,columns:['measure','value','currency']};
     }
     if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))

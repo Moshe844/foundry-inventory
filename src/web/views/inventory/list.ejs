@@ -8,6 +8,7 @@
   </div>
 </div>
 
+<div class="sc-stock-panel">
 <div class="sc-stock-bar"><% if (!sourceLabel && !filters.archivedOnly && stockGroups.length) { %>
   <%# The same groups the stock room shows, as filters. A room group and a table filter are the same question asked in two places. %>
   <div class="att-filters" role="navigation" aria-label="Stock groups">
@@ -108,8 +109,8 @@
             <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: 'name', page: null, after: null }) %>" title="Sort by name">Product</a></th>
             <th>Status</th>
             <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null, after: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
-            <th class="num">Committed</th>
-            <th class="num"><%= typeof postgresNative!=='undefined'&&postgresNative?'Uncommitted':'Available' %></th>
+            <th class="num">Promised</th>
+            <th class="num">Available</th>
             <th class="num">On order</th>
           </tr>
         </thead>
@@ -138,20 +139,20 @@
             %>
             <tr>
               <% if(locals.postgresNative&&!locals.isFlat&&currentUser.role==='owner'){ %><td class="sc-stock-selection"><input type="checkbox" name="itemIds" form="catalog-bulk-form" value="<%= item.id %>" aria-label="Select <%= item.name %>" data-product-selection></td><% } %><td class="cell-main">
-                <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
+                <span class="sc-avatar" aria-hidden="true"><%= String(item.name||'?').trim().split(/\s+/).slice(0,2).map(function(word){return word.charAt(0);}).join('').toUpperCase() %></span><a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
                 <span class="cell-sub">
                   <span class="mono"><%= item.base_code || item.first_sku_code %></span><%
                     %><% if (item.has_variants && item.sku_count > 1) { %> · <%= item.sku_count %> variants<% } %><%
                     %><% if (tracksUnits) { %> · <%= tracking.label %><% } %>
                 </span>
                 <% if(item.missingStockCostUnits>0){ %><small class="is-warn"><%= helpers.unitCount(helpers.qty(item.missingStockCostUnits),'unit') %> still need a purchase cost before completing a sale.</small><% } %>
-                <% if(locals.postgresNative&&!locals.isFlat&&item.has_variants){ %><details data-item-variants data-item-id="<%= item.id %>"><summary>View variants</summary><div data-variant-list></div></details><% } %>
+                <% if(locals.postgresNative&&!locals.isFlat&&item.has_variants&&item.sku_count>1){ %><details data-item-variants data-item-id="<%= item.id %>"><summary>View variants</summary><div data-variant-list></div></details><% } %>
               </td>
               <td data-label="Status">
                 <span class="badge badge--<%= status.tone %>"><%= status.label %></span>
               </td>
               <td class="num" data-label="On hand"><strong><%= helpers.qty(item.on_hand) %></strong></td>
-              <td class="num t-muted" data-label="Committed"><%= item.committed ? helpers.qty(item.committed) : '—' %></td>
+              <td class="num t-muted" data-label="Promised"><%= item.committed ? helpers.qty(item.committed) : '—' %></td>
               <td class="num" data-label="Available"><%= helpers.qty(item.available) %></td>
               <td class="num cell-end" data-label="On order">
                 <% if (item.onOrder) { %>
@@ -171,5 +172,6 @@
     </div>
     <% if (locals.pager) { %><div class="card-foot"><%- include('../partials/pager') %></div><% } %>
   <% } %>
+</div>
 </div>
 <% if(locals.postgresNative){ %><script src="/inventory-variant-list.js" defer></script><% } %>

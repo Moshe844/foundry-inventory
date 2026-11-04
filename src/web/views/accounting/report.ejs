@@ -8,6 +8,7 @@
     <div class="report-line report-line--strong"><span>Revenue</span><strong><%= helpers.money(report.revenueMinor, report.currency) %></strong></div>
     <div class="report-line"><span>Cost of goods sold</span><span>(<%= helpers.money(report.cogsMinor, report.currency) %>)</span></div>
     <div class="report-line report-line--total"><span>Gross profit</span><strong><%= helpers.money(report.grossProfitMinor, report.currency) %></strong></div>
+    <% if (report.stockCountMinor) { %><div class="report-line"><span>Stock count gains / losses</span><span><%= report.stockCountMinor < 0 ? '(' + helpers.money(-report.stockCountMinor, report.currency) + ')' : helpers.money(report.stockCountMinor, report.currency) %></span></div><% } %>
     <div class="report-line"><span>Operating expenses</span><span>(<%= helpers.money(report.operatingExpenseMinor, report.currency) %>)</span></div>
     <div class="report-line report-line--total"><span>Net income</span><strong><%= helpers.money(report.netIncomeMinor, report.currency) %></strong></div>
   </div>

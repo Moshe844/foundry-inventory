@@ -142,7 +142,7 @@
     <div class="report-canvas__head">
       <label class="sr-only" for="report-title">Report title</label><input class="report-title" id="report-title" name="title" maxlength="100" value="<%= saved?.title||draft?.title||builderEntry.sourceNames[dataset.key]||dataset.label %>" required>
       <div class="report-canvas__meta"><p data-report-preview-status role="status">Choose fields to see a preview.</p>
-        <div class="report-view" role="group" aria-label="Show results as" data-report-when="groups"><% for(const [value,label] of [['bar','Bars'],['line','Line'],['table','Table']]){ %><label><input type="radio" name="chart" value="<%= value %>" <%= (selection?.chart||'bar')===value?'checked':'' %>><span><%= label %></span></label><% } %></div>
+        <div class="report-view" role="group" aria-label="Show results as" data-report-when="groups"><% for(const [value,label] of [['bar','Bars'],['line','Line'],['area','Area'],['donut','Donut'],['stacked','Stacked'],['pivot','Cross-tab'],['table','Table']]){ %><label><input type="radio" name="chart" value="<%= value %>" <%= (selection?.chart||'bar')===value?'checked':'' %>><span><%= label %></span></label><% } %></div>
       </div>
     </div>
     <div data-report-preview-big class="report-kpis" hidden></div>
@@ -156,4 +156,5 @@
 <a class="report-jump" href="#report-canvas" data-report-jump>See the results</a>
 </section>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
+<script defer src="/report-charts.js?v=<%= assetVersion %>"></script>
 <script defer src="/reports.js?v=<%= assetVersion %>"></script>

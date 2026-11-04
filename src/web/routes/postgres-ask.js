@@ -118,7 +118,12 @@ function resultFor(turn,proposal=null){
 }
 
 async function askExamples(database,ctx,page=null){
-  return require('../../assistant/postgres-discovery').suggestions(database,ctx,6,page);
+  const found=await require('../../assistant/postgres-discovery').suggestions(database,ctx,6,page);
+  if(page)return found;
+  // Questions answered straight from the books come first, for people allowed to see them.
+  const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+  if(!actor||!require('../../actions/permissions').can(actor,require('../../actions/permissions').VIEW_ACCOUNTING))return found;
+  return [...new Set(['Who owes me money?',"What's my profit this month?",...found])].slice(0,6);
 }
 
 async function instructionLists(database,ctx,proposalIds){

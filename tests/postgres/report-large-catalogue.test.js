@@ -7,12 +7,18 @@ test('a 100,000-SKU report returns its first PostgreSQL page in under two second
   {timeout:180000},async t=>{
     const {db,ctx}=await require('../helpers/postgres-shipping-fixture').fixture(t);
     const now=new Date().toISOString();
-    await db.query(`INSERT INTO items(id,workspace_id,name,tracking_mode,unit_label,created_at,updated_at)
-      SELECT 'report-scale-item-'||n,$1,'Independent item '||lpad(n::text,6,'0'),
-        'quantity','unit',$2,$2 FROM generate_series(1,100000) AS n`,[ctx.workspaceId,now]);
-    await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,position,created_at)
-      SELECT 'report-scale-sku-'||n,$1,'report-scale-item-'||n,
-        'SCALE-'||lpad(n::text,6,'0'),0,$2 FROM generate_series(1,100000) AS n`,[ctx.workspaceId,now]);
+    // Fixture only. With every write trigger running (search, storage, capacity, rollups)
+    // these two statements outlast the 30-second limit before any report runs. This
+    // report reads only the items and skus rows, so load them as a bulk restore would.
+    await db.transaction(async client=>{
+      await client.query("SET LOCAL session_replication_role='replica'");
+      await client.query(`INSERT INTO items(id,workspace_id,name,tracking_mode,unit_label,created_at,updated_at)
+        SELECT 'report-scale-item-'||n,$1,'Independent item '||lpad(n::text,6,'0'),
+          'quantity','unit',$2,$2 FROM generate_series(1,100000) AS n`,[ctx.workspaceId,now]);
+      await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,position,created_at)
+        SELECT 'report-scale-sku-'||n,$1,'report-scale-item-'||n,
+          'SCALE-'||lpad(n::text,6,'0'),0,$2 FROM generate_series(1,100000) AS n`,[ctx.workspaceId,now]);
+    },{statementTimeoutMs:120000});
     await db.query('ANALYZE items');await db.query('ANALYZE skus');
     const actor=(await db.query(`SELECT u.role,u.permissions,a.email FROM users u
       JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,

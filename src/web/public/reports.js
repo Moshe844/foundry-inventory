@@ -129,9 +129,10 @@ function setupReportBuilder(builder){
   };
   const lineAllowed=()=>{const groups=groupsNow();return groups.length===1&&typeOf(groups[0])==='date';};
   const syncChart=()=>{
-    const current=modeNow(),allowed=lineAllowed();
-    for(const radio of charts){radio.disabled=current!=='groups'||(radio.value==='line'&&!allowed);radio.closest('label').classList.toggle('is-off',radio.value==='line'&&!allowed);radio.closest('label').title=radio.value==='line'&&!allowed?'A line needs one date group':'';}
-    if(chartNow()==='line'&&!allowed)chooseChart('bar');
+    const current=modeNow(),allowed=lineAllowed(),two=groupsNow().length===2,one=groupsNow().length===1;
+    const why={line:allowed?'':'A line needs one date group',area:allowed?'':'An area needs one date group',donut:one?'':'A donut needs one group',stacked:two?'':'Stacked needs two groups',pivot:two?'':'A cross-tab needs two groups'};
+    for(const radio of charts){const reason=why[radio.value]||'';radio.disabled=current!=='groups'||Boolean(reason);radio.closest('label').classList.toggle('is-off',Boolean(reason));radio.closest('label').title=reason;}
+    if(why[chartNow()])chooseChart('bar');
   };
   const syncGroups=()=>{
     groupRows.forEach((row,index)=>{row.hidden=index>0&&!groupSelects[index-1].value;if(row.hidden)groupSelects[index].value='';});
@@ -168,15 +169,15 @@ function setupReportBuilder(builder){
     syncGroups();syncSort();
     if(index===0||chartNow()==='line'){if(lineAllowed()&&chartNow()==='bar')chooseChart('line');}
     syncChart();
-    if(chartNow()==='line'){sort.value=groupsNow()[0];direction.value='asc';}else if(chartNow()==='bar'&&sort.value===groupsNow()[0]&&typeOf(sort.value)!=='date'){sort.value=resultColumn();direction.value='desc';}
+    if(['line','area'].includes(chartNow())){sort.value=groupsNow()[0];direction.value='asc';}else if(chartNow()==='bar'&&sort.value===groupsNow()[0]&&typeOf(sort.value)!=='date'){sort.value=resultColumn();direction.value='desc';}
     syncDirectionWords();requireMoneyScope();
   }));
   aggregate.addEventListener('change',()=>{const wasResult=REPORT_RESULT[aggregate.getAttribute('data-was')||'']===sort.value;syncMeasure();if(wasResult)sort.value='';syncSort();aggregate.setAttribute('data-was',aggregate.value);requireMoneyScope();});
   aggregate.setAttribute('data-was',aggregate.value);
   measure.addEventListener('change',()=>{syncSort();requireMoneyScope();});
-  charts.forEach(radio=>radio.addEventListener('change',()=>{if(chartNow()==='line'){sort.value=groupsNow()[0];direction.value='asc';syncDirectionWords();}}));
-  sort.addEventListener('change',()=>{syncDirectionWords();if(chartNow()==='line'&&(sort.value!==groupsNow()[0]||direction.value!=='asc'))chooseChart('bar');});
-  direction.addEventListener('change',()=>{if(chartNow()==='line'&&direction.value!=='asc')chooseChart('bar');});
+  charts.forEach(radio=>radio.addEventListener('change',()=>{if(['line','area'].includes(chartNow())){sort.value=groupsNow()[0];direction.value='asc';syncDirectionWords();}}));
+  sort.addEventListener('change',()=>{syncDirectionWords();if(['line','area'].includes(chartNow())&&(sort.value!==groupsNow()[0]||direction.value!=='asc'))chooseChart('bar');});
+  direction.addEventListener('change',()=>{if(['line','area'].includes(chartNow())&&direction.value!=='asc')chooseChart('bar');});
 
   /* Columns */
   const columnOrder=one('[data-report-column-order]'),columnList=columnOrder.querySelector('[data-report-column-list]');
@@ -420,7 +421,7 @@ function setupReportBuilder(builder){
     if(data.rows.length>20)chartArea.append(reportElement('p','report-preview-note','The chart shows the first 20 groups.'));
   }
   function drawLine(data){
-    const values=data.chart.values,count=values.length,low=Math.min(0,...values),high=Math.max(1,...values),span=high-low||1;
+    const values=data.chart.values,count=values.length,earlier=data.previousSeries?.column===data.chart.column?data.previousSeries.values:null,known=(earlier||[]).filter(value=>value!==null),low=Math.min(0,...values,...known),high=Math.max(1,...values,...known),span=high-low||1;
     const x=index=>index/(count-1)*100,y=value=>100-(value-low)/span*100;
     const path=values.map((value,index)=>(index?'L':'M')+x(index).toFixed(2)+' '+y(value).toFixed(2)).join(' ');
     const plot=reportElement('div','report-plot');
@@ -428,18 +429,21 @@ function setupReportBuilder(builder){
     const space='http://www.w3.org/2000/svg',svg=document.createElementNS(space,'svg');svg.setAttribute('viewBox','0 0 100 100');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('role','img');svg.setAttribute('aria-label','Line chart of '+data.definition.title);
     const area=document.createElementNS(space,'path');area.setAttribute('d',path+' L100 '+y(Math.max(low,0))+' L0 '+y(Math.max(low,0))+' Z');area.setAttribute('class','report-plot__area');
     const stroke=document.createElementNS(space,'path');stroke.setAttribute('d',path);stroke.setAttribute('class','report-plot__line');stroke.setAttribute('vector-effect','non-scaling-stroke');
-    svg.append(area,stroke);plot.append(svg);
+    if(data.definition.chart==='area')svg.append(area);
+    if(earlier){let pen='M',trail='';earlier.forEach((value,index)=>{if(value===null){pen='M';return;}trail+=pen+x(index).toFixed(2)+' '+y(value).toFixed(2)+' ';pen='L';});const ghost=document.createElementNS(space,'path');ghost.setAttribute('d',trail);ghost.setAttribute('class','report-plot__earlier');ghost.setAttribute('vector-effect','non-scaling-stroke');svg.append(ghost);}
+    svg.append(stroke);plot.append(svg);
     const cross=reportElement('div','report-plot__cross'),dot=reportElement('div','report-plot__dot'),tip=reportElement('div','report-plot__tip');cross.hidden=dot.hidden=tip.hidden=true;plot.append(cross,dot,tip);
     const point=event=>{
       const box=plot.getBoundingClientRect(),index=Math.max(0,Math.min(count-1,Math.round((event.clientX-box.left)/box.width*(count-1))));
       const left=x(index),top=y(values[index]);cross.hidden=dot.hidden=tip.hidden=false;cross.style.left=dot.style.left=left+'%';dot.style.top=top+'%';
-      tip.replaceChildren(reportElement('span','',groupLabel(data,index)),reportElement('strong','',String(data.rows[index][data.chart.column]??'—')));
+      tip.replaceChildren(reportElement('span','',groupLabel(data,index)),reportElement('strong','',String(data.rows[index][data.chart.column]??'—')),...(earlier&&earlier[index]!==null?[reportElement('span','','Earlier: '+axisText(data,earlier[index]))]:[]));
       tip.style.left=left+'%';tip.style.top=top+'%';tip.classList.toggle('is-left',left>60);plot.dataset.index=index;
     };
     plot.addEventListener('pointermove',point);plot.addEventListener('pointerleave',()=>{cross.hidden=dot.hidden=tip.hidden=true;});
     plot.addEventListener('click',()=>{const index=Number(plot.dataset.index);if(Number.isInteger(index))drilldown(data.definition,data.groupValues[index]);});
     const axis=reportElement('div','report-plot__axis');for(const index of [...new Set([0,Math.floor((count-1)/2),count-1])])axis.append(reportElement('span','',groupLabel(data,index)));
     chartArea.append(plot,axis);
+    if(earlier)chartArea.append(reportElement('p','report-preview-note','Solid line: this period. Dashed line: the earlier period.'));
   }
   function drawColumns(data){
     const values=data.chart.values,count=values.length,low=Math.min(0,...values),high=Math.max(1,...values),span=high-low||1;
@@ -461,13 +465,21 @@ function setupReportBuilder(builder){
   }
   function drawChart(data){
     const wanted=data.definition.groups?.length&&data.definition.chart!=='table'&&data.rows.length;
-    const signature=wanted?JSON.stringify([data.definition.chart,data.chart.column,data.chart.values,data.groupValues,data.labels]):'';
+    const signature=wanted?JSON.stringify([data.definition.chart,data.chart.column,data.chart.values,data.groupValues,data.labels,data.previousSeries]):'';
     if(signature===lastChart&&signature)return;
     lastChart=signature;chartArea.replaceChildren();chartArea.hidden=!wanted;
     if(!wanted)return;
     if(!data.chart.comparable||!data.chart.plottable){chartArea.append(reportElement('p','report-error',data.chart.comparable?'This chart cannot safely plot these values. The exact figures are in the table.':'This may include different currencies. Filter to one currency to compare amounts. The exact figures are in the table.'));return;}
     const overTime=data.definition.groups.length===1&&typeOf(data.definition.groups[0])==='date'&&data.definition.sort===data.definition.groups[0]&&data.rows.length>1;
-    if(data.definition.chart==='line'&&data.rows.length>1)drawLine(data);else if(overTime)drawColumns(data);else drawBars(data);
+    if(['donut','stacked','pivot'].includes(data.definition.chart)){
+      const metricName=data.labels?.[data.chart.column]||'Total',money=data.columnTypes?.[data.chart.column]==='money_minor',currency=data.definition.filters?.find(filter=>filter.field==='currency'&&filter.operator==='equals')?.value||schema.currency||'USD';
+      const format=value=>money?new Intl.NumberFormat(undefined,{style:'currency',currency}).format(value/minorPerUnit):new Intl.NumberFormat().format(value);
+      const groups=data.definition.groups,textOf=(index,key)=>cellText(data,key,data.rows[index]);
+      const items=data.rows.map((row,index)=>({index,value:data.chart.values[index],display:String(row[data.chart.column]??'—'),label:groupLabel(data,index),first:textOf(index,groups[0]),second:groups[1]?textOf(index,groups[1]):''}));
+      const whole=data.totals?.metrics?.find(metric=>metric.column===data.chart.column);
+      window.ReportCharts.draw(data.definition.chart,chartArea,{items,format,metricName,groupName:data.labels?.[groups[0]]||labelOf(groups[0]),totalDisplay:whole?.display||'',onPick:index=>drilldown(data.definition,data.groupValues[index])});
+      if(data.hasMore)chartArea.append(reportElement('p','report-preview-note','Showing the first '+data.returned+' rows.'));
+    }else if(['line','area'].includes(data.definition.chart)&&data.rows.length>1)drawLine(data);else if(overTime)drawColumns(data);else drawBars(data);
   }
   const shortDay=value=>reportDateText(value,'day');
   function drawBig(data){
@@ -487,6 +499,8 @@ function setupReportBuilder(builder){
         });
       }
       tile.append(reportElement('span','',metric.label),reportElement('strong','',metric.display));
+      const overTimeNow=data.definition.groups?.length===1&&typeOf(data.definition.groups[0])==='date',trend=overTimeNow?(data.metricValues?.[metric.column]||[]):[];
+      if(trend.length>1&&window.ReportCharts){const line=window.ReportCharts.spark(data.definition.direction==='desc'?[...trend].reverse():trend);if(line)tile.append(line);}
       if(metric.change!==null&&metric.change!==undefined)tile.append(reportElement('small','report-delta '+(metric.good===true?'is-good':metric.good===false?'is-bad':''),(metric.change>0?'▲ ':metric.change<0?'▼ ':'')+Math.abs(metric.change).toFixed(1)+'%'));
       if(metric.previousDisplay)tile.append(reportElement('em','','was '+metric.previousDisplay));else if(totals.comparison)tile.append(reportElement('em','','No earlier records'));
       bigArea.append(tile);
@@ -504,6 +518,7 @@ function setupReportBuilder(builder){
     tableArea.replaceChildren();tableArea.hidden=Boolean(data.definition.summary);
     if(data.definition.summary)return;
     const table=document.createElement('table'),head=table.createTHead().insertRow(),metricNames=data.metricColumns||[];
+    const primary=data.definition.groups?.length&&typeOf(data.definition.groups[0])!=='date'?metricNames[0]:null,primaryValues=primary?(data.metricValues?.[primary]||[]):[],peakValue=Math.max(1,...primaryValues.map(Math.abs)),whole=data.totals?.metrics?.find(metric=>metric.column===primary)?.value,canShare=primary&&data.definition.aggregate==='sum'&&whole>0&&primaryValues.every(value=>value>=0);
     for(const key of data.columns){
       const cell=document.createElement('th');cell.scope='col';const text=data.definition.columnLabels?.[key]||data.labels[key]||fields[key]?.label||key;
       if([...sort.options].some(option=>option.value===key)){
@@ -515,6 +530,7 @@ function setupReportBuilder(builder){
       if(['money_minor','number'].includes(data.columnTypes?.[key]))cell.classList.add('is-num');
       head.append(cell);
     }
+    if(canShare){const cell=document.createElement('th');cell.scope='col';cell.className='is-num';cell.textContent='Share';head.append(cell);}
     const body=table.createTBody();
     for(const [index,row] of data.rows.entries()){
       const line=body.insertRow();
@@ -528,9 +544,23 @@ function setupReportBuilder(builder){
         }else if(data.links?.[index]?.startsWith('/')&&!data.links[index].startsWith('//')&&key===data.columns[0]){
           const link=document.createElement('a');link.href=data.links[index];link.textContent=value;cell.append(link);
         }else cell.textContent=value;
+        if(key===primary&&primaryValues.length){cell.classList.add('has-bar');cell.style.setProperty('--bar',Math.round(Math.abs(primaryValues[index])/peakValue*100)+'%');}
       }
+      if(canShare){const cell=line.insertCell();cell.className='is-num report-share';cell.textContent=(primaryValues[index]/whole*100).toFixed(1)+'%';}
+    }
+    const wholes=data.totals?.metrics||[];
+    if(data.definition.groups?.length&&wholes.length){
+      const foot=table.createTFoot().insertRow();
+      for(const key of data.columns){const cell=foot.insertCell(),metric=wholes.find(entry=>entry.column===key);if(key===data.columns[0])cell.textContent='Total';else if(metric){cell.textContent=metric.display;cell.classList.add('is-num');}else if(['money_minor','number'].includes(data.columnTypes?.[key]))cell.classList.add('is-num');}
+      if(canShare)foot.insertCell();
     }
     tableArea.append(table);
+    if(data.rows.length>8&&!data.definition.summary){
+      const find=reportElement('input','report-find');find.type='search';find.placeholder='Find in these results';find.setAttribute('aria-label','Find in these results');
+      find.addEventListener('input',()=>{const needle=find.value.trim().toLowerCase();for(const row of table.tBodies[0].rows)row.hidden=Boolean(needle)&&!row.textContent.toLowerCase().includes(needle);});
+      find.addEventListener('keydown',event=>{if(event.key==='Enter')event.preventDefault();});
+      tableArea.prepend(find);
+    }
   }
   const draw=data=>{
     if(!data.rows.length){clearResults();drawBig(data);tableArea.hidden=false;tableArea.append(reportElement('p','report-empty','No records match these choices. Try a wider date or remove a filter.'));say('No records match these choices.');return;}

@@ -152,9 +152,10 @@ function normalize(spec,actor){
   const topN=spec.topN==null||spec.topN===''?null:Number(spec.topN);
   if(topN!==null&&(!Number.isSafeInteger(topN)||topN<1||topN>1000))
     invalid('Choose a top or bottom count between 1 and 1,000.');
-  const chart=['table','bar','line'].includes(spec.chart)?spec.chart:'table';
+  const chart=['table','bar','line','area','donut','stacked','pivot'].includes(spec.chart)?spec.chart:'table';
   if(chart!=='table'&&!groups.length)invalid('Choose a grouping before drawing a chart.');
-  if(chart==='line'&&(groups.length!==1||dataset.fields[groups[0]]!=='date'||sort!==groups[0]
+  if(['stacked','pivot'].includes(chart)&&groups.length!==2)invalid('This view needs two groupings.');
+  if(['line','area'].includes(chart)&&(groups.length!==1||dataset.fields[groups[0]]!=='date'||sort!==groups[0]
     ||direction!=='asc'))invalid('A trend line needs one date grouping sorted oldest to newest.');
   const title=safeText(spec.title,100)||dataset.label;
   const layout=['chart_first','table_first','dashboard'].includes(spec.layout)?spec.layout:'chart_first';
@@ -359,6 +360,17 @@ async function addComparison(database,ctx,actor,config,output,dateContext){
   const window=compareWindow(config,dateContext),dataset=registry.get(config.dataset);
   if(!window)return;
   output.comparison={from:window.from,to:window.to,previousFrom:window.previousFrom,previousTo:window.previousTo};
+  if(config.groups.length===1&&dataset.fields[config.groups[0]]==='date'){
+    // The same step of each period sits at the same place, so a quiet day does not shift the line.
+    const column=output.chartColumn||metricColumns(config)[0],field=config.groups[0],grain=config.dateGrain;
+    const place=(value,start)=>{const a=new Date(String(value).slice(0,10)+'T12:00:00Z'),b=new Date(start+'T12:00:00Z'),months=(a.getUTCFullYear()-b.getUTCFullYear())*12+a.getUTCMonth()-b.getUTCMonth(),days=Math.round((a-b)/86400000);
+     if(grain==='month')return months;if(grain==='quarter')return Math.floor((a.getUTCFullYear()*12+a.getUTCMonth())/3)-Math.floor((b.getUTCFullYear()*12+b.getUTCMonth())/3);if(grain==='year')return a.getUTCFullYear()-b.getUTCFullYear();
+     if(grain==='week'){const monday=new Date(b);monday.setUTCDate(b.getUTCDate()-((b.getUTCDay()+6)%7));return Math.round((a-monday)/604800000);}return days;};
+    const earlier=await run(database,ctx,actor,{...config,compare:'',filters:window.filters,topN:null,sort:field,direction:'asc',chart:'table'},{limit:1001});
+    const steps=new Map(earlier.rows.map(row=>[place(row[field],window.previousFrom),Number(row[column])]));
+    output.previousSeries={column,values:output.rows.map(row=>{const value=steps.get(place(row[field],window.from));return value===undefined?null:value;})};
+    return;
+  }
   if(!config.groups.length||config.groups.some(field=>dataset.fields[field]==='date'))return;
   const primary=metricColumns(config)[0],earlier=await run(database,ctx,actor,{...config,compare:'',extras:[],chartMeasure:'',filters:window.filters,topN:null,sort:primary,chart:'table'},{limit:1001});
   const key=row=>JSON.stringify(config.groups.map(field=>row[field])),found=new Map(earlier.rows.map((row,index)=>[key(row),{row,index}]));
@@ -387,7 +399,7 @@ async function totals(database,ctx,actor,config){
     chartColumn:config.chartMeasure||metricColumns(config)[0],
     metrics:metricColumns(config).map(column=>{
       const metric=metricOf(config,column),value=current.rows[0]?.[column],before=previous?.rows[0]?.[column],change=previous&&before!=null?changeBetween(value,before):null;
-      return {column,label:current.columnLabels[column]||metricLabel(dataset,metric.aggregate,metric.measure,column),display:String(current.displayRows[0]?.[column]??'—'),
+      return {column,value:value==null?null:Number(value),label:current.columnLabels[column]||metricLabel(dataset,metric.aggregate,metric.measure,column),display:String(current.displayRows[0]?.[column]??'—'),
         previousDisplay:before!=null?String(previous.displayRows[0][column]):null,change:change===null?null:Number(change.toFixed(1)),changeText:change===null?null:changeText(change),
         good:change===null||change===0?null:lowerIsBetter(metric.measure)?change<0:change>0};
     })};

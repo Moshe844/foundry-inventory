@@ -1,4 +1,5 @@
 'use strict';
+const {ValidationError}=require('../domain/errors');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const store=require('./postgres-goal-store'),pilot=require('./postgres-codex-pilot');
 const base='../../scripts/environment-agent-demo/';
@@ -233,9 +234,20 @@ async function run(database,ctx,id,options={}){
    // autonomous planning turn, scope-review model or second investigation.
    const reads=require('./bounded-business-read'),currentAccess=await authorize({catalogue:false});
    const began=Date.now(),modelStarted=Date.now();
+   // Nothing in this lane can change the business. A question it cannot read is
+   // handed back to the person in words; it is never a stopped or paused run.
+   const askInstead=async error=>{
+    const unreadable=error instanceof ValidationError||error?.status===402||/statement timeout|canceling statement/i.test(String(error?.message||''));
+    if(!unreadable)throw error;
+    audit({kind:'bounded_read_returned_to_user',code:error.code||error.reason||error.name});
+    const question=error instanceof ValidationError||error?.status===402?String(error.message):'That question needs too many records to read at once.';
+    await session.finish({verified:false,answer:question,report:{version:1,status:'needs_user',question:question+' Please name the records, dates or total you want and I will read them.',missingInformation:['The records, dates or measure to check']}});
+    return store.get(database,ctx,id);
+   };
    let plan;
    try{plan=await reads.interpret(helper,currentAccess.actor,goal.original_request,{clock:await reads.businessClock(database,ctx.workspaceId,currentAccess.environment?.clock),
     conversation:(goal.checkpoint.messages||[]).slice(-4)});}
+   catch(error){return await askInstead(error);}
    finally{audit({kind:'bounded_read_model',timings:{modelMs:Date.now()-modelStarted}});}
    if(plan.status==='clarify'){
     await session.finish({verified:false,answer:plan.question,report:{version:1,status:'needs_user',question:plan.question,missingInformation:['The records, dates or measure to check']}});
@@ -253,7 +265,8 @@ async function run(database,ctx,id,options={}){
        AND lease_until>now() AND expires_at>now()`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,reads.render(partial)]);
      if(published.rowCount!==1)throw Error('SESSION_LEASE_LOST');
     }});
-   });}finally{audit({kind:'bounded_read_tool',timings:{toolMs:Date.now()-toolStarted}});}
+   });}catch(error){return await askInstead(error);}
+   finally{audit({kind:'bounded_read_tool',timings:{toolMs:Date.now()-toolStarted}});}
    const answer=reads.render(sections),checkStarted=Date.now();
    // The host renders every number from this tool's immutable result. A cheap
    // structural check cannot start a model or rerun the original questions.

@@ -6,7 +6,8 @@
     if (list.dataset.showBatchReady) return;
     list.dataset.showBatchReady = '1';
     var size = Number(list.dataset.showBatch) || 6;
-    var rows = Array.prototype.slice.call(list.children);
+    var headings = Array.prototype.slice.call(list.querySelectorAll(':scope > [data-batch-heading]'));
+    var rows = Array.prototype.slice.call(list.children).filter(function (row) { return !row.hasAttribute('data-batch-heading'); });
     if (rows.length <= size) return;
     var key = 'stockchief:show-batch:' + location.pathname + location.search;
     var shown = size;
@@ -20,6 +21,7 @@
     bar.append(more, less, count); list.after(bar);
     function draw() {
       rows.forEach(function (row, index) { row.hidden = index >= shown; });
+      headings.forEach(function (heading) { var next = heading.nextElementSibling; heading.hidden = !next || next.hidden; });
       var left = rows.length - shown;
       more.hidden = left <= 0; more.textContent = 'Show ' + Math.min(size, left) + ' more';
       less.hidden = shown <= size;

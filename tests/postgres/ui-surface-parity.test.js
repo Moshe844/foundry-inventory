@@ -28,8 +28,10 @@ function appRoutes(app){
 
 function routeExists(routes,method,href){
   const pathname=new URL(href,'http://localhost').pathname;
-  return routes.some((route)=>route.method===method&&new RegExp(`^${route.pathname
-    .replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/:[a-zA-Z][a-zA-Z0-9_]*/g,'[^/]+')}$`).test(pathname));
+  // Express parameters may carry their own constraint, as in /money/:kind(invoices|bills).
+  const pattern=(path)=>path.split(/(:[a-zA-Z][a-zA-Z0-9_]*(?:\([^)]*\))?)/).map((part,index)=>index%2
+    ?(part.includes('(')?part.slice(part.indexOf('(')):'[^/]+'):part.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('');
+  return routes.some((route)=>route.method===method&&new RegExp(`^${pattern(route.pathname)}$`).test(pathname));
 }
 
 test('PostgreSQL core pages render and expose only live local navigation and form routes',
@@ -72,6 +74,9 @@ test('PostgreSQL core pages render and expose only live local navigation and for
         if(!routeExists(routes,control.method,control.href))missing.push(`${surface}: ${control.method} ${pathname} (${control.label})`);
       }
     }
+    // The For developers link goes to another section of the same path, so its fragment lives there.
+    await page.goto(`${base}/settings/connections?section=developers`);
+    assert.equal(await page.locator('#developer-api').count(),1);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
       WHERE a.email='surface-audit@example.test'`)).rows[0];

@@ -20,7 +20,12 @@
 <%- include('warnings',{warnings:result.warnings||[]}) %>
 <div class="report-page report-layout--<%= result.config.layout||'chart_first' %>">
 <% if(locals.totals?.metrics?.length){ %><%- include('totals') %><% }else if(result.config.summary&&result.rows.length){const key=result.columns.at(-1); %><section class="report-card report-big" data-report-total><span><%= result.columnLabels?.[key]||helpers.columnLabel(key) %></span><strong><%= result.displayRows[0][key]??'—' %></strong></section><% } %>
-<% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
+<% if(['donut','stacked','pivot'].includes(result.config.chart)&&result.rows.length){
+  const chartColumn=result.chartColumn||result.metricColumns?.[0]||result.columns.at(-1),groups=result.config.groups,isMoney=result.columnTypes[chartColumn]==='money_minor',currencyCode=result.provenance?.currency||null,digits=currencyCode?new Intl.NumberFormat('en-US',{style:'currency',currency:currencyCode}).resolvedOptions().maximumFractionDigits:0;
+  const whole=locals.totals?.metrics?.find(metric=>metric.column===chartColumn);
+  const chartData={kind:result.config.chart,currency:isMoney?currencyCode:null,minorPerUnit:10**digits,metricName:result.columnLabels[chartColumn]||'Total',groupName:result.columnLabels[groups[0]]||groups[0],totalDisplay:whole?.display||'',items:result.rows.map((row,index)=>({index,value:Number(row[chartColumn]),display:String(result.displayRows[index][chartColumn]??'—'),label:groups.map(field=>cellDate(field,row[field],true)).join(' · '),first:cellDate(groups[0],row[groups[0]],true),second:groups[1]?cellDate(groups[1],row[groups[1]],true):''}))}; %>
+  <section class="report-card report-chart"><h2><%= result.columnLabels?.[chartColumn]||helpers.columnLabel(chartColumn) %></h2><div data-report-client-chart="<%= JSON.stringify(chartData) %>"></div></section>
+<% }else if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
   const chartColumn=result.chartColumn||result.metricColumns?.[0]||result.columns.at(-1);
   const values=result.rows.map(row=>Number(row[chartColumn]));
   const chartSafe=result.comparisonSafe!==false&&result.rows.every(row=>row[chartColumn]!==null)
@@ -28,10 +33,10 @@
   if(chartSafe){
   const maximum=Math.max(1,...values.map(Math.abs)),groupText=row=>result.config.groups.map(field=>cellDate(field,row[field],true)).join(' · '); %>
   <section class="report-card report-chart"><h2><%= result.columnLabels?.[chartColumn]||helpers.columnLabel(chartColumn) %></h2>
-    <% if(result.config.chart==='line'&&values.length>1){
-      const plotted=values.slice(0,120),bottom=Math.min(0,...plotted),top=Math.max(1,...plotted),x=index=>index/(plotted.length-1)*100,y=value=>100-(value-bottom)/(top-bottom||1)*100;
+    <% if(['line','area'].includes(result.config.chart)&&values.length>1){
+      const plotted=values.slice(0,120),earlierValues=result.previousSeries?.column===chartColumn?result.previousSeries.values.slice(0,120):[],knownEarlier=earlierValues.filter(value=>value!==null),bottom=Math.min(0,...plotted,...knownEarlier),top=Math.max(1,...plotted,...knownEarlier),x=index=>index/(plotted.length-1)*100,y=value=>100-(value-bottom)/(top-bottom||1)*100;
       const line=plotted.map((value,index)=>(index?'L':'M')+x(index).toFixed(2)+' '+y(value).toFixed(2)).join(' '); %>
-      <div class="report-result-line"><svg role="img" aria-label="Line chart of <%= result.config.title %>" viewBox="0 0 100 100" preserveAspectRatio="none"><path class="report-plot__area" d="<%= line %> L100 <%= y(Math.max(bottom,0)) %> L0 <%= y(Math.max(bottom,0)) %> Z"/><path class="report-plot__line" vector-effect="non-scaling-stroke" d="<%= line %>"/></svg></div>
+      <div class="report-result-line"><svg role="img" aria-label="Line chart of <%= result.config.title %>" viewBox="0 0 100 100" preserveAspectRatio="none"><% if(result.config.chart==='area'){ %><path class="report-plot__area" d="<%= line %> L100 <%= y(Math.max(bottom,0)) %> L0 <%= y(Math.max(bottom,0)) %> Z"/><% } %><% if(knownEarlier.length){let pen='M',trail='';earlierValues.forEach((value,index)=>{if(value===null){pen='M';return;}trail+=pen+x(index).toFixed(2)+' '+y(value).toFixed(2)+' ';pen='L';}); %><path class="report-plot__earlier" vector-effect="non-scaling-stroke" d="<%= trail %>"/><% } %><path class="report-plot__line" vector-effect="non-scaling-stroke" d="<%= line %>"/></svg></div>
       <div class="report-result-axis"><span><%= groupText(result.rows[0]) %></span><span><%= groupText(result.rows[plotted.length-1]) %></span></div>
     <% }else{ %><div class="report-bars"><% for(let index=0;index<Math.min(40,result.rows.length);index++){
       const row=result.rows[index],value=values[index]; %>
@@ -44,9 +49,9 @@
     <p class="report-note">These are comparisons of recorded rows, not a claim about causes or future outcomes.</p>
   </section>
 <% } %>
-<section class="report-card report-results"><h2>Report results</h2>
+<section class="report-card report-results"><div class="report-results__head"><h2>Report results</h2><% if(result.rows.length>8){ %><input class="report-find" type="search" placeholder="Find in these results" aria-label="Find in these results" data-report-table-search="#report-result-table"><% } %></div>
   <% if(!result.rows.length){ %><p>No matching records. Try a wider date or different filter.</p><% }else{ %>
-    <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
+    <div class="report-table-wrap"><table id="report-result-table"><thead><tr><% for(const column of result.columns){ %>
       <th scope="col" class="<%= numeric(column)?'is-num':'' %>"><%= result.columnLabels?.[column]||helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
       <tbody><% for(const [index,row] of result.rows.slice(0,200).entries()){ %><tr><% for(const column of result.columns){ %>
         <td class="<%= numeric(column)?'is-num':'' %><%= column==='change'&&String(result.displayRows[index][column]).startsWith('+')?' is-up':column==='change'&&String(result.displayRows[index][column]).startsWith('-')?' is-down':'' %>"><%= cellDate(column,result.displayRows[index][column]??'—') %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.dataset==='composed'){ for(const source of result.sources||[]){ %>
@@ -60,6 +65,7 @@
             <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
             <input type="hidden" name="groupValues" value="<%= JSON.stringify(result.config.groups.map(field=>row[field])) %>">
             <button class="report-link" type="submit">See source records</button></form><% } %></td></tr><% } %></tbody>
+      <% if(result.config.groups.length&&locals.totals?.metrics?.length){ %><tfoot><tr><% for(const column of result.columns){const whole=totals.metrics.find(metric=>metric.column===column); %><td class="<%= numeric(column)?'is-num':'' %>"><%= column===result.columns[0]?'Total':whole?whole.display:'' %></td><% } %><td></td></tr></tfoot><% } %>
     </table></div>
     <% if(result.hasMore){ %><p class="report-note">More rows match. Use Next rows, or download the report to see them all.</p><% } %>
     <% if(paginationBase&&(result.offset||result.hasMore)){const separator=paginationBase.includes('?')?'&':'?'; %>
@@ -75,3 +81,4 @@
 </section><% } %>
 </div>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
+<script defer src="/report-charts.js?v=<%= assetVersion %>"></script>

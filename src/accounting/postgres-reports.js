@@ -37,9 +37,12 @@ async function profitAndLoss(database,workspaceId,input={}){
   const rows=await accountTotals(database,workspaceId,{from,to,types:['INCOME','COGS','EXPENSE']});
   const sum=(type)=>rows.filter((row)=>row.account_type===type).reduce((total,row)=>total+
     (type==='INCOME'?Number(row.credit_minor)-Number(row.debit_minor):Number(row.debit_minor)-Number(row.credit_minor)),0);
-  const revenueMinor=sum('INCOME');const cogsMinor=sum('COGS');const operatingExpenseMinor=sum('EXPENSE');
-  return {from,to,currency:await currency(database,workspaceId),accounts:rows,revenueMinor,cogsMinor,operatingExpenseMinor,
-    grossProfitMinor:revenueMinor-cogsMinor,netIncomeMinor:revenueMinor-cogsMinor-operatingExpenseMinor};
+  // A stock count is not a business expense. A gain or loss has its own line between gross and net.
+  const counted=rows.filter((row)=>row.subtype==='INVENTORY_ADJUSTMENTS');
+  const stockCountMinor=counted.reduce((total,row)=>total+Number(row.credit_minor)-Number(row.debit_minor),0);
+  const revenueMinor=sum('INCOME');const cogsMinor=sum('COGS');const operatingExpenseMinor=sum('EXPENSE')+stockCountMinor;
+  return {from,to,currency:await currency(database,workspaceId),accounts:rows,revenueMinor,cogsMinor,operatingExpenseMinor,stockCountMinor,
+    grossProfitMinor:revenueMinor-cogsMinor,netIncomeMinor:revenueMinor-cogsMinor-operatingExpenseMinor+stockCountMinor};
 }
 
 async function balanceSheet(database,workspaceId,input={}){

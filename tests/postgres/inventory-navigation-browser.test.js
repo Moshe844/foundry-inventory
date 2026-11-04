@@ -56,25 +56,26 @@ test('inventory summary links reach understandable, working destinations in a re
 
     const overview=await page.goto(`${base}/inventory`);
     assert.equal(overview.status(),200);
-    assert.match(await page.locator('main').innerText(),/4 products tracked/);
-    assert.match(await page.locator('main').innerText(),/Purchase cost is missing for 10 units/);
+    assert.match(await page.locator('main').innerText(),/4 matching products/);
+    await page.goto(`${base}/inventory/overview`);
+    assert.match(await page.locator('main').innerText(),/5 SKUs tracked/);
+    assert.match(await page.locator('main').innerText(),/Actual stock cost is missing for 10 units/);
     assert.doesNotMatch(await page.locator('main').innerText(),/amount above is not the full inventory value/);
-    assert.match(await page.locator('main').innerText(),/A product may appear in more than one group/);
-    assert.match(await page.locator('main a[href="/inventory/table?group=healthy"]').innerText(),/2 products/);
+    assert.match(await page.locator('main a[href="/inventory/table?group=healthy"] .sc-group-count').innerText(),/^2\b/);
     const expected=[
       {group:'empty',name:'Nothing on hand',item:'Unstocked Hinge'},
       {group:'incoming',name:'On the way',item:'Ordered Bracket'},
       {group:'healthy',name:'Available now',item:'Ready Clamp'},
     ];
     for(const entry of expected){
-      const link=page.locator(`main a[href="/inventory/table?group=${entry.group}"]`);
+      const link=page.locator(`main a.rm-group[href="/inventory/table?group=${entry.group}"]`);
       assert.match(await link.innerText(),new RegExp(entry.name));
       await link.click();
       assert.equal(new URL(page.url()).searchParams.get('group'),entry.group);
       const text=await page.locator('main').innerText();
       assert.match(text,new RegExp(entry.item));
       assert.doesNotMatch(text,/Something went wrong|We could not find that/i);
-      await page.goto(`${base}/inventory`);
+      await page.goto(`${base}/inventory/overview`);
     }
     await page.goto(`${base}/inventory/table?group=healthy`);
     assert.match(await page.locator('main').innerText(),/Sized Glove/);
@@ -87,16 +88,15 @@ test('inventory summary links reach understandable, working destinations in a re
       assert.equal(response.status(),200,`${path} did not render`);
       assert.doesNotMatch(await page.locator('main').innerText(),/Something went wrong|We could not find that/i,path);
     }
-    await page.goto(`${base}/inventory`);
-    const activity=page.getByRole('link',{name:'Tell StockChief about a stock change'});
-    await activity.click();
-    assert.match(page.url(),/\/ask\?from=%2Finventory&task=stock-activity$/);
+    await page.goto(`${base}/inventory/overview`);
+    await Promise.all([page.waitForURL(`${base}/actions`),page.getByRole('link',{name:'Record stock activity'}).click()]);
+    await page.goto(`${base}/ask?from=%2Finventory&task=stock-activity`);
     const guidance=await page.getByRole('region',{name:'Record a stock change'}).innerText();
     assert.match(guidance,/what arrived, left, moved, or was counted/i);
     assert.doesNotMatch(await page.locator('main').innerText(),/Operating outcomes|Recently carried out/i);
     assert.equal(await page.locator('#ask-question').inputValue(),'');
 
-    const roots=['/','/inventory','/inventory/table','/purchasing','/orders','/money',
+    const roots=['/','/inventory','/inventory/overview','/inventory/table','/purchasing','/orders','/money',
       '/needs-you','/ask','/everything'];
     const hrefs=new Set();
     for(const root of roots){

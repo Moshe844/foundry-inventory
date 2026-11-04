@@ -36,7 +36,7 @@ function source(body){
     extras:Object.values(body.extras||{}).filter(row=>row?.aggregate),compare:body.compare,chartMeasure:body.chartMeasure};
 }
 // A grouped preview reads more rows so a trend line can show its whole shape.
-const previewLimit=spec=>spec.groups?.length?61:31;
+const previewLimit=spec=>['stacked','pivot'].includes(spec.chart)?301:spec.groups?.length?61:31;
 function previewSchedule(body,defaultZone){return require('../../reports/local-schedule').normalize(body,defaultZone);}
 async function actorFor(database,ctx){
   const row=(await database.query(`SELECT u.id,u.role,u.permissions,a.email FROM users u
@@ -201,7 +201,7 @@ function createPostgresReportsRouter(database){
       const spec=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
       const result=await reports.run(database,req.ctx,actor,spec,{limit:previewLimit(spec)});
       const chartColumn=result.chartColumn||result.metricColumns?.[0]||result.columns.at(-1),chartValues=result.rows.map(row=>Number(row[chartColumn]));
-      return res.json({ok:true,columns:result.columns,labels:result.columnLabels,metricColumns:result.metricColumns||[],totals:await reports.totals(database,req.ctx,actor,result.config),
+      return res.json({ok:true,columns:result.columns,labels:result.columnLabels,metricColumns:result.metricColumns||[],metricValues:Object.fromEntries((result.metricColumns||[]).map(column=>[column,result.rows.map(row=>Number(row[column]))])),previousSeries:result.previousSeries||null,totals:await reports.totals(database,req.ctx,actor,result.config),
         rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
         links:result.rows.map(row=>row.href||null),groups:result.config.groups,
         groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],

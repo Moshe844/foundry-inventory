@@ -59,8 +59,9 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     assert.match(brief,/Needs you\s+1/i);
     assert.match(brief,/Store feed stopped updating/);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'1');
-    await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
+    await page.locator('a[href="/needs-you"]').filter({has:page.locator('.nav-count')}).first().click();
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
+    await page.locator('.ny-why > summary').first().click();
     assert.match(await page.locator('main').innerText(),/Reconnect the store feed/);
     const failedJobs=[];
     for(let index=0;index<25;index+=1){
@@ -73,21 +74,21 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
       WHERE id=ANY($1::text[])`,[failedJobs]);
     await page.goto(`${base}/needs-you`);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'1');
-    assert.match(await page.locator('main').innerText(),/25 failed background attempts need operator review/);
-    assert.match(await page.locator('main').innerText(),/Decision 1 of 1/);
+    assert.match(await page.locator('main').innerText(),/Some background work could not finish/);
+    assert.match(await page.locator('main').innerText(),/1 waiting for you/);
     await page.goto(`${base}/needs-you?at=25`);
-    assert.match(await page.locator('main').innerText(),/Decision 1 of 1/);
+    assert.match(await page.locator('main').innerText(),/1 waiting for you/);
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
     assert.equal(await page.locator('main a.page-back').count(),0);
-    await page.getByRole('link',{name:'Review the grouped failures and retry controls'}).click();
-    assert.match(await page.locator('main').innerText(),/25 failed attempts from 1 distinct cause/);
+    await page.getByRole('link',{name:'Review work needing attention'}).click();
+    assert.match(await page.locator('main').innerText(),/25 attempts need review/);
     await page.goto(`${base}/activity`);const activity=await page.locator('main').innerText();
     assert.match(activity,/Activity/);assert.match(activity,/Received 12 × Projection Widget into Main Warehouse/);
     assert.match(activity,/raw movement ledger/i);await page.getByLabel('Search activity').fill('OPENING-PROJECTION');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Search'}).click()]);
     assert.match(await page.locator('main').innerText(),/OPENING-PROJECTION/);
     await page.goto(`${base}/money`);const money=await page.locator('main').innerText();
-    assert.match(money,/\$50\.00 net income this period/);assert.match(money,/\$100\.00 revenue/);
+    assert.match(money,/You made \$50\.00 profit/);assert.match(money,/You sold \$100\.00/);
     await page.goto(`${base}/accounting/reports/profit-and-loss?from=${first}&to=${reportEnd}`);
     const pnl=await page.locator('main').innerText();assert.match(pnl,/Revenue\s*\$100\.00/);assert.match(pnl,/Net income\s*\$50\.00/);
     await page.goto(`${base}/accounting/reports/balance-sheet?asOf=${reportEnd}`);

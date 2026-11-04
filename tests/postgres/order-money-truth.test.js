@@ -109,7 +109,7 @@ test('cancelled orders, deposits, one sales total, plan locks, number order and 
  await t.test('a profit question is one card with every figure named',async()=>{
   const reads=require('../../src/assistant/bounded-business-read'),actor=(await db.query('SELECT * FROM users WHERE id=$1',[ctx.actorId])).rows[0];
   const plan=reads.validate({status:'read',question:'',queries:[{dataset:'profit_activity',aggregate:'sum',measure:'net_profit_minor',groups:['currency']},{dataset:'profit_activity',aggregate:'sum',measure:'revenue_minor',groups:['currency']}]},actor);
-  assert.deepEqual(plan.queries.map(q=>q.measure),['revenue_minor','cogs_minor','expenses_minor']);
+  assert.deepEqual(plan.queries.map(q=>q.measure),['revenue_minor','cogs_minor','expenses_minor','stock_count_minor']);
   const answer=reads.render(await reads.execute(db,ctx,actor,plan));
   assert.equal((answer.match(/Recorded sales, product cost/g)||[]).length,0);
   for(const name of ['Sales','Product cost','Gross profit','Expenses','Net profit'])assert.match(answer,new RegExp('\\| '+name+' \\| \\$'),name);

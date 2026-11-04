@@ -198,6 +198,8 @@ function profitStory(pnl, prior, priorPeriod) {
       pct: movement(pnl.cogsMinor, prior.cogsMinor) },
     { name: 'other expenses', effect: -(pnl.operatingExpenseMinor - prior.operatingExpenseMinor),
       pct: movement(pnl.operatingExpenseMinor, prior.operatingExpenseMinor) },
+    { name: 'stock count gains and losses', effect: Number(pnl.stockCountMinor || 0) - Number(prior.stockCountMinor || 0),
+      pct: movement(Number(pnl.stockCountMinor || 0), Number(prior.stockCountMinor || 0)) },
   ].filter((row) => row.effect !== 0).sort((a, b) => Math.abs(b.effect) - Math.abs(a.effect));
 
   if (!drivers.length) {

@@ -37,7 +37,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await page.getByLabel('Name',{exact:true}).fill('Address Required Customer');
     await page.getByLabel('Email for order and shipping messages').fill('address-required@example.test');
     await page.getByLabel(/Default shipping address/).fill('20 Default Road, Albany, NY 12207, United States');
-    await Promise.all([page.waitForURL(`${base}/customers`),page.getByRole('button',{name:'Create customer'}).click()]);
+    await Promise.all([page.waitForURL(`${base}/sales/customers`),page.getByRole('button',{name:'Create customer'}).click()]);
     const addressCustomer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name=$2`,
       [ctx.workspaceId,'Address Required Customer'])).rows[0];
     await page.goto(`${base}/orders/new?customer=${addressCustomer.id}`);
@@ -53,7 +53,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM sales_orders')).rows[0].count,'0');
 
     await page.goto(`${base}/suppliers`);
-    await page.getByRole('button',{name:'Add supplier'}).click();
+    await page.getByRole('button',{name:'Add supplier'}).first().click();
     const supplierForm=page.locator('#ox-supplier-drawer');
     await supplierForm.getByLabel('Name').fill('Boot Supply');await supplierForm.getByLabel('Email').fill('orders@boots.test');
     await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Save supplier'}).click()]);
@@ -117,7 +117,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
 
     // Customers are added from the New order form's dialog, not a form under the Orders list.
     await page.goto(`${base}/orders`);
-    await Promise.all([page.waitForURL(`${base}/orders/new`),page.getByRole('link',{name:'New order',exact:true}).click()]);
+    await Promise.all([page.waitForURL(`${base}/orders/new`),page.getByRole('link',{name:'New order',exact:true}).first().click()]);
     const customerDialog=page.locator('#new-order-customer');
     await page.getByRole('button',{name:'+ New customer',exact:true}).click();
     await customerDialog.locator('[name=name]').fill('Pickup Customer');await customerDialog.locator('[name=email]').fill('pickup@example.test');

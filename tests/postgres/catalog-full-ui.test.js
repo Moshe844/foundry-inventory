@@ -16,6 +16,13 @@ async function addLocation(page,base,name){
   await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Add location',exact:true}).click()]);
 }
 
+// Stock actions live in the product page's More menu.
+async function productAction(page,name){
+  const menu=page.locator('.sc-product-more');
+  if(!await menu.evaluate((details)=>details.open))await menu.locator('> summary').click();
+  await menu.getByRole('button',{name,exact:true}).click();
+}
+
 async function addItem(page,base,{name,code,tracking='quantity',variants=false}){
   await page.goto(`${base}/inventory/new`);
   await page.getByLabel('Name',{exact:true}).fill(name);
@@ -23,7 +30,7 @@ async function addItem(page,base,{name,code,tracking='quantity',variants=false})
   if(tracking==='serial')await page.getByLabel('Individual units').check();
   if(tracking==='lot')await page.getByLabel('Lots / batches').check();
   if(variants){
-    await page.getByLabel(/comes in options/).check();
+    await page.getByLabel(/has multiple options/).check();
     await page.getByLabel('First option name').fill('Colour');
     await page.getByLabel('First option choices').fill('Black, White');
     await page.getByLabel('Second option name').fill('Size');
@@ -52,13 +59,14 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
     await page.getByLabel('Work email').fill('catalog-full-pg@example.test');
     await page.locator('input[name="password"]').fill('catalog-full-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('catalog-full-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
-    assert.equal(await page.locator('.rm-source-grid > *').count(),3);
+    assert.equal(await page.locator('.setup-source-grid > *').count(),3);
     const onboardingText=await page.locator('main').innerText();
-    assert.match(onboardingText,/Move from files[\s\S]*Connect another system[\s\S]*Enter it manually/);
+    assert.match(onboardingText,/Drop your file here[\s\S]*Connect another system[\s\S]*Enter it manually/);
     assert.doesNotMatch(onboardingText,/Use several sources|Use email attachments/);
     assert.equal(await page.getByLabel('Inventory name').inputValue(),'Catalog Certification');
     assert.equal(await page.getByLabel('Inventory spreadsheets').isVisible(),true);
 
+    await page.locator('.setup-sample > summary').click();
     await Promise.all([page.waitForURL(`${base}/inventory`),page.getByRole('button',{name:'Load sample data to explore'}).click()]);
     assert.match(await page.locator('main').innerText(),/Sample inventory[\s\S]*Sample coffee beans/);
     assert.match(await page.locator('main').innerText(),/cannot be converted to real data/i);
@@ -74,7 +82,7 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
     const edit=page.locator('#modal-edit');await edit.getByLabel('Name').fill('Field Jacket');
     await Promise.all([page.waitForNavigation(),edit.getByRole('button',{name:'Save details'}).click()]);
     assert.match(await page.locator('h1').innerText(),/Field Jacket/);
-    await page.locator('.rm-panel__head').filter({hasText:'Variants'}).getByRole('button',{name:'Add'}).click();
+    await page.locator('.sc-product-actions').getByRole('button',{name:'Add variant'}).click();
     const variant=page.locator('#modal-variant');
     await variant.getByLabel('Colour').fill('Blue');await variant.getByLabel('Size').fill('Large');
     await Promise.all([page.waitForNavigation(),variant.getByRole('button',{name:'Add variant'}).click()]);
@@ -83,18 +91,18 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
 
     await addItem(page,base,{name:'Serialized Scanner',code:'SCAN',tracking:'serial'});
     const scannerUrl=page.url();
-    await page.getByRole('button',{name:'Some came in'}).click();
+    await productAction(page,'Some came in');
     let dialog=page.locator('#modal-receive');
     await dialog.getByLabel('Location').selectOption({label:'North Warehouse'});
-    await dialog.getByLabel(/Serial numbers/).fill('SCN-001\nSCN-002');
+    await dialog.getByLabel(/Serial numbers/).fill('SCN-001\nSCN-002');await dialog.getByLabel('Unit cost').fill('5.00');
     await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Record receipt'}).click()]);
-    assert.match(await page.locator('main').innerText(),/2\s+units on hand/);
-    await page.getByRole('button',{name:'Sold or used'}).click();dialog=page.locator('#modal-issue');
+    assert.match(await page.locator('main').innerText(),/On hand\s+2\b/);
+    await productAction(page,'Sold or used');dialog=page.locator('#modal-issue');
     await dialog.locator('input[name="serialUnitIds"]').first().check();
     await dialog.getByLabel('Reason').selectOption({index:1});
     await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Issue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/1\s+unit on hand/);
-    await page.getByRole('button',{name:'Request a move'}).click();dialog=page.locator('#modal-transfer');
+    assert.match(await page.locator('main').innerText(),/On hand\s+1\b/);
+    await productAction(page,'Move stock');dialog=page.locator('#modal-transfer');
     await dialog.locator('input[name="serialUnitIds"]').first().check();
     await dialog.locator('select[name="toLocationId"]').selectOption({label:'South Warehouse'});
     await Promise.all([page.waitForURL(/\/transfers\/tr_/),dialog.getByRole('button',{name:'Create transfer request'}).click()]);
@@ -106,17 +114,17 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
 
     await addItem(page,base,{name:'Lot Coffee',code:'LOT-COFFEE',tracking:'lot'});
     const lotUrl=page.url();
-    await page.getByRole('button',{name:'Some came in'}).click();dialog=page.locator('#modal-receive');
+    await productAction(page,'Some came in');dialog=page.locator('#modal-receive');
     await dialog.getByLabel('Location').selectOption({label:'North Warehouse'});
-    await dialog.getByLabel('Quantity').fill('10');await dialog.getByLabel('Lot or batch number').fill('ROAST-100');
+    await dialog.getByLabel('Quantity').fill('10');await dialog.getByLabel('Lot or batch number').fill('ROAST-100');await dialog.getByLabel('Unit cost').fill('5.00');
     await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Record receipt'}).click()]);
-    await page.getByRole('button',{name:'Sold or used'}).click();dialog=page.locator('#modal-issue');
+    await productAction(page,'Sold or used');dialog=page.locator('#modal-issue');
     await dialog.getByLabel('From location').selectOption({label:'North Warehouse'});
     await dialog.getByLabel('From lot').selectOption({index:1});await dialog.getByLabel('Quantity').fill('3');
     await dialog.getByLabel('Reason').selectOption({index:1});
     await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Issue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/7\s+units on hand/);
-    await page.getByRole('button',{name:'Request a move'}).click();dialog=page.locator('#modal-transfer');
+    assert.match(await page.locator('main').innerText(),/On hand\s+7\b/);
+    await productAction(page,'Move stock');dialog=page.locator('#modal-transfer');
     await dialog.locator('select[name="fromLocationId"]').selectOption({label:'North Warehouse'});
     await dialog.getByLabel('From lot').selectOption({index:1});await dialog.getByLabel('Quantity').fill('2');
     await dialog.locator('select[name="toLocationId"]').selectOption({label:'South Warehouse'});

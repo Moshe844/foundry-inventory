@@ -41,7 +41,7 @@ async function businessEvidence(database,workspaceId,{includeFinancials=false}={
     database.query(`SELECT last_evaluated_at,paused FROM workspace_autopilot WHERE workspace_id=$1`,[workspaceId]),
   ]);
   const amounts=(report)=>({from:report.from,to:report.to,periodLabel:'month to date',currency:report.currency,
-    revenueMinor:report.revenueMinor,cogsMinor:report.cogsMinor,operatingExpenseMinor:report.operatingExpenseMinor,
+    revenueMinor:report.revenueMinor,cogsMinor:report.cogsMinor,operatingExpenseMinor:report.operatingExpenseMinor,stockCountMinor:report.stockCountMinor,
     netIncomeMinor:report.netIncomeMinor});
   const order=orders.rows[0],state=check.rows[0];
   return {

@@ -7,7 +7,10 @@ const money=require('../domain/currency');
 
 const CURRENCY=/^[A-Z]{3}$/;
 function afterCurrent(rows){
- let at=Date.now();for(const row of rows){if(!row)continue;const previous=Date.parse(row.created_at);
+ let at=Date.now();for(const row of rows){
+  // A cost derived from supplier terms or received stock has no history row, so
+  // it has no date to come after. A stored row with a bad date still stops here.
+  if(!row?.id)continue;const previous=Date.parse(row.created_at);
   if(!Number.isFinite(previous))throw new ValidationError('The current price history has an invalid date. Contact support before changing it.');
   at=Math.max(at,previous+1);
  }

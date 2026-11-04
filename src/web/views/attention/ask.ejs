@@ -66,6 +66,14 @@
     var heading = labels?.[column] || helpers.columnLabel(column);
     return heading ? heading + ' ' + value : String(value);
   }
+  function cellValue(column, value) {
+    if (value === null || value === undefined) return '—';
+    if (column === 'occurredAt') return helpers.dateTime(value);
+    if (column === 'operation') return helpers.operationLabel(value);
+    if (column === 'expiresAt') return helpers.shortDate(value);
+    if (typeof value === 'number' && Number.isFinite(value)) return helpers.qty(value);
+    return String(value);
+  }
   function evidenceHref(href, label) {
     if (!href) return null;
     if (locals.postgresAsk) return String(href).startsWith('/') && !String(href).startsWith('//') ? href : null;
@@ -338,7 +346,7 @@
         <% } %>
         <% if (hasRows) { %>
           <% var reportGroups = Boolean(result.reportConfig?.groups?.length); %>
-          <details class="rm-chat-evidence" <%= result.reportConfig ? 'open' : '' %>>
+          <details class="rm-chat-evidence" <%= result.reportConfig || result.rows.length <= 25 ? 'open' : '' %>>
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : reportGroups ? 'Report groups · open full report for source records' : 'The records behind this' %></span>
               <small>
@@ -349,20 +357,18 @@
             </summary>
             <div class="rm-chat-evidence__rows">
               <%# Sixty, not twelve: "all products with their prices" is a list a person scrolls, not a sample. %>
+              <table class="ask-table"><thead><tr><% result.columns.forEach(function (column) { %><th scope="col"><%= result.columnLabels?.[column] || helpers.columnLabel(column) || column %></th><% }) %></tr></thead><tbody>
               <% result.rows.slice(0, 60).forEach(function (row) { %>
                 <%
                   var first = result.columns[0];
                   var label = row[first] === null || row[first] === undefined ? '—' : row[first];
-                  var rest = result.columns.slice(1).map(function (column) {
-                    return cellText(column, row[column], result.columnLabels);
-                  }).filter(Boolean).join(' · ');
                   var linkHref = evidenceHref(row.href, label);
                 %>
-                <div class="rm-chat-evidence__row">
-                  <span><% if (linkHref) { %><a href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
-                  <small><%= rest %></small>
-                </div>
+                <tr class="rm-chat-evidence__row">
+                  <% result.columns.forEach(function (column, position) { var shown = cellValue(column, row[column]); %><td class="<%= position && /^[-−]?[$€£¥]?[\d,.]+%?$/.test(shown) ? 'is-num' : '' %>"><% if (!position && linkHref) { %><a href="<%= linkHref %>"><%= shown %></a><% } else { %><%= shown %><% } %></td><% }) %>
+                </tr>
               <% }) %>
+              </tbody></table>
             </div>
           </details>
         <% } %>
@@ -444,11 +450,6 @@
   <% if (started && !guidedEmailStep && !locals.continuationGoalId && transcript.length) { var nextQuestions = examples.filter(function (example) { return !transcript.some(function (turn) { return turn.message === example; }); }).slice(0, 3); if (nextQuestions.length) { %>
     <div class="ask-next" aria-label="Ask next"><span>Ask next</span><% nextQuestions.forEach(function (example) { %><%- include('ask-send',{message:example,label:example}) %><% }) %></div>
   <% }} %>
-  <% if (!aiConfigured) { %>
-    <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
-      Broader free-form language needs a model connection. Grounded questions and deterministic workflows still work without one.
-    </p>
-  <% } %>
   <% if (!started) { %>
     <p class="ask-try">Try asking</p>
     <div class="rm-suggest ask-starters">

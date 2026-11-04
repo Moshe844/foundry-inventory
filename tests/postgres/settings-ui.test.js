@@ -40,12 +40,14 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
       '/settings/connections','/settings/shipping','/search','/settings','/foundry','/inventories','/guide','/support'];
     for(const route of establishedRoutes){await page.goto(`${base}${route}`);const main=await page.locator('main').innerText();
       assert.doesNotMatch(main,/We could not find that|Internal Server Error/i,route);assert.notEqual(await page.title(),'Error',route);}
-    await page.goto(`${base}/settings`);assert.match(await page.locator('main').innerText(),/technical side of this inventory/i);
-    assert.match(await page.locator('main').innerText(),/Pre-subscription · unlimited/);
+    // Settings is split into sections and the plan moved to its own billing page.
+    await page.goto(`${base}/settings`);assert.match(await page.locator('main').innerText(),/This inventory[\s\S]*Inventory name/);
+    const billing=await page.locator('.sc-settings-nav').getByRole('link',{name:'Plan & billing',exact:true}).getAttribute('href');
+    assert.equal((await page.goto(`${base}${billing}`)).status(),200);await page.goto(`${base}/settings`);
     await page.locator('#workspace-name').fill('Renamed Operation');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save',exact:true}).click()]);
     assert.equal(await page.locator('#workspace-name').inputValue(),'Renamed Operation');
-    await page.getByRole('button',{name:'Add person'}).click();const person=page.locator('#modal-person');
+    await page.goto(`${base}/settings?section=team`);await page.getByRole('button',{name:'Add person'}).click();const person=page.locator('#modal-person');
     await person.getByLabel('Name').fill('Settings Accountant');await person.getByLabel('Email').fill('accountant@example.test');
     assert.match(await person.innerText(),/choose their own password/i);await person.getByLabel('Role').selectOption('accountant');
     await Promise.all([page.waitForNavigation(),page.waitForResponse(response=>response.request().method()==='POST'
@@ -54,9 +56,9 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     assert.deepEqual(pending,{role:'accountant',status:'PENDING'});
     assert.ok(Number((await database.query("SELECT COUNT(*) AS count FROM stockchief_runtime.jobs WHERE kind='system.email-send' AND payload->>'messageType'='workspace_invitation'")).rows[0].count)>0,
       'The invitation must have durable delivery work, not just a transient success banner.');
-    const alerts=page.locator('form[action="/settings/email-alerts"]');await alerts.getByRole('checkbox').check();
+    await page.goto(`${base}/settings?section=notifications`);const alerts=page.locator('form[action="/settings/email-alerts"]');await alerts.getByRole('checkbox').check();
     await alerts.getByLabel('Recipients').fill('owner-alerts@example.test');
-    await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save email alerts'}).click()]);
+    await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/Automatic email alerts are on|preferences are saved/i);
     const oldKey=process.env.RESEND_API_KEY;
     const oldSender=process.env.FOUNDRY_FROM_EMAIL;
@@ -66,7 +68,7 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
       await Promise.all([
         page.waitForResponse((response)=>response.url()===`${base}/settings/email-alerts/test`
           &&response.request().method()==='POST'&&response.status()===303),
-        page.waitForURL(`${base}/settings#email-alerts`),
+        page.waitForURL(`${base}/settings?section=notifications#email-alerts`),
         page.getByRole('button',{name:'Send a test email'}).click(),
       ]);
       await page.getByText(/Test email queued for settings@example\.test/).waitFor();
@@ -79,10 +81,10 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
       if(oldKey===undefined)delete process.env.RESEND_API_KEY;else process.env.RESEND_API_KEY=oldKey;
       if(oldSender===undefined)delete process.env.FOUNDRY_FROM_EMAIL;else process.env.FOUNDRY_FROM_EMAIL=oldSender;
     }
-    await page.locator('#live-event-feed > summary').click();
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Connect live feed'}).click()]);
+    await page.goto(`${base}/settings?section=advanced`);await page.locator('#live-event-feed > summary').click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create feed token'}).click()]);
     assert.match(await page.locator('main').innerText(),/Copy this token now/);
-    assert.match(await page.getByLabel('New event feed token').inputValue(),/^fnd_live_/);
+    assert.match(await page.getByLabel('New live feed token').inputValue(),/^fnd_live_/);
     const row=(await database.query(`SELECT w.name FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id
       WHERE a.email='settings@example.test'`)).rows[0];assert.equal(row.name,'Renamed Operation');assert.deepEqual(errors,[]);
   });
