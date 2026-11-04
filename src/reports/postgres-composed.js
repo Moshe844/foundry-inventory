@@ -189,11 +189,13 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false,dateContext
   const values=[workspaceId],ctes=[],joins=[],keySources=[];
   config.metrics.forEach((metric,index)=>{
     const dataset=registry.get(metric.dataset),source=`source_${index}`,name=`measure_${index}`;
-    ctes.push(`${source} AS (${dataset.source})`);
+    const parameterBase=values.length;
     const conditions=metric.filters.map((filter)=>{
       if(filter.operator!=='is_null')values.push(filterValue(filter));
-      return filterSql(filter,values.length);
-    });
+      return dataset.filterAtSource?.(filter)?null:filterSql(filter,values.length);
+    }).filter(Boolean);
+    const scopedSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,metric,{parameterBase}):dataset.source;
+    ctes.push(`${source} AS (${scopedSource})`);
     // A NULL business identifier cannot match across sources. Exclude it
     // instead of showing a synthetic row whose measures all appear missing.
     const where=`WHERE ${quote(config.dimension)} IS NOT NULL${conditions.length
@@ -254,7 +256,7 @@ async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){
   const pageLimit=Math.min(20001,Math.max(2,Number(limit)||201));
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit:pageLimit,offset:Number(offset),dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const fetched=(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
+    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows;
   const hasMore=fetched.length===pageLimit,rows=hasMore?fetched.slice(0,-1):fetched;
   const columns=[config.dimension,...config.metrics.map((metric)=>metric.alias),...(config.formula?['calculated']:[])];
   const columnLabels={calculated:config.formulaLabel||'Calculated'};
@@ -286,6 +288,8 @@ async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){
     comparisonSafe:true,chartColumn:config.chartMeasure,
     sources:config.metrics.map((metric)=>({alias:metric.alias,dataset:metric.dataset,
       label:registry.get(metric.dataset).label}))};
+  result.warnings=actor.role==='owner'&&config.metrics.some(m=>m.dataset==='movements')
+    ?await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['movement-date-warnings'],()=>require('./postgres-movement-time').warnings(database,ctx.workspaceId),{domain:'business'}):[];
   result.insights=require('./postgres-insights').observations(result);
   return result;
 }
@@ -296,7 +300,7 @@ async function countAtMost(database,ctx,actor,spec,maximum){
   await checkEntitlements(database,ctx,config);
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit:maximum+1,count:true,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const row=(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000})).rows[0];
+    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000,jit:false})).rows[0];
   return Number(row.count);
 }
 function drilldownSpec(spec,values,actor,alias){

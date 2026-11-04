@@ -4,14 +4,20 @@ const permissions=require('../actions/permissions');
 // Apply workspace, posted-state and profit-account scope before aggregation.
 // Re-aggregating the general daily view first processes asset/equity history
 // that cannot contribute to a profit report.
-const profitActivityProjection={aggregates:['sum'],filterFields:['posting_date','currency'],groupFields:['posting_date','currency'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`SELECT e.posting_date,l.currency,
+const profitActivityProjection={aggregates:['sum'],filterFields:['posting_date','currency'],groupFields:['posting_date','currency'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`WITH profit_accounts AS MATERIALIZED (
+ SELECT id,workspace_id,account_type FROM accounting_accounts WHERE workspace_id=$1 AND account_type IN('INCOME','COGS','EXPENSE')
+ ) SELECT e.posting_date,l.currency,
  sum(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,
  sum(CASE WHEN a.account_type='COGS' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS cogs_minor,
  sum(CASE WHEN a.account_type='EXPENSE' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS expenses_minor,
  sum(l.credit_minor-l.debit_minor)::bigint AS net_profit_minor
- FROM accounting_journal_lines l JOIN accounting_journal_entries e ON e.workspace_id=l.workspace_id AND e.id=l.entry_id
- JOIN accounting_accounts a ON a.workspace_id=l.workspace_id AND a.id=l.account_id
- WHERE l.workspace_id=$1 AND e.status='POSTED' AND a.account_type IN('INCOME','COGS','EXPENSE') GROUP BY e.posting_date,l.currency`};
+ FROM profit_accounts a
+ -- Resolve the relevant account identities before their indexed line lookup.
+ -- Opening asset/equity lines never enter this report's input population.
+ CROSS JOIN LATERAL (SELECT l.* FROM accounting_journal_lines l
+  WHERE l.workspace_id=a.workspace_id AND l.account_id=a.id OFFSET 0) l
+ JOIN accounting_journal_entries e ON e.workspace_id=l.workspace_id AND e.id=l.entry_id
+ WHERE e.workspace_id=$1 AND e.status='POSTED' GROUP BY e.posting_date,l.currency`};
 
 // A dataset is a reviewed projection of canonical PostgreSQL records. The
 // builder never accepts SQL, table names, expressions, or joins from a user or
@@ -106,8 +112,10 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1 AND b.on_hand>0`,recordHref:row=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',on_hand:'number',last_sold_on:'date',days_since_sale:'number'}},
   movements:{label:'Inventory movements',permission:permissions.VIEW,
-    aggregateProjections:[{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`}],
-    source:`SELECT m.item_id AS record_id,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
+    sourceTransform:require('./postgres-movement-time').bound,
+    filterAtSource:require('./postgres-movement-time').applied,
+    aggregateProjections:[{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`}],
+    source:`SELECT m.item_id AS record_id,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
       i.name AS product,s.code AS sku,l.name AS location,m.operation,
       m.quantity_delta::numeric AS quantity_delta,COALESCE(m.reference,'') AS reference
       FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id

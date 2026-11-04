@@ -4,6 +4,18 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  let last='';const started=performance.now(),f=await require('../helpers/round17-large-business').fixture(t,{onProgress:(phase,p)=>{const bucket=Math.floor(Number(p.processedRows||p.preparedRows||0)/10000),key=phase+':'+p.stage+':'+bucket;if(key!==last){last=key;console.log(JSON.stringify({phase,stage:p.stage,rows:p.processedRows||p.preparedRows||0,elapsedMs:Math.round(performance.now()-started)}));}}}),{db,ctx}=f;
  await t.test('A1 catalogue cost and price without stock imports 50,000 SKUs',async()=>{assert.equal(f.plan.recordsValid,50000);assert.equal((await db.query('SELECT count(*)::int n FROM sku_purchase_costs WHERE workspace_id=$1 AND amount_minor=200',[ctx.workspaceId])).rows[0].n,50000);});
  await t.test('A2 mixed tracked opening-stock import takes less than five minutes',()=>{assert(f.stockImportMs<300000,`Actual local canonical import took ${Math.round(f.stockImportMs)} ms`);});
+ await t.test('A3 date-filtered movement and sales reads use bounded indexes after statistics refresh at full scale',async()=>{
+  await db.query('ANALYZE movements,accounting_journal_entries,accounting_journal_lines');
+  const service=require('../../src/reports/postgres-service'),actor={role:'owner'},calendar=await require('../../src/lib/business-time').forWorkspace(db,ctx.workspaceId);
+  for(const [dataset,measure,field]of [['movements','quantity_delta','occurred_on'],['profit_activity','revenue_minor','posting_date']]){
+   const q=service.queryFor(service.normalize({dataset,summary:true,aggregate:'sum',measure,filters:[{field,operator:'after',value:'2099-01-01'},{field,operator:'before',value:'2099-01-02'}] },actor),ctx.workspaceId,{limit:2,dateContext:calendar});
+   await db.transaction(async c=>{await c.query('SET LOCAL jit=off');const plan=(await c.query('EXPLAIN (FORMAT JSON) '+q.sql,q.values)).rows[0]['QUERY PLAN'][0],nodes=[];const visit=p=>{nodes.push(p);for(const child of p.Plans||[])visit(child);};visit(plan.Plan);
+    if(dataset==='movements')assert(nodes.some(n=>n['Index Name']==='idx_movements_workspace_instant'&&n['Index Cond'].includes('stockchief_movement_instant')),'Movement dates must narrow the index scan');
+    else{assert(nodes.some(n=>n['Index Name']==='idx_accounting_lines_account'),'Profit accounts must narrow the journal-line index reads');assert(!nodes.some(n=>n['Relation Name']==='accounting_journal_lines'&&n['Node Type']==='Seq Scan'),'Sales must not scan the complete journal-line history');}
+    const result=await c.query(q.sql,q.values);assert.equal(Number(result.rows[0].total||0),0);
+   },{readOnly:true,isolation:'READ COMMITTED',statementTimeoutMs:1500});
+  }
+ });
  await t.test('A3 indexed source history reads exact rows under the large-import generic plan',async()=>{
   const expected=(await db.query("SELECT row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED' ORDER BY row_number DESC LIMIT 10",[ctx.workspaceId,f.stockPlan.id])).rows,started=performance.now();
   const rows=await db.transaction(async c=>{await c.query("SET LOCAL plan_cache_mode='force_generic_plan'");return require('../../src/imports/postgres-source-history').read(c,ctx.workspaceId,f.stockPlan.sourceHash,expected.map(r=>r.row_number));},{readOnly:true,isolation:'REPEATABLE READ'});

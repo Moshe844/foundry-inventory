@@ -6,6 +6,7 @@
   <div><a href="<%= result.config.dataset==='composed'
     ?saved?'/reports/compose?saved='+encodeURIComponent(saved.id):'/reports/compose?draft=1'
     :saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a></div></div>
+<%- include('warnings',{warnings:result.warnings||[]}) %>
 <div class="report-layout--<%= result.config.layout||'chart_first' %>">
 <% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
   const chartColumn=result.chartColumn||result.columns.at(-1);
