@@ -87,6 +87,7 @@ function openPostgres(connectionString, options = {}) {
     }
     const statementTimeoutMs = settings.statementTimeoutMs ?? 30000;
     const lockTimeoutMs = settings.lockTimeoutMs ?? 10000;
+    if(settings.jit!==undefined&&typeof settings.jit!=='boolean')throw new TypeError('PostgreSQL JIT must be a boolean transaction setting.');
     for (const timeout of [statementTimeoutMs, lockTimeoutMs]) {
       if (!Number.isSafeInteger(timeout) || timeout < 1) throw new TypeError('PostgreSQL transaction timeouts must be positive integer milliseconds.');
     }
@@ -100,7 +101,8 @@ function openPostgres(connectionString, options = {}) {
         // the operation until PostgreSQL acknowledges every setup statement.
         await client.query(`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''};` +
           ` SET LOCAL statement_timeout = '${statementTimeoutMs}ms';` +
-          ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+          ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`+
+          (settings.jit===undefined?'':`; SET LOCAL jit = '${settings.jit?'on':'off'}'`));
         const result = await operation({ query: (statement, values = []) => measuredQuery(client,statement,values) });
         await client.query('COMMIT');
         return result;

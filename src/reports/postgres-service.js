@@ -179,11 +179,11 @@ function filterParameter(filter){
     ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`
     :filter.value;
 }
-function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
+function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profitAccountIds=null}={}){
   config=require('./relative-dates').resolve(config,dateContext);
   const dataset=registry.get(config.dataset);const values=[workspaceId];
   const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
-    return condition({...filter,type:dataset.fields[filter.field]},values.length);});
+    return dataset.filterAtSource?.(filter)?null:condition({...filter,type:dataset.fields[filter.field]},values.length);}).filter(Boolean);
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   let select,group='';
   if(config.groups.length||config.summary){
@@ -217,13 +217,15 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
     ['record_id',...Object.keys(dataset.fields)].map(quote);
   const stableOrder=[`${quote(config.sort)} ${direction} NULLS LAST`,
     ...tieBreakers.filter((field)=>field!==quote(config.sort)).map((field)=>`${field} ASC NULLS LAST`)];
-  values.push(limit,offset);
   // A reviewed projection declares its fields and, when its row population
   // differs, its valid additive aggregates. Other counts, averages, filters
   // and groupings retain the full contributing-record source.
   const metric=dataset.metrics?.[config.measure],needed=[...config.groups,...config.filters.map(f=>f.field),...(config.aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[config.measure])];
   const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||p.aggregates.includes(config.aggregate))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
-  const source=reduced?reduced.source:dataset.source;
+  const rawSource=reduced?reduced.source:dataset.source;
+  const transformed=dataset.sourceTransform?dataset.sourceTransform(rawSource,config):rawSource;
+  const source=require('./postgres-profit-scope').bind(transformed,values,profitAccountIds);
+  values.push(limit,offset);
   const sql=`WITH source AS (${source}) SELECT ${select} FROM source ${where} ${group}
     ORDER BY ${stableOrder.join(',')}
     LIMIT $${values.length-1} OFFSET $${values.length}`;
@@ -245,8 +247,13 @@ async function run(database,ctx,actor,spec,options={}){
   const queryLimit=allowed+((config.topN===null||offset+allowed<config.topN)?1:0);
   const dateContext=await require('../lib/request-read-cache').read(JSON.stringify(['report-clock',ctx.workspaceId]),()=>require('../lib/business-time').forWorkspace(database,ctx.workspaceId));
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext});
-  const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
+  const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction(async client=>{
+    const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
+    const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds});
+    return client.query(query.sql,query.values);
+  },{isolation:config.dataset==='profit_activity'?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
+  const warnings=config.dataset==='movements'&&actor.role==='owner'
+    ?await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['movement-date-warnings'],()=>require('./postgres-movement-time').warnings(database,ctx.workspaceId),{domain:'business'}):[];
   const hasMore=fetched.length>allowed;
   const rows=fetched.slice(0,allowed);
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
@@ -283,6 +290,7 @@ async function run(database,ctx,actor,spec,options={}){
     currency:currencyFilter}};
   // Totals from different currencies are individually valid, but their raw minor
   // units cannot be ranked or plotted on one numeric scale.
+  output.warnings=warnings;
   output.comparisonSafe=comparableGroupAmounts(config,dataset,rows,output.hasMore,currencyFilter);
   output.insights=require('./postgres-insights').observations(output);
   return output;
@@ -298,16 +306,21 @@ async function countAtMost(database,ctx,actor,spec,maximum){
   if(config.summary)return 1;
   const values=[ctx.workspaceId];
   const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
-    return condition({...filter,type:dataset.fields[filter.field]},values.length);});
+    return dataset.filterAtSource?.(filter)?null:condition({...filter,type:dataset.fields[filter.field]},values.length);}).filter(Boolean);
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   const groups=config.groups.map((field)=>config.dateGrain!=='exact'&&dataset.fields[field]==='date'
     ?`date_trunc('${config.dateGrain}',${quote(field)}::timestamp)::date`:quote(field));
   values.push(maximum+1);
-  const sql=`WITH source AS (${dataset.source}) SELECT COUNT(*)::bigint AS count FROM (
-    SELECT 1 FROM source ${where} ${groups.length?`GROUP BY ${groups.join(',')}`:''}
-    LIMIT $${values.length}) bounded`;
-  const row=(await database.transaction((client)=>client.query(sql,values),
-    {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000})).rows[0];
+  const limitIndex=values.length;
+  const row=(await database.transaction(async client=>{
+    const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
+    const rawSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,config):dataset.source;
+    const queryValues=values.slice(),boundedSource=require('./postgres-profit-scope').bind(rawSource,queryValues,profitAccountIds);
+    const sql=`WITH source AS (${boundedSource}) SELECT COUNT(*)::bigint AS count FROM (
+      SELECT 1 FROM source ${where} ${groups.length?`GROUP BY ${groups.join(',')}`:''}
+      LIMIT $${limitIndex}) bounded`;
+    return client.query(sql,queryValues);
+  },{isolation:config.dataset==='profit_activity'?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000,jit:false})).rows[0];
   return Math.min(Number(row.count),config.topN??Number.POSITIVE_INFINITY);
 }
 function drilldownSpec(spec,values,actor,sourceAlias=null){
