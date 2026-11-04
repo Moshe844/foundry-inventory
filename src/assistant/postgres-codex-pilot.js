@@ -61,7 +61,7 @@ async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
   else await client.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=$2,revision=revision+1,updated_at=now() WHERE workspace_id=$1`,[ctx.workspaceId,Boolean(enabled)]);
   if(!enabled)await client.query(`UPDATE stockchief_runtime.assistant_goals SET status='CANCELLED',run_token=NULL,lease_until=NULL,
    answer='The Staging agent was disabled. Approved operations retain their canonical recorded status.',updated_at=now()
-   WHERE workspace_id=$1 AND checkpoint->>'runtime'='codex-staging' AND status NOT IN ('COMPLETED','CANCELLED','BLOCKED')`,[ctx.workspaceId]);
+   WHERE workspace_id=$1 AND checkpoint->>'runtime' IN ('codex-staging','hosted-business') AND status NOT IN ('COMPLETED','CANCELLED','BLOCKED')`,[ctx.workspaceId]);
  });
 }
 async function start(db,ctx,message,options={}){
@@ -73,13 +73,16 @@ async function start(db,ctx,message,options={}){
  const hasChatHistory=chatId&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 LIMIT 1",[ctx.workspaceId,ctx.actorId,chatId])).rows.length;
  const conversation=await require('./postgres-agent-context').capture(db,hasChatHistory?{...ctx,conversationId:chatId}:ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
- if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
+ if(goal.checkpoint.runtime&&!['codex-staging','hosted-business'].includes(goal.checkpoint.runtime))throw new ValidationError('That request already belongs to another Ask runtime.');
+ const boundedRead=!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message);
+ const runtime=goal.checkpoint.runtime||(boundedRead||options.boundedProcessing===true?'codex-staging':'hosted-business');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
-  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1,...(chatId?{chatId}:{})}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision,
+  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1,...(chatId?{chatId}:{})}),JSON.stringify({runtime,pilotRevision:pilot.revision,
    ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{}),
-   ...(!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message)?{boundedRead:true}:{})})]);
- goal.checkpoint.runtime='codex-staging';
- if(!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message))goal.checkpoint.boundedRead=true;
+   ...(boundedRead?{boundedRead:true}:{}),...(options.boundedProcessing===true?{boundedProcessing:true}:{})})]);
+ goal.checkpoint.runtime=runtime;
+ if(boundedRead)goal.checkpoint.boundedRead=true;
+ if(options.boundedProcessing===true)goal.checkpoint.boundedProcessing=true;
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }
 async function inbox(db,ctx,id,{progress=false}={}){await access(db,ctx);
@@ -224,6 +227,7 @@ async function resume(db,ctx,id){
  const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
  const goal=await db.transaction(async client=>{
   const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
+  if(row?.checkpoint.legacyReviewOnly)throw new ValidationError('This saved request is available for review. Start a new question to continue with the hosted agent; previously approved work will not be replayed.');
   const state=await continuationState(client,ctx,row),h=row.checkpoint.harness||{};
   h.failure=null;h.interruption=null;h.admissionBlock=null;h.pendingReport=null;row.checkpoint.harness=h;
   row.status=state==='READY'?'READY':state;row.answer=state==='READY'?'Continuing your saved request. Previously recorded work will not be repeated.':row.answer;

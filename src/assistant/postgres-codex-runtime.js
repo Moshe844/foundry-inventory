@@ -75,7 +75,9 @@ async function run(database,ctx,id,options={}){
   const routing=require('./codex-model-routing');ctx=await routing.context(database,ctx);
   let modelProfile=routing.selected(goal,ctx);
   audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
-  const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE||(goal.checkpoint.boundedRead===true?'database-tools-v1':undefined);
+  const processing=require('../connections/postgres-source-automation').processing(goal);
+  if(goal.checkpoint.boundedProcessing===true&&!processing)throw Error('BOUNDED_PROCESSING_INPUT_REQUIRED');
+  const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE||(goal.checkpoint.boundedRead===true||processing?'database-tools-v1':undefined);
   let helper;
   const provider=require('../commercial/relay-provider').register({name:'openai',get model(){return modelProfile.verificationProfile?
    require(base+'codex-models').getProfile(modelProfile.verificationProfile).model:modelProfile.model;},
@@ -88,7 +90,7 @@ async function run(database,ctx,id,options={}){
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
-   if(goal.checkpoint.boundedRead===true)throw Error('READ_ONLY_BROWSER_FORBIDDEN');
+   if(goal.checkpoint.boundedRead===true||processing)throw Error('READ_ONLY_BROWSER_FORBIDDEN');
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
    let server,phaseStarted=Date.now();
@@ -160,7 +162,6 @@ async function run(database,ctx,id,options={}){
   }
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter();
-  const processing=require('../connections/postgres-source-automation').processing(goal);
   if(processing||goal.checkpoint.boundedRead===true)await session.initialize();
   let preparedSandbox=null,preparedContext=null;
   const prepareNative=()=>{

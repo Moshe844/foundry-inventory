@@ -188,7 +188,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
   const certificationPool=require('./staging-certification-budget');
-  let certificationFundingWorkspaceId=!nativeTransport?await certificationPool.reserve(client,Math.ceil(bound.maximumMinor*10000)):null;
+  let certificationFundingWorkspaceId=!nativeTransport?await certificationPool.reserve(client,Math.ceil(bound.maximumMinor*10000),{goalId:goalScope.goalId||null}):null;
   if(creditsOnly()&&!nativeTransport&&!certificationFundingWorkspaceId){
    const f=(await client.query("SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND owner_account_id=$2 AND coalesce(pilot->>'admission_kind','PILOT')='PILOT'",[scope.workspaceId,scope.accountId])).rows[0];
    if(f){

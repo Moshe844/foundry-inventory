@@ -37,8 +37,10 @@ async function shutdown(signal, exitCode = 0) {
 
 async function start() {
   const applied = await migratePostgres(database);
+  const handlers={...businessHandlers.create(),...runtimeHandlers.create()},businessAgentHandler=handlers['assistant.run-goal'];
+  delete handlers['assistant.run-goal'];
   runtime = worker.start(database, {
-    handlers: {...businessHandlers.create(),...runtimeHandlers.create()},
+    handlers,
     intervalMs: Number(process.env.FOUNDRY_WORKER_INTERVAL_MS || 500),
     leaseMs: Number(process.env.FOUNDRY_WORKER_LEASE_MS || 60000),
     isolation: 'SERIALIZABLE',
@@ -52,6 +54,7 @@ async function start() {
   capacityRuntime=require('./operations/postgres-capacity').start(database,{role:'worker',
     onError(error){console.error('[stockchief] worker capacity telemetry failed:',error.code||error.message);}});
   readAgentRuntime=await require('./assistant/postgres-hosted-read-worker').start(database,{
+    businessHandler:businessAgentHandler,
     onError(error){console.error('[stockchief] hosted Ask read failed:',error.code||error.message);}});
   console.log(`[stockchief] PostgreSQL worker ${runtime.owner} ready; migrations applied: ${applied.length}.`);
 }

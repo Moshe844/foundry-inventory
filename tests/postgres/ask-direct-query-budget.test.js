@@ -6,7 +6,7 @@ test('complete simple Ask counts use fewer than twenty queries with no model or 
  let queries=0,models=0;const sql=[];
  const measured={...db,query:(statement,values)=>{queries++;sql.push(statement);return db.query(statement,values);},transaction:(operation,settings)=>db.transaction(client=>operation({query:(statement,values)=>{queries++;sql.push(statement);return client.query(statement,values);}}),settings)};
  const service=require('../../src/assistant/postgres-service'),results=[];
- for(const [message,expected]of [['How many products do I have?',/1 active product/],['How many SKUs are there?',/2 active SKUs/],['How many variants?',/2 active SKUs/]]){
+ for(const [message,expected]of [['How many products do I have?',/1 active product/],['How many SKUs are there?',/2 active SKUs/],['How many variants?',/2 active SKUs/],['How many products are in this inventory in total?',/1 active product/]]){
   queries=0;sql.length=0;const answer=await service.ask(measured,ctx,message,{provider:{name:'offline-forbidden',model:'none',complete:async()=>{models++;throw Error('SIMPLE_READ_MODEL_FORBIDDEN');}}});
   assert.equal(answer.status,'ANSWERED');assert.match(answer.answer,expected);assert.equal(models,0);assert(queries<20,'Complete Ask request exceeded the SQL budget: '+queries);
   assert(!sql.some(statement=>/assistant_goals|codex_pilot_calls/.test(statement)),'A simple count must not start a planning goal');

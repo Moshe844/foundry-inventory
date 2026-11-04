@@ -71,7 +71,7 @@ jobs:
       - name: Browser-free Ask and streamed answer delivery
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/hosted-ask-read-worker.test.js tests/postgres/ask-direct-query-budget.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/hosted-ask-read-worker.test.js tests/postgres/hosted-business-agent.test.js tests/postgres/mail-native-processing.test.js tests/postgres/ask-direct-query-budget.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Approved subscription packaging, metering and billing isolation
         run: |
           set -euo pipefail

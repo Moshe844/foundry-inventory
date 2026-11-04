@@ -162,6 +162,11 @@ function createPostgresAskRouter(database,options={}){
   });
   const goalStore=require('../../assistant/postgres-goal-store');
   const pilot=require('../../assistant/postgres-codex-pilot');
+  router.use(['/ask','/actions'],asyncRoute(async(req,res,next)=>{
+    if(pilot.configured(req.ctx)&&await require('../../assistant/codex-pilot-scope').availableWorkspace(database,req.ctx.workspaceId))
+      req.ctx={...req.ctx,hostedAgent:true};
+    next();
+  }));
   const agentNavigation=require('../../assistant/postgres-agent-navigation');
   const conversation=require('../../assistant/agent-conversation');
   const delivery=require('../../assistant/agent-delivery');
@@ -444,7 +449,7 @@ function createPostgresAskRouter(database,options={}){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
       }else goal.approvalCards=[];
       goal.conversation=require('../proposal-presentation').conversation(goal,goal.approvalCards);
-      goal.continuation=!options.agentInspection&&goal.checkpoint.runtime==='codex-staging'&&goal.status==='BLOCKED'
+      goal.continuation=!options.agentInspection&&!goal.checkpoint.legacyReviewOnly&&goal.checkpoint.runtime==='codex-staging'&&goal.status==='BLOCKED'
         ?await pilot.continuation(database,req.ctx,goal.id):null;
     }
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));

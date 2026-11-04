@@ -30,9 +30,11 @@ test('hosted read agents answer separate inventories in parallel without Docker 
  await wait(async()=>calls===2);assert.equal(calls,2,'Another inventory reaches the provider while the first request is held');
  await wait(async()=>{const goals=await Promise.all([store.get(db,ctx,first.goalId),store.get(db,otherCtx,second.goalId)]);return goals.some(g=>g.status==='COMPLETED');});
  assert.equal((await store.progress(db,ctx,first.goalId)).worker_available,true);
+ assert.equal((await require('../../src/assistant/postgres-ask-health').read(db,ctx)).ok,true,'The public Ask health check recognizes the hosted worker without a PC heartbeat');
  unblock();await wait(async()=>{const goals=await Promise.all([store.get(db,ctx,first.goalId),store.get(db,otherCtx,second.goalId)]);return goals.every(g=>g.status==='COMPLETED');});
  assert.deepEqual(errors,[]);assert.equal(calls,2);await runtime.stop();
  assert.equal((await store.progress(db,ctx,first.goalId)).worker_available,false);
+ assert.equal((await require('../../src/assistant/postgres-ask-health').read(db,ctx)).workerAvailable,false);
  const jobs=(await db.query("SELECT result FROM stockchief_runtime.jobs WHERE payload->>'goalId'=ANY($1::text[])",[[first.goalId,second.goalId]])).rows;
  assert(jobs.every(j=>!j.result.checkpoint&&!j.result.answer),'Job receipts do not duplicate the full goal and evidence ledger');
  await t.test('the hosted lane cannot bypass the account agent-job allowance',async()=>{
