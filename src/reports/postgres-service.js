@@ -31,7 +31,8 @@ function queryContract(key,actor){
  }},filterValues:dataset.filterValues||{},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
   'Text equality is case-sensitive. Use the exact registered filterValues codes where supplied; other values are rejected rather than reported as an empty population.',
   'Absolute date filters use YYYY-MM-DD; relative periods resolve in the business time zone on each run. Contains requires text; date and numeric comparisons use registered fields; empty also recognizes an empty text value.',
-  'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.'],
+  'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.',
+  'Sort grouped results by a group field or aggregate output name. Sorting by the primary measure means its calculated aggregate, unless that measure is itself a group field.'],
   fields:dataset.fields,metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{}};
 }
 function invalid(message){throw new ValidationError(message);}
@@ -145,7 +146,11 @@ function normalize(spec,actor){
     const clean=safeText(label,60);
     if(clean)columnLabels[field]=clean;
   }
-  const sort=safeText(spec.sort,60)||groups[0]||(summary?AGGREGATE_COLUMN[aggregate]:columns[0]);
+  const requestedSort=safeText(spec.sort,60)||groups[0]||(summary?AGGREGATE_COLUMN[aggregate]:columns[0]);
+  // The public contract accepts registered measure names. In a grouped result
+  // that measure is represented by its aggregate output, not the source row.
+  // Preserve explicit group-field sorting and reject every unrelated field.
+  const sort=aggregated&&requestedSort===measure&&!groups.includes(measure)?AGGREGATE_COLUMN[aggregate]:requestedSort;
   const allowedSort=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate],...extraNames]:Object.keys(dataset.fields));
   if(!allowedSort.has(sort))invalid('Choose a registered field to sort.');
   const direction=spec.direction==='asc'?'asc':'desc';

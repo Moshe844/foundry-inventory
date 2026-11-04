@@ -115,7 +115,7 @@ const datasets=Object.freeze({
   movements:{label:'Inventory movements',permission:permissions.VIEW,
     sourceTransform:require('./postgres-movement-time').bound,
     filterAtSource:require('./postgres-movement-time').applied,
-    aggregateProjections:[{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`}],
+    aggregateProjections:[{aggregates:['sum'],filterFields:['occurred_on'],groupFields:['occurred_on'],fields:['occurred_on','quantity_delta'],source:require('./postgres-movement-time').additiveSource}],
     source:`SELECT m.item_id AS record_id,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
       i.name AS product,s.code AS sku,l.name AS location,m.operation,
       m.quantity_delta::numeric AS quantity_delta,COALESCE(m.reference,'') AS reference

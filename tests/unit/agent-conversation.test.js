@@ -1,6 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../../src/assistant/agent-conversation'),trace=require('../fixtures/recorded-sales-clarification.json');
+test('a rejected read query is an explained failure while uncertain usage and operations retain their recovery protection',()=>{
+ const goal={id:'invalid-read',status:'BLOCKED',tool_calls:0,checkpoint:{boundedRead:true,harness:{helperDelivery:{state:'SETTLED'},interruption:{code:'validation_error'}}}};
+ const state=contract.state(goal);assert.equal(state.phase,'failed');assert.equal(state.label,'Could not finish');assert.match(state.message,/supported records query/);assert.match(state.message,/No business records were changed/);assert.doesNotMatch(state.message,/outcome could be confirmed|recorded steps/);
+ const progress={...goal,checkpoint:{harness:{readQueryInvalid:true,interruption:{code:'validation_error'}}}};assert.equal(contract.state(progress).phase,'failed','The restricted progress projection retains the safe classification');
+ goal.checkpoint.harness.helperDelivery.state='PENDING';assert.equal(contract.state(goal).phase,'usage_review');goal.checkpoint.harness.helperDelivery.state='SETTLED';
+ goal.checkpoint.harness.inflight={kind:'business_database_read'};assert.equal(contract.state(goal).phase,'interrupted');delete goal.checkpoint.harness.inflight;
+ goal.tool_calls=1;assert.equal(contract.state(goal).phase,'interrupted');
+});
 test('ordinary leading Markdown links and bracketed business text are not protocol envelopes',()=>{
  for(const answer of ['[Customer order](/orders/example) is complete.','["Warehouse"](/locations) has the recorded stock.','[מלאי](/inventory) נבדק.','[Article] is the product label.']){
   assert.equal(contract.publicText(answer),answer);
