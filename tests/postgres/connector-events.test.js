@@ -69,6 +69,10 @@ test('PostgreSQL connector events authenticate, commit atomically, replay once a
     await unmatched.getByText('More',{exact:true}).click();
     assert.match(await unmatched.innerText(),/Choose the matching StockChief record once/);
     await page.goto(`${base}/settings/connections/${feed.connection.id}`);
-    assert.match(await page.locator('main').innerText(),/Commerce event feed/);assert.match(await page.locator('main').innerText(),/Needs attention/);
+    const connectionText=await page.locator('main').innerText();
+    assert.match(connectionText,/Commerce event feed/);
+    assert.match(connectionText,/This connection needs attention\./);
+    assert.match(connectionText,/Unknown sku from Commerce event feed/);
+    assert.match(connectionText,/Conflicting provider event needs reconciliation/);
     assert.deepEqual(errors,[]);
   });
