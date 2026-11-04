@@ -62,7 +62,7 @@ test('PostgreSQL connector events authenticate, commit atomically, replay once a
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events
       WHERE workspace_id=$1 AND operation='event_ingestion'`,[ctx.workspaceId])).rows[0].count,'2');
     await page.goto(`${base}/`);assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');
-    await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
+    await page.getByRole('link',{name:/^Needs you\b/}).click();
     assert.match(await page.locator('main').innerText(),/Unknown sku from Commerce event feed/);
     assert.match(await page.locator('main').innerText(),/Conflicting provider event needs reconciliation/);
     const unmatched=page.locator('.ny-card').filter({hasText:'Unknown sku from Commerce event feed'});
