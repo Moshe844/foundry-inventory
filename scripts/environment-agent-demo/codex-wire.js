@@ -14,7 +14,7 @@ const MAX_INPUT_TOKENS=nativePolicy.maxInputTokens,REQUEST_CEILING_MICRO_USD=nat
 if(wire.MAX_OUTPUT!==nativePolicy.maxOutputTokens)throw new Error('CODEX_OUTPUT_POLICY_MISMATCH');
 // Economic window, not a replacement compactor. Leave native headroom for the
 // next bounded tool round and the compaction request itself. Every compaction
-// request still needs exact counting and the unchanged financial reservations.
+// request still needs bounded admission and the unchanged financial reservations.
 const nativeCompactionTokenLimit=compactionTokenLimit(PROFILE);
 const source=require('./codex-models').source;
 function countRequest(body){

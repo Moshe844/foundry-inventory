@@ -1,11 +1,11 @@
 'use strict';
-const {ValidationError}=require('./errors'),{newId,nowIso}=require('../lib/util');
+const {ValidationError}=require('./errors'),{nowIso}=require('../lib/util'),{newAppendId}=require('../lib/append-id');
 async function saveManyInTransaction(client,ctx,inputs){
  if(!inputs.length)return;
  const grouped=new Map();for(const input of inputs){const name=String(input.name??''),value=String(input.value);
   if(!name||name.length>240||value.length>10000||!input.importId||!Number.isSafeInteger(input.rowNumber)||input.rowNumber<0)throw new ValidationError('Imported details require a field name, supported value and exact source row.');
   const key=JSON.stringify([input.skuId,input.locationId||null,input.importId,input.rowNumber]);let row=grouped.get(key);
-  if(!row){row={id:newId('fact'),sku_id:input.skuId,location_id:input.locationId||null,source_import_id:input.importId,source_row:input.rowNumber,attributes:Object.create(null)};grouped.set(key,row);}
+  if(!row){row={id:newAppendId('fact'),sku_id:input.skuId,location_id:input.locationId||null,source_import_id:input.importId,source_row:input.rowNumber,attributes:Object.create(null)};grouped.set(key,row);}
   if(Object.hasOwn(row.attributes,name))throw new ValidationError('An imported source row contains the same detail more than once.');row.attributes[name]=value;
  }
  const rows=[...grouped.values()];
@@ -18,7 +18,7 @@ async function saveManyInTransaction(client,ctx,inputs){
   const legacy=(await client.query(`SELECT f.id,f.sku_id,f.location_id,f.source_import_id,f.source_row,f.name FROM catalog_source_facts f
    JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,source_import_id text,source_row bigint)
     ON f.sku_id=x.sku_id AND f.location_id IS NOT DISTINCT FROM x.location_id AND f.source_import_id=x.source_import_id AND f.source_row=x.source_row
-   WHERE f.workspace_id=$1 AND f.sku_id=ANY($3::text[]) AND f.attributes IS NULL`,[ctx.workspaceId,keys,skus])).rows,updates=[];
+   WHERE f.workspace_id=$1 AND f.source_import_id=ANY($4::text[]) AND f.sku_id=ANY($3::text[]) AND f.attributes IS NULL`,[ctx.workspaceId,keys,skus,[...new Set(batch.map(row=>row.source_import_id))]])).rows,updates=[];
   const bySource=new Map(batch.map(row=>[JSON.stringify([row.sku_id,row.location_id,row.source_import_id,Number(row.source_row)]),row]));
   for(const field of legacy){const row=bySource.get(JSON.stringify([field.sku_id,field.location_id,field.source_import_id,Number(field.source_row)]));if(row&&Object.hasOwn(row.attributes,field.name)){updates.push({id:field.id,value:row.attributes[field.name]});delete row.attributes[field.name];}}
   if(updates.length){const changed=await client.query(`UPDATE catalog_source_facts f SET value=x.value,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,value text)

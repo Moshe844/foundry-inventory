@@ -3,11 +3,12 @@ test('Needs You and initial/polled connection timestamps follow the saved accoun
  const instant='2026-11-01T06:15:27Z';
  for(const [zone,expected] of [['Europe/Paris','Nov 1, 2026, 7:15 AM'],['Asia/Kolkata','Nov 1, 2026, 11:45 AM'],['America/New_York','Nov 1, 2026, 1:15 AM']]){
   const time={dateTime:instant},label={},last={},next={},status={},updated={},root={dataset:{connectionSynchronization:'fixture',lastCheck:instant,productsMapped:'0',locationsMapped:'0'},querySelector:selector=>({'[data-connection-sync-progress]':status,'[data-connection-sync-updated]':updated,'[data-sync-last]':last,'[data-sync-next]':next})[selector],querySelectorAll:()=>[time]};
-  const document={documentElement:{dataset:{timeZone:zone}},hidden:false,querySelector:()=>root,querySelectorAll:selector=>selector==='[data-inbox-time-zone]'?[label]:[time]};
+  const listeners=new Map(),document={documentElement:{dataset:{timeZone:zone}},hidden:false,querySelector:()=>root,querySelectorAll:selector=>selector==='[data-inbox-time-zone]'?[label]:[time],addEventListener:(event,listener)=>listeners.set(event,listener)};
   const context=vm.createContext({document,Date,Intl,AbortSignal,window:{setInterval:()=>{}},fetch:async()=>({ok:true,json:async()=>({lastCheckAt:instant,nextCheckAt:instant,mode:'active',productsMapped:0,locationsMapped:0})})});
   context.setInterval=()=>{};context.window=context;
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../../src/web/public/presentation-format.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../../src/web/public/needs-you.js'),'utf8'),context);assert.equal(label.textContent,zone);assert.equal(time.textContent,expected);
+  time.textContent='';listeners.get('stockchief:content-updated')();assert.equal(time.textContent,expected,'Live results must use the saved business zone too');
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../../src/web/public/connection-sync.js'),'utf8'),context);await new Promise(r=>setImmediate(r));assert.equal(time.textContent,expected);assert.equal(last.textContent,expected);assert.equal(next.textContent,expected);assert(status.textContent.includes(expected));
  }
 });

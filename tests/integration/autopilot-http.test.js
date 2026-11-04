@@ -127,7 +127,7 @@ test('an active product reaching zero is watched without inventing a Needs You d
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
-  assert.match(page, /SKUs out of stock 1/i);
+  assert.match(page, /Out of stock 1/i);
   assert.match(page, /Units on hand 0/i);
 
   // A stockout is serious, but with no supplier or owner choice attached it is

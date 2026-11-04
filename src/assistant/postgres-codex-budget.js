@@ -36,7 +36,7 @@ function createBudget(db,ctx,goalId){
     if(upperBoundMicroUsd>state.remaining)throw Error('SHARED_SPENDING_CEILING');
     const id=randomUUID();await client.query(`INSERT INTO stockchief_runtime.codex_pilot_calls(id,workspace_id,actor_id,goal_id,reserved,state,detail,funding_workspace_id)
      VALUES($1,$2,$3,$4,$5,'RESERVED',$6::jsonb,$7)`,[id,ctx.workspaceId,ctx.actorId,goalId,upperBoundMicroUsd,JSON.stringify(pool.detail(detail,certificationFundingWorkspaceId)),pilot.funding_workspace_id]);return id;
-   },{isolation:'SERIALIZABLE',retrySafe:true});
+   },{isolation:'READ COMMITTED',retrySafe:true});
   },
   async settle(id,charged,detail={}){
    if(!Number.isSafeInteger(charged)||charged<0)throw Error('INVALID_PILOT_SETTLEMENT');

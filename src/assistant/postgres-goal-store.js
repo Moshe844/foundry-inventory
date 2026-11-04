@@ -2,14 +2,16 @@
 const {newId}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
 const TABLE='stockchief_runtime.assistant_goals';
-function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
+function enabled(ctx){return ctx.hostedAgent===true||process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
  String(process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES||'').split(',').map(x=>x.trim()).includes(ctx.workspaceId);}
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function conversation(db,ctx,id){return (await db.query(`SELECT id,coalesce(checkpoint->>'chatId',id) AS chat_id FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
- COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
+ CASE WHEN checkpoint->>'boundedRead'='true' OR checkpoint->>'runtime'='hosted-business' THEN EXISTS(SELECT 1 FROM stockchief_runtime.assistant_worker_health
+  WHERE kind='database-read' AND last_seen_at>now()-interval '30 seconds') ELSE
+ COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) END AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
  'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
  'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
@@ -55,7 +57,7 @@ async function save(db,ctx,goal,kind,detail={}){return db.transaction(async clie
  await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
  SELECT $1,$2,COALESCE(MAX(sequence),0)+1,$3,$4::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
  [newId('goalevent'),goal.id,kind,JSON.stringify(detail)]);
-},{isolation:'SERIALIZABLE',retrySafe:true});}
+},{isolation:'READ COMMITTED',retrySafe:true});}
 async function cancel(db,ctx,id){return (await db.query(`UPDATE ${TABLE} SET status='CANCELLED',run_token=NULL,lease_until=NULL,
  answer='Goal stopped. Previously approved or completed business operations retain their own recorded status.',updated_at=now()
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status NOT IN ('COMPLETED','CANCELLED') RETURNING *`,
@@ -85,10 +87,10 @@ async function reply(db,ctx,id,message,{questionId=null}={}){
    SELECT $1,$2,COALESCE(MAX(sequence),0)+1,'user_replied',$3::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
    [newId('goalevent'),id,JSON.stringify({questionId:inputId})]);
   return row;
- },{isolation:'SERIALIZABLE',retrySafe:true});
+ },{isolation:'READ COMMITTED',retrySafe:true});
 }
 async function enqueue(db,goal){const queued=await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
- kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
+ kind:goal.checkpoint.runtime==='codex-staging'?(goal.checkpoint.boundedRead===true||goal.checkpoint.boundedProcessing===true?'assistant.run-codex-read':'assistant.run-codex-goal'):'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
  idempotencyKey:`goal:${goal.id}:${goal.updated_at.toISOString()}`,maxAttempts:1,priority:20});
  if(queued.job?.status==='DEAD'&&goal.status==='READY'&&goal.checkpoint.runtime==='codex-staging'){
   await db.query(`UPDATE ${TABLE} SET status='BLOCKED',answer='The worker stopped before starting this request. Your goal is saved; you can continue it here.',

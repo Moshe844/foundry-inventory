@@ -35,8 +35,12 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.getByLabel('Business name').fill('Import Business');
     await page.getByLabel('Your name').fill('Import Owner');
     await page.getByLabel('Work email').fill('imports-pg@example.test');
+    await page.getByLabel('Business time zone').fill('UTC');
     await page.locator('input[name="password"]').fill('imports-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('imports-password');
-    await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    assert.equal(await page.locator('form[action="/register"]').evaluate(form=>form.checkValidity()),true,'The fixture must submit a complete registration form');
+    const [registration]=await Promise.all([page.waitForResponse(response=>response.url()===`${base}/register`&&response.request().method()==='POST'),page.getByRole('button',{name:'Create account'}).click()]);
+    assert.equal(registration.status(),302,await page.locator('main').innerText());
+    await page.waitForURL(`${base}/onboarding`);
     await page.goto(`${base}/locations`);
     await page.getByRole('button',{name:'Add your first location'}).click();
     await page.getByLabel('Name',{exact:true}).fill('Main Warehouse');
@@ -274,6 +278,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await other.getByLabel('Business name').fill('Other Import Business');
     await other.getByLabel('Your name').fill('Other Owner');
     await other.getByLabel('Work email').fill('other-imports-pg@example.test');
+    await other.getByLabel('Business time zone').fill('UTC');
     await other.locator('input[name="password"]').fill('other-import-password');if(await other.locator('input[name="confirmPassword"]').count())await other.locator('input[name="confirmPassword"]').fill('other-import-password');
     await Promise.all([other.waitForURL(`${base}/onboarding`),other.getByRole('button',{name:'Create account'}).click()]);
     const otherIdentity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w

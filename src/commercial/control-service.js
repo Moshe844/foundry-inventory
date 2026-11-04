@@ -24,8 +24,11 @@ async function audit(database,input){
     input.reason||null,input.sourceIp||null]);
 }
 
-async function recordCost(database,scope,input){
+async function recordCosts(database,scope,inputs){
+ if(!Array.isArray(inputs)||inputs.length>1000)throw new ValidationError('Record at most 1,000 cost components together.');
+ if(!inputs.length)return [];
   if(scope.accountId)await require('./wallet').assertScope(database,scope);
+ const prepared=inputs.map((input,ordinal)=>{
   if(!input.idempotencyKey)throw new ValidationError('A cost event requires its stable idempotency key.');
   const provider=String(input.provider||'').trim().toLowerCase();
   const operation=String(input.operation||'').trim().toLowerCase();
@@ -35,28 +38,48 @@ async function recordCost(database,scope,input){
   if(!provider||!operation||!unit||!Number.isFinite(quantity))throw new ValidationError('Cost events need a provider, operation, unit and quantity.');
   const occurredAt=input.occurredAt||new Date().toISOString();
   const model=String(input.model||input.detail?.model||'');const providerVersion=String(input.providerVersion||'');
-  const rate=(await database.query(`SELECT * FROM commercial_cost_rates WHERE provider=$1 AND operation=$2 AND unit=$3
-    AND effective_from<=$4::timestamptz AND (effective_until IS NULL OR effective_until>$4::timestamptz)
-    AND model=$5 AND provider_version=$6 ORDER BY effective_from DESC LIMIT 1`,[provider,operation,unit,occurredAt,model,providerVersion])).rows[0]||null;
+  return {input,ordinal,provider,operation,unit,quantity,explicit,occurred_at:occurredAt,model,provider_version:providerVersion};
+ });
+ const rates=(await database.query(`SELECT wanted.ordinal,CASE WHEN rate.id IS NULL THEN NULL ELSE to_jsonb(rate) END AS rate FROM
+  jsonb_to_recordset($1::jsonb) wanted(ordinal int,provider text,operation text,unit text,occurred_at timestamptz,model text,provider_version text)
+  LEFT JOIN LATERAL(SELECT * FROM commercial_cost_rates r WHERE r.provider=wanted.provider AND r.operation=wanted.operation AND r.unit=wanted.unit
+   AND r.effective_from<=wanted.occurred_at AND (r.effective_until IS NULL OR r.effective_until>wanted.occurred_at)
+   AND r.model=wanted.model AND r.provider_version=wanted.provider_version ORDER BY r.effective_from DESC,r.id DESC LIMIT 1) rate ON true`,
+ [JSON.stringify(prepared.map(({input,...value})=>value))])).rows;
+ const byOrdinal=new Map(rates.map(row=>[row.ordinal,row.rate]));
+ const events=prepared.map(value=>{
+  const {input,ordinal,provider,operation,unit,quantity,explicit,occurred_at,model,provider_version}=value,rate=byOrdinal.get(ordinal)||null;
   const amount=explicit===null?(rate?quantity*Number(rate.cost_per_unit_minor):null):explicit;
   if(amount!==null&&(!Number.isFinite(amount)||amount<0))throw new ValidationError('Variable cost must be zero or greater.');
   const costBasis=explicit===null?(rate?.pricing_basis||'MISSING'):
     input.costBasis||(input.detail?.basis==='ADMIN_ATTESTED_PROVIDER_INVOICE'?'PROVIDER_INVOICE':'EXPLICIT_UNVERIFIED');
   const costConfidence=explicit===null?(rate?.confidence||'LOW'):
     input.costConfidence||(costBasis==='PROVIDER_INVOICE'?'HIGH':'LOW');
-  const result=await database.query(`INSERT INTO commercial_cost_events
+  return {id:input.id||newId('cost'),account_id:scope.accountId||null,workspace_id:scope.workspaceId||null,
+   provider,operation,unit,quantity,amount_minor:amount,currency:input.currency||rate?.currency||'USD',idempotency_key:input.idempotencyKey,
+   rate_id:rate?.id||null,detail:{...input.detail,costRateMissing:explicit===null&&!rate,costBasis,costConfidence,
+    costSource:explicit===null?rate?.source||null:input.costSource||input.detail?.evidenceReference||null},occurred_at,model,provider_version};
+ });
+ if(new Set(events.map(event=>event.id)).size!==events.length)throw new ValidationError('A cost batch contains duplicate record identities.');
+ const inserted=(await database.query(`INSERT INTO commercial_cost_events
     (id,account_id,workspace_id,provider,operation,unit,quantity,amount_minor,currency,idempotency_key,rate_id,detail,occurred_at,model,provider_version)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::timestamptz,$14,$15)
-    ON CONFLICT DO NOTHING RETURNING *`,[input.id||newId('cost'),scope.accountId||null,
-    scope.workspaceId||null,provider,operation,unit,quantity,amount,input.currency||rate?.currency||'USD',input.idempotencyKey,
-    rate?.id||null,JSON.stringify({...input.detail,costRateMissing:explicit===null&&!rate,
-      costBasis,costConfidence,costSource:explicit===null?rate?.source||null:input.costSource||input.detail?.evidenceReference||null}),occurredAt,model,providerVersion]);
-  if(amount===null)await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
-    VALUES($1,$2,$3,'MISSING_COST_RATE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,
-    [newId('critical'),scope.accountId||null,`cost-rate:${scope.accountId||'platform'}:${provider}:${operation}:${unit}:${model}:${providerVersion}`,
-      JSON.stringify({provider,operation,unit,model,providerVersion,quantity,severity:'CRITICAL'})]);
-  return {created:Boolean(result.rows.length),event:result.rows[0]||null,rate};
+    SELECT x.id,x.account_id,x.workspace_id,x.provider,x.operation,x.unit,x.quantity,x.amount_minor,x.currency,x.idempotency_key,
+     x.rate_id,x.detail,x.occurred_at,x.model,x.provider_version FROM jsonb_to_recordset($1::jsonb)
+     x(id text,account_id text,workspace_id text,provider text,operation text,unit text,quantity numeric,amount_minor numeric,currency text,
+      idempotency_key text,rate_id text,detail jsonb,occurred_at timestamptz,model text,provider_version text)
+    ON CONFLICT DO NOTHING RETURNING *`,[JSON.stringify(events)])).rows;
+ const warnings=new Map();for(const event of events)if(event.amount_minor===null){
+  const {provider,operation,unit,model,provider_version:providerVersion,quantity}=event;
+  const fingerprint=`cost-rate:${scope.accountId||'platform'}:${provider}:${operation}:${unit}:${model}:${providerVersion}`;
+  warnings.set(fingerprint,{id:newId('critical'),account_id:scope.accountId||null,fingerprint,detail:{provider,operation,unit,model,providerVersion,quantity,severity:'CRITICAL'}});
+ }
+ if(warnings.size)await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
+  SELECT x.id,x.account_id,x.fingerprint,'MISSING_COST_RATE',x.detail FROM jsonb_to_recordset($1::jsonb) x(id text,account_id text,fingerprint text,detail jsonb)
+  ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,[JSON.stringify([...warnings.values()])]);
+ const byId=new Map(inserted.map(row=>[row.id,row]));
+ return events.map((event,index)=>({created:byId.has(event.id),event:byId.get(event.id)||null,rate:byOrdinal.get(index)||null}));
 }
+async function recordCost(database,scope,input){return (await recordCosts(database,scope,[input]))[0];}
 
 async function saveCostRate(database,input){
   const provider=String(input.provider||'').trim().toLowerCase();
@@ -225,4 +248,4 @@ async function portfolioEconomics(database){
   return rows.sort((left,right)=>left.contributionMarginPercent-right.contributionMarginPercent);
 }
 
-module.exports={audit,recordCost,saveCostRate,economics,usageWarnings,resourceExcess,snapshotPlanVersion,portfolioEconomics};
+module.exports={audit,recordCost,recordCosts,saveCostRate,economics,usageWarnings,resourceExcess,snapshotPlanVersion,portfolioEconomics};

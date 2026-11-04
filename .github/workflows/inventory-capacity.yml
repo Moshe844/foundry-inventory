@@ -26,7 +26,12 @@ concurrency:
   group: inventory-capacity-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && github.sha || 'latest' }}-${{ inputs.stock_only && 'stock' || 'catalogue' }}
   cancel-in-progress: true
 jobs:
-  inventory:
+  inventory_checks:
+    name: inventory / ${{ matrix.group }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [unit, scale, core, agents, variants, providers]
     if: github.event_name != 'workflow_dispatch' || !inputs.profile_only
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && 300 || 45 }}
@@ -54,31 +59,44 @@ jobs:
       - run: npm ci
       - name: Audit runtime and development dependencies
         run: npm audit --audit-level=moderate
-      - run: npx playwright install --with-deps chromium
+      - id: test_ready
+        run: |
+          npx playwright install --with-deps chromium
+          mkdir -p output/inventory-ci
       - name: Query deadlines, recovery and dense catalogue regressions
-        run: node --test --test-concurrency=2 tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
+        run: node --test --test-concurrency=2 tests/postgres/import-legacy-lookup-scale.test.js tests/postgres/replenishment-expiry-scale.test.js tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js
+      - name: Combined staging order money, refunds, plan locks and storage registration
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: node --test --test-concurrency=2 tests/postgres/order-money-truth.test.js tests/postgres/read-committed-write-invariants.test.js tests/postgres/read-side-business-totals.test.js tests/postgres/assistant-commercial-boundaries.test.js tests/postgres/environment-agent-commercial.test.js
       - name: Decimal reporting, lot batching and account state regressions
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           mkdir -p output/inventory-ci
           set -euo pipefail
           node --test --test-concurrency=2 --test-timeout=240000 tests/unit/append-id.test.js tests/unit/disabled-plan-appearance.test.js tests/postgres/accounting-ledger.test.js tests/postgres/accounting-bulk-locks.test.js tests/unit/template-engine-security.test.js tests/unit/inspection-pool-errors.test.js tests/postgres/inspection-idle-recovery.test.js tests/postgres/inspection-warm-denial.test.js tests/postgres/round17-list-read-capacity.test.js tests/postgres/inspection-scoped-concurrency.test.js tests/unit/totp-provisioning.test.js tests/unit/round17-plan-selection.test.js tests/postgres/round17-decimal-reporting.test.js tests/postgres/round17-decimal-counts.test.js tests/postgres/round17-measured-imports.test.js tests/postgres/round17-company-invoice.test.js tests/postgres/round16-billing-warning.test.js tests/postgres/connection-popup-return.test.js tests/postgres/connections-ui.test.js tests/postgres/provider-webhook-verification.test.js tests/postgres/provider-operational-integrity.test.js tests/postgres/round17-lot-bulk-receipts.test.js tests/postgres/round17-mixed-import-journals.test.js tests/postgres/round17-report-variant-labels.test.js tests/postgres/round17-billing-preview-contract.test.js tests/postgres/round17-plan-selection-ui.test.js tests/postgres/native-complete-read-evidence.test.js 2>&1 | tee output/inventory-ci/round17-regressions.log
       - name: Parallel Ask admission and exact spending protection
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round17-ask-concurrency.test.js tests/postgres/round17-parallel-ai-budget.test.js tests/postgres/codex-staging-budget.test.js tests/postgres/codex-account-access.test.js tests/postgres/staging-installation-budget.test.js tests/postgres/maintenance-claims.test.js tests/postgres/worker-lane-isolation.test.js 2>&1 | tee output/inventory-ci/ask-parallel-budget.log
       - name: Browser-free Ask and streamed answer delivery
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
+          node --test --test-concurrency=2 tests/postgres/bounded-ask-database.test.js tests/postgres/hosted-ask-read-worker.test.js tests/postgres/hosted-business-agent.test.js tests/postgres/mail-native-processing.test.js tests/postgres/ask-direct-query-budget.test.js tests/postgres/ask-answer-stream.test.js tests/postgres/ask-count-projections.test.js tests/postgres/ask-chat-preferences.test.js 2>&1 | tee output/inventory-ci/ask-database-stream.log
       - name: Approved subscription packaging, metering and billing isolation
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js tests/postgres/older-plan-custom-roles.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
       - name: Combined onboarding, invitations and real import approval
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/flash-after-redirect.test.js tests/postgres/invitation-accept-browser.test.js tests/postgres/onboarding-file-formats.test.js tests/postgres/imports-ui.test.js 2>&1 | tee output/inventory-ci/onboarding-import-browser.log
       - name: Full unit and integration regression audit
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
           set -euo pipefail
           # The 117-case actions file creates independent on-disk databases.
@@ -88,10 +106,12 @@ jobs:
           # on Linux pipes (nodejs/node#64833), including the summary count.
           node --test --test-concurrency=4 --test-timeout=180000 tests/unit/*.test.js tests/integration/*.test.js 2>&1 | tee output/inventory-ci/full-regressions.log
       - name: Indexed source history and cross-inventory duplicate protection
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
         run: |
           set -euo pipefail
           node --test tests/postgres/import-source-history.test.js 2>&1 | tee output/inventory-ci/source-history.log
       - name: Mixed business dataset at 50000 SKUs and 150000 opening-stock rows
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
         timeout-minutes: 15
         env:
           STOCKCHIEF_ROUND17_LARGE: '1'
@@ -100,62 +120,76 @@ jobs:
           set -euo pipefail
           node --test --test-concurrency=1 tests/certification/round17-large-business.test.js 2>&1 | tee output/inventory-ci/round17-large-business.log
       - name: Parser, source identity and provider contracts
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
           mkdir -p output/inventory-ci
           set -euo pipefail
           node --test tests/unit/request-body-safety.test.js tests/unit/web-restart-guardian.test.js tests/unit/crash-monitor.test.js tests/unit/mailbox-navigation.test.js tests/unit/totp.test.js tests/unit/invoice-email-attachment.test.js tests/unit/import-analysis-notice.test.js tests/unit/xlsx-integrity-capacity.test.js tests/unit/provider-response-capacity.test.js tests/unit/provider-streaming-discovery.test.js tests/unit/commerce-quantity-events.test.js tests/unit/bigcommerce-adapter.test.js tests/unit/multipart-capacity.test.js tests/unit/multipart-reuse.test.js tests/unit/import-indexed-delimited.test.js tests/unit/import-validation-scratch.test.js tests/unit/import-source-identity.test.js tests/unit/request-read-cache.test.js tests/unit/import-progress.test.js tests/unit/postgres-import-preview.test.js tests/unit/import-execution-identities.test.js tests/unit/integration-store-network.test.js tests/unit/import-delimiter-preamble.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-production-boundaries.test.js 2>&1 | tee output/inventory-ci/unit.log
       - name: Image columns and reviewed source evidence
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/unit/round16-image-columns.test.js tests/unit/image-table-import.test.js tests/unit/image-import-quality.test.js tests/unit/image-table-rules.test.js tests/unit/image-codecs.test.js tests/postgres/image-import-review.test.js tests/postgres/image-codec-review.test.js tests/unit/pdf-table-import.test.js 2>&1 | tee output/inventory-ci/image-columns.log
       - name: PostgreSQL correctness, limits, durable batches and customer screens
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-mfa.test.js tests/postgres/round16-security-audit.test.js tests/postgres/round16-billing-warning.test.js tests/postgres/round16-order-draft.test.js tests/postgres/round16-supplier-invoice.test.js tests/postgres/round16-invoice-document.test.js tests/postgres/round16-business-workbook.test.js tests/postgres/round16-migration-startup.test.js tests/postgres/operations-ui.test.js tests/postgres/cardknox-gateway.test.js tests/postgres/pricing-promotions.test.js tests/postgres/round16-request-boundaries.test.js tests/postgres/round16-stock-costs.test.js tests/postgres/round16-generic-variants.test.js tests/postgres/round16-variant-batch.test.js tests/postgres/round16-catalog-filters.test.js tests/postgres/round16-variant-import.test.js tests/postgres/provider-catalog-cache.test.js tests/postgres/provider-sync.test.js tests/postgres/connection-synchronization.test.js tests/postgres/commerce-position-sync.test.js tests/postgres/warehouse-pages.test.js tests/postgres/import-many-axes.test.js tests/postgres/import-catalogue-no-stock.test.js tests/postgres/import-details-bulk-catalog.test.js tests/postgres/variant-maintenance.test.js tests/postgres/grouped-inbox.test.js tests/postgres/audit-trail.test.js tests/postgres/outbound-webhooks.test.js tests/postgres/team-approval-authority.test.js tests/postgres/ask-health.test.js tests/postgres/import-mixed-tracking.test.js tests/postgres/developer-account-removal.test.js tests/postgres/business-number-capacity.test.js tests/postgres/warehouse-tracked-capacity.test.js tests/postgres/warehouse-waves-ui.test.js tests/postgres/catalog-page-capacity.test.js tests/postgres/import-preview-revisions.test.js tests/postgres/inventory-capacity.test.js tests/postgres/inventory-erp-correctness.test.js tests/postgres/inventory-engine.test.js tests/postgres/manual-stock-removal.test.js tests/postgres/import-durable-batches.test.js tests/postgres/canonical-bulk-import.test.js tests/postgres/import-large-stock-batches.test.js tests/postgres/mixed-bulk-receipts.test.js tests/postgres/pricing-tenant-contention.test.js tests/postgres/import-price-batches.test.js tests/postgres/import-durable-retry.test.js tests/postgres/import-execution-pages.test.js tests/postgres/import-extended-scale-holdout.test.js tests/postgres/import-stock-intent.test.js tests/postgres/import-identity-revision.test.js tests/postgres/import-sku-identity.test.js tests/postgres/import-source-upload.test.js tests/postgres/replenishment-global-scope.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/planning-ui.test.js tests/postgres/public-plan-contract.test.js tests/postgres/public-offer-ui.test.js 2>&1 | tee output/inventory-ci/postgres.log
       - name: ERP cutover and exact quantity regressions
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/unit/exact-quantity.test.js tests/unit/odoo-cutover-reader.test.js tests/unit/commercial-network.test.js tests/unit/postgres-migration-history.test.js tests/unit/persisted-secret-startup.test.js tests/postgres/erp-cutover-contract.test.js tests/postgres/erp-cutover-batches.test.js tests/postgres/erp-cutover-application.test.js tests/postgres/erp-cutover-ui.test.js tests/postgres/odoo-cutover-qualified.test.js tests/postgres/measured-stock.test.js tests/postgres/existing-stock-costs.test.js tests/postgres/transfers-ui.test.js 2>&1 | tee output/inventory-ci/erp-cutover.log
       - name: Complex inventory and source concurrency
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/customer-source-concurrency.test.js tests/postgres/manufacturing-tracking.test.js tests/postgres/manufacturing-stock-safety.test.js tests/postgres/manufacturing-cost-authority.test.js tests/postgres/manufacturing-capacity.test.js tests/postgres/completion-custody-safety.test.js tests/postgres/rental-billing-safety.test.js tests/postgres/reservation-concurrency.test.js tests/postgres/multiwarehouse-allocation.test.js 2>&1 | tee output/inventory-ci/complex-inventory.log
       - name: Historical stock costs and availability protection
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-stock-coverage-totals.test.js tests/postgres/inventory-rollup-deltas.test.js tests/postgres/catalog-rollup-deltas.test.js tests/postgres/round16-return-availability.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/round16-profit-report-projection.test.js tests/postgres/round16-additive-report-projections.test.js tests/postgres/round16-low-stock-report.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
       - name: Generic variant grids, list filters and count approvals
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-quantity-grid.test.js tests/postgres/round16-variant-views.test.js tests/postgres/round16-count-reviews.test.js tests/postgres/round16-inline-variant-stock.test.js 2>&1 | tee output/inventory-ci/variant-grids.log
       - name: Kit recipe snapshots and component reservations
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-kit-recipes.test.js tests/postgres/round16-kit-expiry-reservations.test.js tests/postgres/round16-kit-reservations.test.js tests/postgres/round16-kit-cost-batches.test.js tests/postgres/round16-kit-consumption.test.js tests/postgres/round16-kit-order-lifecycle.test.js tests/postgres/round16-kit-reviews.test.js tests/postgres/round16-kit-parcels.test.js tests/postgres/round16-kit-browser.test.js tests/postgres/round16-kit-plan-terms.test.js 2>&1 | tee output/inventory-ci/kits.log
       - name: Variant answers and fresh replenishment
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-ask-variants.test.js tests/postgres/round16-ask-sales-period.test.js tests/postgres/round16-replenishment-freshness.test.js tests/postgres/round16-attention-capacity.test.js tests/postgres/round16-pending-inbox-read.test.js tests/postgres/replenishment-outcome-correctness.test.js tests/postgres/replenishment-global-scope.test.js 2>&1 | tee output/inventory-ci/variant-answers-freshness.log
       - name: Variant report totals and visible supplier linking
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-variant-reports.test.js tests/postgres/round16-variant-reordering.test.js 2>&1 | tee output/inventory-ci/variant-reports-reordering.log
       - name: Tracked product pages in the browser
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/tracked-product-pages.test.js tests/postgres/round16-tracked-variant-sales.test.js tests/postgres/round16-batch-expiry-alerts.test.js tests/postgres/round16-business-variant-qualification.test.js 2>&1 | tee output/inventory-ci/tracked-products.log
       - name: Provider automatic import and owner approval
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/provider-review-pages.test.js tests/postgres/provider-automatic-pages.test.js tests/postgres/provider-catalog-import.test.js tests/postgres/catalogue-stock-evidence.test.js tests/postgres/accounting-catalog-import.test.js 2>&1 | tee output/inventory-ci/provider-import.log
+          node --test --test-concurrency=2 tests/postgres/provider-review-pages.test.js tests/postgres/provider-automatic-pages.test.js tests/postgres/provider-catalog-import.test.js tests/postgres/connector-events.test.js tests/postgres/catalogue-stock-evidence.test.js tests/postgres/accounting-catalog-import.test.js 2>&1 | tee output/inventory-ci/provider-import.log
       - name: Maintenance fairness and worker isolation
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/maintenance-claims.test.js tests/postgres/maintenance-batches.test.js tests/postgres/maintenance-progress.test.js tests/postgres/worker-lane-isolation.test.js tests/postgres/round16-maintenance-bulk-budget.test.js tests/postgres/round16-maintenance-read-capacity.test.js 2>&1 | tee output/inventory-ci/maintenance.log
       - name: Atomic bulk receipt operation writes
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
         run: node --test tests/postgres/round16-receipt-operation-writes.test.js tests/postgres/bulk-balance-write-once.test.js
       - name: Full large-import certification
-        if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')
+        if: matrix.group == 'scale' && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification'))
         timeout-minutes: 240
         env:
           STOCKCHIEF_RUN_LARGE_IMPORT: '1'
@@ -166,8 +200,18 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: inventory-capacity-results
+          name: inventory-capacity-results-${{ matrix.group }}
           path: output/inventory-ci
+  inventory:
+    name: inventory
+    needs: inventory_checks
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || !inputs.profile_only) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every inventory group
+        env:
+          RESULT: ${{ needs.inventory_checks.result }}
+        run: test "$RESULT" = success
   import-profile:
     if: github.event_name == 'workflow_dispatch' && inputs.profile_only
     uses: ./.github/workflows/import-query-profile.yml

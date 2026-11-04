@@ -32,7 +32,8 @@ function membershipAccess(user) {
 router.get('/transfers', asyncRoute(async (req, res) => {
   permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
   res.page('transfers/index', { title: 'Transfers', nav: 'transfers', room: true,
-    transfers: transfers.list(req.db, req.ctx.workspaceId), ...membershipAccess(req.user) });
+    transfers: transfers.list(req.db, req.ctx.workspaceId),
+    pageOf:rows=>require('../presentation/pagination').slice(req,rows),...membershipAccess(req.user) });
 }));
 
 router.get('/transfers/new', asyncRoute(async (req, res) => {

@@ -12,15 +12,13 @@ async function modelUsage(database,scope,usage,key,detail={}){
   model:usage.model||'',operation:'missing_token_usage',unit:'request',quantity:1,idempotencyKey:key,detail});
  // Components of one receipt are independent, idempotent cost events. Wait
  // for every write before settlement, including when one component fails.
- const record=([operation,quantity])=>control.recordCost(database,scope,{provider:usage.provider||'unknown',
+ const component=([operation,quantity])=>({provider:usage.provider||'unknown',
   model:usage.model||'',providerVersion:usage.providerVersion||'',operation,unit:'token',quantity:Number(quantity),
   idempotencyKey:`${key}:${operation}`,detail:{...detail,latencyMs:usage.latencyMs}});
  const components=fields.filter(([,quantity])=>quantity);
- // Transaction clients have one wire and must stay sequential. Only an
- // actual connection pool can execute the independent component writes.
- if(typeof database.poolMetrics!=='function'){for(const component of components)await record(component);return;}
- const recorded=await Promise.allSettled(components.map(record));
- const failed=recorded.find(result=>result.status==='rejected');if(failed)throw failed.reason;
+ // One scope check, one priced receipt lookup and one idempotent insert for
+ // all token components, on the same financial transaction as settlement.
+ if(components.length)await control.recordCosts(database,scope,components.map(component));
 }
 async function begin(database,workspaceId,input){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
  if(!input.key||typeof input.key!=='string')throw new ValidationError('An operation needs its stable usage key.');

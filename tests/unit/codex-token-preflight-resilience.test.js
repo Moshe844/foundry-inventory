@@ -1,23 +1,30 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict'),{createTokenCounter,policy}=require('../../scripts/environment-agent-demo/codex-token-counter');
-const ok=()=>Response.json({object:'response.input_tokens',input_tokens:40619});
-const input={model:'gpt-6.1-sol',reasoning:{effort:'low'},input:[{role:'user',content:'Growing recorded browser context '.repeat(6000)}]};
-test('recorded DOM timeout code 23 retries only the identical non-generating native count and never estimates',async()=>{
- const calls=[],counter=createTokenCounter({apiKey:'FAKE',fetchImpl:async(url,init)=>{calls.push({url,body:init.body,redirect:init.redirect});if(calls.length===1)throw new DOMException('The operation was aborted due to timeout','TimeoutError');return ok();}});
- assert.equal((await counter(input)).input_tokens,40619);assert.equal(calls.length,2);assert.equal(calls[0].body,calls[1].body);assert.deepEqual(JSON.parse(calls[0].body),input);assert(calls.every(c=>c.url==='https://api.openai.com/v1/responses/input_tokens'&&c.redirect==='error'));
+const test=require('node:test'),assert=require('node:assert/strict');
+const {createTokenCounter,policy}=require('../../scripts/environment-agent-demo/codex-token-counter');
+const wire=require('../../scripts/environment-agent-demo/codex-wire');
+const request={model:wire.MODEL,reasoning:{effort:wire.EFFORT},input:[{role:'user',content:'Read stock, café, 咖啡 ☕.'}]};
+test('native token admission is local, conservative and never calls the provider',async()=>{
+ let calls=0;const counter=createTokenCounter({apiKey:'FAKE',fetchImpl:()=>{calls++;throw Error('NO_TOKEN_COUNT_HTTP');}});
+ const before=structuredClone(request),count=await counter(request),priced=wire.counted(wire.normalize(request),count);
+ assert.equal(calls,0);assert.equal(policy.networkRequests,0);assert.equal(count.basis,'local_conservative_bound');
+ assert(count.input_tokens>=Buffer.byteLength(JSON.stringify(request))+8192);
+ assert.equal(priced.upperBoundMicroUsd,Math.ceil(count.input_tokens*wire.PRICES.input+priced.outputTokens*wire.PRICES.output));
+ assert.deepEqual(request,before);
 });
-test('a stalled count has one bounded alternate count and cancels the losing transport',async()=>{
- let calls=0,aborted=0;const counter=createTokenCounter({apiKey:'FAKE',afterDelay:fn=>setTimeout(fn,1),fetchImpl:async(_url,{signal})=>{calls++;if(calls===2)return ok();return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{aborted++;reject(new DOMException('Cancelled','AbortError'));},{once:true}));}});
- assert.equal((await counter(input)).input_tokens,40619);assert.equal(calls,2);assert.equal(aborted,1);
+test('opaque reasoning and each bounded image have independent token allowances',async()=>{
+ const counter=createTokenCounter(),plain=await counter(request);
+ const png=Buffer.alloc(24);png.writeUInt32BE(0x89504e47,0);png.writeUInt32BE(0x0d0a1a0a,4);png.write('IHDR',12);png.writeUInt32BE(1280,16);png.writeUInt32BE(900,20);
+ const value=await counter({...request,input:[...request.input,{type:'reasoning',encrypted_content:'opaque'},{role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+png.toString('base64')}]}]});
+ assert(value.input_tokens>=plain.input_tokens+3000+20000);
 });
-test('authentication, rate limits, invalid count data and oversized replies remain fail closed without extra calls',async()=>{
- for(const response of [()=>new Response('',{status:401}),()=>new Response('',{status:429}),()=>new Response('',{status:503,headers:{'retry-after':'10'}}),()=>Response.json({object:'response.input_tokens',input_tokens:'40619'}),()=>new Response('x'.repeat(16001))]){
-  let calls=0;const counter=createTokenCounter({apiKey:'FAKE',fetchImpl:async()=>{calls++;return response();}});await assert.rejects(counter(input));assert.equal(calls,1);
- }
- let calls=0;await assert.rejects(createTokenCounter({apiKey:'FAKE',fetchImpl:async()=>{calls++;return new Response('',{status:503});}})(input),e=>e.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'&&e.upstreamAttempted===false&&e.preflightAttempts===2);assert.equal(calls,2);
+test('local admission rejects unbounded context and retains the existing context ceiling',async()=>{
+ const counter=createTokenCounter();
+ for(const item of [{type:'input_file',file_id:'remote'},{type:'compaction',encrypted_content:'unknown'},{type:'input_image',image_url:'https://example.test/a.png'}])await assert.rejects(counter({...request,input:[item]}));
+ const count=await counter({...request,input:[{role:'user',content:'x'.repeat(wire.MAX_INPUT_TOKENS)}]});
+ assert.throws(()=>wire.counted(wire.normalize(request),count),/INVALID_CODEX_TOKEN_COUNT/);
 });
-test('both stalled transports stop inside the original 30-second preflight deadline with no fallback estimate',{timeout:35000},async t=>{
- const keepAlive=setTimeout(()=>{},34000);t.after(()=>clearTimeout(keepAlive));let calls=0;
- const counter=createTokenCounter({apiKey:'FAKE',afterDelay:fn=>setTimeout(fn,1),fetchImpl:async(_url,{signal})=>{calls++;return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Timeout','TimeoutError')),{once:true}));}}),at=Date.now();
- await assert.rejects(counter(input),e=>e.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'&&e.reason==='timeout'&&e.upstreamAttempted===false);assert.equal(calls,2);assert(Date.now()-at<=31000);assert.equal(policy.totalTimeoutMs,30000);
+test('local input bound does not discount cached tokens or lower output reservations',async()=>{
+ const counter=createTokenCounter();const short=await counter(request),long=await counter({...request,input:[{role:'user',content:'x'.repeat(10000)}]});
+ assert(long.input_tokens>short.input_tokens);const a=wire.counted(wire.normalize(request),short),b=wire.counted(wire.normalize({...request,max_output_tokens:100}),short);
+ assert.equal(a.outputTokens,3000);assert(a.upperBoundMicroUsd>b.upperBoundMicroUsd);
 });

@@ -40,6 +40,8 @@ async function catalogueFor(db,ctx){const actor=(await db.query('SELECT role,per
  [ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)throw new ValidationError('This user no longer belongs to the business.');
  return {actor,catalogue:await control.planningCatalogue(db,ctx,actor)};}
 async function assertCurrentActor(db,ctx,actor){
+ if(ctx.hostedAgent===true){await require('./postgres-codex-pilot').access(db,ctx,{enabled:true});
+  await require('../connections/postgres-source-automation').authorize(db,ctx,ctx.sourceAutomation);}
  const current=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!store.enabled(ctx)||JSON.stringify(current)!==JSON.stringify(actor))throw new ValidationError('Goal access changed during investigation.');
 }
@@ -59,22 +61,30 @@ function response(goal){return {status:goal.status==='COMPLETED'?'ANSWERED':goal
  answer:goal.answer,goalId:goal.id,goalStatus:goal.status,rows:[],columns:[]};}
 async function start(db,ctx,message,options={}){
  if(!store.enabled(ctx))throw new ValidationError('Adaptive Ask is not enabled for this business.');
+ if(ctx.hostedAgent===true)await require('./postgres-codex-pilot').access(db,ctx,{enabled:true});
  const goal=await store.create(db,ctx,message,options);
+ if(ctx.hostedAgent===true&&!goal.checkpoint.runtime){
+  goal.checkpoint.runtime='hosted-business';await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{\"runtime\":\"hosted-business\"}'::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3",[ctx.workspaceId,ctx.actorId,goal.id]);
+ }
  if(options.background){await store.enqueue(db,goal);return response(goal);}
  return run(db,ctx,goal.id,options);
 }
 async function run(db,ctx,id,options={}){
+ const saved=await store.get(db,ctx,id);if(saved?.checkpoint.runtime==='hosted-business')ctx={...ctx,hostedAgent:true};
  if(!store.enabled(ctx))return {status:'CLARIFY',answer:'Adaptive Ask is disabled.',goalId:id};
+ if(ctx.hostedAgent===true)await require('./postgres-codex-pilot').access(db,ctx,{enabled:true});
  let goal=await store.claim(db,ctx,id);if(!goal){goal=await store.get(db,ctx,id);if(!goal)throw new ValidationError('Goal not found.');return response(goal);}
- ctx={...ctx,goalId:id,goalRunToken:goal.run_token};const service=require('./postgres-service');
- const config=require('../config');const raw=options.provider||require('../ai/provider').createProviderUnobserved(config.ai.provider,config.ai.tier('standard'));
- const provider=service.fundedAskProvider(db,ctx,raw,`goal:${id}:${goal.run_token}`,
-  require('../commercial/model').wrap,options.verificationProvider||raw);
+ ctx={...ctx,goalId:id,goalRunToken:goal.run_token,sourceAutomation:goal.checkpoint.sourceAutomation};const service=require('./postgres-service');
  const deadline=Date.now()+300000;const cp=goal.checkpoint;cp.observations||=[];cp.discovered||=[];cp.messages||=[];
  const source=[goal.original_request,...cp.messages].join('\n');
  try{
+  const config=require('../config');const raw=options.provider||require('../ai/provider').createProviderUnobserved(config.ai.provider,config.ai.tier('standard'));
+  const provider=service.fundedAskProvider(db,ctx,raw,`goal:${id}:${goal.run_token}`,
+   require('../commercial/model').wrap,options.verificationProvider||raw);
   await require('../commercial/enforcement').workspace(db,ctx.workspaceId,'ask.lookup');
   while(goal.turns<12&&goal.tool_calls<30&&goal.recoveries<=2&&Date.now()<deadline){
+   if(ctx.hostedAgent===true){await require('./postgres-codex-pilot').access(db,ctx,{enabled:true});
+    await require('../connections/postgres-source-automation').authorize(db,ctx,ctx.sourceAutomation);}
    const {actor,catalogue:authorized}=await catalogueFor(db,ctx);
    const catalogue={list:()=>authorized.list().filter(c=>!cp.unavailable?.includes(c.name)),
     get:name=>cp.unavailable?.includes(name)?null:authorized.get(name)};
@@ -82,6 +92,8 @@ async function run(db,ctx,id,options={}){
    cp.observations=cp.observations.filter(o=>catalogue.get(o.capability));
    const memory=actor.role==='owner'?await require('./postgres-business-memory').plannerContext(db,ctx.workspaceId):[];
    const prompt={originalRequest:goal.original_request,userMessages:cp.messages,
+    page:cp.page||null,sourceContext:cp.sourceAutomation?{messageId:cp.sourceAutomation.messageId,capability:cp.sourceAutomation.capability}:null,
+    previousConversation:(cp.conversation?.turns||[]).slice(-3).map(t=>({message:t.message.slice(0,1200),answer:String(t.answer||'').slice(0,1200),historical:true,untrusted:true})),
     directory:catalogue.list().map(c=>c.name).join(' '),
     discovered:cp.discovered,tools:(cp.activeTools||cp.discovered).slice(0,4).filter(n=>catalogue.get(n)).map(n=>descriptor(catalogue.get(n))),
     observations:cp.observations.slice(-8),memory,remainingTurns:12-goal.turns,feedback:cp.feedback||null,lastAction:cp.lastAction||null};

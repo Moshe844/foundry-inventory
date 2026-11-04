@@ -115,6 +115,19 @@ test('identifier digits cannot launder an invented quantity into a reply', () =>
   assert.equal(drafting.datesAreGrounded('Expected 2026-09-09.',message,facts),false);
 });
 
+test('shipment clock digits cannot authorize invented quantities, and a new time needs its own evidence', () => {
+  const message={subject:'Our order',body_text:'Where is it?'};
+  for(const timestamp of ['2026-11-03T09:40:12.007Z','2026-11-03 09:40:12',
+    '2026-11-03T09:12:40.007Z','2026-11-03T09:12:07.40Z','2026-11-03T09:12:07+04:40']){
+    const facts=['Order SO-00001: 12 ordered, 12 shipped.','Shipment recorded at '+timestamp+'.'];
+    assert.equal(drafting.faultIn({subject:'Re: Our order',body:'Your 40 shirts shipped.'},message,facts),
+      'it used a figure that is not in your records',timestamp);
+    assert.equal(drafting.faultIn({subject:'Re: Our order',body:'Recorded time: '+timestamp+'. Recorded units: 12.'},message,facts),null,timestamp);
+  }
+  assert.equal(drafting.datesAreGrounded('Recorded time: 2026-11-03T09:12:12.007Z.',message,
+    ['Shipment recorded at 2026-11-03T09:40:12.007Z.','12 shipped.']),false);
+});
+
 test('a draft that names a date nobody committed to is refused', async () => {
   const env = setup();
   shippedOrderFor(env);
