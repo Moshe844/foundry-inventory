@@ -11,12 +11,12 @@
  function identify(){const prior=history.state?.stockchiefNavigation;if(prior&&prior.scope===scope&&prior.url===href())entryId=prior.id;else{entryId=crypto.randomUUID?crypto.randomUUID():String(Date.now())+':'+Math.random();history.replaceState({...history.state,stockchiefNavigation:{id:entryId,url:href(),scope}},'');}}
  function containers(){return Array.from(document.querySelectorAll('main,[data-navigation-scroll],.table-scroll')).filter(e=>e!==document.scrollingElement);}
  function snapshot(){if(!entryId)return;const scroll=document.scrollingElement;const value={scope,url:href(),at:Date.now(),x:scroll?.scrollLeft||0,y:scroll?.scrollTop||0,
-  containers:containers().map((e,index)=>({key:e.id?'#'+e.id:'index:'+index,x:e.scrollLeft,y:e.scrollTop})),details:Array.from(document.querySelectorAll('main details')).map((e,index)=>({key:e.id?'#'+e.id:'index:'+index,open:e.open}))};
+  containers:containers().map((e,index)=>({key:e.id?'#'+e.id:'index:'+index,x:e.scrollLeft,y:e.scrollTop})),details:Array.from(document.querySelectorAll('main details:not(.ask-menu)')).map((e,index)=>({key:e.id?'#'+e.id:'index:'+index,open:e.open}))};
   state.entries=state.entries&&typeof state.entries==='object'?state.entries:{};state.entries[entryId]=value;state.latest=state.latest&&typeof state.latest==='object'?state.latest:{};state.latest[value.url]=entryId;
   const keys=Object.keys(state.entries).sort((a,b)=>state.entries[a].at-state.entries[b].at);while(keys.length>maxEntries){const key=keys.shift();delete state.entries[key];}
   for(const [url,key]of Object.entries(state.latest))if(!state.entries[key])delete state.latest[url];persist();
  }
- function apply(saved){if(!valid(saved))return false;const disclosure=Array.from(document.querySelectorAll('main details'));for(const d of saved.details||[]){const e=d.key.startsWith('#')?document.getElementById(d.key.slice(1)):disclosure[Number(d.key.slice(6))];if(e?.tagName==='DETAILS')e.open=Boolean(d.open);}
+ function apply(saved){if(!valid(saved))return false;const disclosure=Array.from(document.querySelectorAll('main details:not(.ask-menu)'));for(const d of saved.details||[]){const e=d.key.startsWith('#')?document.getElementById(d.key.slice(1)):disclosure[Number(d.key.slice(6))];if(e?.tagName==='DETAILS')e.open=Boolean(d.open);}
   const targets=containers();for(const s of saved.containers||[]){const e=s.key.startsWith('#')?document.getElementById(s.key.slice(1)):targets[Number(s.key.slice(6))];if(e){e.scrollLeft=Number(s.x)||0;e.scrollTop=Number(s.y)||0;}}
   window.scrollTo({left:Number(saved.x)||0,top:Number(saved.y)||0,behavior:'instant'});restored=true;restoredUrl=href();return true;
  }

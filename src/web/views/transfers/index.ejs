@@ -31,8 +31,9 @@
 <% if (completedTransfers.length) { %>
   <section class="rm-transfer-board rm-transfer-board--completed">
     <div class="rm-transfer-board__head"><div><p class="rm-kicker">History</p><h2>Completed transfers</h2></div></div>
-    <div class="rm-transfer-board__rows"><% completedTransfers.forEach(function(t) { var state = stateFor(t); %>
+    <% var completedPage = pageOf(completedTransfers); %><div class="rm-transfer-board__rows"><% completedPage.rows.forEach(function(t) { var state = stateFor(t); %>
       <a class="rm-transfer-row" href="/transfers/<%= t.id %>"><span class="rm-transfer-row__route"><strong><%= t.source_name %></strong><i aria-hidden="true">→</i><strong><%= t.destination_name %></strong><small><%= t.transfer_number %> · <%= helpers.unitCount(t.requested_units,'unit') %></small></span><span class="rm-transfer-row__state"><b class="rm-transfer-row__badge is-<%= state.tone %>"><%= state.label %></b><small><%= state.detail %></small></span><span class="rm-transfer-row__go" aria-hidden="true">›</span></a>
     <% }) %></div>
+    <%- include('../partials/pager', { pager: completedPage.pager }) %>
   </section>
 <% } %>

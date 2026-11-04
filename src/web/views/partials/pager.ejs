@@ -1,0 +1,5 @@
+<% if(locals.pager&&pager.show){ %><nav class="pager-bar" aria-label="Pages" data-pager>
+  <span class="pager-bar__count"><% if(pager.total!==null){ %><%= pager.from %>–<%= pager.to %> of <%= pager.total.toLocaleString('en-US') %><% }else{ %>Page <%= pager.page %><% } %></span>
+  <form class="pager-bar__size" method="get" data-pager-size><% for(const [name,value] of pager.hidden){ %><input type="hidden" name="<%= name %>" value="<%= value %>"><% } %><label>Rows per page <select class="select" name="rows"><% for(const size of pager.sizes){ %><option value="<%= size %>" <%= size===pager.size?'selected':'' %>><%= size %></option><% } %></select></label><noscript><button class="btn btn--sm" type="submit">Apply</button></noscript></form>
+  <span class="pager-bar__go"><% if(pager.previousHref){ %><a class="btn btn--sm" href="<%= pager.previousHref %>" rel="prev">Previous</a><% } %><% if(pager.pages&&pager.pages>1){ %><span class="pager-bar__page">Page <%= pager.page %> of <%= pager.pages %></span><% } %><% if(pager.nextHref){ %><a class="btn btn--sm" href="<%= pager.nextHref %>" rel="next">Next</a><% } %></span>
+</nav><% } %>

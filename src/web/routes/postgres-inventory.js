@@ -44,7 +44,7 @@ function createPostgresInventoryRouter(database) {
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||'',category:String(req.query.category||'').slice(0,160),supplier:String(req.query.supplier||'').slice(0,160),size:String(req.query.size||'').slice(0,120),color:String(req.query.color||'').slice(0,120),lowStock:req.query.lowStock==='1'};
     filters.optionName=String(req.query.optionName||'').slice(0,120);filters.optionValue=String(req.query.optionValue||'').slice(0,120);
-    const isFlat=req.query.view==='flat',result=await (isFlat?require('../../domain/postgres-flat-catalog').list:catalog.listItems)(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after});
+    const listSize=require('../presentation/pagination').pageSize(req),isFlat=req.query.view==='flat',result=await (isFlat?require('../../domain/postgres-flat-catalog').list:catalog.listItems)(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after,pageSize:listSize});
     const hasProducts=result.items.length>0||(await database.query('SELECT 1 FROM items WHERE workspace_id=$1 LIMIT 1',[req.ctx.workspaceId])).rows.length>0;
     if(!isFlat&&result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
@@ -56,7 +56,7 @@ function createPostgresInventoryRouter(database) {
     // Rendering must work with a read-only business connection. Authorized
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
-    return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
+    return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,pager:require('../presentation/pagination').pager(req,{page:result.page,size:listSize,total:result.totalCount||(result.hasMore?null:result.items.length),hasMore:result.hasMore,shown:result.items.length,next:{after:result.nextAfterItemId||null}}),
       hasProducts,isFlat,totalCount:result.totalCount,hasMore:result.hasMore,nextAfterItemId:result.nextAfterItemId,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId,{includeStock:false}),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,

@@ -65,7 +65,7 @@
         </tbody>
       </table>
     <% } %>
-    <footer class="ox-foot"><span class="ox-muted">Showing <%= L.rows.length %> of <%= L.counts[L.tab] %></span></footer>
+    <footer class="ox-foot"><% if (locals.pager && pager.show) { %><%- include('../partials/pager') %><% } else { %><span class="ox-muted">Showing <%= L.rows.length %> of <%= L.matching %></span><% } %></footer>
     <% } %>
   </section>
 

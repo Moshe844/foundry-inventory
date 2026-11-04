@@ -62,7 +62,7 @@ async function list(database,ctx,{before=null,status=''}={}){
  return database.transaction(async client=>{
   const counts=(await client.query(`SELECT status,count(*) AS total,
     count(*) FILTER(WHERE expires_at<=now()) AS expired FROM stockchief_runtime.assistant_goals
-   WHERE workspace_id=$1 AND actor_user_id=$2 GROUP BY status`,[ctx.workspaceId,ctx.actorId])).rows;
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_chat_preferences hidden WHERE hidden.workspace_id=$1 AND hidden.actor_user_id=$2 AND hidden.chat_id=coalesce(checkpoint->>'chatId',id) AND hidden.deleted_at IS NOT NULL) GROUP BY status`,[ctx.workspaceId,ctx.actorId])).rows;
   const statusCounts=Object.entries(labels).map(([value,label])=>{
    const count=counts.find(r=>r.status===value),total=Number(count?.total||0),expired=Number(count?.expired||0);
    return {status:value,label,total,expired,withinLifetime:total-expired};
@@ -78,7 +78,7 @@ async function list(database,ctx,{before=null,status=''}={}){
       'codexDelivery',jsonb_build_object('state',checkpoint#>'{harness,codexDelivery,state}'),
       'helperDelivery',jsonb_build_object('state',checkpoint#>'{harness,helperDelivery,state}'))) AS public_checkpoint,
     to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_time FROM stockchief_runtime.assistant_goals
-   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3='' OR status=$3)
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3='' OR status=$3) AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_chat_preferences hidden WHERE hidden.workspace_id=$1 AND hidden.actor_user_id=$2 AND hidden.chat_id=coalesce(checkpoint->>'chatId',id) AND hidden.deleted_at IS NOT NULL)
     AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5::text))
    ORDER BY created_at DESC,id DESC LIMIT $6`,[ctx.workspaceId,ctx.actorId,status,after?.[0]||null,after?.[1]||null,pageSize+1])).rows;
   const hasMore=rows.length>pageSize,visible=rows.slice(0,pageSize),recorded=await effects(client,ctx,visible.map(g=>g.id)),last=visible.at(-1);

@@ -118,7 +118,7 @@ function resultFor(turn,proposal=null){
 }
 
 async function askExamples(database,ctx,page=null){
-  return require('../../assistant/postgres-discovery').suggestions(database,ctx,4,page);
+  return require('../../assistant/postgres-discovery').suggestions(database,ctx,6,page);
 }
 
 async function instructionLists(database,ctx,proposalIds){
@@ -160,7 +160,7 @@ function createPostgresAskRouter(database,options={}){
       req.session.postgresAskWorkspace=id;
     }next();
   });
-  const goalStore=require('../../assistant/postgres-goal-store');
+  const goalStore=require('../../assistant/postgres-goal-store'),chats=require('../../assistant/postgres-chats');
   const pilot=require('../../assistant/postgres-codex-pilot');
   const agentNavigation=require('../../assistant/postgres-agent-navigation');
   const conversation=require('../../assistant/agent-conversation');
@@ -353,14 +353,14 @@ function createPostgresAskRouter(database,options={}){
     if(req.query.goal!==undefined){
       if(typeof req.query.goal!=='string'||req.query.goal.length>160)return res.sendStatus(404);
       const goal=await goalStore.get(database,req.ctx,req.query.goal);
-      if(!goal)return res.sendStatus(404);
+      if(!goal||await chats.isDeleted(database,req.ctx,goal.checkpoint?.chatId||goal.id))return res.sendStatus(404);
       const recorded=await history.effects(database,req.ctx,[goal.id]);
       const state=conversation.state(goal);
       selected={id:goal.id,request:goal.original_request,label:state.label,createdAt:goal.created_at,
         conversation:{...state,history:(state.history||[]).map(turn=>({...turn,text:conversation.publicText(turn.text)}))},
         delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[],continuation:await pilot.continuation(database,req.ctx,goal.id)};
     }
-    if(!selected&&!req.query.status&&!req.query.before)return res.page('attention/conversations',{title:'Your conversations',nav:'ask',requireLabels:history.labels,chats:await require('../../assistant/postgres-chats').list(database,req.ctx,{limit:100})});
+    if(!selected&&!req.query.status&&!req.query.before){const pagination=require('../presentation/pagination'),paging=pagination.window(req),q=String(req.query.q||'').trim().slice(0,200),paged=pagination.fromWindow(req,await chats.list(database,req.ctx,{limit:paging.limit,offset:paging.offset,q}),paging);return res.page('attention/conversations',{title:'Your conversations',nav:'ask',requireLabels:history.labels,chats:paged.rows,pager:paged.pager,q,chatReturn:'/ask/history'});}
     const saved=selected?null:await history.list(database,req.ctx,{before:req.query.before,status:req.query.status==='all'?'':req.query.status||''});
     return res.page('attention/ask-history',{title:'Saved requests',nav:'ask',room:true,selected,saved,
       labels:history.labels,renderAgentAnswer:require('../public/agent-answer').render});
@@ -458,8 +458,9 @@ function createPostgresAskRouter(database,options={}){
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=focusedGoal||transcript.at(-1)?.agentGoal;
     const submission=req.session.askSubmission?.workspaceId===req.ctx.workspaceId?req.session.askSubmission:null;
-    const recentRequests=await require('../../assistant/postgres-chats').list(database,req.ctx,{limit:10});
-    return res.page('attention/ask',{recentRequests,title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
+    const recentRequests=await chats.list(database,req.ctx,{limit:40}),businessZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;
+    const currentChat=recentRequests.find(chat=>chat.chat_id===req.session.postgresAskConversationId)||null;
+    return res.page('attention/ask',{recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
@@ -470,6 +471,22 @@ function createPostgresAskRouter(database,options={}){
       continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
       continuationQuestionId:continuationGoal?.conversation?.input?.id||null,
       examples:await askExamples(database,req.ctx,sourcePage)});
+  }));
+  // One person's own conversations: named, pinned, downloaded or deleted.
+  const chatReturn=req=>{const to=String(req.body.returnTo||'');return /^\/ask(?:\/history)?(?:\?[\w=&%.-]*)?$/.test(to)?to:'/ask';};
+  router.post('/ask/chats/:id/rename',asyncRoute(async(req,res)=>{await chats.rename(database,req.ctx,req.params.id,req.body.title);return res.redirect(303,chatReturn(req));}));
+  router.post('/ask/chats/:id/pin',asyncRoute(async(req,res)=>{await chats.pin(database,req.ctx,req.params.id,req.body.pinned==='1');return res.redirect(303,chatReturn(req));}));
+  router.post('/ask/chats/:id/delete',asyncRoute(async(req,res)=>{
+    try{await chats.remove(database,req.ctx,req.params.id);}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);return res.redirect(303,chatReturn(req));}
+    if(req.session.postgresAskConversationId===req.params.id){req.session.postgresAskStartedAt=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;req.session.postgresAskConversationId=newId('chat');delete req.session.askSubmission;req.session.postgresAskNavigationGoal=null;}
+    req.flash('success','Conversation deleted.');
+    return res.redirect(303,/[?&]chat=/.test(chatReturn(req))?'/ask':chatReturn(req));
+  }));
+  router.get('/ask/chats/:id/download',asyncRoute(async(req,res)=>{
+    const turns=await chats.transcript(database,req.ctx,req.params.id),text=turns.map(turn=>'You: '+turn.message+'\n\nStockChief: '+conversation.publicText(turn.answer||'(no answer recorded)')).join('\n\n---\n\n');
+    res.set({'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="stockchief-conversation.txt"','Cache-Control':'private, no-store'});
+    return res.send(text+'\n');
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{
     // Use the database clock that timestamps interactions, then persist the

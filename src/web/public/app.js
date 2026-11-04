@@ -1882,6 +1882,14 @@
   var zone; try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return; }
   if (!zone) return;
   document.querySelectorAll('input[data-business-time-zone]').forEach(function (input) { if (!input.value) input.value = zone; });
+  // The zone you are in comes first in every list, right after the one already saved.
+  document.querySelectorAll('select[name="timeZone"]').forEach(function (select) {
+    var saved = select.options[select.selectedIndex], mine = Array.prototype.find.call(select.options, function (o) { return o.value === zone; });
+    if (!mine) return;
+    var after = saved && saved !== mine && saved.value !== 'UTC' ? saved : null;
+    if (after) select.insertBefore(after, select.firstChild);
+    select.insertBefore(mine, after ? after.nextSibling : select.firstChild);
+  });
   document.querySelectorAll('select[data-time-zone-default="browser"]').forEach(function (select) {
     if (zone === select.value || !Array.prototype.some.call(select.options, function (o) { return o.value === zone; })) return;
     select.value = zone;

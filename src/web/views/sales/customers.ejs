@@ -8,8 +8,8 @@
 </div>
 
 <section class="card section">
-  <div class="card-head"><h2><%= customers.length %> active customer<%= customers.length === 1 ? '' : 's' %></h2></div>
-  <% if (!customers.length) { %>
+  <div class="card-head"><h2><%= customerTotal %> active customer<%= customerTotal === 1 ? '' : 's' %></h2><% if (customerTotal) { %><form method="get" action="/sales/customers" role="search" class="customers-search"><label><span class="visually-hidden">Search customers</span><input class="input" type="search" name="q" value="<%= q %>" placeholder="Search name, company, email or phone" autocomplete="off"></label><button class="btn btn--sm" type="submit">Search</button></form><% } %></div>
+  <% if (customerTotal && !customers.length) { %><p class="empty-state__title" style="padding:18px">No customers match “<%= q %>”.</p><% } else if (!customers.length) { %>
     <div class="empty-state">
       <p class="empty-state__title">No customers yet</p>
       <p class="empty-state__body">Customers you add or connect to an order will appear here.</p>
@@ -29,5 +29,6 @@
         <% }) %>
       </tbody>
     </table>
+    <%- include('../partials/pager') %>
   <% } %>
 </section>

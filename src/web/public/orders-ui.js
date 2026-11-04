@@ -12,26 +12,12 @@
 
   /* ---------------- Orders list ---------------- */
   function ordersList() {
-    $$('.ox-row[data-href]').forEach(function (row) {
-      row.addEventListener('click', function (event) {
-        if (event.target.closest('a, button, input')) return;
-        if (window.getSelection && String(window.getSelection())) return;
-        window.location.href = row.getAttribute('data-href');
-      });
+    document.addEventListener('click', function (event) {
+      var row = event.target.closest && event.target.closest('.ox-row[data-href]');
+      if (!row || event.target.closest('a, button, input')) return;
+      if (window.getSelection && String(window.getSelection())) return;
+      window.location.href = row.getAttribute('data-href');
     });
-    var form = $('[data-ox-search]');
-    if (!form) return;
-    var input = $('input[name="q"]', form);
-    var initial = input.value;
-    var timer = null;
-    input.addEventListener('input', function () {
-      clearTimeout(timer);
-      timer = setTimeout(function () {
-        if (input.value.trim() === initial.trim()) return;
-        form.submit();
-      }, 300);
-    });
-    if (initial) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
   }
 
   var ORDER_PAGE = /^\/(sales\/)?orders\/so_[^/]+$/;

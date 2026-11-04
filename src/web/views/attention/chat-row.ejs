@@ -1,0 +1,9 @@
+<div class="ask-chat" data-chat-row data-chat-text="<%= chat.label.toLowerCase() %>" <%- locals.currentChatId===chat.chat_id?'aria-current="true"':'' %>>
+  <a class="sc-recent-request" href="<%= chat.href %>"><strong><%= chat.label %></strong><time data-local-time datetime="<%= new Date(chat.updated_at).toISOString() %>"><%= helpers.dateTime(chat.updated_at) %></time></a>
+  <details class="ask-menu"><summary aria-label="Options for <%= chat.label %>"><span aria-hidden="true">⋯</span></summary><div class="ask-menu__panel">
+    <form method="post" action="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/pin"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= chatReturn %>"><input type="hidden" name="pinned" value="<%= chat.pinned_at?'':'1' %>"><button type="submit"><%= chat.pinned_at?'Unpin':'Pin' %></button></form>
+    <a href="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/download" download>Download</a>
+    <form class="ask-menu__rename" method="post" action="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/rename"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= chatReturn %>"><label><span class="visually-hidden">Conversation name</span><input name="title" value="<%= chat.title||'' %>" maxlength="120" placeholder="Name this conversation"></label><button type="submit">Rename</button></form>
+    <form method="post" action="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/delete" data-confirm="Delete this conversation? It disappears from your list and cannot be reopened. Anything it already changed stays recorded in your business's history."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= chatReturn %>"><button class="ask-menu__delete" type="submit">Delete</button></form>
+  </div></details>
+</div>

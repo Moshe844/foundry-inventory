@@ -30,7 +30,7 @@ function createPostgresAutopilotRouter(database){
     return res.page('autopilot/history',{title:"StockChief's work",nav:'autopilot',groups,operations:[],evaluations:[],describe});
   }));
   router.get('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-misses',{
-    title:'Report an Ask problem',nav:'ask',room:true,interactions:await assistant.listInteractions(database,req.ctx.workspaceId,30)})));
+    title:'Report an Ask problem',nav:'ask',room:true,selectedInteraction:typeof req.query.interaction==='string'?req.query.interaction:null,interactions:await assistant.listInteractions(database,req.ctx.workspaceId,30)})));
   router.post('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>{
     const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100);
     const turn=interactions.find((entry)=>entry.id===req.body.interactionId);

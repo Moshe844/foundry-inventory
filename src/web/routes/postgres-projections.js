@@ -82,7 +82,7 @@ async function businessActivity(database,workspaceId){
   return events;
 }
 
-async function activityPage(database,workspaceId,query,includeSecurity=false){const page=positivePage(query.page);const pageSize=50;
+async function activityPage(database,workspaceId,query,includeSecurity=false,pageSize=50){const page=positivePage(query.page);
   const filters={operation:trimOrNull(query.operation)||'',itemId:trimOrNull(query.item)||'',
     locationId:trimOrNull(query.location)||'',actorId:trimOrNull(query.user)||'',
     dateFrom:trimOrNull(query.from)||'',dateTo:trimOrNull(query.to)||''};const search=trimOrNull(query.q)||'';
@@ -97,15 +97,18 @@ async function activityPage(database,workspaceId,query,includeSecurity=false){co
   const where=clauses.join(' AND ');const count=(await database.query(`SELECT COUNT(*) AS count FROM movements m
     JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
     JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id WHERE ${where}`,values)).rows[0];
-  values.push(pageSize+1,(page-1)*pageSize);const rows=(await database.query(`SELECT m.*,i.name AS item_name,
+  const movementFilters=[...values];const movementSelect=`SELECT m.*,i.name AS item_name,
     s.code,s.variant_label,l.name AS location_name,u.name AS actor_name FROM movements m
     JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
     JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id LEFT JOIN users u ON u.id=m.actor_user_id
-    WHERE ${where} ORDER BY m.occurred_at DESC,m.seq DESC LIMIT $${values.length-1} OFFSET $${values.length}`,values)).rows;
+    WHERE ${where} ORDER BY m.occurred_at DESC,m.seq DESC`;
+  values.push(pageSize+1,(page-1)*pageSize);const rows=(await database.query(movementSelect+` LIMIT $${values.length-1} OFFSET $${values.length}`,values)).rows;
   const hasMore=rows.length>pageSize;const visible=rows.slice(0,pageSize);const groups=visible.map((row)=>({operation:row.operation,
     itemId:row.item_id,displayName:row.variant_label||row.item_name,sentence:movementSentence(row),actorName:row.actor_name||'StockChief',
     occurredAt:row.occurred_at,reasonLabel:null,reference:row.reference,notes:row.notes}));
-  const inventoryEvents=visible.map((row)=>({stream:'inventory',at:row.occurred_at,title:movementSentence(row),
+  // Everything up to the end of this page, so it can be merged with other activity and cut once.
+  const timeline=page===1?visible:(await database.query(movementSelect+` LIMIT $${movementFilters.length+1}`,[...movementFilters,Math.min(5000,page*pageSize)])).rows;
+  const inventoryEvents=timeline.map((row)=>({stream:'inventory',at:row.occurred_at,title:movementSentence(row),
     detail:[row.reference&&`Reference ${row.reference}`,row.notes].filter(Boolean).join(' · '),who:row.actor_name||'StockChief',href:`/inventory/${row.item_id}`}));
   const streams=['inventory','sales','purchasing','foundry','exception',...(includeSecurity?['security']:[])];
   const stream=streams.includes(query.stream)?query.stream:'all';
@@ -117,15 +120,16 @@ async function activityPage(database,workspaceId,query,includeSecurity=false){co
     &&(!needle||`${event.title} ${event.detail} ${event.who}`.toLowerCase().includes(needle))
     &&(!filters.dateFrom||String(event.at).slice(0,10)>=filters.dateFrom)
     &&(!filters.dateTo||String(event.at).slice(0,10)<=filters.dateTo))
-    .sort((left,right)=>String(right.at).localeCompare(String(left.at))).slice(0,100);
+    .sort((left,right)=>String(right.at).localeCompare(String(left.at)));
   const [locations,users,items]=await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 ORDER BY is_active DESC,name,id`,[workspaceId]),
     database.query(`SELECT id,name FROM users WHERE workspace_id=$1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT id,name FROM items WHERE workspace_id=$1 ORDER BY is_active DESC,name,id LIMIT 200`,[workspaceId])]);
-  const total=Number(count.count);return {page,pageSize,hasMore,total,filters,groups,locations:locations.rows,users:users.rows,
+  const total=Number(count.count),beyondThisPage=Math.max(0,total-timeline.length),eventTotal=events.length+(['all','inventory'].includes(stream)?beyondThisPage:0);
+  return {page,pageSize,hasMore,total,eventTotal,filters,groups,locations:locations.rows,users:users.rows,
     items:items.rows,stream,query:search,streams,
     streamLabels:{all:'All activity',inventory:'Inventory',sales:'Sales orders',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',security:'Access and settings',system:'System'},
-    log:{events,counts:{},quietChecks:0}};}
+    log:{events:events.slice((page-1)*pageSize,page*pageSize),counts:{},quietChecks:0}};}
 
 function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0,days31to60:0,days61to90:0,over90:0};let totalMinor=0;
   for(const row of rows){if(!['OPEN','PARTIALLY_PAID'].includes(row.status))continue;const balance=Number(row.balance_minor||0);totalMinor+=balance;
@@ -154,16 +158,16 @@ function createPostgresProjectionsRouter(database){
     const homeSales=permissions.can(req.user,permissions.VIEW_ACCOUNTING)?await require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):null;
     return res.page('foundry/brief',{homeSales,title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
-      askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:result.brief.needs.filter(item=>!item.approval).slice(0,4),
+      askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:require('../presentation/importance').mostImportantFirst(result.brief.needs.filter(item=>!item.approval)).slice(0,18),homeLevels:require('../presentation/importance').counts(result.brief.needs),
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get('/needs-you/questions/:id',requireAuth,asyncRoute(async(req,res)=>{const entries=await require('../../assistant/postgres-approval-projection').pending(database,req.ctx.workspaceId,req.ctx.actorId);const entry=entries.find(e=>e.question?.goalId===req.params.id);if(!entry){req.flash('info','That question is no longer waiting for an answer.');return res.redirect(303,'/needs-you');}return res.page('manager/question',{title:'Answer a question',nav:'home',entry});}));
   router.get('/needs-you/work',requireAuth,asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
-    return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,req.query)});
+    const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});
   }));
-  router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,req.query)})));
+  router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
@@ -174,8 +178,9 @@ function createPostgresProjectionsRouter(database){
         inbox:items,failures,desk:require('../needs-you-presentation').present(items,req.query),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
+    const size=require('../presentation/pagination').pageSize(req),found=await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner',size);
     return res.page('activity/list',{title:'Activity',nav:'history',backToFallback:{href:'/everything',label:'Everything else'},
-      recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner'))});
+      recentOnly:true,...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.eventTotal,shown:found.log.events.length})});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
     const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
@@ -200,8 +205,9 @@ function createPostgresProjectionsRouter(database){
   router.get('/accounting/transactions',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting transactions'),asyncRoute(async(req,res)=>{const dates=period(req.query,await require('../../lib/business-time').today(database,req.ctx.workspaceId));
     const entries=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
       AND posting_date BETWEEN $2 AND $3 ORDER BY posting_date DESC,entry_number DESC`,[req.ctx.workspaceId,dates.from,dates.to])).rows;
+    const paged=require('../presentation/pagination').slice(req,entries);
     return res.page('accounting/transactions',{title:'Accounting transactions',nav:'accounting',from:dates.from,to:dates.to,
-      rows:[],entries});
+      rows:[],entries:paged.rows,entryTotal:entries.length,pager:paged.pager});
   }));
   router.get('/accounting/chart',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view the chart of accounts'),asyncRoute(async(req,res)=>res.page('accounting/chart',{
     title:'Chart of accounts',nav:'accounting',accounts:(await database.query(`SELECT * FROM accounting_accounts
