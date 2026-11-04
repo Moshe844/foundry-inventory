@@ -65,7 +65,9 @@ test('PostgreSQL connector events authenticate, commit atomically, replay once a
     await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
     assert.match(await page.locator('main').innerText(),/Unknown sku from Commerce event feed/);
     assert.match(await page.locator('main').innerText(),/Conflicting provider event needs reconciliation/);
-    assert.match(await page.locator('main').innerText(),/Choose the matching StockChief record once/);
+    const unmatched=page.locator('.ny-card').filter({hasText:'Unknown sku from Commerce event feed'});
+    await unmatched.getByText('More',{exact:true}).click();
+    assert.match(await unmatched.innerText(),/Choose the matching StockChief record once/);
     await page.goto(`${base}/settings/connections/${feed.connection.id}`);
     assert.match(await page.locator('main').innerText(),/Commerce event feed/);assert.match(await page.locator('main').innerText(),/Needs attention/);
     assert.deepEqual(errors,[]);

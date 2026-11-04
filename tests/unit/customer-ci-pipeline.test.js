@@ -1,8 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process');
+function runBlocks(workflow){const lines=workflow.split(/\r?\n/);return lines.flatMap((line,index)=>{
+ if(!/^(?:      - |        )run: \|$/.test(line))return [];
+ const body=[];for(let next=index+1;next<lines.length&&lines[next].startsWith('          ');next++)body.push(lines[next].slice(10));
+ return [body.join('\n')+'\n'];
+});}
 test('the actual required CI logging pipeline propagates a failing test command',()=>{
  const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/customer-navigation.yml'),'utf8');
- const blocks=[...workflow.matchAll(/      - (?:name: [^\r\n]+\r?\n        )?run: \|\r?\n((?:          [^\n]*\r?\n)+)/g)].map(m=>m[1].replace(/^          /gm,''));
+ assert.doesNotMatch(workflow,/continue-on-error/,'Every failed group must still fail the release');
+ const blocks=runBlocks(workflow);
  const required=blocks.filter(s=>s.includes('npm run test:customer-navigation'));assert.equal(required.length,2,'Core and complete click crawl remain separate required steps');
  const shell=process.platform==='win32'?path.join(process.env.ProgramFiles||'C:/Program Files','Git/bin/bash.exe'):'/bin/bash';
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-ci-pipeline-'));
@@ -16,7 +22,8 @@ test('the inventory regression pipeline retains every piped verdict and its fina
  assert.doesNotMatch(workflow,/node [^\r\n]*--test-force-exit/);
  const commands=workflow.split(/\r?\n/).filter(line=>line.trimStart().startsWith('node --test '));
  assert(commands.length>0);assert(commands.every(line=>line.startsWith('          node ')),'Every test command belongs to its YAML run block');
- const blocks=[...workflow.matchAll(/      - (?:name: [^\r\n]+\r?\n        )?run: \|\r?\n((?:          [^\n]*\r?\n)+)/g)].map(m=>m[1].replace(/^          /gm,''));
+ assert.doesNotMatch(workflow,/continue-on-error/,'Every failed group must still fail the release');
+ const blocks=runBlocks(workflow);
  const block=blocks.find(s=>s.includes('tee output/inventory-ci/full-regressions.log'));
  assert(block,'The full unit/integration gate remains required');
  const shell=process.platform==='win32'?path.join(process.env.ProgramFiles||'C:/Program Files','Git/bin/bash.exe'):'/bin/bash';
