@@ -81,7 +81,33 @@ function setupReportBuilder(builder){
     measureRow.hidden=kind==='count';measure.disabled=kind==='count'||modeNow()==='list';
   };
   const resultColumn=()=>REPORT_RESULT[aggregate.value]||'count';
-  const resultName=()=>aggregate.value==='count'?'Number of records':aggregate.selectedOptions[0]?.textContent+' of '+(measure.selectedOptions[0]?.textContent||'');
+  const metricName=(kind,field,text)=>kind==='count'?'Records':kind==='sum'||kind==='ratio'?text:(kind==='average'?'Average ':kind==='minimum'?'Lowest ':kind==='maximum'?'Highest ':'Different ')+String(text||'').toLowerCase();
+  const resultName=()=>metricName(aggregate.value,measure.value,measure.selectedOptions[0]?.textContent||'');
+  /* Further numbers beside the first */
+  const extraRows=all('[data-report-extra]'),extraAdd=one('[data-report-extra-add]'),chartMeasure=one('[data-report-chart-measure]');
+  const extraParts=row=>({kind:row.querySelector('[data-report-extra-aggregate]'),field:row.querySelector('[data-report-extra-measure]'),fieldRow:row.querySelector('[data-report-extra-measure-row]')});
+  const choicesFor=kind=>kind==='count'?[]:kind==='ratio'?Object.keys(schema.metrics||{}):kind==='count_distinct'?Object.keys(fields):numericFields;
+  const fillExtra=(row,wanted)=>{
+    const {kind,field,fieldRow}=extraParts(row),list=choicesFor(kind.value);
+    field.replaceChildren(...list.map(key=>new Option(measureChoices[key]||labelOf(key),key)));
+    field.value=list.includes(wanted)?wanted:(list[0]||'');fieldRow.hidden=kind.value==='count';field.disabled=kind.value==='count'||row.hidden||modeNow()==='list';kind.disabled=row.hidden||modeNow()==='list';
+  };
+  const activeExtras=()=>extraRows.filter(row=>!row.hidden).map(row=>{const {kind,field}=extraParts(row);return {kind:kind.value,field:kind.value==='count'?'':field.value};});
+  const extraColumn=extra=>(REPORT_RESULT[extra.kind]||'count')+'_'+(extra.field||'records');
+  const syncExtraAdd=()=>{if(extraAdd)extraAdd.hidden=!extraRows.some(row=>row.hidden)||!numericFields.length;};
+  for(const row of extraRows){
+    const {kind,field}=extraParts(row);kind.dataset.was=kind.value;
+    for(const option of [...kind.options]){if(option.value==='ratio'&&!Object.keys(schema.metrics||{}).length)option.remove();if(['sum','average','minimum','maximum'].includes(option.value)&&!numericFields.length)option.remove();}
+    kind.addEventListener('change',()=>{fillExtra(row,field.value);syncSort();requireMoneyScope();});
+    field.addEventListener('change',()=>{syncSort();requireMoneyScope();});
+    row.querySelector('[data-report-extra-remove]').addEventListener('click',()=>{row.hidden=true;fillExtra(row,'');if(chartMeasure.value&&!activeExtras().some(extra=>extraColumn(extra)===chartMeasure.value))chartMeasure.value='';syncExtraAdd();syncSort();changed();});
+  }
+  const unusedMeasure=()=>{const used=new Set([measure.value,...activeExtras().map(extra=>extra.field)]);return numericFields.find(key=>typeOf(key)==='money_minor'&&!used.has(key))||numericFields.find(key=>!used.has(key))||'';};
+  const addExtra=(kindValue,fieldValue)=>{
+    const row=extraRows.find(item=>item.hidden);if(!row)return;
+    row.hidden=false;const {kind}=extraParts(row);kind.value=kindValue||'sum';fillExtra(row,fieldValue||unusedMeasure());syncExtraAdd();syncSort();requireMoneyScope();
+  };
+  extraAdd?.addEventListener('click',()=>{addExtra();changed();});
   const syncDirectionWords=()=>{
     const type=sort.value===resultColumn()?'number':typeOf(sort.value||groupsNow()[0]);
     const [high,low]=type==='date'?['Newest first','Oldest first']:['number','money_minor'].includes(type)?['Highest first','Lowest first']:['Z to A','A to Z'];
@@ -94,7 +120,7 @@ function setupReportBuilder(builder){
   };
   const syncSort=()=>{
     const keep=sort.value||sort.getAttribute('data-initial')||'',current=modeNow();sort.removeAttribute('data-initial');
-    const options=current==='groups'?[...groupsNow().map(field=>[field,labelOf(field)]),[resultColumn(),resultName()]]:Object.keys(fields).map(field=>[field,labelOf(field)]);
+    const options=current==='groups'?[...groupsNow().map(field=>[field,labelOf(field)]),[resultColumn(),resultName()],...activeExtras().map(extra=>[extraColumn(extra),metricName(extra.kind,extra.field,measureChoices[extra.field]||labelOf(extra.field))])]:Object.keys(fields).map(field=>[field,labelOf(field)]);
     if(current!=='groups')options.unshift(['','Default order']);
     sort.replaceChildren(...options.map(([value,label])=>new Option(label,value)));
     sort.disabled=current==='summary';
@@ -120,7 +146,7 @@ function setupReportBuilder(builder){
     groupSelects.forEach(select=>{select.disabled=current!=='groups';});
     aggregate.disabled=current==='list';
     columnInputs().forEach(input=>{input.disabled=current!=='list';});
-    syncGroups();syncMeasure();syncSort();syncChart();
+    syncGroups();syncMeasure();extraRows.forEach(row=>fillExtra(row,extraParts(row).field.value||extraParts(row).field.dataset.initial));syncExtraAdd();syncSort();syncChart();syncCompare();
   };
   // The first useful total for a source: its first amount when it has one, otherwise a count.
   const startCalculation=()=>{
@@ -134,7 +160,7 @@ function setupReportBuilder(builder){
     if(modeNow()!=='list')startCalculation();
     sort.value='';applyMode();autoSort();syncDirectionWords();
     if(modeNow()==='groups')chooseChart(lineAllowed()?'line':'bar');
-    syncChart();requireMoneyScope();
+    syncChart();requireMoneyScope();syncTry();
   }));
   function lineAllowedAfterEnable(){const field=groupSelects[0].value;return field&&typeOf(field)==='date';}
   groupSelects.forEach((select,index)=>select.addEventListener('change',()=>{
@@ -309,16 +335,54 @@ function setupReportBuilder(builder){
      Add the filter that makes the total honest, where the person can see and change it. */
   function moneyScopeNeeded(){
     if(modeNow()==='list')return [];
-    const needs=[],kind=aggregate.value,chosen=measure.value,groups=groupsNow(),filtersNow=filterRows.map(partsOf).filter(row=>row.field.value);
+    const needs=[],groups=groupsNow(),filtersNow=filterRows.map(partsOf).filter(row=>row.field.value);
     const exactCurrency=filtersNow.some(row=>row.field.value==='currency'&&row.operator.value==='equals'&&/^[A-Z]{3}$/.test(row.real.value));
-    const moneyTotal=['sum','average','minimum','maximum'].includes(kind)&&typeOf(chosen)==='money_minor';
-    const moneyRatio=kind==='ratio'&&schema.metrics?.[chosen]?.currencySensitive;
-    if((moneyTotal||moneyRatio)&&fields.currency&&schema.currency&&!groups.includes('currency')&&!exactCurrency)needs.push(['currency','equals',schema.currency]);
-    const known=['sum','average','minimum','maximum'].includes(kind)?schema.moneyCompleteness?.[chosen]:null;
-    if(known&&!filtersNow.some(row=>row.field.value===known.field&&row.operator.value==='equals'&&row.real.value===String(known.value)))needs.push([known.field,'equals',String(known.value)]);
+    for(const {kind,field:chosen} of [{kind:aggregate.value,field:measure.value},...activeExtras()]){
+      const moneyTotal=['sum','average','minimum','maximum'].includes(kind)&&typeOf(chosen)==='money_minor';
+      const moneyRatio=kind==='ratio'&&schema.metrics?.[chosen]?.currencySensitive;
+      if((moneyTotal||moneyRatio)&&fields.currency&&schema.currency&&!groups.includes('currency')&&!exactCurrency&&!needs.some(need=>need[0]==='currency'))needs.push(['currency','equals',schema.currency]);
+      const known=['sum','average','minimum','maximum'].includes(kind)?schema.moneyCompleteness?.[chosen]:null;
+      if(known&&!filtersNow.some(row=>row.field.value===known.field&&row.operator.value==='equals'&&row.real.value===String(known.value))&&!needs.some(need=>need[0]===known.field))needs.push([known.field,'equals',String(known.value)]);
+    }
     return needs;
   }
   function requireMoneyScope(){for(const [field,operator,value] of moneyScopeNeeded())setFilter(field,operator,value);syncFilterSummary();}
+
+  /* Comparing needs a date range to compare against */
+  const compare=one('[data-report-compare]'),compareHint=one('[data-report-compare-hint]');
+  function syncCompare(){
+    if(!compare)return;
+    const dated=filterRows.map(partsOf).some(({field,operator,real})=>typeOf(field.value)==='date'&&['relative','after','at_least'].includes(operator.value)&&real.value);
+    compare.disabled=!dated||modeNow()==='list';if(!dated)compare.value='';if(compareHint)compareHint.hidden=dated;
+  }
+
+  /* One-click next steps, from what this source can actually answer */
+  const tryArea=one('[data-report-try]');
+  const usefulGroups=()=>Object.keys(fields).filter(key=>typeOf(key)==='text'&&key!=='currency'&&!/number|code|sku|reference|source|note|description|email|phone|address|barcode|id$/.test(key)&&[...groupSelects[0].options].some(option=>option.value===key));
+  const fireChange=node=>node.dispatchEvent(new Event('change',{bubbles:true}));
+  function syncTry(){
+    if(!tryArea)return;
+    const current=modeNow(),moves=[],groups=groupsNow(),dateFields=Object.keys(fields).filter(key=>typeOf(key)==='date'&&[...groupSelects[0].options].some(option=>option.value===key));
+    const groupBy=(field,grainValue)=>{groupSelects[0].value=field;groupSelects.slice(1).forEach(select=>{select.value='';});if(grainValue)grain.value=grainValue;fireChange(groupSelects[0]);};
+    const toGroups=(field,grainValue)=>{if(modeNow()!=='groups'){modes.find(radio=>radio.value==='groups').checked=true;groupSelects[0].value=field;fireChange(modes.find(radio=>radio.value==='groups'));}groupBy(field,grainValue);};
+    const name=key=>labelOf(key).toLowerCase();
+    if(current==='list'||current==='summary')usefulGroups().slice(0,4).forEach(key=>moves.push(['Totals by '+name(key),()=>toGroups(key)]));
+    if(current==='groups'){
+      const dated=groups.find(key=>typeOf(key)==='date');
+      if(dated){for(const [value,label] of [['week','By week'],['month','By month'],['quarter','By quarter']])if(grain.value!==value)moves.push([label,()=>{grain.value=value;fireChange(grain);}]);}
+      else if(dateFields[0])moves.push(['Over time',()=>toGroups(dateFields[0],'month')]);
+      usefulGroups().filter(key=>!groups.includes(key)).slice(0,4).forEach(key=>moves.push(['By '+name(key),()=>toGroups(key)]));
+      if(!dated&&!one('[name=topN]').value)moves.push(['Top 10',()=>{one('[name=topN]').value=10;sort.value=resultColumn();direction.value='desc';fireChange(one('[name=topN]'));}]);
+    }
+    if(current!=='list'){
+      const used=new Set([measure.value,...activeExtras().map(extra=>extra.field)]);
+      numericFields.filter(key=>typeOf(key)==='money_minor'&&!used.has(key)).slice(0,3).forEach(key=>{if(extraRows.some(row=>row.hidden))moves.push(['+ '+(measureChoices[key]||labelOf(key)),()=>{addExtra('sum',key);changed();}]);});
+    }
+    tryArea.replaceChildren();tryArea.hidden=!moves.length;
+    if(!moves.length)return;
+    tryArea.append(reportElement('span','','Try'));
+    for(const [label,action] of moves.slice(0,8)){const button=reportElement('button','',label);button.type='button';button.addEventListener('click',()=>{action();syncTry();});tryArea.append(button);}
+  }
 
   /* Live results */
   const status=document.querySelector('[data-report-preview-status]'),canvas=document.querySelector('#report-canvas');
@@ -332,7 +396,7 @@ function setupReportBuilder(builder){
     for(const [name,text] of Object.entries({_csrf:one('[name=_csrf]').value,definition:JSON.stringify(definition),groupValues:JSON.stringify(groupValues)})){const input=document.createElement('input');input.type='hidden';input.name=name;input.value=text;form.append(input);}
     document.body.append(form);form.submit();
   };
-  const cellText=(data,key,row)=>{const value=row[key];if(data.columnTypes?.[key]==='date'||typeOf(key)==='date')return reportDateText(value,data.definition.groups?.includes(key)?data.definition.dateGrain:'exact');return String(value??'—');};
+  const cellText=(data,key,row)=>{const value=row[key];if(data.columnTypes?.[key]==='date'||typeOf(key)==='date')return reportDateText(value,data.definition.groups?.includes(key)?data.definition.dateGrain:'exact');const text=String(value??'—');return /^[a-z]+(_[a-z]+)+$/.test(text)?text.replaceAll('_',' ').replace(/^./,letter=>letter.toUpperCase()):text;};
   const groupLabel=(data,index)=>data.definition.groups.map(key=>cellText(data,key,data.rows[index])).join(' · ');
   const axisText=(data,value)=>{
     if(data.columnTypes?.[data.chart.column]==='money_minor'){
@@ -377,6 +441,24 @@ function setupReportBuilder(builder){
     const axis=reportElement('div','report-plot__axis');for(const index of [...new Set([0,Math.floor((count-1)/2),count-1])])axis.append(reportElement('span','',groupLabel(data,index)));
     chartArea.append(plot,axis);
   }
+  function drawColumns(data){
+    const values=data.chart.values,count=values.length,low=Math.min(0,...values),high=Math.max(1,...values),span=high-low||1;
+    const y=value=>100-(value-low)/span*100;
+    const plot=reportElement('div','report-plot report-plot--columns');
+    for(const value of [high,(high+low)/2,low]){const line=reportElement('div','report-plot__grid');line.style.top=y(value)+'%';line.append(reportElement('span','',axisText(data,value)));plot.append(line);}
+    const tip=reportElement('div','report-plot__tip');tip.hidden=true;
+    values.forEach((value,index)=>{
+      const column=reportElement('button','report-column');column.type='button';column.setAttribute('aria-label',groupLabel(data,index)+': '+String(data.rows[index][data.chart.column]??'—'));
+      column.style.left=index/count*100+'%';column.style.width=100/count+'%';
+      const fill=reportElement('i');if(value<0)fill.classList.add('is-negative');fill.style.top=y(Math.max(value,0))+'%';fill.style.bottom=100-y(Math.min(value,0))+'%';column.append(fill);
+      const show=()=>{tip.hidden=false;tip.replaceChildren(reportElement('span','',groupLabel(data,index)),reportElement('strong','',String(data.rows[index][data.chart.column]??'—')));const middle=(index+.5)/count*100;tip.style.left=middle+'%';tip.style.top=y(Math.max(value,0))+'%';tip.classList.toggle('is-left',middle>60);};
+      column.addEventListener('pointerenter',show);column.addEventListener('focus',show);column.addEventListener('pointerleave',()=>{tip.hidden=true;});
+      column.addEventListener('click',()=>drilldown(data.definition,data.groupValues[index]));plot.append(column);
+    });
+    plot.append(tip);
+    const axis=reportElement('div','report-plot__axis');for(const index of [...new Set([0,Math.floor((count-1)/2),count-1])])axis.append(reportElement('span','',groupLabel(data,index)));
+    chartArea.append(plot,axis);
+  }
   function drawChart(data){
     const wanted=data.definition.groups?.length&&data.definition.chart!=='table'&&data.rows.length;
     const signature=wanted?JSON.stringify([data.definition.chart,data.chart.column,data.chart.values,data.groupValues,data.labels]):'';
@@ -384,13 +466,33 @@ function setupReportBuilder(builder){
     lastChart=signature;chartArea.replaceChildren();chartArea.hidden=!wanted;
     if(!wanted)return;
     if(!data.chart.comparable||!data.chart.plottable){chartArea.append(reportElement('p','report-error',data.chart.comparable?'This chart cannot safely plot these values. The exact figures are in the table.':'This may include different currencies. Filter to one currency to compare amounts. The exact figures are in the table.'));return;}
-    if(data.definition.chart==='line'&&data.rows.length>1)drawLine(data);else drawBars(data);
+    const overTime=data.definition.groups.length===1&&typeOf(data.definition.groups[0])==='date'&&data.definition.sort===data.definition.groups[0]&&data.rows.length>1;
+    if(data.definition.chart==='line'&&data.rows.length>1)drawLine(data);else if(overTime)drawColumns(data);else drawBars(data);
   }
+  const shortDay=value=>reportDateText(value,'day');
   function drawBig(data){
-    bigArea.hidden=!data.definition.summary;
-    if(!data.definition.summary||!data.rows.length)return;
-    const key=data.columns.at(-1),open=reportElement('button','report-source-link','See the records behind this');open.type='button';open.addEventListener('click',()=>drilldown(data.definition,[]));
-    bigArea.replaceChildren(reportElement('span','',data.definition.columnLabels?.[key]||resultName()),reportElement('strong','',String(data.rows[0][key]??'—')),open);
+    const totals=data.totals,metrics=totals?.metrics||[];
+    bigArea.replaceChildren();bigArea.hidden=!metrics.length;
+    if(!metrics.length)return;
+    const choosable=metrics.length>1&&data.definition.groups?.length&&data.definition.chart!=='table';
+    for(const metric of metrics){
+      const tile=reportElement(choosable?'button':'div','report-kpi');
+      if(choosable){
+        tile.type='button';tile.setAttribute('aria-pressed',String(metric.column===data.chart.column));tile.title='Chart '+metric.label;
+        tile.addEventListener('click',()=>{
+          chartMeasure.value=metric.column===metrics[0].column?'':metric.column;
+          const overTime=groupsNow().length===1&&typeOf(groupsNow()[0])==='date';
+          if(!overTime&&[...sort.options].some(option=>option.value===metric.column)){sort.value=metric.column;direction.value='desc';}
+          changed();
+        });
+      }
+      tile.append(reportElement('span','',metric.label),reportElement('strong','',metric.display));
+      if(metric.change!==null&&metric.change!==undefined)tile.append(reportElement('small','report-delta '+(metric.good===true?'is-good':metric.good===false?'is-bad':''),(metric.change>0?'▲ ':metric.change<0?'▼ ':'')+Math.abs(metric.change).toFixed(1)+'%'));
+      if(metric.previousDisplay)tile.append(reportElement('em','','was '+metric.previousDisplay));else if(totals.comparison)tile.append(reportElement('em','','No earlier records'));
+      bigArea.append(tile);
+    }
+    if(totals.comparison)bigArea.append(reportElement('p','report-kpis__note',shortDay(totals.comparison.from)+' – '+shortDay(totals.comparison.to)+' compared with '+shortDay(totals.comparison.previousFrom)+' – '+shortDay(totals.comparison.previousTo)));
+    if(data.definition.summary){const open=reportElement('button','report-source-link','See the records behind this');open.type='button';open.addEventListener('click',()=>drilldown(data.definition,[]));bigArea.append(open);}
   }
   function drawInsights(data){
     const list=data.insights||[];insightsArea.hidden=!list.length;insightsArea.replaceChildren();
@@ -401,10 +503,10 @@ function setupReportBuilder(builder){
   function drawTable(data){
     tableArea.replaceChildren();tableArea.hidden=Boolean(data.definition.summary);
     if(data.definition.summary)return;
-    const table=document.createElement('table'),head=table.createTHead().insertRow(),sortable=!data.definition.summary;
+    const table=document.createElement('table'),head=table.createTHead().insertRow(),metricNames=data.metricColumns||[];
     for(const key of data.columns){
-      const cell=document.createElement('th');cell.scope='col';const text=data.definition.columnLabels?.[key]||fields[key]?.label||(key===resultColumn()?resultName():data.labels[key])||key;
-      if(sortable&&(modeNow()!=='groups'||key===resultColumn()||groupsNow().includes(key))){
+      const cell=document.createElement('th');cell.scope='col';const text=data.definition.columnLabels?.[key]||data.labels[key]||fields[key]?.label||key;
+      if([...sort.options].some(option=>option.value===key)){
         const button=reportElement('button','report-sort',text);button.type='button';
         if(data.definition.sort===key){cell.setAttribute('aria-sort',data.definition.direction==='asc'?'ascending':'descending');button.dataset.direction=data.definition.direction;}
         button.addEventListener('click',()=>{const same=sort.value===key;if(![...sort.options].some(option=>option.value===key))return;sort.value=key;direction.value=same&&direction.value==='desc'?'asc':'desc';sort.dispatchEvent(new Event('change',{bubbles:true}));});
@@ -419,7 +521,8 @@ function setupReportBuilder(builder){
       for(const key of data.columns){
         const cell=line.insertCell(),value=cellText(data,key,row);
         if(['money_minor','number'].includes(data.columnTypes?.[key]))cell.classList.add('is-num');
-        if(data.groups?.length&&key===data.columns.at(-1)){
+        if(key==='change'&&/^[+-]/.test(value))cell.classList.add(value.startsWith('+')?'is-up':'is-down');
+        if(data.groups?.length&&metricNames.includes(key)){
           const button=reportElement('button','report-source-link',value);button.type='button';button.setAttribute('aria-label','Show records behind '+value);
           button.addEventListener('click',()=>drilldown(data.definition,data.groupValues[index]));cell.append(button);
         }else if(data.links?.[index]?.startsWith('/')&&!data.links[index].startsWith('//')&&key===data.columns[0]){
@@ -430,7 +533,7 @@ function setupReportBuilder(builder){
     tableArea.append(table);
   }
   const draw=data=>{
-    if(!data.rows.length){clearResults();tableArea.hidden=false;tableArea.append(reportElement('p','report-empty','No records match these choices. Try a wider date or remove a filter.'));say('No records match these choices.');return;}
+    if(!data.rows.length){clearResults();drawBig(data);tableArea.hidden=false;tableArea.append(reportElement('p','report-empty','No records match these choices. Try a wider date or remove a filter.'));say('No records match these choices.');return;}
     say(data.returned+(data.hasMore?'+':'')+(data.returned===1?' row shown · ':' rows shown · ')+(data.elapsedMs/1000).toFixed(1)+' s');
     drawBig(data);drawChart(data);drawInsights(data);drawTable(data);
     note.hidden=!data.hasMore;note.textContent=data.hasMore?'Showing the first '+data.returned+' rows. Run the report to see all of them.':'';
@@ -459,14 +562,16 @@ function setupReportBuilder(builder){
     canvas.classList.add('is-updating');status.textContent='Updating preview…';timer=setTimeout(load,300);
   };
   builder.addEventListener('input',event=>{if(event.target.name==='title')return;schedule();});
-  builder.addEventListener('change',event=>{if(event.target.name==='title'||event.target.closest('[data-report-schedule],[data-report-picker] [data-report-field-search]'))return;syncFilterSummary();schedule();});
-  applyMode();renderColumns();requireMoneyScope();syncFilterSummary();schedule();
+  builder.addEventListener('change',event=>{if(event.target.name==='title'||event.target.closest('[data-report-schedule],[data-report-picker] [data-report-field-search]'))return;syncFilterSummary();syncCompare();syncTry();schedule();});
+  applyMode();renderColumns();requireMoneyScope();syncFilterSummary();syncCompare();syncTry();schedule();
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
   const describe=document.querySelector('[data-report-describe]');let buildingReport=false;
   describe?.addEventListener('submit',async event=>{event.preventDefault();if(buildingReport)return;buildingReport=true;const button=describe.querySelector('button[type=submit]'),status=describe.querySelector('[data-report-build-status]');button.disabled=true;status.hidden=false;status.textContent='Building your report from your business records…';try{const response=await fetch(describe.action,{method:'POST',credentials:'same-origin',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(describe))});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.message||result.error?.message||'This report could not be built. Your description is kept here.');status.textContent='Ready: '+result.title;location.assign(result.url);}catch(error){buildingReport=false;status.textContent=error.message;status.setAttribute('role','alert');button.disabled=false;describe.querySelector('textarea').focus();}});
   for(const example of document.querySelectorAll('[data-report-example]'))example.addEventListener('click',()=>{const box=describe.querySelector('textarea');box.value=example.textContent;box.focus();});
+  // The download menu closes once a format is chosen, and when clicking elsewhere.
+  document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('.report-download[open],.report-picker[open]')){const inside=menu.contains(event.target),chose=menu.matches('.report-download')&&event.target.closest('button,a');if(!inside||chose)setTimeout(()=>{menu.open=false;},0);}});
   const builder=document.querySelector('[data-report-builder]');
   if(builder)setupReportBuilder(builder);
   for(const group of document.querySelectorAll('[data-report-schedule]')){

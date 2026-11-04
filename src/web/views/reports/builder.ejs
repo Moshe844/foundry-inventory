@@ -8,8 +8,8 @@
     <button class="btn btn--primary" type="submit" form="report-builder-form">Run report</button>
   </div></div>
 <section class="report-start <%= editing?'is-compact':'' %>" data-report-start aria-label="Start a custom report">
-  <% if(locals.reportBuildAvailability?.available===false){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
-  <% if(selection){ %><details class="report-change-prompt"><summary>Ask StockChief to change this report</summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
+  <% const canDescribe=locals.reportBuildAvailability?.available!==false; %><% if(!canDescribe&&!selection){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
+  <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary>Ask StockChief to change this report</summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
     <div class="report-describe__box"><textarea id="report-description" name="q" rows="<%= editing?1:2 %>" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
     <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button></div><p data-report-build-status role="status" hidden></p>
     <% if(!selection){ %><div class="report-examples" data-report-landing-part <%= editing?'hidden':'' %>><% for(const example of ['Best selling products in the last 30 days','Profit by customer by month this year','Stock value by location','Unpaid invoices by customer']){ %><button type="button" data-report-example><%= example %></button><% } %></div><% } %></form><% if(selection){ %></details><% } %>
@@ -26,93 +26,116 @@
 <form class="report-builder report-workspace" id="report-builder-form" method="post" action="/reports/run" data-report-builder data-active-report="<%= selection?'true':'false' %>" data-report-schema="<%= JSON.stringify(builderEntry.schema(dataset,{currency:locals.reportCurrency||null,periods:reportRelativePeriods})) %>">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
-  <div class="report-rail">
-    <div class="report-card" data-report-step-panel="source">
-      <label for="report-dataset">Report on</label>
-      <select id="report-dataset" name="dataset" onchange="location.href='/reports/builder?dataset='+encodeURIComponent(this.value)">
-        <% for(const row of builderEntry.groupedSources(datasets)){ %><optgroup label="<%= row.area %>"><% for(const entry of row.sources){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %> <%= unavailable.has(entry.key)?'disabled':'' %>><%= builderEntry.sourceNames[entry.key]||entry.label %><%= unavailable.has(entry.key)?' — higher plan':'' %></option><% } %></optgroup><% } %>
-      </select>
-      <fieldset class="report-mode"><legend>Show as</legend><div>
-        <% for(const [value,label] of [['list','A list'],['groups','Totals by group'],['summary','One total']]){ %><label><input type="radio" name="reportMode" value="<%= value %>" <%= mode===value?'checked':'' %>><span><%= label %></span></label><% } %>
-      </div></fieldset>
-      <input class="report-summary-flag" type="checkbox" name="summary" value="on" <%= selection?.summary?'checked':'' %> hidden aria-hidden="true" tabindex="-1">
+  <input type="hidden" name="chartMeasure" value="<%= selection?.chartMeasure||'' %>" data-report-chart-measure>
+  <div class="report-query">
+    <div class="report-q" data-report-step-panel="source">
+      <label class="report-q__word" for="report-dataset">Report on</label>
+      <div class="report-q__body">
+        <select id="report-dataset" name="dataset" onchange="location.href='/reports/builder?dataset='+encodeURIComponent(this.value)">
+          <% for(const row of builderEntry.groupedSources(datasets)){ %><optgroup label="<%= row.area %>"><% for(const entry of row.sources){ %><option value="<%= entry.key %>" <%= entry.key===dataset.key?'selected':'' %> <%= unavailable.has(entry.key)?'disabled':'' %>><%= builderEntry.sourceNames[entry.key]||entry.label %><%= unavailable.has(entry.key)?' — higher plan':'' %></option><% } %></optgroup><% } %>
+        </select>
+        <fieldset class="report-mode"><legend class="sr-only">Show as</legend><div>
+          <% for(const [value,label] of [['list','A list'],['groups','Totals by group'],['summary','One total']]){ %><label><input type="radio" name="reportMode" value="<%= value %>" <%= mode===value?'checked':'' %>><span><%= label %></span></label><% } %>
+        </div></fieldset>
+        <input class="report-summary-flag" type="checkbox" name="summary" value="on" <%= selection?.summary?'checked':'' %> hidden aria-hidden="true" tabindex="-1">
+      </div>
     </div>
-    <nav class="report-section-nav" aria-label="Report builder sections">
-      <a data-report-step-link="columns" data-report-when="list" href="#report-columns">Columns</a>
-      <a data-report-step-link="summary" data-report-when="groups summary" href="#report-summary">Calculation</a>
-      <a data-report-step-link="filters" href="#report-filters">Filters<span data-report-filter-count aria-hidden="true" hidden></span></a>
-      <a data-report-step-link="sort" data-report-when="list groups" href="#report-sort">Sort and limit</a>
-      <a data-report-step-link="delivery" href="#report-delivery">Save and delivery</a>
-    </nav>
 
-    <div class="report-card" data-report-step-panel="columns" data-report-when="list" id="report-columns"><h2>Columns</h2>
-      <div class="report-column-order" data-report-column-order
+    <div class="report-q" data-report-step-panel="columns" data-report-when="list" id="report-columns">
+      <span class="report-q__word">Columns</span>
+      <div class="report-q__body report-column-order" data-report-column-order
         data-initial-columns="<%= JSON.stringify(initialColumns) %>"
         data-initial-labels="<%= JSON.stringify(selection?.columnLabels||{}) %>">
         <ol data-report-column-list></ol>
+        <details class="report-picker" data-report-picker><summary>Add or remove columns</summary>
+          <div class="report-pop">
+            <label class="sr-only" for="report-field-search">Find a field</label><input id="report-field-search" type="search" placeholder="Find a field" data-report-field-search>
+            <div class="report-checks"><% for(const group of builderEntry.fieldsFor(dataset)){ %><fieldset class="report-field-area"><legend><%= group.area %></legend><% for(const {key:field,label} of group.fields){ %>
+              <label><input type="checkbox" name="columns" value="<%= field %>" data-report-column-choice data-report-column-label="<%= label %>"
+                <%= initialColumns.includes(field)?'checked':'' %>> <%= label %></label>
+            <% } %></fieldset><% } %></div>
+          </div>
+        </details>
       </div>
-      <details class="report-picker" data-report-picker><summary>Add or remove columns</summary>
-        <label class="sr-only" for="report-field-search">Find a field</label><input id="report-field-search" type="search" placeholder="Find a field" data-report-field-search>
-        <div class="report-checks"><% for(const group of builderEntry.fieldsFor(dataset)){ %><fieldset class="report-field-area"><legend><%= group.area %></legend><% for(const {key:field,label} of group.fields){ %>
-          <label><input type="checkbox" name="columns" value="<%= field %>" data-report-column-choice data-report-column-label="<%= label %>"
-            <%= initialColumns.includes(field)?'checked':'' %>> <%= label %></label>
-        <% } %></fieldset><% } %></div>
-      </details>
     </div>
 
-    <div class="report-card" data-report-step-panel="summary" data-report-when="groups summary" id="report-summary">
-      <div data-report-when="groups"><h2>Group by</h2>
-        <div class="report-controls report-controls--stack">
-        <% for(let position=0;position<3;position++){ %><label data-report-group-row><span class="<%= position===0?'sr-only':'' %>"><%= position===0?'Group by':'Then by' %></span>
+    <div class="report-q" data-report-step-panel="summary" data-report-when="groups summary" id="report-summary">
+      <span class="report-q__word">Show</span>
+      <div class="report-q__body">
+        <span class="report-metric">
+          <label><span class="sr-only">Calculate</span><select name="aggregate"><% for(const [value,label] of [['count','Number of records'],['sum','Total'],['average','Average'],['minimum','Lowest'],['maximum','Highest'],['count_distinct','Number of different'],['ratio','Weighted percentage']]){ %>
+            <option value="<%= value %>" <%= (selection?.aggregate||'count')===value?'selected':'' %>><%= label %></option><% } %></select></label>
+          <label data-report-measure-row><span class="report-of">of</span><select name="measure"><option value="">Choose</option>
+            <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
+            <% for(const [key,metric] of Object.entries(dataset.metrics||{})){ %><option value="<%= key %>" <%= selection?.measure===key?'selected':'' %>><%= metric.label %></option><% } %></select></label>
+        </span>
+        <% for(let index=0;index<5;index++){const extra=selection?.extras?.[index]; %><span class="report-metric" data-report-extra <%= extra?'':'hidden' %>>
+          <select name="extras[<%= index %>][aggregate]" aria-label="Calculation for number <%= index+2 %>" data-report-extra-aggregate data-initial="<%= extra?.aggregate||'sum' %>"><% for(const [value,label] of [['sum','Total'],['average','Average'],['minimum','Lowest'],['maximum','Highest'],['count','Number of records'],['count_distinct','Number of different'],['ratio','Weighted percentage']]){ %><option value="<%= value %>" <%= (extra?.aggregate||'sum')===value?'selected':'' %>><%= label %></option><% } %></select>
+          <label data-report-extra-measure-row><span class="report-of">of</span><select name="extras[<%= index %>][measure]" aria-label="Field for number <%= index+2 %>" data-report-extra-measure data-initial="<%= extra?.measure||'' %>"></select></label>
+          <button type="button" class="report-icon-btn" data-report-extra-remove aria-label="Remove number <%= index+2 %>">×</button>
+        </span><% } %>
+        <button type="button" class="report-add" data-report-extra-add>Add a number</button>
+      </div>
+    </div>
+
+    <div class="report-q" data-report-when="groups">
+      <span class="report-q__word">Group by</span>
+      <div class="report-q__body">
+        <% for(let position=0;position<3;position++){ %><label data-report-group-row><span class="<%= position===0?'sr-only':'report-of' %>"><%= position===0?'Group by':'then by' %></span>
           <select name="groups"><option value=""><%= position===0?'Choose':'Nothing else' %></option>
             <% for(const [field,type] of Object.entries(dataset.fields)){if(type==='money_minor'&&selection?.groups?.[position]!==field)continue; %><option value="<%= field %>" <%= selection?.groups?.[position]===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
           </select></label><% } %>
-        <label data-report-grain>Group dates by<select name="dateGrain">
+        <label data-report-grain><span class="report-of">dates by</span><select name="dateGrain" aria-label="Group dates by">
           <% for(const [value,label] of [['exact','Exact date'],['day','Day'],['week','Week'],['month','Month'],['quarter','Quarter'],['year','Year']]){ %>
             <option value="<%= value %>" <%= (selection?.dateGrain||'exact')===value?'selected':'' %>><%= label %></option>
           <% } %></select></label>
+      </div>
+    </div>
+
+    <% if(Object.entries(dataset.fields).some(([field,type])=>type==='date'&&field!=='as_of')){ %><div class="report-q" data-report-dates>
+      <span class="report-q__word">Dates</span>
+      <div class="report-q__body">
+        <label data-report-date-field><span class="sr-only">Which date</span><select><% for(const [field,type] of Object.entries(dataset.fields)){if(type!=='date'||field==='as_of')continue; %><option value="<%= field %>"><%= builderEntry.friendlyField(field) %></option><% } %></select></label>
+        <div class="report-chips" role="group" aria-label="Date range"><button type="button" data-report-period="">All time</button><% for(const value of ['last_7_days','last_30_days','last_90_days','this_month','last_month','year_to_date']){ %><button type="button" data-report-period="<%= value %>"><%= reportRelativePeriods[value] %></button><% } %><button type="button" data-report-period="custom">Custom</button></div>
+        <div class="report-date-custom" data-report-custom hidden><label>From <input type="date" data-report-custom-from></label><label>To <input type="date" data-report-custom-to></label></div>
+      </div>
+    </div>
+    <div class="report-q" data-report-when="groups summary" data-report-compare-row>
+      <label class="report-q__word" for="report-compare">Compare to</label>
+      <div class="report-q__body">
+        <select id="report-compare" name="compare" data-report-compare><% for(const [value,label] of [['','Nothing'],['previous_period','The period before'],['previous_year','Same dates last year']]){ %><option value="<%= value %>" <%= (selection?.compare||'')===value?'selected':'' %>><%= label %></option><% } %></select>
+        <span class="report-q__hint" data-report-compare-hint hidden>Choose a date range first.</span>
+      </div>
+    </div><% } %>
+
+    <div class="report-q" data-report-step-panel="filters" id="report-filters">
+      <span class="report-q__word">Filter</span>
+      <div class="report-q__body report-q__body--stack">
+        <div class="report-filters" data-report-filter-list><% for(let index=0;index<8;index++){const filter=selection?.filters?.[index]||{}; %>
+          <div class="report-filter" data-report-filter <%= index<(selection?.filters?.length||0)?'':'hidden' %>><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
+            <option value="">Choose a field</option><% for(const field of Object.keys(dataset.fields)){ %>
+              <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
+            <% } %></select><select name="filters[<%= index %>][operator]" aria-label="Filter comparison <%= index+1 %>">
+            <% for(const option of ['equals','is_not','contains','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']){ %>
+              <option value="<%= option %>" <%= filter.operator===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option>
+            <% } %></select><input name="filters[<%= index %>][value]" value="<%= filter.value||'' %>"
+              aria-label="Filter value <%= index+1 %>"><button type="button" class="report-icon-btn" data-report-remove-filter aria-label="Remove filter <%= index+1 %>">×</button></div>
+        <% } %></div>
+        <button class="report-add" type="button" data-report-add-filter>Add a filter</button>
+      </div>
+    </div>
+
+    <div class="report-folds">
+      <details class="report-fold" data-report-step-panel="sort" data-report-when="list groups" id="report-sort"><summary>Sort and limit</summary>
+        <div class="report-controls report-controls--sort">
+          <label>Sort by<select name="sort" data-initial="<%= selection?.sort||'' %>"><option value="">Default</option></select></label>
+          <label>Order<select name="direction"><option value="desc">High to low</option><option value="asc" <%= selection?.direction==='asc'||!selection?'selected':'' %>>Low to high</option></select></label>
+          <label>Show only the first results<input name="topN" type="number" min="1" max="1000" step="1" value="<%= selection?.topN??'' %>" placeholder="All results"></label>
+          <label data-report-when="groups">The full report opens with<select name="layout"><% for(const [value,label] of [['chart_first','The chart'],['table_first','The table'],['dashboard','Both, side by side']]){ %><option value="<%= value %>" <%= (selection?.layout||'chart_first')===value?'selected':'' %>><%= label %></option><% } %></select></label>
         </div>
-      </div>
-      <h2>Calculate</h2>
-      <div class="report-calc">
-        <label><span class="sr-only">Calculate</span><select name="aggregate"><% for(const [value,label] of [['count','Number of records'],['sum','Total'],['average','Average'],['minimum','Lowest'],['maximum','Highest'],['count_distinct','Number of different'],['ratio','Weighted percentage']]){ %>
-          <option value="<%= value %>" <%= (selection?.aggregate||'count')===value?'selected':'' %>><%= label %></option><% } %></select></label>
-        <label data-report-measure-row><span class="report-of">of</span><select name="measure"><option value="">Choose</option>
-          <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option><% } %>
-          <% for(const [key,metric] of Object.entries(dataset.metrics||{})){ %><option value="<%= key %>" <%= selection?.measure===key?'selected':'' %>><%= metric.label %></option><% } %></select></label>
-      </div>
+      </details>
+      <details class="report-fold report-delivery" data-report-step-panel="delivery" id="report-delivery"><summary>Save and delivery</summary><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></details>
     </div>
-
-    <div class="report-card" data-report-step-panel="filters" id="report-filters"><h2>Filters</h2>
-      <% if(Object.values(dataset.fields).includes('date')){ %><div class="report-dates" data-report-dates>
-        <p class="report-dates__head">Date range<% const dateFields=Object.entries(dataset.fields).filter(([,type])=>type==='date');if(dateFields.length===1){ %> · <%= builderEntry.friendlyField(dateFields[0][0]) %><% } %></p>
-        <label data-report-date-field><span class="sr-only">Which date</span><select><% for(const [field,type] of Object.entries(dataset.fields)){if(type!=='date')continue; %><option value="<%= field %>"><%= builderEntry.friendlyField(field) %></option><% } %></select></label>
-        <div class="report-chips" role="group" aria-label="Date range"><button type="button" data-report-period="">All time</button><% for(const value of ['last_7_days','last_30_days','this_month','last_month','year_to_date']){ %><button type="button" data-report-period="<%= value %>"><%= reportRelativePeriods[value] %></button><% } %><button type="button" data-report-period="custom">Custom</button></div>
-        <div class="report-date-custom" data-report-custom hidden><label>From<input type="date" data-report-custom-from></label><label>To<input type="date" data-report-custom-to></label></div>
-      </div><% } %>
-      <div class="report-filters" data-report-filter-list><% for(let index=0;index<8;index++){const filter=selection?.filters?.[index]||{}; %>
-        <div class="report-filter" data-report-filter <%= index<(selection?.filters?.length||0)?'':'hidden' %>><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
-          <option value="">Choose a field</option><% for(const field of Object.keys(dataset.fields)){ %>
-            <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
-          <% } %></select><select name="filters[<%= index %>][operator]" aria-label="Filter comparison <%= index+1 %>">
-          <% for(const option of ['equals','is_not','contains','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']){ %>
-            <option value="<%= option %>" <%= filter.operator===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option>
-          <% } %></select><input name="filters[<%= index %>][value]" value="<%= filter.value||'' %>"
-            aria-label="Filter value <%= index+1 %>"><button type="button" class="report-icon-btn" data-report-remove-filter aria-label="Remove filter <%= index+1 %>">×</button></div>
-      <% } %></div>
-      <button class="btn btn--sm" type="button" data-report-add-filter>Add a filter</button>
-    </div>
-
-    <div class="report-card" data-report-step-panel="sort" data-report-when="list groups" id="report-sort"><h2>Sort and limit</h2>
-      <div class="report-controls report-controls--sort">
-        <label>Sort by<select name="sort" data-initial="<%= selection?.sort||'' %>"><option value="">Default</option></select></label>
-        <label>Order<select name="direction"><option value="desc">High to low</option><option value="asc" <%= selection?.direction==='asc'||!selection?'selected':'' %>>Low to high</option></select></label>
-        <label class="report-wide">Show only the first results<input name="topN" type="number" min="1" max="1000" step="1" value="<%= selection?.topN??'' %>" placeholder="All results"></label>
-        <label class="report-wide" data-report-when="groups">The full report opens with<select name="layout"><% for(const [value,label] of [['chart_first','The chart'],['table_first','The table'],['dashboard','Both, side by side']]){ %><option value="<%= value %>" <%= (selection?.layout||'chart_first')===value?'selected':'' %>><%= label %></option><% } %></select></label>
-      </div>
-    </div>
-
-    <details class="report-card report-delivery" data-report-step-panel="delivery" id="report-delivery"><summary><h2>Save and delivery</h2></summary><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></details>
   </div>
 
   <aside class="report-live-preview" id="report-canvas" aria-label="Live preview">
@@ -122,8 +145,9 @@
         <div class="report-view" role="group" aria-label="Show results as" data-report-when="groups"><% for(const [value,label] of [['bar','Bars'],['line','Line'],['table','Table']]){ %><label><input type="radio" name="chart" value="<%= value %>" <%= (selection?.chart||'bar')===value?'checked':'' %>><span><%= label %></span></label><% } %></div>
       </div>
     </div>
-    <div data-report-preview-big class="report-big" hidden></div>
+    <div data-report-preview-big class="report-kpis" hidden></div>
     <div data-report-preview-chart class="report-chart-area" hidden></div>
+    <div data-report-try class="report-try" hidden></div>
     <div data-report-preview-insights class="report-insights" hidden></div>
     <div data-report-preview-table class="report-preview-table"></div>
     <p class="report-preview-note" data-report-preview-note hidden></p>

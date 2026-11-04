@@ -32,7 +32,8 @@ function source(body){
   return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,columnLabels:body.columnLabels||{},
     groups,dateGrain:body.dateGrain,aggregate:body.aggregate,measure:body.measure,
     summary:body.summary==='on'||body.summary===true,
-    filters,sort:body.sort,direction:body.direction,topN:body.topN,chart:body.chart,layout:body.layout};
+    filters,sort:body.sort,direction:body.direction,topN:body.topN,chart:body.chart,layout:body.layout,
+    extras:Object.values(body.extras||{}).filter(row=>row?.aggregate),compare:body.compare,chartMeasure:body.chartMeasure};
 }
 // A grouped preview reads more rows so a trend line can show its whole shape.
 const previewLimit=spec=>spec.groups?.length?61:31;
@@ -108,7 +109,7 @@ function createPostgresReportsRouter(database){
     return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,
       compositions:composed.dimensions(actor)});
   }));
-  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);return res.page('reports/business',{title:report.definition.title,nav:'accounting',room:true,report});}));
+  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query),totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'});return res.page('reports/business',{title:report.definition.title,nav:'accounting',room:true,report,totals});}));
   router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
   router.get('/reports/business/:key/export.csv',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);if(await reports.countAtMost(database,req.ctx,actor,report.result.config,100000)>100000)throw new ValidationError('This export has more than 100,000 rows. Narrow the dates or filters before exporting.');res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="stockchief-'+report.definition.key+'.csv"');res.set('Cache-Control','private, no-store');let offset=0,started=false;do{const part=await reports.run(database,req.ctx,actor,report.result.config,{limit:1001,offset});await require('../../reports/business-reports').enrich(database,req.ctx,report.definition.key,part);if(!started){res.write(reportExports.csvHeader(part));started=true;}res.write(reportExports.csvRows(part));offset+=part.rows.length;if(!part.hasMore)break;if(offset>=100000)break;}while(!res.destroyed);return res.end();}));
   router.get('/reports/from-ask/:interactionId',asyncRoute(async(req,res)=>{
@@ -199,8 +200,8 @@ function createPostgresReportsRouter(database){
       const started=performance.now();
       const spec=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
       const result=await reports.run(database,req.ctx,actor,spec,{limit:previewLimit(spec)});
-      const chartColumn=result.chartColumn||result.columns.at(-1),chartValues=result.rows.map(row=>Number(row[chartColumn]));
-      return res.json({ok:true,columns:result.columns,labels:result.columnLabels,
+      const chartColumn=result.chartColumn||result.metricColumns?.[0]||result.columns.at(-1),chartValues=result.rows.map(row=>Number(row[chartColumn]));
+      return res.json({ok:true,columns:result.columns,labels:result.columnLabels,metricColumns:result.metricColumns||[],totals:await reports.totals(database,req.ctx,actor,result.config),
         rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
         links:result.rows.map(row=>row.href||null),groups:result.config.groups,
         groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],
@@ -238,7 +239,7 @@ function createPostgresReportsRouter(database){
     if(!detail){req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config,
       schedule:prior.schedule||null};
       req.session.reportParentDraft=null;}
-    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,
+    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,totals:await reports.totals(database,req.ctx,actor,result.config),
       pageHref:detail?'/reports/run?view=detail':'/reports/run',
       draftSchedule:prior.schedule||null,
       backTo:detail?{href:'/reports/run',label:'Report'}:{href:'/reports',label:'Reports'}});
@@ -249,7 +250,7 @@ function createPostgresReportsRouter(database){
     const draftSchedule=previewSchedule(req.body,res.locals.reportBusinessTimeZone);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config,schedule:draftSchedule};
     req.session.reportParentDraft=null;
-    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,
+    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,totals:await reports.totals(database,req.ctx,actor,result.config),
       pageHref:'/reports/run',draftSchedule});
   }));
   router.post('/reports/drilldown',asyncRoute(async(req,res)=>{
@@ -284,7 +285,7 @@ function createPostgresReportsRouter(database){
     const actor=await actorFor(database,req.ctx);
     const saved=await reports.load(database,req.ctx,actor,req.params.id);
     const result=await reports.run(database,req.ctx,actor,saved.definition,{limit:201,offset:req.query.offset});
-    return res.page('reports/result',{title:saved.title,nav:'accounting',result,saved,
+    return res.page('reports/result',{title:saved.title,nav:'accounting',result,saved,totals:await reports.totals(database,req.ctx,actor,result.config),
       pageHref:`/reports/saved/${saved.id}`,draftSchedule:null});
   }));
   router.get('/reports/saved/:id/export.:format',asyncRoute(async(req,res)=>{

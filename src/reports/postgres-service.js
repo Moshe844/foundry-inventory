@@ -77,6 +77,7 @@ function normalize(spec,actor){
     invalid('Choose a registered field to count distinct values.');
   if(aggregate!=='count'&&aggregate!=='count_distinct'&&aggregate!=='ratio'&&(!Object.hasOwn(dataset.fields,measure)
     ||!['number','money_minor'].includes(dataset.fields[measure])))invalid('Choose a numeric measure.');
+  const compare=['previous_period','previous_year'].includes(spec.compare)?spec.compare:'';
   const filters=Array.isArray(spec.filters)?spec.filters:[];
   if(filters.length>12)invalid('Use at most twelve filters.');
   const cleanFilters=filters.map((filter)=>{
@@ -112,23 +113,40 @@ function normalize(spec,actor){
   if(aggregated&&aggregate==='ratio'&&metric.currencySensitive
     &&(!groups.includes('currency')&&!exactCurrency))
     invalid('Filter this monetary ratio to one exact currency or group by currency.');
+  const extras=[];
+  if(aggregated)for(const raw of Array.isArray(spec.extras)?spec.extras.slice(0,6):[]){
+    const kind=AGGREGATES.has(raw?.aggregate)?raw.aggregate:'count',chosen=kind==='count'?'':safeText(raw?.measure,60),known=dataset.metrics?.[chosen];
+    if(kind==='ratio'&&!known)invalid('Choose a registered weighted ratio.');
+    if(kind==='count_distinct'&&!Object.hasOwn(dataset.fields,chosen))invalid('Choose a registered field to count distinct values.');
+    if(!['count','count_distinct','ratio'].includes(kind)&&(!Object.hasOwn(dataset.fields,chosen)||!['number','money_minor'].includes(dataset.fields[chosen])))invalid('Choose a numeric measure.');
+    const scope=!['count','count_distinct','ratio'].includes(kind)?dataset.moneyCompleteness?.[chosen]:null;
+    if(scope&&!cleanFilters.some(filter=>filter.field===scope.field&&filter.operator==='equals'&&filter.value===scope.value))
+      invalid(`This amount is not known for every record. Filter ${scope.field.replaceAll('_',' ')} to ${scope.value} before calculating a total.`);
+    const moneyTotal=!['count','count_distinct','ratio'].includes(kind)&&dataset.fields[chosen]==='money_minor',moneyRatio=kind==='ratio'&&known?.currencySensitive;
+    if((moneyTotal||moneyRatio)&&(!Object.hasOwn(dataset.fields,'currency')||(!groups.includes('currency')&&!exactCurrency)))
+      invalid('Group monetary totals by currency or filter to one exact currency.');
+    const extra={aggregate:kind,measure:chosen};
+    if((kind===aggregate&&chosen===measure)||extras.some(item=>extraColumn(item)===extraColumn(extra)))continue;
+    extras.push(extra);
+  }
   if(!aggregated&&columns.some((field)=>dataset.fields[field]==='money_minor')
     &&Object.hasOwn(dataset.fields,'currency')&&!columns.includes('currency')){
     columns.push('currency');
   }
   const requestedLabels=spec.columnLabels&&typeof spec.columnLabels==='object'&&!Array.isArray(spec.columnLabels)
     ?spec.columnLabels:{};
-  const visibleColumns=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate]]:columns);
+  const extraNames=extras.map(extraColumn);
+  const visibleColumns=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate],...extraNames]:columns);
   const columnLabels={};
   for(const [field,label] of Object.entries(requestedLabels)){
-    if(!Object.hasOwn(dataset.fields,field)&&!Object.values(AGGREGATE_COLUMN).includes(field))
+    if(!Object.hasOwn(dataset.fields,field)&&!Object.values(AGGREGATE_COLUMN).includes(field)&&!extraNames.includes(field))
       invalid('Rename only registered report columns.');
     if(!visibleColumns.has(field))continue;
     const clean=safeText(label,60);
     if(clean)columnLabels[field]=clean;
   }
   const sort=safeText(spec.sort,60)||groups[0]||(summary?AGGREGATE_COLUMN[aggregate]:columns[0]);
-  const allowedSort=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate]]:Object.keys(dataset.fields));
+  const allowedSort=new Set(aggregated?[...groups,AGGREGATE_COLUMN[aggregate],...extraNames]:Object.keys(dataset.fields));
   if(!allowedSort.has(sort))invalid('Choose a registered field to sort.');
   const direction=spec.direction==='asc'?'asc':'desc';
   const topN=spec.topN==null||spec.topN===''?null:Number(spec.topN);
@@ -140,8 +158,10 @@ function normalize(spec,actor){
     ||direction!=='asc'))invalid('A trend line needs one date grouping sorted oldest to newest.');
   const title=safeText(spec.title,100)||dataset.label;
   const layout=['chart_first','table_first','dashboard'].includes(spec.layout)?spec.layout:'chart_first';
+  const chartMeasure=extraNames.includes(spec.chartMeasure)?spec.chartMeasure:'';
   return {dataset:datasetKey,columns:aggregated?[]:columns,columnLabels,groups,summary:summary&&!groups.length,dateGrain,aggregate,
-    measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,topN,chart,layout,title};
+    measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,topN,chart,layout,title,
+    ...(extras.length?{extras}:{}),...(chartMeasure?{chartMeasure}:{}),...(compare&&aggregated?{compare}:{})};
 }
 async function assertWritableCapabilities(database,ctx,spec,actor){
   const config=normalize(spec,actor);
@@ -156,6 +176,42 @@ async function assertWritableCapabilities(database,ctx,spec,actor){
   return config;
 }
 function quote(field){return `"${field}"`;}
+// Further numbers beside the main one. A report can show sales, profit and units together.
+const extraColumn=extra=>`${AGGREGATE_COLUMN[extra.aggregate]}_${extra.measure||'records'}`;
+function metricColumns(config){return [AGGREGATE_COLUMN[config.aggregate],...(config.extras||[]).map(extraColumn)];}
+function metricOf(config,column){return column===AGGREGATE_COLUMN[config.aggregate]?{aggregate:config.aggregate,measure:config.measure}:(config.extras||[]).find(extra=>extraColumn(extra)===column)||null;}
+function metricExpression(dataset,aggregate,measure){
+  const metric=dataset.metrics?.[measure];
+  return aggregate==='count'?'COUNT(*)::bigint':
+    aggregate==='count_distinct'?`COUNT(DISTINCT ${quote(measure)})::bigint`:
+    aggregate==='ratio'
+      ?`ROUND(100.0*SUM(${quote(metric.numerator)})::numeric/NULLIF(SUM(${quote(metric.denominator)}),0),2)`:
+    aggregate==='sum'?`SUM(${quote(measure)})`:
+      aggregate==='average'?(dataset.fields[measure]==='money_minor'?`ROUND(AVG(${quote(measure)})::numeric,0)`:`AVG(${quote(measure)})`):
+        aggregate==='minimum'?`MIN(${quote(measure)})`:`MAX(${quote(measure)})`;
+}
+function metricLabel(dataset,aggregate,measure,fallback){
+  const name=dataset.metrics?.[measure]?.label||(measure?require('./builder-entry').friendlyField(measure):'');
+  if(aggregate==='ratio')return name;
+  return {sum:name,average:'Average '+name.toLowerCase(),minimum:'Lowest '+name.toLowerCase(),maximum:'Highest '+name.toLowerCase(),count_distinct:'Different '+name.toLowerCase(),count:'Records'}[aggregate]||fallback;
+}
+function compareWindow(config,dateContext){
+  if(!config.compare)return null;
+  const resolved=require('./relative-dates').resolve(config,dateContext).filters,dataset=registry.get(config.dataset);
+  const isFrom=filter=>['after','at_least'].includes(filter.operator),isTo=filter=>['before','at_most'].includes(filter.operator);
+  const from=resolved.find(filter=>dataset.fields[filter.field]==='date'&&isFrom(filter));
+  if(!from)return null;
+  const to=resolved.find(filter=>filter.field===from.field&&isTo(filter))?.value||dateContext?.calendarDate;
+  if(!to)return null;
+  const day=value=>Date.parse(value+'T12:00:00Z'),text=ms=>new Date(ms).toISOString().slice(0,10);
+  let previousFrom,previousTo;
+  if(config.compare==='previous_year'){const back=value=>{const date=new Date(day(value));date.setUTCFullYear(date.getUTCFullYear()-1);return date.getTime();};previousFrom=text(back(from.value));previousTo=text(back(to));}
+  else{const length=Math.round((day(to)-day(from.value))/86400000)+1;previousTo=text(day(from.value)-86400000);previousFrom=text(day(previousTo)-(length-1)*86400000);}
+  const filters=[...resolved.filter(filter=>filter.field!==from.field||!(isFrom(filter)||isTo(filter))),{field:from.field,operator:'after',value:previousFrom},{field:from.field,operator:'before',value:previousTo}];
+  return {field:from.field,from:from.value,to,previousFrom,previousTo,filters};
+}
+const changeBetween=(current,previous)=>{const now=Number(current),before=Number(previous);if(!Number.isFinite(now)||!Number.isFinite(before)||before===0)return null;return (now-before)/Math.abs(before)*100;};
+const changeText=change=>change===null?'—':(change>0?'+':'')+change.toFixed(1)+'%';
 function comparableGroupAmounts(config,dataset,rows,hasMore,currencyFilter){
   if(!config.groups.length||['count','count_distinct'].includes(config.aggregate)||dataset.fields[config.measure]!=='money_minor'
     ||currencyFilter)return true;
@@ -195,15 +251,9 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
         ?`to_char(${expression},'YYYY-MM-DD') AS ${quote(field)}`
         :`${expression} AS ${quote(field)}`;
     });
-    const metric=dataset.metrics?.[config.measure];
-    const expression=config.aggregate==='count'?'COUNT(*)::bigint':
-      config.aggregate==='count_distinct'?`COUNT(DISTINCT ${quote(config.measure)})::bigint`:
-      config.aggregate==='ratio'
-        ?`ROUND(100.0*SUM(${quote(metric.numerator)})::numeric/NULLIF(SUM(${quote(metric.denominator)}),0),2)`:
-      config.aggregate==='sum'?`SUM(${quote(config.measure)})`:
-        config.aggregate==='average'?(dataset.fields[config.measure]==='money_minor'?`ROUND(AVG(${quote(config.measure)})::numeric,0)`:`AVG(${quote(config.measure)})`):
-          config.aggregate==='minimum'?`MIN(${quote(config.measure)})`:`MAX(${quote(config.measure)})`;
-    select=`${selectGroups.length?`${selectGroups.join(',')},`:''}${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
+    const expression=metricExpression(dataset,config.aggregate,config.measure);
+    const extraSelects=(config.extras||[]).map(extra=>`,${metricExpression(dataset,extra.aggregate,extra.measure)} AS ${quote(extraColumn(extra))}`).join('');
+    select=`${selectGroups.length?`${selectGroups.join(',')},`:''}${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}${extraSelects}`;
     group=groupFields.length?`GROUP BY ${groupFields.join(',')}`:'';
   }else{
     // SKU-level rows need a distinguishable product label even when the
@@ -220,8 +270,9 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
   // A reviewed projection declares its fields and, when its row population
   // differs, its valid additive aggregates. Other counts, averages, filters
   // and groupings retain the full contributing-record source.
-  const metric=dataset.metrics?.[config.measure],needed=[...config.groups,...config.filters.map(f=>f.field),...(config.aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[config.measure])];
-  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||p.aggregates.includes(config.aggregate))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
+  const allMetrics=[{aggregate:config.aggregate,measure:config.measure},...(config.extras||[])];
+  const needed=[...config.groups,...config.filters.map(f=>f.field),...allMetrics.flatMap(({aggregate,measure})=>{const metric=dataset.metrics?.[measure];return aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[measure];})];
+  const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||allMetrics.every(({aggregate})=>p.aggregates.includes(aggregate)))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
   const rawSource=reduced?reduced.source:dataset.source;
   const transformed=dataset.sourceTransform?dataset.sourceTransform(rawSource,config):rawSource;
   const source=require('./postgres-profit-scope').bind(transformed,values,profitAccountIds);
@@ -259,30 +310,35 @@ async function run(database,ctx,actor,spec,options={}){
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length||config.summary);
-  const columns=grouped?[...config.groups,AGGREGATE_COLUMN[config.aggregate]]
+  const metricNames=metricColumns(config);
+  const columns=grouped?[...config.groups,...metricNames]
     :config.columns;
   const currencyFilter=config.filters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals')?.value||null;
-  const monetaryColumn=(column)=>grouped
-    ?column===columns.at(-1)&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
-    :dataset.fields[column]==='money_minor';
+  const monetaryColumn=(column)=>{
+    if(!grouped)return dataset.fields[column]==='money_minor';
+    const metric=metricOf(config,column);
+    return Boolean(metric)&&!['count','count_distinct'].includes(metric.aggregate)&&dataset.fields[metric.measure]==='money_minor';
+  };
   // The displayed monetary cells are formatted amounts, not raw minor units.
   // Derive headings from their declared type; retain raw field keys and values.
   const columnLabels=Object.fromEntries(columns.map(column=>{
-    if(config.aggregate==='ratio'&&grouped&&column===columns.at(-1))return [column,dataset.metrics[config.measure].label];
+    const metric=grouped?metricOf(config,column):null;
+    if(metric?.aggregate==='ratio')return [column,dataset.metrics[metric.measure].label];
     const label=(monetaryColumn(column)?column.replace(/_minor$/,''):column).replaceAll('_',' ').replace(/([a-z])([A-Z])/g,'$1 $2');
-    return [column,config.columnLabels?.[column]||label.charAt(0).toUpperCase()+label.slice(1)];
+    const plain=label.charAt(0).toUpperCase()+label.slice(1);
+    return [column,config.columnLabels?.[column]||(metric?metricLabel(dataset,metric.aggregate,metric.measure,plain):require('./builder-entry').friendlyField(column))];
   }));
   const displayRows=rows.map((row)=>Object.fromEntries(columns.map((column)=>{
     const value=row[column];
-    if(grouped&&config.aggregate==='ratio'&&column===columns.at(-1))
+    if(grouped&&metricOf(config,column)?.aggregate==='ratio')
       return [column,value==null?'Not calculable':`${Number(value).toFixed(2)}%`];
     if(!monetaryColumn(column)||value==null)return [column,value];
     const currency=row.currency||currencyFilter;
     return [column,currency?require('../pricing/postgres-service').formatMinor(value,currency):
       `${value} minor units (currency not recorded)`];
   })));
-  const columnTypes=Object.fromEntries(columns.map(column=>[column,monetaryColumn(column)?'money_minor':grouped&&column===columns.at(-1)?'number':dataset.fields[column]||'text']));const output={config,columns,columnLabels,columnTypes,rows:rows.map((row)=>({...row,
+  const columnTypes=Object.fromEntries(columns.map(column=>[column,monetaryColumn(column)?'money_minor':grouped&&metricOf(config,column)?'number':dataset.fields[column]||'text']));const output={config,columns,columnLabels,columnTypes,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
   hasMore,offset,pageSize,extent:{rowKind:grouped?'groups':'records',returnedRows:rows.length,
     totalRows:offset===0&&!hasMore?rows.length:null,complete:offset===0&&!hasMore},asOf:new Date().toISOString(),
@@ -292,8 +348,49 @@ async function run(database,ctx,actor,spec,options={}){
   // units cannot be ranked or plotted on one numeric scale.
   output.warnings=warnings;
   output.comparisonSafe=comparableGroupAmounts(config,dataset,rows,output.hasMore,currencyFilter);
+  const chartColumn=config.chartMeasure||(metricNames.length>1?metricNames[0]:null);
+  if(grouped&&chartColumn)output.chartColumn=chartColumn;
+  if(grouped){output.metricColumns=metricNames;await addComparison(database,ctx,actor,config,output,dateContext);}
   output.insights=require('./postgres-insights').observations(output);
   return output;
+}
+// Beside each group, the same number for the earlier period. A date group has no row to match, so its comparison is the totals above the chart.
+async function addComparison(database,ctx,actor,config,output,dateContext){
+  const window=compareWindow(config,dateContext),dataset=registry.get(config.dataset);
+  if(!window)return;
+  output.comparison={from:window.from,to:window.to,previousFrom:window.previousFrom,previousTo:window.previousTo};
+  if(!config.groups.length||config.groups.some(field=>dataset.fields[field]==='date'))return;
+  const primary=metricColumns(config)[0],earlier=await run(database,ctx,actor,{...config,compare:'',extras:[],chartMeasure:'',filters:window.filters,topN:null,sort:primary,chart:'table'},{limit:1001});
+  const key=row=>JSON.stringify(config.groups.map(field=>row[field])),found=new Map(earlier.rows.map((row,index)=>[key(row),{row,index}]));
+  output.columns.push('previous','change');
+  const named=String(output.columnLabels[primary]).toLowerCase();output.columnLabels.previous='Previous '+named;output.columnLabels.change='Change in '+named;
+  output.columnTypes.previous=output.columnTypes[primary];output.columnTypes.change='number';
+  output.rows.forEach((row,index)=>{
+    const match=found.get(key(row)),previous=match?match.row[primary]:null,change=match?changeBetween(row[primary],previous):null;
+    row.previous=previous;row.change=change===null?null:Number(change.toFixed(1));
+    output.displayRows[index].previous=match?earlier.displayRows[match.index][primary]:(earlier.hasMore?'—':'None');
+    output.displayRows[index].change=changeText(change);
+  });
+}
+// The totals across the whole report, each with its earlier period when one was asked for.
+async function totals(database,ctx,actor,config){
+  if(config.dataset==='composed'||(!config.groups.length&&!config.summary))return null;
+  const dateContext=await require('../lib/business-time').forWorkspace(database,ctx.workspaceId),dataset=registry.get(config.dataset);
+  const whole={...config,columns:[],groups:[],summary:true,dateGrain:'exact',sort:'',chart:'table',topN:null,compare:'',chartMeasure:''};
+  let current,previous=null;const window=compareWindow(config,dateContext);
+  try{
+    current=await run(database,ctx,actor,whole,{limit:2});
+    if(window)previous=await run(database,ctx,actor,{...whole,filters:window.filters},{limit:2});
+  }catch(error){if(error instanceof ValidationError)return null;throw error;}
+  const lowerIsBetter=measure=>/cogs|cost|expense|refund|return|discount/.test(String(measure||''));
+  return {comparison:window?{from:window.from,to:window.to,previousFrom:window.previousFrom,previousTo:window.previousTo}:null,
+    chartColumn:config.chartMeasure||metricColumns(config)[0],
+    metrics:metricColumns(config).map(column=>{
+      const metric=metricOf(config,column),value=current.rows[0]?.[column],before=previous?.rows[0]?.[column],change=previous&&before!=null?changeBetween(value,before):null;
+      return {column,label:current.columnLabels[column]||metricLabel(dataset,metric.aggregate,metric.measure,column),display:String(current.displayRows[0]?.[column]??'—'),
+        previousDisplay:before!=null?String(previous.displayRows[0][column]):null,change:change===null?null:Number(change.toFixed(1)),changeText:change===null?null:changeText(change),
+        good:change===null||change===0?null:lowerIsBetter(metric.measure)?change<0:change>0};
+    })};
 }
 async function countAtMost(database,ctx,actor,spec,maximum){
   if(spec?.dataset==='composed')return composed.countAtMost(database,ctx,actor,spec,maximum);
@@ -352,7 +449,7 @@ function drilldownSpec(spec,values,actor,sourceAlias=null){
     invalid('This report has too many filters for a safe drill-down.');
   const suffix=' - source records';
   const sourceTitle=config.title.slice(0,100-suffix.length).trimEnd()+suffix;
-  return normalize({...config,title:sourceTitle,groups:[],summary:false,
+  return normalize({...config,extras:[],compare:'',chartMeasure:'',title:sourceTitle,groups:[],summary:false,
     aggregate:'count',measure:'',dateGrain:'exact',columns,topN:null,
     filters:[...config.filters,...groupFilters],sort:config.groups[0]||columns[0],chart:'table'},actor);
 }
@@ -382,5 +479,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,assertWritableCapabilities,inspectionSpec,queryContract,querySyntax,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
+module.exports={normalize,assertWritableCapabilities,inspectionSpec,queryContract,querySyntax,queryFor,run,totals,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
   aggregateColumn:AGGREGATE_COLUMN};
