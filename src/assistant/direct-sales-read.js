@@ -2,7 +2,14 @@
 const dates=require('../reports/relative-dates'),money=require('../domain/currency'),reports=require('../reports/postgres-service');
 const months=['january','february','march','april','may','june','july','august','september','october','november','december'];
 function day(value,calendar){const text=String(value).trim().toLowerCase();if(text==='today')return calendar.calendarDate;if(text==='yesterday')return dates.bounds('yesterday',calendar).from;if(/^\d{4}-\d{2}-\d{2}$/.test(text))return text;const match=/^([a-z]+)\s+(\d{1,2})(?:,?\s+(\d{4}))?$/.exec(text);if(!match)return null;const month=months.findIndex(m=>m===match[1]||m.slice(0,3)===match[1]);if(month<0)return null;return (match[3]||calendar.calendarDate.slice(0,4))+'-'+String(month+1).padStart(2,'0')+'-'+match[2].padStart(2,'0');}
-function period(query,calendar){try{const range=query.range?{from:day(query.range.from,calendar),to:day(query.range.to,calendar)}:dates.bounds(query.period,calendar);if(!range.from||!range.to)return null;return require('../accounting/customer-money').dates(range,calendar.calendarDate);}catch{return null;}}
+function namedRange(query,calendar){const today=calendar.calendarDate,add=(day,n)=>new Date(Date.parse(day+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
+ if(query.lastWeek){const start=dates.bounds('this_week',calendar).from;return {from:add(start,-7),to:add(start,-1)};}
+ if(query.lastYear){const year=Number(today.slice(0,4))-1;return {from:year+'-01-01',to:year+'-12-31'};}
+ const index=months.findIndex(m=>m.startsWith(query.month.name.slice(0,3)));if(index<0)return null;
+ // A month with no year is the most recent one: in March, "October" means last October.
+ const year=query.month.year||(index+1>Number(today.slice(5,7))?Number(today.slice(0,4))-1:Number(today.slice(0,4))),first=year+'-'+String(index+1).padStart(2,'0')+'-01';
+ return {from:first,to:new Date(Date.UTC(year,index+1,0)).toISOString().slice(0,10)};}
+function period(query,calendar){try{if(query.lastWeek||query.lastYear||query.month)return require('../accounting/customer-money').dates(namedRange(query,calendar),calendar.calendarDate);const range=query.range?{from:day(query.range.from,calendar),to:day(query.range.to,calendar)}:dates.bounds(query.period,calendar);if(!range.from||!range.to)return null;return require('../accounting/customer-money').dates(range,calendar.calendarDate);}catch{return null;}}
 async function run(db,ctx,actor,query){const calendar=await require('../lib/business-time').forWorkspace(db,ctx.workspaceId),range=period(query,calendar);if(!range)return null;
  const entitlements=require('../commercial/entitlements');await entitlements.assertCapability(db,await entitlements.ownerScopeForWorkspace(db,ctx.workspaceId),'accounting.reports',{allowReadOnly:true});
  const spec=measure=>({dataset:'profit_activity',groups:['currency'],aggregate:'sum',measure,filters:[{field:'posting_date',operator:'after',value:range.from},{field:'posting_date',operator:'before',value:range.to}]});
@@ -17,7 +24,7 @@ async function run(db,ctx,actor,query){const calendar=await require('../lib/busi
 }
 const shortDay=value=>new Date(value+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'});
 function profitAnswer({query,range,rows,calculations,books,today}){
- const to=query.period&&range.to>today?today:range.to,when=(query.period?dates.periods[query.period]+' · ':'')+(range.from===to?shortDay(range.from):shortDay(range.from)+' – '+shortDay(to));
+ const to=range.to>today?today:range.to,when=(query.period?dates.periods[query.period]+' · ':query.lastWeek?'Last week · ':query.lastYear?'Last year · ':'')+(range.from===to?shortDay(range.from):shortDay(range.from)+' – '+shortDay(to));
  const blocks=calculations.map(c=>{const format=n=>money.format(n,c.currency);return [...(calculations.length>1?[c.currency]:[]),'Sales: '+format(c.salesMinor),'Product cost: '+format(c.costOfGoodsSoldMinor),'Gross profit: '+format(c.grossProfitMinor),'Expenses: '+format(c.operatingExpensesMinor),'Net profit: '+format(c.netProfitMinor),'',
   'Gross profit = '+format(c.salesMinor)+' sales − '+format(c.costOfGoodsSoldMinor)+' product cost = '+format(c.grossProfitMinor)+'.','Net profit = '+format(c.grossProfitMinor)+' gross profit − '+(c.operatingExpensesMinor<0?'('+format(c.operatingExpensesMinor)+')':format(c.operatingExpensesMinor))+' expenses = '+format(c.netProfitMinor)+'.',
   ...(c.operatingExpensesMinor<0?['Expenses include more credits than charges. Those credits increase net profit above gross profit; review the posted stock adjustments and expense reversals.']:[])].join('\n');});
