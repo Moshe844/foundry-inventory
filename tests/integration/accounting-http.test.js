@@ -217,7 +217,7 @@ test('StockChief automatically applies the proven PO portion when older stock ha
     'the summary valuation must drill into quantity × cost evidence');
   const inventoryPage = await env.agent.get('/inventory').expect(200);
   assert.match(plain(inventoryPage.text),
-    /91 units on hand, \$180 known cost.*Purchase cost is still missing for 55 units.*not the full inventory value/i,
+    /On hand 91 units.*Known cost \$180.*Purchase cost is missing for 55 units.*not the full inventory value/i,
     'Inventory uses the same qualified valuation truth as Accounting');
   assert.match(inventoryPage.text, /href="\/accounting#inventory"[^>]*>Show the units and recorded cost/,
     'the Inventory headline has an exact quantity × cost evidence path');

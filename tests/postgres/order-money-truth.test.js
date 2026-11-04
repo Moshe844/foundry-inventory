@@ -60,6 +60,7 @@ test('cancelled orders, deposits, one sales total, plan locks, number order and 
    AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='workspace_id' AND a.attnum>0 AND NOT a.attisdropped)
    AND NOT EXISTS(SELECT 1 FROM commercial_storage_tables s WHERE s.relation=c.oid)`)).rows;
   assert.deepEqual(untracked,[],'Every stored business table needs its quota registration');
+  await require('../../src/commercial/storage-capacity').refresh(db,ctx.workspaceId);
   const value=(await db.query(`SELECT greatest(0,baseline_bytes+delta_bytes-baseline_delta)::text bytes,
    (SELECT sum(octet_length(convert_to(to_jsonb(r)::text,'UTF8')))::text FROM accounting_deposit_refunds r WHERE r.workspace_id=$1) actual
    FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='accounting_deposit_refunds'::regclass`,[ctx.workspaceId])).rows[0];

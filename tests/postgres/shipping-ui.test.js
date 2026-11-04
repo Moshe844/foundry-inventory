@@ -228,7 +228,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal(uncertainEffect.status,'AMBIGUOUS');
     assert.equal((await database.query(`SELECT status FROM shipping_label_transactions
       WHERE workspace_id=$1 AND shipment_id=$2`,[ctx.workspaceId,uncertainParcel.shipmentId])).rows[0].status,'REVIEW');
-    await page.reload();
+    await page.locator('main strong').filter({hasText:/^Carrier outcome needs review\.?$/}).waitFor({state:'visible',timeout:10000});
     assert.match(await page.locator('main').innerText(),/Carrier outcome needs review/);
     await page.goto(`${base}/needs-you`);
     const needsText=await page.locator('main').innerText();

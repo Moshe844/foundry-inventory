@@ -363,7 +363,7 @@ html:root body .rm-canvas .sc-report-bars i { display:block; height:12px; backgr
   html:root body .rm-canvas .sc-period .sc-date-filter button { grid-column:1/-1; justify-self:start; }
   html:root body .rm-canvas form.filters > .select { flex:1 1 auto; }
   html:root body .rm-canvas table th.sc-stock-selection { display:none; }
-  html:root body .rm-canvas table td.sc-stock-selection { display:block; width:auto; padding-bottom:0; }
+  html:root body .rm-canvas table td.sc-stock-selection { display:flex; width:auto; padding-bottom:0; }
   html:root body .rm-canvas table td.sc-stock-selection::before { content:none !important; }
 }
 
