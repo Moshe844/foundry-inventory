@@ -9,14 +9,24 @@ async function currency(database,workspaceId){
   return (await database.query(`SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1`,[workspaceId])).rows[0]?.base_currency || 'USD';
 }
 
-async function accountTotals(database,workspaceId,{from=null,to}){
+async function accountTotals(database,workspaceId,{from=null,to,types=null}){
   const values=[workspaceId,to];let fromClause='';
-  if(from){values.push(from);fromClause=` AND l.posting_date >= $${values.length}`;}
-  return (await database.query(`SELECT a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance,
-      COALESCE(SUM(l.debit_minor),0) AS debit_minor,COALESCE(SUM(l.credit_minor),0) AS credit_minor
-    FROM accounting_accounts a LEFT JOIN accounting_daily_account_totals l ON l.account_id=a.id AND l.workspace_id=a.workspace_id
-      AND l.posting_date <= $2${fromClause}
-    WHERE a.workspace_id=$1 AND (a.active=1 OR l.account_id IS NOT NULL) GROUP BY a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance
+  if(from){values.push(from);fromClause=` AND e.posting_date >= $${values.length}`;}
+  const typeClause=types?(values.push(types),` AND account_type=ANY($${values.length}::text[])`):'';
+  return (await database.query(`WITH scoped_accounts AS MATERIALIZED (
+      SELECT * FROM accounting_accounts WHERE workspace_id=$1${typeClause}
+    ), totals AS (
+      SELECT l.account_id,SUM(l.debit_minor) AS debit_minor,SUM(l.credit_minor) AS credit_minor
+      FROM scoped_accounts scoped JOIN accounting_journal_lines l
+        ON l.workspace_id=scoped.workspace_id AND l.account_id=scoped.id
+      JOIN accounting_journal_entries e
+        ON e.workspace_id=l.workspace_id AND e.id=l.entry_id
+      WHERE l.workspace_id=$1 AND e.status='POSTED' AND e.posting_date <= $2${fromClause}
+      GROUP BY l.account_id
+    ) SELECT a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance,
+      COALESCE(l.debit_minor,0) AS debit_minor,COALESCE(l.credit_minor,0) AS credit_minor
+    FROM scoped_accounts a LEFT JOIN totals l ON l.account_id=a.id
+    WHERE a.workspace_id=$1 AND (a.active=1 OR l.account_id IS NOT NULL)
     ORDER BY a.code`,values)).rows;
 }
 
@@ -24,7 +34,7 @@ async function profitAndLoss(database,workspaceId,input={}){
   const to=day(input.to || await require('../lib/business-time').today(database,workspaceId),'To date');
   const from=day(input.from || `${to.slice(0,7)}-01`,'From date');
   if(from>to)throw new ValidationError('From date must not be after to date.');
-  const rows=await accountTotals(database,workspaceId,{from,to});
+  const rows=await accountTotals(database,workspaceId,{from,to,types:['INCOME','COGS','EXPENSE']});
   const sum=(type)=>rows.filter((row)=>row.account_type===type).reduce((total,row)=>total+
     (type==='INCOME'?Number(row.credit_minor)-Number(row.debit_minor):Number(row.debit_minor)-Number(row.credit_minor)),0);
   const revenueMinor=sum('INCOME');const cogsMinor=sum('COGS');const operatingExpenseMinor=sum('EXPENSE');

@@ -1,15 +1,17 @@
 'use strict';
 
 const permissions=require('../actions/permissions');
-// Daily totals preserve additive money measures. Transaction counts, averages
-// and individual-entry evidence continue to use the original journal source.
-const profitActivityProjection={aggregates:['sum'],filterFields:['posting_date','currency'],groupFields:['posting_date','currency'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`SELECT t.posting_date,t.currency,
- sum(CASE WHEN a.account_type='INCOME' THEN t.credit_minor-t.debit_minor ELSE 0 END)::bigint AS revenue_minor,
- sum(CASE WHEN a.account_type='COGS' THEN t.debit_minor-t.credit_minor ELSE 0 END)::bigint AS cogs_minor,
- sum(CASE WHEN a.account_type='EXPENSE' THEN t.debit_minor-t.credit_minor ELSE 0 END)::bigint AS expenses_minor,
- sum(t.credit_minor-t.debit_minor)::bigint AS net_profit_minor
- FROM accounting_daily_account_totals t JOIN accounting_accounts a ON a.workspace_id=t.workspace_id AND a.id=t.account_id
- WHERE t.workspace_id=$1 AND a.account_type IN('INCOME','COGS','EXPENSE') GROUP BY t.posting_date,t.currency`};
+// Apply workspace, posted-state and profit-account scope before aggregation.
+// Re-aggregating the general daily view first processes asset/equity history
+// that cannot contribute to a profit report.
+const profitActivityProjection={aggregates:['sum'],filterFields:['posting_date','currency'],groupFields:['posting_date','currency'],fields:['posting_date','currency','revenue_minor','cogs_minor','expenses_minor','net_profit_minor'],source:`SELECT e.posting_date,l.currency,
+ sum(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,
+ sum(CASE WHEN a.account_type='COGS' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS cogs_minor,
+ sum(CASE WHEN a.account_type='EXPENSE' THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS expenses_minor,
+ sum(l.credit_minor-l.debit_minor)::bigint AS net_profit_minor
+ FROM accounting_journal_lines l JOIN accounting_journal_entries e ON e.workspace_id=l.workspace_id AND e.id=l.entry_id
+ JOIN accounting_accounts a ON a.workspace_id=l.workspace_id AND a.id=l.account_id
+ WHERE l.workspace_id=$1 AND e.status='POSTED' AND a.account_type IN('INCOME','COGS','EXPENSE') GROUP BY e.posting_date,l.currency`};
 
 // A dataset is a reviewed projection of canonical PostgreSQL records. The
 // builder never accepts SQL, table names, expressions, or joins from a user or
@@ -104,7 +106,6 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1 AND b.on_hand>0`,recordHref:row=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',on_hand:'number',last_sold_on:'date',days_since_sale:'number'}},
   movements:{label:'Inventory movements',permission:permissions.VIEW,
-    aggregateProjection:{aggregates:['sum'],filterFields:['occurred_on'],groupFields:['occurred_on'],fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta,to_char(m.occurred_second AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM inventory_movement_second_totals m WHERE m.workspace_id=$1`},
     aggregateProjections:[{fields:['occurred_on','quantity_delta'],source:`SELECT m.quantity_delta::numeric AS quantity_delta,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on FROM movements m WHERE m.workspace_id=$1`}],
     source:`SELECT m.item_id AS record_id,to_char(m.occurred_at::timestamptz AT TIME ZONE (SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1),'YYYY-MM-DD') AS occurred_on,
       i.name AS product,s.code AS sku,l.name AS location,m.operation,

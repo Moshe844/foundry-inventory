@@ -12,6 +12,12 @@ test('movement sums preserve local dates while counts, averages and quantity fil
  const before=(await db.query('SELECT sum(movement_count)::int n FROM inventory_movement_second_totals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;await assert.rejects(db.transaction(async c=>{await inventory.receiveInTransaction(c,ctx,{...commands[0],quantity:30,idempotencyKey:'second-rollback'});throw Error('rollback movement total');}),/rollback movement total/);assert.equal((await db.query('SELECT sum(movement_count)::int n FROM inventory_movement_second_totals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,before);
  await require('../helpers/recreate-read-view')(db,'inventory_movement_second_totals');assert.equal((await db.query('SELECT sum(movement_count)::int n FROM inventory_movement_second_totals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,before);assert.equal((await reports.run(db,ctx,actor,{...january,aggregate:'sum'})).rows[0].total,'103');
  assert.equal((await db.query("SELECT count(*)::int n FROM pg_trigger WHERE tgname='movement_second_totals'")).rows[0].n,0,'Rebuilding a reader must not restore the shared movement write trigger');
+ await t.test('movement reports remain available without the legacy second-by-second view',async()=>{
+  await db.query('DROP VIEW inventory_movement_second_totals');
+  const uncached={query:db.query.bind(db),transaction:db.transaction.bind(db)};
+  assert.equal(Number((await reports.run(uncached,ctx,actor,{...january,aggregate:'sum'})).rows[0].total),103);
+  assert.equal(Number((await reports.run(uncached,ctx,actor,{...january,aggregate:'count'})).rows[0].count),101);
+ });
 });
 test('valuation sums use exact totals without changing row-value filters, averages, counts or empty inventories',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,catalog=require('../../src/domain/postgres-catalog-service'),reports=require('../../src/reports/postgres-service'),actor={role:'owner'},item=await catalog.createItem(db,ctx,{name:'Valuation lot',trackingMode:'quantity',purchaseCost:'1.25'});await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:item.skuIds[0],locationId:f.location.id,quantity:2,idempotencyKey:'valuation-projection-extra'});
