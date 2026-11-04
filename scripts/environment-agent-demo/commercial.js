@@ -9,7 +9,7 @@ const {MODELS}=require('./wire-policy');
 // This adapter uses the SAME funded credit, per-goal, operation, purchased-pack,
 // account-period and daily protections as commercial.complete(). It is a native
 // wire transport, so each provider request (including each retry) gets a hold.
-function createCommercialAccounting(database){return {
+function createCommercialAccounting(database,{transactional=false}={}){const adapter={
  async goalRemainingMicroUsd({goalId,ctx}){
     const row=(await database.query(`SELECT g.budget_minor,g.checkpoint->>'runtime' AS runtime,COALESCE((SELECT SUM(CASE
     WHEN h.status IN ('RESERVED','UNKNOWN') THEN h.maximum_minor WHEN h.status='SETTLED' THEN h.actual_minor ELSE 0 END)
@@ -89,5 +89,15 @@ function createCommercialAccounting(database){return {
   await cost.settle(database,held.scope,held.key,{failed:true});
  },
  async release(held){if(!held.existing){await cost.release(database,held.scope,held.key);await entitlements.reverseUsage(database,held.scope,{meter:'ai_work_credits',idempotencyKey:held.fundingKey,reason:'Provider call did not start.'});}}
-};}
+};
+ // Commit all financial admission together before the provider call, and all
+ // receipt/cost/credit settlement together afterwards. Nested commercial
+ // helpers reuse this client; no network request runs inside either boundary.
+ if(!transactional)for(const name of ['begin','complete','unknown','release']){
+  adapter[name]=(...args)=>database.transaction(client=>createCommercialAccounting({
+   query:(...query)=>client.query(...query),transaction:operation=>operation(client),
+  },{transactional:true})[name](...args),{isolation:'READ COMMITTED',retrySafe:true});
+ }
+ return adapter;
+}
 module.exports={createCommercialAccounting};

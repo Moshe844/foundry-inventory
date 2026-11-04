@@ -30,10 +30,12 @@ function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor,prov
    ?Math.min(request.maxOutputTokens,policy.maxOutputTokens):policy.maxOutputTokens;
  return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+outputTokens*outputRateMinor)*
   providerExecutions*1e6)/1e6,inputTokens,outputTokens,providerExecutions};}
-async function rate(database,provider,model,operation,version){return (await database.query(`SELECT cost_per_unit_minor,
- pricing_basis,confidence,source FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3
- AND operation=$4 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
- ORDER BY effective_from DESC LIMIT 1`,[provider,model,version,operation])).rows[0]||null;}
+async function rates(database,provider,model,operations,version){const rows=(await database.query(`SELECT DISTINCT ON(operation)
+ operation,cost_per_unit_minor,pricing_basis,confidence,source FROM commercial_cost_rates
+ WHERE provider=$1 AND model=$2 AND provider_version=$3 AND operation=ANY($4::text[]) AND unit='token'
+ AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
+ ORDER BY operation,effective_from DESC,id DESC`,[provider,model,version,operations])).rows;
+ const byOperation=new Map(rows.map(row=>[row.operation,row]));return operations.map(operation=>byOperation.get(operation)||null);}
 async function pricedBound(database,provider,request,policy,operation,nativeBound=null){
  const name=String(provider.name||'').toLowerCase();const model=String(provider.model||'');
  // A native host profile may select another verified processing price version.
@@ -41,8 +43,7 @@ async function pricedBound(database,provider,request,policy,operation,nativeBoun
  // model or inferred from a cheaper tier. Every selected rate is read fresh.
  const version=nativeBound?String(provider.providerVersion||VERSION[name]||''):VERSION[name];
  if(!VERSION[name]||!version||!model)throw new ValidationError('This model has no approved cost-bound pricing version.');
- const prices=await Promise.all(['model_input','cache_write_1h','model_output']
-  .map(operationName=>rate(database,name,model,operationName,version)));
+ const prices=await rates(database,name,model,['model_input','cache_write_1h','model_output'],version);
  if(prices.some(row=>!row||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT'].includes(row.pricing_basis))){
   await database.query(`INSERT INTO commercial_critical_warnings(id,fingerprint,code,detail)
    VALUES($1,$2,'UNBOUNDED_MODEL_PRICE',$3::jsonb) ON CONFLICT(fingerprint)
@@ -187,7 +188,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
   const certificationPool=require('./staging-certification-budget');
-  let certificationFundingWorkspaceId=!nativeTransport?await certificationPool.reserve(client,Math.ceil(bound.maximumMinor*10000)):null;
+  let certificationFundingWorkspaceId=!nativeTransport?await certificationPool.reserve(client,Math.ceil(bound.maximumMinor*10000),{goalId:goalScope.goalId||null}):null;
   if(creditsOnly()&&!nativeTransport&&!certificationFundingWorkspaceId){
    const f=(await client.query("SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND owner_account_id=$2 AND coalesce(pilot->>'admission_kind','PILOT')='PILOT'",[scope.workspaceId,scope.accountId])).rows[0];
    if(f){
@@ -247,35 +248,40 @@ async function release(database,scope,idempotencyKey){await database.query(`UPDA
  WHERE account_id=$1 AND workspace_id=$2 AND idempotency_key=$3 AND status='RESERVED'`,
  [scope.accountId,scope.workspaceId,idempotencyKey]);}
 async function settle(database,scope,idempotencyKey,{failed=false}={}){
- const rows=(await database.query(`SELECT amount_minor FROM commercial_cost_events WHERE account_id=$1 AND workspace_id=$2
- AND left(idempotency_key,length($3))=$3`,[scope.accountId,scope.workspaceId,`${idempotencyKey}:`])).rows;
- const known=rows.length>0&&rows.every(row=>row.amount_minor!==null);
- const actual=known?rows.reduce((sum,row)=>sum+Number(row.amount_minor),0):null;
- const update=async client=>{const row=(await client.query(`UPDATE commercial_model_cost_holds SET status=$4,actual_minor=$5,settled_at=now(),
- detail=detail||$6::jsonb WHERE account_id=$1 AND workspace_id=$2 AND idempotency_key=$3
- AND status IN ('RESERVED','UNKNOWN') RETURNING maximum_minor`,
- [scope.accountId,scope.workspaceId,idempotencyKey,known?'SETTLED':'UNKNOWN',actual,
-  JSON.stringify({recordedCostEventCount:rows.length,actualCostVerified:known,
-    customerCreditsConsumed:!failed})])).rows[0];
- if(!row)return null;
- if(known){const allocations=(await client.query(`SELECT a.id,a.maximum_minor FROM commercial_model_cost_hold_allocations a
-  JOIN commercial_model_cost_holds h ON h.id=a.hold_id WHERE h.account_id=$1 AND h.workspace_id=$2
-  AND h.idempotency_key=$3 ORDER BY a.id`,[scope.accountId,scope.workspaceId,idempotencyKey])).rows;
+ const update=async client=>{const row=(await client.query(`WITH costs AS MATERIALIZED (
+ SELECT count(*) AS event_count,count(*)>0 AND coalesce(bool_and(amount_minor IS NOT NULL),false) AS known,
+ sum(amount_minor) AS actual_total FROM commercial_cost_events WHERE account_id=$1 AND workspace_id=$2
+ AND left(idempotency_key,length($3)+1)=$3||':'
+ ), updated AS (
+ UPDATE commercial_model_cost_holds h SET status=CASE WHEN c.known THEN 'SETTLED' ELSE 'UNKNOWN' END,
+ actual_minor=CASE WHEN c.known THEN c.actual_total ELSE NULL END,settled_at=now(),
+ detail=detail||jsonb_build_object('recordedCostEventCount',c.event_count,'actualCostVerified',c.known,'customerCreditsConsumed',$4::boolean)
+ FROM costs c WHERE h.account_id=$1 AND h.workspace_id=$2 AND h.idempotency_key=$3
+ AND h.status IN ('RESERVED','UNKNOWN') RETURNING h.id,h.maximum_minor,
+ (SELECT coalesce(jsonb_agg(jsonb_build_object('id',a.id,'maximum_minor',a.maximum_minor) ORDER BY a.id),'[]'::jsonb)
+  FROM commercial_model_cost_hold_allocations a WHERE a.hold_id=h.id) AS allocations
+ ) SELECT c.*,u.* FROM costs c LEFT JOIN updated u ON true`,
+ [scope.accountId,scope.workspaceId,idempotencyKey,!failed])).rows[0];
+ if(!row.id)return row;
+ if(row.known){const actual=Number(row.actual_total),allocations=row.allocations,portions=[];
   let assigned=0;for(let i=0;i<allocations.length;i++){
    const portion=i===allocations.length-1?paidBudget.round(actual-assigned):
     paidBudget.round(actual*Number(allocations[i].maximum_minor)/Number(row.maximum_minor));
-   assigned+=portion;await client.query('UPDATE commercial_model_cost_hold_allocations SET actual_minor=$2 WHERE id=$1',
-    [allocations[i].id,portion]);
+   assigned+=portion;portions.push({id:allocations[i].id,actual_minor:portion});
   }
+  if(portions.length){const saved=await client.query(`UPDATE commercial_model_cost_hold_allocations a SET actual_minor=x.actual_minor
+   FROM jsonb_to_recordset($2::jsonb) x(id text,actual_minor numeric) WHERE a.hold_id=$1 AND a.id=x.id`,[row.id,JSON.stringify(portions)]);
+   if(saved.rowCount!==portions.length)throw new ValidationError('Model cost allocations changed during settlement. Reconcile this receipt before retrying.');}
  }
  return row;};
- const row=typeof database.transaction==='function'?await database.transaction(update,{isolation:'SERIALIZABLE',retrySafe:true}):await update(database);
- if(!row)return {known,actualMinor:actual,replayed:true};
+ const row=typeof database.transaction==='function'?await database.transaction(update,{isolation:'READ COMMITTED',retrySafe:true}):await update(database);
+ const known=row.known,actual=known?Number(row.actual_total):null;
+ if(!row.id)return {known,actualMinor:actual,replayed:true};
  if(!known||actual>Number(row.maximum_minor))await database.query(`INSERT INTO commercial_critical_warnings
   (id,account_id,fingerprint,code,detail) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(fingerprint)
   DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,[newId('critical'),scope.accountId,
    `model-cost-bound:${scope.accountId}:${idempotencyKey}`,known?'MODEL_COST_BOUND_EXCEEDED':'UNVERIFIED_MODEL_COST',
-   JSON.stringify({idempotencyKey,actualMinor:actual,maximumMinor:Number(row.maximum_minor),costEventCount:rows.length})]);
+   JSON.stringify({idempotencyKey,actualMinor:actual,maximumMinor:Number(row.maximum_minor),costEventCount:Number(row.event_count)})]);
  if(failed&&known&&actual>0){
   const threshold=configuredUsd('STOCKCHIEF_AI_FAILED_COST_ALERT_USD',.25)*100;
   const today=(await database.query(`SELECT COALESCE(SUM(actual_minor),0) AS cost_minor,

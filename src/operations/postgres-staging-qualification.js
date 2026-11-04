@@ -25,8 +25,16 @@ async function run(job,db){
   child.on('error',error=>{clearInterval(heartbeat);clearTimeout(timer);reject(error);});
   child.on('close',async(code,signal)=>{clearInterval(heartbeat);clearTimeout(timer);await pending;if(leaseLost)return reject(Object.assign(new Error('The qualification lease expired; the child stopped.'),{retryable:false}));
    let evidence=null;for(const line of stdout.trim().split(/\r?\n/).reverse()){try{const parsed=JSON.parse(line);if(parsed.finishedAt||parsed.mode){evidence=parsed;break;}}catch{}}
-   resolve({passed:code===0&&Boolean(evidence),exitCode:code,signal,evidence,problem:code===0?null:stderr.trim().split(/\r?\n/).at(-1)||'The bounded test did not finish.',paidCalls:0,newInfrastructure:false});
+   resolve({passed:code===0&&Boolean(evidence),exitCode:code,signal,evidence,problem:failureReason(code,signal,evidence,stderr),paidCalls:0,newInfrastructure:false});
   });
  });
 }
-module.exports={run,specification};
+function failureReason(code,signal,evidence,stderr=''){
+ if(code===0)return null;
+ const measured=evidence?.imports?.[evidence.latestStock150k||'stock150k:150000'];
+ if(['prepare','remeasure'].includes(evidence?.mode)&&measured?.verified&&measured.rows===150000&&Number.isFinite(measured.elapsedMs)&&measured.elapsedMs>=300000)
+  return `All 150,000 rows were verified, but the import took ${(measured.elapsedMs/1000).toFixed(1)} seconds. The five-minute target is not met.`;
+ for(const line of stderr.trim().split(/\r?\n/).reverse()){try{const parsed=JSON.parse(line);if(typeof parsed.message==='string'&&parsed.message)return parsed.message;}catch{}}
+ return signal?'The qualification worker stopped before recording a verified result. Review its saved import progress.':'The bounded qualification did not return a verified result. Review its saved import progress.';
+}
+module.exports={run,specification,failureReason};

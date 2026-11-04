@@ -103,7 +103,9 @@ test('PostgreSQL provider discovery exact-maps safe records, queues signed chang
     assert.match(await page.locator('main').innerText(),/Catalogue refresh queued/);
     await page.goto(`${base}/needs-you`);
     assert.match(await page.locator('main').innerText(),/Provider-only product needs a StockChief match/);
-    assert.match(await page.locator('main').innerText(),/Choose the matching StockChief record once/);
+    const unmatched=page.locator('.ny-card').filter({hasText:'Provider-only product needs a StockChief match'});
+    await unmatched.getByText('More',{exact:true}).click();
+    assert.match(await unmatched.innerText(),/Choose the matching StockChief record once/);
     assert.deepEqual(errors,[]);
     const failedProviders={get:()=>({...adapter,async discover({onProduct}){
       onProduct({externalId:'incomplete-page',code:'BAD',displayName:'Incomplete provider read'});

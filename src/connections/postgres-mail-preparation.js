@@ -62,7 +62,7 @@ async function request(db,ctx,messageId,{automatic=false}={}){
     const scoped={query:client.query,transaction:fn=>fn(client)};
     const task='Prepare an unsent reply for the received business email at /mail/'+encodeURIComponent(messageId)+'.';
     const started=await pilot.start(scoped,ctx,task,{usageKey:'mail-preparation:'+messageId+':'+
-      (automatic?'automatic':require('../lib/util').newId('request')),page:{path:'/mail/'+encodeURIComponent(messageId)},budgetMinor:100});
+      (automatic?'automatic':require('../lib/util').newId('request')),page:{path:'/mail/'+encodeURIComponent(messageId)},budgetMinor:100,boundedProcessing:true});
     source.expectedDraftDigest=require('./postgres-reply-drafting').draftDigest(message);
     // Pure processing sees only this sender's bounded evidence packet. It has
     // no browser, business tools, other contacts, or mutation authority.

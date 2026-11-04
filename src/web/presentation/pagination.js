@@ -1,5 +1,4 @@
 'use strict';
-const {ValidationError}=require('../../domain/errors');
 // One way to page through a long list: 25 rows unless the person chose more.
 const SIZES=Object.freeze([25,50,75]);
 const MAX_PAGE=1000000;
@@ -16,10 +15,10 @@ function hrefWith(req,changes){
   return url.pathname+url.search;
 }
 // What the pager draws. total is null for a list that only knows whether more follow.
-function pager(req,{page,size,total=null,hasMore=false,shown=0,next={}}){
+function pager(req,{page,size,offset=(page-1)*size,total=null,hasMore=false,shown=0,next={}}){
   const pages=total===null?null:Math.max(1,Math.ceil(total/size));
   const hasNext=total===null?hasMore:page<pages;
-  const from=(total===0||shown===0)?0:(page-1)*size+1;
+  const from=(total===0||shown===0)?0:offset+1;
   const hidden=[...new URL(req.originalUrl,'http://local').searchParams].filter(([key])=>!['rows','page','after','offset'].includes(key));
   return {page,pages,size,sizes:SIZES,total,from,to:from?from+shown-1:0,hidden,
     show:total===null?page>1||hasMore||size>SIZES[0]:total>SIZES[0]||size>SIZES[0],
@@ -33,11 +32,20 @@ function slice(req,rows,size=pageSize(req)){
   return {rows:shown,pager:pager(req,{page,size,total:rows.length,shown:shown.length})};
 }
 // A query that reads one row more than it shows, to learn whether more follow.
-function window(req){const size=pageSize(req);
-  if(req.query?.offset!==undefined){const offset=Number(req.query.offset);if(!Number.isSafeInteger(offset)||offset<0||offset>MAX_PAGE)throw new ValidationError('Choose a valid list page.');return {size,page:Math.floor(offset/size)+1,limit:size+1,offset};}
-  const page=pageNumber(req);return {size,page,limit:size+1,offset:(page-1)*size};}
-function fromWindow(req,found,{size,page},total=null){
+function window(req){
+  const size=pageSize(req);let page=pageNumber(req),offset=(page-1)*size;
+  // Retained links used offsets before the shared pager. Keep their exact
+  // position and validation; newly generated links use the page parameter.
+  if(req.query?.page===undefined&&req.query?.offset!==undefined){
+    const value=req.query.offset;
+    if(typeof value!=='string'||!/^\d+$/.test(value)||!Number.isSafeInteger(Number(value))||Number(value)>1000000)
+      throw new (require('../../domain/errors').ValidationError)('Choose a valid list page.');
+    offset=Number(value);page=Math.floor(offset/size)+1;
+  }
+  return {size,page,limit:size+1,offset};
+}
+function fromWindow(req,found,{size,page,offset},total=null){
   const rows=found.slice(0,size);
-  return {rows,pager:pager(req,{page,size,total,hasMore:found.length>size,shown:rows.length})};
+  return {rows,pager:pager(req,{page,size,offset,total,hasMore:found.length>size,shown:rows.length})};
 }
 module.exports={SIZES,pageSize,pageNumber,hrefWith,pager,slice,window,fromWindow};

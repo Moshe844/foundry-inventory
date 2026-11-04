@@ -1,6 +1,12 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
-async function lock(client,workspaceId){await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['purchase-authority:'+workspaceId]);}
+async function lock(client,workspaceId){
+ // Imports take the account quota lock before expiring prepared work. Take
+ // that lock before purchasing authority and work-item locks on every path.
+ await client.query(`WITH quota_lock AS MATERIALIZED(
+  SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||owner_account_id,0)) FROM workspaces WHERE id=$1)
+  SELECT pg_advisory_xact_lock(hashtextextended('purchase-authority:'||$1,0)) FROM quota_lock`,[workspaceId]);
+}
 async function read(database,workspaceId,{now=null}={}){
  const rows=(await database.query(`WITH lines AS(SELECT purchase_order_id,SUM(unit_cost::numeric*quantity_units) AS full_amount,SUM(GREATEST(quantity_units-quantity_received_units,0)*unit_cost::numeric) AS pending_amount,COUNT(*) FILTER(WHERE unit_cost IS NULL) AS unknown_prices FROM purchase_order_lines WHERE workspace_id=$1 GROUP BY purchase_order_id),
  charges AS(SELECT purchase_order_id,SUM(amount_minor) FILTER(WHERE kind<>'deposit') AS amount_minor FROM purchase_order_charges WHERE workspace_id=$1 GROUP BY purchase_order_id)

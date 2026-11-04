@@ -19,8 +19,13 @@ function exposureSql(funding,goal){
   (SELECT count(*) FROM stockchief_runtime.codex_pilot_calls call WHERE
    (call.funding_workspace_id=${funding} OR call.detail->>'certificationFundingWorkspaceId'=${funding})
     AND ${require('../assistant/live-model-reservation').blocksAdmission('call',goal)})
-  +(SELECT count(*) FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=${funding}
-    AND status IN ('RESERVED','UNKNOWN')) AS unresolved`;
+  +(SELECT count(*) FROM commercial_model_cost_holds hold WHERE hold.detail->>'certificationFundingWorkspaceId'=${funding}
+    AND (hold.status='UNKNOWN' OR hold.status='RESERVED' AND (
+     hold.goal_id IS NOT DISTINCT FROM ${goal} OR NOT EXISTS(
+      SELECT 1 FROM stockchief_runtime.jobs live_job WHERE live_job.workspace_id=hold.workspace_id
+      AND live_job.kind IN('assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read') AND live_job.status='RUNNING'
+      AND live_job.payload->>'goalId'=hold.goal_id AND live_job.lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)
+     )))) AS unresolved`;
 }
 async function exposure(db,id,{goalId=null}={}){
  const row=(await db.query(exposureSql('$1','$2::text'),[id,goalId])).rows[0];

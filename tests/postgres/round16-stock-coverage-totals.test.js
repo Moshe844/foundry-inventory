@@ -14,6 +14,11 @@ test('stock cost coverage totals reconcile per position through receipts, costs,
  await assert.rejects(db.transaction(async c=>{await inventory.receiveInTransaction(c,ctx,{skuId:sku,locationId:other.id,quantity:30,idempotencyKey:'coverage-rollback'});throw Error('rollback projection');}),/rollback projection/);assert.equal((await same()).missing_units,'1');
  await db.query('DELETE FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,sku,other.id]);assert.equal((await same()).missing_units,'9');
  await db.query('DELETE FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,sku,other.id]);assert.equal((await same()).missing_units,'0');
- await db.transaction(async c=>{await c.query('DROP FUNCTION stockchief_physical_cost_coverage() CASCADE; DROP FUNCTION stockchief_recorded_cost_coverage() CASCADE; DROP TABLE inventory_cost_coverage_positions CASCADE; DROP TABLE inventory_cost_coverage_totals; DROP FUNCTION stockchief_sum_cost_coverage()');await c.query(require('node:fs').readFileSync(require('node:path').join(__dirname,'../../src/db/postgres-migrations/167-stock-cost-coverage-totals.sql'),'utf8'));});await same();
+ await db.transaction(async c=>{await c.query('DELETE FROM inventory_cost_coverage_positions WHERE workspace_id=$1',[ctx.workspaceId]);await c.query(`INSERT INTO inventory_cost_coverage_positions(workspace_id,sku_id,location_id,physical_units,costed_units,book_cost_minor)
+  SELECT coalesce(b.workspace_id,c.workspace_id),coalesce(b.sku_id,c.sku_id),coalesce(b.location_id,c.location_id),coalesce(b.on_hand,0),coalesce(c.quantity_units,0),coalesce(c.total_cost_minor,0)
+  FROM balances b FULL JOIN accounting_inventory_cost_balances c USING(workspace_id,sku_id,location_id)
+  WHERE coalesce(b.workspace_id,c.workspace_id)=$1`,[ctx.workspaceId]);});await same();
+ await require('../helpers/recreate-read-view')(db,'inventory_cost_coverage_totals');await same();
+ assert.equal((await db.query("SELECT count(*)::int n FROM pg_trigger WHERE tgname IN('cost_coverage_insert','cost_coverage_update')")).rows[0].n,0);
  const queries=[],reader={query:async(sql,...args)=>{queries.push(sql);return db.query(sql,...args);}};await coverage.inventoryCoverage(reader,ctx.workspaceId);assert(queries.some(sql=>sql.includes('FROM inventory_cost_coverage_totals')));assert(!queries.some(sql=>sql.includes('FROM balances')),'Coverage must not rescan stock positions');
 });

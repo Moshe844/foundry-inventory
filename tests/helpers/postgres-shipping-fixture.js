@@ -19,6 +19,6 @@ async function fixture(t,{provider='shippo',units=4,timeZone}={}){
   const shipment=await shipping.prepare(db,ctx,order.salesOrderId,{idempotencyKey:key+'-pack',lines:[{lineId:order.lineIds[0],locationId:location.id,quantity}]});await shipping.setPackages(db,ctx,shipment.shipmentId,boxes);return {...shipment,order};
  }
  const balance=async()=>Number((await db.query('SELECT sum(on_hand)::int n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
- return {db,ctx,owner,email,password,location,item,parcel,balance,workflows,shipping,cleanup:operation=>cleanups.push(operation)};
+ return {cluster,db,ctx,owner,email,password,location,item,parcel,balance,workflows,shipping,cleanup:operation=>cleanups.push(operation)};
 }
 module.exports={fixture};

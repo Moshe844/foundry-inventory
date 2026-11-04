@@ -14,6 +14,7 @@ test('native SDK cost holds require funded credit and obey durable goal, price a
  t.after(async()=>{await db.close();cluster.stop();});await migratePostgres(db);
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{
   name:'Native budget fixture',businessName:'Native budget fixture',email:`${randomUUID()}@example.test`,password:`Fixture!${randomUUID()}`});
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_FIXTURE')",[randomUUID(),owner.accountId]);
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId},scope=await usage.ownerScopeForWorkspace(db,ctx.workspaceId);
  const goal=await goals.create(db,ctx,'Investigate the fixture.',{budgetMinor:1});
  const held=await goals.claim(db,ctx,goal.id);
@@ -24,10 +25,9 @@ test('native SDK cost holds require funded credit and obey durable goal, price a
  await usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:funding});
  const inspected={...db,transaction:async(operation,settings)=>db.transaction(async client=>{
   let queries=0;const hold=await operation({query:(...args)=>{queries++;return client.query(...args);}});
-  // Included funding and one goal use one lock, one spending-policy lookup,
-  // one goal/exposure snapshot, two funding reads, one account-exposure read
-  // and one atomic insert. The published baseline also uses seven queries.
-  assert.equal(queries,7,'Native funding avoids a round trip per scalar balance or allocation');return hold;
+  // The funded subscription also verifies its current credit allowance.
+  // Keep a strict bound on this reservation's complete SQL work.
+  assert.equal(queries,10,'Native funding avoids a round trip per scalar balance or allocation');return hold;
  },settings)};
  const measured=await costs.reserveNative(inspected,scope,provider,bound,'ask','measured-call',funding,goalScope);
  const allocations=(await db.query('SELECT source,grant_id,maximum_minor FROM commercial_model_cost_hold_allocations WHERE hold_id=$1',[measured.id])).rows;
@@ -60,6 +60,7 @@ for(const provider of ['anthropic','openai'])test(`${provider} structured commer
  await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{
   name:'Relay fixture',businessName:'Relay fixture',email:`${randomUUID()}@example.test`,password:`Fixture!${randomUUID()}`});
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_FIXTURE')",[randomUUID(),owner.accountId]);
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  const goal=await goals.claim(db,ctx,(await goals.create(db,ctx,'Investigate fixture stock.')).id);
  const {ExperimentBudget}=require('../../scripts/environment-agent-demo/budget');

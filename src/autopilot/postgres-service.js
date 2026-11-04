@@ -10,6 +10,7 @@ const workflows = require('../operations/postgres-business-workflows');
 const outboundMail=require('../connections/postgres-outbound-mail');
 const commercial=require('../commercial/service');
 const entitlements=require('../entitlements/postgres-service');
+const {newAppendId}=require('../lib/append-id');
 
 const MODES = Object.freeze({ OBSERVE:'OBSERVE', SUPERVISED:'SUPERVISED', POLICY_AUTOMATED:'POLICY_AUTOMATED' });
 const ACTIONS = Object.freeze({ TRANSFER:'transfer', PURCHASE:'approve_purchase_order' });
@@ -256,7 +257,7 @@ async function persistPlannedWork(database,workspaceId,entries){
  // Bound each SQL payload rather than performing four network round trips per
  // suggestion. The unique idempotency key and its audit event commit together.
  for(let offset=0;offset<entries.length;offset+=250){const batch=entries.slice(offset,offset+250).map(({candidate,evaluation})=>{
-  const automatic=evaluation.decision==='authorized';return {id:newId('wi'),event_id:newId('wievt'),
+  const automatic=evaluation.decision==='authorized';return {id:newAppendId('wi'),event_id:newAppendId('wievt'),
    category:candidate.type==='transfer'?'stock_transfer':'replenishment_plan',source_evidence:candidate.evidence,
    affected_entities:{skuId:candidate.skuId,displayName:candidate.displayName},recommended_action:candidate,
    priority:candidate.priority,urgency:candidate.urgency,policy_id:evaluation.policy?.id||null,
@@ -472,13 +473,18 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   return {planned:planned.created.length,executed,waiting:planned.created.length-executed,
     considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
- if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
+ if(destinationLocationId)await database.transaction(async client=>{await require('../purchasing/postgres-replenishment-cycle').lockStorageOwner(client,ctx.workspaceId);const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
  return execute(database,ctx,id,{approvedBy:ctx.actorId});}
-async function cancel(database,ctx,membership,id){assertOperate(membership);const item=await getWork(database,ctx.workspaceId,id);
+async function cancel(database,ctx,membership,id){assertOperate(membership);return database.transaction(async client=>{
+  await require('../purchasing/postgres-replenishment-cycle').lockStorageOwner(client,ctx.workspaceId);
+  await client.query('SELECT id FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
+  const scoped=scopedDatabase(client),item=await getWork(scoped,ctx.workspaceId,id);
   if(item.execution_status==='EXECUTING')throw new ValidationError('This work has already started. Review its linked purchase or transfer; discarding it would not cancel that business commitment.');
   if([STATUSES.COMPLETED,STATUSES.FAILED].includes(item.execution_status))throw new ValidationError('Completed work cannot be discarded.');
-  await database.query(`UPDATE work_items SET execution_status='CANCELLED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
-    [ctx.workspaceId,id,nowIso()]);return getWork(database,ctx.workspaceId,id);}
+  if(item.execution_status===STATUSES.CANCELLED)return item;
+  await client.query(`UPDATE work_items SET execution_status='CANCELLED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
+    [ctx.workspaceId,id,nowIso()]);return getWork(scoped,ctx.workspaceId,id);
+ },{isolation:'SERIALIZABLE',retrySafe:true});}
 
 async function dashboard(database,workspaceId){const [state,policies,capabilities,locations,suppliers,recent]=await Promise.all([
   getState(database,workspaceId),listPolicies(database,workspaceId),

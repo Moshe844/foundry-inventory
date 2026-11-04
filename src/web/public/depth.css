@@ -265,4 +265,5 @@ html:root body .aw-note { margin:8px 0 0; font-size:12.5px; text-align:center; c
 @media (max-width:1050px) { html:root body.page-ask .sc-chat-workspace { gap:0; padding-top:8px; } }
 @media (prefers-reduced-motion:reduce) {
   html:root body *,html:root body *::before,html:root body *::after { animation:none !important; transition:none !important; }
+  html:root body :is(.sc-provider-card,.sc-money-card,.sc-report-card,.ox-kpi,a.card,.btn,.rm-btn,.ox-btn,.sc-metric,.hm-row,.ny-card,.level-count,.ask-starters button) { transform:none !important; }
 }

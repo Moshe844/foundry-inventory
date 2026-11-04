@@ -171,7 +171,9 @@ test('the real Brief and work-history pages expose active universal work', async
   const agent = request.agent(env.app);
   await signIn(agent, workspace.account.email);
   const home = await agent.get('/').expect(200);
-  assert.match(plain(home.text), /Work in progress 1/);
+  const progress=/<section\b[^>]*data-home-section="progress"[\s\S]*?<\/section>/.exec(home.text)?.[0]||'';
+  assert.equal([...progress.matchAll(/<article\b/g)].length,1);
+  assert.match(plain(progress), /In progress Work history Checking QuickBooks/);
   assert.match(plain(home.text), /Checking QuickBooks/);
   const history = await agent.get('/autopilot/history').expect(200);
   assert.match(plain(history.text), /Universal operations .* Checking QuickBooks/);

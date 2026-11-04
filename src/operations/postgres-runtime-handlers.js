@@ -160,6 +160,7 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
 }
 
 async function runtimeSweep(job,client,options={}){
+  await require('../lib/versioned-read-model').foldChanges(client);
   await require('../commercial/storage-capacity').schedule(scopedDatabase(client));
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   await client.query('DELETE FROM connection_authorization_states WHERE id IN (SELECT id FROM connection_authorization_states WHERE used_at IS NULL AND expires_at::timestamptz<$1::timestamptz ORDER BY expires_at LIMIT 500)',[at]);

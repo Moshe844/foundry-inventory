@@ -1,6 +1,24 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),catalog=require('../domain/postgres-catalog-service'),prices=require('../pricing/postgres-service'),identities=require('./postgres-execution-identities');
 
+async function saveBindings(client,ctx,planId,bindings){
+ if(!bindings.length)return;
+ const payload=JSON.stringify(bindings),params=[ctx.workspaceId,planId,payload];
+ const inserted=await client.query(`INSERT INTO import_catalogue_bindings(workspace_id,import_id,product_key,variant_key,item_id,sku_id)
+  SELECT $1,$2,x.product_key,x.variant_key,x.item_id,x.sku_id
+  FROM jsonb_to_recordset($3::jsonb) x(product_key text,variant_key text,item_id text,sku_id text)
+  ON CONFLICT(workspace_id,import_id,product_key,variant_key) DO NOTHING`,params);
+ if(inserted.rowCount===bindings.length)return;
+ // A matching replay is safe. A different winner must roll back this entire
+ // catalogue batch, never silently bind newly created products to old SKUs.
+ const matched=(await client.query(`SELECT count(*)::int AS n FROM
+  jsonb_to_recordset($3::jsonb) x(product_key text,variant_key text,item_id text,sku_id text)
+  JOIN import_catalogue_bindings b ON b.workspace_id=$1 AND b.import_id=$2
+   AND b.product_key=x.product_key AND b.variant_key=x.variant_key
+   AND b.item_id=x.item_id AND b.sku_id=x.sku_id`,params)).rows[0].n;
+ if(matched!==bindings.length)throw new ValidationError('The imported product mapping changed. Saved batches are preserved; review this import before continuing.');
+}
+
 async function prepare(client,ctx,plan,options,deps,saved={}){
  const params=[ctx.workspaceId,plan.id];
  // Validate cross-page conflicts in PostgreSQL before creating any catalogue
@@ -55,10 +73,9 @@ async function prepare(client,ctx,plan,options,deps,saved={}){
     if(price)initialPrices.push({skuId,amountMinor:Number(price.amount),currency:price.currency,source:'opening_import',sourceDetail:{importId:plan.id,importRowId:row.row_id}});}
   }
   for(let offset=0;offset<initialPrices.length;offset+=500)await prices.setPricesInTransaction(client,ctx,initialPrices.slice(offset,offset+500),{initialize:true});
-  for(let offset=0;offset<bindings.length;offset+=500)await client.query(`INSERT INTO import_catalogue_bindings(workspace_id,import_id,product_key,variant_key,item_id,sku_id)
-   SELECT $1,$2,x.product_key,x.variant_key,x.item_id,x.sku_id FROM jsonb_to_recordset($3::jsonb) x(product_key text,variant_key text,item_id text,sku_id text)`,[...params,JSON.stringify(bindings.slice(offset,offset+500))]);
+  for(let offset=0;offset<bindings.length;offset+=500)await saveBindings(client,ctx,plan.id,bindings.slice(offset,offset+500));
   tailItem={id:created.at(-1).itemId,first:products.at(-1)===lastProduct?tailItem.first:firstByProduct.get(products.at(-1))};
   lastProduct=representatives.at(-1).product_key;lastVariant=representatives.at(-1).variant_key;
   return {cataloguePrepared:false,catalogueChecked:true,catalogueCursor:{product:lastProduct,variant:lastVariant},catalogueTail:tailItem,itemsCreated,skusCreated,itemsUpdated:Number(saved.itemsUpdated||0)};
 }
-module.exports={prepare};
+module.exports={prepare,saveBindings};

@@ -174,7 +174,9 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal(exceptionResponse.status(),200);
     assert.equal((await exceptionResponse.json()).applied,true);
     await page.goto(`${base}/needs-you`);
-    assert.match(await page.locator('main').innerText(),/Carrier exception on .*Weather delay at regional hub/s);
+    const carrierException=page.locator('.ny-card').filter({hasText:'Carrier exception on'});
+    await carrierException.getByText('More',{exact:true}).click();
+    assert.match(await carrierException.innerText(),/Carrier exception on .*Weather delay at regional hub/s);
 
     const deliveredPayload=JSON.stringify({externalEventId:'carrier-delivered-1',type:'tracking.updated',
       trackingNumber:'1Z999AA10123456784',status:'DELIVERED',detail:'Delivered at front desk',events:[

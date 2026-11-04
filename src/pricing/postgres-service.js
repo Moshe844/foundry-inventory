@@ -6,6 +6,13 @@ const {ValidationError,NotFoundError}=require('../domain/errors');
 const money=require('../domain/currency');
 
 const CURRENCY=/^[A-Z]{3}$/;
+function afterCurrent(rows){
+ let at=Date.now();for(const row of rows){if(!row)continue;const previous=Date.parse(row.created_at);
+  if(!Number.isFinite(previous))throw new ValidationError('The current price history has an invalid date. Contact support before changing it.');
+  at=Math.max(at,previous+1);
+ }
+ return new Date(at).toISOString();
+}
 
 function normaliseCurrency(value,fallback='USD'){
   const currency=String(value||fallback).trim().toUpperCase();
@@ -69,6 +76,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   if(!Array.isArray(inputs))throw new ValidationError('Selling prices must be a list.');if(!inputs.length)return [];
   const skuIds=inputs.map(input=>input.skuId);
   if(new Set(skuIds).size!==skuIds.length){if(initialize)throw new ValidationError('Initial prices require one price per new variant.');const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
+  if(!initialize)await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,skuIds]);
   // Drive bounded validation from the requested keys. A growing import can
   // otherwise make PostgreSQL repeatedly scan the entire tenant catalogue.
   const active=(await client.query(`SELECT s.id,s.created_here FROM unnest($2::text[]) wanted(id)
@@ -87,7 +95,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   // matches. Keep the same validator and history writer, without predicate-
   // reading unrelated price history or draft orders. Public change callers
   // never choose this mode; existing variants must use the conflict checks.
-  const current=initialize?new Map():await readPrices(),rows=[],unchanged=new Set(),at=nowIso();let inserted=[],actorName=null;
+  const current=initialize?new Map():await readPrices(),rows=[],unchanged=new Set(),at=afterCurrent(current.values());let inserted=[],actorName=null;
   for(const input of inputs){const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
     if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
     const currency=normaliseCurrency(input.currency),before=current.get(input.skuId);
@@ -111,6 +119,7 @@ async function setPriceInTransaction(client,ctx,input){return (await setPricesIn
 async function setPrice(database,ctx,input){return database.transaction((client)=>setPriceInTransaction(client,ctx,input));}
 
 async function setPurchaseCostInTransaction(client,ctx,input){
+  await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,input.skuId]);
   const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?
     toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');
@@ -119,7 +128,7 @@ async function setPurchaseCostInTransaction(client,ctx,input){
   if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(current?.id||null)!==(input.expectedCurrentId||null))
     throw new ValidationError('The current purchase cost changed after this preview was prepared. Start again from the latest cost.');
   if(current&&current.amount_minor===amountMinor&&current.currency===currency)return {...current,replayed:true};
-  const id=newId('pcost');const at=nowIso();
+  const id=newId('pcost');const at=afterCurrent([current]);
   await client.query(`INSERT INTO sku_purchase_costs
     (id,workspace_id,sku_id,amount_minor,currency,supplier_item_id,source,source_detail,created_by_user_id,created_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,[id,ctx.workspaceId,sku.id,amountMinor,currency,
@@ -132,9 +141,10 @@ async function setPurchaseCostInTransaction(client,ctx,input){
 async function setPurchaseCostsInTransaction(client,ctx,inputs){
  if(!Array.isArray(inputs))throw new ValidationError('Purchase costs must be a list.');if(!inputs.length)return [];
  if(new Set(inputs.map(i=>i.skuId)).size!==inputs.length||inputs.some(i=>i.supplierItemId||Object.hasOwn(i,'expectedCurrentId'))){const result=[];for(const input of inputs)result.push(await setPurchaseCostInTransaction(client,ctx,input));return result;}
+ await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,inputs.map(i=>i.skuId)]);
  const ids=inputs.map(i=>i.skuId),active=(await client.query('SELECT s.id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,ids])).rows;if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
  if(ctx.actorId&&!(await client.query('SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows.length)throw new NotFoundError('The acting user does not belong to this inventory.');
- const current=new Map((await client.query('SELECT DISTINCT ON(sku_id) * FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,created_at DESC,id DESC',[ctx.workspaceId,ids])).rows.map(r=>[r.sku_id,r])),rows=[],at=nowIso();
+ const current=new Map((await client.query('SELECT DISTINCT ON(sku_id) * FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,created_at DESC,id DESC',[ctx.workspaceId,ids])).rows.map(r=>[r.sku_id,r])),rows=[],at=afterCurrent(current.values());
  for(const input of inputs){const amount=input.amountMinor===undefined?toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor),currency=normaliseCurrency(input.currency);if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');const before=current.get(input.skuId);if(before&&Number(before.amount_minor)===amount&&before.currency===currency){current.set(input.skuId,{...before,replayed:true});continue;}rows.push({id:newId('pcost'),sku_id:input.skuId,amount_minor:amount,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});}
  if(rows.length){const saved=(await client.query('INSERT INTO sku_purchase_costs(id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at) SELECT x.id,$1,x.sku_id,x.amount_minor,x.currency,x.source,x.source_detail,$2,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,sku_id text,amount_minor bigint,currency text,source text,source_detail jsonb) RETURNING *',[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(rows)])).rows;for(const row of saved)current.set(row.sku_id,row);}
  return inputs.map(input=>{const row=current.get(input.skuId);return {...row,amount_minor:Number(row.amount_minor),isSet:true,formatted:formatMinor(Number(row.amount_minor),row.currency),sourceLabel:'Owner supplied'};});

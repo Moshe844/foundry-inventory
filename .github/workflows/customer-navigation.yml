@@ -4,8 +4,12 @@ on:
   push:
     branches: [main, codex/staging-codex-pilot]
 jobs:
-  customer-navigation:
-    name: Required customer navigation and account safety
+  customer_checks:
+    name: customer-navigation / ${{ matrix.group }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [core, crawl, shipping]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -34,6 +38,7 @@ jobs:
           sudo apt-get install -y postgresql-17
       - run: npm ci
       - name: Install browser with bounded package downloads
+        id: test_ready
         timeout-minutes: 8
         run: |
           # Avoid an unresponsive runner-image mirror holding the test gate.
@@ -43,33 +48,50 @@ jobs:
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           npx playwright install --with-deps chromium firefox
+          mkdir -p output/customer-navigation-ci
       - name: Private authentication persists before redirects
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
           node --test tests/postgres/owner-session-redirect.test.js 2>&1 | tee output/customer-navigation-ci/owner-session-redirect.log
-      - run: |
+      - if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
           npm run test:customer-navigation:core 2>&1 | tee output/customer-navigation-ci/core-test.log
       - name: Plan changes and first-customer regression tests
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/unit/commercial-stripe-lifecycle.test.js tests/unit/staging-plan-portal.test.js tests/unit/annual-usage-periods.test.js tests/unit/return-navigation.test.js tests/unit/report-build-pending-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/round15-plan-limits.test.js tests/postgres/public-information.test.js tests/postgres/public-api-ui.test.js tests/postgres/round15-first-sale.test.js tests/postgres/round15-report-credits.test.js tests/postgres/report-stock-cost-detail.test.js tests/postgres/existing-stock-costs-ui.test.js 2>&1 | tee output/customer-navigation-ci/round15.log
       - name: Click every customer destination
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'crawl' }}
         run: |
           set -euo pipefail
           npm run test:customer-navigation:links 2>&1 | tee output/customer-navigation-ci/link-test.log
       - name: Redesigned orders and order entry in the browser
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'shipping' }}
         run: |
           set -euo pipefail
           node --test tests/postgres/orders-redesign-ui.test.js tests/postgres/buy-redesign-ui.test.js 2>&1 | tee output/customer-navigation-ci/orders-redesign.log
       - name: Shipping connections and customer addresses
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'shipping' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/shipping-account-verification.test.js tests/postgres/shipping-order-panel.test.js tests/postgres/shipping-ui.test.js tests/postgres/round7-controls-customers.test.js 2>&1 | tee output/customer-navigation-ci/shipping-addresses.log
+          node --test --test-concurrency=2 tests/postgres/shipping-first-order.test.js tests/postgres/shipping-account-verification.test.js tests/postgres/shipping-order-panel.test.js tests/postgres/shipping-ui.test.js tests/postgres/round7-controls-customers.test.js 2>&1 | tee output/customer-navigation-ci/shipping-addresses.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: customer-navigation-results
+          name: customer-navigation-results-${{ matrix.group }}
           path: output/customer-navigation-ci
+  customer-navigation:
+    name: Required customer navigation and account safety
+    needs: customer_checks
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every navigation group
+        env:
+          RESULT: ${{ needs.customer_checks.result }}
+        run: test "$RESULT" = success
