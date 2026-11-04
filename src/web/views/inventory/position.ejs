@@ -18,51 +18,45 @@
 %>
 
 
-<p class="rm-stamp">
-  <%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %>
-  · <%= totals.skus || 0 %> SKU<%= totals.skus === 1 ? '' : 's' %> tracked
-</p>
-<% if(typeof postgresNative!=='undefined'&&postgresNative){ %><p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/imports">File imports and results</a><a class="rm-btn rm-btn--ghost" href="/manufacturing">Manufacturing and material planning</a><a class="rm-btn rm-btn--ghost" href="/custody">Rentals and consignment</a></p><% } %>
+<header class="sc-business-head"><div><h1><%= typeof title!=='undefined'?title:'Stock overview' %></h1><p><%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %> · <%= totals.skus || 0 %> <%= typeof postgresNative!=='undefined'&&postgresNative?'SKU':'product' %><%= totals.skus === 1 ? '' : 's' %> tracked</p></div><% if (!position.tooLarge && position.groups.length) { %><div class="sc-row-actions"><a class="btn" href="/actions">Record stock activity</a><a class="btn" href="/inventory/table">Open the stock table</a><a class="btn btn--primary" href="/inventory/new">Add a product</a></div><% } %></header>
 <% if (position.productNames && position.productNames.length) { %><p class="sr-only">Products in this inventory: <%= position.productNames.join(', ') %>.</p><% } %>
 
 <% if (position.tooLarge) { %>
 
-  <h1 class="rm-figure">This inventory is too big to summarise on sight.</h1>
-  <p class="rm-sub">
-    Reading every position to group them would make this the page you stop opening.
-    <%= totals.skus %> products is past that line, so here is the table instead, which is what
-    you would want at this size anyway.
-  </p>
-  <p class="rm-choices"><a class="rm-btn" href="/inventory/table">Open the stock table</a></p>
+  <section class="sc-business-card">
+    <h2>This inventory is too big to summarise on sight.</h2>
+    <p>Reading every position to group them would make this the page you stop opening. <%= totals.skus %> products is past that line, so here is the table instead, which is what you would want at this size anyway.</p>
+    <p><a class="btn btn--primary" href="/inventory/table">Open the stock table</a></p>
+  </section>
+
+<% } else if (!position.groups.length) { %>
+
+  <section class="sc-business-card">
+    <h2>There is nothing here yet.</h2>
+    <p>Once StockChief knows what you hold, this is where it tells you whether it is all right.</p>
+    <p class="rm-choices">
+      <a class="rm-btn" href="/ask"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
+      <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add one manually</a>
+      <a class="rm-btn rm-btn--ghost" href="/imports">Import existing inventory</a>
+      <a class="rm-btn rm-btn--ghost" href="/settings/connections">Connect a business system</a>
+    </p>
+  </section>
 
 <% } else { %>
 
-  <h1 class="rm-figure">
-    <%= helpers.unitCount((totals.onHand || 0).toLocaleString('en-US'),'unit') %> on hand<% if (value && value.totalCostMinor) { %>,
-    $<%= Math.round(value.totalCostMinor / 100).toLocaleString('en-US') %> known cost<% } %>.
-  </h1>
-  <p class="rm-sub">
-    <% if (!position.groups.length) { %>
-      There is nothing here yet. Once StockChief knows what you hold, this is where it tells you
-      whether it is all right.
-    <% } else { %>
-      <%= totals.committed ? totals.committed.toLocaleString('en-US') + ' units are promised to customers' : 'Nothing is promised to a customer' %><%
-      %><%= totals.incoming ? ', and ' + totals.incoming.toLocaleString('en-US') + ' more are on their way' : '' %>.
-    <% } %>
-  </p>
+  <div class="sc-tiles">
+    <a class="sc-tile" href="/inventory/table"><span>On hand</span><strong><%= helpers.unitCount((totals.onHand || 0).toLocaleString('en-US'),'unit') %></strong><small>Across every location</small></a>
+    <a class="sc-tile" href="/accounting#inventory"><span>Known cost</span><strong class="<%= missingCostUnits > 0 ? 'is-important' : '' %>"><%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'Not recorded' %></strong><small><%= missingCostUnits > 0 ? helpers.unitCount(missingCostUnits.toLocaleString('en-US'),'unit') + ' still need a cost' : 'Every unit has a cost' %></small></a>
+    <a class="sc-tile" href="/orders?status=open"><span>Promised to customers</span><strong><%= helpers.unitCount((totals.committed || 0).toLocaleString('en-US'),'unit') %></strong><small><%= totals.committed ? 'Already sold, not yet shipped' : 'Nothing is promised to a customer' %></small></a>
+    <a class="sc-tile" href="/inventory/table?group=incoming"><span>On the way</span><strong><%= helpers.unitCount((totals.incoming || 0).toLocaleString('en-US'),'unit') %></strong><small>From purchase orders</small></a>
+  </div>
+
   <% if (missingCostUnits > 0) { %>
-    <p class="rm-sub">
-      <%= typeof postgresNative!=='undefined'&&postgresNative?'Actual stock cost':'Purchase cost' %> is still missing for <strong><%= missingCostUnits.toLocaleString('en-US') %></strong> units,
-      so <%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'the amount above' %>
-      is not the full inventory value.
-      <% if(typeof postgresNative!=='undefined'&&postgresNative){ %>A purchasing price may already be saved without cost being attached to these units. <a href="/inventory/table">Open a product to record stock cost</a>.<% }else{ %><a href="/accounting#inventory">Show the units and recorded cost</a>.<% } %>
-    </p>
-  <% } else if (value && value.totalCostMinor) { %>
-    <p class="rm-sub"><a href="/accounting#inventory">Show the units and recorded cost</a>.</p>
+    <p class="sc-stock-notice"><%= typeof postgresNative!=='undefined'&&postgresNative?'Actual stock cost':'Purchase cost' %> is missing for <strong><%= missingCostUnits.toLocaleString('en-US') %></strong> units, so <%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'the amount above' %> is not the full inventory value. <% if(typeof postgresNative!=='undefined'&&postgresNative){ %><a href="/inventory/table">Open a product to record stock cost.</a><% }else{ %><a href="/accounting#inventory">Show the units and recorded cost.</a><% } %></p>
   <% } %>
 
-
-  <div class="rm-groups">
+  <section class="sc-business-card sc-stock-groups"><h2>Where your products stand</h2>
+    <div class="rm-groups">
     <% position.groups.forEach(function (group) { %>
       <%
         /* The bar is this group's share of the products counted, on one scale
@@ -70,32 +64,15 @@
         var share = totals.skus ? Math.max(3, Math.round((group.count / totals.skus) * 100)) : 0;
       %>
       <a class="rm-group" href="<%= group.href %>">
-        <span class="rm-group__mk <%= group.tone === 'hot' ? 'is-hot' : group.tone === 'ok' ? 'is-ok' : '' %>" aria-hidden="true"><%- helpers.icon(group.icon || 'box', { size: 15 }) %></span>
         <span class="rm-group__body">
           <span class="rm-group__n"><%= group.name %></span>
           <span class="rm-group__d"><%= group.detail %></span>
         </span>
-        <span class="rm-meter <%= group.tone === 'hot' ? 'is-flag' : group.tone === 'ok' ? 'is-good' : 'is-quiet' %>"><span style="width:<%= share %>%"></span></span>
+        <span class="sc-group-count"><strong><%= group.count.toLocaleString('en-US') %></strong><span class="rm-meter <%= group.tone === 'hot' ? 'is-flag' : group.tone === 'ok' ? 'is-good' : 'is-quiet' %>"><span style="width:<%= share %>%"></span></span></span>
       </a>
     <% }) %>
-  </div>
-
-  <% if (position.groups.length) { %>
-    <div class="rm-choices" style="margin-top:16px">
-      <a class="rm-btn rm-btn--ghost" href="/inventory/table"><%- helpers.icon('inventory', { size: 15 }) %> Open the stock table</a>
-      <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add a product</a>
-      <a class="rm-btn rm-btn--ghost" href="/actions">Record stock activity</a>
     </div>
-  <% } %>
-
-  <% if (!position.groups.length) { %>
-    <div class="rm-choices" style="margin-top:16px">
-      <a class="rm-btn" href="/ask"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
-      <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add one manually</a>
-      <a class="rm-btn rm-btn--ghost" href="/imports">Import existing inventory</a>
-      <a class="rm-btn rm-btn--ghost" href="/settings/connections">Connect a business system</a>
-    </div>
-  <% } %>
+  </section>
 
 <% } %>
 
@@ -105,4 +82,5 @@
   <a href="/purchasing/orders">What is on order</a>
   <a href="/locations">Your locations</a>
   <a href="/inventory/table?archived=only">Archived products</a>
+  <% if(typeof postgresNative!=='undefined'&&postgresNative){ %><a href="/imports">File imports and results</a><a href="/manufacturing">Manufacturing and material planning</a><a href="/custody">Rentals and consignment</a><% } %>
 </p>

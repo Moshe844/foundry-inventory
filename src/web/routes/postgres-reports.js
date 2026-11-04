@@ -34,6 +34,8 @@ function source(body){
     summary:body.summary==='on'||body.summary===true,
     filters,sort:body.sort,direction:body.direction,topN:body.topN,chart:body.chart,layout:body.layout};
 }
+// A grouped preview reads more rows so a trend line can show its whole shape.
+const previewLimit=spec=>spec.groups?.length?61:31;
 function previewSchedule(body,defaultZone){return require('../../reports/local-schedule').normalize(body,defaultZone);}
 async function actorFor(database,ctx){
   const row=(await database.query(`SELECT u.id,u.role,u.permissions,a.email FROM users u
@@ -60,6 +62,43 @@ async function requireBuilderSource(database,ctx,key){
   if(!required)return;
   const entitlements=require('../../commercial/entitlements');
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),required);
+}
+async function baseCurrency(database,ctx){return (await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';}
+const EXPORT_TYPES=Object.freeze({csv:'text/csv; charset=utf-8',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',pdf:'application/pdf'});
+async function sendExport(database,req,res,actor,definition,name){
+  const format=req.params.format;
+  if(!Object.hasOwn(EXPORT_TYPES,format))throw new ValidationError('That export format is unavailable.');
+  if(format==='csv'){
+    const total=await reports.countAtMost(database,req.ctx,actor,definition,100000);
+    if(total>100000)throw new ValidationError('This CSV exceeds 100,000 rows. Narrow its filters first.');
+    res.set('Content-Type',EXPORT_TYPES.csv);
+    res.set('Content-Disposition',`attachment; filename="${name}.csv"`);
+    res.set('Cache-Control','private, no-store');
+    let offset=0,started=false;
+    try{
+      do{
+        const page=await reports.run(database,req.ctx,actor,definition,{limit:1001,offset});
+        if(!started){res.write(reportExports.csvHeader(page));started=true;}
+        if(page.rows.length){
+          const wrote=res.write(reportExports.csvRows(page));
+          if(!wrote)await new Promise((resolve)=>{const done=()=>{
+            res.off('drain',done);res.off('close',done);resolve();};
+            res.once('drain',done);res.once('close',done);});
+        }
+        offset+=page.rows.length;
+        if(!page.hasMore||res.destroyed)break;
+      }while(true);
+      if(!res.destroyed)res.end();
+    }catch(error){if(res.headersSent)res.destroy(error);else throw error;}
+    return;
+  }
+  const limit=format==='xlsx'?20001:5001;
+  const result=await reports.run(database,req.ctx,actor,definition,{limit});
+  if(result.hasMore)throw new ValidationError(`This ${format.toUpperCase()} export exceeds ${limit-1} rows. Narrow its filters first or use CSV.`);
+  const output=await reportExports[format](result);
+  res.set('Content-Type',EXPORT_TYPES[format]);
+  res.set('Content-Disposition',`attachment; filename="${name}.${format}"`);
+  res.set('Cache-Control','private, no-store');return res.send(output);
 }
 function createPostgresReportsRouter(database){
   const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
@@ -88,7 +127,7 @@ function createPostgresReportsRouter(database){
     const {datasets,unavailableSources}=await builderChoices(database,req.ctx,actor),dataset=datasets.find((entry)=>entry.key===draft.dataset);
     if(!dataset)throw new ValidationError('That report dataset is unavailable.');
     return res.page('reports/builder',{title:'Customize Ask report',nav:'accounting',
-      datasets,dataset,saved:null,draft,draftSchedule:null,builderEntry,unavailableSources});
+      datasets,dataset,saved:null,draft,draftSchedule:null,builderEntry,unavailableSources,reportCurrency:await baseCurrency(database,req.ctx)});
   }));
   router.get('/reports/from-ask/:interactionId/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -152,18 +191,21 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     try{
       const started=performance.now();
       const spec=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
-      const result=await reports.run(database,req.ctx,actor,spec,{limit:31});
+      const result=await reports.run(database,req.ctx,actor,spec,{limit:previewLimit(spec)});
+      const chartColumn=result.chartColumn||result.columns.at(-1),chartValues=result.rows.map(row=>Number(row[chartColumn]));
       return res.json({ok:true,columns:result.columns,labels:result.columnLabels,
         rows:result.displayRows,hasMore:result.hasMore,returned:result.rows.length,
         links:result.rows.map(row=>row.href||null),groups:result.config.groups,
         groupValues:result.config.groups.length?result.rows.map(row=>result.config.groups.map(key=>row[key])):[],
+        columnTypes:result.columnTypes,insights:result.insights||[],
+        chart:{column:chartColumn,values:chartValues,comparable:result.comparisonSafe!==false,plottable:result.rows.every(row=>row[chartColumn]!==null)&&chartValues.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)},
         definition:result.config,elapsedMs:Math.round(performance.now()-started)});
     }catch(error){
       if(error.status===402)return res.status(402).json({ok:false,message:error.message,upgradeUrl:'/upgrade'});
@@ -228,7 +270,7 @@ function createPostgresReportsRouter(database){
     const actor=await actorFor(database,req.ctx);permissions.assertCan(actor,permissions.VIEW,'save a report');
     const saved=await reports.save(database,req.ctx,actor,source(req.body),{
       id:req.body.id||null,expectedRevision:req.body.expectedRevision??null,schedule:{frequency:req.body.frequency,hour:req.body.hour,minute:req.body.minute,weekday:req.body.weekday,timeZone:req.body.timeZone||res.locals.reportBusinessTimeZone,recipient:req.body.recipient||actor.email}});
-    req.flash('success','Report template saved.');return res.redirect(303,`/reports/saved/${saved.id}`);
+    req.flash('success','Report saved.');return res.redirect(303,`/reports/saved/${saved.id}`);
   }));
   for(const [path,action]of [['send-now','send_now'],['pause','pause'],['resume','resume'],['delete','delete']])router.post('/reports/saved/:id/'+path,asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx);if(action==='delete'&&req.body.confirmed!=='yes')throw new ValidationError('Confirm deletion of this saved report.');const result=await require('../../reports/postgres-delivery-controls').change(database,req.ctx,actor,req.params.id,{...req.body,action});req.flash('success',action==='send_now'?(result.replayed?'That exact delivery is already queued or recorded.':'Report delivery queued to your account email.'):action==='delete'?'Saved report deleted; delivery history retained.':action==='pause'?'Future report delivery paused.':'Report delivery resumed.');if(result.alreadySending)req.flash('info',result.alreadySending+' email delivery is already in progress and may finish.');res.redirect(303,action==='delete'?'/reports':'/reports/saved/'+req.params.id);}));
   router.get('/reports/saved/:id/duplicate',asyncRoute(async(req,res)=>{
@@ -248,41 +290,12 @@ function createPostgresReportsRouter(database){
   router.get('/reports/saved/:id/export.:format',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const saved=await reports.load(database,req.ctx,actor,req.params.id);
-    const format=req.params.format;
-    if(!['csv','xlsx','pdf'].includes(format))throw new ValidationError('That export format is unavailable.');
-    if(format==='csv'){
-      const total=await reports.countAtMost(database,req.ctx,actor,saved.definition,100000);
-      if(total>100000)throw new ValidationError('This CSV exceeds 100,000 rows. Narrow its filters first.');
-      res.set('Content-Type','text/csv; charset=utf-8');
-      res.set('Content-Disposition',`attachment; filename="stockchief-report-${saved.id}.csv"`);
-      res.set('Cache-Control','private, no-store');
-      let offset=0,started=false;
-      try{
-        do{
-          const page=await reports.run(database,req.ctx,actor,saved.definition,{limit:1001,offset});
-          if(!started){res.write(reportExports.csvHeader(page));started=true;}
-          if(page.rows.length){
-            const wrote=res.write(reportExports.csvRows(page));
-            if(!wrote)await new Promise((resolve)=>{const done=()=>{
-              res.off('drain',done);res.off('close',done);resolve();};
-              res.once('drain',done);res.once('close',done);});
-          }
-          offset+=page.rows.length;
-          if(!page.hasMore||res.destroyed)break;
-        }while(true);
-        if(!res.destroyed)res.end();
-      }catch(error){if(res.headersSent)res.destroy(error);else throw error;}
-      return;
-    }
-    const limit=format==='xlsx'?20001:5001;
-    const result=await reports.run(database,req.ctx,actor,saved.definition,{limit});
-    if(result.hasMore)throw new ValidationError(`This ${format.toUpperCase()} export exceeds ${limit-1} rows. Narrow its filters first or use CSV.`);
-    const output=await reportExports[format](result);
-    const mime={csv:'text/csv; charset=utf-8',
-      xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',pdf:'application/pdf'};
-    res.set('Content-Type',mime[format]);
-    res.set('Content-Disposition',`attachment; filename="stockchief-report-${saved.id}.${format}"`);
-    res.set('Cache-Control','private, no-store');return res.send(output);
+    return sendExport(database,req,res,actor,saved.definition,`stockchief-report-${saved.id}`);
+  }));
+  router.post('/reports/export.:format',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    const definition=await reports.assertWritableCapabilities(database,req.ctx,source(req.body),actor);
+    return sendExport(database,req,res,actor,definition,'stockchief-report');
   }));
   return router;
 }

@@ -1,48 +1,55 @@
 <% var returnLink=typeof backTo==='undefined'?null:backTo;
-   var paginationBase=typeof pageHref==='undefined'?null:pageHref; %>
-<div class="page-head"><div><a class="back-link" href="<%= returnLink?.href||'/reports' %>"><%= returnLink?.label||'Reports' %></a><h1><%= result.config.title %></h1>
-  <p class="lede"><%= result.rows.length %><%= result.hasMore?' or more':'' %> shown<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
+   var paginationBase=typeof pageHref==='undefined'?null:pageHref;
+   var unsavedDefinition=saved?null:JSON.stringify(result.config);
+   var numeric=column=>['money_minor','number'].includes(result.columnTypes?.[column]);
+   // Dates read the way a person says them, at the grain the report groups by.
+   var cellDate=(column,value,grouped)=>{const text=String(value??'');if(result.columnTypes?.[column]!=='date'||!/^\d{4}-\d{2}-\d{2}$/.test(text))return text;const date=new Date(text+'T12:00:00Z'),grain=result.config.groups?.includes(column)?result.config.dateGrain:'exact',month=new Intl.DateTimeFormat('en-US',{month:'short',year:'numeric',timeZone:'UTC'}).format(date),day=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(date);return grain==='year'?String(date.getUTCFullYear()):grain==='quarter'?'Q'+(Math.floor(date.getUTCMonth()/3)+1)+' '+date.getUTCFullYear():grain==='month'?month:grain==='week'?'Week of '+day:day;}; %>
+<div class="report-page__head"><div><a class="back-link" href="<%= returnLink?.href||'/reports' %>"><%= returnLink?.label||'Reports' %></a><h1><%= result.config.title %></h1>
+  <p><%= result.rows.length %><%= result.hasMore?' or more':'' %> shown<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
     Checked <%= new Intl.DateTimeFormat('en-US',{timeZone:reportBusinessTimeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(result.asOf)) %></p></div>
-  <div><a href="<%= result.config.dataset==='composed'
+  <div class="report-page__actions"><a class="btn" href="<%= result.config.dataset==='composed'
     ?saved?'/reports/compose?saved='+encodeURIComponent(saved.id):'/reports/compose?draft=1'
-    :saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a></div></div>
+    :saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a>
+    <details class="report-download"><summary class="btn">Download</summary><div><% if(saved){ %><% for(const [format,label] of [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']]){ %><a class="report-download__link" href="/reports/saved/<%= saved.id %>/export.<%= format %>"><%= label %></a><% } %><% }else{ %><form method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="definition" value="<%= unsavedDefinition %>"><% for(const [format,label] of [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']]){ %><button type="submit" formaction="/reports/export.<%= format %>"><%= label %></button><% } %></form><% } %></div></details>
+    <% if(saved){ %><a class="btn" href="/reports/saved/<%= saved.id %>/duplicate">Duplicate report</a><% }else{ %><form action="/reports/save" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
+      <input type="hidden" name="frequency" value="<%= draftSchedule?.frequency||'none' %>">
+      <input type="hidden" name="hour" value="<%= draftSchedule?.hour??9 %>"><input type="hidden" name="minute" value="<%= draftSchedule?.minute??0 %>"><input type="hidden" name="weekday" value="<%= draftSchedule?.weekday??1 %>"><input type="hidden" name="timeZone" value="<%= draftSchedule?.timeZone||reportBusinessTimeZone %>">
+      <button class="btn btn--primary" type="submit">Save this report</button></form><% } %></div></div>
+<% if(!saved&&draftSchedule?.frequency&&draftSchedule.frequency!=='none'){ %><p class="report-note">Saving turns on automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:<%= String(draftSchedule.minute||0).padStart(2,'0') %> <%= draftSchedule.timeZone||reportBusinessTimeZone %> to your account email.</p><% } %>
 <%- include('warnings',{warnings:result.warnings||[]}) %>
-<div class="report-layout--<%= result.config.layout||'chart_first' %>">
+<div class="report-page report-layout--<%= result.config.layout||'chart_first' %>">
+<% if(result.config.summary&&result.rows.length){const key=result.columns.at(-1); %><section class="report-card report-big" data-report-total><span><%= result.columnLabels?.[key]||helpers.columnLabel(key) %></span><strong><%= result.displayRows[0][key]??'—' %></strong></section><% } %>
 <% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
   const chartColumn=result.chartColumn||result.columns.at(-1);
   const values=result.rows.map(row=>Number(row[chartColumn]));
   const chartSafe=result.comparisonSafe!==false&&result.rows.every(row=>row[chartColumn]!==null)
     &&values.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER);
   if(chartSafe){
-  const maximum=Math.max(1,...values.map(Math.abs)); %>
-  <section class="report-card report-chart"><h2><%= result.config.chart==='line'?(result.rows.length>1?'Trend':'Recorded value'):'Comparison' %> · <%= result.columnLabels?.[chartColumn]||helpers.columnLabel(chartColumn) %></h2>
-    <% if(result.config.chart==='line'){
-      const plotted=values.slice(0,40);const bottom=Math.min(0,...plotted),top=Math.max(1,...plotted);
-      const points=plotted.map((value,index)=>`${30+index*640/Math.max(1,plotted.length-1)},${180-(value-bottom)*150/(top-bottom||1)}`).join(' '); %>
-      <svg class="report-line" role="img" aria-label="Line chart of <%= result.config.title %>"
-        viewBox="0 0 700 210" preserveAspectRatio="none"><line x1="30" y1="180" x2="670" y2="180" stroke="#aeb4c6"/>
-        <polyline points="<%= points %>" fill="none" stroke="#6756e8" stroke-width="3"/>
-        <% points.split(' ').forEach(function(point){const xy=point.split(','); %>
-          <circle cx="<%= xy[0] %>" cy="<%= xy[1] %>" r="4" fill="#6756e8"/>
-        <% }); %></svg>
+  const maximum=Math.max(1,...values.map(Math.abs)),groupText=row=>result.config.groups.map(field=>cellDate(field,row[field],true)).join(' · '); %>
+  <section class="report-card report-chart"><h2><%= result.columnLabels?.[chartColumn]||helpers.columnLabel(chartColumn) %></h2>
+    <% if(result.config.chart==='line'&&values.length>1){
+      const plotted=values.slice(0,120),bottom=Math.min(0,...plotted),top=Math.max(1,...plotted),x=index=>index/(plotted.length-1)*100,y=value=>100-(value-bottom)/(top-bottom||1)*100;
+      const line=plotted.map((value,index)=>(index?'L':'M')+x(index).toFixed(2)+' '+y(value).toFixed(2)).join(' '); %>
+      <div class="report-result-line"><svg role="img" aria-label="Line chart of <%= result.config.title %>" viewBox="0 0 100 100" preserveAspectRatio="none"><path class="report-plot__area" d="<%= line %> L100 <%= y(Math.max(bottom,0)) %> L0 <%= y(Math.max(bottom,0)) %> Z"/><path class="report-plot__line" vector-effect="non-scaling-stroke" d="<%= line %>"/></svg></div>
+      <div class="report-result-axis"><span><%= groupText(result.rows[0]) %></span><span><%= groupText(result.rows[plotted.length-1]) %></span></div>
     <% }else{ %><div class="report-bars"><% for(let index=0;index<Math.min(40,result.rows.length);index++){
       const row=result.rows[index],value=values[index]; %>
-      <div class="report-bar"><span><%= result.config.groups.map(field=>row[field]).join(' · ') %></span>
-        <i style="width:<%= Math.max(1,Math.round(Math.abs(value)/maximum*100)) %>%"></i><strong><%= result.displayRows[index][chartColumn] %></strong></div>
-    <% } %></div><% } %><p><small>Chart shows the first 40 displayed groups. The table below contains the exact values.</small></p>
+      <div class="report-bar"><span class="report-bar__label"><%= groupText(row) %></span><span class="report-bar__track"><i class="<%= value<0?'is-negative':'' %>" style="width:<%= Math.max(1,Math.round(Math.abs(value)/maximum*100)) %>%"></i></span><strong><%= result.displayRows[index][chartColumn] %></strong></div>
+    <% } %></div><% if(result.rows.length>40){ %><p class="report-note">The chart shows the first 40 groups. The table has every row.</p><% } %><% } %>
   </section><% }else{ %><p class="report-error"><%= result.comparisonSafe===false?'This report may include different currencies. Filter to one currency before comparing amounts.':'This chart cannot safely plot these values.' %> The exact figures remain in the verified table.</p><% } %><% } %>
 <% var insights=result.insights||[]; if(insights.length){ %>
   <section class="report-card"><h2>What stands out</h2>
     <% insights.forEach(function(insight){ %><p><strong><%= insight.title %>.</strong> <%= insight.text %></p><% }); %>
-    <p><small>These are comparisons of recorded rows, not a claim about causes or future outcomes.</small></p>
+    <p class="report-note">These are comparisons of recorded rows, not a claim about causes or future outcomes.</p>
   </section>
 <% } %>
 <section class="report-card report-results"><h2>Report results</h2>
   <% if(!result.rows.length){ %><p>No matching records. Try a wider date or different filter.</p><% }else{ %>
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
-      <th scope="col"><%= result.columnLabels?.[column]||helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
+      <th scope="col" class="<%= numeric(column)?'is-num':'' %>"><%= result.columnLabels?.[column]||helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
       <tbody><% for(const [index,row] of result.rows.slice(0,200).entries()){ %><tr><% for(const column of result.columns){ %>
-        <td><%= result.displayRows[index][column]??'—' %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.dataset==='composed'){ for(const source of result.sources||[]){ %>
+        <td class="<%= numeric(column)?'is-num':'' %>"><%= cellDate(column,result.displayRows[index][column]??'—') %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.dataset==='composed'){ for(const source of result.sources||[]){ %>
           <form method="post" action="/reports/drilldown"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
             <input type="hidden" name="groupValues" value="<%= JSON.stringify([row[result.config.dimension]]) %>">
@@ -54,30 +61,17 @@
             <input type="hidden" name="groupValues" value="<%= JSON.stringify(result.config.groups.map(field=>row[field])) %>">
             <button class="report-link" type="submit">See source records</button></form><% } %></td></tr><% } %></tbody>
     </table></div>
-    <% if(result.hasMore){ %><p>More rows match. Narrow the filters or export the saved report to inspect more.</p><% } %>
+    <% if(result.hasMore){ %><p class="report-note">More rows match. Use Next rows, or download the report to see them all.</p><% } %>
     <% if(paginationBase&&(result.offset||result.hasMore)){const separator=paginationBase.includes('?')?'&':'?'; %>
-      <nav class="report-actions" aria-label="Report pages">
+      <nav class="report-actions report-note" aria-label="Report pages">
         <% if(result.offset){ %><a href="<%= paginationBase+separator+'offset='+Math.max(0,result.offset-result.pageSize) %>">Previous rows</a><% } %>
         <% if(result.hasMore){ %><a href="<%= paginationBase+separator+'offset='+(result.offset+result.pageSize) %>">Next rows</a><% } %>
       </nav>
     <% } %>
   <% } %>
 </section>
-<section class="report-card report-save"><h2>Save and export</h2>
-  <% if(saved){ %><%- include('delivery-actions',{report:saved}) %>
+<% if(saved){ %><section class="report-card report-save"><h2>Delivery</h2><%- include('delivery-actions',{report:saved}) %>
     <% if(saved.last_error){ %><p class="report-error">Delivery needs attention: <%= saved.last_error %></p><% } %>
-    <div class="report-actions"><a href="/reports/saved/<%= saved.id %>/duplicate">Duplicate report</a>
-      <a href="/reports/saved/<%= saved.id %>/export.csv">CSV</a>
-      <a href="/reports/saved/<%= saved.id %>/export.xlsx">Excel</a>
-      <a href="/reports/saved/<%= saved.id %>/export.pdf">PDF</a></div>
-  <% }else{ %><form action="/reports/save" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
-    <input type="hidden" name="frequency" value="<%= draftSchedule?.frequency||'none' %>">
-    <input type="hidden" name="hour" value="<%= draftSchedule?.hour??9 %>"><input type="hidden" name="minute" value="<%= draftSchedule?.minute??0 %>"><input type="hidden" name="weekday" value="<%= draftSchedule?.weekday??1 %>"><input type="hidden" name="timeZone" value="<%= draftSchedule?.timeZone||reportBusinessTimeZone %>">
-    <% if(draftSchedule?.frequency&&draftSchedule.frequency!=='none'){ %>
-      <p>Automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:<%= String(draftSchedule.minute||0).padStart(2,'0') %> <%= draftSchedule.timeZone||reportBusinessTimeZone %> to your account email.</p>
-    <% } %>
-    <button class="btn btn--primary" type="submit">Save this report</button></form><% } %>
-</section>
+</section><% } %>
 </div>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">

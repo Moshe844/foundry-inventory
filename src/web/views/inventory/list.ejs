@@ -8,7 +8,7 @@
   </div>
 </div>
 
-<% if (!sourceLabel && !filters.archivedOnly && stockGroups.length) { %>
+<div class="sc-stock-bar"><% if (!sourceLabel && !filters.archivedOnly && stockGroups.length) { %>
   <%# The same groups the stock room shows, as filters. A room group and a table filter are the same question asked in two places. %>
   <div class="att-filters" role="navigation" aria-label="Stock groups">
     <a class="chip <%= !activeGroup ? 'is-active' : '' %>" href="/inventory/table">All products</a>
@@ -16,11 +16,18 @@
   </div>
 <% } %>
 
+<% if(locals.postgresNative){ %><nav class="segmented" aria-label="Product grouping"><a class="segmented__item <%= !locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'grouped',page:null,after:null}) %>">Grouped by item</a><a class="segmented__item <%= locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'flat',page:null,after:null}) %>">Every variant</a></nav><% } %></div>
 <% if(locals.postgresNative&&!locals.isFlat&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="cost">Change purchase costs</option><option value="reorder">Change reorder levels</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
-<% if(locals.postgresNative){ %><nav class="segmented" aria-label="Product grouping"><a class="segmented__item <%= !locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'grouped',page:null,after:null}) %>">Grouped by item</a><a class="segmented__item <%= locals.isFlat?'is-on':'' %>" href="/inventory/table<%= helpers.queryString(query,{view:'flat',page:null,after:null}) %>">Every variant</a></nav><p data-catalogue-total><%= Number(totalCount).toLocaleString('en-US') %> matching <%= locals.isFlat?'variants':'products' %></p><% } %>
 <form class="filters" method="get" action="<%= locals.postgresNative?'/inventory/table':'/inventory' %>">
   <% if(locals.isFlat){ %><input type="hidden" name="view" value="flat"><% } %>
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
+  <select class="select" name="sort" aria-label="Sort" data-auto-submit>
+    <option value="name" <%= filters.sort === 'name' ? 'selected' : '' %>>Name A–Z</option>
+    <option value="stock_desc" <%= filters.sort === 'stock_desc' ? 'selected' : '' %>>Most stock</option>
+    <option value="stock_asc" <%= filters.sort === 'stock_asc' ? 'selected' : '' %>>Least stock</option>
+    <option value="newest" <%= filters.sort === 'newest' ? 'selected' : '' %>>Newest</option>
+  </select>
+  <details class="sc-more-filters" <%= (filters.trackingMode||filters.locationId||filters.category||filters.supplier||filters.size||filters.color||filters.optionName||filters.optionValue||filters.lowStock)?'open':'' %>><summary>More filters</summary><div>
   <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>
     <option value="">All tracking types</option>
     <% Object.values(helpers.TRACKING_MODES).forEach(function (mode) { %>
@@ -34,12 +41,7 @@
     <% }) %>
   </select>
   <% if(locals.postgresNative){ %><input class="input" name="category" value="<%= filters.category||'' %>" placeholder="Category" aria-label="Category"><input class="input" name="supplier" value="<%= filters.supplier||'' %>" placeholder="Supplier" aria-label="Supplier"><input class="input" name="optionName" value="<%= filters.optionName||'' %>" placeholder="Option name" aria-label="Option name"><input class="input" name="optionValue" value="<%= filters.optionValue||'' %>" placeholder="Option value" aria-label="Option value"><label><input type="checkbox" name="lowStock" value="1" <%= filters.lowStock?'checked':'' %>> Low stock</label><% } %>
-  <select class="select" name="sort" aria-label="Sort" data-auto-submit>
-    <option value="name" <%= filters.sort === 'name' ? 'selected' : '' %>>Name A–Z</option>
-    <option value="stock_desc" <%= filters.sort === 'stock_desc' ? 'selected' : '' %>>Most stock</option>
-    <option value="stock_asc" <%= filters.sort === 'stock_asc' ? 'selected' : '' %>>Least stock</option>
-    <option value="newest" <%= filters.sort === 'newest' ? 'selected' : '' %>>Newest</option>
-  </select>
+  </div></details>
   <% if (activeGroup) { %><input type="hidden" name="group" value="<%= activeGroup.key %>"><% } %>
   <% if (filters.includeArchived) { %><input type="hidden" name="archived" value="<%= filters.archivedOnly ? 'only' : '1' %>"><% } %>
   <% if (fromConnection) { %><input type="hidden" name="fromConnection" value="<%= fromConnection %>"><% } %>
@@ -50,6 +52,7 @@
     <a class="btn btn--ghost btn--sm" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString({}, { archived: filters.archivedOnly ? 'only' : null, sourceDocument: sourceDocument, fromConnection: fromConnection, fromMessage: fromMessage }) %>">Clear</a>
   <% } %>
 </form>
+<% if(locals.postgresNative){ %><p data-catalogue-total><%= Number(totalCount).toLocaleString('en-US') %> matching <%= locals.isFlat?'variants':'products' %></p><% } %>
 
 <div class="card">
   <% if (items.length === 0) { %>
