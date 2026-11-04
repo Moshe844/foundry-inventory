@@ -68,7 +68,7 @@ test('an operating inventory is not called getting ready while optional setup re
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
   assert.doesNotMatch(page, /Getting StockChief ready/i);
-  assert.match(page, /Ready for your first check/i);
+  assert.match(page, /Not checked yet Check now/i);
   assert.doesNotMatch(page, /Everything is under control/i);
   assert.match(page, /Add who supplies Working Shoe/);
   env.db.close();
