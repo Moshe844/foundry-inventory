@@ -577,11 +577,12 @@ router.post('/accounting/entries/:id/reverse', permit(permissions.MANAGE_ACCOUNT
 
 router.get('/accounting/transactions', permit(permissions.VIEW_ACCOUNTING, 'view accounting transactions'), asyncRoute(async (req, res) => {
   const from = trimOrNull(req.query.from) || monthStart(); const to = trimOrNull(req.query.to) || today();
+  const entries=req.db.prepare(`SELECT * FROM accounting_journal_entries WHERE workspace_id = ?
+    AND status = 'POSTED' AND posting_date BETWEEN ? AND ? ORDER BY posting_date DESC, entry_number DESC`)
+    .all(req.ctx.workspaceId, from, to);
   res.page('accounting/transactions', { title: 'Accounting transactions', nav: 'accounting', from, to,
     rows: reports.generalLedger(req.db, req.ctx.workspaceId, { from, to }).rows,
-    entries: req.db.prepare(`SELECT * FROM accounting_journal_entries WHERE workspace_id = ?
-      AND status = 'POSTED' AND posting_date BETWEEN ? AND ? ORDER BY posting_date DESC, entry_number DESC`)
-      .all(req.ctx.workspaceId, from, to) });
+    entryTotal:entries.length,entries });
 }));
 
 router.get('/accounting/adjustments/new', permit(permissions.MANAGE_ACCOUNTING, 'create accounting adjustments'), asyncRoute(async (req, res) => {
