@@ -42,14 +42,15 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
   await ent.recordUsage(db,scope,{meter:'incoming_emails',units:2,idempotencyKey:'independent:incoming_emails'});assert.equal((await ent.meterState(db,scope,'incoming_emails')).used,2);
  });
  assert.deepEqual(await migratePostgres(db),[]);
- await t.test('stored business bytes are exact, roll back at the quota, and leave saved data intact',async()=>{
-  const before=await require('../../src/commercial/storage-capacity').state(db,scope.accountId);assert(before>0);
+ await t.test('background storage is exact and the quota blocks uploads while business writes remain usable',async()=>{
+  const storage=require('../../src/commercial/storage-capacity');await storage.refresh(db,ctx.workspaceId);const before=await storage.state(db,scope.accountId);assert(before>0);
   await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES('storage-test',$1,'storage_bytes',$2,'Exact quota test')",[scope.accountId,before]);
   const row=(await db.query('SELECT * FROM locations WHERE workspace_id=$1 ORDER BY id LIMIT 1',[ctx.workspaceId])).rows[0];
-  await assert.rejects(db.query('UPDATE locations SET name=name||$2 WHERE id=$1',[row.id,' added bytes beyond the exact limit']),e=>e.code==='entitlement_required');
-  assert.equal((await db.query('SELECT name FROM locations WHERE id=$1',[row.id])).rows[0].name,row.name);assert.equal(await require('../../src/commercial/storage-capacity').state(db,scope.accountId),before);
+  await db.query('UPDATE locations SET name=name||$2 WHERE id=$1',[row.id,' additional business text']);
+  await assert.rejects(require('../../src/imports/postgres-source-uploads').enqueue(db,ctx,{text:'Product,SKU\nBlocked upload,BLOCKED',requestKey:'storage-quota-upload'}),e=>e.code==='entitlement_required');
+  assert.equal((await db.query('SELECT name FROM locations WHERE id=$1',[row.id])).rows[0].name,row.name+' additional business text');assert.equal(await storage.state(db,scope.accountId),before);
   await db.query("DELETE FROM commercial_entitlement_overrides WHERE id='storage-test'");
-  await db.query("UPDATE locations SET name='A' WHERE id=$1",[row.id]);assert((await require('../../src/commercial/storage-capacity').state(db,scope.accountId))<before);
+  await db.query("UPDATE locations SET name='A' WHERE id=$1",[row.id]);await storage.refresh(db,ctx.workspaceId);assert((await storage.state(db,scope.accountId))<before);
  });
  await t.test('API minute capacity is shared by all keys and failed requests return monthly capacity',async()=>{
   const resources=require('../../src/commercial/api-resources');
@@ -99,14 +100,14 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
   const bounds=ent.periodBounds(await ent.subscriptionFor(db,scope.accountId));assert.equal((await wallet.balances(db,{accountId:other.accountId,workspaceId:other.workspaceId},'incoming_emails',bounds)).purchasedRemaining,0);
   await assert.rejects(ent.meterState(db,{accountId:other.accountId,workspaceId:second.id},'incoming_emails'),/another commercial account/);
  });
- await t.test('measuring old data preserves mutations committed after the baseline snapshot',async()=>{
+ await t.test('a measurement publishes its snapshot and a later measurement includes subsequent mutations',async()=>{
   await db.query("UPDATE account_subscriptions SET plan_version_id='planver_starter_1' WHERE account_id=$1",[scope.accountId]);
-  const storage=require('../../src/commercial/storage-capacity'),before=await storage.state(db,scope.accountId);
+  const storage=require('../../src/commercial/storage-capacity');await storage.refresh(db,ctx.workspaceId);const before=await storage.state(db,scope.accountId);
   await db.query("UPDATE commercial_storage_usage SET baseline_complete=false WHERE workspace_id=$1 AND relation='locations'::regclass",[ctx.workspaceId]);
   await assert.rejects(storage.state(db,scope.accountId),/being measured/);const changed='-concurrent-change';
-  const wrapper={query:db.query.bind(db),transaction:async(fn,options)=>{const result=await db.transaction(fn,options);await db.query('UPDATE locations SET name=name||$2 WHERE workspace_id=$1',[ctx.workspaceId,changed]);return result;}};
+  const wrapper={query:db.query.bind(db),transaction:async(fn,options)=>{const result=await db.transaction(fn,options);if(options.readOnly)await db.query('UPDATE locations SET name=name||$2 WHERE workspace_id=$1',[ctx.workspaceId,changed]);return result;}};
   const count=Number((await db.query('SELECT count(*) AS n FROM locations WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
-  await storage.baseline(wrapper,ctx.workspaceId,'locations');assert.equal(await storage.state(db,scope.accountId),before+Buffer.byteLength(changed)*count);
+  await storage.baseline(wrapper,ctx.workspaceId,'locations');assert.equal(await storage.state(db,scope.accountId),before);await storage.refresh(db,ctx.workspaceId);assert.equal(await storage.state(db,scope.accountId),before+Buffer.byteLength(changed)*count);
   await db.query('UPDATE account_subscriptions SET plan_version_id=$2 WHERE account_id=$1',[scope.accountId,offer.id+':starter']);
  });
  await t.test('reconnecting a postage account cannot bypass the shared five-connection limit',async()=>{

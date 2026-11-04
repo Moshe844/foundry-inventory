@@ -7,8 +7,10 @@ async function scheduleOnce(database,options={}){
   const bucketMs=Number(options.bucketMs || 60_000);
   if(!Number.isSafeInteger(now)||!Number.isSafeInteger(bucketMs)||bucketMs<10_000)throw new TypeError('Invalid scheduler time bucket.');
   const bucket=Math.floor(now/bucketMs);
-  return jobs.enqueue(database,{kind:'system.runtime-sweep',idempotencyKey:`runtime-sweep:${bucket}`,
+  const result=await jobs.enqueue(database,{kind:'system.runtime-sweep',idempotencyKey:`runtime-sweep:${bucket}`,
     payload:{now},priority:10,maxAttempts:5,availableAt:now,now});
+  // Measurement scheduling commits independently of later runtime sweep work.
+  await require('../commercial/storage-capacity').schedule(database,{now});return result;
 }
 
 function start(database,options={}){

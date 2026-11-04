@@ -51,7 +51,7 @@ test('PostgreSQL scheduler polls tenant mailboxes, replays safely and treats suc
     const firstNow=Date.parse('2026-09-23T16:00:00.000Z');
     await scheduler.scheduleOnce(database,{now:firstNow});
     const sweep=await jobs.processOne(database,runtimeHandlers,{owner:'mail-scheduler',now:firstNow,leaseMs:60000});
-    assert.equal(sweep.status,'COMPLETED');assert.equal(sweep.result.scheduledMailboxPolls,1);
+    assert.equal(sweep.status,'COMPLETED',JSON.stringify(sweep.lastError));assert.equal(sweep.result.scheduledMailboxPolls,1);
     assert.equal(sweep.result.staleConnectors,1);
     const firstPoll=await jobs.processOne(database,runtimeHandlers,{owner:'mail-worker',now:firstNow+1,leaseMs:60000});
     assert.equal(firstPoll.status,'COMPLETED');assert.deepEqual({accepted:firstPoll.result.accepted,
