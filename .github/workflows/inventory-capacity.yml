@@ -68,7 +68,7 @@ jobs:
         run: node --test --test-concurrency=2 tests/postgres/import-legacy-lookup-scale.test.js tests/postgres/replenishment-expiry-scale.test.js tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js
       - name: Combined staging order money, refunds, plan locks and storage registration
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
-        run: node --test --test-concurrency=2 tests/postgres/order-money-truth.test.js tests/postgres/read-committed-write-invariants.test.js tests/postgres/read-side-business-totals.test.js tests/postgres/assistant-commercial-boundaries.test.js tests/postgres/environment-agent-commercial.test.js
+        run: node --test --test-concurrency=2 tests/postgres/order-money-truth.test.js tests/postgres/read-committed-write-invariants.test.js tests/postgres/read-side-business-totals.test.js tests/postgres/assistant-commercial-boundaries.test.js tests/postgres/environment-agent-commercial.test.js tests/postgres/bulk-approve-decisions.test.js
       - name: Decimal reporting, lot batching and account state regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
