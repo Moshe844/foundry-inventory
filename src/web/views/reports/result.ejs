@@ -3,7 +3,7 @@
    var unsavedDefinition=saved?null:JSON.stringify(result.config);
    var numeric=column=>['money_minor','number'].includes(result.columnTypes?.[column]);
    // Dates read the way a person says them, at the grain the report groups by.
-   var cellDate=(column,value,grouped)=>{const text=String(value??'');if(result.columnTypes?.[column]!=='date'||!/^\d{4}-\d{2}-\d{2}$/.test(text))return text;const date=new Date(text+'T12:00:00Z'),grain=result.config.groups?.includes(column)?result.config.dateGrain:'exact',month=new Intl.DateTimeFormat('en-US',{month:'short',year:'numeric',timeZone:'UTC'}).format(date),day=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(date);return grain==='year'?String(date.getUTCFullYear()):grain==='quarter'?'Q'+(Math.floor(date.getUTCMonth()/3)+1)+' '+date.getUTCFullYear():grain==='month'?month:grain==='week'?'Week of '+day:day;}; %>
+   var cellDate=(column,value,grouped)=>{const text=String(value??'');if(/^[a-z]+(_[a-z]+)+$/.test(text))return text.replaceAll('_',' ').replace(/^./,letter=>letter.toUpperCase());if(result.columnTypes?.[column]!=='date'||!/^\d{4}-\d{2}-\d{2}$/.test(text))return text;const date=new Date(text+'T12:00:00Z'),grain=result.config.groups?.includes(column)?result.config.dateGrain:'exact',month=new Intl.DateTimeFormat('en-US',{month:'short',year:'numeric',timeZone:'UTC'}).format(date),day=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(date);return grain==='year'?String(date.getUTCFullYear()):grain==='quarter'?'Q'+(Math.floor(date.getUTCMonth()/3)+1)+' '+date.getUTCFullYear():grain==='month'?month:grain==='week'?'Week of '+day:day;}; %>
 <div class="report-page__head"><div><a class="back-link" href="<%= returnLink?.href||'/reports' %>"><%= returnLink?.label||'Reports' %></a><h1><%= result.config.title %></h1>
   <p><%= result.rows.length %><%= result.hasMore?' or more':'' %> shown<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
     Checked <%= new Intl.DateTimeFormat('en-US',{timeZone:reportBusinessTimeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(result.asOf)) %></p></div>
@@ -19,9 +19,9 @@
 <% if(!saved&&draftSchedule?.frequency&&draftSchedule.frequency!=='none'){ %><p class="report-note">Saving turns on automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:<%= String(draftSchedule.minute||0).padStart(2,'0') %> <%= draftSchedule.timeZone||reportBusinessTimeZone %> to your account email.</p><% } %>
 <%- include('warnings',{warnings:result.warnings||[]}) %>
 <div class="report-page report-layout--<%= result.config.layout||'chart_first' %>">
-<% if(result.config.summary&&result.rows.length){const key=result.columns.at(-1); %><section class="report-card report-big" data-report-total><span><%= result.columnLabels?.[key]||helpers.columnLabel(key) %></span><strong><%= result.displayRows[0][key]??'—' %></strong></section><% } %>
+<% if(locals.totals?.metrics?.length){ %><%- include('totals') %><% }else if(result.config.summary&&result.rows.length){const key=result.columns.at(-1); %><section class="report-card report-big" data-report-total><span><%= result.columnLabels?.[key]||helpers.columnLabel(key) %></span><strong><%= result.displayRows[0][key]??'—' %></strong></section><% } %>
 <% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
-  const chartColumn=result.chartColumn||result.columns.at(-1);
+  const chartColumn=result.chartColumn||result.metricColumns?.[0]||result.columns.at(-1);
   const values=result.rows.map(row=>Number(row[chartColumn]));
   const chartSafe=result.comparisonSafe!==false&&result.rows.every(row=>row[chartColumn]!==null)
     &&values.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER);
@@ -49,7 +49,7 @@
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
       <th scope="col" class="<%= numeric(column)?'is-num':'' %>"><%= result.columnLabels?.[column]||helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
       <tbody><% for(const [index,row] of result.rows.slice(0,200).entries()){ %><tr><% for(const column of result.columns){ %>
-        <td class="<%= numeric(column)?'is-num':'' %>"><%= cellDate(column,result.displayRows[index][column]??'—') %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.dataset==='composed'){ for(const source of result.sources||[]){ %>
+        <td class="<%= numeric(column)?'is-num':'' %><%= column==='change'&&String(result.displayRows[index][column]).startsWith('+')?' is-up':column==='change'&&String(result.displayRows[index][column]).startsWith('-')?' is-down':'' %>"><%= cellDate(column,result.displayRows[index][column]??'—') %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.dataset==='composed'){ for(const source of result.sources||[]){ %>
           <form method="post" action="/reports/drilldown"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
             <input type="hidden" name="groupValues" value="<%= JSON.stringify([row[result.config.dimension]]) %>">

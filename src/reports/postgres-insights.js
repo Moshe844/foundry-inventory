@@ -9,7 +9,8 @@ function observations(result){
   if(rows.some((row)=>row[metric]===null||row[metric]===undefined))return [];
   const values=rows.map((row)=>Number(row[metric]));
   if(values.some((value)=>!Number.isFinite(value)||Math.abs(value)>Number.MAX_SAFE_INTEGER))return [];
-  const label=(row)=>groups.map((field)=>String(row[field]??'Not recorded')).join(' · ');
+  const grain=result.config.dateGrain,dateText=value=>{const date=new Date(String(value)+'T12:00:00Z');const part=options=>new Intl.DateTimeFormat('en-US',{timeZone:'UTC',...options}).format(date);return grain==='year'?part({year:'numeric'}):grain==='quarter'?'Q'+(Math.floor(date.getUTCMonth()/3)+1)+' '+date.getUTCFullYear():grain==='month'?part({month:'short',year:'numeric'}):(grain==='week'?'Week of ':'')+part({month:'short',day:'numeric',year:'numeric'});};
+  const label=(row)=>groups.map((field)=>/^\d{4}-\d{2}-\d{2}$/.test(String(row[field]??''))?dateText(row[field]):String(row[field]??'Not recorded')).join(' · ');
   const shown=(index)=>String(result.displayRows?.[index]?.[metric]??rows[index][metric]);
   const metricLabel=result.columnLabels?.[metric]||metric.replaceAll('_',' ');
   const scope=result.hasMore?' among the displayed groups':'';

@@ -1,7 +1,7 @@
-<div class="page-head"><div><a class="back-link" href="/money">‹ Money</a><p class="eyebrow">Ledger-backed report</p><h1><%= title %></h1>
-  <p class="lede"><%= kind === 'inventory-valuation' ? 'Cost value from the inventory cost subledger—not selling prices.' : 'Calculated only from immutable posted journal entries.' %></p></div></div>
+<div class="page-head"><div><a class="back-link" href="/money">‹ Money</a><h1><%= title %></h1>
+  <p class="lede"><%= kind === 'inventory-valuation' ? 'What your stock cost you, not what it sells for.' : 'Worked out only from your posted records.' %></p></div></div>
 
-<% if (kind !== 'balance-sheet' && kind !== 'inventory-valuation') { %><form class="card card-body form-inline" method="get"><label class="field"><span class="field-label">From</span><input class="input" type="date" name="from" value="<%= from %>"></label><label class="field"><span class="field-label">To</span><input class="input" type="date" name="to" value="<%= to %>"></label><button class="btn btn--sm" type="submit">Update report</button></form><% } %>
+<% if (kind !== 'balance-sheet' && kind !== 'inventory-valuation') { %><%- include('customer-period',{model:{from,to},action:'/accounting/reports/'+kind}) %><% } %>
 
 <% if (kind === 'profit-and-loss') { %>
   <section class="card"><div class="card-body"><div class="report-lines">
@@ -13,8 +13,9 @@
   </div>
   <p class="hint">Gross profit is revenue minus product cost. Net income also includes operating expenses.</p>
   <p class="actions">
-    <a class="btn btn--sm" href="/accounting?period=custom&amp;from=<%= from %>&amp;to=<%= to %>#customers">Show the exact sales and product cost</a>
-    <a class="btn btn--sm btn--ghost" href="/accounting?period=custom&amp;from=<%= from %>&amp;to=<%= to %>#expenses">Show other business expenses</a>
+    <a class="btn btn--sm" href="/money/sources/revenue?from=<%= from %>&amp;to=<%= to %>">Show the exact sales</a>
+    <a class="btn btn--sm" href="/money/sources/cogs?from=<%= from %>&amp;to=<%= to %>">Show the product cost</a>
+    <a class="btn btn--sm" href="/money/sources/expenses?from=<%= from %>&amp;to=<%= to %>">Show other business expenses</a>
   </p>
   </div></section>
 <% } else if (kind === 'balance-sheet') { %>
@@ -33,7 +34,7 @@
 <% } else if (kind === 'general-ledger') { %>
   <section class="card"><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Entry</th><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>
   <% report.rows.forEach(function(row){ %><tr><td><%= helpers.shortDate(row.posting_date) %></td><td><a href="/accounting/entries/<%= row.entry_id %>">#<%= row.entry_number %></a></td><td><%= row.account_code %> · <%= row.account_name %></td><td><%= row.description %></td><td class="num"><%= row.debit_minor ? helpers.money(row.debit_minor,row.currency) : '—' %></td><td class="num"><%= row.credit_minor ? helpers.money(row.credit_minor,row.currency) : '—' %></td></tr><% }) %>
-  </tbody></table></div><% if(!report.rows.length){ %><div class="empty"><strong>No posted entries in this period.</strong></div><% } %></div></section>
+  </tbody></table></div><% if(!report.rows.length){ %><div class="empty"><strong>No posted entries in this period.</strong></div><% } %><%- include('../partials/pager') %></div></section>
 <% } else if (kind === 'cash-flow') { %>
   <section class="card"><div class="card-body"><div class="report-lines"><div class="report-line"><span>Operating</span><span><%= helpers.money(report.sections.operating, report.currency) %></span></div><div class="report-line"><span>Investing</span><span><%= helpers.money(report.sections.investing, report.currency) %></span></div><div class="report-line"><span>Financing</span><span><%= helpers.money(report.sections.financing, report.currency) %></span></div><div class="report-line report-line--total"><span>Net cash change</span><strong><%= helpers.money(report.netCashChangeMinor, report.currency) %></strong></div></div></div></section>
 <% } else if (kind === 'inventory-valuation') { %>

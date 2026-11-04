@@ -419,7 +419,8 @@ function createPostgresProjectionsRouter(database){
     else if(req.params.kind==='trial-balance'){report=await reports.trialBalance(database,req.ctx.workspaceId,dates);title='Trial balance';}
     else if(req.params.kind==='general-ledger'){report=await reports.generalLedger(database,req.ctx.workspaceId,dates);title='General ledger';}
     else return res.status(404).page('error',{title:'Report not found',status:404,message:'That report does not exist.'});
-    return res.page('accounting/report',{title,nav:'accounting',kind:req.params.kind,report,from:dates.from,to:dates.to,
+    let pager=null;if(req.params.kind==='general-ledger'){const paged=require('../presentation/pagination').slice(req,report.rows);report={...report,rows:paged.rows};pager=paged.pager;}
+    return res.page('accounting/report',{title,nav:'accounting',kind:req.params.kind,report,from:dates.from,to:dates.to,pager,
       configured:{currency:report.currency || 'USD'}});
   }));
   router.get('/accounting/entries/:id',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view journal entries'),asyncRoute(async(req,res)=>{
