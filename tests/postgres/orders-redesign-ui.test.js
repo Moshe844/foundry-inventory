@@ -29,7 +29,13 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Hendels shoes');
     await page.getByLabel('Your name').fill('Orders Owner');await page.getByLabel('Work email').fill('orders-ui@example.test');
     await page.locator('input[name="password"]').fill('orders-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('orders-password');
-    await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    const invalidRegistration=await page.locator('form[action="/register"]').evaluate(form=>[...form.elements].filter(field=>field.willValidate&&!field.checkValidity()).map(field=>({name:field.name,message:field.validationMessage})));
+    assert.deepEqual(invalidRegistration,[],'Registration form must be valid before submitting');
+    const [registration]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&response.url()===`${base}/register`),page.getByRole('button',{name:'Create account'}).click()]);
+    const registrationBody=registration.status()===302?'':await registration.text();
+    const registrationAlerts=[...registrationBody.matchAll(/<div[^>]*class="auth-message[^"]*"[^>]*>([\s\S]*?)<\/div>/g)].map(match=>match[1].replace(/<[^>]*>/g,' ').trim());
+    assert.equal(registration.status(),302,JSON.stringify({alerts:registrationAlerts,title:/<title>([^<]*)/.exec(registrationBody)?.[1],fromServiceWorker:registration.fromServiceWorker(),location:registration.headers().location}));
+    await page.waitForURL(`${base}/onboarding`);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='orders-ui@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
