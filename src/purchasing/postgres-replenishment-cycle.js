@@ -12,20 +12,15 @@ const activeImportSql=`EXISTS(SELECT 1 FROM import_executions execution
   AND active.kind='import.execute-approved' AND active.payload->>'planId'=execution.import_id
   AND active.status='RUNNING' AND active.lease_expires_at>extract(epoch FROM CURRENT_TIMESTAMP)*1000)))`;
 
-async function lockStorageOwner(database,workspaceId){
- // Positive business writes take this account lock. Take it before source
- // version/workspace locks, otherwise import A->version and planner version->A
- // deadlock (including when two inventories share one paying account).
- await database.query("SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||owner_account_id,0)) FROM workspaces WHERE id=$1",[workspaceId]);
-}
 async function begin(database,workspaceId,cycleId,{continuation=false,requestedByUser=false}={}){
+ // Serialize only planning cycles for this inventory, not its owner's stock,
+ // uploads or other inventories. Existing source/authority row locks remain.
+ await database.query("SELECT pg_advisory_xact_lock(hashtextextended('replenishment-cycle:'||$1,0))",[workspaceId]);
  if((await database.query('SELECT '+activeImportSql+' AS active',[workspaceId])).rows[0].active){
-  await lockStorageOwner(database,workspaceId);
   await database.query(`UPDATE workspace_autopilot SET next_evaluation_at=
    to_char((CURRENT_TIMESTAMP+interval '2 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') WHERE workspace_id=$1`,[workspaceId]);
   return {skipped:'import_in_progress'};
  }
- await lockStorageOwner(database,workspaceId);
  const existing=(await database.query('SELECT *,started_at>CURRENT_TIMESTAMP-interval \'5 minutes\' AS recent FROM stockchief_runtime.replenishment_planning_runs WHERE workspace_id=$1 FOR UPDATE',[workspaceId])).rows[0];
  if(existing?.cycle_id===cycleId)return {planningRevision:String(existing.revision)};
  if(continuation)return {skipped:'superseded_planning_cycle'};
@@ -50,4 +45,4 @@ async function begin(database,workspaceId,cycleId,{continuation=false,requestedB
   revision=excluded.revision,started_at=excluded.started_at,completed_at=NULL`,[workspaceId,cycleId,revision]);
  return {planningRevision:revision};
 }
-module.exports={activeImportSql,lockStorageOwner,begin};
+module.exports={activeImportSql,begin};

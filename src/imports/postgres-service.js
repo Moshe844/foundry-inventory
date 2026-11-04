@@ -419,6 +419,7 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
     await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
       VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
     for(let start=0;start<rows.length;start+=500){await rowStore.insert(client,ctx.workspaceId,plan.id,rows.slice(start,start+500),at);await lifecycle.onProgress?.({stage:'saving',processedRows:Math.min(start+500,rows.length),totalRows:rows.length});}
+    const storage=require('../commercial/storage-capacity');await storage.reserve(client,ctx.workspaceId,'preview:'+plan.id,storage.previewBytes(bytes.length,rows.length),{finished:true});
     await lifecycle.beforeCommit?.(client,plan);
   },{isolation:lifecycle.sourceJobId?'READ COMMITTED':'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
@@ -431,6 +432,7 @@ async function analyse(database, ctx, input) {
   const text=input.text === undefined ? null : String(input.text);
   if(!buffer && !String(text || '').trim())throw new ValidationError('Choose a file, or paste your data.');
   const bytes=buffer || Buffer.from(text,'utf8');
+  await require('../commercial/storage-capacity').check(database,ctx.workspaceId,bytes.length);
   const sourceHash=digest(bytes);
   const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
   const isImage=Boolean(buffer)&&require('./image-table').isImage(buffer);
@@ -576,6 +578,7 @@ async function analyse(database, ctx, input) {
     await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7,transformations=$8::jsonb WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash,JSON.stringify(plan.transformations)]);
     await executionIdentities.mark(client,ctx,plan);
+    const storage=require('../commercial/storage-capacity');await storage.reserve(client,ctx.workspaceId,'preview:'+plan.id,storage.previewBytes(bytes.length,plan.recordsDetected),{finished:true});
     await input.beforeCommit?.(client,plan);
   },{isolation:input.sourceJobId?'READ COMMITTED':'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
@@ -898,11 +901,12 @@ async function approve(database, ctx, id, expectedHash) {
     if((await client.query(`SELECT 1 FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3
       AND status='SUCCEEDED' AND records_invalid=0 LIMIT 1`,[ctx.workspaceId,plan.sourceHash,id])).rows.length)
       throw new ValidationError('This exact source has already been imported. StockChief will not apply it twice.');
+    const storage=require('../commercial/storage-capacity');await storage.reserve(client,ctx.workspaceId,'import:'+id,storage.importBytes(plan));
     const at=nowIso();
     await client.query(`UPDATE import_plans SET approval_status='APPROVED',approved_by_user_id=$3,approved_at=$4
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,ctx.actorId,at]);
     return {...plan,approvalStatus:'APPROVED',approvedByUserId:ctx.actorId,approvedAt:at};
-  },{isolation:'SERIALIZABLE'});
+  },{isolation:'READ COMMITTED'});
 }
 
 function productKey(parsed) {
@@ -939,6 +943,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status='SUCCEEDED' AND (p.records_invalid=0 OR p.id=$3) ORDER BY e.finished_at DESC LIMIT 1`,
   [ctx.workspaceId,plan.sourceHash,id])).rows[0];
   if(previous)return {duplicate:true,execution:previous,planId:previous.import_id};
+  const storage=require('../commercial/storage-capacity');await database.transaction(c=>storage.reserve(c,ctx.workspaceId,'import:'+id,storage.importBytes(plan)),{isolation:'READ COMMITTED'});
   let executionId=newId('impexec');
   if(options.retryExecutionId)await requireRolledBackExecution(database,ctx,plan,options.retryExecutionId);
   const executionKey=`import:${plan.sourceHash}:${plan.integrityHash}${options.retryExecutionId?':retry:'+options.retryExecutionId:''}`;
@@ -991,6 +996,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
         [executionId,created,JSON.stringify({verificationId,verified:true,checks}),finishedAt]);
         await client.query(`UPDATE import_plans SET status='SUCCEEDED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
           [ctx.workspaceId,id,finishedAt]);
+        await require('../commercial/storage-capacity').finish(client,ctx.workspaceId,'import:'+id);
         await options.beforeCommit?.();
         return {executionId,verificationId,verified:true,checks,itemsCreated:0,skusCreated:0,
           rowsImported:created,suppliersCreated:created,units:0};
@@ -1085,9 +1091,12 @@ async function report(database, workspaceId, id) {
 
 async function cancel(database, ctx, id) {
   await assertOperator(database,ctx);
-  const result=await database.query(`UPDATE import_plans SET status='CANCELLED',approval_status='CANCELLED'
+  return database.transaction(async client=>{
+  const result=await client.query(`UPDATE import_plans SET status='CANCELLED',approval_status='CANCELLED'
     WHERE workspace_id=$1 AND id=$2 AND status='READY' RETURNING id`,[ctx.workspaceId,id]);
   if(!result.rows.length)throw new ValidationError('Only an import waiting to run can be cancelled.');
+  await require('../commercial/storage-capacity').finish(client,ctx.workspaceId,'import:'+id);
+  },{isolation:'READ COMMITTED'});
 }
 
 module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,approveAndQueue,execute,queueExecution,retryExecution,report,cancel,hydratePlan,hydrateRow};

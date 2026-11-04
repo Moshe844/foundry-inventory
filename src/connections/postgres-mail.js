@@ -33,6 +33,7 @@ function attachmentsForCapture(message){
 }
 
 async function saveAttachments(client,workspaceId,messageId,attachments,at,{backfill=false}={}){
+  if(attachments.length){const bytes=attachments.reduce((sum,a)=>sum+(a.content?.length||0)+Buffer.byteLength(a.extractedText||'','utf8')+4096,0);await require('../commercial/storage-capacity').reserve(client,workspaceId,'mail-attachments:'+messageId,bytes,{finished:true});}
   let added=0;
   for(const attachment of attachments){const saved=await client.query(`INSERT INTO connection_email_attachments
     (id,workspace_id,message_id,external_attachment_id,filename,mime_type,content_hash,content,extracted_text,created_at)

@@ -4,6 +4,12 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  let last='';const started=performance.now(),f=await require('../helpers/round17-large-business').fixture(t,{onProgress:(phase,p)=>{const bucket=Math.floor(Number(p.processedRows||p.preparedRows||0)/10000),key=phase+':'+p.stage+':'+bucket;if(key!==last){last=key;console.log(JSON.stringify({phase,stage:p.stage,rows:p.processedRows||p.preparedRows||0,elapsedMs:Math.round(performance.now()-started)}));}}}),{db,ctx}=f;
  await t.test('A1 catalogue cost and price without stock imports 50,000 SKUs',async()=>{assert.equal(f.plan.recordsValid,50000);assert.equal((await db.query('SELECT count(*)::int n FROM sku_purchase_costs WHERE workspace_id=$1 AND amount_minor=200',[ctx.workspaceId])).rows[0].n,50000);});
  await t.test('A2 mixed tracked opening-stock import takes less than five minutes',()=>{assert(f.stockImportMs<300000,`Actual local canonical import took ${Math.round(f.stockImportMs)} ms`);});
+ await t.test('A3 cached 50,000-SKU reads make no database revision query or backlog scan',async()=>{
+  const statements=[],isolated={...db,query:(sql,values)=>{statements.push(sql);return db.query(sql,values);}},cache=require('../../src/lib/versioned-read-model');let computations=0;
+  const read=()=>cache.read(isolated,ctx.workspaceId,['qualification-cache'],async()=>{computations++;return (await isolated.query('SELECT (SELECT count(*)::int FROM skus WHERE workspace_id=$1) skus,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions',[ctx.workspaceId])).rows[0];},{domain:'business'});
+  const results=await Promise.all(Array.from({length:100},read));assert(results.every(r=>r.skus===50000&&r.positions===150000));assert.equal(computations,1);assert.equal(statements.length,1);assert(!statements.some(sql=>/read_model_changes|read_model_versions|string_agg/.test(sql)));
+  assert.equal((await db.query("SELECT count(*)::int n FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE p.proname='commercial_track_storage'")).rows[0].n,0);
+ });
  await t.test('A3 date-filtered movement and sales reads use bounded indexes after statistics refresh at full scale',async()=>{
   await db.query('ANALYZE movements,accounting_journal_entries,accounting_journal_lines');
   const service=require('../../src/reports/postgres-service'),actor={role:'owner'},calendar=await require('../../src/lib/business-time').forWorkspace(db,ctx.workspaceId);
