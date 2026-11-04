@@ -447,8 +447,14 @@ test('all core reports and ledger drill-down render from posted entries', async 
     ],
   }).entry;
   for (const path of ['profit-and-loss', 'balance-sheet', 'cash-flow', 'trial-balance', 'general-ledger', 'inventory-valuation']) {
-    const page = await env.agent.get(`/accounting/reports/${path}`).expect(200);
-    assert.match(plain(page.text), /Ledger-backed report/i);
+    const page = await env.agent.get(`/accounting/reports/${path}?from=2026-01-01&to=2026-01-01`).expect(200);
+    assert.match(plain(page.text), path === 'inventory-valuation'
+      ? /What your stock cost you, not what it sells for/i
+      : /Worked out only from your posted records/i);
+    if (path === 'general-ledger') {
+      assert.match(page.text, new RegExp(`href="/accounting/entries/${entry.id}"`));
+      assert.match(plain(page.text), /Opening cash.*\$100\.00/i);
+    }
   }
   const detail = await env.agent.get(`/accounting/entries/${entry.id}`).expect(200);
   assert.match(plain(detail.text), /Accounting evidence.*Opening cash.*Advanced accounting details.*Debit.*Credit/i);
@@ -584,8 +590,12 @@ test('owner accounting UI carries exact PO and Sales evidence through partial pa
     'owned stock cost drills down to exact units and cost');
   const profitPage = await env.agent
     .get('/accounting/reports/profit-and-loss?from=2026-09-01&to=2026-09-08').expect(200);
-  assert.match(plain(profitPage.text), /Show the exact sales and product cost.*Show other business expenses/i,
+  assert.match(plain(profitPage.text), /Show the exact sales.*Show the product cost.*Show other business expenses/i,
     'the aggregate profit report continues to exact operational evidence');
+  for (const source of ['revenue', 'cogs', 'expenses']) {
+    assert.match(profitPage.text, new RegExp(`href="/money/sources/${source}\\?from=2026-09-01(?:&|&amp;)to=2026-09-08"`),
+      'every profit component retains the reviewed reporting period in its source link');
+  }
 
   await env.agent.post(`/accounting/receivables/${invoice.id}/payment`).type('form').send({
     _csrf: csrfFrom(ownerPage.text), paymentDate: '2026-09-01', amount: '40.00',
