@@ -21,3 +21,6 @@ test('composed movement reads retain date parameters belonging to their own metr
  assert.match(q.sql,/stockchief_movement_instant\(m\.occurred_at\)>=\(\$4::text::date::timestamp/);
  assert.match(q.sql,/stockchief_movement_instant\(m\.occurred_at\)<\(\(\$4::text::date\+1\)::timestamp/);
 });
+test('impossible movement filter dates fail clearly before reaching PostgreSQL',()=>{
+ for(const value of ['2026-02-30','2026-13-01','0000-01-01'])assert.throws(()=>reports.queryFor(reports.normalize({dataset:'movements',summary:true,aggregate:'count',filters:[{field:'occurred_on',operator:'equals',value}]},{role:'owner'}),'workspace-one'),error=>error.code==='validation_error'&&/real calendar date/.test(error.message));
+});

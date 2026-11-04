@@ -7,6 +7,11 @@ function bound(source,config,{parameterBase=1}={}){
  for(const filter of config.filters){
   if(!['is_null','is_empty','not_empty'].includes(filter.operator))parameter++;
   if(filter.field!=='occurred_on')continue;
+  if(applied(filter)&&filter.operator!=='is_null'){
+   const value=String(filter.value),parsed=Date.parse(value);
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-')||!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==value)
+    throw new(require('../domain/errors').ValidationError)('Choose a real calendar date for movement records.');
+  }
   const start=`($${parameter}::text::date::timestamp AT TIME ZONE ${zone})`;
   // Add a calendar day before converting to UTC: DST days are not always 24h.
   const end=`(($${parameter}::text::date+1)::timestamp AT TIME ZONE ${zone})`;
