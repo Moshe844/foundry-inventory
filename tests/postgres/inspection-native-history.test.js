@@ -14,7 +14,7 @@ test('restricted application shows the same owned native conversation state with
  renderer=await require('../../scripts/environment-agent-demo/inspection').createInspectionServer({cluster,database:db,ctx});
  const response=await fetch(renderer.origin+'/ask'),html=await response.text();assert.equal(response.status,200);
  assert(html.includes(goal.original_request),'Recorded safety-011 failure: the restricted Ask renderer omitted actual native goals, causing unrelated investigation');
- assert(html.includes('The prepared change was not executed. No stock moved.'));assert(html.includes('The authorized warehouse was created once.'));
+ const recorded=async id=>(await (await fetch(renderer.origin+'/ask/history?goal='+id)).text());assert((await recorded(goal.id)).includes('The prepared change was not executed. No stock moved.'));assert((await recorded(completed.id)).includes('The authorized warehouse was created once.'));
  assert(!html.includes(foreign.original_request));assert(!html.includes('DO-NOT-EXPOSE-NATIVE-CHECKPOINT'));
  assert(!html.includes('src="/adaptive-goal.js'),'Read-only rendering must not start mutating approval/polling lifecycle calls');
  assert.equal((await fetch(renderer.origin+'/ask/goals/'+goal.id+'/resume',{method:'POST'})).status,403);

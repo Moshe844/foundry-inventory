@@ -55,7 +55,7 @@ test('real UI exploration uses discovered controls; browser cannot write or cros
   cleanup.push(()=>ui.close());
   const entry=await ui.inspect();assert.ok(entry.text.includes('StockChief'),entry.text.slice(0,400));
   assert.ok(!JSON.stringify(entry).includes('PRIVATE CANARY'));
-  const link=entry.controls.find(c=>c.tag==='a'&&/inventory/i.test(c.label));assert.ok(link,JSON.stringify(entry.controls).slice(0,1000));
+  const link=entry.controls.find(c=>c.tag==='a'&&/^(?:stock|inventory)$/i.test(c.label.trim()));assert.ok(link,JSON.stringify(entry.controls).slice(0,1000));
   const inventory=await ui.act({action:'click',ref:link.ref});
   assert.ok(inventory.text.includes(productName),inventory.text.slice(0,1000));
   const screenshot=await ui.act({action:'screenshot'});
