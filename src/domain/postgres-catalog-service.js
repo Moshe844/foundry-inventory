@@ -203,9 +203,9 @@ async function listItemsUncached(database, workspaceId, input = {}) {
   }
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
     anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true,JSON.stringify(Object.fromEntries(optionFilters))];
-  // Start filtered pages from matching IDs. LIMIT keeps primary-key lookups
-  // bounded before workspace checks even when fresh imports have stale stats.
-  const result = await database.query(`WITH ${input.lowStock===true?`low_skus AS MATERIALIZED(${require('../reports/postgres-low-stock-badges').filterSource()}), low_items AS MATERIALIZED(SELECT DISTINCT s.item_id FROM low_skus low CROSS JOIN LATERAL(SELECT s.item_id,s.workspace_id,s.is_active FROM skus s WHERE s.id=low.sku_id LIMIT 1)s WHERE s.workspace_id=$1 AND s.is_active=1),`:''}matching_items AS NOT MATERIALIZED (
+  // Fetch low-SKU metadata through one indexed key batch, then look up only
+  // the matching parent IDs. Keep both boundaries valid before statistics catch up.
+  const result = await database.query(`WITH ${input.lowStock===true?`low_skus AS MATERIALIZED(${require('../reports/postgres-low-stock-badges').filterSource()}), low_sku_metadata AS MATERIALIZED(SELECT s.item_id,s.workspace_id,s.is_active FROM skus s WHERE s.id=ANY(ARRAY(SELECT sku_id FROM low_skus))), low_items AS MATERIALIZED(SELECT DISTINCT item_id FROM low_sku_metadata WHERE workspace_id=$1 AND is_active=1),`:''}matching_items AS NOT MATERIALIZED (
       SELECT i.* FROM ${input.lowStock===true?'low_items low CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=low.item_id LIMIT 1)i':'items i'}
       WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
