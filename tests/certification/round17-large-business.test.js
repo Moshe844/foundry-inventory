@@ -199,5 +199,6 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('A2 item stock rollups stay bounded while preserving insert update delete and rollback at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/stock-rollup-locality-checks').check(db,ctx)));});
  await t.test('D19 movement bucket reads retain exact local-day totals without rescanning 150,000 stock events',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/movement-bucket-checks').check(db,ctx)));});
  await t.test('D19 SKU stock summaries retain exact pending quantities without reading 150,000 canonical positions',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sku-stock-summary-checks').check(db,ctx)));});
+ await t.test('D19 maintenance scheduling avoids full stock scans for empty inventories and completed jobs at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/maintenance-read-locality-checks').check(db,ctx)));});
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });

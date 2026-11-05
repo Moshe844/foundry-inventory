@@ -169,8 +169,7 @@ async function runtimeSweep(job,client,options={}){
   await require('../payments/postgres-provenance').queueMissing(scopedDatabase(client));
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
-  const paused=(await client.query(`SELECT * FROM stockchief_runtime.jobs WHERE status='PAUSED'
-    AND workspace_id IS NOT NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED`)).rows;
+  const paused=(await client.query(require('./paused-jobs-source').source())).rows;
   for(const pending of paused){const scope=await entitlements.ownerScopeForWorkspace(client,pending.workspace_id);
     const subscription=await entitlements.subscriptionFor(client,scope.accountId);
     if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription,new Date(now)).canOperate)continue;
