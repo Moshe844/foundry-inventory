@@ -203,11 +203,12 @@ async function needsUncached(database,workspaceId,actorId=null){
   return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
 }
 
-async function brief(database,workspaceId,actorId=null){
-  const [data,needItems]=await Promise.all([require('../lib/versioned-read-model').read(database,workspaceId,['business-brief'],()=>briefData(database,workspaceId),{domain:'business'}),needs(database,workspaceId,actorId)]);
+async function brief(database,workspaceId,actorId=null,{includeLocationStock=true}={}){
+  if(typeof includeLocationStock!=='boolean')throw new TypeError('Choose a fixed location-stock projection.');
+  const [data,needItems]=await Promise.all([require('../lib/versioned-read-model').read(database,workspaceId,['business-brief',includeLocationStock],()=>briefData(database,workspaceId,{includeLocationStock}),{domain:'business'}),needs(database,workspaceId,actorId)]);
   return {...data,needs:needItems};
 }
-async function briefData(database,workspaceId){
+async function briefData(database,workspaceId,{includeLocationStock}){
   const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
     database.query(`WITH stock_by_sku AS MATERIALIZED (
       SELECT sku_id,sum(on_hand)::numeric AS quantity FROM balances WHERE workspace_id=$1 GROUP BY sku_id
@@ -228,9 +229,9 @@ async function briefData(database,workspaceId){
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
         AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming FROM sku_stats`,[workspaceId]),
-    database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
+    includeLocationStock?database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
       LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
-      WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]),
+      WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]):{rows:[]},
     database.query(`SELECT m.id,m.operation,m.quantity_delta,m.reference,m.notes,m.occurred_at,
       i.name AS item_name,s.code,l.name AS location_name,u.name AS actor_name
       FROM movements m JOIN items i ON i.id=m.item_id JOIN skus s ON s.id=m.sku_id
