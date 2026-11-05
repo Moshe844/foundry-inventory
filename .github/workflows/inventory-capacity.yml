@@ -92,7 +92,7 @@ jobs:
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/background-storage-admission.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js tests/postgres/older-plan-custom-roles.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
+          node --test --test-concurrency=2 tests/postgres/approved-packaging.test.js tests/postgres/background-storage-admission.test.js tests/postgres/storage-import-priority.test.js tests/postgres/commercial-wallet.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/commercial-paid-model-budget.test.js tests/postgres/payments-ui.test.js tests/postgres/warehouse-member-access.test.js tests/postgres/warehouse-count-campaigns.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/staging-load-sessions.test.js tests/postgres/staging-million-source.test.js tests/postgres/older-plan-custom-roles.test.js 2>&1 | tee output/inventory-ci/approved-packaging.log
       - name: Combined onboarding, invitations and real import approval
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: |

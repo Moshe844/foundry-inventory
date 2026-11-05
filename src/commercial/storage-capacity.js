@@ -21,7 +21,22 @@ async function reserve(db,workspaceId,key,bytes,{finished=false}={}){
 async function finish(db,workspaceId,key){await db.query('UPDATE commercial_storage_reservations SET finished_xid=pg_current_xact_id() WHERE workspace_id=$1 AND reservation_key=$2',[workspaceId,key]);}
 function previewBytes(sourceBytes,rows){return amount(Math.max(0,Number(sourceBytes))*4+Math.max(0,Number(rows))*4096+16384);}
 function importBytes(plan){return amount(Math.max(0,Number(plan.recordsValid))*16384);}
-async function measurement(db,workspaceId,relation=null){
+async function measurement(db,workspaceId,relation=null,options={}){
+ const yielding=options.yieldToImports===true,pollMs=options.bulkPollMs??1000;
+ if(!Number.isSafeInteger(pollMs)||pollMs<20||pollMs>5000)throw new TypeError('Storage work needs a bounded import polling interval.');
+ let nextProbe=0;
+ const waitForImports=async()=>{if(!yielding||Date.now()<nextProbe)return;
+  for(;;){const active=(await db.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE status='RUNNING'
+   AND (kind=ANY($1::text[]) OR lease_owner LIKE '%:bulk')
+   AND lease_expires_at>floor(extract(epoch FROM statement_timestamp())*1000) LIMIT 1`,
+   [['import.analyse-source','import.revise-preview','import.execute-approved','erp.cutover.continue','warehouse.count.apply','qualification.staging-million']])).rows.length;
+   if(!active){nextProbe=Date.now()+pollMs;return;}await new Promise(resolve=>setTimeout(resolve,pollMs));
+  }
+ };
+ // Check on a fresh connection, not the audit's older repeatable-read snapshot.
+ // A one-connection caller can yield before opening its cursor, without ever
+ // waiting on its own leased connection in the middle of that transaction.
+ await waitForImports();const canProbeDuringRead=yielding&&db.poolMetrics?.().max>1;
  return db.transaction(async c=>{
   const instant=(await c.query('SELECT pg_current_snapshot()::text AS snapshot,transaction_timestamp() AS at')).rows[0];
   const registry=(await c.query(`SELECT u.relation::text AS relation,r.bytes_expression FROM commercial_storage_usage u JOIN commercial_storage_tables r USING(relation) WHERE u.workspace_id=$1 AND ($2::text IS NULL OR u.relation=$2::regclass) ORDER BY u.relation`,[workspaceId,relation])).rows;
@@ -30,9 +45,10 @@ async function measurement(db,workspaceId,relation=null){
   // SUM lets quota maintenance occupy CPU/I/O continuously for millions of
   // historical records while customers are trying to use the application.
   await c.query('SET LOCAL max_parallel_workers_per_gather=0');
+  await c.query('SET LOCAL cursor_tuple_fraction=1.0');
   const rows=[];for(const entry of registry){
    await c.query(`DECLARE stockchief_storage_rows NO SCROLL CURSOR FOR SELECT ${entry.bytes_expression} AS bytes FROM ${entry.relation} t WHERE t.workspace_id=$1`,[workspaceId]);
-   let bytes=0n;for(;;){const batch=(await c.query('FETCH FORWARD 1000 FROM stockchief_storage_rows')).rows;
+   let bytes=0n;for(;;){if(canProbeDuringRead)await waitForImports();const batch=(await c.query('FETCH FORWARD 1000 FROM stockchief_storage_rows')).rows;
     for(const row of batch)bytes+=BigInt(row.bytes||0);
     if(batch.length<1000)break;
     await new Promise(resolve=>setTimeout(resolve,50));
@@ -54,8 +70,8 @@ async function publish(db,workspaceId,snapshot,{complete=false}={}){
   return {measured:true,relations:snapshot.rows.length};
  },{isolation:'READ COMMITTED'});
 }
-async function baseline(db,workspaceId,relation){return publish(db,workspaceId,await measurement(db,workspaceId,relation));}
-async function refresh(db,workspaceId){return publish(db,workspaceId,await measurement(db,workspaceId),{complete:true});}
+async function baseline(db,workspaceId,relation,options={}){return publish(db,workspaceId,await measurement(db,workspaceId,relation,options));}
+async function refresh(db,workspaceId,options={}){return publish(db,workspaceId,await measurement(db,workspaceId,null,options),{complete:true});}
 async function schedule(db,{now=Date.now()}={}){
  const rows=(await db.query(`SELECT u.workspace_id,w.owner_account_id,w.deletion_requested_at FROM commercial_storage_usage u JOIN workspaces w ON w.id=u.workspace_id
  WHERE NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)
