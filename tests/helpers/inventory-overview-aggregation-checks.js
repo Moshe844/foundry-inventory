@@ -1,0 +1,19 @@
+'use strict';const assert=require('node:assert/strict');
+async function check(db,ctx){
+ const reference=(await db.query(`WITH sku_position AS (
+ SELECT s.id,s.item_id,coalesce(sum(b.on_hand),0)::numeric on_hand,
+ coalesce((SELECT sum(a.quantity) FROM sales_stock_commitments a WHERE a.workspace_id=s.workspace_id AND a.sku_id=s.id),0)::numeric committed,
+ coalesce((SELECT sum(l.quantity_units-l.quantity_received_units) FROM purchase_order_lines l JOIN purchase_orders p ON p.id=l.purchase_order_id WHERE l.workspace_id=s.workspace_id AND l.sku_id=s.id AND p.status IN('ORDERED','PARTIALLY_RECEIVED')),0)::numeric incoming
+ FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.item_id,s.workspace_id
+ ), item_position AS(SELECT item_id,sum(on_hand) on_hand,sum(committed) committed,sum(incoming) incoming FROM sku_position GROUP BY item_id)
+ SELECT count(*)::int products,(SELECT count(*)::int FROM sku_position) skus,coalesce(sum(on_hand),0)::text on_hand,coalesce(sum(committed),0)::text committed,coalesce(sum(incoming),0)::text incoming,
+ count(*) FILTER(WHERE on_hand<=0)::int empty_count,count(*) FILTER(WHERE committed>on_hand)::int shortage_count,count(*) FILTER(WHERE incoming>0)::int incoming_count,count(*) FILTER(WHERE on_hand>0 AND committed<=on_hand)::int healthy_count FROM item_position`,[ctx.workspaceId])).rows[0];
+ let query;const measured={...db,query:(sql,values)=>{if(sql.includes('WITH stock_by_sku AS MATERIALIZED'))query={sql,values};return db.query(sql,values);}};
+ const actual=await require('../../src/web/postgres-presenters').inventoryPosition(measured,ctx.workspaceId);assert(query);for(const [field,key]of [['products','products'],['skus','skus'],['onHand','on_hand'],['committed','committed'],['incoming','incoming']])assert.equal(actual.position.totals[field],Number(reference[key]),field);
+ const groups=new Map(actual.position.groups.map(g=>[g.key,g.count]));for(const key of ['empty','shortage','incoming','healthy'])assert.equal(groups.get(key)||0,reference[key+'_count'],key);
+ const plan=(await db.transaction(c=>c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+query.sql,query.values),{isolation:'READ COMMITTED',readOnly:true,jit:false})).rows[0]['QUERY PLAN'][0],nodes=[];const visit=n=>{nodes.push(n);for(const p of n.Plans||[])visit(p);};visit(plan.Plan);
+ assert(!nodes.some(n=>String(n['Subplan Name']||'').startsWith('SubPlan')),'Commitment and incoming totals must not run a correlated subquery for each SKU');
+ const catalogueSkus=Number((await db.query('SELECT count(*) n FROM skus WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),stockPlan=nodes.find(n=>n['Subplan Name']==='CTE stock_by_sku');assert(stockPlan,'Group canonical stock before joining catalogue metadata');assert(stockPlan['Actual Rows']<=catalogueSkus,'The stock aggregate produces at most one row per SKU, including archived records');const stockNodes=[];const inspect=n=>{stockNodes.push(n);for(const p of n.Plans||[])inspect(p);};inspect(stockPlan);assert(!stockNodes.some(n=>['items','skus'].includes(n['Relation Name'])),'Catalogue metadata is joined after stock is grouped');assert(plan['Execution Time']<1500,'Stock overview exceeds 1.5 seconds');
+ return {overviewSkus:reference.skus,catalogueSkus,stockGroups:stockPlan['Actual Rows'],onHand:Number(reference.on_hand),committed:Number(reference.committed),incoming:Number(reference.incoming),exactPriorTotals:true,correlatedSkuSubqueries:0,stockGroupedBeforeMetadata:true,executionMs:plan['Execution Time'],paidCalls:0};
+}
+module.exports={check};

@@ -192,5 +192,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('D19 missing-cost totals read only nonzero positions among 1.15 million generated stock-cost records',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sparse-coverage-read-checks').check(db,ctx)));});
  await t.test('D19 automatic visibility maintenance restores covered reads after modest updates at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/stock-visibility-maintenance-checks').check(db,ctx)));});
  await t.test('D19 fifty Home readers share exact stock value and omit unused location totals at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/home-shared-stock-checks').check(db,ctx)));});
+ await t.test('D19 stock overview aggregates each source once and preserves exact totals at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/inventory-overview-aggregation-checks').check(db,ctx)));});
+ await t.test('D19 fifty Reports readers share exact cards and low-stock location counts at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/report-card-sharing-checks').check(t,db,ctx)));});
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });
