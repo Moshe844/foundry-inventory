@@ -24,6 +24,6 @@ test('one model interpretation exposes registered reads and cannot supply SQL, e
 });
 test('answers render exact database values, explicit filters and truncation without another model or review loop',()=>{
  const sections=[{label:'Stock by product',config:{filters:[{field:'location',operator:'equals',value:'NJ-Main'}]},columns:['variant','on_hand'],columnLabels:{variant:'Variant','on_hand':'On hand'},rows:[{variant:'Vanilla / 500g',on_hand:'3.75'}],hasMore:true}];
- assert.equal(reads.render(sections),'Stock by product\nFilters: location equals NJ-Main.\nVariant: Vanilla / 500g · On hand: 3.75\nShowing the first 1 results. Narrow the filters for the remaining records.');
+ assert.equal(reads.render(sections),'### Stock by product\nFilters: location equals NJ-Main.\n\n| Variant | On hand |\n|---|---:|\n| Vanilla / 500g | 3.75 |\n\nShowing the first 1 results. Narrow the filters for the remaining records.');
  const large=reads.render([{...sections[0],rows:Array.from({length:100},()=>({variant:'Long product '.repeat(100),on_hand:'3.75'})),hasMore:false}]);assert(large.length<20000);assert.match(large,/This answer was shortened/);
 });

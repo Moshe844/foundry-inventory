@@ -47,7 +47,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
  const outcomes=[];
  for(const sample of cases){
   await page.goto(origin+'/ask');await page.getByRole('button',{name:'New conversation',exact:true}).click().catch(()=>{});
-  await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.goal);
+  await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(sample.goal);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
   const goal=await store.latest(db,ctx);let calls=0;
   const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
@@ -69,10 +69,10 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
     let actual=JSON.parse(entry.text);for(const part of sample.path.slice(1).split('/'))actual=actual[part];assert.equal(String(actual),String(sample.value));
     return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({version:1,status:'completed',outcome:'answer',answer:'The approved operation is recorded and its current business state is verified.',claims:[{evidenceId:entry.id,path:sample.path,value:actual}]}));
    }};
-  await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.reply); // unsent input must survive the arriving question
+  await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(sample.reply); // unsent input must survive the arriving question
   const first=await pilot.run(db,ctx,goal.id,options);assert.equal(first.status,'WAITING_USER',JSON.stringify({calls,failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption}));
   await page.locator('[data-goal-phase-text]').last().getByText('Let’s clarify',{exact:true}).waitFor({timeout:10000});
-  assert.equal(await page.getByLabel('Ask StockChief',{exact:true}).inputValue(),sample.reply);
+  assert.equal(await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).inputValue(),sample.reply);
   assert(!await page.locator('body').innerText().then(s=>s.includes('"missingInformation"')||s.includes('Could not finish')));
   const qid=first.checkpoint.conversationState.input.id;
   if(sample.name==='sales')await page.screenshot({path:path.join(artifact,'recorded-sales-clarification-after.png'),fullPage:true});
@@ -85,7 +85,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
   await page.locator('[data-adaptive-goal="'+goal.id+'"] [data-goal-answer]').filter({hasText:sample.follow}).waitFor({timeout:20000});
   assert.equal(await store.reply(db,ctx,goal.id,'stale different answer',{questionId:qid}),null);
   const secondQuestion=second.checkpoint.conversationState.input.id;
-  await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.second);
+  await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(sample.second);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
   assert.deepEqual((await store.get(db,ctx,goal.id)).checkpoint.messages,[sample.reply,sample.second]);
   const prepared=await pilot.run(db,ctx,goal.id,options);assert.equal(prepared.status,'WAITING_APPROVAL',prepared.answer);assert.equal(calls,3);

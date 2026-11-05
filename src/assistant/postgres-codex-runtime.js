@@ -246,7 +246,7 @@ async function run(database,ctx,id,options={}){
    };
    let plan;
    try{plan=await reads.interpret(helper,currentAccess.actor,goal.original_request,{clock:await reads.businessClock(database,ctx.workspaceId,currentAccess.environment?.clock),
-    conversation:(goal.checkpoint.messages||[]).slice(-4)});}
+    conversation:[...(goal.checkpoint.conversation?.turns||[]).map(turn=>({question:turn.message,answer:turn.answer})),...(goal.checkpoint.messages||[])].slice(-4)});}
    catch(error){return await askInstead(error);}
    finally{audit({kind:'bounded_read_model',timings:{modelMs:Date.now()-modelStarted}});}
    if(plan.status==='clarify'){

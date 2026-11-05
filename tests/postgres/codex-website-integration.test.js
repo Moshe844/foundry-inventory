@@ -31,7 +31,7 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  const cookie=signed.headers['set-cookie'].find(c=>c.startsWith('foundry.sid='));
  await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:origin}]);
  const store=require('../../src/assistant/postgres-goal-store'),pilot=require('../../src/assistant/postgres-codex-pilot');
- const send=async message=>{await page.goto(origin+'/ask');await page.getByLabel('Ask StockChief',{exact:true}).fill(message);
+ const send=async message=>{await page.goto(origin+'/ask');await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(message);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);};
  const businessCounts=async()=>(await db.query(`SELECT (SELECT count(*) FROM movements WHERE workspace_id=$1) AS movements,
   (SELECT count(*) FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1) AS proposals`,[ctx.workspaceId])).rows[0];
@@ -49,7 +49,7 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  await send('Take e to the suppliers tab');const requested=await store.latest(db,ctx);
  assert.equal(requested.original_request,'Take e to the suppliers tab');
  const verification=require('../../src/assistant/postgres-codex-verification');
- await page.getByLabel('Ask StockChief',{exact:true}).fill('Draft prevents navigation while assertions run');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('Draft prevents navigation while assertions run');
  let nativeCalls=0;
  // Reproduce the recorded four-response sequence through the ACTUAL SDK and
  // restricted browser. Only this offline provider fixture supplies decisions.
@@ -79,7 +79,7 @@ test('pilot preserves fast navigation and hands native navigation to the custome
   }});
  assert.equal(run.status,'WAITING_EVENT',JSON.stringify({failure:run.checkpoint.harness.failure,interruption:run.checkpoint.harness.interruption,nativeCalls}));assert.equal(nativeCalls,4);
  assert.equal(new URL(page.url()).pathname,'/ask','Private browser arrival is not user-browser arrival');
- await page.getByLabel('Ask StockChief',{exact:true}).fill('');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('');
  await page.waitForURL(origin+'/suppliers',{timeout:15000});
  await page.waitForFunction(()=>document.querySelector('[data-agent-arrival]')?.dataset.confirmed==='true');
  const done=await store.get(db,ctx,requested.id);assert.equal(done.status,'COMPLETED');
@@ -92,7 +92,7 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  await send('Open the newly discovered workspace review');const unknown=await store.latest(db,ctx),active=await store.claim(db,ctx,unknown.id);
  const g=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:active.original_request,goalId:active.id,runToken:active.run_token});
  const s=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:active.id,runToken:active.run_token,candidate:'codex',authorize:g.authorize});
- await page.getByLabel('Ask StockChief',{exact:true}).fill('Keep my unsent draft');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('Keep my unsent draft');
  const screen=await s.execute('environment_browser',{action:'restore'},()=>inspect.restore(origin+novel));
  const state=await store.get(db,ctx,active.id),e=Object.values(state.checkpoint.harness.evidence).at(-1);
  const checked=await verification.verify(db,ctx,state,JSON.stringify({status:'completed',outcome:'navigation',answer:'Ready to open.',
@@ -101,14 +101,14 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  assert.equal((await require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,active.id)).status,'WAITING_EVENT',
   'A pending page handoff must not enqueue another model run after restart');
  await page.getByRole('button',{name:'Open '+label,exact:true}).waitFor();
- assert.equal(new URL(page.url()).pathname,'/ask');assert.equal(await page.getByLabel('Ask StockChief',{exact:true}).inputValue(),'Keep my unsent draft');
+ assert.equal(new URL(page.url()).pathname,'/ask');assert.equal(await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).inputValue(),'Keep my unsent draft');
  const nav=require('../../src/assistant/postgres-agent-navigation');
  const delivery=await nav.begin(db,ctx,active.id,{automatic:true});assert(delivery);
  assert.equal(await nav.begin(db,ctx,active.id,{automatic:true}),null,'Concurrent tabs cannot both start automatic delivery');
  await db.query("UPDATE users SET role='viewer' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
  await assert.rejects(nav.begin(db,ctx,active.id),/SESSION_AUTHORITY_CHANGED/);
  await db.query("UPDATE users SET role='owner' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
- await page.getByLabel('Ask StockChief',{exact:true}).fill('');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('');
  await page.getByRole('button',{name:'Open '+label,exact:true}).click();await page.waitForURL(origin+novel);
  await page.waitForFunction(()=>document.querySelector('[data-agent-arrival]')?.dataset.confirmed==='true');
  assert.equal((await store.get(db,ctx,active.id)).status,'COMPLETED');
@@ -117,17 +117,17 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  const progress=(await web.get(`/ask/goals/${active.id}`)).body;assert.equal(progress.navigation,null);assert(!JSON.stringify(progress).includes('tokenHash'));
  // Conversation and page references persist, but a new conversation excludes them.
  await page.getByRole('link',{name:'Ask StockChief',exact:true}).click();
- await page.getByLabel('Ask StockChief',{exact:true}).fill('What is this page for?');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('What is this page for?');
  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
  const follow=await store.latest(db,ctx);assert.equal(follow.checkpoint.page.path,novel);
  assert(follow.checkpoint.conversation.turns.some(turn=>turn.id===active.id));
  await page.getByRole('button',{name:'New conversation',exact:true}).click();
- await page.getByLabel('Ask StockChief',{exact:true}).fill('Start a separate investigation');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('Start a separate investigation');
  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
  const fresh=await store.latest(db,ctx);assert.equal(fresh.checkpoint.conversation.turns.length,0);assert.equal(fresh.checkpoint.page,null);
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_USER',answer='Which date range should I investigate?' WHERE id=$1",[fresh.id]);
  await page.reload();assert.equal(await page.locator('#tell-foundry input[name="continueGoalId"]').inputValue(),fresh.id);
- await page.getByLabel('Ask StockChief',{exact:true}).fill('The previous calendar month');
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('The previous calendar month');
  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
  const continued=await store.latest(db,ctx);assert.equal(continued.id,fresh.id);assert.equal(continued.status,'READY');
  assert.deepEqual(continued.checkpoint.messages,['The previous calendar month']);

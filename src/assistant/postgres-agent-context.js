@@ -61,7 +61,7 @@ async function capture(db,ctx,startedAt=null){
    ORDER BY created_at DESC,id DESC LIMIT 6)
   UNION ALL
   (SELECT i.id,i.message,i.answer,i.status,i.created_at,NULL::jsonb AS conversation_state FROM stockchief_runtime.assistant_interactions i
-   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3) AND $5::boolean AND $6::text IS NULL
+   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3) AND $5::boolean AND ($6::text IS NULL OR i.intent->>'chatId'=$6)
    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_goals g
     WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
      AND (i.intent->>'batchId'=g.id OR starts_with(i.intent->>'batchId',g.id||':')))

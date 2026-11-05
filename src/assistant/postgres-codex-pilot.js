@@ -70,7 +70,7 @@ async function start(db,ctx,message,options={}){
  const {pilot}=await access(db,ctx,{enabled:true});
  const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
  const chatId=typeof options.conversationId==='string'&&/^[a-zA-Z0-9_-]{8,160}$/.test(options.conversationId)?options.conversationId:null;
- const hasChatHistory=chatId&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 LIMIT 1",[ctx.workspaceId,ctx.actorId,chatId])).rows.length;
+ const hasChatHistory=chatId&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 UNION ALL SELECT 1 FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId'=$3 LIMIT 1",[ctx.workspaceId,ctx.actorId,chatId])).rows.length;
  const conversation=await require('./postgres-agent-context').capture(db,hasChatHistory?{...ctx,conversationId:chatId}:ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&!['codex-staging','hosted-business'].includes(goal.checkpoint.runtime))throw new ValidationError('That request already belongs to another Ask runtime.');

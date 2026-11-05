@@ -44,7 +44,7 @@ test('repaired gateway preserves approvals and durable state for numeric operati
  await session.execute('environment_notebook',{note:'Verify the complete draft and physical receipt separately.',evidenceIds:[]},async()=>({saved:true}));
  const resumed=require('../../scripts/environment-agent-demo/session').createSession(settings),memory=await resumed.workingMemory();
  assert.ok(memory.contracts.some(c=>c.name===dataset.key));assert.match(memory.lastToolError.message,/operator/);assert.match(memory.notebook.note,/separately/);
- const stopped=await resumed.stop({code:'OFFLINE_COST_GATE'});assert.match(stopped.answer,/recorded and verified/);
+ const stopped=await resumed.stop({code:'OFFLINE_COST_GATE'});assert.match(stopped.answer,/executed and verified/i);
  assert.equal(providerCalls,0);assert.equal((await goals.get(db,ctx,held.id)).status,'BLOCKED');
  await t.test('adaptive final verification recovers a transient read and preserves diagnostic output on failure',async()=>{
   const flag=process.env.STOCKCHIEF_ADAPTIVE_ASK,spaces=process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES;
@@ -68,6 +68,7 @@ test('repaired gateway preserves approvals and durable state for numeric operati
    }};
    const transientDb={...db,query:(sql,args)=>require('../../scripts/environment-agent-demo/read-recovery').query(injected,sql,args,()=>retries++)};
    const controller=require('../../src/assistant/postgres-goal-controller');
+   await require('../helpers/postgres-model-fixture').fundWorkspace(db,ctx.workspaceId);
    const outcome=await controller.start(transientDb,ctx,'Check the current inventory summary.',{provider:synthetic});
    assert.equal(outcome.goalStatus,'COMPLETED');assert.equal(retries,1);assert.equal(verificationReads,1);
    phase=0;failVerdict=true;

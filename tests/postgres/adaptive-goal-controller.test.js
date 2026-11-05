@@ -93,7 +93,7 @@ test('adaptive goal ownership, cost bounds, approvals, tenant isolation and reco
    await page.goto(`${base}/login`);await page.locator('input[name="email"]').fill('adaptive@example.test');
    await page.locator('input[name="password"]').fill('certification-password');
    await Promise.all([page.waitForNavigation(),page.locator('button[type="submit"]').click()]);
-   await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief',{exact:true}).fill(
+   await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(
     'Create Browser Part with SKU BR-8 and record three physically delivered units at Browser Depot against BROWSER-ARRIVAL.');
    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
    const goal=await store.latest(db,ctx);assert.equal(goal.status,'READY');

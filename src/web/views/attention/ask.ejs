@@ -205,7 +205,6 @@
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said, locals.protectedNames || []) %></p>
-        <%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id}) %>
         <p class="rm-said__meta"><% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify' && !result.emailFlow) { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
         <% if (result.emailFlow && result.needsClarification) { %>
           <form method="post" action="/ask/email/continue" class="rm-email-flow" data-busy>
@@ -268,9 +267,7 @@
           </div>
         <% } %>
 
-        <% if (result.handoff) { %>
-          <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>
-        <% } %>
+        
 
         <% if (result.isAction) { %>
           <%# Saying "StockChief cannot move stock" would be false — it can. So the
@@ -346,7 +343,7 @@
         <% } %>
         <% if (hasRows) { %>
           <% var reportGroups = Boolean(result.reportConfig?.groups?.length); %>
-          <details class="rm-chat-evidence" <%= result.reportConfig || result.rows.length <= 25 ? 'open' : '' %>>
+          <details class="rm-chat-evidence" <%= result.reportConfig || result.rows.length <= 25 || /\btable\b/i.test(turn.message) ? 'open' : '' %>>
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : reportGroups ? 'Report groups · open full report for source records' : 'The records behind this' %></span>
               <small>
@@ -365,7 +362,7 @@
                   var linkHref = evidenceHref(row.href, label);
                 %>
                 <tr class="rm-chat-evidence__row">
-                  <% result.columns.forEach(function (column, position) { var shown = cellValue(column, row[column]); %><td class="<%= position && /^[-−]?[$€£¥]?[\d,.]+%?$/.test(shown) ? 'is-num' : '' %>"><% if (!position && linkHref) { %><a href="<%= linkHref %>"><%= shown %></a><% } else { %><%= shown %><% } %></td><% }) %>
+                  <% result.columns.forEach(function (column, position) { var shown = cellValue(column, row[column]); %><td class="<%= position && /^[-−]?[$€£¥]?[\d,.]+%?$/.test(shown) ? 'is-num' : '' %><%= column === 'late' && shown !== 'None' ? ' is-late' : '' %>"><% if (!position && linkHref) { %><a href="<%= linkHref %>"><%= shown %></a><% } else { %><%= shown %><% } %></td><% }) %>
                 </tr>
               <% }) %>
               </tbody></table>
@@ -373,6 +370,7 @@
           </details>
         <% } %>
 
+        <div class="ask-foot"><% if (result.handoff) { %><a class="ask-foot__link" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a><% } %><%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id}) %></div>
         <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification', 'navigation'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational && !result.emailProposal) { %>
           <%#

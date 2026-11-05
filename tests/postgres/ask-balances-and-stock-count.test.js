@@ -13,6 +13,9 @@ test('questions about who owes whom are read directly, and a period or reason is
  assert.equal(direct.classify('Who is late paying? Overdue invoices').late,true);
  for(const text of ['How many items are in my inventory currently?','How many products do we currently have?','How many items do I have right now?'])assert.equal(direct.classify(text).kind,'summary',text);
  assert.equal(direct.classify('How many Trail Shoe do we have?').kind,'stock');
+ assert.equal(direct.classify('Who ows me money?').kind,'balances');
+ for(const text of ['give me a table','I asked for a table','put it in a table please','Make it a table'])assert.equal(direct.classify(text).kind,'as_table',text);
+ assert.notEqual(direct.classify('Give me a table of customers')?.kind,'as_table');
  for(const text of ['Any unpaid supplier bills and customer invoices?','Show AP and AR outstanding.','What do we currently owe suppliers, and what customer money is still outstanding?'])assert.equal(balanceSides(text),null,text);
 });
 

@@ -29,14 +29,14 @@ test('Home Ask stays in document flow without covering later sections on desktop
     await page.goto(base);
     for(const width of [1440,390]){
       await page.setViewportSize({width,height:900});
-      const before=await page.locator('.sc-home__ask').evaluate((element)=>({
+      const before=await page.locator('.sc-ask-card').evaluate((element)=>({
         position:getComputedStyle(element).position,top:element.getBoundingClientRect().top,
         bottom:element.getBoundingClientRect().bottom,viewport:innerHeight,
-        heroBottom:document.querySelector('.sc-home__hero').getBoundingClientRect().bottom,
+        heroBottom:document.querySelector('.hm-head').getBoundingClientRect().bottom,
         nextTop:element.nextElementSibling.getBoundingClientRect().top,
         documentWidth:document.documentElement.scrollWidth,viewportWidth:innerWidth}));
       await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
-      const after=await page.locator('.sc-home__ask').evaluate((element)=>({
+      const after=await page.locator('.sc-ask-card').evaluate((element)=>({
         top:element.getBoundingClientRect().top,bottom:element.getBoundingClientRect().bottom,
         scrollY:scrollY}));
       context.diagnostic(JSON.stringify({width,before,after}));

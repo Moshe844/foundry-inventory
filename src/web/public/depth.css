@@ -781,3 +781,105 @@ html:root body.page-ask .ask-next > span { font-size:12px; color:var(--d-muted);
 @media (max-width:900px) { html:root body.page-ask .sc-chat-workspace { grid-template-columns:minmax(0,1fr); } html:root body.page-ask .ask-starters { grid-template-columns:minmax(0,1fr); } }
 html:root body.page-ask .ask-table th:not(:first-child),html:root body.page-ask .ask-table td:not(:first-child) { text-align:right; }
 html:root body .hm .hm-ask__links { display:inline-flex; gap:14px; flex-wrap:wrap; }
+
+/* ———— Ask, the conversation ————
+   The page background is the page. The answer is plain text on it, its table is the one panel. */
+html:root body.page-ask .sc-chat-workspace { width:100%; max-width:1240px; grid-template-columns:232px minmax(0,1fr); gap:32px; padding-top:18px; }
+html:root body.page-ask .sc-chat-history { display:flex; flex-direction:column; padding:2px 0 16px; margin:0; background:none; box-shadow:none; border:0; border-radius:0; }
+html:root body.page-ask .sc-chat-history h2 { padding:0 10px 6px; font-size:11.5px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:#7A839C; }
+html:root body.page-ask .ask-chats { flex:0 1 auto; }
+html:root body.page-ask .ask-chat { border-radius:8px; }
+html:root body.page-ask .ask-chat:hover { background:rgba(17,21,46,.05); }
+html:root body.page-ask .ask-chat[aria-current] { background:#fff; box-shadow:var(--d-1); }
+html:root body.page-ask .ask-all { padding:6px 10px; font-size:12.5px; font-weight:500; color:#475069; }
+html:root body.page-ask .sc-ai-details { margin-top:auto; padding:8px 10px 0; border-top:1px solid rgba(17,21,46,.07); font-size:12px; color:#7A839C; }
+html:root body.page-ask .sc-ai-details > summary { cursor:pointer; list-style-position:inside; }
+html:root body.page-ask .sc-feedback { padding:6px 10px 0; margin:0; font-size:12px; line-height:1.4; }
+html:root body.page-ask .sc-feedback a { color:#7A839C; }
+html:root body.page-ask .sc-feedback a:hover { color:var(--d-ink); }
+
+html:root body.page-ask .rm-chat { padding:0; }
+html:root body.page-ask .rm-chat__bar,html:root body.page-ask [data-ask-health],html:root body.page-ask .sc-chat-scroll > *,html:root body.page-ask .rm-chat > .rm-composer { width:100%; max-width:780px; margin-left:auto; margin-right:auto; }
+html:root body.page-ask .rm-chat__bar { align-items:center; padding:0 0 12px; }
+html:root body.page-ask .rm-chat__title { font-size:15px; font-weight:600; color:var(--d-ink); }
+html:root body.page-ask .rm-chat__new .rm-btn--ghost { color:#475069; }
+html:root body.page-ask .sc-chat-scroll { scrollbar-width:thin; scrollbar-color:rgba(17,21,46,.18) transparent; padding:6px 10px 18px; }
+
+html:root body.page-ask .rm-turn { margin-top:22px; }
+html:root body.page-ask .rm-turn--you { display:flex; justify-content:flex-end; margin-top:30px; }
+html:root body.page-ask .rm-turn--you .rm-turn__who { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+html:root body.page-ask .rm-turn--you .rm-turn__said { max-width:78%; padding:10px 15px; border-radius:16px 16px 4px 16px; background:var(--d-action) #4F46E5; color:#fff; font-size:14px; font-weight:500; box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 6px 14px -8px rgba(55,48,163,.6); }
+html:root body.page-ask .rm-turn--foundry { margin-top:14px; }
+html:root body.page-ask .rm-turn--foundry .rm-turn__who { display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:12.5px; font-weight:600; color:var(--d-ink); }
+html:root body.page-ask .rm-turn--foundry .rm-turn__who::before { content:""; flex:none; width:20px; height:20px; border-radius:6px; background:var(--d-action) #4F46E5; box-shadow:inset 0 1px 0 rgba(255,255,255,.2); }
+html:root body.page-ask .rm-said { padding:0; border:0; border-radius:0; background:none; box-shadow:none; }
+html:root body.page-ask .rm-said__text,html:root body.page-ask .rm-said > p:first-child { margin:0; padding:0; font-size:15px; line-height:1.6; color:var(--d-ink); }
+html:root body.page-ask .rm-said__meta { margin:6px 0 0; font-size:12.5px; color:#7A839C; }
+html:root body.page-ask .rm-said--problem { padding:12px 14px; border-radius:10px; background:#FDF1F1; box-shadow:inset 3px 0 0 var(--d-urgent); }
+
+html:root body.page-ask .rm-chat-evidence { margin-top:12px; border:0; border-radius:12px; background:#fff; box-shadow:var(--d-1); overflow:hidden; }
+html:root body.page-ask .rm-chat-evidence > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; border-bottom:1px solid #F0F1F6; font-size:12.5px; font-weight:600; color:var(--d-ink); cursor:pointer; }
+html:root body.page-ask .rm-chat-evidence:not([open]) > summary { border-bottom:0; }
+html:root body.page-ask .rm-chat-evidence > summary small { font-weight:400; color:#7A839C; }
+html:root body.page-ask .rm-chat-evidence__rows { padding:0; max-height:440px; scrollbar-width:thin; }
+html:root body.page-ask .ask-table th { padding:8px 14px; background:#FAFAFC; box-shadow:0 1px 0 #ECEEF4; font-size:11.5px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:#7A839C; }
+html:root body.page-ask .ask-table td { padding:10px 14px; border-top:1px solid #F4F5F9; font-size:13.5px; }
+html:root body.page-ask .ask-table tbody tr:hover td { background:#FAFAFC; }
+html:root body.page-ask .ask-table td a { color:var(--d-ink); text-decoration:none; font-weight:500; }
+html:root body.page-ask .ask-table td a:hover { color:#4F46E5; }
+html:root body.page-ask .ask-table td.is-late { color:var(--d-urgent); font-weight:600; }
+
+/* Answers written by the agent use the same table and the same plain text. */
+html:root body.page-ask .rm-agent { padding:0; border:0; border-radius:0; background:none; box-shadow:none; }
+html:root body.page-ask .rm-agent__answer { font-size:15px; line-height:1.6; color:var(--d-ink); }
+html:root body.page-ask .rm-agent__heading { margin:18px 0 8px; font-size:13px; font-weight:600; color:var(--d-ink); }
+html:root body.page-ask .rm-agent__table { margin:8px 0 14px; border-radius:12px; background:#fff; box-shadow:var(--d-1); overflow:auto; scrollbar-width:thin; }
+html:root body.page-ask .rm-agent__table table { width:100%; border-collapse:collapse; font-size:13.5px; font-variant-numeric:tabular-nums; }
+html:root body.page-ask .rm-agent__table th { padding:9px 14px; background:#FAFAFC; border:0; box-shadow:0 1px 0 #ECEEF4; font-size:11.5px; font-weight:600; letter-spacing:.03em; text-transform:uppercase; color:#7A839C; white-space:nowrap; }
+html:root body.page-ask .rm-agent__table td { padding:10px 14px; border:0; border-top:1px solid #F4F5F9; color:var(--d-text); }
+html:root body.page-ask .rm-agent__table tbody tr:first-child td { border-top:0; }
+html:root body.page-ask .rm-agent__table td:first-child { font-weight:500; color:var(--d-ink); }
+html:root body.page-ask .rm-agent__table tbody tr:hover td { background:#FAFAFC; }
+
+html:root body.page-ask .ask-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; margin-top:10px; }
+html:root body.page-ask .ask-foot__link { font-size:13px; font-weight:600; color:#4F46E5; text-decoration:none; }
+html:root body.page-ask .ask-foot__link:hover { text-decoration:underline; }
+html:root body.page-ask .ask-actions { display:flex; flex-wrap:wrap; gap:0; margin:0; }
+html:root body.page-ask .ask-action { padding:3px 7px; border:0; background:none; font-size:12px; font-weight:500; color:#8A92A8; text-decoration:none; }
+html:root body.page-ask .rm-chat-reading { margin-top:2px; border:0; background:none; box-shadow:none; }
+html:root body.page-ask .rm-chat-reading > summary { padding:3px 7px; font-size:12px; font-weight:500; color:#8A92A8; cursor:pointer; }
+html:root body.page-ask .rm-chat-reading__body { padding:6px 7px; font-size:12.5px; line-height:1.5; color:#5A6379; }
+
+html:root body.page-ask .ask-next { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:22px auto 4px; }
+html:root body.page-ask .ask-next > span { margin-right:4px; font-size:12px; font-weight:500; color:#7A839C; }
+html:root body.page-ask .ask-next button { padding:6px 12px; border-radius:999px; font-size:12.5px; font-weight:500; }
+
+html:root body.page-ask .rm-chat > .rm-composer { margin-top:6px; margin-bottom:14px; border-radius:14px; }
+
+/* The first screen: one centred question, not a form. */
+html:root body.page-ask .rm-chat__intro { grid-template-columns:minmax(0,1fr); justify-items:center; gap:10px; max-width:620px; margin:7vh auto 6px; text-align:center; }
+html:root body.page-ask .rm-chat__mark { width:48px; height:48px; border-radius:14px; }
+html:root body.page-ask .rm-verdict { font-size:27px; font-weight:650; letter-spacing:-.022em; }
+html:root body.page-ask .rm-chat__intro p { max-width:480px; font-size:14px; line-height:1.55; }
+html:root body.page-ask .ask-try { max-width:620px; margin:24px auto 8px; font-size:12px; font-weight:500; text-align:center; color:#7A839C; }
+html:root body.page-ask .ask-starters { max-width:620px; gap:10px; }
+html:root body.page-ask .ask-starters button { padding:13px 15px; border-radius:12px; font-size:13.5px; }
+
+@media (max-width:1050px) {
+ html:root body.page-ask .sc-chat-workspace { grid-template-columns:minmax(0,1fr); gap:0; padding-top:6px; }
+ html:root body.page-ask .sc-chat-history { display:none; }
+}
+@media (max-width:900px) {
+ html:root body.page-ask .sc-chat-scroll { padding:4px 2px 14px; }
+ html:root body.page-ask .rm-turn--you .rm-turn__said { max-width:88%; }
+ html:root body.page-ask .rm-chat__intro { margin-top:3vh; }
+ html:root body.page-ask .rm-verdict { font-size:22px; }
+ html:root body.page-ask .ask-table th,html:root body.page-ask .ask-table td,html:root body.page-ask .rm-agent__table th,html:root body.page-ask .rm-agent__table td { padding-left:10px; padding-right:10px; }
+ /* Still a real table on a phone: it scrolls sideways rather than breaking words apart. */
+ html:root body.page-ask .ask-table { display:table; min-width:100%; width:max-content; }
+ html:root body.page-ask .ask-table thead { display:table-header-group; position:static; width:auto; height:auto; clip:auto; clip-path:none; overflow:visible; }
+ html:root body.page-ask .ask-table tbody { display:table-row-group; }
+ html:root body.page-ask .ask-table tr,html:root body.page-ask .ask-table tr.rm-chat-evidence__row { display:table-row; }
+ html:root body.page-ask .ask-table th,html:root body.page-ask .ask-table td { display:table-cell; white-space:nowrap !important; overflow-wrap:normal !important; word-break:normal !important; }
+ html:root body.page-ask .ask-table td::before { content:none !important; display:none !important; }
+}
