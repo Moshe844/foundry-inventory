@@ -31,10 +31,12 @@ async function runtimeFailures(database,workspaceId){
 }
 
 function needs(database,workspaceId,actorId=null){return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),()=>require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)));}
-async function needsUncached(database,workspaceId,actorId=null){
-  const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
-  const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,nativeApprovals,bulkReviews,rentalBilling,batchExpiry]=await Promise.all([
+// Share only permission-independent source facts. Membership, private agent
+// approvals, de-duplication and final permissions remain per actor.
+function needsInputs(connection,workspaceId){return require('../lib/versioned-read-model').read(connection,workspaceId,['needs-inputs'],async()=>{
+  // pg.Result carries parser functions; cache only detached source rows.
+  const database={query:async(sql,values)=>({rows:(await connection.query(sql,values)).rows})};
+  return Promise.all([
     require('./postgres-attention-inbox').summary(database,workspaceId),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
       i.issue_type,i.external_event_id,c.provider_type,
@@ -102,11 +104,20 @@ async function needsUncached(database,workspaceId,actorId=null){
         WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
         AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))
       ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
-    require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
     database.query("SELECT id,kind,payload,created_at FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at,id",[workspaceId]),
     database.query("SELECT p.id,p.agreement_id,p.last_error,p.created_at,p.updated_at,a.agreement_number FROM custody_billing_policies p JOIN custody_agreements a ON a.workspace_id=p.workspace_id AND a.id=p.agreement_id WHERE p.workspace_id=$1 AND p.status='NEEDS_REVIEW' ORDER BY p.updated_at",[workspaceId]),
     require('../domain/postgres-batch-expiry').summary(database,workspaceId),
+    require('../sales/postgres-deposit-refunds').due(database,workspaceId),
+    require('../lib/business-time').forWorkspace(database,workspaceId),
+  ]);});}
+async function needsUncached(database,workspaceId,actorId=null){
+  const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
+  const [inputs,nativeApprovals]=await Promise.all([
+    needsInputs(database,workspaceId),
+    require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
   ]);
+  const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
+    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar]=inputs;
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
@@ -116,7 +127,7 @@ async function needsUncached(database,workspaceId,actorId=null){
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,grouped:Boolean(row.summary),href:row.href||(row.item_id?`/inventory/${row.item_id}?finding=${encodeURIComponent(row.id)}`:'/needs-you/findings'),actionLabel:row.summary?'Review group':'See what to do',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
-  for(const row of await require('../sales/postgres-deposit-refunds').due(database,workspaceId)){const amount=require('../pricing/postgres-service').formatMinor(row.toRefundMinor,row.currency);
+  for(const row of depositRefunds){const amount=require('../pricing/postgres-service').formatMinor(row.toRefundMinor,row.currency);
     items.push({kind:'accounting',importance:olderThanDays(row.cancelledAt,3)?'Important':'Needs You',priority:88,title:'Deposit to refund: '+amount+' to '+row.customerName,happened:row.orderNumber+' was cancelled after the customer paid.',
       why:'That money is still theirs. It stays on your books as a customer deposit until it is returned.',recommendation:'Send the money back, then record the refund on the order.',
       href:'/orders/'+row.orderId+'#deposit-refund',actionLabel:'Refund deposit',sourceId:'deposit-refund:'+row.orderId,createdAt:row.cancelledAt,timeLabel:'Cancelled',updatedAt:row.cancelledAt,at:row.cancelledAt});}
@@ -187,7 +198,7 @@ async function needsUncached(database,workspaceId,actorId=null){
         row.payment_order_id?`/orders/${row.payment_order_id}`:
           `/settings/operations/provider-effects/${row.id}`,
     actionLabel:'Verify provider outcome',sourceId:row.id,createdAt:row.created_at,updatedAt:row.completed_at,at:row.completed_at});
-  const zone=(await require('../lib/business-time').forWorkspace(database,workspaceId)).timeZone,{readableTimes}=require('../web/presentation/time-zones');
+  const zone=calendar.timeZone,{readableTimes}=require('../web/presentation/time-zones');
   for(const item of items)for(const field of ['title','happened','why','recommendation'])if(item[field])item[field]=readableTimes(item[field],zone);
   return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
 }
