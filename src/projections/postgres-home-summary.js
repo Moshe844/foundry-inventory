@@ -17,15 +17,16 @@ async function activityCounts(db,workspaceId,since){
   FROM work_items WHERE workspace_id=$1 AND execution_status='COMPLETED'
    AND stockchief_movement_instant(completed_at)>=$2::timestamptz) completed`,[workspaceId,since])).rows[0];
 }
-async function read(db,workspaceId,{seesMoney=false,sales:current=null}={}){
+async function read(db,workspaceId,{seesMoney=false,sales:current=null,skuCount=null}={}){
  const since=new Date(Date.now()-DAYS*86400000).toISOString();
- const [work,ready,state,skus]=await Promise.all([
+ const [work,ready,state,watching]=await Promise.all([
   activityCounts(db,workspaceId,since),
   db.query("SELECT count(*)::int AS count FROM sales_orders WHERE workspace_id=$1 AND status='CONFIRMED'",[workspaceId]),
   require('../autopilot/postgres-service').getState(db,workspaceId),
-  db.query('SELECT count(*)::int AS count FROM skus WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
+  skuCount===null?db.query('SELECT count(*)::int AS count FROM skus WHERE workspace_id=$1 AND is_active=1',[workspaceId]).then(result=>result.rows[0].count):skuCount,
  ]);
- const out={days:DAYS,watching:skus.rows[0].count,found:work.proposed+work.found,resolved:work.resolved,doneAlone:work.alone,doneApproved:work.approved,readyToShip:ready.rows[0].count,canAutomate:Boolean(state.canAutomate),salesChange:null,stockValue:null};
+ if(!Number.isSafeInteger(watching)||watching<0)throw new RangeError('Home needs an exact active-SKU count.');
+ const out={days:DAYS,watching,found:work.proposed+work.found,resolved:work.resolved,doneAlone:work.alone,doneApproved:work.approved,readyToShip:ready.rows[0].count,canAutomate:Boolean(state.canAutomate),salesChange:null,stockValue:null};
  if(seesMoney&&current){
   const today=(await clock.forWorkspace(db,workspaceId)).calendarDate,prior=await sales.forPeriod(db,workspaceId,sameDaysLastMonth(today));
   if(Number(prior.minor)>0)out.salesChange=Math.round((Number(current.minor)-Number(prior.minor))*100/Number(prior.minor));

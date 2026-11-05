@@ -143,9 +143,10 @@ function createPostgresProjectionsRouter(database){
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
     const seesMoney=permissions.can(req.user,permissions.VIEW_ACCOUNTING);
     const sales=seesMoney?require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):Promise.resolve(null);
-    const [result,available,homeSales,homeSummary]=await Promise.all([presenters.home(database,req.ctx.workspaceId,req.ctx.actorId),
+    const home=presenters.home(database,req.ctx.workspaceId,req.ctx.actorId);
+    const [result,available,homeSales,homeSummary]=await Promise.all([home,
       require('../../assistant/postgres-discovery').available(database,req.ctx),sales,
-      sales.then(current=>require('../../projections/postgres-home-summary').read(database,req.ctx.workspaceId,{seesMoney,sales:current}))]);
+      sales.then(current=>require('../../projections/postgres-home-summary').read(database,req.ctx.workspaceId,{seesMoney,sales:current,skuCount:home.then(result=>result.brief.stats.skuCount)}))]);
     const askSuggestions=[];
     const offer=(entry)=>{if(entry&&!askSuggestions.some((current)=>current.name===entry.name))askSuggestions.push(entry);};
     offer(available.find((entry)=>entry.name==='read.custom_report'));
