@@ -18,6 +18,10 @@ on:
         description: Profile stock receipts against an existing catalogue; requires profile_only
         type: boolean
         default: false
+      diagnose_flat_filter:
+        description: Diagnostic-only Linux query plan run; never a release gate
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -32,7 +36,7 @@ jobs:
       fail-fast: false
       matrix:
         group: [unit, scale, core, agents, variants, providers]
-    if: github.event_name != 'workflow_dispatch' || !inputs.profile_only
+    if: github.event_name != 'workflow_dispatch' || (!inputs.profile_only && !inputs.diagnose_flat_filter)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'scale-certification')) && 300 || 45 }}
     env:
@@ -216,7 +220,7 @@ jobs:
   inventory:
     name: inventory
     needs: inventory_checks
-    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || !inputs.profile_only) }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || (!inputs.profile_only && !inputs.diagnose_flat_filter)) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Require every inventory group
@@ -224,8 +228,39 @@ jobs:
           RESULT: ${{ needs.inventory_checks.result }}
         run: test "$RESULT" = success
   import-profile:
-    if: github.event_name == 'workflow_dispatch' && inputs.profile_only
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_only && !inputs.diagnose_flat_filter
     uses: ./.github/workflows/import-query-profile.yml
     with:
       rows: ${{ inputs.large_rows }}
       stock_only: ${{ inputs.stock_only || false }}
+  flat-plan-diagnosis:
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_flat_filter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      NODE_ENV: test
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install PostgreSQL 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - name: Preserve the actual two-second regression and collect its failure plan
+        run: |
+          set -euo pipefail
+          mkdir -p output/flat-plan-diagnosis
+          node --test tests/postgres/grouped-inventory-skew.test.js 2>&1 | tee output/flat-plan-diagnosis/dense-filter.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dense-filter-plan-diagnosis
+          path: output/flat-plan-diagnosis
