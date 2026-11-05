@@ -1,4 +1,5 @@
 'use strict';
+process.env.NODE_ENV='test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,14 +21,14 @@ test('PostgreSQL request identity falls back safely and never trusts a tenant id
     context.after(async () => { await database.close(); cluster.stop(); });
     await migratePostgres(database);
     const first = await auth.createBusiness(database, {
-      name:'First Owner',businessName:'First Inventory',email:'first@example.test',password:'first-password',
+      name:'First Owner',businessName:'First Inventory',email:'first@example.test',password:'First-password!',
     });
     const second = await auth.createBusiness(database, {
-      name:'Second Owner',businessName:'Second Inventory',email:'second@example.test',password:'second-password',
+      name:'Second Owner',businessName:'Second Inventory',email:'second@example.test',password:'Second-password!',
     });
 
     const loaded = await invoke(middleware.loadUser(database), {
-      session:{ accountId:first.accountId,workspaceId:second.workspaceId },
+      method:'GET',path:'/whoami',get:()=>'',session:{ accountId:first.accountId,workspaceId:second.workspaceId,csrfToken:'isolated-middleware-csrf' },
     });
     assert.equal(loaded.req.ctx.accountId, first.accountId);
     assert.equal(loaded.req.ctx.workspaceId, first.workspaceId);
