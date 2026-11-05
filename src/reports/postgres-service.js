@@ -280,7 +280,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
   const needed=[...config.groups,...config.filters.map(f=>f.field),...allMetrics.flatMap(({aggregate,measure})=>{const metric=dataset.metrics?.[measure];return aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[measure];})];
   const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||allMetrics.every(({aggregate})=>p.aggregates.includes(aggregate)))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
   const rawSource=reduced?reduced.source:dataset.source;
-  const transformed=dataset.sourceTransform?dataset.sourceTransform(rawSource,config):rawSource;
+  const transformed=dataset.sourceTransform?dataset.sourceTransform(rawSource,config,{dateContext,values}):rawSource;
   const source=require('./postgres-profit-scope').bind(transformed,values,profitAccountIds);
   values.push(limit,offset);
   const sql=`WITH source AS (${source}) SELECT ${select} FROM source ${where} ${group}
@@ -411,7 +411,8 @@ async function totals(database,ctx,actor,config){
 }
 async function countAtMost(database,ctx,actor,spec,maximum){
   if(spec?.dataset==='composed')return composed.countAtMost(database,ctx,actor,spec,maximum);
-  const config=require('./relative-dates').resolve(normalize(spec,actor),await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)),dataset=registry.get(config.dataset);
+  const dateContext=await require('../lib/business-time').forWorkspace(database,ctx.workspaceId);
+  const config=require('./relative-dates').resolve(normalize(spec,actor),dateContext),dataset=registry.get(config.dataset);
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>100000)
     invalid('That export size is unavailable.');
   if(dataset.commercialCapability){const entitlements=require('../commercial/entitlements');
@@ -428,8 +429,9 @@ async function countAtMost(database,ctx,actor,spec,maximum){
   const limitIndex=values.length;
   const row=(await database.transaction(async client=>{
     const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
-    const rawSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,config):dataset.source;
-    const queryValues=values.slice(),boundedSource=require('./postgres-profit-scope').bind(rawSource,queryValues,profitAccountIds);
+    const queryValues=values.slice();
+    const rawSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,config,{dateContext,values:queryValues}):dataset.source;
+    const boundedSource=require('./postgres-profit-scope').bind(rawSource,queryValues,profitAccountIds);
     const sql=`WITH source AS (${boundedSource}) SELECT COUNT(*)::bigint AS count FROM (
       SELECT 1 FROM source ${where} ${groups.length?`GROUP BY ${groups.join(',')}`:''}
       LIMIT $${limitIndex}) bounded`;

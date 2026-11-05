@@ -194,7 +194,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false,dateContext
       if(filter.operator!=='is_null')values.push(filterValue(filter));
       return dataset.filterAtSource?.(filter)?null:filterSql(filter,values.length);
     }).filter(Boolean);
-    const scopedSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,metric,{parameterBase}):dataset.source;
+    const scopedSource=dataset.sourceTransform?dataset.sourceTransform(dataset.source,metric,{parameterBase,dateContext,values}):dataset.source;
     ctes.push(`${source} AS (${scopedSource})`);
     // A NULL business identifier cannot match across sources. Exclude it
     // instead of showing a synthetic row whose measures all appear missing.
