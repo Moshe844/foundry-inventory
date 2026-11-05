@@ -27,3 +27,10 @@ test('answers render exact database values, explicit filters and truncation with
  assert.equal(reads.render(sections),'### Stock by product\nFilters: location equals NJ-Main.\n\n| Variant | On hand |\n|---|---:|\n| Vanilla / 500g | 3.75 |\n\nShowing the first 1 results. Narrow the filters for the remaining records.');
  const large=reads.render([{...sections[0],rows:Array.from({length:100},()=>({variant:'Long product '.repeat(100),on_hand:'3.75'})),hasMore:false}]);assert(large.length<20000);assert.match(large,/This answer was shortened/);
 });
+
+test('saved display-only money answers remain readable without fabricating raw totals',()=>{
+ const section={dataset:'customer_invoices',label:'Amounts owed',config:{filters:[],columns:['customer','balance_minor','currency']},columns:['customer','balance_minor','currency'],columnLabels:{customer:'Customer',balance_minor:'Balance',currency:'Currency'},rows:[{customer:'First customer',balance_minor:'$12.50',currency:'USD'},{customer:'Second customer',balance_minor:'$7.25',currency:'USD'}],hasMore:false};
+ const text=reads.render([section]);assert.match(text,/First customer \| \$12\.50 \| USD/);assert.match(text,/Second customer \| \$7\.25 \| USD/);assert.doesNotMatch(text,/Total owed|\$0\.00/);
+ const profit=['revenue_minor','cogs_minor'].map(measure=>({...section,dataset:'profit_activity',config:{dataset:'profit_activity',filters:[{field:'currency',operator:'equals',value:'USD'}],groups:['currency'],aggregate:'sum',measure},columns:['currency','total'],rows:[{currency:'USD',total:measure==='revenue_minor'?'$12.50':'$7.25'}]}));
+ const legacy=reads.render(profit);assert.match(legacy,/\$12\.50/);assert.match(legacy,/\$7\.25/);assert.doesNotMatch(legacy,/Gross profit|Net profit|\$0\.00/);
+});
