@@ -89,7 +89,7 @@ async function execute(db,ctx,actor,plan,{onSection=()=>{}}={}){
  return sections;
 }
 // One card for one profit question: every figure named, and how they relate.
-function profitCards(sections){const groups=new Map();for(const s of sections){if(!profitTotal(s.config)||s.hasMore)continue;const key=JSON.stringify(s.config.filters);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);}
+function profitCards(sections){const groups=new Map();for(const s of sections){if(!Array.isArray(s.rawRows)||!Array.isArray(s.columns)||!profitTotal(s.config)||s.hasMore)continue;const key=JSON.stringify(s.config.filters);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(s);}
  return [...groups.values()].filter(group=>new Set(group.map(s=>s.config.measure)).size>=2);}
 function profitCard(group){const filters=group[0].config.filters,at=(field,op)=>filters.find(f=>f.field===field&&f.operator===op)?.value,from=at('posting_date','after'),to=at('posting_date','before'),only=at('currency','equals');
  const value=(measure,currency)=>{const s=group.find(g=>g.config.measure===measure);if(!s)return null;const column=s.columns.at(-1),row=s.rawRows.find(r=>!r.currency||r.currency===currency);return row?Number(row[column]||0):0;};
@@ -100,6 +100,7 @@ function profitCard(group){const filters=group[0].config.filters,at=(field,op)=>
  return '### Profit'+(from&&to?' · '+from+' to '+to:'')+'\n| Measure | '+currencies.join(' | ')+' |\n|---|'+currencies.map(()=>'---:').join('|')+'|\n'+lines.map(([name,read])=>'| '+name+' | '+currencies.map(c=>cell(read(c),c)).join(' | ')+' |').join('\n')+'\n\nGross profit = sales − product cost. Net profit = gross profit '+(group.some(s=>s.config.measure==='stock_count_minor'&&s.rawRows.some(r=>Number(r[s.columns.at(-1)]||0)!==0))?'+ stock count gains / losses ':'')+'− expenses.';}
 // Several rows of one money figure always add up on the page, one line per currency.
 function moneyTotal(s){
+ if(!Array.isArray(s.rawRows)||s.rawRows.length<2)return '';
  const fields=registry.get(s.dataset)?.fields||{},aggregated=reports.aggregateColumn[s.config.aggregate||'count'],grouped=(s.config.groups||[]).length>0;
  const column=grouped?(s.config.aggregate==='sum'&&fields[s.config.measure]==='money_minor'?aggregated:null):(()=>{const money=s.columns.filter(c=>fields[c]==='money_minor');return money.length===1?money[0]:null;})();
  if(!column||s.rawRows.length<2)return '';
@@ -112,7 +113,7 @@ function render(sections){let used=0,shortened=false;const output=[],cards=profi
  const group=cards.find(g=>g.includes(s));
  if(group){if(merged.has(group))continue;merged.add(group);const card=profitCard(group);if(card){output.push(card);used+=card.length;continue;}}
  const title=sectionTitle(s,sections);
- const rowCurrency=[...new Set(s.rawRows.map(r=>r.currency).filter(Boolean))],filters=s.config.filters.filter(f=>!(/_minor$/.test(f.field)&&['greater_than','at_least'].includes(f.operator)&&Number(f.value)===0)).map(f=>filterWords(f,s.columnLabels,rowCurrency.length===1?rowCurrency[0]:null)).filter(Boolean),scope=filters.length?'\nFilters: '+filters.join('; ')+'.':'';
+ const rowCurrency=[...new Set((Array.isArray(s.rawRows)?s.rawRows:[]).map(r=>r.currency).filter(Boolean))],filters=s.config.filters.filter(f=>!(/_minor$/.test(f.field)&&['greater_than','at_least'].includes(f.operator)&&Number(f.value)===0)).map(f=>filterWords(f,s.columnLabels,rowCurrency.length===1?rowCurrency[0]:null)).filter(Boolean),scope=filters.length?'\nFilters: '+filters.join('; ')+'.':'';
  if(!s.rows.length){const text=title+scope+'\nNo matching records.';if(used+text.length>18000){shortened=true;break;}output.push(text);used+=text.length;continue;}
  const label=c=>s.columnLabels?.[c]||c.replaceAll('_',' '),cell=value=>String(value??'—').replace(/\|/g,'/').replace(/\s*\n\s*/g,' '),numeric=c=>s.rows.every(row=>row[c]===null||row[c]===undefined||/^[-(]?[^\d\s]{0,3}\s?\d[\d,.]*\)?\s?[^\d\s]{0,3}$/.test(String(row[c]))),rows=s.rows.map(row=>'| '+s.columns.map(c=>cell(row[c])).join(' | ')+' |');
  const head='| '+s.columns.map(c=>cell(label(c))).join(' | ')+' |\n|'+s.columns.map(c=>numeric(c)?'---:':'---').join('|')+'|';
