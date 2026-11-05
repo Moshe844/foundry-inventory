@@ -1,0 +1,8 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test');
+test('covered stock reads recover automatically after modest updates without waiting for a whole-tenant-table vacuum threshold',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('visibility-sub',$1,'enterprise','COMP','ISOLATED_TEST')",[f.owner.accountId]);
+ const definitions=Array.from({length:50},(_,n)=>({name:'Visibility family '+n,trackingMode:'quantity',variants:Array.from({length:100},(_,v)=>({code:'VISIBLE-'+n+'-'+v}))})),catalogue=await db.transaction(c=>require('../../src/domain/postgres-catalog-service').createImportedItemsInTransaction(c,ctx,definitions)),skus=catalogue.flatMap(i=>i.skus.map(s=>s.skuId)),second=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Visibility room',kind:'warehouse'});
+ await db.query('INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,s.id,l.id,0,now() FROM unnest($2::text[])s(id) CROSS JOIN unnest($3::text[])l(id)',[ctx.workspaceId,skus,[f.location.id,second.id]]);
+ await db.query('INSERT INTO accounting_inventory_cost_balances(workspace_id,sku_id,location_id,quantity_units,total_cost_minor,updated_at) SELECT $1,s.id,l.id,0,0,now() FROM unnest($2::text[])s(id) CROSS JOIN unnest($3::text[])l(id)',[ctx.workspaceId,skus,[f.location.id,second.id]]);
+ t.diagnostic(JSON.stringify(await require('../helpers/stock-visibility-maintenance-checks').check(db,ctx)));
+});
