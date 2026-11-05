@@ -1,7 +1,12 @@
 'use strict';
 const exact=require('../domain/exact-quantity');
 async function read(db,workspaceId){
- const result=await db.query('SELECT missing_units FROM inventory_cost_coverage_totals WHERE workspace_id=$1',[workspaceId]);
+ // missing_units is generated as greatest(physical-costed,0). Zero rows do
+ // not contribute; the existing (workspace_id,missing_units,...) index can
+ // read only missing stock instead of summing every fully costed position.
+ // PostgreSQL numeric NaN is greater than zero, so damaged rows still reach
+ // the existing validation and named-position warning path below.
+ const result=await db.query('SELECT coalesce(sum(missing_units),0) AS missing_units FROM inventory_cost_coverage_positions WHERE workspace_id=$1 AND missing_units>0',[workspaceId]);
  try{return {missingCostUnits:exact.safeNumber(result.rows[0]?.missing_units??0,{label:'Stock quantity'})};}
  catch(error){if(error.code!=='validation_error')throw error;}
  // A damaged projection must not hide every invoice or business report. The
