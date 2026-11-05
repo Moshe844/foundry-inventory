@@ -9,7 +9,8 @@ function source({scopeItems=false}={}){
  const totals=scopeItems?'SELECT sku_id,sum(on_hand) AS on_hand FROM stock_positions GROUP BY sku_id':`SELECT total.sku_id,total.quantity-coalesce(inactive.on_hand,0) AS on_hand
  FROM (${require('../projections/postgres-sku-stock').source()}) total
  LEFT JOIN(SELECT b.sku_id,sum(b.on_hand) AS on_hand FROM balances b
-  WHERE b.workspace_id=$1 AND b.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active<>1)) GROUP BY b.sku_id) inactive ON inactive.sku_id=total.sku_id
+  WHERE b.workspace_id=$1 AND EXISTS(SELECT 1 FROM locations WHERE workspace_id=$1 AND is_active<>1)
+  AND b.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active<>1)) GROUP BY b.sku_id) inactive ON inactive.sku_id=total.sku_id
  WHERE EXISTS(SELECT 1 FROM eligible_policies WHERE location_id IS NULL)`;
  return `WITH ${selected}eligible_policies AS MATERIALIZED(
  SELECT p.* FROM reorder_policies p ${policyScope}
