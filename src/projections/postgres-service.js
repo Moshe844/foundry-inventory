@@ -210,12 +210,11 @@ async function brief(database,workspaceId,actorId=null,{includeLocationStock=tru
 }
 async function briefData(database,workspaceId,{includeLocationStock,includeAvailability}){
   const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
-    database.query(`WITH sku_stats AS (
+    database.query(`WITH stock_by_sku AS MATERIALIZED(${require('./postgres-sku-stock').source()}),sku_stats AS (
       SELECT count(*) FILTER(WHERE s.is_active=1) AS sku_count,
-        count(*) FILTER(WHERE s.is_active=1 AND NOT EXISTS(
-          SELECT 1 FROM balances b WHERE b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.on_hand>0 OFFSET 0)) AS zero_count
+        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count
       FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-      WHERE s.workspace_id=$1
+      LEFT JOIN stock_by_sku b ON b.sku_id=s.id WHERE s.workspace_id=$1
     ) SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       sku_stats.sku_count,
