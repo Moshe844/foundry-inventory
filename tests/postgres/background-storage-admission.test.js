@@ -53,6 +53,21 @@ test('storage admission is isolated from writes, concurrent-safe and measured in
   const holder=db.transaction(async c=>{await c.query("SELECT pg_advisory_xact_lock(hashtextextended('storage-quota:'||$1,0))",[owner.accountId]);ready();await unblock;},{isolation:'READ COMMITTED'});await waiting;
   try{await db.transaction(c=>require('../../src/domain/postgres-inventory-engine').receiveInTransaction(c,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'storage-independent-stock'}),{isolation:'READ COMMITTED',lockTimeoutMs:500});}finally{release();await holder;}
  });
+ await t.test('exact byte measurement scans once in bounded batches and yields without changing quota accounting',async()=>{
+  const previous=(await db.query("SELECT baseline_bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='suppliers'::regclass",[ctx.workspaceId])).rows[0].baseline_bytes,rollback=Error('Rollback isolated storage cursor records');let ticks=0;
+  const timer=setInterval(()=>ticks++,5);timer.unref();
+  try{await assert.rejects(db.transaction(async c=>{
+   await c.query(`INSERT INTO suppliers(id,workspace_id,name,status,currency,created_at,updated_at)
+    SELECT 'storage-cursor-'||n,$1,'Cursor supplier 咖啡 '||n,'active','USD',now(),now() FROM generate_series(1,3000) n`,[ctx.workspaceId]);
+   const expression=(await c.query("SELECT bytes_expression FROM commercial_storage_tables WHERE relation='suppliers'::regclass")).rows[0].bytes_expression;
+   const expected=(await c.query('SELECT sum('+expression+')::text bytes,count(*)::int n FROM suppliers t WHERE workspace_id=$1',[ctx.workspaceId])).rows[0],pages=[];
+   const scoped={query:async(sql,values)=>{const result=await c.query(sql,values);if(sql.startsWith('FETCH'))pages.push(result.rows.length);return result;},transaction:fn=>fn(scoped)};
+   await storage.baseline(scoped,ctx.workspaceId,'suppliers');const actual=(await c.query("SELECT baseline_bytes::text bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='suppliers'::regclass",[ctx.workspaceId])).rows[0].bytes;
+   assert.equal(actual,expected.bytes);assert.equal(pages.reduce((a,b)=>a+b,0),expected.n);assert(pages.length>=4&&pages.every(n=>n<=1000));assert(ticks>0,'Other work must run between storage batches');assert.equal((await c.query("SELECT count(*)::int n FROM pg_cursors WHERE name='stockchief_storage_rows'")).rows[0].n,0);throw rollback;
+  },{isolation:'REPEATABLE READ'}),e=>e===rollback);}finally{clearInterval(timer);}
+  assert.equal((await db.query("SELECT baseline_bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='suppliers'::regclass",[ctx.workspaceId])).rows[0].baseline_bytes,previous);
+  assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND id LIKE 'storage-cursor-%'",[ctx.workspaceId])).rows[0].n,0);
+ });
  await t.test('measurement scheduling and publication survive a later runtime sweep failure',async()=>{
   const now=Date.now(),jobs=require('../../src/operations/postgres-job-queue');await db.query("UPDATE commercial_storage_usage SET measured_at=now()-interval '2 hours' WHERE workspace_id=$1",[ctx.workspaceId]);
   await require('../../src/operations/postgres-scheduler').scheduleOnce(db,{now});

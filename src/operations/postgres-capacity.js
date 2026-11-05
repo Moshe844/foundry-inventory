@@ -12,36 +12,39 @@ const DEFAULTS=Object.freeze({queueDepthWarn:100,queueDepthCritical:500,
  httpErrorWarnFraction:.02,httpErrorCriticalFraction:.05,
  jobRetriesWarn:5,jobRetriesCritical:20,deadJobsWarn:1,deadJobsCritical:10});
 function finitePositive(value,name){const n=Number(value);if(!Number.isFinite(n)||n<=0)throw Error(`${name} must be positive`);return n;}
-async function sample(database,options={}){
- const result=await database.query(`SELECT
+// Bound once, before PostgreSQL plans the query. A per-row volatile clock
+// prevents the recent-history index from narrowing these monitoring reads.
+const SAMPLE_SQL=`WITH recent_web AS MATERIALIZED (
+ SELECT elapsed_microseconds,outcome FROM commercial_resource_measurements
+ WHERE runtime_kind='web' AND started_at>=$1::timestamptz AND started_at<=$2::timestamptz
+ AND operation NOT IN ('GET /readyz','GET /healthz','GET unmatched-or-static')
+), http AS (
+ SELECT COUNT(*)::int AS samples,
+ COUNT(*) FILTER(WHERE outcome='ABORTED' OR CASE WHEN outcome ~ '^[0-9]{3}$' THEN outcome::int>=500 ELSE false END)::int AS errors,
+ percentile_cont(0.95) WITHIN GROUP(ORDER BY elapsed_microseconds) AS p95 FROM recent_web
+)
+SELECT
   (SELECT COUNT(*)::int FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
-    AND available_at<=floor(extract(epoch FROM clock_timestamp())*1000)) AS queue_depth,
-  (SELECT COALESCE(floor(extract(epoch FROM clock_timestamp()-MIN(created_at))*1000),0)::bigint
+    AND available_at<=$3::bigint) AS queue_depth,
+  (SELECT COALESCE(floor(extract(epoch FROM $2::timestamptz-MIN(created_at))*1000),0)::bigint
     FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
-    AND available_at<=floor(extract(epoch FROM clock_timestamp())*1000)) AS oldest_queue_wait_ms,
+    AND available_at<=$3::bigint) AS oldest_queue_wait_ms,
   (SELECT COUNT(*)::int FROM stockchief_runtime.jobs WHERE status='DEAD') AS dead_jobs,
   (SELECT COUNT(*)::int FROM stockchief_runtime.jobs WHERE status='RETRY'
-    AND updated_at>=clock_timestamp()-interval '5 minutes') AS job_retries_5m,
-  (SELECT COUNT(*)::int FROM commercial_resource_measurements
-    WHERE runtime_kind='web' AND started_at>=clock_timestamp()-interval '5 minutes'
-    AND operation NOT IN ('GET /readyz','GET /healthz','GET unmatched-or-static')) AS http_samples_5m,
-  (SELECT COUNT(*)::int FROM commercial_resource_measurements
-    WHERE runtime_kind='web' AND started_at>=clock_timestamp()-interval '5 minutes'
-    AND operation NOT IN ('GET /readyz','GET /healthz','GET unmatched-or-static')
-    AND (outcome='ABORTED' OR CASE WHEN outcome ~ '^[0-9]{3}$' THEN outcome::int>=500 ELSE false END)) AS http_errors_5m,
-  (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY elapsed_microseconds)
-    FROM commercial_resource_measurements WHERE runtime_kind='web'
-    AND started_at>=clock_timestamp()-interval '5 minutes'
-    AND operation NOT IN ('GET /readyz','GET /healthz','GET unmatched-or-static')) AS http_p95_micros_5m,
+    AND updated_at>=$1::timestamptz AND updated_at<=$2::timestamptz) AS job_retries_5m,
+  http.samples AS http_samples_5m,http.errors AS http_errors_5m,http.p95 AS http_p95_micros_5m,
   (SELECT COUNT(*)::int FROM pg_stat_activity WHERE datname=current_database()) AS database_connections,
   current_setting('max_connections')::int AS database_connection_limit,
-  pg_database_size(current_database())::bigint AS database_bytes`);
+  pg_database_size(current_database())::bigint AS database_bytes FROM http`;
+async function sample(database,options={}){
+ const at=new Date(options.now??Date.now());if(!Number.isFinite(at.getTime()))throw new TypeError('Capacity sampling needs a valid time.');
+ const result=await database.query(SAMPLE_SQL,[new Date(at.getTime()-300000).toISOString(),at.toISOString(),at.getTime()]);
  const row=result.rows[0],pool=typeof database.poolMetrics==='function'?database.poolMetrics():null;
  const diskCapacityGb=options.diskCapacityGb??process.env.FOUNDRY_POSTGRES_DISK_GB;
  const diskCapacityBytes=diskCapacityGb?finitePositive(diskCapacityGb,'Postgres disk capacity')*1024**3:null;
  const memoryLimitMb=options.memoryLimitMb??process.env.FOUNDRY_PROCESS_MEMORY_MB;
  const memoryLimitBytes=memoryLimitMb?finitePositive(memoryLimitMb,'Process memory limit')*1024**2:null;
- return {sampledAt:new Date().toISOString(),role:options.role||'worker',
+ return {sampledAt:at.toISOString(),role:options.role||'worker',
   queueDepth:Number(row.queue_depth),oldestQueueWaitMs:Number(row.oldest_queue_wait_ms),deadJobs:Number(row.dead_jobs),
   jobRetries5m:Number(row.job_retries_5m),httpSamples5m:Number(row.http_samples_5m),
   httpErrors5m:Number(row.http_errors_5m),httpP95Ms:row.http_p95_micros_5m===null?null:Number(row.http_p95_micros_5m)/1000,
@@ -96,4 +99,4 @@ function start(database,options={}){
  pending=tick();const timer=setInterval(()=>{pending=tick();},intervalMs);timer.unref();
  return {stop:async()=>{stopped=true;clearInterval(timer);await pending;}};
 }
-module.exports={DEFAULTS,sample,evaluate,check,start};
+module.exports={DEFAULTS,SAMPLE_SQL,sample,evaluate,check,start};

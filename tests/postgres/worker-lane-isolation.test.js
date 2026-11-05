@@ -1,6 +1,9 @@
 'use strict';
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
+test('storage measurement uses maintenance capacity rather than occupying the import lane',()=>{
+ assert.equal(require('../../src/operations/postgres-runtime-handlers').create()['commercial.storage-baseline'].workerLane,'maintenance');
+});
 test('PostgreSQL workers claim routine jobs during held bulk work without duplicate execution',{timeout:120000},async t=>{
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString,{max:5});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
