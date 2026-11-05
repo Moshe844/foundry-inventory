@@ -20,5 +20,5 @@ test('stock cost coverage totals reconcile per position through receipts, costs,
   WHERE coalesce(b.workspace_id,c.workspace_id)=$1`,[ctx.workspaceId]);});await same();
  await require('../helpers/recreate-read-view')(db,'inventory_cost_coverage_totals');await same();
  assert.equal((await db.query("SELECT count(*)::int n FROM pg_trigger WHERE tgname IN('cost_coverage_insert','cost_coverage_update')")).rows[0].n,0);
- const queries=[],reader={query:async(sql,...args)=>{queries.push(sql);return db.query(sql,...args);}};await coverage.inventoryCoverage(reader,ctx.workspaceId);assert(queries.some(sql=>sql.includes('FROM inventory_cost_coverage_totals')));assert(!queries.some(sql=>sql.includes('FROM balances')),'Coverage must not rescan stock positions');
+ const queries=[],reader={query:async(sql,...args)=>{queries.push(sql);return db.query(sql,...args);}};await coverage.inventoryCoverage(reader,ctx.workspaceId);assert(queries.some(sql=>sql.includes('FROM inventory_cost_coverage_positions')&&sql.includes('missing_units>0')));assert(!queries.some(sql=>sql.includes('FROM balances')),'Coverage must not rescan stock positions');
 });
