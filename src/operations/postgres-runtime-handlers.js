@@ -403,10 +403,7 @@ async function autopilotEvaluate(job,client){
   if(!job.workspaceId||!job.payload?.actorId)throw Object.assign(new Error('An autopilot evaluation needs workspace and owner identity.'),
     {code:'invalid_autopilot_evaluation',retryable:false});
   if(!job.payload.cycleId&&job.createdAt){
-    const covering=(await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE workspace_id=$1
-      AND kind='autopilot.evaluate' AND status='COMPLETED' AND result->>'partial'='false'
-      AND (result->>'cycleStartedAt')::timestamptz>=$2::timestamptz
-      ORDER BY completed_at DESC LIMIT 1`,[job.workspaceId,job.createdAt])).rows[0];
+    const covering=await require('./completed-autopilot-check').find(client,job.workspaceId,job.createdAt);
     if(covering)return {skipped:'covered_by_completed_check',coveringJobId:covering.id};
   }
   const scope=await entitlements.ownerScopeForWorkspace(client,job.workspaceId);

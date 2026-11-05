@@ -6,8 +6,8 @@ async function check(db,ctx,{closedJobs=50000,emptyWorkspaces=100}={}){
  try{await db.transaction(async c=>{
   await c.query(`INSERT INTO workspaces(id,name,owner_account_id,created_at)
    SELECT $2||n,'Empty maintenance fixture',w.owner_account_id,now() FROM workspaces w CROSS JOIN generate_series(1,$3::int)n WHERE w.id=$1`,[ctx.workspaceId,prefix,emptyWorkspaces]);
-  await c.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,payload,status,available_at,idempotency_key,created_at,updated_at)
-   SELECT $2||n,$1,'fixture.maintenance-locality','{}',CASE WHEN n=0 THEN 'PAUSED' ELSE 'COMPLETED' END,0,$2||n,'2020-01-01','2020-01-01' FROM generate_series(0,$3::int)n`,[ctx.workspaceId,prefix,closedJobs]);
+  await c.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,payload,status,available_at,idempotency_key,created_at,updated_at,completed_at,result)
+   SELECT $2||n,$1,'autopilot.evaluate','{}',CASE WHEN n=0 THEN 'PAUSED' ELSE 'COMPLETED' END,0,$2||n,'2020-01-01','2020-01-01',CASE WHEN n>0 THEN '2020-01-01'::timestamptz END,'{"partial":false,"cycleStartedAt":"2020-01-01T00:00:00Z"}' FROM generate_series(0,$3::int)n`,[ctx.workspaceId,prefix,closedJobs]);
   let testedSchedule=scheduleSql,testedMovement=movementSql;
   if(positions<150000){
    // Small focused fixtures still exercise a genuinely large occupied source.
@@ -36,6 +36,7 @@ async function check(db,ctx,{closedJobs=50000,emptyWorkspaces=100}={}){
    else assert(!nodes.some(p=>p['Relation Name']==='accounting_inventory_cost_balances'),'Cost scheduling must only inspect its bounded pending queue');
   }
   proof={maintenanceClosedJobs:closedJobs,maintenanceSourcePositions:Math.max(positions,150000),canonicalMaintenanceStock:positions>=150000,emptyInventoryChecks:emptyWorkspaces,emptyInventoryBalanceScan:false,emptyInventoryMovementScan:false,oldMovementFullScan,movementScheduleMs:plans[2].ms,costScheduleMs:plans[3].ms,pausedJobOrderExact:true,pausedJobBatchBound:100,stockScheduleMs:plans[0].ms,pausedJobMs:plans[1].ms,idempotencyScopesExact:true,idempotencyLookupMs:lookupMs,activeJobIndexed:true,activeJobLookupMs:activePlan['Execution Time'],sourceRowsChanged:0,paidCalls:0};
+  Object.assign(proof,await require('./completed-autopilot-window-checks').check(c,ctx,prefix));
   throw Object.assign(Error('Rollback maintenance locality fixture'),{qualificationRollback:true});
  },{isolation:'READ COMMITTED',jit:false});}catch(error){if(!error.qualificationRollback)throw error;}
  assert(proof);assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.jobs')).rows[0].n,before);assert.equal((await db.query('SELECT count(*)::int n FROM workspaces WHERE id LIKE $1',[prefix+'%'])).rows[0].n,0);return proof;

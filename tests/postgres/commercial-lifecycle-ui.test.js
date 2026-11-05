@@ -51,15 +51,20 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
   const page=await browser.newPage({viewport:{width:1360,height:900}});await page.goto(`${base}/login`);
+  async function choosePlan(name){
+    const [response]=await Promise.all([page.waitForNavigation({waitUntil:'load'}),page.getByRole('link',{name,exact:true}).click()]);
+    assert.equal(response.status(),200,'The actual plan-review navigation must succeed');
+    assert.equal(new URL(response.url()).pathname,'/billing/change');
+  }
   await page.getByLabel('Email').fill('lifecycle@example.test');await page.locator('input[name="password"]').fill('Lifecycle-password!');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('Lifecycle-password!');
   await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);
 
-  await page.goto(`${base}/settings/billing`);await page.getByRole('link',{name:'Growth',exact:true}).click();
+  await page.goto(`${base}/settings/billing`);await choosePlan('Growth');
   await Promise.all([page.waitForURL(`${base}/settings/billing`),page.getByRole('button',{name:'Confirm upgrade'}).click()]);
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'starter');
   await commercial.handleBillingEvent(database,{id:'evt_verified_growth',created:now-1,type:'customer.subscription.updated',data:{object:structuredClone(providerSubscription)}});
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'growth');
-  await page.reload();await page.getByRole('link',{name:'Pro',exact:true}).click();
+  await page.reload();await choosePlan('Pro');
   assert.match(await page.locator('body').innerText(),/Growth → Pro[\s\S]*estimated amount due now is \$250\.00/i);
   await Promise.all([page.waitForURL(`${base}/settings/billing`),page.getByRole('button',{name:'Confirm upgrade'}).click()]);
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'growth');
@@ -72,7 +77,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
       items:{data:[{id:'si_lifecycle',price:{id:'price_growth_monthly',recurring:{interval:'month'}}}]}}}});
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'pro');
 
-  await page.getByRole('link',{name:'Starter',exact:true}).click();assert.match(await page.locator('body').innerText(),/Pro → Starter/);
+  await choosePlan('Starter');assert.match(await page.locator('body').innerText(),/Pro → Starter/);
   assert.match(await page.locator('body').innerText(),/Scheduled for/);await Promise.all([page.waitForURL(`${base}/settings/billing`),
     page.getByRole('button',{name:'Schedule downgrade'}).click()]);
   assert.match(await page.locator('body').innerText(),/Your plan changes to Starter on/);assert.equal(changes[2].priceId,'price_starter_monthly');
@@ -81,7 +86,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   assert.match(await page.locator('body').innerText(),/Your plan ends on/);assert.doesNotMatch(await page.locator('body').innerText(),/Your plan changes to Starter on/);
   assert.equal((await database.query("SELECT status FROM commercial_subscription_changes WHERE account_id=$1 AND to_plan_id='starter' ORDER BY created_at DESC LIMIT 1",[business.accountId])).rows[0].status,'CANCELLED');
   await Promise.all([page.waitForNavigation({waitUntil:'load'}),page.getByRole('button',{name:'Keep my subscription'}).click()]);
-  await page.getByRole('link',{name:'Starter',exact:true}).click();await Promise.all([page.waitForURL(base+'/settings/billing'),page.getByRole('button',{name:'Schedule downgrade'}).click()]);
+  await choosePlan('Starter');await Promise.all([page.waitForURL(base+'/settings/billing'),page.getByRole('button',{name:'Schedule downgrade'}).click()]);
   assert.match(await page.locator('body').innerText(),/Your plan changes to Starter on/);
   assert.equal((await database.query("SELECT count(*)::int AS n FROM commercial_subscription_changes WHERE account_id=$1 AND to_plan_id='starter' AND status='PENDING'",[business.accountId])).rows[0].n,1,'a fresh review can schedule the same plan again after cancellation');
   const effective=Math.floor(new Date((await database.query(`SELECT effective_at FROM commercial_subscription_changes
