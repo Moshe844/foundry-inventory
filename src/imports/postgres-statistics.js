@@ -31,4 +31,14 @@ async function refreshAfterImport(database,result){
  return {state:deferred.length?'DEFERRED':'COMPLETE',refreshed,deferred};
 }
 
-module.exports={refreshAfterImport};
+async function enqueueAfterImport(database,ctx,importId,result){
+ if(!result?.verified||!Number.isSafeInteger(Number(result.rowsImported))||Number(result.rowsImported)<500)return {state:'NOT_REQUIRED',refreshed:[],deferred:[]};
+ const queued=await require('../operations/postgres-job-queue').enqueue(database,{workspaceId:ctx.workspaceId,kind:'import.refresh-statistics',idempotencyKey:'statistics:'+result.executionId,payload:{importId,executionId:result.executionId},priority:1,maxAttempts:3});
+ return {state:'QUEUED',jobId:queued.job.id,refreshed:[],deferred:[]};
+}
+async function run(job,database){
+ const row=(await database.query("SELECT e.rows_imported,p.transformations::jsonb->>'dataset' AS dataset FROM import_executions e JOIN import_plans p ON p.workspace_id=e.workspace_id AND p.id=e.import_id WHERE e.workspace_id=$1 AND e.id=$2 AND e.import_id=$3 AND e.status='SUCCEEDED'",[job.workspaceId,job.payload.executionId,job.payload.importId])).rows[0];
+ if(!row)return {state:'NOT_REQUIRED',refreshed:[],deferred:[]};
+ return refreshAfterImport(database,{verified:true,rowsImported:Number(row.rows_imported),...(row.dataset==='suppliers'?{suppliersCreated:0}:{})});
+}
+module.exports={refreshAfterImport,enqueueAfterImport,run};
