@@ -16,5 +16,6 @@
     <% for(const item of navigation.footer){ %><a href="<%= item.href %>" <%- currentHref.startsWith(item.href)?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
   </nav>
   <% }else{ %><nav class="sc-primary" aria-label="Primary navigation"><a href="/inventories">Your inventories</a><a href="/inventories/new">New inventory</a></nav><% } %>
+  <% if(workspace&&currentUser?.role==='owner'){ %><nav class="sc-phone-extras" aria-label="Plan"><a href="/usage">Usage &amp; add more</a><a href="/pricing">Upgrade</a></nav><% } %>
   <% const person=currentUser||account; if(person){ %><div class="sc-person"><span><%= helpers.displayName(person.name) %></span><form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm" type="submit">Sign out</button></form></div><% } %>
 </div></header>

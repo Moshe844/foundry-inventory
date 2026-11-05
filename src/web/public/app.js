@@ -352,7 +352,11 @@
             const form = body && body.querySelector('.operator-command__form');
             if (feedback && body && form && !target.contains(feedback)) body.insertBefore(feedback, form);
           }
-          target.scrollIntoView({ block: 'start', inline: 'nearest' });
+          // Inside a conversation only the conversation scrolls. scrollIntoView would also move
+          // the fixed page around it, leaving it stuck out of place with no way back.
+          const conversation = target.closest('[data-chat-scroll]');
+          if (conversation) conversation.scrollTop += target.getBoundingClientRect().top - conversation.getBoundingClientRect().top;
+          else target.scrollIntoView({ block: 'start', inline: 'nearest' });
 
           // "Tell StockChief" is an input destination, not merely a heading. Put
           // the cursor where the person can immediately type, without letting
@@ -1039,7 +1043,9 @@
           const history = form.parentElement.querySelector('.rm-history');
           if (history) history.open = false;
           you.classList.add('rm-turn--latest');
-          you.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          const conversation = you.closest('[data-chat-scroll]');
+          if (conversation) conversation.scrollTo({ top: conversation.scrollTop + you.getBoundingClientRect().top - conversation.getBoundingClientRect().top, behavior: 'smooth' });
+          else you.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
           // The phrasing moves so a long wait reads as progress, not a hang.
           const text = foundry.querySelector('[data-thinking-text]');
@@ -1117,6 +1123,16 @@
     let complete=false;const run=()=>{if(complete)return;complete=true;clearTimeout(timer);callback();};
     // Background tabs can suspend animation frames. A request must still proceed once.
     const timer=setTimeout(run,100);requestAnimationFrame(()=>requestAnimationFrame(run));
+  }
+
+  // The Ask page fills the window and only its conversation scrolls. A link to a message or a
+  // focused field can still move the page behind it, so anything that does is put straight back.
+  function initAskPageInPlace(){
+    if(!document.querySelector('[data-chat-scroll]'))return;
+    const fixed=[document.scrollingElement,document.body,document.querySelector('.app'),document.querySelector('main#main'),document.querySelector('.sc-chat-workspace'),document.querySelector('.rm-chat')].filter(Boolean);
+    const restore=()=>{const typing=document.activeElement&&document.activeElement.matches('input,textarea,select');for(const node of fixed){if(node.scrollLeft)node.scrollLeft=0;if(node.scrollTop&&!(typing&&node===document.scrollingElement))node.scrollTop=0;}};
+    window.addEventListener('scroll',event=>{if(event.target===document||fixed.includes(event.target))restore();},true);
+    window.addEventListener('hashchange',restore);window.addEventListener('load',restore);restore();
   }
 
   function initAskSubmissionPaint(){
@@ -1857,6 +1873,7 @@
     initMigrationAutoStart();
     initOperatorAttachment();
     initAskPending();
+    initAskPageInPlace();
     initAskSubmissionPaint();
     initHomeAskHandoff();
     initFullPageAskEntry();

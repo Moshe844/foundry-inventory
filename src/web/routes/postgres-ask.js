@@ -214,6 +214,15 @@ function createPostgresAskRouter(database,options={}){
       'Content-Disposition':`attachment; filename="stockchief-${work.id.slice(0,16)}.txt"`});
     return res.send(work.content);
   }));
+  // The saved table from an answer, in the format asked for.
+  router.get('/ask/answers/:id/export.:format',asyncRoute(async(req,res)=>{
+    const exporter=require('../../assistant/ask-export');
+    return exporter.send(res,req.params.format,await exporter.interaction(database,req.ctx,req.params.id,require('../view-helpers').columnLabel));
+  }));
+  router.get('/ask/goals/:id/export.:format',asyncRoute(async(req,res)=>{
+    const exporter=require('../../assistant/ask-export');
+    return exporter.send(res,req.params.format,exporter.goal(await goalStore.get(database,req.ctx,req.params.id),req.query.table));
+  }));
   router.post('/ask/goals/:id/next',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),saved=delivery.visible(goal);
     const action=saved.nextActions.find(a=>a.id===req.body.actionId);
@@ -532,7 +541,7 @@ function createPostgresAskRouter(database,options={}){
     if(require('../../assistant/direct-business-reads').standalone(req.body.message))req.body.continueGoalId='';
     if(req.body.continueGoalId){
       const id=String(req.body.continueGoalId),existing=await goalStore.get(database,req.ctx,id);
-      if(existing?.checkpoint.runtime!=='codex-staging')throw new ValidationError('That agent question is no longer available.');
+      if(!['codex-staging','hosted-business'].includes(existing?.checkpoint.runtime))throw new ValidationError('That agent question is no longer available.');
       await pilot.access(database,req.ctx,{enabled:true});
       if(req.session.postgresAskStartedAt&&new Date(existing.created_at)<=new Date(req.session.postgresAskStartedAt))
         throw new ValidationError('That question belongs to an earlier conversation.');

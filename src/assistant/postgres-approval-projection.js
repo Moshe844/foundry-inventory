@@ -1,4 +1,6 @@
 'use strict';
+// A question nobody answered in a day has been overtaken. It stays in its conversation, not on Needs you.
+const QUESTION_HOURS=24;
 const {digest,snapshot}=require('./approval-revision');
 
 // Actor-private durable approvals and questions belong in the decision inbox.
@@ -39,7 +41,10 @@ async function pending(database,workspaceId,actorId){
       AND m.approval_status IN ('PENDING','APPROVED')
     ORDER BY m.created_at DESC,m.id DESC LIMIT 1) m ON true
   WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND ($5 OR lower(a.email)=ANY($3::text[]))
-    AND g.checkpoint->>'runtime'='codex-staging' AND g.status IN ('WAITING_APPROVAL','WAITING_USER') AND g.expires_at>now()
+    AND g.checkpoint->>'runtime' IN ('codex-staging','hosted-business') AND g.status IN ('WAITING_APPROVAL','WAITING_USER') AND g.expires_at>now()
+    AND (g.status<>'WAITING_USER' OR (g.updated_at>now()-make_interval(hours=>${QUESTION_HOURS}) AND g.checkpoint->>'needsYouDismissedAt' IS NULL
+     AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_goals later WHERE later.id<>g.id AND later.workspace_id=g.workspace_id AND later.actor_user_id=g.actor_user_id AND later.checkpoint->>'chatId'=g.checkpoint->>'chatId' AND later.created_at>g.updated_at)
+     AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_interactions later WHERE later.workspace_id=g.workspace_id AND later.actor_user_id=g.actor_user_id AND later.intent->>'chatId'=g.checkpoint->>'chatId' AND later.created_at>g.updated_at)))
     AND (g.status='WAITING_USER' OR p.id IS NOT NULL OR r.id IS NOT NULL)
   ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails,require('./codex-pilot-scope').fundingWorkspaces(),commercial])).rows;
  const decisions=new Set(),items=new Map();
@@ -60,7 +65,7 @@ async function pending(database,workspaceId,actorId){
     sourceId,title:state.input.question,happened:state.input.question,
     why:'Your request is waiting for information or a business choice.',
     recommendation:'Answer the question to continue the same request.',question:{goalId:row.goal_id,id:state.input.id,text:state.input.question},
-    href:'/needs-you/questions/'+encodeURIComponent(row.goal_id),actionLabel:'Answer question',
+    href:'/needs-you/questions/'+encodeURIComponent(row.goal_id),actionLabel:'Answer question',dismiss:{action:'/needs-you/questions/'+encodeURIComponent(row.goal_id)+'/dismiss',label:'Dismiss'},
     createdAt:askedAt,timeLabel:askedAt?'Question asked':'Question time unavailable',updatedAt:row.updated_at,at:askedAt});
    continue;
   }
@@ -107,4 +112,8 @@ async function pending(database,workspaceId,actorId){
  }
  return [...items].filter(([key])=>!decisions.has(key)).map(([,item])=>item);
 }
-module.exports={pending};
+// Dismissing only takes the question off Needs you. It stays in its conversation, still answerable.
+async function dismissQuestion(database,ctx,goalId){
+ await database.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{needsYouDismissedAt}',to_jsonb(now())) WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='WAITING_USER'",[ctx.workspaceId,ctx.actorId,goalId]);
+}
+module.exports={pending,dismissQuestion,QUESTION_HOURS};

@@ -66,7 +66,7 @@ const PROFIT_MEASURES=['revenue_minor','cogs_minor','expenses_minor','stock_coun
 const profitTotal=spec=>spec.dataset==='profit_activity'&&spec.aggregate==='sum'&&PROFIT_ALL.includes(spec.measure)&&(spec.groups||[]).every(group=>group==='currency');
 const MEASURE_NAMES={revenue_minor:'Sales',cogs_minor:'Product cost',expenses_minor:'Expenses',stock_count_minor:'Stock count gains / losses',net_profit_minor:'Net profit'};
 const OPERATOR_WORDS={after:'from',before:'to',at_least:'at least',at_most:'at most',greater_than:'more than',less_than:'less than',is_not:'is not',is_null:'is empty',is_empty:'is empty',not_empty:'is not empty'};
-function filterWords(f,labels){const name=labels?.[f.field]||f.field.replaceAll('_',' ');if(f.operator==='relative')return name+': '+(require('../reports/relative-dates').periods[f.value]||String(f.value).replaceAll('_',' '));if(['is_null','is_empty','not_empty'].includes(f.operator))return name+' '+OPERATOR_WORDS[f.operator];return name+' '+(OPERATOR_WORDS[f.operator]||f.operator.replaceAll('_',' '))+' '+(f.value??'');}
+function filterWords(f,labels,currency){const name=labels?.[f.field]||f.field.replace(/_minor$/,'').replaceAll('_',' ');if(/_minor$/.test(f.field)&&f.value!==undefined&&f.value!==null&&f.value!==''){const amount=currency?require('../pricing/postgres-service').formatMinor(Number(f.value),currency):null;return amount?name+' '+(OPERATOR_WORDS[f.operator]||f.operator.replaceAll('_',' '))+' '+amount:null;}if(f.operator==='relative')return name+': '+(require('../reports/relative-dates').periods[f.value]||String(f.value).replaceAll('_',' '));if(['is_null','is_empty','not_empty'].includes(f.operator))return name+' '+OPERATOR_WORDS[f.operator];return name+' '+(OPERATOR_WORDS[f.operator]||f.operator.replaceAll('_',' '))+' '+(f.value??'');}
 function wholeProfit(queries){const done=new Set();return queries.flatMap(spec=>{if(!profitTotal(spec))return [spec];
   const key=JSON.stringify(spec.filters),asked=queries.filter(other=>profitTotal(other)&&JSON.stringify(other.filters)===key).map(other=>other.measure);
   if(asked.length<2&&!asked.includes('net_profit_minor'))return [spec];
@@ -98,18 +98,27 @@ function profitCard(group){const filters=group[0].config.filters,at=(field,op)=>
  const lines=[['Sales',c=>value('revenue_minor',c)],['Product cost',c=>value('cogs_minor',c)],['Gross profit',c=>value('revenue_minor',c)===null||value('cogs_minor',c)===null?null:value('revenue_minor',c)-value('cogs_minor',c)],...(group.some(s=>s.config.measure==='stock_count_minor'&&s.rawRows.some(r=>Number(r[s.columns.at(-1)]||0)!==0))?[['Stock count gains / losses',c=>value('stock_count_minor',c)]]:[]),['Expenses',c=>value('expenses_minor',c)],
   ['Net profit',c=>{const net=value('net_profit_minor',c);if(net!==null)return net;const parts=['revenue_minor','cogs_minor','expenses_minor'].map(m=>value(m,c));return parts.includes(null)?null:parts[0]-parts[1]-parts[2]+(value('stock_count_minor',c)||0);}]];
  return '### Profit'+(from&&to?' · '+from+' to '+to:'')+'\n| Measure | '+currencies.join(' | ')+' |\n|---|'+currencies.map(()=>'---:').join('|')+'|\n'+lines.map(([name,read])=>'| '+name+' | '+currencies.map(c=>cell(read(c),c)).join(' | ')+' |').join('\n')+'\n\nGross profit = sales − product cost. Net profit = gross profit '+(group.some(s=>s.config.measure==='stock_count_minor'&&s.rawRows.some(r=>Number(r[s.columns.at(-1)]||0)!==0))?'+ stock count gains / losses ':'')+'− expenses.';}
+// Several rows of one money figure always add up on the page, one line per currency.
+function moneyTotal(s){
+ const fields=registry.get(s.dataset)?.fields||{},aggregated=reports.aggregateColumn[s.config.aggregate||'count'],grouped=(s.config.groups||[]).length>0;
+ const column=grouped?(s.config.aggregate==='sum'&&fields[s.config.measure]==='money_minor'?aggregated:null):(()=>{const money=s.columns.filter(c=>fields[c]==='money_minor');return money.length===1?money[0]:null;})();
+ if(!column||s.rawRows.length<2)return '';
+ const totals=new Map();for(const row of s.rawRows){if(!row.currency)return '';totals.set(row.currency,(totals.get(row.currency)||0)+Number(row[column]||0));}
+ const name={customer_invoices:'Total owed',supplier_bills:'Total you owe'}[s.dataset]||'Total';
+ return '\n\n'+[...totals].map(([currency,minor])=>'**'+name+': '+require('../pricing/postgres-service').formatMinor(minor,currency)+'**').join('\n\n');
+}
 function sectionTitle(s,sections){if(MEASURE_NAMES[s.config.measure])return MEASURE_NAMES[s.config.measure];if(!s.config.measure||sections.filter(other=>other.label===s.label).length<2)return s.label;const words=s.config.measure.replace(/_minor$/,'').replaceAll('_',' ');return s.label+' · '+words.charAt(0).toUpperCase()+words.slice(1);}
 function render(sections){let used=0,shortened=false;const output=[],cards=profitCards(sections),merged=new Set();for(const s of sections){
  const group=cards.find(g=>g.includes(s));
  if(group){if(merged.has(group))continue;merged.add(group);const card=profitCard(group);if(card){output.push(card);used+=card.length;continue;}}
  const title=sectionTitle(s,sections);
- const filters=s.config.filters.filter(f=>!(/_minor$/.test(f.field)&&f.operator==='greater_than'&&Number(f.value)===0)).map(f=>filterWords(f,s.columnLabels)),scope=filters.length?'\nFilters: '+filters.join('; ')+'.':'';
+ const rowCurrency=[...new Set(s.rawRows.map(r=>r.currency).filter(Boolean))],filters=s.config.filters.filter(f=>!(/_minor$/.test(f.field)&&['greater_than','at_least'].includes(f.operator)&&Number(f.value)===0)).map(f=>filterWords(f,s.columnLabels,rowCurrency.length===1?rowCurrency[0]:null)).filter(Boolean),scope=filters.length?'\nFilters: '+filters.join('; ')+'.':'';
  if(!s.rows.length){const text=title+scope+'\nNo matching records.';if(used+text.length>18000){shortened=true;break;}output.push(text);used+=text.length;continue;}
  const label=c=>s.columnLabels?.[c]||c.replaceAll('_',' '),cell=value=>String(value??'—').replace(/\|/g,'/').replace(/\s*\n\s*/g,' '),numeric=c=>s.rows.every(row=>row[c]===null||row[c]===undefined||/^[-(]?[^\d\s]{0,3}\s?\d[\d,.]*\)?\s?[^\d\s]{0,3}$/.test(String(row[c]))),rows=s.rows.map(row=>'| '+s.columns.map(c=>cell(row[c])).join(' | ')+' |');
  const head='| '+s.columns.map(c=>cell(label(c))).join(' | ')+' |\n|'+s.columns.map(c=>numeric(c)?'---:':'---').join('|')+'|';
  const shown=[];let size=title.length+scope.length+head.length+1;
  for(const row of rows){if(used+size+row.length+1>18000){shortened=true;break;}shown.push(row);size+=row.length+1;}
- const text='### '+title+scope+'\n\n'+head+'\n'+shown.join('\n')+(s.hasMore||shown.length<rows.length?'\n\nShowing the first '+shown.length+' results. Narrow the filters for the remaining records.':'');output.push(text);used+=text.length;
+ const complete=!s.hasMore&&shown.length===rows.length,text='### '+title+scope+'\n\n'+head+'\n'+shown.join('\n')+(complete?moneyTotal(s):'')+(complete?'':'\n\nShowing the first '+shown.length+' results. Narrow the filters for the remaining records.');output.push(text);used+=text.length;
  if(shortened)break;
  }return output.join('\n\n')+(shortened?'\n\nThis answer was shortened to keep it readable. Narrow the filters to see the remaining results.':'');}
 module.exports={selected,schema,system,contracts,validate,businessClock,interpret,execute,render};

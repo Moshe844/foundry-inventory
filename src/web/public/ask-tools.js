@@ -57,3 +57,36 @@
     });
   }
 })();
+
+// Every table in a written answer can be saved, in the format the person needs.
+(function () {
+  var enhance = function () {
+    document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]').forEach(function (goal) {
+      goal.querySelectorAll('[data-goal-answer] .rm-agent__table').forEach(function (table, index) {
+        if (table.previousElementSibling && table.previousElementSibling.matches('.ask-download')) return;
+        var menu = document.createElement('details');
+        menu.className = 'ask-download ask-download--inline';
+        var summary = document.createElement('summary');
+        summary.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 11 12 15.5 16.5 11"/><path d="M5 20h14"/></svg> Download';
+        var list = document.createElement('div');
+        list.className = 'ask-download__menu';
+        [['PDF', 'pdf'], ['Excel', 'xlsx'], ['CSV', 'csv']].forEach(function (entry) {
+          var link = document.createElement('a');
+          link.textContent = entry[0];
+          link.setAttribute('download', '');
+          link.href = '/ask/goals/' + encodeURIComponent(goal.getAttribute('data-adaptive-goal')) + '/export.' + entry[1] + '?table=' + index;
+          list.appendChild(link);
+        });
+        menu.appendChild(summary);
+        menu.appendChild(list);
+        table.parentNode.insertBefore(menu, table);
+      });
+    });
+  };
+  enhance();
+  var scroll = document.querySelector('[data-chat-scroll]');
+  if (scroll && window.MutationObserver) new MutationObserver(enhance).observe(scroll, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-goal-status'] });
+  document.addEventListener('click', function (event) {
+    document.querySelectorAll('.ask-download[open]').forEach(function (open) { if (!open.contains(event.target)) open.open = false; });
+  });
+}());
