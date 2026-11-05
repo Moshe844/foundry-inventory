@@ -806,7 +806,7 @@ html:root body.page-ask .rm-chat__new .rm-btn--ghost { color:#475069; }
 html:root body.page-ask .sc-chat-scroll { scrollbar-width:thin; scrollbar-color:rgba(17,21,46,.18) transparent; padding:6px 10px 18px; }
 
 html:root body.page-ask .rm-turn { margin-top:22px; }
-html:root body.page-ask .rm-turn--you { display:flex; justify-content:flex-end; margin-top:30px; }
+html:root body.page-ask .rm-turn--you { position:relative; display:flex; justify-content:flex-end; margin-top:30px; }
 html:root body.page-ask .rm-turn--you .rm-turn__who { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 html:root body.page-ask .rm-turn--you .rm-turn__said { max-width:78%; padding:10px 15px; border-radius:16px 16px 4px 16px; background:var(--d-action) #4F46E5; color:#fff; font-size:14px; font-weight:500; box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 6px 14px -8px rgba(55,48,163,.6); }
 html:root body.page-ask .rm-turn--foundry { margin-top:14px; }
@@ -882,4 +882,51 @@ html:root body.page-ask .ask-starters button { padding:13px 15px; border-radius:
  html:root body.page-ask .ask-table tr,html:root body.page-ask .ask-table tr.rm-chat-evidence__row { display:table-row; }
  html:root body.page-ask .ask-table th,html:root body.page-ask .ask-table td { display:table-cell; white-space:nowrap !important; overflow-wrap:normal !important; word-break:normal !important; }
  html:root body.page-ask .ask-table td::before { content:none !important; display:none !important; }
+}
+
+/* ———— Download on every Ask table ———— */
+html:root body.page-ask .ask-table-panel { position:relative; margin-top:12px; }
+html:root body.page-ask .ask-table-panel .rm-chat-evidence { margin-top:0; }
+html:root body.page-ask .ask-table-panel .rm-chat-evidence > summary { padding-right:124px; justify-content:flex-start; }
+html:root body .ask-download { position:relative; display:inline-block; }
+html:root body.page-ask .ask-table-panel > .ask-download { position:absolute; top:6px; right:8px; z-index:3; }
+html:root body .ask-download--inline { display:block; width:max-content; margin:10px 0 -2px auto; }
+html:root body .ask-download > summary { display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border-radius:8px; background:#fff; box-shadow:var(--d-ring); font-size:12.5px; font-weight:600; color:var(--d-ink); cursor:pointer; list-style:none; transition:box-shadow .16s; }
+html:root body .ask-download > summary::-webkit-details-marker { display:none; }
+html:root body .ask-download > summary:hover,html:root body .ask-download[open] > summary { box-shadow:0 0 0 1px #4F46E5; }
+html:root body .ask-download__menu { position:absolute; top:calc(100% + 4px); right:0; z-index:5; display:grid; min-width:112px; padding:4px; border-radius:10px; background:#fff; box-shadow:var(--d-3); }
+html:root body .ask-download__menu a { padding:7px 10px; border-radius:7px; font-size:13px; font-weight:500; color:var(--d-ink); text-decoration:none; }
+html:root body .ask-download__menu a:hover { background:#F1F2F7; color:#4F46E5; }
+
+/* The Ask page fills the window; only the conversation inside it moves. */
+html:root body.page-ask main#main:has([data-chat-scroll]),html:root body.page-ask .sc-chat-workspace,html:root body.page-ask .rm-chat { overflow:clip; }
+/* Approvals, saved conversations and the capabilities list share this page style but are ordinary pages. */
+html:root body.page-ask main#main:not(:has([data-chat-scroll])) { height:auto; min-height:100dvh; overflow:visible; }
+html:root body.page-ask .sc-chat-history { min-height:0; overflow:auto; scrollbar-width:thin; }
+
+/* ———— Phones ———— */
+html:root body .sc-phone-extras { display:none; }
+@media (max-width:760px) {
+ /* The top bar fits the screen: nothing runs off the edge or needs a sideways swipe. */
+ html:root body .sc-toolbar .sc-toolbar-actions { flex-wrap:wrap !important; justify-content:flex-end; gap:6px; width:100%; max-width:100%; overflow:visible; }
+ html:root body .sc-toolbar .sc-toolbar-actions > * { flex:0 1 auto; min-width:0; }
+ html:root body .sc-toolbar .sc-toolbar-actions :is(.sc-usage-link,.sc-upgrade-link) { display:none; }
+ html:root body .sc-phone-extras { display:grid; gap:2px; margin:auto 0 8px; padding:8px 0 0; border-top:1px solid rgba(255,255,255,.12); }
+ html:root body .sc-phone-extras a { padding:8px 12px; border-radius:8px; color:#D5D8EE; font-size:13.5px; text-decoration:none; }
+
+ /* A table becomes a list of full-width cards that scrolls with the page. */
+ html:root body .rm-canvas :is(.card,.section,.table-scroll,.rm-scroll,.table-wrap):has(> table.sc-mobile-table) { max-height:none !important; height:auto !important; overflow:visible !important; }
+ html:root body table.sc-mobile-table { display:block; width:100%; height:auto; }
+ html:root body table.sc-mobile-table tbody { display:grid; gap:8px; padding:8px; height:auto; max-height:none; overflow:visible; }
+ html:root body table.sc-mobile-table tbody tr { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0 10px; height:auto; }
+ html:root body table.sc-mobile-table tbody td { height:auto !important; min-height:0; line-height:1.35; }
+ html:root body table.sc-mobile-table tbody td .cell-sub { display:block; margin-top:2px; }
+ html:root body table.sc-mobile-table tbody td:last-child:not(:first-child) { align-items:stretch; }
+}
+
+html:root body .ask-download > summary::before,html:root body .ask-download > summary::after { content:none !important; display:none !important; }
+@media (max-width:760px) {
+ html:root body table.sc-mobile-table { overflow:visible; }
+ html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn) { grid-column:1/-1; flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+ html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn)::before { display:none; }
 }

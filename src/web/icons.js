@@ -8,6 +8,7 @@ const PATHS = {
   locations:
     '<path d="M12 21s6.5-5.6 6.5-10.4A6.5 6.5 0 0 0 5.5 10.6C5.5 15.4 12 21 12 21z"/><circle cx="12" cy="10.4" r="2.4"/>',
   activity: '<path d="M3.5 12h4l2.5 6 4-13 2.5 7h4"/>',
+  download: '<path d="M12 4v11"/><path d="M7.5 11 12 15.5 16.5 11"/><path d="M5 20h14"/>',
   // Sales shared Activity's icon, so two different destinations in the sidebar
   // were the same picture. A receipt reads as customer demand; a chain link
   // reads as a connection to somewhere outside StockChief.

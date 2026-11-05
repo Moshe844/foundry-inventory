@@ -214,7 +214,7 @@ async function money(database,workspaceId,input={},actorId=null){
     status:{caughtUp:true,headline:'Books need attention'},profit:{netMinor:pnl.netIncomeMinor,
       revenueMinor:pnl.revenueMinor,cogsMinor:pnl.cogsMinor,expensesMinor:pnl.operatingExpenseMinor,
       marginPct:pnl.revenueMinor?Math.round((gross/pnl.revenueMinor)*1000)/10:null,
-      why:[`${amount(pnl.revenueMinor)} revenue, ${amount(pnl.cogsMinor)} stock sold, ${amount(pnl.operatingExpenseMinor)} other costs, and ${amount(pnl.netIncomeMinor)} net income this period.`]},
+      why:[`${amount(pnl.revenueMinor)} revenue, ${amount(pnl.cogsMinor)} stock sold, ${amount(pnl.operatingExpenseMinor)} other costs, ${pnl.stockCountMinor?`${amount(pnl.stockCountMinor)} stock count gains / losses, `:''}and ${amount(pnl.netIncomeMinor)} net income this period.`]},
     position:{suppliersCommittedMinor:payableMinor,billPayableMinor,receivedNotBilledMinor,receivableCount:receivables.rows.length,payableCount:payables.rows.length,customersOweMinor:receivableMinor,cashMinor,
       inventoryMinor:number(inventory.rows[0].cost_minor),inventoryUnits:number(inventory.rows[0].units),
       confirmedCustomerOrders:confirmed.rows},inventory:{missingCostUnits:number(inventory.rows[0].missing_units)},comingUp,

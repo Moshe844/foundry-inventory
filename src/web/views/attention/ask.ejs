@@ -343,7 +343,7 @@
         <% } %>
         <% if (hasRows) { %>
           <% var reportGroups = Boolean(result.reportConfig?.groups?.length); %>
-          <details class="rm-chat-evidence" <%= result.reportConfig || result.rows.length <= 25 || /\btable\b/i.test(turn.message) ? 'open' : '' %>>
+          <div class="ask-table-panel"><%- include('ask-download',{base:'/ask/answers/'+encodeURIComponent(goal.id)+'/export'}) %><details class="rm-chat-evidence" <%= result.reportConfig || result.rows.length <= 25 || /\btable\b/i.test(turn.message) ? 'open' : '' %>>
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : reportGroups ? 'Report groups · open full report for source records' : 'The records behind this' %></span>
               <small>
@@ -367,7 +367,7 @@
               <% }) %>
               </tbody></table>
             </div>
-          </details>
+          </details></div>
         <% } %>
 
         <div class="ask-foot"><% if (result.handoff) { %><a class="ask-foot__link" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a><% } %><%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id}) %></div>

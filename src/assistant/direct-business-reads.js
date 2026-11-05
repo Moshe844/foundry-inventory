@@ -35,9 +35,9 @@ async function balances(db,ctx,query){
  for(const r of open){const key=r.currency+'|'+r.party_id,p=byParty.get(key)||{name:r.party_name,currency:r.currency,totalMinor:0,count:0,lateMinor:0};p.totalMinor+=Number(r.balance_minor);p.count++;if(r.daysLate>0)p.lateMinor+=Number(r.balance_minor);byParty.set(key,p);}
  const currencies=[...new Set(open.map(r=>r.currency))],parties=[...byParty.values()].sort((a,b)=>b.totalMinor-a.totalMinor||a.name.localeCompare(b.name));
  const sentences=currencies.map(currency=>{const list=parties.filter(p=>p.currency===currency),total=list.reduce((n,p)=>n+p.totalMinor,0),late=list.reduce((n,p)=>n+p.lateMinor,0),names=list.map(p=>p.name+' '+format(p.totalMinor,currency)).join(', '),who=bills?'supplier':'customer';
-  const lead=list.length>3?(bills?list.length+' suppliers, '+format(total,currency)+' in total':list.length+' customers owe you '+format(total,currency)):names+(list.length>1?' - total '+format(total,currency):'');
-  return lead+'.'+(late&&!query.late?' '+format(late,currency)+' of that is late.':'');});
- return {answer:(query.late?(bills?'Late bills: ':'Late to pay you: '):bills?'You owe: ':'')+sentences.join(' '),
+  const lead=list.length>3?(query.late?list.length+(bills?' suppliers are overdue':' customers are late'):bills?list.length+' suppliers to pay':list.length+' customers owe you'):names;
+  return lead+'.\n'+(query.late?'Total late: ':bills?'Total you owe: ':'Total owed: ')+format(total,currency)+(late&&!query.late?'\n'+format(late,currency)+' of that is late.':'');});
+ const named=parties.length<=3;return {answer:(query.late&&named?(bills?'Late bills: ':'Late to pay you: '):bills&&named?'You owe: ':'')+sentences.join('\n\n'),
   rows:parties.map(p=>({[bills?'supplier':'customer']:p.name,documents:p.count,amount:format(p.totalMinor,p.currency),late:p.lateMinor?format(p.lateMinor,p.currency):'None'})),
   columns:[bills?'supplier':'customer','documents','amount','late'],handoff:{href,label}};
 }
@@ -62,10 +62,49 @@ function classify(message){const text=clean(message).replace(/^(?:please|can you
  if((m=/^(?:where\s+(?:(?:do|can|should)\s+i|to)|how\s+do\s+i)\s+(.+)$/i.exec(text)))return {kind:'where',target:m[1].replace(/\b(?:a|an|the)\b/gi,' ').trim()};
  if((m=/^(?:open|take me to|go to|navigate to)\s+(?:(?:sales? order|purchase order|order|return|transfer|shipment)\s+)?([A-Z]+[- ]*\d+)$/i.exec(text)))return {kind:'record',reference:m[1]};
  if((m=/^(?:open|take me to|go to|navigate to|bring up)\s+(.+)$/i.exec(text)))return {kind:'page',target:m[1].replace(/\b(?:the|page|screen|section|tab)\b/gi,' ').trim()};return null;}
-async function run(service,db,ctx,message,options={}){const query=classify(message);if(!query)return null;const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)return null;await require('../commercial/enforcement').workspace(db,ctx.workspaceId,'ask.lookup');
+// What the last answer in this conversation was, so a short follow-up can build on it.
+async function lastDirect(db,ctx,options){
+ const chat=options.conversationId||'';if(!chat)return null;
+ const previous=(await db.query("SELECT message,intent,created_at FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId'=$3 AND status='ANSWERED' ORDER BY created_at DESC,id DESC LIMIT 1",[ctx.workspaceId,ctx.actorId,chat])).rows[0];
+ if(!previous)return null;
+ const newerGoal=(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 AND created_at>$4 LIMIT 1",[ctx.workspaceId,ctx.actorId,chat,previous.created_at])).rows.length;
+ if(newerGoal)return null;
+ const query=previous.intent?.directQuery||classify(previous.message);
+ return query&&query.kind!=='as_table'?{message:previous.message,query}:null;
+}
+const PERIOD=/^(?:(?:what|how)\s+about|and|for|in|just|only|same\s+for|now)?\s*(?:for\s+|in\s+)?(last\s+month|this\s+month|today|yesterday|this\s+week|last\s+week|last\s+7\s+days|this\s+year|last\s+year|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/i;
+// "Just the late ones", "what about last month", "and Nike": the same question, one thing changed.
+function followUpQuery(message,earlier){
+ const text=clean(message).replace(/[.!?]+$/,'').trim();if(!text||text.split(/\s+/).length>8)return null;
+ if(earlier.kind==='balances'){
+  if(/^(?:(?:only|just|show(?:\s+me)?|and|(?:what|how)\s+about)\s+)*(?:the\s+)?(?:late|overdue|past\s+due)(?:\s+(?:ones?|only|invoices?|bills?|customers?|suppliers?))?$/i.test(text)||/^(?:how\s+much|what)\s+(?:of\s+(?:that|it)\s+)?is\s+(?:late|overdue|past\s+due)$/i.test(text))return {...earlier,late:true};
+  if(/^(?:(?:show(?:\s+me)?|and|(?:what|how)\s+about)\s+)?(?:all|everyone|everybody|all\s+of\s+them)$/i.test(text))return {kind:'balances',side:earlier.side,late:false};
+  if(/^(?:(?:what|how)\s+about|and)\s+(?:the\s+|my\s+)?(?:bills?|suppliers?|vendors?|payables?)$/i.test(text))return {kind:'balances',side:'bills',late:false};
+  if(/^(?:(?:what|how)\s+about|and)\s+(?:the\s+|my\s+)?(?:invoices?|customers?|receivables?)$/i.test(text))return {kind:'balances',side:'invoices',late:false};
+  const name=/^(?:(?:what|how)\s+about|and|just|only)\s+(.+)$/i.exec(text);
+  if(name&&!/\b(?:month|week|year|today|yesterday|stock|sales?|profit|products?|orders?|them|that|those|it)\b/i.test(name[1]))return {kind:'balances',side:earlier.side,party:name[1].trim(),late:false};
+  return null;
+ }
+ if(earlier.kind==='sales'){const period=PERIOD.exec(text);return period?classify((earlier.profit?'profit ':'sales ')+period[1]):null;}
+ if(earlier.kind==='stock'){const name=/^(?:(?:what|how)\s+about|and)\s+(?:the\s+)?(.+)$/i.exec(text);return name&&!/\b(?:month|week|year|today|yesterday|it|them|that|those)\b/i.test(name[1])?{kind:'stock',search:name[1].trim()}:null;}
+ return null;
+}
+async function run(service,db,ctx,message,options={}){
+ let query=classify(message);
+ if(!query||query.kind==='as_table'){
+  const earlier=await lastDirect(db,ctx,options);
+  if(query?.kind==='as_table'){if(!earlier)return null;query=earlier.query;}
+  else if(earlier)query=followUpQuery(message,earlier.query);
+  if(!query)return null;
+ }
+ const done=await answerQuery(service,db,ctx,message,options,query);
+ // Remembered with the answer, so the next follow-up builds on this one.
+ if(done?.result)done.result.carryForward={...done.result.carryForward,directQuery:query};
+ return done;
+}
+async function answerQuery(service,db,ctx,message,options,query){const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)return null;await require('../commercial/enforcement').workspace(db,ctx.workspaceId,'ask.lookup');
  if(!['page','where','record'].includes(query.kind))await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  const read=async(spec,limit=101)=>reports.run(db,ctx,actor,spec,{limit}),contract=name=>registry.get(name),answer=(result,name='read.custom_report',args={})=>({result:{status:'ANSWERED',...result},step:{contract:contract(name),args,dependsOn:[]},args,provenance:{source:'canonical_direct_read',modelCalls:0}});
- if(query.kind==='as_table'){const previous=(await db.query("SELECT message FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId'=$3 AND status='ANSWERED' ORDER BY created_at DESC,id DESC LIMIT 1",[ctx.workspaceId,ctx.actorId,options.conversationId||''])).rows[0],newerGoal=previous&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals g WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND g.checkpoint->>'chatId'=$3 AND g.created_at>(SELECT max(created_at) FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId'=$3) LIMIT 1",[ctx.workspaceId,ctx.actorId,options.conversationId||''])).rows.length;if(!previous||newerGoal||classify(previous.message)?.kind==='as_table')return null;return run(service,db,ctx,previous.message,options);}
  if(['page','where'].includes(query.kind)){const matches=pages.search(query.target,{actor,limit:8}),page=matches[0];if(!page||matches[1]?.score===page.score)return null;return answer({answer:query.kind==='where'?'Use '+page.title+'.':'Opening '+page.title+'.',rows:[],columns:[],handoff:{href:page.href,label:page.title},...(query.kind==='page'?{navigation:{href:page.href,label:page.title}}:{})},'navigate.settings');}
  if(query.kind==='record'){const types={PO:'purchase_order',SO:'sales_order',TR:'transfer',RMA:'customer_return',SHP:'shipment'},kind=types[/^[A-Z]+/i.exec(query.reference)?.[0].toUpperCase()],records=require('../web/postgres-record-destinations');if(!kind||!permissions.can(actor,records.RECORDS[kind].permission))return null;const result=await records.resolve(db,ctx,kind,query.reference);if(!result.href)return null;return answer({answer:'Opening '+result.label+'.',rows:[],columns:[],navigation:result,handoff:{href:result.href,label:result.label}},'navigate.settings');}
  if(query.kind==='balances'){permissions.assertCan(actor,permissions.VIEW_ACCOUNTING,'view what is owed');return answer(await balances(db,ctx,query));}

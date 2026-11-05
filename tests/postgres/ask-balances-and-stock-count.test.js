@@ -16,6 +16,8 @@ test('questions about who owes whom are read directly, and a period or reason is
  assert.equal(direct.classify('Who ows me money?').kind,'balances');
  for(const text of ['give me a table','I asked for a table','put it in a table please','Make it a table'])assert.equal(direct.classify(text).kind,'as_table',text);
  assert.notEqual(direct.classify('Give me a table of customers')?.kind,'as_table');
+ for(const text of ['change it to 20','make those 5 each','what about last month?','show only the late ones','and for Nike'])assert.equal(direct.standalone(text),false,text+' leans on what was just said');
+ for(const text of ['What is in stock right now?','Create a purchase order for Nike','Who owes me money?'])assert.equal(direct.standalone(text),true,text);
  for(const text of ['Any unpaid supplier bills and customer invoices?','Show AP and AR outstanding.','What do we currently owe suppliers, and what customer money is still outstanding?'])assert.equal(balanceSides(text),null,text);
 });
 
@@ -53,6 +55,21 @@ test('Ask answers the unpaid list on two accounts with no model, and count gains
   }
   const model=await money.snapshot(db,ctx.workspaceId,{from:today,to:today});assert.equal(model.receivableTotals.totalMinor,27000);
   assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0','No agent run started for a fixed read');
+ });
+ await t.test('short follow-ups build on the last answer in the same conversation, with no AI',async()=>{
+  const conversationId='chat_followups_balances',ask=async message=>assistant.ask(db,ctx,message,{requestKey:'followup-'+message,conversationId,usageKey:'followup-'+message});
+  const name=(await db.query("SELECT name FROM customers WHERE id='fixture-customer'")).rows[0].name;
+  assert.match((await ask('Who owes me money?')).answer,/Total owed: \$270\.00/);
+  assert.match((await ask('just the late ones')).answer,/Nobody is late paying you/);
+  assert.match((await ask('all of them')).answer,/Total owed: \$270\.00/);
+  assert.match((await ask('what about '+name)).answer,/\$270\.00/);
+  assert.match((await ask('and Nobody Real Inc')).answer,/no unpaid invoices for Nobody Real Inc/);
+  assert.match((await ask('what about bills?')).answer,/no unpaid bills/i);
+  const table=await ask('Who owes me money?');await ask('give me a table');
+  assert.equal(table.rows.length,1);
+  const goals=(await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;assert.equal(goals,'0','No agent run started for any of these');
+  const other=await assistant.ask(db,ctx,'just the late ones',{requestKey:'followup-other',conversationId:'chat_other_conversation',usageKey:'followup-other'}).catch(error=>error);
+  assert.doesNotMatch(String(other.answer||''),/Nobody is late paying you/,'Another conversation has nothing to follow up on');
  });
  await t.test('a second account sees only its own balances',async()=>{
   const other=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Second Owner',businessName:'Second shop',email:'second-'+Date.now()+'@example.test',password:'Second-password-1!'});

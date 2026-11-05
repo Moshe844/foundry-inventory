@@ -165,6 +165,11 @@ function createPostgresProjectionsRouter(database){
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get('/needs-you/questions/:id',requireAuth,asyncRoute(async(req,res)=>{const entries=await require('../../assistant/postgres-approval-projection').pending(database,req.ctx.workspaceId,req.ctx.actorId);const entry=entries.find(e=>e.question?.goalId===req.params.id);if(!entry){req.flash('info','That question is no longer waiting for an answer.');return res.redirect(303,'/needs-you');}return res.page('manager/question',{title:'Answer a question',nav:'home',entry});}));
+  router.post('/needs-you/questions/:id/dismiss',requireAuth,asyncRoute(async(req,res)=>{
+    await require('../../assistant/postgres-approval-projection').dismissQuestion(database,req.ctx,req.params.id);
+    req.flash('success','Question dismissed. It stays in its conversation if you want to answer it later.');
+    return res.redirect(303,String(req.body.returnTo||'')==='/'?'/':'/needs-you');
+  }));
   router.get('/needs-you/work',requireAuth,asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
     const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});
