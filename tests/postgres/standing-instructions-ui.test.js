@@ -72,6 +72,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     await page.getByLabel('Business name').fill('Rule Business');await page.getByLabel('Your name').fill('Rule Owner');
     await page.getByLabel('Work email').fill('rules@example.test');await page.locator('input[name="password"]').fill('rules-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('rules-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id,a.id AS account_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='rules@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
@@ -81,7 +82,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     const at='2026-09-23T00:00:00.000Z';await database.query(`INSERT INTO suppliers
       (id,workspace_id,name,status,currency,created_at,updated_at) VALUES('rule-supplier',$1,'Acme Supply','active','USD',$2,$2)`,
     [ctx.workspaceId,at]);
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Keep Rule Widget replenished, remember Acme Supply’s 12-day lead time and four-unit minimum, transfer before buying, block issues below two on hand until stock recovers, and automatically handle only the exact limits I stated.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/not in force yet/i);
@@ -145,7 +146,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].reorder_point),4);
     await page.goto(`${base}/inventory/${item.itemId}`);
     assert.match(await page.locator('main').innerText(),/Main Warehouse: reorder at 4, up to 15/);
-    await page.getByRole('link',{name:'Reorder settings'}).click();
+    await page.locator('section',{has:page.getByRole('heading',{name:'Reordering'})}).getByRole('link',{name:'Change'}).click();
     assert.match(page.url(),/\/purchasing\/why\//);
     assert.match(await page.locator('main').innerText(),/Main Warehouse\s+4\s+15/);
     assert.match(await page.locator('main').innerText(),/All locations\s+8\s+20/);
@@ -231,7 +232,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       AND key='prefer_transfer_before_purchasing'`,[ctx.workspaceId])).rows[0].value),true);
     await page.goto(`${base}/what-you-told-me`);const transcript=await page.locator('main').innerText();
     assert.match(transcript,/Rule Widget.*reorder at 8/);
-    assert.match(transcript,/2 standing rules/);
+    assert.match(transcript,/2 (?:standing rules|approved instructions)/);
     await page.goto(`${base}/operating-instructions/${correction.id}?from=ask`);
     await Promise.all([page.waitForURL(/\/ask(?:\?.*)?(?:#latest)?$/),
       page.getByRole('button',{name:'Discard'}).click()]);

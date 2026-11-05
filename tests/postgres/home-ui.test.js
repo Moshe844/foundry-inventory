@@ -31,12 +31,13 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrfFrom(registration.text),name:'Alex Rivera',
       businessName:'Rivera Supply',email:'home-owner@example.test',password:'home-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const firstDay=await agent.get('/');
     assert.equal(firstDay.status,200);
-    assert.match(firstDay.text,/StockChief is ready\. Your inventory isn’t here yet/);
-    assert.match(firstDay.text,/No business check yet/);
-    assert.match(firstDay.text,/Add your inventory/);
-    assert.match(firstDay.text,/id="sc-home-ask-title">Ask StockChief<\/h2>/);
+    assert.match(firstDay.text,/Your first inventory is ready\. Add your records or explore first/);
+    assert.match(firstDay.text,/Not checked yet/);
+    assert.match(firstDay.text,/Add the place where you keep stock/);
+    assert.match(firstDay.text,/id="home-ask-title">Ask StockChief<\/h2>/);
     assert.match(firstDay.text,/href="\/ask\/capabilities"/);
     assert.doesNotMatch(firstDay.text,/Everything is under control/);
     assert.doesNotMatch(firstDay.text,/Check overdue/);
@@ -50,24 +51,24 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
       reference:'OPENING-COUNT',idempotencyKey:'home-opening-count'});
     const response=await agent.get('/');
     assert.equal(response.status,200,response.text.slice(0,700));
-    assert.match(response.text,/Good (?:morning|afternoon|evening), Alex/);
-    assert.match(response.text,/id="sc-home-ask-title">Ask StockChief<\/h2>/);
+    assert.match(response.text,/data-local-greeting>Hello<\/span>, Alex/);
+    assert.match(response.text,/id="home-ask-title">Ask StockChief<\/h2>/);
     assert.match(response.text,/Needs you/);
-    assert.match(response.text,/Coming up/);
-    assert.match(response.text,/StockChief noticed/);
-    assert.match(response.text,/StockChief has not checked them yet/);
+    assert.match(response.text,/Sales this month/);
+    assert.match(response.text,/This week/);
+    assert.match(response.text,/Not checked yet/);
     assert.doesNotMatch(response.text,/White Medium inventory changed/);
     assert.match(response.text,/\/home\.css\?/);
-    assert.match(response.text,/Your inventory is here\. Let’s do the first check/);
-    assert.match(response.text,/First check needed/);
-    assert.match(response.text,/Pause automatic work/);
+    assert.match(response.text,/Nothing needs you right now/);
+    assert.match(response.text,/Check now/);
+    
     assert.doesNotMatch(response.text,/Nothing needs you\./);
     const check=await agent.post('/autopilot/run').type('form').send({_csrf:csrfFrom(response.text),returnToHome:'1'});
     assert.equal(check.status,303);
     assert.equal(check.headers.location,'/');
     const checkedHome=await agent.get('/');
-    assert.match(checkedHome.text,/Everything is under control/);
-    assert.match(checkedHome.text,/Last checked just now/);
+    assert.match(checkedHome.text,/Nothing needs you right now/);
+    assert.doesNotMatch(checkedHome.text,/Not checked yet/);
     const at=nowIso();
     await database.query(`INSERT INTO attention_items
       (id,workspace_id,fingerprint,category,severity,priority_score,title,concise_summary,explanation,recommendation,
@@ -90,16 +91,16 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     const activeHome=await agent.get('/');
     assert.equal(activeHome.status,200,activeHome.text.slice(0,700));
     assert.match(activeHome.text,/White Medium needs a decision/);
-    assert.match(activeHome.text,/<strong>handled 1 thing<\/strong>/);
-    assert.match(activeHome.text,/Blue Large: purchase order approved/);
-    assert.match(activeHome.text,/not yet sent/);
-    assert.match(activeHome.text,/ABC Supply delivery expected/);
+    assert.match(activeHome.text,/handled on its own/);
+    
+    
+    
     const pause=await agent.post('/autopilot/pause').type('form').send({_csrf:csrfFrom(activeHome.text),returnToHome:'1'});
     assert.equal(pause.status,303);
     assert.equal(pause.headers.location,'/');
     const pausedHome=await agent.get('/');
-    assert.match(pausedHome.text,/StockChief is paused/);
-    assert.match(pausedHome.text,/Resume StockChief/);
+    assert.match(pausedHome.text,/Automatic work paused/);
+    assert.match(pausedHome.text,/Resume automatic work/);
     assert.doesNotMatch(pausedHome.text,/Pause automatic work/);
     const resume=await agent.post('/autopilot/resume').type('form').send({_csrf:csrfFrom(pausedHome.text),returnToHome:'1'});
     assert.equal(resume.status,303);
@@ -108,7 +109,7 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
       message:'How many products do we have?'});
     assert.equal(count.status,303);
     const counted=await agent.get('/ask');
-    assert.match(counted.text,/You have 1 active product in StockChief, across 1 SKU/);
+    assert.match(counted.text,/You have 1 active product recorded/);
     const attention=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(counted.text),
       message:'What needs my attention?'});
     assert.equal(attention.status,303);

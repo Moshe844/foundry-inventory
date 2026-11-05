@@ -528,7 +528,8 @@ function createPostgresAskRouter(database,options={}){
         usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }
-    if(require('../../assistant/direct-business-reads').standalone(req.body.message)){req.body.continueGoalId='';req.body.continueInteractionId='';}
+    // The composer promises the next message becomes the email being written, so only an agent reply can be redirected by its wording.
+    if(require('../../assistant/direct-business-reads').standalone(req.body.message))req.body.continueGoalId='';
     if(req.body.continueGoalId){
       const id=String(req.body.continueGoalId),existing=await goalStore.get(database,req.ctx,id);
       if(existing?.checkpoint.runtime!=='codex-staging')throw new ValidationError('That agent question is no longer available.');
@@ -553,7 +554,7 @@ function createPostgresAskRouter(database,options={}){
       background:goalStore.enabled(req.ctx),
       usageKey:String(req.body.usageKey||newId('askusage')),
       page,conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null,
-      newRequest:require('../../assistant/direct-business-reads').standalone(req.body.message),continueInteractionId:String(req.body.continueInteractionId||'')});
+      newRequest:!req.body.continueInteractionId&&require('../../assistant/direct-business-reads').standalone(req.body.message),continueInteractionId:String(req.body.continueInteractionId||'')});
     req.session.postgresAskNavigationGoal=result.goalId||null;
     return result;
   }

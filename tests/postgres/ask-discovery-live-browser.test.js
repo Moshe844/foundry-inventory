@@ -36,9 +36,9 @@ test('real Chromium and reasoning model discover actual capabilities without bus
     assert.equal(await page.getByText('Help me email a supplier',{exact:true}).count(),0,
       'unconnected email must not be suggested');
     await page.getByText('What can you help me do here?',{exact:true}).click();
-    assert.equal(await page.getByLabel('Ask StockChief').inputValue(),'What can you help me do here?');
-    await page.getByLabel('Ask StockChief').fill('I am new here. What can you help me do in this business?');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.equal(await page.getByRole('textbox',{name:'Ask StockChief'}).inputValue(),'What can you help me do here?');
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('I am new here. What can you help me do in this business?');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const reply=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
     assert.match(reply,/I can help you/i);
     assert.match(reply,/approval|records you are allowed to see/i);
@@ -46,8 +46,8 @@ test('real Chromium and reasoning model discover actual capabilities without bus
     const proposals=(await database.query('SELECT COUNT(*)::int AS total FROM stockchief_runtime.assistant_action_proposals')).rows[0];
     assert.equal(proposals.total,0);
     await Promise.all([page.waitForURL(`${base}/ask`),page.getByRole('button',{name:'New conversation'}).click()]);
-    await page.getByLabel('Ask StockChief').fill('Arrange for $150 to leave our bank account and pay a supplier now.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Arrange for $150 to leave our bank account and pay a supplier now.');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const unsupported=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
     assert.match(unsupported,/cannot complete|could not safely match/i);
     assert.doesNotMatch(unsupported,/approved|sent the payment|payment completed/i);
@@ -60,7 +60,7 @@ test('real Chromium and reasoning model discover actual capabilities without bus
     await page.goto(`${base}/inventory/${item.itemId}`);
     await page.getByRole('link',{name:'Ask about this product'}).click();
     assert.equal(await page.locator('input[name="sourcePath"]').inputValue(),`/inventory/${item.itemId}`);
-    assert.match(await page.getByLabel('Ask StockChief').inputValue(),/Browser Clamp/);
+    assert.match(await page.getByRole('textbox',{name:'Ask StockChief'}).inputValue(),/Browser Clamp/);
     context.diagnostic(`Browser discovery reply: ${reply.slice(0,320).replace(/\s+/g,' ')}`);
     context.diagnostic(`Unsupported bank-transfer reply: ${unsupported.slice(0,240).replace(/\s+/g,' ')}`);
   });

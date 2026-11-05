@@ -45,8 +45,8 @@ async function register(page,base){
 }
 
 async function ask(page,base,message){
-  await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(message);
-  await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+  await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
+  await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
   return page.locator('main').innerText();
 }
 
@@ -62,6 +62,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const base=`http://127.0.0.1:${server.address().port}`;const page=await browserContext.newPage();
     await register(page,base);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id AND u.role='owner' WHERE w.name='Ask Receiving Business'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
@@ -90,7 +91,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     await page.goto(`${base}${proposalHref}`);
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/purchase_order\.receive/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,skuId,location.id])).rows[0].on_hand),6);
     assert.equal((await database.query(`SELECT status FROM purchase_orders WHERE id=$1`,[purchase.purchaseOrderId])).rows[0].status,
@@ -127,7 +128,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     await page.goto(`${base}${proposalHref}`);
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/supplier_payment\.record/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     const payment=(await database.query(`SELECT * FROM accounting_payments WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
     assert.deepEqual({supplier:payment.supplier_id,amount:Number(payment.amount_minor),method:payment.method,
       reference:payment.reference,status:payment.status},{supplier:supplier.id,amount:1800,method:'ACH',reference:'BANK-77',status:'POSTED'});

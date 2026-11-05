@@ -2182,7 +2182,7 @@ async function cancelProposal(database,ctx,id) {
 async function ask(database,ctx,message,options={}){
   ctx={...ctx,conversationId:options.conversationId||null};
   const directStarted=Date.now();
-  const direct=await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
+  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
     const result=await recordCapabilityOutcome(database,ctx,message,direct);
     console.log(JSON.stringify({kind:'ask_direct_read_finished',interactionId:result.interactionId||null,queueWaitMs:0,modelCalls:0,toolCalls:1,toolMs,totalMs:Date.now()-directStarted}));return result;}

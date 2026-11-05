@@ -37,7 +37,7 @@ async function register(page,base,business,email){
 }
 async function prepareAndApprove(page,base,database,workspaceId,message,capability){
   await page.goto(`${base}/ask`);
-  await page.getByLabel('Ask StockChief').fill(message);
+  await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
   const proposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId])).rows[0];
@@ -113,7 +113,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     plans.set(supplierLinkMessage,step('supplier.link_product',{recordReference:'Boot Supply Co',sku:skuCode,
       supplierSku:'BOOT-12',amount:'10.25',leadTimeDays:'12',minimumOrderQuantity:'4'}));
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(supplierLinkMessage);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(supplierLinkMessage);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/supplier SKU BOOT-12/);
     assert.match(await page.locator('main').innerText(),/minimum order 4 purchase units/);
@@ -189,10 +189,10 @@ test('Ask browser controls a real customer order, payment, and return through th
         {sku:hatCode,quantity:1,unitPrice:'5'}])}));
     plans.set(pickupAnswer,{...step('sales_order.create',{location:'Main Warehouse'}),continuesPending:true});
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(pendingOrderMessage);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(pendingOrderMessage);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Which location will the customer pick/);
-    await page.getByLabel('Ask StockChief').fill(pickupAnswer);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(pickupAnswer);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     const resumedOrderProposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='sales_order.create' ORDER BY created_at DESC,id DESC LIMIT 1`,
@@ -212,7 +212,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     for(const [message,expected] of [[threeTurnOrder,/shipped, picked up, or delivered/],
       [methodAnswer,/Which location will the customer pick/],
       [locationAnswer,/Nothing has changed yet/]]){
-      await page.getByLabel('Ask StockChief').fill(message);
+      await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
       await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
       assert.match(await page.locator('main').innerText(),expected);
     }
@@ -356,7 +356,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     const ambiguousRefund=`Handle the refund on ${refundNumber}`;
     plans.set(ambiguousRefund,step('customer_return.refund',{recordReference:refundNumber}));
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(ambiguousRefund);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(ambiguousRefund);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/reduce an unpaid invoice balance or return money already paid/);
     const clarified=(await database.query(`SELECT status,intent FROM stockchief_runtime.assistant_interactions

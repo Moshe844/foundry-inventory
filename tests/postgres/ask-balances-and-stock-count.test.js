@@ -3,6 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const reads=require('../../src/assistant/bounded-business-read'),direct=require('../../src/assistant/direct-business-reads');
 
 test('questions about who owes whom are read directly, and a period or reason is left to the planner',()=>{
+ const balanceSides=text=>{const query=direct.classify(text);return query?.kind==='balances'?query.side:null;};
  const kind=text=>{const query=direct.classify(text);return query?query.kind+':'+(query.side||''):null;};
  for(const text of ['Who owes me money?','Which customers owe me money, and how much each?','How much am I owed?','Show unpaid invoices','who owes us','Late invoices'])assert.equal(kind(text),'balances:invoices',text);
  for(const text of ['Who do I owe?','How much do we owe suppliers?','Unpaid bills','What bills to pay do I have'])assert.equal(kind(text),'balances:bills',text);
@@ -10,6 +11,9 @@ test('questions about who owes whom are read directly, and a period or reason is
  assert.equal(direct.classify('How much does Sarah Klein owe me?').party,'Sarah Klein');
  assert.equal(direct.classify('How much do I owe Nike Wholesale?').party,'Nike Wholesale');
  assert.equal(direct.classify('Who is late paying? Overdue invoices').late,true);
+ for(const text of ['How many items are in my inventory currently?','How many products do we currently have?','How many items do I have right now?'])assert.equal(direct.classify(text).kind,'summary',text);
+ assert.equal(direct.classify('How many Trail Shoe do we have?').kind,'stock');
+ for(const text of ['Any unpaid supplier bills and customer invoices?','Show AP and AR outstanding.','What do we currently owe suppliers, and what customer money is still outstanding?'])assert.equal(balanceSides(text),null,text);
 });
 
 test('a close model choice is corrected to the report rules instead of stopping the run',()=>{

@@ -55,6 +55,7 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:token(registration.text),name:'Owner',
       businessName:'Owner Journeys',email:'owner-journeys@example.test',password:'owner-journeys-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Owner Journeys'`)).rows[0];
     const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
@@ -137,9 +138,9 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     await inventory.issue(database,ctx,{skuId:product.skuIds[0],locationId:place.id,quantity:4,
       reasonCode:'other',reference:'ORDER-1',idempotencyKey:'ask-owner-issue'});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:1,rearmed:0});
+      {checked:1,alerted:1,rearmed:0,notifications:{held:0,queued:0}});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:0,rearmed:0});
+      {checked:1,alerted:0,rearmed:0,notifications:{held:0,queued:0}});
     const alert=(await database.query(`SELECT status,title FROM attention_items WHERE workspace_id=$1
       AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0];
     assert.equal(alert.status,'OPEN');assert.match(alert.title,/reached 4 on hand/);
@@ -149,13 +150,13 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     await inventory.receive(database,ctx,{skuId:product.skuIds[0],locationId:place.id,quantity:1,
       reference:'RESTOCK',idempotencyKey:'ask-owner-restock'});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:0,rearmed:1});
+      {checked:1,alerted:0,rearmed:1,notifications:{held:0,queued:0}});
     assert.equal((await database.query(`SELECT status FROM attention_items WHERE workspace_id=$1
       AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0].status,'RESOLVED');
     await inventory.issue(database,ctx,{skuId:product.skuIds[0],locationId:place.id,quantity:1,
       reasonCode:'other',reference:'ORDER-2',idempotencyKey:'ask-owner-issue-again'});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:1,rearmed:0});
+      {checked:1,alerted:1,rearmed:0,notifications:{held:0,queued:0}});
     assert.equal((await database.query(`SELECT status FROM attention_items WHERE workspace_id=$1
       AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0].status,'OPEN');
     // An available-to-fulfill warning must react to an allocation without a
@@ -194,9 +195,9 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
       {view:'operating_rules',search:'BLUE-SHOE'});
     assert.equal(ruleRead.rows.find((row)=>row.kind==='stock_warning').threshold,4);
     assert.equal(ruleRead.rows.find((row)=>row.kind==='stock_warning').metric,'available_to_fulfill');
-    assert.match(ruleRead.answer,/strictly below 4 available to fulfill; it does not email or purchase/);
+    assert.match(ruleRead.answer,/strictly below 4 available to fulfill; it does not email\. It never purchases/);
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:0,rearmed:0});
+      {checked:1,alerted:0,rearmed:0,notifications:{held:0,queued:0}});
     const customer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name='River Market'`,
       [ctx.workspaceId])).rows[0];
     const order=await workflows.createSalesOrder(database,ctx,{customerId:customer.id,deliveryMethod:'PICKUP',
@@ -204,7 +205,7 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     await workflows.confirmSalesOrder(database,ctx,order.salesOrderId,
       {requireFullAllocation:true,idempotencyKey:'alert-availability-confirm'});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:1,rearmed:0});
+      {checked:1,alerted:1,rearmed:0,notifications:{held:0,queued:0}});
     const availableAlert=(await database.query(`SELECT title,metrics FROM attention_items WHERE workspace_id=$1
       AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0];
     assert.match(availableAlert.title,/reached 3 available to fulfill/);
@@ -214,5 +215,5 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     await workflows.cancelSalesOrder(database,ctx,order.salesOrderId,
       {reason:'Synthetic threshold test',idempotencyKey:'alert-availability-cancel'});
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
-      {checked:1,alerted:0,rearmed:1});
+      {checked:1,alerted:0,rearmed:1,notifications:{held:0,queued:0}});
   });

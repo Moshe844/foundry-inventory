@@ -73,7 +73,7 @@ test('one unscripted browser goal prepares a complete supplier order mission',
       VALUES($1,$2,$3,$4,$5,'each',1,3.25,5,1,1,1,1,$6,$6)`,
     [newId('supi'),ctx.workspaceId,supplier.id,item.skuIds[0],`PAD-${suffix}`,at]);
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(`Order 8 ${product} (${sku}) from ${supplierName} `+
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(`Order 8 ${product} (${sku}) from ${supplierName} `+
       `at $3.25 each for ${warehouse}. Approve the purchase order, email the supplier the order, `+
       'and wait for the mailbox provider to confirm that it accepted the message before marking the PO ordered.');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);

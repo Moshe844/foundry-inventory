@@ -75,4 +75,8 @@ async function fundWorkspace(database,workspaceId){
   SELECT $1,owner_account_id,'growth','wallet-foundation:growth','COMP','CUSTOM','OFFLINE_MODEL_FIXTURE' FROM workspaces WHERE id=$2
   ON CONFLICT(account_id) DO NOTHING`,[newId('sub'),workspaceId]);
 }
-module.exports={fixture,part,pricedUsage,PRICED_MODEL,fundWorkspace};
+// Same allocation for every business a browser or request test has registered so far.
+async function fundAllWorkspaces(database){
+ for(const {id} of (await database.query('SELECT id FROM workspaces')).rows)await fundWorkspace(database,id);
+}
+module.exports={fixture,part,pricedUsage,PRICED_MODEL,fundWorkspace,fundAllWorkspaces};

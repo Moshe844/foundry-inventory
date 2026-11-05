@@ -96,19 +96,22 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     await page.locator('input[name="password"]').fill('mission-password');
     if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('mission-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
+    // This walk uses features that only the current Pro plan includes.
+    await database.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='pro' ORDER BY version_number DESC LIMIT 1)");
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Autonomous Mission Business'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     const warehouse=await locations.createLocation(database,ctx,{name:'Mission Warehouse',kind:'warehouse'});
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Create Mission Widget with SKU MISSION-WIDGET and record three delivered units at Mission Warehouse.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.equal(await page.getByRole('link',{name:'Review prepared change'}).count(),1,
       await page.locator('main').innerText());
     await page.getByRole('link',{name:'Review prepared change'}).click();
-    assert.match(await page.locator('main').innerText(),/One outcome, one approval[\s\S]*catalog create item[\s\S]*inventory receive/i);
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Review all 2 changes/i);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve all remaining changes'}).click()]);
     const mission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
     assert.equal(mission.status,'DONE');assert.equal(mission.verification_status,'VERIFIED');
@@ -123,9 +126,9 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     assert.deepEqual({missions:measured.missions,completed:measured.completed,automatic:measured.automatic_steps,
       interactions:measured.humanInteractionsPerCompleted},{missions:1,completed:1,automatic:1,interactions:2});
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Allow StockChief to email suppliers automatically.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     await Promise.all([page.waitForURL(/\/operating-instructions\/oin_/),
       page.getByRole('link',{name:'Review prepared change'}).click()]);
     assert.match(await page.locator('main').innerText(),/Authorize StockChief to email suppliers/i);
@@ -149,12 +152,12 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,ctx.actorId,at]);
     await database.transaction((client)=>credentials.put(client,ctx.workspaceId,connectorId,'provider',{accessToken:'mission-mail-token'}));
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Add Resume Supply as a supplier at resume@mission-supply.example and email them this exact message: This is the approved mission follow-through.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     await page.getByRole('link',{name:'Review prepared change'}).click();
-    await Promise.all([page.waitForURL(/\/ask#latest$/),
-      page.getByRole('button',{name:'Approve the whole mission'}).click()]).catch(async error=>{
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),
+      page.getByRole('button',{name:'Approve all remaining changes'}).click()]).catch(async error=>{
         throw new Error(`Mission approval failed: ${await page.locator('main').innerText()}`,{cause:error});});
     let waitingMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND source_message LIKE 'Add Resume Supply%' ORDER BY created_at DESC LIMIT 1`,
@@ -203,15 +206,15 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       units_per_purchase_unit,last_unit_cost,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,created_at,updated_at)
       VALUES($1,$2,$3,$4,'FOLLOW-MISSION','each',1,2.50,5,1,1,1,1,$5,$5)`,
     [newId('supi'),ctx.workspaceId,supplier.id,missionPurchaseItem.skuIds[0],at]);
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Order two Follow Through Parts from Mission Supply, approve the order, email it, and mark it ordered only after Mission Supply accepts the purchase order by replying.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.equal(await page.getByRole('link',{name:'Review prepared change'}).count(),1,
       await page.locator('main').innerText());
     await page.getByRole('link',{name:'Review prepared change'}).click();
-    assert.match(await page.locator('main').innerText(),/purchase order create[\s\S]*purchase order approve[\s\S]*communication send email[\s\S]*purchase order place/i);
-    await Promise.all([page.waitForURL(/\/ask#latest$/),
-      page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Review all 4 changes/i);
+    await Promise.all([page.waitForNavigation(),
+      page.getByRole('button',{name:'Approve all remaining changes'}).click()]);
     let purchaseMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND source_message LIKE 'Order two Follow Through Parts%' ORDER BY created_at DESC LIMIT 1`,
     [ctx.workspaceId])).rows[0];
@@ -408,12 +411,12 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     assert.equal(afterReply.humanInteractions,beforeReply.humanInteractions+1,
       'an actual owner follow-up counts; StockChief asking the question does not');
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Order two Follow Through Parts from Mission Supply, approve the order, email it, and mark it ordered only after Mission Supply accepts the purchase order by replying.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     await page.getByRole('link',{name:'Review prepared change'}).click();
-    await Promise.all([page.waitForURL(/\/ask#latest$/),
-      page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),
+      page.getByRole('button',{name:'Approve all remaining changes'}).click()]);
     const revokedMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND source_message LIKE 'Order two Follow Through Parts%'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];

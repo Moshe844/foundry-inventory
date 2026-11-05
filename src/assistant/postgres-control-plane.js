@@ -403,8 +403,12 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       :'I could not verify that conclusion from the records I checked. Nothing changed.';
     const evidenceSteps=answer.supported?used:executed.map((_,index)=>index);
     const original=executed.length===1?executed[0].result:null;
-    const rows=original?original.rows:evidenceSteps.flatMap((index)=>evidence[index].rows.map((row)=>({source:evidence[index].capability,
-      record:JSON.stringify(row).slice(0,900)}))).slice(0,60);
+    // Several reads share one table, so each row becomes a readable line. Ids and raw minor units mean nothing to a person.
+    const readable=(row)=>Object.entries(row).filter(([key,value])=>key!=='href'&&!/(?:^id|_id|Id|minor|Minor)$/.test(key)&&value!==null&&value!==undefined&&typeof value!=='object')
+      .map(([key,value])=>`${key.replace(/_/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,(letter)=>letter.toUpperCase())}: ${value}`).join(' · ').slice(0,900);
+    const sourceName=(capability)=>String(capability).replace(/^read\./,'').replace(/_/g,' ').replace(/^./,(letter)=>letter.toUpperCase());
+    const rows=original?original.rows:evidenceSteps.flatMap((index)=>evidence[index].rows.map((row)=>({source:sourceName(evidence[index].capability),
+      record:readable(row)}))).slice(0,60);
     const additionalReads=[...new Set(answer.additionalReads||[])].filter((name)=>
       registry.get(name)?.kind==='read'&&!executed.some((entry)=>entry.step.contract.name===name)).slice(0,2);
     const primary=executed[evidenceSteps[0]??0];

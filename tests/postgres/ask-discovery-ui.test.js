@@ -25,6 +25,7 @@ test('Ask suggestions come only from registered, currently available capabilitie
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Discovery Business',email:'discovery@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const ctx=(await database.query(`SELECT w.id AS "workspaceId",u.id AS "actorId" FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Discovery Business'`)).rows[0];
     let discoveryQueries=0;const measured={...database,query:(...args)=>{discoveryQueries++;return database.query(...args);}};
@@ -51,7 +52,7 @@ test('Ask suggestions come only from registered, currently available capabilitie
     assert.doesNotMatch(directory.text,/Prepare an email for approval/);
     const home=await agent.get('/');
     assert.match(home.text,/href="\/ask\/capabilities"/);
-    assert.match(home.text,/Add a product to the catalog/);
+    assert.match(home.text,/Build a custom business report/);
     for(const example of examples)assert.match(page.text,new RegExp(example.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     const item=await catalog.createItem(database,ctx,{name:'Discovery Clamp',trackingMode:'quantity'});
     const contextual=await agent.get(`/ask?from=${encodeURIComponent(`/inventory/${item.itemId}`)}`);
@@ -79,8 +80,8 @@ test('Ask suggestions come only from registered, currently available capabilitie
       [ctx.actorId,'staff',JSON.stringify(['VIEW'])]);
     const restricted=await discovery.available(database,ctx);
     assert.ok(restricted.every((entry)=>entry.kind==='read'||entry.kind==='navigation'
-      ||entry.name==='report.template.create'),
-    'VIEW-only staff can save a private report, not mutate business records');
+      ||entry.name.startsWith('report.template.')),
+    'VIEW-only staff can manage their own private reports, not mutate business records');
     assert.ok(!restricted.some((entry)=>entry.name==='read.payables'||entry.name==='navigate.connections'));
     const restrictedDirectory=await agent.get('/ask/capabilities');
     assert.equal(restrictedDirectory.status,200);
@@ -103,6 +104,7 @@ test('Ask explains only verified registered capabilities and never changes busin
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Discovery Answer',email:'discovery-answer@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const page=await agent.get('/ask');
     const response=await agent.post('/ask').type('form').send({_csrf:csrf(page.text),
       message:'I am new here. How can you help me run this business?',usageKey:'discovery-answer-1'});
@@ -131,6 +133,7 @@ test('unavailable effects offer only a different registered and permitted altern
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Fallback Business',email:'fallback@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const page=await agent.get('/ask');
     await agent.post('/ask').type('form').send({_csrf:csrf(page.text),
       message:'Send a bank transfer to my supplier now',usageKey:'fallback-1'});

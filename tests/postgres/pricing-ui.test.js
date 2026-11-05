@@ -28,6 +28,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     await page.getByLabel('Your name').fill('Pricing Owner');await page.getByLabel('Work email').fill('pricing-pg@example.test');
     await page.locator('input[name="password"]').fill('pricing-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('pricing-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w JOIN users u ON u.workspace_id=w.id
       JOIN accounts account ON account.id=u.account_id WHERE account.email='pricing-pg@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
@@ -35,8 +36,8 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     const skuId=item.skuIds[0];
 
     await page.goto(`${base}/inventory/${item.itemId}`);const emptyPricing=await page.locator('main').innerText();
-    assert.match(emptyPricing,/Selling price/i);assert.match(emptyPricing,/Purchasing price & stock cost/i);
-    assert.equal((emptyPricing.match(/Not set/g)||[]).length,2);
+    assert.match(emptyPricing,/Sells for/i);assert.match(emptyPricing,/Purchase cost/i);
+    assert.match(emptyPricing,/Set price/);assert.match(emptyPricing,/Set cost/);
     await page.locator(`a[href="/pricing/new?skuId=${skuId}"]`).click();await page.getByLabel(/Selling price per/).fill('24.50');
     await Promise.all([page.waitForURL(/\/pricing\/proposals\//),page.getByRole('button',{name:'Review price change'}).click()]);
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM sku_prices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
@@ -61,8 +62,8 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     const current=await pricing.currentPrice(database,ctx.workspaceId,skuId);assert.equal(current.amount_minor,2600);
     assert.equal((await database.query('SELECT status FROM price_change_proposals WHERE id=$1',[stale.id])).rows[0].status,'PENDING');
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('Set the selling price for Pricing Widget to $28.00');
-    await Promise.all([page.waitForURL(`${base}/ask#latest`),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Set the selling price for Pricing Widget to $28.00');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Set Pricing Widget selling price to \$28\.00[\s\S]*Nothing has changed yet/i);
     const actionHref=await page.locator('a[href^="/actions/"]').last().getAttribute('href');assert.ok(actionHref);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2600);
@@ -73,8 +74,8 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     assert.match(await page.locator('main').innerText(),/EXECUTED/);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2800);
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('Set the purchase cost for Pricing Widget to $14.25');
-    await Promise.all([page.waitForURL(`${base}/ask#latest`),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Set the purchase cost for Pricing Widget to $14.25');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Set Pricing Widget purchase cost to \$14\.25[\s\S]*Nothing has changed yet/i);
     const costActionHref=await page.locator('a[href^="/actions/"]').last().getAttribute('href');assert.ok(costActionHref);
     assert.equal((await pricing.purchaseCost(database,ctx.workspaceId,skuId)).amount_minor,1275);

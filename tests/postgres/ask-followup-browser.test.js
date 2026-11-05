@@ -26,7 +26,7 @@ test('browser Ask retains contact details through a follow-up and does not route
         if(plans===1)return {data:{steps:[step('communication.send_email',{
           recipient:'Ada Source',recipientKind:'supplier',recipientEmail:'ada@example.test',
           recipientMode:'add_supplier'})],clarifyingQuestion:''},usage:pricedUsage()};
-        if(plans===2){assert.equal(prompt.pending?.capability,'communication.send_email');
+        if(plans===2){assert.ok(!prompt.pending,'a new question is planned on its own, without the prepared email');
           return {data:{steps:[step('read.inventory_summary')],clarifyingQuestion:''},usage:pricedUsage()};}
         if(plans===3)return {data:{steps:[step('contact.create',{recipient:'Delta Supply',recipientKind:'supplier',
           recipientEmail:'delta@example.test'})],clarifyingQuestion:''},usage:pricedUsage()};
@@ -74,7 +74,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     [connectorId,owner.workspace_id,`gmail:${connectorId}`,JSON.stringify(['business mail']),
       JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,owner.actor_id,at]);
     await page.goto(`${base}/ask`);
-    async function ask(message){await page.getByLabel('Ask StockChief').fill(message);
+    async function ask(message){await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
       await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);}
     await ask('Add Ada Source as a supplier at ada@example.test and email her. I will say what to write next.');
     assert.match(await page.locator('main').innerText(),/What would you like the email to Ada Source to say/);

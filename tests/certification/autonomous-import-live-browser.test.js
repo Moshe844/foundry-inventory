@@ -54,7 +54,7 @@ test('real model and browser complete one approved import mission after an actua
       filename});
     assert.equal(preview.status,'READY');
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(`Finish the reviewed ${filename} inventory upload. `+
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(`Finish the reviewed ${filename} inventory upload. `+
       'Approve its current preview, apply it, and verify the stock is recorded.');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const mission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans

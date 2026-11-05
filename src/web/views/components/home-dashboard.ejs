@@ -65,7 +65,7 @@
 
   </div></aside></div>
   <section class="sc-home-block sc-ask-card hm-ask" data-home-section="ask" aria-labelledby="home-ask-title">
-    <header><h2 id="home-ask-title">Ask StockChief</h2><a href="/ask/history">Your conversations</a></header>
+    <header><h2 id="home-ask-title">Ask StockChief</h2><span class="hm-ask__links"><a href="/ask/capabilities">What it can do</a><a href="/ask/history">Your conversations</a></span></header>
     <%- include('../partials/composer',{composerPlaceholder:'What would you like to know or do?',homeHandoff:!!locals.postgresAsk,hideAttachment:!!locals.postgresAsk}) %>
     <% if(chips.length){ %><div class="sc-home__suggestions" aria-label="Available actions"><% for(const entry of chips){ %><a class="btn btn--ghost btn--sm" href="<%= entry.href %>"><%= entry.label %></a><% } %></div><% } %>
   </section>

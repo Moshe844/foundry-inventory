@@ -41,6 +41,7 @@ test('Ask re-reads a registered source when the first read cannot answer the own
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Recorded Stock Business',email:'recorded-stock@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Recorded Stock Business'`)).rows[0];
     const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
@@ -78,6 +79,7 @@ test('Ask selects a registered operation, resolves unique records, and executes 
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Capable Business',email:'capable@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Capable Business'`)).rows[0];
     const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
@@ -103,7 +105,7 @@ test('Ask selects a registered operation, resolves unique records, and executes 
     assert.equal(Number(after.units),11);
     const opened=await agent.post('/ask').type('form').send({_csrf:csrf(ask.text),
       message:'Bring up the area where supplier orders live.',usageKey:'contract-ask-2'});
-    assert.equal(opened.status,303);assert.equal(opened.headers.location,'/purchasing');
+    assert.equal(opened.status,303);assert.equal(opened.headers.location,'/purchasing/orders');
   });
 
 test('a dependent capability is prepared after the first approval, never executed early',
@@ -123,6 +125,7 @@ test('a dependent capability is prepared after the first approval, never execute
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Sequential Business',email:'sequential@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Sequential Business'`)).rows[0];
     const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
@@ -175,6 +178,7 @@ test('a correction replaces the pending proposal instead of leaving two approvab
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
       businessName:'Corrected Business',email:'corrected@example.test',password:'password-for-testing'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Corrected Business'`)).rows[0];
     const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
