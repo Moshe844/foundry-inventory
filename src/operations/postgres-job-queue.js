@@ -218,7 +218,9 @@ async function listDead(database, workspaceId) {
 }
 
 async function processOne(database, handlers, options = {}) {
-  const kinds = Object.keys(handlers || {}).filter((kind) => typeof handlers[kind] === 'function');
+  const requested=Array.isArray(options.kinds)?new Set(options.kinds.map(kind=>String(kind||'').trim()).filter(Boolean)):null;
+  const kinds = Object.keys(handlers || {}).filter((kind) => typeof handlers[kind] === 'function' &&
+    (!requested || requested.has(kind)));
   const job = await claim(database, { ...options, kinds });
   if (!job) return null;
   const handler = handlers?.[job.kind];

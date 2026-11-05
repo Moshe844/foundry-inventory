@@ -1023,7 +1023,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
   if(commitReceiptPersisted)try{executionCache=await require('./postgres-execution-cache').finish(database,ctx,id);}
   catch(error){executionCache={state:'DEFERRED',reason:error.code||error.name};}
   let statistics;
-  try{statistics=await require('./postgres-statistics').refreshAfterImport(database,result);}
+  try{statistics=await require('./postgres-statistics').enqueueAfterImport(database,ctx,id,result);}
   catch(error){statistics={state:'DEFERRED',reason:error.code||error.name};}
   return {...result,committedAt,commitReceiptPersisted,executionCache,statistics};
 }
