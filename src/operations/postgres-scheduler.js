@@ -12,7 +12,8 @@ async function scheduleOnce(database,options={}){
   // Measurement scheduling commits independently of later runtime sweep work.
   await require('../commercial/storage-capacity').schedule(database,{now});
   await require('../projections/postgres-cost-summaries').schedule(database,{now});
-  await require('../projections/postgres-movement-buckets').schedule(database,{now});return result;
+  await require('../projections/postgres-movement-buckets').schedule(database,{now});
+  await require('../projections/postgres-sku-stock').schedule(database,{now});return result;
 }
 
 function start(database,options={}){

@@ -197,5 +197,6 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('D19 SKU cost summaries retain exact fractional and archived value without visiting location balances at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sku-cost-summary-checks').check(db,ctx)));});
  await t.test('D19 Home uses existing item totals and bounded empty checks with exact stock at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/home-brief-stock-checks').check(db,ctx)));});
  await t.test('D19 movement bucket reads retain exact local-day totals without rescanning 150,000 stock events',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/movement-bucket-checks').check(db,ctx)));});
+ await t.test('D19 SKU stock summaries retain exact pending quantities without reading 150,000 canonical positions',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sku-stock-summary-checks').check(db,ctx)));});
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });
