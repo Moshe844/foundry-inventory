@@ -20,8 +20,9 @@ function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
  // estimate the actual indexed date range instead of an unknown InitPlan value.
  const needsZone=source.includes(zone)||config.filters.some(filter=>applied(filter)&&filter.operator!=='is_null');
  const reportZone=needsZone&&dateContext?.timeZone&&values?`$${values.push(dateContext.timeZone)}::text`:zone;
+ const additiveChart=source===additiveSource;
  if(reportZone!==zone)source=source.replaceAll(zone,reportZone);
- let parameter=parameterBase;const predicates=[];
+ let parameter=parameterBase;const predicates=[],lower=[],upper=[];let first=-Infinity,last=Infinity;
  for(const filter of config.filters){
   if(!['is_null','is_empty','not_empty'].includes(filter.operator))parameter++;
   if(filter.field!=='occurred_on')continue;
@@ -29,6 +30,13 @@ function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
    const value=String(filter.value),parsed=Date.parse(value);
    if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-')||!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==value)
     throw new(require('../domain/errors').ValidationError)('Choose a real calendar date for movement records.');
+   const day=`$${parameter}::text::date`;
+   if(['after','at_least','equals','greater_than'].includes(filter.operator)){
+    const next=filter.operator==='greater_than';lower.push(next?`(${day}+1)`:day);first=Math.max(first,parsed+(next?86400000:0));
+   }
+   if(['before','at_most','equals','less_than'].includes(filter.operator)){
+    const prior=filter.operator==='less_than';upper.push(prior?`(${day}-1)`:day);last=Math.min(last,parsed-(prior?86400000:0));
+   }
   }
   const start=`($${parameter}::text::date::timestamp AT TIME ZONE ${reportZone})`;
   // Add a calendar day before converting to UTC: DST days are not always 24h.
@@ -39,6 +47,18 @@ function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
   if(filter.operator==='less_than')predicates.push(`${instant}<${start}`);
   if(filter.operator==='is_null')predicates.push(`${instant} IS NULL`);
  }
+ // A bounded calendar chart needs one indexed SUM per business day, not a
+ // hash table for every distinct timestamp. Each UTC range is calculated once
+ // from the local midnight and the following local midnight, including DST.
+ // Open-ended, very long and row-level reports retain the general source.
+ if(additiveChart&&dateContext?.timeZone&&lower.length&&upper.length&&last-first<=366*86400000&&config.filters.every(f=>applied(f)&&f.operator!=='is_null'))return `
+  WITH movement_days AS (
+   SELECT day,day AT TIME ZONE ${reportZone} AS day_start,(day+interval '1 day') AT TIME ZONE ${reportZone} AS day_end
+   FROM generate_series(GREATEST(${lower.join(',')})::timestamp,LEAST(${upper.join(',')})::timestamp,interval '1 day') AS days(day)
+  ) SELECT m.quantity_delta,to_char(d.day,'YYYY-MM-DD') AS occurred_on FROM movement_days d
+  CROSS JOIN LATERAL(SELECT sum(m.quantity_delta)::numeric AS quantity_delta FROM movements m
+   WHERE m.workspace_id=$1 AND ${instant}>=d.day_start AND ${instant}<d.day_end) m
+  WHERE m.quantity_delta IS NOT NULL`;
  const bounds=predicates.length?' AND '+predicates.join(' AND '):'';
  return source.includes(boundsMarker)?source.replace(boundsMarker,bounds):source+bounds;
 }

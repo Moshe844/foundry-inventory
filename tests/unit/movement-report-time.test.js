@@ -43,8 +43,8 @@ test('a known business clock binds the movement time zone without changing date 
  const actor={role:'owner'},dateContext={timeZone:'America/New_York',calendarDate:'2026-11-01'},filters=[{field:'occurred_on',operator:'equals',value:'2026-11-01'}];
  const q=reports.queryFor(reports.normalize({dataset:'movements',groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters},actor),'workspace-one',{dateContext,limit:5});
  assert.deepEqual(q.values,['workspace-one','2026-11-01','America/New_York',5,0]);
- assert.match(q.sql,/\$2::text::date::timestamp AT TIME ZONE \$3::text/);
- assert.match(q.sql,/to_char\(stockchief_movement_instant\(m\.occurred_at\) AT TIME ZONE \$3::text/);
+ assert.match(q.sql,/generate_series\(GREATEST\(\$2::text::date\)::timestamp,LEAST\(\$2::text::date\)::timestamp/);
+ assert.match(q.sql,/day AT TIME ZONE \$3::text/);assert.match(q.sql,/stockchief_movement_instant\(m\.occurred_at\)>=d.day_start/);
  assert.doesNotMatch(q.sql,/FROM workspaces/);
  const composed=require('../../src/reports/postgres-composed'),spec=composed.normalize({dataset:'composed',dimension:'sku',metrics:[
   {alias:'moved',dataset:'movements',aggregate:'sum',measure:'quantity_delta',filters},
@@ -54,4 +54,11 @@ test('a known business clock binds the movement time zone without changing date 
  assert.deepEqual(combined.values.slice(0,7),['workspace-one','2026-11-01','America/New_York','Main','2026-11-02','America/New_York',201]);
  assert.match(combined.sql,/stockchief_movement_instant\(m\.occurred_at\)>=\(\$5::text::date::timestamp AT TIME ZONE \$6::text/);
  assert.match(combined.sql,/"location"=\$4/);
+});
+test('bounded movement charts sum indexed calendar-day ranges and retain the general path for open or long windows',()=>{
+ const actor={role:'owner'},dateContext={timeZone:'Asia/Kathmandu'},spec={dataset:'movements',groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[{field:'occurred_on',operator:'after',value:'2026-10-30'},{field:'occurred_on',operator:'before',value:'2026-11-04'},{field:'occurred_on',operator:'greater_than',value:'2026-10-31'},{field:'occurred_on',operator:'less_than',value:'2026-11-04'}]};
+ const q=reports.queryFor(reports.normalize(spec,actor),'workspace-one',{dateContext});
+ assert.match(q.sql,/GREATEST\(\$2::text::date,\(\$4::text::date\+1\)\)/);assert.match(q.sql,/LEAST\(\$3::text::date,\(\$5::text::date-1\)\)/);
+ assert.match(q.sql,/CROSS JOIN LATERAL/);assert.doesNotMatch(q.sql,/movement_instants/);
+ for(const filters of [[],spec.filters.slice(0,1),[{field:'occurred_on',operator:'after',value:'1800-01-01'},{field:'occurred_on',operator:'before',value:'2026-11-04'}],[{field:'occurred_on',operator:'is_null',value:''}]])assert.match(reports.queryFor(reports.normalize({...spec,filters},actor),'workspace-one',{dateContext}).sql,/movement_instants/);
 });

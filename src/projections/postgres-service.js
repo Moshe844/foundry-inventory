@@ -198,20 +198,25 @@ async function brief(database,workspaceId,actorId=null){
 }
 async function briefData(database,workspaceId){
   const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
-    database.query(`SELECT
+    database.query(`WITH stock_by_sku AS MATERIALIZED (
+      SELECT sku_id,sum(on_hand)::numeric AS quantity FROM balances WHERE workspace_id=$1 GROUP BY sku_id
+    ), sku_stats AS (
+      SELECT count(*) FILTER(WHERE s.is_active=1) AS sku_count,
+        coalesce(sum(b.quantity) FILTER(WHERE i.quantity_precision=0),0) AS units_on_hand,
+        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count
+      FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+      LEFT JOIN stock_by_sku b ON b.sku_id=s.id WHERE s.workspace_id=$1
+    ) SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
-      (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS sku_count,
+      sku_stats.sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
-      CASE WHEN EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) THEN
-        (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE b.workspace_id=$1 AND i.quantity_precision=0)
-        ELSE (SELECT COALESCE(SUM(on_hand),0) FROM balances WHERE workspace_id=$1) END AS units_on_hand,
+      sku_stats.units_on_hand,
       EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) AS has_measured_stock,
-      (SELECT COUNT(*) FROM skus s LEFT JOIN(SELECT sku_id,sum(on_hand) quantity FROM balances WHERE workspace_id=$1 GROUP BY sku_id) b ON b.sku_id=s.id
-        WHERE s.workspace_id=$1 AND s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count,
+      sku_stats.zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
-        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming`,[workspaceId]),
+        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming FROM sku_stats`,[workspaceId]),
     database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
       LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
       WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]),
