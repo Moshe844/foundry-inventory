@@ -66,10 +66,10 @@ test('Buy: purchase orders, one-page PO, receiving, suppliers, what to order and
 
   // 2. New purchase order: ?supplier= preselects, a suggestion chip adds a line, totals follow, Create draft sends nothing.
   await page.goto(`${base}/purchasing/orders/new`);
-  assert.equal(await page.locator('#ox-supplier-list a').filter({hasText:'Zeta'}).count(),0,'Sweep records stay out of the picker');
+  assert.equal(await page.locator('#ox-supplier-list a').filter({hasText:'Zeta'}).count(),1,'Every supplier of this business is listed, whatever the business is called');
   await page.goto(`${base}/purchasing/orders/new?supplier=${nike.id}`);
   assert.match(await page.locator('.ox-chipcard').innerText(),/Nike Wholesale/);
-  assert.equal(await page.locator('select[name=destinationLocationId] option').filter({hasText:'SWEEP'}).count(),0);
+  assert.equal(await page.locator('select[name=destinationLocationId] option').filter({hasText:'SWEEP'}).count(),1);
   await page.locator(`[data-ox-suggest="${black9}"]`).click();
   const line=page.locator(`[data-purchase-line][data-sku="${black9}"]`);assert.equal(await line.isVisible(),true);
   await line.locator('[name^="quantity["]').fill('5');

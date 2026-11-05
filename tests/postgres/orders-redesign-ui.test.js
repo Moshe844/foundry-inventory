@@ -115,9 +115,9 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     for(const removed of ['units requested','Product weight is missing','editable selling price','Choose products to see available stock'])
       assert.doesNotMatch(formText,new RegExp(removed));
     assert.equal(await page.locator('main a',{hasText:/^\s*←/}).count(),1);
-    assert.deepEqual(await page.locator('select[name="fulfillmentLocationId"] option').allTextContents(),['Best location (auto)','Brooklyn Store'],
-      'Sweep test locations are hidden from the demo picker');
-    assert.equal(await page.locator('#order-customer option',{hasText:'Sweep'}).count(),0);
+    assert.deepEqual(await page.locator('select[name="fulfillmentLocationId"] option').allTextContents(),['Best location (auto)','Brooklyn Store','SWEEP WH <i>Ä</i>'],
+      'Every location of this business is listed, whatever the business is called, and a name is shown as plain text');
+    assert.equal(await page.locator('#order-customer option',{hasText:'Sweep'}).count(),1);
     const productSearch=page.getByRole('combobox',{name:'Search products'});
     await productSearch.fill('air max');
     await page.waitForFunction(()=>/18 in stock/.test(document.querySelector('#ox-product-list').textContent));

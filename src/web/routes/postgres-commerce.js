@@ -341,7 +341,7 @@ function createPostgresCommerceRouter(database,options={}){
       ownSectionTabs:true,suppressBack:true,screenGuide:null,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
-      codeMappings:[],catalogue:catalogueRows.rows.filter(s=>!buyView.demoHidden(req.workspace?.name)(s.item_name)).map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
+      codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
       permissions:purchasingPermissions(req)});
   }));
 
@@ -499,8 +499,7 @@ function createPostgresCommerceRouter(database,options={}){
   router.get(['/purchasing/supplier-for/:skuId','/suppliers/for/:skuId'],requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
     const sku=(await database.query('SELECT s.id,s.item_id,s.code,s.variant_label,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1',[req.ctx.workspaceId,req.params.skuId])).rows[0];if(!sku)throw new NotFoundError('Choose an active variant in this inventory.');
     const supplierQuery=String(req.query.q||'').trim().slice(0,120),suppliers=(await database.query("SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY lower(name),id LIMIT 50",[req.ctx.workspaceId,supplierQuery])).rows;
-    const hiddenSupplier=require('../buy-view').demoHidden(req.workspace?.name);
-    return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers:suppliers.filter(x=>!hiddenSupplier(x.name)),supplierQuery});
+    return res.page('purchasing/variant-supplier',{title:'Link a supplier',nav:'purchasing',sku,suppliers,supplierQuery});
   }));
   router.post('/purchasing/supplier-for/:skuId',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link suppliers'),asyncRoute(async(req,res)=>{
     await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.body.supplierId,skuId:req.params.skuId,purchaseUnit:req.body.purchaseUnit,unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit,lastUnitCost:req.body.lastUnitCost,isPreferred:true,
@@ -621,9 +620,7 @@ function createPostgresCommerceRouter(database,options={}){
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
-    const hiddenPlace=require('../buy-view').demoHidden(req.workspace?.name);
-    const pickLocations=locations.filter(l=>lines.some(line=>line.destinationLocationId===l.id)||!hiddenPlace(l.name));
-    return res.page('buy/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations:pickLocations,
+    return res.page('buy/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
       permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
   }));
@@ -644,8 +641,7 @@ function createPostgresCommerceRouter(database,options={}){
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
     const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
     const buy=await require('../buy-view').purchaseEntryExtras(database,req.ctx.workspaceId,supplierId,supplierItems,supplierRows);
-    const hidden=require('../buy-view').demoHidden(req.workspace?.name);buy.suppliers=buy.suppliers.filter(s=>s.id===supplierId||!hidden(s.name));
-    const entryLocations=(await commerce.locations(database,req.ctx.workspaceId)).filter(l=>l.id===submitted?.destinationLocationId||!hidden(l.name));
+    const entryLocations=await commerce.locations(database,req.ctx.workspaceId);
     return res.status(status).page('buy/order-new',{title:'New purchase order',nav:'purchasing',supplierQuery,supplierPage,supplierHasMore,supplierTotal,suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems:buy.items,buy:{...buy,leadDays},locations:entryLocations,orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today,
       permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }

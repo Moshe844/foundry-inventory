@@ -14,11 +14,6 @@
   const quotation=Boolean(locals.quotation),back=quotation?{href:'/quotes',label:'Quotes'}:editOrder?{href:'/orders/'+editOrder.id,label:editOrder.order_number||'Order'}:{href:'/orders',label:'Orders'};
   const editingOpen=Boolean(editOrder&&editOrder.status&&editOrder.status!=='DRAFT');
   const heading=quotation?'New quote':editingOpen?'Edit order '+(editOrder.order_number||''):editOrder?'Edit draft order':'New order';
-  // The Hendels demo inventory carries records left by automated sweeps; they
-  // stay in the books but are kept out of its pickers. Chosen records always show.
-  const demo=/hendel/i.test((locals.workspace&&workspace.name)||''),sweep=name=>demo&&(/^\s*(sweep|r18|rt-|qa)\b/i.test(String(name||''))||/<\/?[a-z][^>]*>/i.test(String(name||'')));
-  customers=customers.filter(c=>c.id===form.customerId||!sweep(c.name));locations=locations.filter(l=>l.id===form.fulfillmentLocationId||!sweep(l.name));
-  catalogue=catalogue.filter(s=>ids.includes(s.id)||!sweep(s.item_name||s.display_name));
 %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
 <div class="ox" data-ox-page="order-entry">
