@@ -2,6 +2,23 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 test('movement sums preserve local dates while counts, averages and quantity filters retain the exact events',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,inventory=require('../../src/domain/postgres-inventory-engine'),reports=require('../../src/reports/postgres-service'),registry=require('../../src/reports/postgres-registry'),actor={role:'owner'},at='2026-01-01T23:59:59.999Z';
+ await t.test('indexed movement parser matches its predecessor across session zones, date styles and invalid ISO inputs',async()=>{
+  const prior=require('node:fs').readFileSync(require('node:path').join(__dirname,'../../src/db/postgres-migrations/198-indexed-movement-report-time.sql'),'utf8').split('CREATE INDEX')[0].replace('CREATE FUNCTION stockchief_movement_instant','CREATE FUNCTION pg_temp.stockchief_movement_instant_prior');
+  const values=[null,'','yesterday','2026-02-30','0000-01-01','2026-03-08T00:00:00+25:00','2026-11-01T24:01:00Z','2026-01-01T23:59:60Z'];
+  for(const day of ['0001-01-01','1900-01-01','2000-02-29','2026-03-08','2026-11-01','9999-12-31']){
+   values.push(day);for(const time of ['T00:00','t01:30:00',' 23:59:59.999999','T24:00:00'])for(const offset of ['','Z','z','+05:45','-12','+1559','+16:00'])values.push(day+time+offset);
+  }
+  await db.withSessionLock('movement-parser-equivalence',async c=>{
+   await c.query(prior);
+   for(const timeZone of ['UTC','America/New_York','Pacific/Chatham'])for(const dateStyle of ['ISO, YMD','SQL, DMY','German, DMY'])await c.transaction(async tx=>{
+    await tx.query("SELECT set_config('TimeZone',$1,true),set_config('DateStyle',$2,true)",[timeZone,dateStyle]);
+    const mismatches=(await tx.query(`SELECT value FROM unnest($1::text[]) value WHERE stockchief_movement_instant(value) IS DISTINCT FROM pg_temp.stockchief_movement_instant_prior(value)`,[values])).rows;
+    assert.deepEqual(mismatches,[],timeZone+' '+dateStyle);
+   },{readOnly:true,isolation:'READ COMMITTED'});
+   await c.query('DROP FUNCTION pg_temp.stockchief_movement_instant_prior(text)');
+  });
+  const fn=(await db.query("SELECT proconfig,proparallel FROM pg_proc WHERE oid='stockchief_movement_instant(text)'::regprocedure")).rows[0];assert.equal(fn.proconfig,null);assert.equal(fn.proparallel,'s');
+ });
  await t.test('absolute ISO dates parse consistently while ambiguous and invalid dates are reviewable',async()=>{
   const values=['2026-03-08T01:59:59.999-05:00','2026-03-08','1900-01-01T23:40:28.001Z','2026-02-30','2026-03-08T00:00:00+25:00','yesterday','not-a-date'];
   const rows=(await db.query('SELECT stockchief_movement_instant(value) instant FROM unnest($1::text[]) WITH ORDINALITY AS t(value,n) ORDER BY n',[values])).rows;

@@ -32,3 +32,19 @@ test('composed movement reads retain date parameters belonging to their own metr
 test('impossible movement filter dates fail clearly before reaching PostgreSQL',()=>{
  for(const value of ['2026-02-30','2026-13-01','0000-01-01'])assert.throws(()=>reports.queryFor(reports.normalize({dataset:'movements',summary:true,aggregate:'count',filters:[{field:'occurred_on',operator:'equals',value}]},{role:'owner'}),'workspace-one'),error=>error.code==='validation_error'&&/real calendar date/.test(error.message));
 });
+test('a known business clock binds the movement time zone without changing date or composed metric parameters',()=>{
+ const actor={role:'owner'},dateContext={timeZone:'America/New_York',calendarDate:'2026-11-01'},filters=[{field:'occurred_on',operator:'equals',value:'2026-11-01'}];
+ const q=reports.queryFor(reports.normalize({dataset:'movements',groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters},actor),'workspace-one',{dateContext,limit:5});
+ assert.deepEqual(q.values,['workspace-one','2026-11-01','America/New_York',5,0]);
+ assert.match(q.sql,/\$2::text::date::timestamp AT TIME ZONE \$3::text/);
+ assert.match(q.sql,/to_char\(stockchief_movement_instant\(m\.occurred_at\) AT TIME ZONE \$3::text/);
+ assert.doesNotMatch(q.sql,/FROM workspaces/);
+ const composed=require('../../src/reports/postgres-composed'),spec=composed.normalize({dataset:'composed',dimension:'sku',metrics:[
+  {alias:'moved',dataset:'movements',aggregate:'sum',measure:'quantity_delta',filters},
+  {alias:'stock',dataset:'stock',aggregate:'sum',measure:'on_hand',filters:[{field:'location',operator:'equals',value:'Main'}]},
+  {alias:'later',dataset:'movements',aggregate:'sum',measure:'quantity_delta',filters:[{field:'occurred_on',operator:'equals',value:'2026-11-02'}]}
+ ],chart:'table'},actor),combined=composed.queryFor(spec,'workspace-one',{dateContext});
+ assert.deepEqual(combined.values.slice(0,7),['workspace-one','2026-11-01','America/New_York','Main','2026-11-02','America/New_York',201]);
+ assert.match(combined.sql,/stockchief_movement_instant\(m\.occurred_at\)>=\(\$5::text::date::timestamp AT TIME ZONE \$6::text/);
+ assert.match(combined.sql,/"location"=\$4/);
+});

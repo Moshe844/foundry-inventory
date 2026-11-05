@@ -12,7 +12,11 @@ const additiveSource=`WITH movement_instants AS MATERIALIZED (
 ) SELECT m.quantity_delta,to_char(stockchief_movement_instant(m.occurred_at) AT TIME ZONE ${zone},'YYYY-MM-DD') AS occurred_on
  FROM movement_instants m`;
 function applied(filter){return filter.field==='occurred_on'&&['after','at_least','before','at_most','equals','greater_than','less_than','is_null'].includes(filter.operator);}
-function bound(source,config,{parameterBase=1}={}){
+function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
+ // The clock was already read for this report. Binding its zone lets PostgreSQL
+ // estimate the actual indexed date range instead of an unknown InitPlan value.
+ const reportZone=dateContext?.timeZone&&values?`$${values.push(dateContext.timeZone)}::text`:zone;
+ if(reportZone!==zone)source=source.replaceAll(zone,reportZone);
  let parameter=parameterBase;const predicates=[];
  for(const filter of config.filters){
   if(!['is_null','is_empty','not_empty'].includes(filter.operator))parameter++;
@@ -22,9 +26,9 @@ function bound(source,config,{parameterBase=1}={}){
    if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-')||!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==value)
     throw new(require('../domain/errors').ValidationError)('Choose a real calendar date for movement records.');
   }
-  const start=`($${parameter}::text::date::timestamp AT TIME ZONE ${zone})`;
+  const start=`($${parameter}::text::date::timestamp AT TIME ZONE ${reportZone})`;
   // Add a calendar day before converting to UTC: DST days are not always 24h.
-  const end=`(($${parameter}::text::date+1)::timestamp AT TIME ZONE ${zone})`;
+  const end=`(($${parameter}::text::date+1)::timestamp AT TIME ZONE ${reportZone})`;
   if(['after','at_least','equals'].includes(filter.operator))predicates.push(`${instant}>=${start}`);
   if(['before','at_most','equals'].includes(filter.operator))predicates.push(`${instant}<${end}`);
   if(filter.operator==='greater_than')predicates.push(`${instant}>=${end}`);
