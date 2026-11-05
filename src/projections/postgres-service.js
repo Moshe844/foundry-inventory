@@ -212,15 +212,15 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
   const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
     database.query(`WITH stock_by_sku AS MATERIALIZED(${require('./postgres-sku-stock').source()}),sku_stats AS (
       SELECT count(*) FILTER(WHERE s.is_active=1) AS sku_count,
-        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count
+        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count,
+        coalesce(sum(b.quantity) FILTER(WHERE i.quantity_precision=0),0)::numeric AS units_on_hand
       FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
       LEFT JOIN stock_by_sku b ON b.sku_id=s.id WHERE s.workspace_id=$1
     ) SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       sku_stats.sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
-      (SELECT coalesce(sum(b.on_hand),0)::numeric FROM item_location_balances b JOIN items i ON i.workspace_id=b.workspace_id AND i.id=b.item_id
-        WHERE b.workspace_id=$1 AND i.quantity_precision=0) AS units_on_hand,
+      sku_stats.units_on_hand,
       EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) AS has_measured_stock,
       sku_stats.zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
