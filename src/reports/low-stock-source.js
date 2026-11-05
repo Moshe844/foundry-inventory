@@ -21,12 +21,17 @@ function source({scopeItems=false,skuIdsOnly=false}={}){
  WHERE b.workspace_id=$1 AND b.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1)) ${stockScope}
  AND EXISTS(SELECT 1 FROM eligible_policies WHERE location_id IS NULL)
  ),stock_totals AS MATERIALIZED(${totals}),
+ local_stock AS MATERIALIZED(
+ SELECT stock.sku_id,stock.location_id,stock.on_hand
+ FROM(SELECT location_id,array_agg(sku_id ORDER BY sku_id) AS sku_ids FROM eligible_policies
+  WHERE location_id IS NOT NULL GROUP BY location_id) sites
+ CROSS JOIN LATERAL(SELECT b.sku_id,b.location_id,b.on_hand FROM balances b
+  WHERE b.workspace_id=$1 AND b.location_id=sites.location_id AND b.sku_id=ANY(sites.sku_ids) OFFSET 0) stock),
  low_positions AS MATERIALIZED(
  SELECT p.workspace_id,p.sku_id,p.location_id,p.reorder_point,p.target_stock,
  coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)::numeric AS on_hand
  FROM eligible_policies p
- LEFT JOIN LATERAL(SELECT b.on_hand FROM balances b WHERE b.workspace_id=p.workspace_id
- AND p.location_id IS NOT NULL AND b.sku_id=p.sku_id AND b.location_id=p.location_id OFFSET 0) stock ON true
+ LEFT JOIN local_stock stock ON stock.sku_id=p.sku_id AND stock.location_id=p.location_id
  LEFT JOIN stock_totals total ON total.sku_id=p.sku_id
  WHERE coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)<=p.reorder_point)
  ${skuIdsOnly?'SELECT DISTINCT sku_id FROM low_positions':`SELECT i.id AS record_id,s.code AS sku,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product,coalesce(l.name,'Whole business') AS location,
