@@ -53,7 +53,7 @@ test('live browser certifies a novel multi-step goal, memory, and human interact
     const goal=`We have started stocking ${product} under SKU ${sku}. Set it up in our inventory, `+
       `then record the ${quantity} units that physically arrived in ${warehouse} on receiving note ${reference}.`;
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill(goal);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(goal);
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const firstReply=(await page.locator('main').innerText()).slice(-1800);
     const mission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
@@ -93,7 +93,7 @@ test('live browser certifies a novel multi-step goal, memory, and human interact
     assert.equal(summary.approvals,1);
     assert.equal(summary.automatic_steps,1);
     assert.equal(summary.humanInteractionsPerCompleted,2);
-    await page.getByLabel('Ask StockChief').fill(`How many ${product} do we have in ${warehouse}, `+
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(`How many ${product} do we have in ${warehouse}, `+
       `and what receiving note established that amount?`);
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const followUp=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();

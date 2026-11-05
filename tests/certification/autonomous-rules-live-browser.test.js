@@ -39,7 +39,7 @@ test('real browser and model grant, remember, revoke, and reject conflicting sup
       page.getByRole('button',{name:'Create account'}).click()]);
     const workspaceId=(await database.query('SELECT id FROM workspaces WHERE name=$1',[business])).rows[0].id;
     async function ask(message){await page.goto(`${base}/ask`);
-      await page.getByLabel('Ask StockChief').fill(message);
+      await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
       await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
       return (await page.locator('main').innerText()).slice(-1100);}
     const grantReply=await ask('Permit StockChief to send supplier emails automatically for routine purchasing.');

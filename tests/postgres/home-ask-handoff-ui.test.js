@@ -33,15 +33,16 @@ test('Home opens Ask immediately and shows the question there while the backend 
     await page.getByLabel('Work email').fill('handoff-owner@example.test');
     await page.locator('input[name="password"]').fill('handoff-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('handoff-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     await page.goto(base);
-    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('How many products do we have?');
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Which part of the stock should I check first?');
     await page.getByRole('button',{name:'Continue'}).click();
-    await page.waitForURL(`${base}/ask`);
+    await page.waitForURL(/\/ask\?fresh=/);
     assert.equal(new URL(page.url()).pathname,'/ask');
     await page.getByText('Reading your records…').waitFor({timeout:2500});
-    assert.match(await page.locator('main').innerText(),/How many products do we have\?/);
+    assert.match(await page.locator('main').innerText(),/Which part of the stock should I check first\?/);
     releaseModel();
-    await page.waitForURL(`${base}/ask?latest=1#latest`);
+    await page.waitForURL(/\/ask\?chat=[^#]+#latest$/);
     await page.getByText(/No products have ever been recorded in StockChief; you have 0 units on hand/).waitFor();
     assert.match(await page.locator('main').innerText(),/No products have ever been recorded in StockChief; you have 0 units on hand/);
     assert.equal(await page.locator('.rm-composer__attach').count(),1);
@@ -69,6 +70,7 @@ test('Home Ask follows the server-selected destination for a navigation request'
     await page.getByLabel('Work email').fill('navigation-owner@example.test');
     await page.locator('input[name="password"]').fill('navigation-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('navigation-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     await page.goto(base);
     await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Could you open the supplier directory for me?');
     await page.getByRole('button',{name:'Continue'}).click();

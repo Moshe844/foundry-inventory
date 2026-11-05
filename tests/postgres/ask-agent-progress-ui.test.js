@@ -15,7 +15,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  await db.query("UPDATE stockchief_runtime.codex_pilots SET stopped=false,approval_reference='OFFLINE UI ONLY',ceiling_micro_usd=1000000,period_ends_at=now()+interval '1 hour' WHERE workspace_id=$1",[ctx.workspaceId]);
  const store=require('../../src/assistant/postgres-goal-store');
  const first=await store.create(db,ctx,'Investigate the first request.'),second=await store.create(db,ctx,'Investigate the next request.');
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=ANY($1::text[])`,[[first.id,second.id]]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||jsonb_build_object('runtime','codex-staging','chatId',$2::text) WHERE id=ANY($1::text[])`,[[first.id,second.id],first.id]);
  await store.cancel(db,ctx,first.id);
  await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{runStartedAt}',to_jsonb(now()-interval '2 minutes')) WHERE id=$1",[second.id]);
  for(let sequence=1;sequence<=12;sequence++)await db.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail) VALUES($1,$2,$3,'agent_activity',$4::jsonb)`,[randomUUID(),second.id,sequence,JSON.stringify({kind:sequence%2?'agent_tool_started':'agent_tool_completed',tool:'environment_browser'})]);
@@ -25,7 +25,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  const agent=request.agent(app),login=await agent.get('/login');const signed=await agent.post('/login').type('form').send({_csrf:csrf(login.text),email,password});
  const cookie=signed.headers['set-cookie'].find(value=>value.startsWith('foundry.sid='));
  await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:`http://127.0.0.1:${server.address().port}`}]);
- await page.goto(`http://127.0.0.1:${server.address().port}/ask#latest`);
+ await page.goto(`http://127.0.0.1:${server.address().port}/ask?chat=${encodeURIComponent(first.id)}#latest`);
  assert.equal(await page.locator('script[src^="/adaptive-goal.js?v="]').count(),1,'Progress uses the release version so a cached old script cannot drive the new UI');
  assert.deepEqual((await page.locator('.rm-turn--you .rm-turn__said').allTextContents()).map(s=>s.trim()),[first.original_request,second.original_request]);
  const panel=page.locator(`[data-adaptive-goal="${second.id}"]`);
@@ -54,7 +54,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await panel.getAttribute('data-active'),'false');
  assert.equal(await panel.getByRole('button',{name:'Stop',exact:true}).isVisible(),false);
  assert.equal(await panel.locator('[data-goal-hint]').innerText(),'');
- assert.match(await panel.locator('[data-goal-answer]').innerText(),/failed before any business change/);
+ assert.match(await panel.locator('[data-goal-answer]').innerText(),/could not confirm that the requested result was saved/);
  assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),true,'Recoverable failures keep their existing continuation');
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='' WHERE id=$1",[second.id]);await page.reload();
  await db.query("UPDATE stockchief_runtime.codex_pilots SET period_ends_at=now()-interval '1 minute' WHERE workspace_id=$1",[ctx.workspaceId]);

@@ -33,15 +33,16 @@ test('Ask resolves the only stocked SKU and prepares unpriced or priced purchase
     const agent=request.agent(app);const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Stock Owner',
       businessName:'Stock Reference Test',email:'stock-reference@example.test',password:'stock-reference-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Stock Reference Test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     const ask=async(message)=>{
       const page=await agent.get('/ask');
       assert.equal(page.status,200,`Ask page redirect: ${page.headers.location}`);
-      const sent=await agent.post('/ask').set('Accept','application/json').type('form').send({_csrf:csrf(page.text),message});
+      const sent=await agent.post('/ask').type('form').send({_csrf:csrf(page.text),message});
       assert.equal(sent.status,303,`Ask response: ${JSON.stringify(sent.body)}; csrf=${csrf(page.text)}`);
-      if(sent.headers.location!=='/ask#latest')assert.fail(`Ask response ${sent.status}: ${JSON.stringify(sent.body)}`);
+      if(!/^\/ask\?chat=[^#]+#latest$/.test(sent.headers.location))assert.fail(`Ask response ${sent.status}: ${JSON.stringify(sent.body)}`);
       const latest=(await database.query(`SELECT * FROM stockchief_runtime.assistant_interactions
         WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
       return {latest,html:(await agent.get('/ask')).text};

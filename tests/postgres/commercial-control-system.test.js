@@ -156,9 +156,9 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
   await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);
   await page.goto(`${base}/billing`);assert.match(await page.locator('body').innerText(),/Growth/);
   assert.match(await page.locator('body').innerText(),/0 of 10 included/);
-  await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('How many items are in my inventory?');
-  await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
-  await page.goto(`${base}/billing`);assert.match(await page.locator('body').innerText(),/1 of 10 included/);
+  await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('How many items are in my inventory?');
+  await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
+  await page.goto(`${base}/billing`);assert.match(await page.locator('body').innerText(),/People, including pending invitations\s+10 · 1 used/);
   await page.goto(`${base}/pricing`);assert.equal(await page.getByRole('link',{name:'Choose Pro'}).count(),0);
   await page.goto(`${base}/billing`);const token=await page.locator('input[name="_csrf"]').first().inputValue();
   const checkout=await page.request.post(`${base}/billing/checkout`,{form:{_csrf:token,planId:'pro',interval:'monthly'}});

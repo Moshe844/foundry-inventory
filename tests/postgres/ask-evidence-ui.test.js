@@ -63,6 +63,7 @@ test('Ask routes broad questions through supported evidence and general knowledg
     const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'New Owner',
       businessName:'New Business',email:'evidence-owner@example.test',password:'evidence-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='New Business'`)).rows[0];
     const customer=await commerce.createCustomer(database,{workspaceId:owner.workspace_id,actorId:owner.actor_id},
@@ -99,5 +100,5 @@ test('Ask routes broad questions through supported evidence and general knowledg
     const followup=await ask('What about last month?');
     assert.match(followup,/Two customer orders were recorded last month/);
     const reorder=await ask('What should I reorder?');
-    assert.match(reorder,/has not run its first business check/);
+    assert.match(reorder,/There are no recorded stock positions to rank/);
   });

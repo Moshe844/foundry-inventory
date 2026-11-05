@@ -62,6 +62,8 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     const base=`http://127.0.0.1:${server.address().port}`;const page=await first.newPage();const other=await second.newPage();
     await register(page,base,'Ask Mail One','ask-mail-one@example.test');
     await register(other,base,'Ask Mail Two','ask-mail-two@example.test');
+
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identities=(await database.query(`SELECT w.name,w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id AND u.role='owner' WHERE w.name IN ('Ask Mail One','Ask Mail Two')`)).rows;
     const one=identities.find((row)=>row.name==='Ask Mail One');const two=identities.find((row)=>row.name==='Ask Mail Two');
@@ -70,8 +72,8 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     await commerce.createSupplier(database,{workspaceId:two.workspace_id,actorId:two.actor_id},
       {name:'Solomon Supply',email:'wrong-tenant@supplier.example'});
 
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('Email Solomon Supply');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Email Solomon Supply');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/What would you like the email to Solomon Supply to say/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1`,[one.workspace_id])).rows[0].count,'0');
@@ -85,8 +87,8 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,one.actor_id,at]);
     await database.transaction((client)=>credentials.put(client,one.workspace_id,connectorId,'provider',{accessToken:'ask-mail-token'}));
 
-    await page.getByLabel('Ask StockChief').fill('Please email Solomon Supply that we received the order and will confirm Friday.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Please email Solomon Supply that we received the order and will confirm Friday.');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const askText=await page.locator('main').innerText();assert.match(askText,/Email Solomon Supply at solomon@supplier\.example from Business Gmail/);
     assert.match(askText,/Needs your approval/);assert.equal(delivered.length,0);
     const proposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
@@ -97,7 +99,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     assert.match(review,/Order received/);assert.match(review,/Approve and send/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM supplier_communications WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Approve and send'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve and send'}).click()]);
     assert.equal(delivered.length,0);
     let message=(await database.query(`SELECT * FROM supplier_communications WHERE workspace_id=$1`,[one.workspace_id])).rows[0];
     assert.equal(message.status,'QUEUED');assert.equal(message.recipient,'solomon@supplier.example');
@@ -118,8 +120,8 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       [one.workspace_id])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM supplier_communications WHERE workspace_id=$1`,
       [two.workspace_id])).rows[0].count,'0');
-    await page.getByLabel('Ask StockChief').fill('Email New Supplier that we received the order and will confirm Friday.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Email New Supplier that we received the order and will confirm Friday.');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Add the contact or send this email once/);
     if(process.env.STOCKCHIEF_UX_SHOTS)await page.screenshot({path:require('path').join(require('os').tmpdir(),
       'stockchief-ask-email-choice.png'),fullPage:true});
@@ -127,7 +129,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       WHERE workspace_id=$1 AND status='PENDING'`,[one.workspace_id])).rows[0].count,'0');
     await page.getByLabel('Email address').fill('new-supplier@example.test');
     await page.getByLabel('Send once without adding a contact').check();
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Prepare the email'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Prepare the email'}).click()]);
     assert.match(await page.locator('main').innerText(),/Email New Supplier at new-supplier@example\.test/);
     if(process.env.STOCKCHIEF_UX_SHOTS)await page.screenshot({path:require('path').join(require('os').tmpdir(),
       'stockchief-ask-email-preview.png'),fullPage:true});
@@ -136,7 +138,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     assert.equal(oneOff.status,'PENDING');
     assert.equal(oneOff.payload.recipientKind,'address');
     assert.equal(oneOff.payload.recipientEmail,'new-supplier@example.test');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Approve and send'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve and send'}).click()]);
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'ask-one-off-mail-worker'});
     const sentOneOff=(await database.query(`SELECT * FROM customer_communications WHERE workspace_id=$1
       AND recipient='new-supplier@example.test'`,[one.workspace_id])).rows[0];
@@ -153,11 +155,11 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     assert.equal(unrelatedThread.setAside,true,'a matching address alone is not permission to capture unrelated mail');
 
     await commerce.createSupplier(database,{workspaceId:one.workspace_id,actorId:one.actor_id},{name:'No Address Supply'});
-    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('Email No Address Supply that we received the order and will confirm Friday.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Email No Address Supply that we received the order and will confirm Friday.');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/no email address is recorded/i);
     await page.getByLabel('Email address').fill('no-address@supplier.example');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Prepare the email'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Prepare the email'}).click()]);
     let latest=(await database.query(`SELECT id,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0];
     assert.equal(latest.payload.saveEmailToContact,true);
@@ -165,11 +167,11 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       [one.workspace_id])).rows[0].email,null,'contact changes wait for approval');
     await page.getByText('Edit this draft').click();
     await page.locator('.rm-email-preview__edit textarea[name="body"]').fill('Hello,\n\nWe received the order and will confirm Friday.\n\nRegards, StockChief');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Save draft'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Save draft'}).click()]);
     latest=(await database.query(`SELECT id,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0];
     assert.match(latest.payload.body,/Regards, StockChief/);
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Approve and send'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve and send'}).click()]);
     assert.equal((await database.query(`SELECT email FROM suppliers WHERE workspace_id=$1 AND name='No Address Supply'`,
       [one.workspace_id])).rows[0].email,'no-address@supplier.example');
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'ask-known-missing-mail-worker'});
@@ -179,25 +181,25 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       ['customer','New Customer','added-customer@example.test'],
     ]){
       await page.goto(`${base}/ask`);
-      await page.getByLabel('Ask StockChief').fill(`Email ${name} that we received the order and will confirm Friday.`);
-      await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+      await page.getByRole('textbox',{name:'Ask StockChief'}).fill(`Email ${name} that we received the order and will confirm Friday.`);
+      await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
       await page.getByLabel('Email address').fill(address);
       await page.getByLabel(`Add ${name} as a ${kind}`).check();
-      await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Prepare the email'}).click()]);
+      await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Prepare the email'}).click()]);
       const prepared=(await database.query(`SELECT id,payload FROM stockchief_runtime.assistant_action_proposals
         WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0];
       assert.equal(prepared.payload.addContactKind,kind);
       const table=kind==='supplier'?'suppliers':'customers';
       assert.equal((await database.query(`SELECT COUNT(*) AS count FROM ${table} WHERE workspace_id=$1 AND name=$2`,
         [one.workspace_id,name])).rows[0].count,'0','contact is not created before approval');
-      await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Approve and send'}).click()]);
+      await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve and send'}).click()]);
       assert.equal((await database.query(`SELECT email FROM ${table} WHERE workspace_id=$1 AND name=$2`,
         [one.workspace_id,name])).rows[0].email,address);
       await jobs.processOne(database,runtimeHandlers.create(providers),{owner:`ask-added-${kind}-mail-worker`});
     }
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill('Email Solomon Supply and say we recieved seven gloves.');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Email Solomon Supply and say we recieved seven gloves.');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const unsafeDraft=(await database.query(`SELECT payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0].payload;
     assert.equal(unsafeDraft.draftPolished,false,'invented shipment facts must reject the model rewrite');

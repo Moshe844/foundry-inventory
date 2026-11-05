@@ -21,14 +21,14 @@ function step(capability,args={}){return {capability,arguments:Object.entries(ar
 async function ask(page,base,database,workspaceId,plans,message,contract){
   assert.ok(plans.has(message));
   await page.goto(`${base}/ask`);
-  await page.getByLabel('Ask StockChief').fill(message);
+  await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
   const proposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId])).rows[0];
   assert.equal(proposal?.action_type,contract,`Missing ${contract}: ${(await page.locator('main').innerText()).slice(0,900)}`);
   assert.equal(proposal.status,'PENDING');
   await page.goto(`${base}/actions/${proposal.id}`);
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
   const result=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=$2`,[workspaceId,proposal.id])).rows[0];
   assert.equal(result.status,'EXECUTED',`${contract}: ${(await page.locator('body').innerText()).slice(0,1100)}`);
@@ -71,6 +71,9 @@ test('real Ask browser approves supplier return, warehouse scans and bank eviden
     await other.locator('input[name="password"]').fill('ask-isolated-password');if(await other.locator('input[name="confirmPassword"]').count())await other.locator('input[name="confirmPassword"]').fill('ask-isolated-password');
     await Promise.all([other.waitForURL(`${base}/onboarding`),
       other.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
+    // Warehouse waves, bins and scans need a plan that includes them.
+    await database.query("UPDATE account_subscriptions SET plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='growth' ORDER BY version_number DESC LIMIT 1)");
     const otherWorkspace=(await database.query(`SELECT w.id FROM workspaces w JOIN users u ON u.workspace_id=w.id
       JOIN accounts a ON a.id=u.account_id WHERE a.email='ask-isolated@example.test'`)).rows[0].id;
     const place=await locations.createLocation(database,ctx,{name:'Pick Warehouse',kind:'warehouse',barcode:'PICK-BIN'});
@@ -100,7 +103,7 @@ test('real Ask browser approves supplier return, warehouse scans and bank eviden
     assert.equal((await database.query('SELECT status FROM supplier_returns WHERE id=$1',[returnId])).rows[0].status,'REQUESTED');
     const crossTenant=`Authorize supplier return ${returnId} from the other inventory`;
     plans.set(crossTenant,step('supplier_return.authorize',{recordReference:returnId}));
-    await other.goto(`${base}/ask`);await other.getByLabel('Ask StockChief').fill(crossTenant);
+    await other.goto(`${base}/ask`);await other.getByRole('textbox',{name:'Ask StockChief'}).fill(crossTenant);
     await Promise.all([other.waitForNavigation(),other.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await other.locator('main').innerText(),/could not find that supplier return/i);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM stockchief_runtime.assistant_action_proposals

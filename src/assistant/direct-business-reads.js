@@ -13,6 +13,8 @@ function profitPeriod(text){for(const [pattern,period] of [[/\byesterday\b/i,'ye
  return /\b(?:last|past|since|between|from|before|after|during|in|for|week|month|year|quarter|q[1-4]|\d{4})\b/i.test(text)?null:'this_month';}
 // Who owes whom, right now. Asking about a period or a reason is a different question and stays with the planner.
 function balanceQuestion(text){
+ // A question about both sides needs both answers, and this read covers one list at a time.
+ if(/\b(?:bills?|payables?|ap|suppliers?|vendors?)\b/i.test(text)&&/\b(?:invoices?|receivables?|ar|customers?)\b/i.test(text))return null;
  if(/\b(?:why|compared?|versus|vs|trend|last|since|before|after|between|during|history|paid|by\s+(?:month|week|year|quarter|product|item))\b/i.test(text))return null;
  const late=/\b(?:late|overdue|past\s+due)\b/i.test(text);let m;
  if((m=/^how\s+much\s+(?:does|do|did)\s+(.+?)\s+owes?\s+(?:me|us)(?:\s+money)?$/i.exec(text)))return {kind:'balances',side:'invoices',party:clean(m[1]),late};
@@ -39,7 +41,7 @@ async function balances(db,ctx,query){
 }
 function classify(message){const text=clean(message).replace(/^(?:please|can you|could you|would you)\s+/i,'').replace(/,?\s+and\s+how\s+much(?:\s+(?:each|in\s+total|(?:do|does)\s+(?:they|each(?:\s+one)?)\s+owes?(?:\s+(?:me|us))?))?$/i,'');if(!text||text.length>500||/[;\n]|\b(?:and then|after that|also|instead of)\b/i.test(text)||text.replace(/^and\s+/i,'').split(/\band\b/i).slice(1).some(standalone))return null;
  const owed=balanceQuestion(text);if(owed)return owed;
- if(/^(?:how many|(?:what(?:'s| is)\s+)?(?:the\s+)?(?:total\s+)?(?:number|count) of)\s+(?:(?:active|total|catalogue|catalog)\s+)*(?:products?|items?|skus?|variants?)(?:\s+(?:are there|do (?:i|we) have|in total|(?:are\s+)?in (?:(?:my|our|the|this)\s+)?(?:inventory|catalogue|catalog|business)(?:\s+in total)?))?$/i.test(text))return {kind:'summary'};
+ if(/^(?:how many|(?:what(?:'s| is)\s+)?(?:the\s+)?(?:total\s+)?(?:number|count) of)\s+(?:(?:active|total|catalogue|catalog)\s+)*(?:products?|items?|skus?|variants?)(?:\s+(?:are there|do (?:i|we)(?:\s+currently)? have|in total|(?:are\s+)?(?:currently\s+)?in (?:(?:my|our|the|this)\s+)?(?:inventory|catalogue|catalog|business)(?:\s+in total)?))?(?:\s+(?:currently|right now|now|today|at the moment))?$/i.test(text))return {kind:'summary'};
  if(/^(?:(?:what(?:'s| is)|show(?: me)?|calculate|how much is)\s+)?(?:(?:my|our|the|total|current)\s+)*(?:inventory|stock)(?:\s+(?:book|total))?\s+(?:value|worth)(?:\s+(?:in total|today))?$/i.test(text)||/^how much (?:is|are) (?:my|our|the) (?:inventory|stock) worth$/i.test(text))return {kind:'valuation'};
  if(/^(?:draft|prepare|create)\s+(?:a\s+)?(?:po|purchase order)\s+for\s+(?:the\s+)?lowest(?:[- ]stock)?\s+(?:item|product)(?:\s+in\s+(?:my|our|the)\s+inventory)?$/i.test(text))return {kind:'lowest_po'};
  let m;if((m=/^(?:how many|what(?:'s| is) the (?:quantity|stock count) of)\s+(?:units\s+(?:of\s+)?)?(.+?)(?:\s+(?:are|do (?:we|i) have)(?:\s+(?:on hand|in stock))?|\s+(?:on hand|in stock))?$/i.exec(text)))return {kind:'stock',search:clean(m[1]),explicitStock:/\b(?:units?|stock|inventory|quantity)\b/i.test(text)};

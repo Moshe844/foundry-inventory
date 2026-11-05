@@ -6,8 +6,10 @@ const date=value=>value instanceof Date?value.toISOString().slice(0,10):normaliz
 async function purchase(client,ctx,result,payload){
  if(!result?.purchaseOrderId||!payload?.lines?.length)return false;
  const order=(await client.query('SELECT * FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,result.purchaseOrderId])).rows[0];
+ // With no date approved, the order may only carry one worked out from the supplier's lead time.
+ const expectedDateMatches=payload.expectedDate?date(order?.expected_date)===date(payload.expectedDate):order?.expected_date_source!=='manual';
  if(!order||order.status!=='DRAFT'||order.supplier_id!==payload.supplierId||normalized(order.reference)!==normalized(payload.reference)
-  ||order.destination_location_id!==(payload.destinationLocationId||null)||date(order.expected_date)!==date(payload.expectedDate)
+  ||order.destination_location_id!==(payload.destinationLocationId||null)||!expectedDateMatches
   ||payload.currency&&order.currency!==payload.currency||payload.poNumber&&order.po_number!==payload.poNumber)return false;
  const lines=(await client.query(`SELECT l.*,si.units_per_purchase_unit AS supplier_pack_size,si.last_unit_cost AS supplier_unit_cost
   FROM purchase_order_lines l LEFT JOIN supplier_items si ON si.workspace_id=l.workspace_id AND si.id=l.supplier_item_id

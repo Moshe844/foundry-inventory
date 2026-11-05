@@ -46,8 +46,8 @@ async function register(page,base,business,email){
 }
 
 async function ask(page,base,message){
-  await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(message);
-  await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+  await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
+  await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
   return page.locator('main').innerText();
 }
 
@@ -64,6 +64,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     const base=`http://127.0.0.1:${server.address().port}`;const page=await first.newPage();const other=await second.newPage();
     await register(page,base,'Order Business One','orders-one@example.test');
     await register(other,base,'Order Business Two','orders-two@example.test');
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identities=(await database.query(`SELECT w.name,w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id AND u.role='owner' WHERE w.name IN ('Order Business One','Order Business Two')`)).rows;
     const one=identities.find((row)=>row.name==='Order Business One');const two=identities.find((row)=>row.name==='Order Business Two');
@@ -73,7 +74,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     await page.getByLabel('Type').selectOption('warehouse');
     await Promise.all([page.waitForNavigation(),page.locator('#modal-location').getByRole('button',{name:'Add location'}).click()]);
     await page.goto(`${base}/inventory/new`);await page.locator('#name').fill('Safety Shoe');
-    await page.locator('#baseCode').fill('SHOE');await page.getByLabel(/This item comes in options/).check();
+    await page.locator('#baseCode').fill('SHOE');await page.getByLabel(/This item has multiple options/).check();
     await page.getByLabel('First option name').fill('Size');await page.getByLabel('First option choices').fill('9');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create item'}).click()]);
     const sku=(await database.query(`SELECT s.id,s.code FROM skus s JOIN items i ON i.id=s.item_id
@@ -125,7 +126,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     await page.goto(`${base}/ask`);
 
     text=await ask(page,base,'Record the complete customer order');
-    assert.match(text,/Prepare (?:one )?draft customer order for Builder Co/);assert.match(text,/10 Jobsite Road/);
+    assert.match(text,/Prepare (?:one )?draft (?:customer )?order for Builder Co/);assert.match(text,/10 Jobsite Road/);
     assert.match(text,/Needs your approval/);
     assert.doesNotMatch(text,/999 Wrong Tenant Road/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
@@ -136,8 +137,8 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     const reviewText=await page.locator('main').innerText();
     assert.match(reviewText,/sales_order\.create/);
     assert.doesNotMatch(reviewText,/\[object Object\]/,'the approval must show nested order lines');
-    assert.match(reviewText,/"quantity": 4/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    assert.match(reviewText,/Lines · 1 · Quantity\s+4/);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     const salesOrder=(await database.query(`SELECT so.*,sol.quantity_ordered,sol.unit_price_minor FROM sales_orders so
       JOIN sales_order_lines sol ON sol.sales_order_id=so.id WHERE so.workspace_id=$1`,[one.workspace_id])).rows[0];
     assert.deepEqual({customer:salesOrder.customer_id,method:salesOrder.delivery_method,address:salesOrder.ship_to_address,
@@ -163,7 +164,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     await page.goto(`${base}${proposalHref}`);
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/purchase_order\.create/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     const purchaseOrder=(await database.query(`SELECT po.*,pol.quantity_units,pol.unit_cost FROM purchase_orders po
       JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id WHERE po.workspace_id=$1`,[one.workspace_id])).rows[0];
     assert.deepEqual({supplier:purchaseOrder.supplier_id,location:purchaseOrder.destination_location_id,
@@ -185,7 +186,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     assert.match(text,/Supplier cost is not recorded; the draft cannot be placed until it is priced/);
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
     await page.goto(`${base}${proposalHref}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     const unpriced=(await database.query(`SELECT po.status,pol.unit_cost FROM purchase_orders po
       JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id
       WHERE po.workspace_id=$1 AND po.id<>$2`,[one.workspace_id,purchaseOrder.id])).rows[0];

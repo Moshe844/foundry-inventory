@@ -38,14 +38,14 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     const workspaceId=(await database.query("SELECT id FROM workspaces WHERE name='Meadow Fixtures'")).rows[0].id;
     const supplierName=`Meadow Materials ${10000+crypto.randomInt(80000)}`;
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Ask StockChief').fill('Has this new business ever recorded any inventory products?');
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Has this new business ever recorded any inventory products?');
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const firstAnswer=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
     assert.match(firstAnswer,/no (?:inventory )?products|0 products|(?:never|not) recorded any inventory products/i);
     assert.doesNotMatch(firstAnswer,/productsEver|inventory_summary/i);
     await Promise.all([page.waitForURL(`${base}/ask`),page.getByRole('button',{name:'New conversation'}).click()]);
-    await page.getByLabel('Ask StockChief').fill(`Put ${supplierName} in our supplier contacts. Their email is meadow@example.test.`);
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill(`Put ${supplierName} in our supplier contacts. Their email is meadow@example.test.`);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     const proposal=(await database.query(`SELECT id,status,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='contact.create'`,[workspaceId])).rows[0];
     assert.ok(proposal,'Ask should prepare a supplier proposal in the browser.');
@@ -81,18 +81,18 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     context.diagnostic(`New conversation browser round-trip: ${Date.now()-newConversationStarted} ms`);
     assert.equal(await page.getByText('Put Meadow Materials in our supplier contacts.',{exact:false}).count(),0,
       'A new conversation must not display a previous exchange.');
-    await page.getByLabel('Ask StockChief').fill('How many Meadow Bolts could I promise right now from recorded stock after commitments?');
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('How many Meadow Bolts could I promise right now from recorded stock after commitments?');
     const readStarted=Date.now();
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     context.diagnostic(`Inventory answer browser round-trip: ${Date.now()-readStarted} ms`);
     const answer=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
     assert.match(answer,/8/);
     assert.match(answer,/Meadow Bolt/i);
     assert.doesNotMatch(answer,/positions matched/i);
 
-    await page.getByLabel('Ask StockChief').fill('What can I actually ship from this inventory today, based on the quantities recorded here?');
+    await page.getByRole('textbox',{name:'Ask StockChief'}).fill('What can I actually ship from this inventory today, based on the quantities recorded here?');
     const reportedQuestionStarted=Date.now();
-    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     context.diagnostic(`Reported-question browser round-trip: ${Date.now()-reportedQuestionStarted} ms`);
     const reportedAnswer=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
     assert.match(reportedAnswer,/8/);

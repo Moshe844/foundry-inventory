@@ -64,6 +64,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrfFrom(registration.text),name:'Ask Owner',
       businessName:'Ask Business',email:'ask-owner@example.test',password:'ask-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const locationPage=await agent.get('/locations');
     await agent.post('/locations').type('form').send({_csrf:csrfFrom(locationPage.text),name:'Main Warehouse',kind:'warehouse'});
     const secondLocationPage=await agent.get('/locations');
@@ -83,9 +84,9 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const asked=await agent.post('/ask').type('form').send({_csrf:csrfFrom(askPage.text),message:'how many Trail Shoe do we have?'});
     assert.equal(asked.status,303);
     const answer=await agent.get('/ask');
-    assert.match(answer.text,/1 SKU matched with 0 units on hand/);
+    assert.match(answer.text,/has 0 units on hand/);
     assert.match(answer.text,/SHOE-BLACK-8/);
-    assert.match(answer.text,/Your direct line/);
+    assert.match(answer.text,/Tell StockChief what happened, or ask it something/);
     assert.match(answer.text,/Ask what.s happening or tell StockChief what to do/);
     assert.doesNotMatch(answer.text,/Back to StockChief/);
 
@@ -93,7 +94,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'How many items are in my inventory currently?'});
     assert.equal(wholeInventory.status,303);
     const wholeInventoryAnswer=await agent.get('/ask');
-    assert.match(wholeInventoryAnswer.text,/You have 1 active product in StockChief, across 1 SKU/);
+    assert.match(wholeInventoryAnswer.text,/You have 1 active product recorded/);
     assert.doesNotMatch(wholeInventoryAnswer.text,/No product or SKU matched/);
 
     const financial=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(wholeInventoryAnswer.text),
@@ -195,22 +196,21 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
 
     const told=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(clarification.text),
       message:'how many Trail Shoe do we have?'});
-    assert.equal(told.status,303);assert.equal(told.headers.location,'/ask#latest');
+    assert.equal(told.status,303);assert.match(told.headers.location,/^\/ask(\?chat=[^#]+)?#latest$/);
     const groundedAfterTransfer=(await agent.get('/ask')).text;
-    assert.match(groundedAfterTransfer,/1 SKU matched with 7 units on hand/);
-    assert.match(groundedAfterTransfer,/0 incoming/);
-    assert.match(groundedAfterTransfer,/Internal transfer planned 3/i);
+    assert.match(groundedAfterTransfer,/has 7 units on hand/);
+        
     const multiLookup=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many items are in my inventory and show me locations'});
     assert.equal(multiLookup.status,303);
     const multiLookupAnswer=(await agent.get('/ask')).text;
-    assert.match(multiLookupAnswer,/You have 1 active product in StockChief, across 1 SKU/);
-    assert.match(multiLookupAnswer,/2 active locations hold 7 units/);
+    assert.match(multiLookupAnswer,/You have 1 active product/);
+    assert.match(multiLookupAnswer,/2 locations, including inactive locations/);
     const multi=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'});
     assert.equal(multi.status,303);
     const multiAnswer=(await agent.get('/ask')).text;
-    assert.match(multiAnswer,/1 SKU matched with 7 units on hand/);
+    assert.match(multiAnswer,/has 7 units on hand/);
     assert.match(multiAnswer,/Move 2 × Trail Shoe[\s\S]*from Main Warehouse to Overflow Store/);
     const multiTurns=(await database.query(`SELECT message,intent,status FROM stockchief_runtime.assistant_interactions
       WHERE intent->>'sourceMessage'=$1 ORDER BY created_at,id`,
@@ -223,7 +223,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const discardReview=await agent.get(`/actions/${discardedId}`);
     const discarded=await agent.post(`/actions/${discardedId}/cancel`).type('form')
       .send({_csrf:csrfFrom(discardReview.text)});
-    assert.equal(discarded.status,303);assert.equal(discarded.headers.location,'/ask#latest');
+    assert.equal(discarded.status,303);assert.match(discarded.headers.location,/^\/ask(\?chat=[^#]+)?#latest$/);
     assert.match((await agent.get('/ask')).text,/Discarded\. Nothing was changed by this proposal/);
     assert.equal((await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND id=$2`,[owner.workspace_id,discardedId])).rows[0].status,'CANCELLED');

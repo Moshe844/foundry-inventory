@@ -1,7 +1,7 @@
 'use strict';
 const {NotFoundError,ValidationError}=require('../domain/errors');
 const source=`SELECT id,original_request,created_at,updated_at,coalesce(checkpoint->>'chatId',id) AS chat_id,checkpoint->>'chatId' IS NOT NULL AS grouped FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->'sourceAutomation' IS NULL
- UNION ALL SELECT id,message AS original_request,created_at,created_at AS updated_at,intent->>'chatId' AS chat_id,true AS grouped FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId' IS NOT NULL AND intent->>'parentGoalId' IS NULL AND intent->>'batchId' IS NULL`;
+ UNION ALL SELECT id,message AS original_request,created_at,created_at AS updated_at,intent->>'chatId' AS chat_id,true AS grouped FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId' IS NOT NULL AND intent->>'parentGoalId' IS NULL AND (intent->>'batchId' IS NULL OR intent->>'requestIndex'='1')`;
 const preferences='stockchief_runtime.assistant_chat_preferences';
 const notDeleted=chatId=>`NOT EXISTS(SELECT 1 FROM ${preferences} deleted WHERE deleted.workspace_id=$1 AND deleted.actor_user_id=$2 AND deleted.chat_id=${chatId} AND deleted.deleted_at IS NOT NULL)`;
 async function list(db,ctx,{limit=50,offset=0,q=''}={}){const term=String(q||'').trim().slice(0,200);

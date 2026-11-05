@@ -71,7 +71,7 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     await Promise.all([page.waitForURL(`${base}/orders`),page.getByRole('button',{name:'Continue'}).click()]);
     await page.goto(`${base}/ask`);
     await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('How many Browser Widget do we have?');
-    await Promise.all([page.waitForURL(/\/ask(\?chat=[^#]+)?#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Browser Widget \(BROWSER-1\) has 14 units on hand/);
     assert.match(await page.locator('.ask-table').last().innerText(),/BROWSER-1[\s\S]*Browser Warehouse[\s\S]*14/);
     assert.equal(await page.locator('a[href^="/foundry/navigate?"]').count(),0);

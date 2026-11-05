@@ -61,6 +61,8 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     app.get('/fixture-books-consent',(req,res)=>res.send(`<!doctype html><html><body><main><h1>Fixture Books</h1>
       <a href="${req.query.callback}?code=fixture-code&amp;state=${encodeURIComponent(req.query.state)}">Authorize Fixture Books</a>
       </main></body></html>`));
+    // The app ends with its own not-found page, so this stand-in for the provider has to answer first.
+    app._router.stack.splice(2,0,app._router.stack.pop());
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch({args:['--disable-popup-blocking']});const browserContext=await browser.newContext();
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
@@ -72,13 +74,16 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     await page.getByLabel('Your name').fill('Books Owner');await page.getByLabel('Work email').fill('books-pg@example.test');
     await page.locator('input[name="password"]').fill('books-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('books-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
+    // This walk uses features that only the current Pro plan includes.
+    await database.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='pro' ORDER BY version_number DESC LIMIT 1)");
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='books-pg@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     async function askAndApprove(message,capability,args){
       askPlans.set(message,{capability,args});
       const prior=(await database.query('SELECT id FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1',[ctx.workspaceId])).rows[0]?.id;
-      await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(message);
+      await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
       // Ask now submits asynchronously. Assert its durable proposal rather
       // than requiring the browser to perform an obsolete full navigation.
       await page.getByRole('button',{name:'Continue'}).click();let proposal;
@@ -113,6 +118,7 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     const cashAccount=(await database.query("SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='CASH'",[ctx.workspaceId])).rows[0].id;
     const expenseAccount=(await database.query("SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='OPERATING_EXPENSE'",[ctx.workspaceId])).rows[0].id;
     for(const [accountId,externalId] of [[cashAccount,'ext-cash'],[expenseAccount,'ext-expense']]){
+      await page.locator('details:has(form[action$="/accounting/map-account"])').evaluateAll(sections=>sections.forEach(section=>{section.open=true;}));
       const form=page.locator('form[action$="/accounting/map-account"]');
       await form.locator('[name="accountId"]').selectOption(accountId);
       await form.locator('[name="externalId"]').selectOption(externalId);

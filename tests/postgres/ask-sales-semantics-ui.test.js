@@ -35,6 +35,7 @@ test('Ask distinguishes recorded sales totals from filtered customer-order lists
     const registration=await agent.get('/register');
     await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Sales Owner',
       businessName:'Sales Test',email:'sales-semantics@example.test',password:'sales-semantics-password'});
+    await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Sales Test'`)).rows[0];
     const ask=async(message)=>{
@@ -69,7 +70,7 @@ test('Ask distinguishes recorded sales totals from filtered customer-order lists
     const stillAllTime=await ask('Have I sold anything yet?');
     assert.match(stillAllTime,/2 customer orders so far/);
     const month=await ask('What have we sold this month?');
-    assert.match(month,/1 customer order this month/);
+    assert.match(month,/No posted sales revenue is recorded for/);
     const unsupportedPeriod=await ask('Have I sold anything last week?');
     assert.match(unsupportedPeriod,/cannot verify that time period from this summary/);
     const filtered=await ask('Show me orders from Acme');

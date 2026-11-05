@@ -65,7 +65,7 @@ test('real model and Chromium select new Ask lifecycle contracts and commit veri
       lines:[{skuId:item.skuIds[0],quantity:2,unitPriceMinor:1200}]});
     async function ask(message,expected){
       await page.goto(`${base}/ask`);
-      await page.getByLabel('Ask StockChief').fill(message);
+      await page.getByRole('textbox',{name:'Ask StockChief'}).fill(message);
       await Promise.all([page.waitForNavigation({timeout:90000}),page.getByRole('button',{name:'Continue'}).click()]);
       const latest=(await database.query(`SELECT action_type,id,status FROM stockchief_runtime.assistant_action_proposals
         WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
@@ -73,7 +73,7 @@ test('real model and Chromium select new Ask lifecycle contracts and commit veri
         `Model: ${JSON.stringify(transcript.slice(-4)).slice(0,3000)}`);
       assert.equal(latest.status,'PENDING');
       await page.goto(`${base}/actions/${latest.id}`);
-      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
       const saved=(await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,latest.id])).rows[0];
       assert.equal(saved.status,'EXECUTED',`Approval: ${(await page.locator('body').innerText()).slice(0,1000)}`);
