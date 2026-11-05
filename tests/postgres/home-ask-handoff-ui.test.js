@@ -39,7 +39,7 @@ test('Home opens Ask immediately and shows the question there while the backend 
     await page.getByRole('button',{name:'Continue'}).click();
     await page.waitForURL(/\/ask\?fresh=/);
     assert.equal(new URL(page.url()).pathname,'/ask');
-    await page.getByText('Reading your records…').waitFor({timeout:2500});
+    await page.locator('[data-thinking-text]').waitFor({timeout:2500});
     assert.match(await page.locator('main').innerText(),/Which part of the stock should I check first\?/);
     releaseModel();
     await page.waitForURL(/\/ask\?chat=[^#]+#latest$/);
