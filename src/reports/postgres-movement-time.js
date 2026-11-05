@@ -51,14 +51,18 @@ function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
  // hash table for every distinct timestamp. Each UTC range is calculated once
  // from the local midnight and the following local midnight, including DST.
  // Open-ended, very long and row-level reports retain the general source.
+ const summary=require('../projections/postgres-movement-buckets');
  if(additiveChart&&dateContext?.timeZone&&lower.length&&upper.length&&last-first<=366*86400000&&config.filters.every(f=>applied(f)&&f.operator!=='is_null'))return `
-  WITH movement_days AS (
+  WITH movement_bucket_ready AS MATERIALIZED(${summary.readySql}),movement_days AS (
    SELECT day,day AT TIME ZONE ${reportZone} AS day_start,(day+interval '1 day') AT TIME ZONE ${reportZone} AS day_end
    FROM generate_series(GREATEST(${lower.join(',')})::timestamp,LEAST(${upper.join(',')})::timestamp,interval '1 day') AS days(day)
   ) SELECT m.quantity_delta,to_char(d.day,'YYYY-MM-DD') AS occurred_on FROM movement_days d
-  CROSS JOIN LATERAL(SELECT sum(m.quantity_delta)::numeric AS quantity_delta FROM movements m
-   WHERE m.workspace_id=$1 AND ${instant}>=d.day_start AND ${instant}<d.day_end) m
+  CROSS JOIN LATERAL(SELECT sum(parts.quantity_delta)::numeric AS quantity_delta FROM (${summary.rangeSource('d.day_start','d.day_end')}) parts) m
   WHERE m.quantity_delta IS NOT NULL`;
+ if(source===additiveTotalSource&&dateContext?.timeZone&&lower.length&&upper.length&&config.filters.every(f=>applied(f)&&f.operator!=='is_null')){
+  const start=`(GREATEST(${lower.join(',')})::timestamp AT TIME ZONE ${reportZone})`,end=`((LEAST(${upper.join(',')})+1)::timestamp AT TIME ZONE ${reportZone})`;
+  return `WITH movement_bucket_ready AS MATERIALIZED(${summary.readySql}) ${summary.rangeSource(start,end)}`;
+ }
  const bounds=predicates.length?' AND '+predicates.join(' AND '):'';
  return source.includes(boundsMarker)?source.replace(boundsMarker,bounds):source+bounds;
 }
