@@ -5,14 +5,17 @@ const CHUNK=500;
 async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported}){
  let last=cursor||{key:'',rowNumber:-1,rowId:''};
  for(;;){
+  // Probe the unique source ID before checking scope. Statistics from an
+  // older import must not select a scope index and rescan this whole source
+  // for each row. Both workspace and import remain mandatory join checks.
   const page=(await client.query(`WITH page AS MATERIALIZED(
    SELECT row_id,row_number,coalesce(existing_sku_id,product_key||':'||variant_key) AS execution_key
    FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2
     AND (coalesce(existing_sku_id,product_key||':'||variant_key),row_number,row_id)>($3::text,$4::bigint,$5::text)
    ORDER BY coalesce(existing_sku_id,product_key||':'||variant_key),row_number,row_id LIMIT ${batchSize})
    SELECT p.execution_key,r.id,r.row_number,r.parsed,r.item_id,r.sku_id,r.location_id,r.status
-   FROM page p JOIN LATERAL(SELECT id,row_number,parsed,item_id,sku_id,location_id,status FROM import_rows
-    WHERE workspace_id=$1 AND import_id=$2 AND id=p.row_id OFFSET 0${lock?' FOR UPDATE':''}) r ON true
+   FROM page p JOIN LATERAL(SELECT id,row_number,parsed,item_id,sku_id,location_id,status,workspace_id,import_id FROM import_rows
+    WHERE id=p.row_id OFFSET 0${lock?' FOR UPDATE':''}) r ON r.workspace_id=$1 AND r.import_id=$2
    ORDER BY p.execution_key,p.row_number,p.row_id`,[workspaceId,importId,last.key,last.rowNumber,last.rowId])).rows;
   if(!page.length)break;
   if(page.some(row=>!(includeImported?['VALID','NEEDS_REVIEW','IMPORTED']:['VALID','NEEDS_REVIEW']).includes(row.status)))throw new (require('../domain/errors').ValidationError)('Saved stock import progress does not match its approved source rows. Its recorded batches remain safe.');

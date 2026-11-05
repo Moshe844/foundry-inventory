@@ -12,7 +12,7 @@ test('legacy field updates stay bounded among 50,000 modern source documents und
  for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{
   await c.query('SET LOCAL plan_cache_mode='+mode);let measured=false;
   await facts.saveManyInTransaction({query:async(sql,args)=>{const result=await c.query(sql,args);
-   if(sql.startsWith('SELECT f.id,f.sku_id')){const explained=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+sql,args)).rows[0]['QUERY PLAN'][0];assert(filtered(explained.Plan)<1000,'Legacy lookup visited the modern document population: '+filtered(explained.Plan));measured=true;}
+   if(sql===require('../../src/domain/catalog-legacy-facts-source').source()){const explained=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+sql,args)).rows[0]['QUERY PLAN'][0];assert(filtered(explained.Plan)<1000,'Legacy lookup visited the modern document population: '+filtered(explained.Plan));measured=true;}
    return result;
   }},ctx,[{skuId,locationId:f.location.id,importId:plan.id,rowNumber:1,name:'Legacy note',value:mode},{skuId,locationId:f.location.id,importId:plan.id,rowNumber:1,name:'Source reference',value:'Exact updated receipt'}]);
   assert(measured);assert.equal((await c.query("SELECT value FROM catalog_source_facts WHERE id='legacy-source'")).rows[0].value,mode);
