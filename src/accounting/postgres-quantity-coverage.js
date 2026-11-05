@@ -26,4 +26,11 @@ async function read(db,workspaceId){
  if(!excluded)warnings.push({message:'The saved stock quantity summary needs review. Showing totals recalculated from its stock positions.'});
  return {missingCostUnits:exact.safeNumber(total),quantityWarnings:warnings,quantityTotalsIncomplete:excluded>0,excludedQuantityPositions:excluded};
 }
-module.exports={read};
+async function forItems(db,workspaceId,itemIds){
+ if(!itemIds.length)return [];
+ return(await db.query(`SELECT s.item_id,sum(p.missing_units) AS missing_units
+  FROM inventory_cost_coverage_positions p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
+  WHERE p.workspace_id=$1 AND p.missing_units>0 AND p.physical_units>0 AND s.item_id=ANY($2::text[])
+  GROUP BY s.item_id ORDER BY s.item_id`,[workspaceId,itemIds])).rows;
+}
+module.exports={read,forItems};
