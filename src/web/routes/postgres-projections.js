@@ -141,8 +141,11 @@ function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0
 function createPostgresProjectionsRouter(database){
   const router=express.Router();router.use(require('./postgres-customer-money')(database));
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
-    const [result,available]=await Promise.all([presenters.home(database,req.ctx.workspaceId,req.ctx.actorId),
-      require('../../assistant/postgres-discovery').available(database,req.ctx)]);
+    const seesMoney=permissions.can(req.user,permissions.VIEW_ACCOUNTING);
+    const sales=seesMoney?require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):Promise.resolve(null);
+    const [result,available,homeSales,homeSummary]=await Promise.all([presenters.home(database,req.ctx.workspaceId,req.ctx.actorId),
+      require('../../assistant/postgres-discovery').available(database,req.ctx),sales,
+      sales.then(current=>require('../../projections/postgres-home-summary').read(database,req.ctx.workspaceId,{seesMoney,sales:current}))]);
     const askSuggestions=[];
     const offer=(entry)=>{if(entry&&!askSuggestions.some((current)=>current.name===entry.name))askSuggestions.push(entry);};
     offer(available.find((entry)=>entry.name==='read.custom_report'));
@@ -155,7 +158,6 @@ function createPostgresProjectionsRouter(database){
       if(entry.kind!=='navigation'&&entry.name!=='read.capabilities')offer(entry);
     }
     res.locals.attentionCount=result.brief.needs.length;
-    const seesMoney=permissions.can(req.user,permissions.VIEW_ACCOUNTING),homeSales=seesMoney?await require('../../accounting/posted-sales').thisMonth(database,req.ctx.workspaceId):null,homeSummary=await require('../../projections/postgres-home-summary').read(database,req.ctx.workspaceId,{seesMoney,sales:homeSales});
     return res.page('foundry/brief',{homeSales,homeSummary,title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
       askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:require('../presentation/importance').mostImportantFirst(result.brief.needs.filter(item=>!item.approval)).slice(0,18),homeLevels:require('../presentation/importance').counts(result.brief.needs),
