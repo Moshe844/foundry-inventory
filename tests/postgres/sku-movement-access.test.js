@@ -5,4 +5,5 @@ test('SKU chronology, per-location evidence and cost history remain exact withou
  const receipts=ids.flatMap(skuId=>locations.map(locationId=>({skuId,locationId,quantity:10,idempotencyKey:'history:'+skuId+':'+locationId})));
  for(let start=0;start<receipts.length;start+=1000)await db.transaction(async c=>{const received=await require('../../src/domain/postgres-inventory-engine').receiveManyInTransaction(c,ctx,receipts.slice(start,start+1000));await require('../../src/accounting/postgres-costing').receiveManyInTransaction(c,ctx,received.map(r=>({movementId:r.movementId,unitCostMinor:200,sourceType:'fixture',sourceRecordId:r.movementId})));});
  t.diagnostic(JSON.stringify(await require('../helpers/sku-movement-access-checks').check(db,ctx)));
+ t.diagnostic(JSON.stringify(await require('../helpers/compact-history-index-checks').check(db,ctx)));
 });
