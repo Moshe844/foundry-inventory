@@ -4,7 +4,8 @@ const MAX_QUANTITY=1000000000;
 function date(value,label){
  if(value===null||value===undefined||value==='')return null;
  const text=String(value),stamp=Date.parse(text);
- if(!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(text)||!Number.isFinite(stamp)||new Date(stamp).toISOString().slice(0,10)!==text.slice(0,10))
+ const calendar=Date.parse(text.slice(0,10)+'T00:00:00.000Z');
+ if(!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(text)||!Number.isFinite(stamp)||!Number.isFinite(calendar)||new Date(calendar).toISOString().slice(0,10)!==text.slice(0,10))
   throw new ValidationError(label+' must be a real calendar date.');
  return text;
 }
