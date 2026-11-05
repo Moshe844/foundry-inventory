@@ -2,7 +2,7 @@
 const exact=require('../domain/exact-quantity');
 async function read(db,workspaceId){
  // missing_units is generated as greatest(physical-costed,0). Zero rows do
- // not contribute; the existing (workspace_id,missing_units,...) index can
+ // not contribute; the partial workspace/SKU covering index can
  // read only missing stock instead of summing every fully costed position.
  // PostgreSQL numeric NaN is greater than zero, so damaged rows still reach
  // the existing validation and named-position warning path below.
