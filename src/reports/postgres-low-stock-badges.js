@@ -9,24 +9,10 @@ function skuCondition(){return `EXISTS(SELECT 1 FROM reorder_policies p WHERE p.
 // imports have planner statistics. EXISTS alone can be pulled into a broad join.
 function itemCondition(){return `coalesce((SELECT true FROM skus s WHERE s.workspace_id=i.workspace_id
  AND s.item_id=i.id AND s.is_active=1 AND ${skuCondition()} LIMIT 1),false)`;}
-// Filtering counts the entire catalogue. Aggregate active stock once, rather
-// than performing a stock sum for every variant during both count and paging.
-// Share warehouse eligibility too: a correlated policy subplan inflates cost
-// estimates after ANALYZE and can trigger slow JIT compilation on dense lists.
-function filterSource(){return `WITH active_locations AS MATERIALIZED(
- SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1
- ), positions AS MATERIALIZED(
- SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN active_locations l ON l.id=b.location_id
- WHERE b.workspace_id=$1
- ), policies AS MATERIALIZED(SELECT p.sku_id,p.location_id,p.reorder_point FROM reorder_policies p
- LEFT JOIN active_locations l ON l.id=p.location_id
- WHERE p.workspace_id=$1 AND p.reorder_point IS NOT NULL AND(p.location_id IS NULL OR l.id IS NOT NULL))
- SELECT sku_id FROM(SELECT sku_id,reorder_point,0::numeric on_hand FROM policies WHERE location_id IS NULL
- UNION ALL SELECT sku_id,NULL::numeric,on_hand FROM positions WHERE EXISTS(SELECT 1 FROM policies WHERE location_id IS NULL)) whole_stock
- GROUP BY sku_id HAVING min(reorder_point) IS NOT NULL AND sum(on_hand)<=min(reorder_point)
- UNION SELECT sku_id FROM(SELECT sku_id,location_id,reorder_point,0::numeric on_hand FROM policies WHERE location_id IS NOT NULL
- UNION ALL SELECT sku_id,location_id,NULL::numeric,on_hand FROM positions WHERE EXISTS(SELECT 1 FROM policies WHERE location_id IS NOT NULL)) site_stock
- GROUP BY sku_id,location_id HAVING min(reorder_point) IS NOT NULL AND sum(on_hand)<=min(reorder_point)`;}
+// Filtering needs identities across the catalogue, but never a materialized
+// copy of every bin. Share the report's exact SKU totals plus pending changes;
+// the list callers retain their own active-product and permission predicates.
+function filterSource(){return require('./low-stock-source').source({skuIdsOnly:true});}
 async function forItems(db,workspaceId,itemIds){
  if(!Array.isArray(itemIds)||itemIds.length>200)throw new TypeError('Choose a bounded catalogue page.');
  if(!itemIds.length)return [];
