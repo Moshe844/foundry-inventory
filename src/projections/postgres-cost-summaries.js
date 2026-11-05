@@ -13,7 +13,13 @@ async function value(db,workspaceId){return (await db.query('SELECT coalesce(sum
 async function refreshBatch(db,workspaceId,{beforePublish}={}){
  return db.transaction(async c=>{
   const snapshot=(await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0].snapshot;
-  const ids=(await c.query('SELECT DISTINCT sku_id FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1 ORDER BY sku_id LIMIT 500',[workspaceId])).rows.map(r=>r.sku_id);
+  // Bound each queue read, and take the oldest changes first. Continuous
+  // writes to alphabetically early SKUs must not starve the rest of a catalogue.
+  const ids=(await c.query(`SELECT sku_id FROM(
+   SELECT DISTINCT ON(sku_id) sku_id,change_xid FROM(
+    SELECT sku_id,change_xid FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1
+    ORDER BY change_xid,sku_id LIMIT 4000) oldest
+   ORDER BY sku_id,change_xid) queued ORDER BY change_xid,sku_id LIMIT 500`,[workspaceId])).rows.map(r=>r.sku_id);
   if(!ids.length)return {done:true,refreshed:0,cleared:0};
   await c.query(`INSERT INTO stockchief_runtime.sku_cost_totals(workspace_id,sku_id,quantity_units,total_cost_minor)
    SELECT workspace_id,sku_id,sum(quantity_units),sum(total_cost_minor) FROM accounting_inventory_cost_balances
@@ -38,12 +44,12 @@ async function refresh(db,workspaceId,options={}){
 }
 async function schedule(db,{now=Date.now()}={}){
  const rows=(await db.query(`SELECT w.id,p.sku_id,p.change_xid::text FROM workspaces w
-  CROSS JOIN LATERAL(SELECT sku_id,change_xid FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=w.id ORDER BY sku_id,change_xid LIMIT 1)p
+  CROSS JOIN LATERAL(SELECT sku_id,change_xid FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=w.id ORDER BY change_xid,sku_id LIMIT 1)p
   WHERE w.deletion_requested_at IS NULL
   AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)
   AND NOT EXISTS(SELECT 1 FROM import_executions e WHERE e.workspace_id=w.id AND e.status='EXECUTING')
   AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs j WHERE j.workspace_id=w.id AND j.kind='inventory.refresh-cost-summary' AND j.status IN('PENDING','RUNNING','RETRY'))
-  ORDER BY w.id LIMIT 5`)).rows;
+  ORDER BY p.change_xid,w.id LIMIT 5`)).rows;
  // A bounded run can leave the same first pending key behind. A new time
  // bucket permits its continuation instead of resolving forever to a completed
  // job. Concurrent scheduler passes in the same bucket remain idempotent.

@@ -14,6 +14,7 @@ CREATE TABLE stockchief_runtime.sku_cost_pending(
  change_xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
  PRIMARY KEY(workspace_id,sku_id,change_xid)
 );
+CREATE INDEX sku_cost_pending_oldest ON stockchief_runtime.sku_cost_pending(workspace_id,change_xid,sku_id);
 ALTER TABLE stockchief_runtime.sku_cost_pending SET(autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_insert_scale_factor=0.02,autovacuum_analyze_scale_factor=0.02);
 ALTER TABLE stockchief_runtime.sku_cost_totals SET(autovacuum_vacuum_scale_factor=0.02,autovacuum_analyze_scale_factor=0.02);
 CREATE FUNCTION stockchief_queue_sku_cost_summary() RETURNS trigger LANGUAGE plpgsql AS $$

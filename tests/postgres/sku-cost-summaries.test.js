@@ -16,6 +16,9 @@ test('SKU cost summaries retain exact committed costs through concurrent receipt
  const value=async()=>Number((await summaries.value(db,ctx.workspaceId)).minor);
  const pending=async()=>Number((await db.query('SELECT count(*)::int n FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
  assert(await pending()>0);assert.equal(await value(),400,'Uninitialized summaries read canonical receipts');
+ await db.query("INSERT INTO stockchief_runtime.sku_cost_pending(workspace_id,sku_id) SELECT $1,'a-newer-'||n FROM generate_series(1,500)n",[ctx.workspaceId]);
+ await summaries.refreshBatch(db,ctx.workspaceId);
+ assert.equal(Number((await db.query('SELECT total_cost_minor FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,sku])).rows[0]?.total_cost_minor),400,'An older change is served before 500 newer alphabetically earlier SKUs');
  const single=require('../../src/db/postgres').openPostgres(f.cluster.connectionString,{max:1,connectionTimeoutMillis:1000});
  try{assert.equal((await summaries.refresh(single,ctx.workspaceId)).done,true);}finally{await single.close();}
  assert.equal(await pending(),0);assert.equal(await value(),400);
