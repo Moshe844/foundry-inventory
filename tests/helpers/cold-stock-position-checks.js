@@ -8,7 +8,7 @@ async function check(db,ctx){return db.withSessionLock('qualification:cold-stock
   await c.query(`INSERT INTO cold_locations SELECT (jsonb_populate_record(NULL::public.locations,to_jsonb(l)||jsonb_build_object('id','cold-loc-'||n,'name','Cold read bin '||n,'kind','bin','parent_location_id',l.id,'custody_agreement_id',NULL,'is_active',1))).* FROM (SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 LIMIT 1)l CROSS JOIN generate_series(1,23)n`,[ctx.workspaceId]);
   await c.query("CREATE TEMP TABLE cold_balances AS SELECT s.workspace_id,s.id sku_id,'cold-loc-'||n location_id,1::numeric on_hand FROM skus s CROSS JOIN generate_series(1,23)n WHERE s.workspace_id=$1 AND s.is_active=1",[ctx.workspaceId]);
   await c.query("INSERT INTO cold_balances SELECT 'wsp_foreigncold',sku_id,'foreign-'||location_id,on_hand*7 FROM cold_balances");
-  await c.query('CREATE UNIQUE INDEX cold_positions ON cold_balances(workspace_id,sku_id,location_id) INCLUDE(on_hand)');
+  await c.query('CREATE UNIQUE INDEX cold_positions ON cold_balances(workspace_id,location_id,sku_id) INCLUDE(on_hand)');
   await c.query('CREATE INDEX cold_positions_location ON cold_balances(location_id)');await c.query('CREATE INDEX cold_positions_workspace ON cold_balances(workspace_id)');
   await c.query('CREATE TEMP TABLE cold_cost_balances AS SELECT workspace_id,sku_id,location_id,on_hand AS quantity_units,on_hand*200 AS total_cost_minor FROM cold_balances');await c.query('CREATE INDEX cold_cost_values ON cold_cost_balances(workspace_id,sku_id) INCLUDE(quantity_units,total_cost_minor)');
   await c.query('CREATE INDEX cold_locations_scope ON cold_locations(workspace_id,id)');await c.query('VACUUM ANALYZE cold_balances');await c.query('VACUUM ANALYZE cold_cost_balances');await c.query('ANALYZE cold_locations');
@@ -40,9 +40,11 @@ async function check(db,ctx){return db.withSessionLock('qualification:cold-stock
     if(positions>=150000){assert(examined<=positions/23,'Warehouse batches must not read all stock positions');assert(reads[0]['Node Type'].includes('Index'),'Large warehouse batches must retain indexed SKU/location scope');}
     else assert(examined<=positions*2,'The tiny focused fixture is scanned at most once, including its foreign rows');}
    if(kind==='stock-value')assert(nodes.filter(n=>/Join|Nested Loop/.test(n['Node Type'])).every(n=>n['Actual Rows']<=positions/23),'Join item identities after grouping stock positions by SKU');
-   assert(plan['Execution Time']<1500,kind+' cold read exceeded 1.5 seconds: '+plan['Execution Time']);plans.push({kind,executionMs:plan['Execution Time'],tempBlocksWritten:plan.Plan['Temp Written Blocks']||0,positionMaterialization:false});
+   const positionIndexBuffers=nodes.filter(n=>n['Relation Name']==='cold_balances'&&n['Actual Loops']>0).reduce((sum,n)=>sum+Number(n['Shared Hit Blocks']||0)+Number(n['Shared Read Blocks']||0)+Number(n['Local Hit Blocks']||0)+Number(n['Local Read Blocks']||0),0);
+   if(positions>=150000&&['local-low-stock','inventory-local-low-stock-filter'].includes(kind))assert(positionIndexBuffers<=positions/23/4+128,'A warehouse read must not probe separately through every SKU bin history: '+positionIndexBuffers+' buffer visits');
+   assert(plan['Execution Time']<1500,kind+' cold read exceeded 1.5 seconds: '+plan['Execution Time']);plans.push({kind,executionMs:plan['Execution Time'],tempBlocksWritten:plan.Plan['Temp Written Blocks']||0,positionIndexBuffers,positionMaterialization:false});
   }
-  return {positions,foreignPositions:positions,skus:positions/23,availability:actual,lowStockRows:current.n,stockValueMinor:positions*200,canonicalValuesUnchanged:true,globalLowStockCanonicalRows:0,globalLowStockFilterCanonicalRows:0,inventoryLowStockFilterMatchesReport:true,warehousePolicyBatchScans:1,plans,paidCalls:0};
+  return {positions,foreignPositions:positions,skus:positions/23,availability:actual,lowStockRows:current.n,stockValueMinor:positions*200,canonicalValuesUnchanged:true,globalLowStockCanonicalRows:0,globalLowStockFilterCanonicalRows:0,inventoryLowStockFilterMatchesReport:true,warehousePolicyBatchScans:1,warehouseCoveringIndexBoundsBuffers:true,plans,paidCalls:0};
  }finally{await c.query('DROP TABLE IF EXISTS pg_temp.cold_balances,pg_temp.cold_locations,pg_temp.cold_cost_balances,pg_temp.cold_local_policies,pg_temp.cold_global_policies,pg_temp.cold_stock_state,pg_temp.cold_stock_totals,pg_temp.cold_stock_pending');await c.query("SELECT set_config('work_mem',$1,false),set_config('jit',$2,false)",[prior.work_mem,prior.jit]);}
 });}
 module.exports={check};
