@@ -33,7 +33,7 @@ async function refreshAfterImport(database,result){
 
 async function enqueueAfterImport(database,ctx,importId,result){
  if(!result?.verified||!Number.isSafeInteger(Number(result.rowsImported))||Number(result.rowsImported)<500)return {state:'NOT_REQUIRED',refreshed:[],deferred:[]};
- const queued=await require('../operations/postgres-job-queue').enqueue(database,{workspaceId:ctx.workspaceId,kind:'import.refresh-statistics',idempotencyKey:'statistics:'+result.executionId,payload:{importId,executionId:result.executionId},priority:1,maxAttempts:3});
+ const queued=await require('../operations/postgres-job-queue').enqueue(database,{workspaceId:ctx.workspaceId,kind:'import.refresh-statistics',idempotencyKey:'statistics:'+result.executionId,payload:{importId,executionId:result.executionId},priority:90,maxAttempts:3});
  return {state:'QUEUED',jobId:queued.job.id,refreshed:[],deferred:[]};
 }
 async function run(job,database){

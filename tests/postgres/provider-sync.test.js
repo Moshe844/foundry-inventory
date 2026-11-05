@@ -47,8 +47,9 @@ test('PostgreSQL provider discovery exact-maps safe records, queues signed chang
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Provider Sync Business');
     await page.getByLabel('Your name').fill('Provider Owner');await page.getByLabel('Work email').fill('provider-sync@example.test');
-    await page.locator('input[name="password"]').fill('provider-sync-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('provider-sync-password');
-    await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    await page.getByLabel('Business time zone').fill('UTC');const fixturePassword='Fixture!'+newId('pw');
+    await page.locator('input[name="password"]').fill(fixturePassword);if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill(fixturePassword);
+    const [registration]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&response.url()===`${base}/register`),page.getByRole('button',{name:'Create account'}).click()]);assert.equal(registration.status(),302,await registration.text());await page.waitForURL(`${base}/onboarding`);
     const identity=(await database.query(`SELECT workspace.id AS workspace_id,user_record.id AS actor_id
       FROM workspaces workspace JOIN users user_record ON user_record.workspace_id=workspace.id
       JOIN accounts account ON account.id=user_record.account_id WHERE account.email='provider-sync@example.test'`)).rows[0];
