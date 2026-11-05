@@ -15,10 +15,7 @@ async function saveManyInTransaction(client,ctx,inputs){
    JOIN import_plans p ON p.workspace_id=$1 AND p.id=x.source_import_id
    WHERE x.location_id IS NULL OR EXISTS(SELECT 1 FROM locations l WHERE l.workspace_id=$1 AND l.id=x.location_id)`,[ctx.workspaceId,keys,skus]);
   if(allowed.rowCount!==batch.length)throw new ValidationError('Imported product details and their source must belong to this inventory.');
-  const legacy=(await client.query(`SELECT f.id,f.sku_id,f.location_id,f.source_import_id,f.source_row,f.name FROM catalog_source_facts f
-   JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,source_import_id text,source_row bigint)
-    ON f.sku_id=x.sku_id AND f.location_id IS NOT DISTINCT FROM x.location_id AND f.source_import_id=x.source_import_id AND f.source_row=x.source_row
-   WHERE f.workspace_id=$1 AND f.source_import_id=ANY($4::text[]) AND f.sku_id=ANY($3::text[]) AND f.attributes IS NULL`,[ctx.workspaceId,keys,skus,[...new Set(batch.map(row=>row.source_import_id))]])).rows,updates=[];
+  const legacy=(await client.query(require('./catalog-legacy-facts-source').source(),[ctx.workspaceId,keys])).rows,updates=[];
   const bySource=new Map(batch.map(row=>[JSON.stringify([row.sku_id,row.location_id,row.source_import_id,Number(row.source_row)]),row]));
   for(const field of legacy){const row=bySource.get(JSON.stringify([field.sku_id,field.location_id,field.source_import_id,Number(field.source_row)]));if(row&&Object.hasOwn(row.attributes,field.name)){updates.push({id:field.id,value:row.attributes[field.name]});delete row.attributes[field.name];}}
   if(updates.length){const changed=await client.query(`UPDATE catalog_source_facts f SET value=x.value,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,value text)

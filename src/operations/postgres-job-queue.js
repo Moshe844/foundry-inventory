@@ -58,9 +58,12 @@ async function enqueue(database, input = {}) {
       await event(client, inserted.rows[0].id, 'ENQUEUED', { availableAt }, now);
       return { job: hydrate(inserted.rows[0]), created: true };
     }
+    // Bind every leading unique-index key. IS NOT DISTINCT FROM prevents
+    // PostgreSQL from narrowing the middle workspace key in large histories.
+    const scoped=Boolean(input.workspaceId);
     const prior = await client.query(`SELECT * FROM stockchief_runtime.jobs
-      WHERE kind = $1 AND workspace_id IS NOT DISTINCT FROM $2 AND idempotency_key = $3`,
-    [input.kind, input.workspaceId || null, input.idempotencyKey]);
+      WHERE kind = $1 AND ${scoped?'workspace_id = $2':'workspace_id IS NULL'} AND idempotency_key = ${scoped?'$3':'$2'}`,
+    scoped?[input.kind,input.workspaceId,input.idempotencyKey]:[input.kind,input.idempotencyKey]);
     if (!prior.rows.length) throw new Error('Job ID conflicts with a different idempotency key.');
     return { job: hydrate(prior.rows[0]), created: false };
   }, { isolation: 'READ COMMITTED' });
