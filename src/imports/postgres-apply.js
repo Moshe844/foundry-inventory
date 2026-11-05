@@ -26,14 +26,26 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   const locations=saved.locations||Object.fromEntries(await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]));
   const created=await require('./postgres-prepare-catalogue').prepare(client,ctx,plan,options,deps,saved);
   if(created.cataloguePrepared&&plan.recordsValid>=5000)await client.query('ANALYZE skus (id,workspace_id,item_id,is_active), items (id,workspace_id,is_active), import_catalogue_bindings (workspace_id,import_id,product_key,variant_key,item_id,sku_id)');
-  return save(client,{...saved,version:3,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
+  // Pin the order before saving any stock. Earlier partially prepared plans
+  // retain their source order; a resumed plan never changes its page cursor.
+  let executionOrder=saved.executionOrder||'source';
+  if(!saved.executionOrder&&!saved.catalogueStarted&&plan.recordsValid>=5000&&plan.transformations.importMode==='add'&&plan.fieldMappings.quantity!==undefined){
+   // A category shared by several variants must keep its source-file winner.
+   // Conflicting parent updates and older unclassified caches stay in source
+   // order; ordinary stock and consistent categories can use SKU locality.
+   const unsafe=(await client.query(`SELECT EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND source_category IS NULL)
+    OR EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND source_category<>''
+     GROUP BY coalesce(existing_item_id,product_key) HAVING count(DISTINCT source_category)>1) AS unsafe`,[ctx.workspaceId,id])).rows[0].unsafe;
+   if(!unsafe)executionOrder='sku';
+  }
+  return save(client,{...saved,version:3,executionOrder,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId),...created,savedRows:0,units:0});
  });await emit('preparing',checkpoint.skusCreated);
  }while(!checkpoint.cataloguePrepared);
  attemptStartRows=Number(checkpoint.savedRows||0);
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:exact.costMinor(row.parsed.quantity||0,row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
- for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id,{batchSize})){
+ for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',cursor:checkpoint.executionCursor})){
   await identities.hydrate(database,ctx,plan,chunk,checkpoint);const priorSaved=Number(checkpoint.savedRows||0);
   await emit('processing');
   const result=await phase(async(client,saved)=>{
@@ -138,7 +150,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    const totals=await verification.totals(client,ctx.workspaceId,chunk.map(row=>row.id)),value=chunk.reduce((n,row)=>addExact(n,expectedCost(row)),0),expectedUnits=chunk.reduce((n,row)=>addExact(n,expectedDelta(row)),0),valued=chunk.filter(expectsCostRecord).length;
    const checks=[{name:'Rows saved',expected:chunk.length,observed:rowsImported,ok:rowsImported===chunk.length},{name:'Stock movement units',expected:expectedUnits,observed:units,ok:units===expectedUnits},{name:'Cost records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost',expected:value,observed:Number(totals.value.value),ok:value===Number(totals.value.value)},{name:'Inventory asset',expected:value,observed:Number(totals.posted.value),ok:value===Number(totals.posted.value)}];
    if(!checks.every(check=>check.ok))throw new ValidationError('The imported stock and accounting evidence did not reconcile. The current batch was not saved.',{checks});
-   const next=await save(client,{...saved,savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:chunk[0].rowNumber,lastRow:chunk.at(-1).rowNumber,checks}});
+   const next=await save(client,{...saved,...(saved.executionOrder==='sku'?{executionCursor:chunk.at(-1).executionCursor}:{}),savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:Math.min(...chunk.map(r=>r.rowNumber)),lastRow:Math.max(...chunk.map(r=>r.rowNumber)),checks}});
    await client.query('UPDATE import_executions SET items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,stage=$7 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,executionId,next.itemsCreated,next.skusCreated,next.savedRows,next.units,'processing']);
    return {checkpoint:next,prices:[...salePriceBySku]};
   });

@@ -15,7 +15,7 @@ test('large quantity imports save bounded 2,000-row batches and resume exactly a
  await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:ids.at(-1),locationId:f.location.id,quantity:3,unitCost:'2',idempotencyKey:'activity-between-large-batches'});
  const ledger=require('../../src/accounting/postgres-ledger'),originalPostMany=ledger.postManyInTransaction;
  for(const tamperedLine of [0,1500]){
-  ledger.postManyInTransaction=(client,context,entries)=>originalPostMany(client,context,entries.map(entry=>entry.sourceRecordType==='import_batch'?{...entry,lines:entry.lines.map((line,i)=>i===tamperedLine?{...line,skuId:ids[0]}:line)}:entry));
+  ledger.postManyInTransaction=(client,context,entries)=>originalPostMany(client,context,entries.map(entry=>entry.sourceRecordType==='import_batch'?{...entry,lines:entry.lines.map((line,i)=>i===tamperedLine?{...line,skuId:f.item.skuIds[0]}:line)}:entry));
   try{await assert.rejects(imports.execute(db,ctx,plan.id,{retryExecutionId:paused.id}),/source rows.*receipt values do not match/);}finally{ledger.postManyInTransaction=originalPostMany;}
   assert.deepEqual(await state(),{units:'4003',value:'500600'});assert.equal((await db.query("SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1 AND source_record_type='import_batch'",[ctx.workspaceId])).rows[0].n,0,'A balanced journal with a wrong early or late SKU must roll back with its whole stock batch');paused=await imports.report(db,ctx.workspaceId,plan.id);
  }

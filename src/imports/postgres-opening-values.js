@@ -14,9 +14,9 @@ async function post(client,ctx,plan,values){
  const compatible=new Map();for(const v of ordinary){const key=JSON.stringify([v.postingDate,v.row.parsed.currency]);if(!compatible.has(key))compatible.set(key,[]);compatible.get(key).push(v);}
  for(const rows of compatible.values()){
   const total=rows.reduce((n,v)=>n+v.totalCostMinor,0);if(!Number.isSafeInteger(total)){groups.push(...rows.map(individual));continue;}
-  const hash=createHash('sha256').update(JSON.stringify(rows.map(v=>v.row.id))).digest('hex'),first=rows[0],last=rows.at(-1);
+  const hash=createHash('sha256').update(JSON.stringify(rows.map(v=>v.row.id))).digest('hex'),first=rows[0];
   groups.push({values:rows,input:{postingDate:first.postingDate,sourceKey:`import:${plan.id}:batch:${hash}:opening-value`,sourceType:'opening_inventory',sourceRecordType:'import_batch',sourceRecordId:plan.id,
-   description:`Opening inventory from ${plan.sourceName}, rows ${first.row.rowNumber}–${last.row.rowNumber}`,currency:first.row.parsed.currency,
+   description:`Stock received from ${plan.sourceName} (${rows.length} source rows)`,currency:first.row.parsed.currency,
    metadata:{importId:plan.id,integrityHash:plan.integrityHash,importRows:rows.length,sourceRowsHash:hash},
    lines:[...rows.map(v=>({accountKey:'INVENTORY_ASSET',debitMinor:v.totalCostMinor,skuId:v.skuId,locationId:v.row.parsed.locationId,metadata:{importId:plan.id,importRowId:v.row.id,sourceRow:v.row.rowNumber,movementId:v.movementId,...(v.row.parsed.lotCode?{lotCode:v.row.parsed.lotCode}:{})}})),{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:total}]}});
  }
