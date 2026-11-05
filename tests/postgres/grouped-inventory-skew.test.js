@@ -27,7 +27,10 @@ test('grouped and flat inventory stay bounded with 52,500 variants concentrated 
    t.diagnostic(JSON.stringify({failureCode:error.code,statistics,mode,sql:failedQuery?.sql,values:failedQuery?.values}));
    for(const jit of ['on','off'])try{await db.transaction(async c=>{
     await c.query('SET LOCAL plan_cache_mode='+mode);await c.query('SET LOCAL jit='+jit);
-    const info=(await c.query("SELECT version(),pg_jit_available(),current_setting('work_mem') work_mem")).rows[0],plan=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+failedQuery.sql,failedQuery.values)).rows[0]['QUERY PLAN'][0],nodes=[];
+    const info=(await c.query("SELECT version(),pg_jit_available(),current_setting('work_mem') work_mem")).rows[0],name='diagnostic_'+statistics.replaceAll('-','_')+'_'+mode+'_'+jit;
+    await c.query('PREPARE '+name+' AS '+failedQuery.sql);
+    const literals=(await c.query('SELECT quote_nullable(value) literal FROM unnest($1::text[]) WITH ORDINALITY p(value,n) ORDER BY n',[failedQuery.values.map(v=>v===null||v===undefined?null:String(v))])).rows.map(r=>r.literal).join(',');
+    const plan=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) EXECUTE '+name+'('+literals+')')).rows[0]['QUERY PLAN'][0],nodes=[];await c.query('DEALLOCATE '+name);
     const visit=n=>{nodes.push({node:n['Node Type'],relation:n['Relation Name'],index:n['Index Name'],sub:n['Subplan Name'],rows:n['Actual Rows'],loops:n['Actual Loops'],cost:n['Total Cost'],estimatedRows:n['Plan Rows'],ms:n['Actual Total Time'],read:n['Shared Read Blocks'],temp:n['Temp Written Blocks'],filter:n.Filter});for(const child of n.Plans||[])visit(child);};visit(plan.Plan);
     t.diagnostic(JSON.stringify({statistics,mode,jit,info,ms:plan['Execution Time'],compilation:plan.JIT,nodes}));
    },{readOnly:true,statementTimeoutMs:10000});}catch(diagnosticError){t.diagnostic(JSON.stringify({statistics,mode,jit,diagnosticError:diagnosticError.code||diagnosticError.message}));}
