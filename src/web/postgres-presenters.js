@@ -32,7 +32,7 @@ async function homeUncached(database,workspaceId,actorId=null){
   const clock=await require('../lib/business-time').forWorkspace(database,workspaceId);
   const dayStart=require('../lib/business-time').dayBoundary(clock.calendarDate,clock.timeZone);
   const [brief,state,completed,executing,upcoming]=await Promise.all([
-    projections.brief(database,workspaceId,actorId,{includeLocationStock:false}),autonomy.getState(database,workspaceId),
+    projections.brief(database,workspaceId,actorId,{includeLocationStock:false,includeAvailability:false}),autonomy.getState(database,workspaceId),
     database.query(`SELECT id,recommended_action,outcome,completed_at,COUNT(*) OVER() AS total
       FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot'
         AND approval_requirement='NONE' AND execution_status='COMPLETED'
