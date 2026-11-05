@@ -41,7 +41,7 @@ async function schedule(db,{now=Date.now()}={}){
  const rows=(await db.query(`SELECT w.id FROM workspaces w LEFT JOIN stockchief_runtime.movement_bucket_state s ON s.workspace_id=w.id
   LEFT JOIN LATERAL(SELECT change_xid FROM stockchief_runtime.movement_bucket_pending WHERE workspace_id=w.id ORDER BY change_xid,bucket_at LIMIT 1) p ON true
   WHERE w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)
-  AND (NOT coalesce(s.initialized,false) AND EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=w.id LIMIT 1) OR p.change_xid IS NOT NULL)
+  AND (NOT coalesce(s.initialized,false) AND (SELECT m.seq FROM movements m WHERE m.workspace_id=w.id ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 1) IS NOT NULL OR p.change_xid IS NOT NULL)
   AND NOT EXISTS(SELECT 1 FROM import_executions e WHERE e.workspace_id=w.id AND e.status='EXECUTING')
   AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs j WHERE j.workspace_id=w.id AND j.kind='inventory.refresh-movement-buckets' AND j.status IN('PENDING','RUNNING','RETRY'))
   ORDER BY coalesce(s.initialized,false),p.change_xid,w.id LIMIT 5`)).rows;
