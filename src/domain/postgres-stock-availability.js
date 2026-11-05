@@ -30,8 +30,9 @@ async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=nu
 async function read(c,workspaceId,skuId,locationId,options={}){return (await readMany(c,workspaceId,[{skuId,locationId}],options)).get(key(skuId,locationId))||{onHand:0,committed:0,reserved:0,rentalReserved:0,available:0};}
 async function total(c,workspaceId,{itemId=null}={}){
  const holds=await require('../custody/postgres-bookings').heldMany(c,workspaceId,null),rows=[...holds].map(([key,quantity])=>{const [sku_id,location_id]=JSON.parse(key);return {sku_id,location_id,quantity};});
- // Aggregate each commitment source once. Reusing the point lookup here ran
- // its correlated sales/transfer subqueries for every stock position.
+ // Sum positive owned stock once, then subtract min(stock, combined holds)
+ // only at held positions. This equals max(stock-holds,0) at every position
+ // without joining four usually empty reservation sources to millions of rows.
  const r=(await c.query(`WITH sales AS (
  SELECT a.sku_id,a.location_id,sum(a.quantity) quantity FROM sales_stock_commitments a
  WHERE a.workspace_id=$1 GROUP BY a.sku_id,a.location_id
@@ -44,17 +45,26 @@ async function total(c,workspaceId,{itemId=null}={}){
  active_skus AS MATERIALIZED (
  SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND ($3::text IS NULL OR s.item_id=$3)
  AND s.item_id IN(SELECT id FROM items WHERE workspace_id=$1 AND is_active=1)
- ), physical AS MATERIALIZED (
+ ), owned_locations AS MATERIALIZED (
+ SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL
+ ), physical AS NOT MATERIALIZED (
  SELECT b.sku_id,b.location_id,b.on_hand FROM balances b WHERE b.workspace_id=$1 AND b.on_hand>0
  AND b.sku_id IN(SELECT id FROM active_skus)
- AND b.location_id IN(SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL)
+ AND b.location_id IN(SELECT id FROM owned_locations)
+ ), held_positions AS MATERIALIZED (
+ SELECT sku_id,location_id,coalesce(sum(quantity),0) quantity FROM (
+ SELECT sku_id,location_id,quantity FROM sales UNION ALL
+ SELECT sku_id,location_id,quantity FROM transfers UNION ALL
+ SELECT sku_id,location_id,quantity FROM rental_holds UNION ALL
+ SELECT sku_id,location_id,quantity FROM return_holds
+ ) holds GROUP BY sku_id,location_id
  )
- SELECT coalesce(sum(greatest(b.on_hand-coalesce(sales.quantity,0)-coalesce(transfers.quantity,0)-coalesce(r.quantity,0)-coalesce(held.quantity,0),0)),0)::text quantity
- FROM physical b
- LEFT JOIN sales ON sales.sku_id=b.sku_id AND sales.location_id=b.location_id
- LEFT JOIN transfers ON transfers.sku_id=b.sku_id AND transfers.location_id=b.location_id
- LEFT JOIN rental_holds r ON r.sku_id=b.sku_id AND r.location_id=b.location_id
- LEFT JOIN return_holds held ON held.sku_id=b.sku_id AND held.location_id=b.location_id
+ SELECT ((SELECT coalesce(sum(on_hand),0) FROM physical)-
+ coalesce((SELECT sum(least(b.on_hand,held.quantity)) FROM held_positions held
+ CROSS JOIN LATERAL(SELECT b.on_hand FROM balances b WHERE b.workspace_id=$1
+ AND b.sku_id=held.sku_id AND b.location_id=held.location_id AND b.on_hand>0
+ OFFSET 0) b WHERE held.sku_id IN(SELECT id FROM active_skus)
+ AND held.location_id IN(SELECT id FROM owned_locations)),0))::text quantity
  `,[workspaceId,JSON.stringify(rows),itemId])).rows[0];return exact.safeNumber(r.quantity);
 }
 module.exports={read,readMany,key,total};
