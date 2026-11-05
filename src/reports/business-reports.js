@@ -19,13 +19,25 @@ async function run(db,ctx,actor,key,input={}){let d=definitions.find(d=>d.key===
 async function enrich(db,ctx,key,result){if(key==='stock-value'&&result.config.groups.length===1&&result.config.groups[0]==='sku'&&result.rows.length){const labels=(await db.query("SELECT s.code,i.id,concat_ws(' / ',i.name,nullif(s.variant_label,'')) AS name FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.code=ANY($2::text[])",[ctx.workspaceId,result.rows.map(r=>r.sku)])).rows,bySku=new Map(labels.map(r=>[r.code,r]));result.columns.unshift('product');result.columnLabels.product='Product';result.columnTypes.product='text';for(let i=0;i<result.rows.length;i++){const label=bySku.get(result.rows[i].sku);result.rows[i].product=label?.name||result.rows[i].sku;result.displayRows[i].product=result.rows[i].product;if(label)result.rows[i].href='/inventory/'+label.id;}}return result;}
 async function cards(db,ctx,actor,input){
  const c=await context(db,ctx,input,{coverage:true}),allowed=definitions.filter(d=>permissions.can(actor,registry.get(d.dataset).permission));
+ const required=[...new Set(allowed.map(d=>registry.get(d.dataset).commercialCapability).filter(Boolean))];
+ // Check the current subscription before a shared result can be returned.
+ // Saved reports remain personal; these cards contain only reviewed business
+ // summaries for this exact role and set of readable sources.
+ if(required.length){const entitlements=require('../commercial/entitlements'),cache=require('../lib/request-read-cache'),scope=await cache.read(JSON.stringify(['report-owner',ctx.workspaceId]),()=>entitlements.ownerScopeForWorkspace(db,ctx.workspaceId));for(const capability of required)await cache.read(JSON.stringify(['report-permit',ctx.workspaceId,capability]),()=>entitlements.assertCapability(db,scope,capability,{allowReadOnly:true}));}
+ return require('../lib/versioned-read-model').read(db,ctx.workspaceId,['business-report-cards',c.from,c.to,c.timeZone,c.currency,actor.role,actor.permissions||null,allowed.map(d=>d.key)],()=>buildCards(db,ctx,actor,c,allowed),{domain:'business'});
+}
+async function buildCards(db,ctx,actor,c,allowed){
  const list=new Array(allowed.length);let next=0;
  // Bound foreground database work instead of launching every chart and total
  // together. Each chart carries its exact whole-population total before LIMIT.
  async function worker(){while(next<allowed.length){const index=next++,d=allowed[index];
-  const trend=await reports.run(db,ctx,actor,spec(d,c,c.currency),{limit:13,includeOverall:true});
+  // Count low-stock positions by location before formatting product labels.
+  // This retains the exact whole-business count and a useful warehouse chart
+  // without sorting tens of thousands of named variants for a tiny card.
+  const definition=d.count?{...spec(d,c,c.currency),columns:[],groups:['location'],aggregate:'count',measure:'',sort:'count',direction:'desc'}:spec(d,c,c.currency);
+  const trend=await reports.run(db,ctx,actor,definition,{limit:13,includeOverall:true});
   const raw=Number(trend.overall.value||0),needsReorderSetup=d.key==='low-stock'&&!await hasReorderLevels(db,ctx);
-  const card={needsReorderSetup,key:d.key,title:d.title,question:d.question,current:d.current,chartKind:d.date&&d.groups?.[0]===d.date?'line':'bar',note:d.key==='movement'&&trend.warnings?.length?trend.warnings.join(' '):d.key==='stock-value'&&c.missingCostUnits?'Stock value is incomplete. Add purchase costs for '+c.missingCostUnits+' units.':d.key==='profit'?'Recorded profit · incomplete until all costs are included.':null,value:d.money?require('../pricing/postgres-service').formatMinor(raw,c.currency):raw.toLocaleString('en-US')+(d.count?(raw===1?' position':' positions'):d.key==='sellers'?(raw===1?' unit fulfilled':' units fulfilled'):d.key==='movement'?(Math.abs(raw)===1?' net unit':' net units'):''),trend:trend.rows.map(r=>Number(r.total??r.on_hand??0)),hasRecords:trend.rows.length>0};
+  const card={needsReorderSetup,key:d.key,title:d.title,question:d.question,current:d.current,chartKind:d.date&&d.groups?.[0]===d.date?'line':'bar',chartLabel:d.count?'Low-stock positions by location':'Recorded values',note:d.key==='movement'&&trend.warnings?.length?trend.warnings.join(' '):d.key==='stock-value'&&c.missingCostUnits?'Stock value is incomplete. Add purchase costs for '+c.missingCostUnits+' units.':d.key==='profit'?'Recorded profit · incomplete until all costs are included.':null,value:d.money?require('../pricing/postgres-service').formatMinor(raw,c.currency):raw.toLocaleString('en-US')+(d.count?(raw===1?' position':' positions'):d.key==='sellers'?(raw===1?' unit fulfilled':' units fulfilled'):d.key==='movement'?(Math.abs(raw)===1?' net unit':' net units'):''),trend:trend.rows.map(r=>Number(r.total??r.count??r.on_hand??0)),hasRecords:trend.rows.length>0};
   if(!d.current&&!d.count){const lead=(await reports.totals(db,ctx,actor,{...reports.normalize(spec(d,c,c.currency,{summary:true}),actor),compare:'previous_period'},{currentResult:trend}))?.metrics?.[0];card.change=lead?.change??null;card.previous=lead?.previousDisplay||null;card.changeGood=lead?.good??null;}
   list[index]=card;
  }}

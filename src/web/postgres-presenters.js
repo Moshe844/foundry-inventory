@@ -97,17 +97,21 @@ async function homeUncached(database,workspaceId,actorId=null){
 }
 
 async function inventoryPosition(database,workspaceId){
-  const result=await database.query(`WITH sku_position AS (
-      SELECT s.id,s.item_id,COALESCE(SUM(b.on_hand),0)::numeric AS on_hand,
-        COALESCE((SELECT SUM(a.quantity) FROM sales_stock_commitments a
-          WHERE a.workspace_id=s.workspace_id AND a.sku_id=s.id),0)::numeric AS committed,
-        COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
-          JOIN purchase_orders po ON po.id=pol.purchase_order_id
-          WHERE pol.workspace_id=s.workspace_id AND pol.sku_id=s.id
-            AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)::numeric AS incoming
-      FROM skus s LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
+  const result=await database.query(`WITH stock_by_sku AS MATERIALIZED (
+      SELECT sku_id,SUM(on_hand)::numeric AS on_hand FROM balances WHERE workspace_id=$1 GROUP BY sku_id
+    ), commitments_by_sku AS MATERIALIZED (
+      SELECT sku_id,SUM(quantity)::numeric AS committed FROM sales_stock_commitments WHERE workspace_id=$1 GROUP BY sku_id
+    ), incoming_by_sku AS MATERIALIZED (
+      SELECT pol.sku_id,SUM(pol.quantity_units-pol.quantity_received_units)::numeric AS incoming
+      FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
+      WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
+    ), sku_position AS (
+      SELECT s.id,s.item_id,COALESCE(b.on_hand,0)::numeric AS on_hand,
+        COALESCE(a.committed,0)::numeric AS committed,COALESCE(p.incoming,0)::numeric AS incoming
+      FROM skus s LEFT JOIN stock_by_sku b ON b.sku_id=s.id
+      LEFT JOIN commitments_by_sku a ON a.sku_id=s.id LEFT JOIN incoming_by_sku p ON p.sku_id=s.id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.item_id,s.workspace_id
+      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
     ), item_position AS (
       SELECT item_id,SUM(on_hand) AS on_hand,SUM(committed) AS committed,SUM(incoming) AS incoming
       FROM sku_position GROUP BY item_id

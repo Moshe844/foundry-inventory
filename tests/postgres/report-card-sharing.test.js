@@ -1,0 +1,13 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('report cards share whole-business counts without leaking permissions, stale stock or revoked capabilities',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,catalog=require('../../src/domain/postgres-catalog-service');
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('report-card-paid-plan',$1,'enterprise','COMP','ISOLATED_TEST') ON CONFLICT(account_id) DO NOTHING",[f.owner.accountId]);
+ for(let n=0;n<20;n++)await catalog.createItem(db,ctx,{name:'Report grouping '+n,baseCode:'REPORT-GROUP-'+n,trackingMode:'quantity'});
+ await db.query("INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at) SELECT 'report-policy-'||s.id,s.workspace_id,s.id,$2,10,20,0,'manual',$3,$3 FROM skus s WHERE s.workspace_id=$1",[ctx.workspaceId,f.location.id,new Date().toISOString()]);
+ t.diagnostic(JSON.stringify(await require('../helpers/report-card-sharing-checks').check(t,db,ctx)));
+ const business=require('../../src/reports/business-reports'),read=(workspace=ctx.workspaceId)=>business.cards(db,{...ctx,workspaceId:workspace},{role:'owner'},{}),value=async workspace=>(await read(workspace)).find(c=>c.key==='stock-value').value;
+ assert.equal(await value(),'$4.00');await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,unitCost:'1.00',idempotencyKey:'report-card-stock-change'});assert.equal(await value(),'$5.00');
+ const foreign=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Other report owner',businessName:'Other report business',email:randomUUID()+'@example.test',password:'ReportForeign!'+randomUUID()});await require('../../src/accounting/postgres-ledger').configure(db,{workspaceId:foreign.workspaceId,actorId:foreign.userId},{currency:'USD',startDate:'2026-01-01'});assert.equal(await value(foreign.workspaceId),'$0.00');assert.equal(await value(),'$5.00');
+ await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,capability,enabled,reason) VALUES('report-revoke',$1,'accounting.reports',0,'Fixture verifies fresh subscription enforcement')",[f.owner.accountId]);
+ await assert.rejects(()=>read(),require('../../src/commercial/entitlements').EntitlementError,'A cached dashboard must still check the current subscription');
+});

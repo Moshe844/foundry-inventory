@@ -279,6 +279,8 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
     if(config.groups.length&&config.aggregate==='sum'&&!config.extras?.length
       &&(dataset.fields[config.measure]!=='money_minor'||config.filters.some(f=>f.field==='currency'&&f.operator==='equals')))
       select+=`,SUM(${metricExpression(dataset,'sum',config.measure)}) OVER () AS __report_overall`;
+    else if(config.groups.length&&config.aggregate==='count'&&!config.extras?.length)
+      select+=',SUM(COUNT(*)) OVER () AS __report_overall';
     else if(!config.groups.length&&!config.summary&&config.aggregate==='count')
       select+=',COUNT(*) OVER () AS __report_overall';
     else invalid('This report needs its own whole-dataset total.');
