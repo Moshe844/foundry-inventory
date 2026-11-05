@@ -171,5 +171,15 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('D19 Home work-history counts use date-window indexes with 50,000 additional old records',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/home-work-history-checks').check(db,ctx)));});
  await t.test('D19 Money and stock-value previews support covered reads at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/dashboard-covered-read-checks').check(db,ctx)));});
  await t.test('D19 Reports retain exact dates and totals with 1.7 million historical movements and 121,643 timestamps',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/movement-history-shape-checks').check(db,ctx)));});
+ await t.test('D19 capacity monitoring excludes 1.7 million historical measurements using one indexed recent window',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/capacity-history-shape-checks').check(db,ctx)));});
+ await t.test('D19 exact storage accounting yields to stock reads across the large warehouse dataset',async()=>{
+  const expression=(await db.query("SELECT bytes_expression FROM commercial_storage_tables WHERE relation='accounting_journal_lines'::regclass")).rows[0].bytes_expression;
+  const expected=(await db.query('SELECT sum('+expression+')::text bytes,count(*)::int rows FROM accounting_journal_lines t WHERE t.workspace_id=$1',[ctx.workspaceId])).rows[0];assert(expected.rows>=150000);
+  let running=true;const latencies=[],started=performance.now(),measurement=require('../../src/commercial/storage-capacity').baseline(db,ctx.workspaceId,'accounting_journal_lines');
+  const foreground=(async()=>{for(let n=0;n<10&&running;n++){await new Promise(r=>setTimeout(r,25));if(!running)break;const start=performance.now(),rows=(await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 LIMIT 1',[ctx.workspaceId])).rows;assert(rows.length);if(running)latencies.push(performance.now()-start);}})();
+  try{await measurement;}finally{running=false;await foreground;}
+  const actual=(await db.query("SELECT baseline_bytes::text bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='accounting_journal_lines'::regclass",[ctx.workspaceId])).rows[0].bytes;
+  assert.equal(actual,expected.bytes);assert(latencies.length>0);assert(Math.max(...latencies)<1500);t.diagnostic(JSON.stringify({storageRows:expected.rows,exactBytes:true,measurementMs:performance.now()-started,foregroundReads:latencies.length,maxForegroundMs:Math.max(...latencies),paidCalls:0}));
+ });
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });

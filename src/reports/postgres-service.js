@@ -10,6 +10,10 @@ const OPERATORS=new Set(['equals','is_not','contains','greater_than','less_than'
 const AGGREGATES=new Set(['count','count_distinct','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',count_distinct:'distinct_count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
+// Only native results can supply a previously computed total to comparisons.
+// Keep the proof out of serialized reports and user-authored specifications.
+const wholeResults=new WeakMap();
+const wholeKey=(config,dateContext)=>{const c=require('./relative-dates').resolve(config,dateContext);return JSON.stringify([c.dataset,c.filters,c.aggregate,c.measure,c.extras]);};
 // The native tool shares this grammar. Dataset fields, permissions, money
 // completeness and currency rules remain owned by queryContract.
 const querySyntax=Object.freeze({operators:Object.freeze([...OPERATORS]),aggregates:Object.freeze([...AGGREGATES]),
@@ -241,7 +245,7 @@ function filterParameter(filter){
     ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`
     :filter.value;
 }
-function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profitAccountIds=null}={}){
+function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profitAccountIds=null,includeOverall=false}={}){
   config=require('./relative-dates').resolve(config,dateContext);
   const dataset=registry.get(config.dataset);const values=[workspaceId];
   const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
@@ -267,6 +271,17 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
     // still use the parent identity, so item totals never split by variant.
     const variantLabel=dataset.fields.variant&&config.columns.includes('sku')&&config.columns.includes('product')&&!config.columns.includes('variant');
     select=`record_id,${config.columns.map(field=>field==='product'&&variantLabel?`concat_ws(' — ',product,nullif(variant,'')) AS product`:quote(field)).join(',')}`;
+  }
+  if(includeOverall){
+    if(offset!==0)invalid('Read the first report page to calculate its whole-dataset total.');
+    // Windows run before ORDER BY/LIMIT/OFFSET. Summing only displayed groups
+    // would silently understate stock value and movement on large inventories.
+    if(config.groups.length&&config.aggregate==='sum'&&!config.extras?.length
+      &&(dataset.fields[config.measure]!=='money_minor'||config.filters.some(f=>f.field==='currency'&&f.operator==='equals')))
+      select+=`,SUM(${metricExpression(dataset,'sum',config.measure)}) OVER () AS __report_overall`;
+    else if(!config.groups.length&&!config.summary&&config.aggregate==='count')
+      select+=',COUNT(*) OVER () AS __report_overall';
+    else invalid('This report needs its own whole-dataset total.');
   }
   const direction=config.direction==='asc'?'ASC':'DESC';
   const tieBreakers=config.groups.length?config.groups.map(quote):config.summary?[]:
@@ -303,16 +318,17 @@ async function run(database,ctx,actor,spec,options={}){
   const allowed=config.topN===null?pageSize:Math.max(0,Math.min(pageSize,config.topN-offset));
   const queryLimit=allowed+((config.topN===null||offset+allowed<config.topN)?1:0);
   const dateContext=await require('../lib/request-read-cache').read(JSON.stringify(['report-clock',ctx.workspaceId]),()=>require('../lib/business-time').forWorkspace(database,ctx.workspaceId));
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext});
+  const includeOverall=options.includeOverall===true;
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,includeOverall});
   const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction(async client=>{
     const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
-    const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds});
+    const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds,includeOverall});
     return client.query(query.sql,query.values);
   },{isolation:config.dataset==='profit_activity'?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
   const warnings=config.dataset==='movements'&&actor.role==='owner'
     ?await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['movement-date-warnings'],()=>require('./postgres-movement-time').warnings(database,ctx.workspaceId),{domain:'business'}):[];
   const hasMore=fetched.length>allowed;
-  const rows=fetched.slice(0,allowed);
+  const rows=fetched.slice(0,allowed).map(row=>{const {__report_overall,...visible}=row;return visible;});
   if(config.groups.includes('currency')&&!['count','count_distinct'].includes(config.aggregate)&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length||config.summary);
@@ -353,6 +369,14 @@ async function run(database,ctx,actor,spec,options={}){
   // Totals from different currencies are individually valid, but their raw minor
   // units cannot be ranked or plotted on one numeric scale.
   output.warnings=warnings;
+  if(includeOverall){
+    const column=AGGREGATE_COLUMN[config.aggregate],value=fetched[0]?.__report_overall??(config.aggregate==='count'?'0':null);
+    const currency=currencyFilter;
+    const display=value==null?'—':config.aggregate==='sum'&&dataset.fields[config.measure]==='money_minor'
+      ?require('../pricing/postgres-service').formatMinor(value,currency):String(value);
+    output.overall={column,value,display};
+    wholeResults.set(output,{workspaceId:ctx.workspaceId,key:wholeKey(config,dateContext),column,value,display,label:metricLabel(dataset,config.aggregate,config.measure,column)});
+  }
   output.comparisonSafe=comparableGroupAmounts(config,dataset,rows,output.hasMore,currencyFilter);
   const chartColumn=config.chartMeasure||(metricNames.length>1?metricNames[0]:null);
   if(grouped&&chartColumn)output.chartColumn=chartColumn;
@@ -390,13 +414,17 @@ async function addComparison(database,ctx,actor,config,output,dateContext){
   });
 }
 // The totals across the whole report, each with its earlier period when one was asked for.
-async function totals(database,ctx,actor,config){
+async function totals(database,ctx,actor,config,{currentResult=null}={}){
   if(config.dataset==='composed'||(!config.groups.length&&!config.summary))return null;
   const dateContext=await require('../lib/business-time').forWorkspace(database,ctx.workspaceId),dataset=registry.get(config.dataset);
   const whole={...config,columns:[],groups:[],summary:true,dateGrain:'exact',sort:'',chart:'table',topN:null,compare:'',chartMeasure:''};
   let current,previous=null;const window=compareWindow(config,dateContext);
   try{
-    current=await run(database,ctx,actor,whole,{limit:2});
+    const known=wholeResults.get(currentResult);
+    if(known&&known.workspaceId===ctx.workspaceId&&known.key===wholeKey(config,dateContext)){
+      ensureActor(actor,dataset);
+      current={rows:[{[known.column]:known.value}],columnLabels:{[known.column]:known.label},displayRows:[{[known.column]:known.display}]};
+    }else current=await run(database,ctx,actor,whole,{limit:2});
     if(window)previous=await run(database,ctx,actor,{...whole,filters:window.filters},{limit:2});
   }catch(error){if(error instanceof ValidationError)return null;throw error;}
   const lowerIsBetter=measure=>/cogs|cost|expense|refund|return|discount/.test(String(measure||''));

@@ -1,4 +1,7 @@
 'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+test('capacity monitoring reads only the exact recent window and shares its population',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t);t.diagnostic(JSON.stringify(await require('../helpers/capacity-history-shape-checks').check(f.db,f.ctx,{historyRows:10000})));
+});
 test('Money and stock-value previews support covered reads while retaining exact balances',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t);t.diagnostic(JSON.stringify(await require('../helpers/dashboard-covered-read-checks').check(f.db,f.ctx)));
 });

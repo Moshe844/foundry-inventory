@@ -25,7 +25,20 @@ async function measurement(db,workspaceId,relation=null){
  return db.transaction(async c=>{
   const instant=(await c.query('SELECT pg_current_snapshot()::text AS snapshot,transaction_timestamp() AS at')).rows[0];
   const registry=(await c.query(`SELECT u.relation::text AS relation,r.bytes_expression FROM commercial_storage_usage u JOIN commercial_storage_tables r USING(relation) WHERE u.workspace_id=$1 AND ($2::text IS NULL OR u.relation=$2::regclass) ORDER BY u.relation`,[workspaceId,relation])).rows;
-  const rows=[];for(const entry of registry){const measured=(await c.query(`SELECT coalesce(sum(${entry.bytes_expression}),0)::text AS bytes FROM ${entry.relation} t WHERE t.workspace_id=$1`,[workspaceId])).rows[0];rows.push({relation:entry.relation,bytes:measured.bytes});}
+  // A cursor scans each relation once, keeps the same exact logical-byte
+  // expression and snapshot, and yields between small batches. A monolithic
+  // SUM lets quota maintenance occupy CPU/I/O continuously for millions of
+  // historical records while customers are trying to use the application.
+  await c.query('SET LOCAL max_parallel_workers_per_gather=0');
+  const rows=[];for(const entry of registry){
+   await c.query(`DECLARE stockchief_storage_rows NO SCROLL CURSOR FOR SELECT ${entry.bytes_expression} AS bytes FROM ${entry.relation} t WHERE t.workspace_id=$1`,[workspaceId]);
+   let bytes=0n;for(;;){const batch=(await c.query('FETCH FORWARD 1000 FROM stockchief_storage_rows')).rows;
+    for(const row of batch)bytes+=BigInt(row.bytes||0);
+    if(batch.length<1000)break;
+    await new Promise(resolve=>setTimeout(resolve,50));
+   }
+   await c.query('CLOSE stockchief_storage_rows');rows.push({relation:entry.relation,bytes:bytes.toString()});
+  }
   return {...instant,rows};
  },{isolation:'REPEATABLE READ',readOnly:true,jit:false});
 }

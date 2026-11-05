@@ -30,6 +30,13 @@ async function check(db,ctx,{movementRows=1700000,distinctTimestamps=121643}={})
      assert(!nodes.some(n=>['workspaces','accounts'].includes(n['Relation Name'])),'The business zone must not be re-read by an unknown planning-time subquery');
     },{readOnly:true,isolation:'READ COMMITTED',jit:false,statementTimeoutMs:1500});
    }
+   const limited=reports.queryFor(reports.normalize({dataset:'movements',groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters,sort:'occurred_on',direction:'asc'},actor),ctx.workspaceId,{dateContext,limit:1,includeOverall:true});
+   const limitedSql=limited.sql.replaceAll('FROM movements m','FROM pg_temp.qualification_movement_history m');
+   await c.transaction(async tx=>{
+    const rows=(await tx.query(limitedSql,limited.values)).rows;assert.equal(rows.length,1);
+    assert.equal(Number(rows[0].__report_overall),expected.reduce((n,row)=>n+Number(row.total),0),'A limited history chart must include all dates in its total');
+    const plan=(await tx.query('EXPLAIN (ANALYZE,FORMAT JSON) '+limitedSql,limited.values)).rows[0]['QUERY PLAN'][0];timings.sharedTotalMs=plan['Execution Time'];assert(plan['Execution Time']<1500,'The shared chart and total must finish below 1.5 seconds');
+   },{readOnly:true,isolation:'READ COMMITTED',jit:false,statementTimeoutMs:1500});
    return {movementRows,distinctTimestamps,...timings,exactTotals:true,tenantIsolation:true,paidCalls:0};
   }finally{await c.query('DROP TABLE IF EXISTS pg_temp.qualification_movement_history');}
  });
