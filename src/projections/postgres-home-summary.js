@@ -29,7 +29,7 @@ async function read(db,workspaceId,{seesMoney=false,sales:current=null}={}){
  if(seesMoney&&current){
   const today=(await clock.forWorkspace(db,workspaceId)).calendarDate,prior=await sales.forPeriod(db,workspaceId,sameDaysLastMonth(today));
   if(Number(prior.minor)>0)out.salesChange=Math.round((Number(current.minor)-Number(prior.minor))*100/Number(prior.minor));
-  const stock=await require('../lib/versioned-read-model').read(db,workspaceId,['home-stock-value'],async()=>(await db.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[workspaceId])).rows[0],{domain:'business'});
+  const stock=await require('../lib/versioned-read-model').read(db,workspaceId,['home-stock-value'],()=>require('./postgres-cost-summaries').value(db,workspaceId),{domain:'business'});
   out.stockValue={minor:Number(stock.minor),currency:current.currency};
  }
  return out;
