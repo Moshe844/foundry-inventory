@@ -60,8 +60,12 @@ test('real Chromium qualifies blocked-popup same-tab OAuth return, ownership, en
     await page.getByLabel('Business name').fill('Connection Business');
     await page.getByLabel('Your name').fill('Connection Owner');
     await page.getByLabel('Work email').fill('connection-pg@example.test');
+    await page.getByLabel('Business time zone').fill('America/New_York');
     await page.locator('input[name="password"]').fill('connection-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('connection-password');
-    await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
+    assert.deepEqual(await page.locator('form input').evaluateAll(inputs=>inputs.filter(input=>!input.checkValidity()).map(input=>({name:input.name,message:input.validationMessage}))),[],'The OAuth fixture must complete every required registration field');
+    const [registration]=await Promise.all([page.waitForResponse(response=>response.url()===`${base}/register`&&response.request().method()==='POST'),page.getByRole('button',{name:'Create account'}).click()]);
+    assert.equal(registration.status(),302,'Fixture account registration failed: '+(await page.locator('main').innerText()).slice(0,1800));
+    await page.waitForURL(`${base}/onboarding`);
     await page.goto(`${base}/settings/connections`);
     assert.match(await page.locator('main').innerText(),/Each inventory has its own accounts/);
 

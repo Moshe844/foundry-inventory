@@ -1016,10 +1016,13 @@ async function executeUnlocked(database, ctx, id, options={}) {
   const committedAt=nowIso();let commitReceiptPersisted=true;
   try{await database.query('UPDATE import_executions SET committed_at=$3 WHERE workspace_id=$1 AND id=$2 AND status=\'SUCCEEDED\'',[ctx.workspaceId,result.executionId,committedAt]);}
   catch{commitReceiptPersisted=false;}
+  let executionCache={state:'DEFERRED',removed:0};
+  if(commitReceiptPersisted)try{executionCache=await require('./postgres-execution-cache').finish(database,ctx,id);}
+  catch(error){executionCache={state:'DEFERRED',reason:error.code||error.name};}
   let statistics;
   try{statistics=await require('./postgres-statistics').refreshAfterImport(database,result);}
   catch(error){statistics={state:'DEFERRED',reason:error.code||error.name};}
-  return {...result,committedAt,commitReceiptPersisted,statistics};
+  return {...result,committedAt,commitReceiptPersisted,executionCache,statistics};
 }
 
 async function approveAndQueue(database,ctx,id,expectedHash){

@@ -23,9 +23,16 @@ test('reported fractional-stock quantities work in Money, reports, stock overvie
  const summary=await require('../../src/assistant/postgres-inventory-summary').context(db,ctx.workspaceId,{role:'owner'});assert.equal(summary.onHand,383.75);assert.equal(summary.complete,true);
  const assistant=require('../../src/assistant/postgres-service'),valuation=await assistant.lookup(db,ctx,{view:'inventory_valuation'});assert.equal(valuation.totals.physicalUnits,383.75);assert.equal(valuation.totals.costedUnits,360.5);assert.equal(valuation.totals.missingCostUnits,23.25);assert.equal(valuation.totals.inventoryBookCostMinor,1611900);
  const stock=await require('../../src/web/postgres-presenters').inventoryPosition(db,ctx.workspaceId);assert.equal(stock.stockValue.missingCostUnits,23.25);
+ await t.test('Home aggregates ordinary stock once while retaining measured stock, empty SKUs and tenant scope',async()=>{
+  await catalog.createItem(db,ctx,{name:'No stock yet',baseCode:'DECIMAL-EMPTY',trackingMode:'quantity'});
+  const brief=await require('../../src/projections/postgres-service').brief(db,ctx.workspaceId,ctx.actorId);
+  assert.equal(brief.stats.unitsOnHand,380,'Kilograms must not be added to the ordinary-unit count');assert.equal(brief.stats.hasMeasuredStock,true);assert.equal(brief.stats.skuCount,4);assert.equal(brief.stats.zeroCount,1);assert.equal(brief.stats.available,383.75);
+  const other=await auth.createBusiness(db,{name:'Other Home owner',businessName:'Other Home tenant',email:'other-home@example.test',password:'Other-Home-tenant-fixture!'});
+  const empty=await require('../../src/projections/postgres-service').brief(db,other.workspaceId,other.userId);assert.equal(empty.stats.itemCount,0);assert.equal(empty.stats.skuCount,0);assert.equal(empty.stats.unitsOnHand,0);assert.equal(empty.stats.zeroCount,0);assert.equal(empty.stats.available,0);
+ });
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'round17-decimal-reporting'});t.after(()=>app.locals.sessionStore.close());
  const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(login.text),email:'decimal-reporting@example.test',password:'Decimal-reporting-qualification!'}).expect(302);
- for(const route of ['/money','/money/invoices','/money/bills','/money/profit','/reports','/inventory','/inventory/overview']){const page=await agent.get(route);assert.equal(page.status,200,route+': '+page.text.slice(0,300));assert.doesNotMatch(page.text,/exceeds the exact reporting range|INVENTORY_SUMMARY_PRECISION/);}
+ for(const route of ['/','/money','/money/invoices','/money/bills','/money/profit','/reports','/inventory','/inventory/overview']){const page=await agent.get(route);assert.equal(page.status,200,route+': '+page.text.slice(0,300));assert.doesNotMatch(page.text,/exceeds the exact reporting range|INVENTORY_SUMMARY_PRECISION/);}
  assert.equal((await money.snapshot(db,ctx.workspaceId,{summary:true})).missingCostUnits,23.25);
  assert.equal((await money.snapshot(db,ctx.workspaceId,{summary:false})).missingCostUnits,23.25);
  // Currency cents remain integer-only: supporting fractional stock does not
