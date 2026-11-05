@@ -46,10 +46,7 @@ function createPostgresInventoryRouter(database) {
     filters.optionName=String(req.query.optionName||'').slice(0,120);filters.optionValue=String(req.query.optionValue||'').slice(0,120);
     const listSize=require('../presentation/pagination').pageSize(req),isFlat=req.query.view==='flat',result=await (isFlat?require('../../domain/postgres-flat-catalog').list:catalog.listItems)(database,req.ctx.workspaceId,{...filters,page:req.query.page,afterItemId:req.query.after,pageSize:listSize});
     const hasProducts=result.items.length>0||(await database.query('SELECT 1 FROM items WHERE workspace_id=$1 LIMIT 1',[req.ctx.workspaceId])).rows.length>0;
-    if(!isFlat&&result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
-      FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
-      LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
-      WHERE s.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND b.on_hand>0 GROUP BY s.item_id`,[req.ctx.workspaceId,result.items.map(i=>i.id)])).rows;
+    if(!isFlat&&result.items.length){const missing=await require('../../accounting/postgres-quantity-coverage').forItems(database,req.ctx.workspaceId,result.items.map(i=>i.id));
       const low=await require('../../reports/postgres-low-stock-badges').forItems(database,req.ctx.workspaceId,result.items.map(i=>i.id));
       const lowIds=new Set(low.map(r=>r.record_id));
       result.items=result.items.map(item=>({...item,atOrBelowReorderPoint:lowIds.has(item.id),missingStockCostUnits:Number(missing.find(r=>r.item_id===item.id)?.missing_units||0)}));}
