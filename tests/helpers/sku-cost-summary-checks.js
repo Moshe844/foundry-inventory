@@ -10,8 +10,14 @@ async function check(db,ctx){
  const nodes=[];function visit(p){nodes.push(p);for(const child of p.Plans||[])visit(child);}visit(plan);
  const canonicalNodes=nodes.filter(p=>p['Relation Name']==='accounting_inventory_cost_balances');assert(canonicalNodes.every(p=>p['Actual Loops']===0),'Clean reads must never visit location-level cost balances');
  const counts=(await db.query('SELECT (SELECT count(*) FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1)::int summaries,(SELECT count(*) FROM skus WHERE workspace_id=$1)::int skus',[ctx.workspaceId])).rows[0];assert(counts.summaries<=counts.skus);
- await db.transaction(async c=>{await c.query('UPDATE accounting_inventory_cost_balances SET total_cost_minor=total_cost_minor+1 WHERE workspace_id=$1 AND (sku_id,location_id)=(SELECT sku_id,location_id FROM accounting_inventory_cost_balances WHERE workspace_id=$1 ORDER BY sku_id,location_id LIMIT 1)',[ctx.workspaceId]);assert.equal(Number((await summaries.value(c,ctx.workspaceId)).minor),Number(expected.cost)+1,'Dirty reads fall back in the writing transaction');throw Object.assign(Error('rollback summary probe'),{probe:true});},{isolation:'READ COMMITTED'}).catch(e=>{if(!e.probe)throw e;});
+ let dirtyReadPositions=0;
+ await db.transaction(async c=>{await c.query('UPDATE accounting_inventory_cost_balances SET total_cost_minor=total_cost_minor+1 WHERE workspace_id=$1 AND (sku_id,location_id)=(SELECT sku_id,location_id FROM accounting_inventory_cost_balances WHERE workspace_id=$1 ORDER BY sku_id,location_id LIMIT 1)',[ctx.workspaceId]);assert.equal(Number((await summaries.value(c,ctx.workspaceId)).minor),Number(expected.cost)+1,'Dirty reads fall back in the writing transaction');
+  const dirtyPlan=(await c.query('EXPLAIN(ANALYZE,FORMAT JSON) SELECT sum(total_cost_minor) FROM ('+summaries.source()+') costs',[ctx.workspaceId])).rows[0]['QUERY PLAN'][0].Plan;
+  const inspect=p=>{if(p['Relation Name']==='accounting_inventory_cost_balances')dirtyReadPositions+=p['Actual Rows']*p['Actual Loops'];for(const n of p.Plans||[])inspect(n);};inspect(dirtyPlan);
+  const affected=Number((await c.query('SELECT count(*) n FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=(SELECT sku_id FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1 LIMIT 1)',[ctx.workspaceId])).rows[0].n);
+  assert(dirtyReadPositions>0&&dirtyReadPositions<=affected,'One dirty SKU must not rescan all canonical stock positions');
+  throw Object.assign(Error('rollback summary probe'),{probe:true});},{isolation:'READ COMMITTED'}).catch(e=>{if(!e.probe)throw e;});
  assert.deepEqual(await canonical(),expected);assert.equal(Number((await summaries.value(db,ctx.workspaceId)).minor),Number(expected.cost));
- return {skuCostSummaries:counts.summaries,catalogueSkus:counts.skus,readMs,canonicalCostBalanceReadLoops:canonicalNodes.reduce((n,p)=>n+p['Actual Loops'],0),exactCanonicalCosts:true,dirtyFallback:true,sourceRowsChanged:0,paidCalls:0};
+ return {skuCostSummaries:counts.summaries,catalogueSkus:counts.skus,readMs,canonicalCostBalanceReadLoops:canonicalNodes.reduce((n,p)=>n+p['Actual Loops'],0),dirtyReadPositions,exactCanonicalCosts:true,dirtyFallback:true,sourceRowsChanged:0,paidCalls:0};
 }
 module.exports={check};

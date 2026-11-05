@@ -31,6 +31,7 @@ test('SKU cost summaries retain exact committed costs through concurrent receipt
  await summaries.refreshBatch(db,ctx.workspaceId,{beforePublish:async()=>{const started=performance.now();await receive('summary-concurrent-receipt');concurrentReceiptMs=performance.now()-started;assert(concurrentReceiptMs<1500,'Summary refresh must not hold a lock that stalls receipts');assert.equal(await value(),600,'Readers see the new receipt before summary publication');}});
  assert(await pending()>0,'A receipt committed after the refresh snapshot keeps its independent pending key');assert.equal(await value(),600,'An older refresh cannot hide a newer receipt');
  await summaries.refresh(db,ctx.workspaceId);assert.equal(await pending(),0);assert.equal(await value(),600);
+ t.diagnostic(JSON.stringify(await require('../helpers/sku-cost-summary-checks').check(db,ctx)));
  await db.query('UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,sku]);assert.equal(await value(),600,'Archival retains historical stock value');
  await db.query('UPDATE accounting_inventory_cost_balances SET quantity_units=3.75,total_cost_minor=375 WHERE workspace_id=$1',[ctx.workspaceId]);
  await summaries.refresh(db,ctx.workspaceId);const fractional=(await summaries.totals(db,ctx.workspaceId)).rows[0];assert.equal(Number(fractional.units),3.75);assert.equal(Number(fractional.cost),375);

@@ -1,13 +1,15 @@
 'use strict';
-// One bounded existence check on a cache miss, never a revision scan on every
-// cached read. A dirty or uninitialized workspace reads canonical balances.
-function source(){return `WITH cost_summary_state AS MATERIALIZED(
- SELECT EXISTS(SELECT 1 FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1 LIMIT 1) AS dirty
-) SELECT sku_id,quantity_units,total_cost_minor FROM stockchief_runtime.sku_cost_totals
- WHERE workspace_id=$1 AND NOT(SELECT dirty FROM cost_summary_state)
- UNION ALL SELECT sku_id,sum(quantity_units)::numeric AS quantity_units,sum(total_cost_minor) AS total_cost_minor
- FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND (SELECT dirty FROM cost_summary_state)
- GROUP BY sku_id`;}
+// Reuse committed per-SKU totals, and read only changed SKUs from canonical
+// balances. Cached reads make no database revision query. Ongoing receipts do
+// not force an inventory-wide fallback while background refresh catches up.
+function source(){return `WITH dirty_skus AS MATERIALIZED(
+ SELECT DISTINCT sku_id FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1
+) SELECT s.sku_id,s.quantity_units,s.total_cost_minor FROM stockchief_runtime.sku_cost_totals s
+ WHERE s.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM dirty_skus d WHERE d.sku_id=s.sku_id)
+ UNION ALL SELECT live.sku_id,live.quantity_units,live.total_cost_minor FROM dirty_skus d
+ CROSS JOIN LATERAL(SELECT b.sku_id,sum(b.quantity_units)::numeric AS quantity_units,sum(b.total_cost_minor) AS total_cost_minor
+  FROM accounting_inventory_cost_balances b WHERE b.workspace_id=$1 AND b.sku_id=d.sku_id
+  GROUP BY b.sku_id OFFSET 0) live`;}
 async function totals(db,workspaceId){return db.query('SELECT coalesce(sum(quantity_units),0)::numeric AS units,coalesce(sum(total_cost_minor),0)::bigint AS cost FROM ('+source()+') costs',[workspaceId]);}
 async function value(db,workspaceId){return (await db.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS minor FROM ('+source()+') costs',[workspaceId])).rows[0];}
 async function refreshBatch(db,workspaceId,{beforePublish}={}){
