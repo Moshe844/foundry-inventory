@@ -28,7 +28,8 @@ async function fixture(t,{onProgress=()=>{}}={}){
  await db.transaction(c=>require('../../src/domain/stock-quantity').save(c,ctx,measured.item_id,{unitLabel:'kg',quantityPrecision:3,quantityIncrement:'0.001'}));
  const profiler=process.env.STOCKCHIEF_IMPORT_PROFILE==='1'?require('./postgres-query-profile').profile(db):null,importDb=profiler?.database||db;
  const progress=phase=>p=>{profiler?.phase(phase+':'+p.stage);return onProgress(phase,p);};
- const started=performance.now(),stockPlan=await imports.analyse(importDb,ctx,{text:stock.join('\n'),filename:'round17-mixed-opening-stock.csv',importMode:'add',allowModel:false,onProgress:progress('stock-analysis')});
+ let additivePreviewPositionReads=0;const observe=target=>({...target,query:(sql,...values)=>{if(sql.includes('AS has_history'))additivePreviewPositionReads++;return target.query(sql,...values);}}),previewDb={...observe(importDb),transaction:(fn,options)=>importDb.transaction(c=>fn(observe(c)),options)};
+ const started=performance.now(),stockPlan=await imports.analyse(previewDb,ctx,{text:stock.join('\n'),filename:'round17-mixed-opening-stock.csv',importMode:'add',allowModel:false,onProgress:progress('stock-analysis')});
  assert.equal(stockPlan.recordsInvalid,0);assert.equal(stockPlan.recordsValid,150000);await imports.approve(importDb,ctx,stockPlan.id,stockPlan.integrityHash);const stockResult=await imports.execute(importDb,ctx,stockPlan.id,{onProgress:progress('stock-execution')});assert(stockResult.verified);const stockImportMs=performance.now()-started;if(profiler)console.log(JSON.stringify({importQueryProfile:profiler.report()}));
  const actual=(await db.query(`SELECT (SELECT count(*)::int FROM suppliers WHERE workspace_id=$1) suppliers,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions,(SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
  assert.deepEqual(actual,{suppliers:200,positions:150000,units:'1500000',value_minor:'300000000'});
@@ -37,6 +38,6 @@ async function fixture(t,{onProgress=()=>{}}={}){
  await db.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,status,available_at,idempotency_key,created_at,updated_at)
  SELECT 'round17-history-'||n,$1,'qualification.history','COMPLETED',0,'round17-history-'||n,now(),now() FROM generate_series(1,20000)n`,[ctx.workspaceId]);
  await db.query('ANALYZE stockchief_runtime.jobs');
- return {db,ctx,owner,email,password,locations,plan,stockPlan,catalogueMs,stockImportMs,imports,actual};
+ return {db,ctx,owner,email,password,locations,plan,stockPlan,catalogueMs,stockImportMs,additivePreviewPositionReads,imports,actual};
 }
 module.exports={fixture,warehouses};
