@@ -6,6 +6,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('A2 mixed tracked opening-stock import takes less than five minutes',()=>{assert(f.stockImportMs<300000,`Actual local canonical import took ${Math.round(f.stockImportMs)} ms`);});
  await t.test('A3 additive preview reads no historical stock positions across 50,000 SKUs and five warehouses',()=>{assert.equal(f.additivePreviewPositionReads,0);});
  await t.test('A3 movement and cost history retain exact bounded access after retiring the legacy chronology index',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sku-movement-access-checks').check(db,ctx)));});
+ await t.test('A3 compact history prefixes preserve every movement and stable timestamp pages across the large dataset',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/compact-history-index-checks').check(db,ctx)));});
  await t.test('A3 large stock imports pin SKU-local pages and their durable resume cursor',async()=>{const saved=(await db.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.stockPlan.id])).rows[0].apply_checkpoint;assert.equal(saved.executionOrder,'sku');assert.equal(saved.savedRows,150000);assert(saved.executionCursor?.key&&saved.executionCursor.rowId);});
  await t.test('A3 cached 50,000-SKU reads make no database revision query or backlog scan',async()=>{
   const statements=[],isolated={...db,query:(sql,values)=>{statements.push(sql);return db.query(sql,values);}},cache=require('../../src/lib/versioned-read-model');let computations=0;
@@ -185,6 +186,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
   const actual=(await db.query("SELECT baseline_bytes::text bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='accounting_journal_lines'::regclass",[ctx.workspaceId])).rows[0].bytes;
   assert.equal(actual,expected.bytes);assert(latencies.length>0);assert(Math.max(...latencies)<1500);t.diagnostic(JSON.stringify({storageRows:expected.rows,exactBytes:true,importPriorityChecked:true,measurementMs:performance.now()-started,foregroundReads:latencies.length,maxForegroundMs:Math.max(...latencies),paidCalls:0}));
  });
+ await t.test('D19 imports release an in-progress audit snapshot without publishing partial bytes at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/storage-snapshot-yield-checks').check(db,ctx)));});
  await t.test('D19 fifty distinct people share warehouse inbox sources with private approvals at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/needs-shared-input-checks').check(t,f)));});
  await t.test('D19 cold availability and low-stock reads preserve exact values without materializing 1.15 million stock positions',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/cold-stock-position-checks').check(db,ctx)));});
  await t.test('D19 missing-cost totals read only nonzero positions among 1.15 million generated stock-cost records',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sparse-coverage-read-checks').check(db,ctx)));});
