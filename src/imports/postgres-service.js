@@ -82,7 +82,7 @@ function problem(code, message) {
   return { code, message };
 }
 
-async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null}={}) {
+async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null,includePositions=true}={}) {
   const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
   // Scoped pages need an index lookup even under force_generic_plan; a nullable
   // OR forces every catalogue row through a large ANY array for every page.
@@ -95,8 +95,8 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
       WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ${skuFilter('s.')}`,[workspaceId,keys]),
-    database.query(`SELECT b.sku_id,b.location_id,b.on_hand,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
-      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]),
+    includePositions?database.query(`SELECT b.sku_id,b.location_id,b.on_hand,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
+      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]):{rows:[]},
     database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]),
     database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
     database.query(`SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id IN (${scopedSkus}) ORDER BY sku_id,currency,created_at DESC,id DESC`,[workspaceId,keys]),
@@ -290,7 +290,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
     for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
     blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
-    if(parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
+    if(input.importMode!=='add'&&parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
     if(quantity!==null&&!aggregate&&trackingMode==='quantity'){
       const key=JSON.stringify([code?.toLowerCase()||JSON.stringify([name?.toLowerCase(),variants]),location?.id||locationText||location?.name||null]);
       if(state.positions.has(key))problems.push(problem('duplicate_position','The source repeats this product and location. Combine the quantities or clarify the duplicate before importing.'));state.positions.add(key);
@@ -502,7 +502,10 @@ async function analyse(database, ctx, input) {
   const streaming=sheet.rows.length>500;
   const sourceIdentity=require('./source-identity');
   proposal.variantBases=sourceIdentity.bases(sheet,proposal.mappings,proposal,input);
-  const scopeRows=rows=>({sourceHash,rowNumbers:rows.map(r=>r.sourceRow),supplierNames:rows.map(r=>textCell(r,proposal.mappings.supplierName).toLowerCase()).filter(Boolean),
+  // Additive receipts do not overwrite an earlier stock count. Their price,
+  // cost and receipt checks stay live at execution; only count imports need
+  // a frozen before-position and a scan of the SKU's other warehouses.
+  const scopeRows=rows=>({sourceHash,includePositions:input.importMode!=='add',rowNumbers:rows.map(r=>r.sourceRow),supplierNames:rows.map(r=>textCell(r,proposal.mappings.supplierName).toLowerCase()).filter(Boolean),
     codes:rows.flatMap(r=>{const code=Object.hasOwn(input.codeOverrides||{},r.sourceRow)?input.codeOverrides[r.sourceRow]:textCell(r,proposal.mappings.code);
       return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,proposal.mappings,proposal))]:[];})});
   const context=await workspaceContext(database,ctx.workspaceId,scopeRows(streaming?[]:sheet.rows));
@@ -756,7 +759,7 @@ async function revise(database,ctx,id,input={},options={}){
       trackingReview={serial:choices.serial||'source',lot:choices.lot||'source',confirmedBy:ctx.actorId,confirmedAt:nowIso()};
     }
     await options.onProgress?.({processedRows:0,totalRows:plan.recordsDetected,stage:'checking'});
-    const context=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,codes:[],rowNumbers:[],supplierNames:[]});
+    const context=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,includePositions:false,codes:[],rowNumbers:[],supplierNames:[]});
     const scratch=plan.recordsDetected>5000?require('./validation-scratch').create():null;
     if(scratch)context.validationState=scratch.state;
     try{
@@ -812,7 +815,7 @@ async function revise(database,ctx,id,input={},options={}){
       if(!current.length)break;
       const sourceRows=current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}));
       const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview};
-      const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,rowNumbers:sourceRows.map(r=>r.sourceRow),
+      const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,includePositions:revised.transformations.importMode!=='add',rowNumbers:sourceRows.map(r=>r.sourceRow),
         supplierNames:sourceRows.map(r=>textCell(r,fieldMappings.supplierName).toLowerCase()).filter(Boolean),
         codes:sourceRows.flatMap(r=>{const code=Object.hasOwn(codeOverrides,r.sourceRow)?codeOverrides[r.sourceRow]:textCell(r,fieldMappings.code);return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,fieldMappings,rowProposal))]:[];})});
       batchContext.validationState=context.validationState;

@@ -1,0 +1,11 @@
+'use strict';const assert=require('node:assert/strict');
+async function check(db,ctx){
+ const ids=(await db.query("SELECT id FROM skus WHERE workspace_id=$1 AND code LIKE 'R17-%' ORDER BY id LIMIT 1000",[ctx.workspaceId])).rows.map(r=>r.id);assert.equal(ids.length,1000);
+ const chronology={sql:'SELECT sku_id,seq,quantity_delta::text AS quantity,occurred_at FROM movements WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,occurred_at,seq',values:[ctx.workspaceId,ids]},rows=(await db.query(chronology.sql,chronology.values)).rows;assert.equal(rows.length,3000);assert.equal(rows.reduce((n,r)=>n+Number(r.quantity),0),30000);
+ for(let i=1;i<rows.length;i++)if(rows[i].sku_id===rows[i-1].sku_id)assert(rows[i].occurred_at>rows[i-1].occurred_at||rows[i].occurred_at===rows[i-1].occurred_at&&Number(rows[i].seq)>Number(rows[i-1].seq));
+ const positions={sql:'SELECT b.sku_id,b.location_id,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[])',values:[ctx.workspaceId,ids]},points=(await db.query(positions.sql,positions.values)).rows;assert.equal(points.length,3000);assert(points.every(p=>p.has_history));
+ const costs={sql:'SELECT sku_id,cost_delta_minor::text AS cost FROM accounting_inventory_cost_movements WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,created_at,id',values:[ctx.workspaceId,ids]},values=(await db.query(costs.sql,costs.values)).rows;assert.equal(values.length,3000);assert.equal(values.reduce((n,r)=>n+Number(r.cost),0),6000000);
+ const plans=[];for(const [kind,q]of [['chronology',chronology],['position-history',positions],['cost-history',costs]]){const plan=(await db.transaction(c=>c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+q.sql,q.values),{readOnly:true,isolation:'READ COMMITTED',jit:false})).rows[0]['QUERY PLAN'][0];assert(plan['Execution Time']<1500,kind+' must retain indexed bounded history access');plans.push({kind,executionMs:plan['Execution Time']});}
+ return {skuHistorySample:1000,movementRows:rows.length,exactChronology:true,positionHistoryPreserved:true,costHistoryPreserved:true,plans,paidCalls:0};
+}
+module.exports={check};

@@ -1,0 +1,8 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test');
+test('SKU chronology, per-location evidence and cost history remain exact without the unused chronology index',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('history-access-sub',$1,'enterprise','COMP','ISOLATED_TEST')",[f.owner.accountId]);
+ const catalogue=await db.transaction(c=>require('../../src/domain/postgres-catalog-service').createImportedItemsInTransaction(c,ctx,Array.from({length:50},(_,n)=>({name:'History family '+n,trackingMode:'quantity',variants:Array.from({length:20},(_,v)=>({code:'R17-HISTORY-'+n+'-'+v}))})))),ids=catalogue.flatMap(i=>i.skus.map(s=>s.skuId)),locations=[f.location.id];for(const name of ['History second','History third'])locations.push((await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name,kind:'warehouse'})).id);
+ const receipts=ids.flatMap(skuId=>locations.map(locationId=>({skuId,locationId,quantity:10,idempotencyKey:'history:'+skuId+':'+locationId})));
+ for(let start=0;start<receipts.length;start+=1000)await db.transaction(async c=>{const received=await require('../../src/domain/postgres-inventory-engine').receiveManyInTransaction(c,ctx,receipts.slice(start,start+1000));await require('../../src/accounting/postgres-costing').receiveManyInTransaction(c,ctx,received.map(r=>({movementId:r.movementId,unitCostMinor:200,sourceType:'fixture',sourceRecordId:r.movementId})));});
+ t.diagnostic(JSON.stringify(await require('../helpers/sku-movement-access-checks').check(db,ctx)));
+});
