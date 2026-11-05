@@ -4,5 +4,7 @@ test('covered stock reads recover automatically after modest updates without wai
  const definitions=Array.from({length:50},(_,n)=>({name:'Visibility family '+n,trackingMode:'quantity',variants:Array.from({length:100},(_,v)=>({code:'VISIBLE-'+n+'-'+v}))})),catalogue=await db.transaction(c=>require('../../src/domain/postgres-catalog-service').createImportedItemsInTransaction(c,ctx,definitions)),skus=catalogue.flatMap(i=>i.skus.map(s=>s.skuId)),second=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Visibility room',kind:'warehouse'});
  await db.query('INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,s.id,l.id,0,now() FROM unnest($2::text[])s(id) CROSS JOIN unnest($3::text[])l(id)',[ctx.workspaceId,skus,[f.location.id,second.id]]);
  await db.query('INSERT INTO accounting_inventory_cost_balances(workspace_id,sku_id,location_id,quantity_units,total_cost_minor,updated_at) SELECT $1,s.id,l.id,0,0,now() FROM unnest($2::text[])s(id) CROSS JOIN unnest($3::text[])l(id)',[ctx.workspaceId,skus,[f.location.id,second.id]]);
+ const receipts=skus.flatMap(skuId=>[f.location.id,second.id].map(locationId=>({skuId,locationId,quantity:1,idempotencyKey:'visibility:'+skuId+':'+locationId})));
+ for(let start=0;start<receipts.length;start+=1000)await db.transaction(c=>require('../../src/domain/postgres-inventory-engine').receiveManyInTransaction(c,ctx,receipts.slice(start,start+1000)));
  t.diagnostic(JSON.stringify(await require('../helpers/stock-visibility-maintenance-checks').check(db,ctx)));
 });

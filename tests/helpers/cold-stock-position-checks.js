@@ -18,15 +18,20 @@ async function check(db,ctx){return db.withSessionLock('qualification:cold-stock
   const reference=(await c.query(availability.sql.replace('physical AS NOT MATERIALIZED','physical AS MATERIALIZED'),availability.values)).rows[0];assert.equal(actual,Number(reference.quantity));
   const source=shadow(require('../../src/reports/low-stock-source').source()),low={sql:'SELECT count(*)::int n,coalesce(sum(on_hand),0)::text quantity FROM ('+source+') source',values:[ctx.workspaceId]};
   const current=(await c.query(low.sql,low.values)).rows[0],legacy=(await c.query(low.sql.replace('stock_positions AS NOT MATERIALIZED','stock_positions AS MATERIALIZED'),low.values)).rows[0];assert.deepEqual(current,legacy);
+  // Location-only rules never need a whole-workspace stock sum, even with
+  // another million foreign positions and competing location indexes.
+  await c.query("CREATE TEMP TABLE cold_local_policies AS SELECT workspace_id,id AS sku_id,'cold-loc-1'::text location_id,1::numeric reorder_point,2::numeric target_stock FROM skus WHERE workspace_id=$1 AND is_active=1",[ctx.workspaceId]);
+  const local={sql:low.sql.replace('FROM reorder_policies','FROM pg_temp.cold_local_policies'),values:low.values},localResult=(await c.query(local.sql,local.values)).rows[0];assert.equal(localResult.n,positions/23);assert.equal(Number(localResult.quantity),positions/23);
   const reports=require('../../src/reports/postgres-service'),config=reports.normalize({dataset:'inventory_valuation',groups:['sku'],aggregate:'sum',measure:'book_cost_minor',filters:[{field:'currency',operator:'equals',value:'USD'}],sort:'total',direction:'desc'},{role:'owner'}),stockValue=reports.queryFor(config,ctx.workspaceId,{limit:13,includeOverall:true}),stock={...stockValue,sql:shadow(stockValue.sql)},valueRows=(await c.query(stock.sql,stock.values)).rows;assert(valueRows.length);assert.equal(Number(valueRows[0].total),4600);assert.equal(Number(valueRows[0].__report_overall),positions*200);
-  const plans=[];for(const [kind,q,forbidden]of [['availability',availability,'physical'],['low-stock',low,'stock_positions'],['stock-value',stock,'complete_position_population']]){
+  const plans=[];for(const [kind,q,forbidden]of [['availability',availability,'physical'],['low-stock',low,'stock_positions'],['local-low-stock',local,'stock_positions'],['stock-value',stock,'complete_position_population']]){
    const plan=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+q.sql,q.values)).rows[0]['QUERY PLAN'][0],nodes=[];const visit=n=>{nodes.push(n);for(const p of n.Plans||[])visit(p);};visit(plan.Plan);
    assert(!nodes.some(n=>n['Node Type']==='CTE Scan'&&n['CTE Name']===forbidden),'The complete position population must not be written to an intermediate table');
    if(kind==='low-stock')assert(nodes.filter(n=>n['Relation Name']==='cold_balances'&&!String(n['Index Cond']||'').includes('p.sku_id')).every(n=>n['Actual Loops']<=1),'Stock totals must not rescan the heap separately for every warehouse');
+   if(kind==='local-low-stock'){const broad=nodes.filter(n=>n['Relation Name']==='cold_balances'&&!/sku_id\s*=\s*p(?:_\d+)?\.sku_id/.test((n['Index Cond']||'')+' '+(n.Filter||'')));assert(broad.every(n=>n['Actual Loops']===0),'Location-only rules must skip the complete workspace stock population: '+JSON.stringify(broad));}
    if(kind==='stock-value')assert(nodes.filter(n=>/Join|Nested Loop/.test(n['Node Type'])).every(n=>n['Actual Rows']<=positions/23),'Join item identities after grouping stock positions by SKU');
    assert(plan['Execution Time']<1500,kind+' cold read exceeded 1.5 seconds: '+plan['Execution Time']);plans.push({kind,executionMs:plan['Execution Time'],tempBlocksWritten:plan.Plan['Temp Written Blocks']||0,positionMaterialization:false});
   }
   return {positions,foreignPositions:positions,skus:positions/23,availability:actual,lowStockRows:current.n,stockValueMinor:positions*200,canonicalValuesUnchanged:true,plans,paidCalls:0};
- }finally{await c.query('DROP TABLE IF EXISTS pg_temp.cold_balances,pg_temp.cold_locations,pg_temp.cold_cost_balances');await c.query("SELECT set_config('work_mem',$1,false),set_config('jit',$2,false)",[prior.work_mem,prior.jit]);}
+ }finally{await c.query('DROP TABLE IF EXISTS pg_temp.cold_balances,pg_temp.cold_locations,pg_temp.cold_cost_balances,pg_temp.cold_local_policies');await c.query("SELECT set_config('work_mem',$1,false),set_config('jit',$2,false)",[prior.work_mem,prior.jit]);}
 });}
 module.exports={check};
