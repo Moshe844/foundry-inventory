@@ -181,5 +181,6 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
   const actual=(await db.query("SELECT baseline_bytes::text bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='accounting_journal_lines'::regclass",[ctx.workspaceId])).rows[0].bytes;
   assert.equal(actual,expected.bytes);assert(latencies.length>0);assert(Math.max(...latencies)<1500);t.diagnostic(JSON.stringify({storageRows:expected.rows,exactBytes:true,measurementMs:performance.now()-started,foregroundReads:latencies.length,maxForegroundMs:Math.max(...latencies),paidCalls:0}));
  });
+ await t.test('D19 fifty distinct people share warehouse inbox sources with private approvals at 50,000 SKUs',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/needs-shared-input-checks').check(t,f)));});
  t.diagnostic(JSON.stringify({products:5000,skus:50000,warehouses:5,suppliers:200,openingStockRows:150000,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),...f.actual,routeTimings,paidCalls:0}));
 });
