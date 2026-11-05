@@ -2,7 +2,7 @@
 const CHUNK=500;
 // A SKU's source rows keep their original order, including repeated receipts
 // with different costs and locations. Only independent SKUs change order.
-async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor}){
+async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported}){
  let last=cursor||{key:'',rowNumber:-1,rowId:''};
  for(;;){
   const page=(await client.query(`WITH page AS MATERIALIZED(
@@ -15,9 +15,9 @@ async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor}){
     WHERE workspace_id=$1 AND import_id=$2 AND id=p.row_id OFFSET 0${lock?' FOR UPDATE':''}) r ON true
    ORDER BY p.execution_key,p.row_number,p.row_id`,[workspaceId,importId,last.key,last.rowNumber,last.rowId])).rows;
   if(!page.length)break;
-  if(page.some(row=>!['VALID','NEEDS_REVIEW'].includes(row.status)))throw new (require('../domain/errors').ValidationError)('Saved stock import progress does not match its approved source rows. Its recorded batches remain safe.');
-  const rows=page.map(row=>({id:row.id,rowNumber:Number(row.row_number),parsed:typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed,
-   executionCursor:{key:row.execution_key,rowNumber:Number(row.row_number),rowId:row.id}}));
+  if(page.some(row=>!(includeImported?['VALID','NEEDS_REVIEW','IMPORTED']:['VALID','NEEDS_REVIEW']).includes(row.status)))throw new (require('../domain/errors').ValidationError)('Saved stock import progress does not match its approved source rows. Its recorded batches remain safe.');
+  const rows=page.map(row=>{const parsed=typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed;if(includeImported&&row.sku_id){if(!parsed.existingSkuId)parsed.createdSkuId=row.sku_id;if(!parsed.existingItemId)parsed.createdItemId=row.item_id;if(row.location_id)parsed.locationId=row.location_id;}
+   return {id:row.id,rowNumber:Number(row.row_number),parsed,imported:row.status==='IMPORTED',executionCursor:{key:row.execution_key,rowNumber:Number(row.row_number),rowId:row.id}};});
   last=rows.at(-1).executionCursor;
   const size=rows.some(row=>!['quantity','lot'].includes(row.parsed.trackingMode)||row.parsed.secondaryUnitLabel)?Math.min(CHUNK,batchSize):batchSize;
   for(let start=0;start<rows.length;start+=size)yield rows.slice(start,start+size);
@@ -28,7 +28,7 @@ async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor}){
 // complete workbook and can time out before progress is published.
 async function* executionPages(client,workspaceId,importId,{includeImported=false,lock=true,batchSize=CHUNK,orderBySku=false,cursor=null}={}){
  if(!Number.isSafeInteger(batchSize)||batchSize<1||batchSize>2000)throw new TypeError('Import execution pages must contain one to 2,000 rows.');
- if(orderBySku){if(includeImported)throw new TypeError('Completed-source verification retains the original row order.');yield* stockPages(client,workspaceId,importId,{batchSize,lock,cursor});return;}
+ if(orderBySku){yield* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported});return;}
  let lastRow=-1,lastId='';
  for(;;){
   const page=(await client.query(`SELECT id,row_number,parsed,item_id,sku_id,location_id,status FROM import_rows

@@ -142,7 +142,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
         if(categories.size)await client.query(`INSERT INTO catalogue_item_facts(workspace_id,item_id,category,facts,created_at,updated_at)
           SELECT $1,x.item_id,x.category,'{}',$3,$3 FROM jsonb_to_recordset($2::jsonb) x(item_id text,category text)
           ON CONFLICT(workspace_id,item_id) DO UPDATE SET category=EXCLUDED.category,updated_at=EXCLUDED.updated_at`,[ctx.workspaceId,JSON.stringify([...categories.values()]),nowIso()]);
-        if(supplierLinks.length)await commerce.linkSupplierItemsInTransaction(client,ctx,supplierLinks);
+        if(supplierLinks.length){const latest=new Map();for(const link of supplierLinks){const key=JSON.stringify([link.supplierId,link.skuId]);latest.set(key,{...latest.get(key),...link});}await commerce.linkSupplierItemsInTransaction(client,ctx,[...latest.values()]);}
         if(facts.length)await require('../domain/postgres-catalog-facts').saveManyInTransaction(client,ctx,facts);
         if(policies.length)await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,policies);
       }
@@ -160,7 +160,9 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  const totals={value:{value:0n,movements:0},posted:{value:0n}};let expectedUnits=0,expectedValue=0,valued=0;
  await database.transaction(async client=>{
   await deps.bulkPlanning(client);
-  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize})){
+  // Match the committed journal batches. Returning to file-order pages after
+  // SKU-local execution would revisit most journal batches for every page.
+  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize,orderBySku:checkpoint.executionOrder==='sku'})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);
    for(const row of page){expectedUnits=addExact(expectedUnits,expectedDelta(row));expectedValue=addExact(expectedValue,expectedCost(row));if(expectsCostRecord(row))valued++;}
