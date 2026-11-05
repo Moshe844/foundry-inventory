@@ -98,7 +98,7 @@ async function homeUncached(database,workspaceId,actorId=null){
 
 async function inventoryPosition(database,workspaceId){
   const result=await database.query(`WITH stock_by_sku AS MATERIALIZED (
-      SELECT sku_id,SUM(on_hand)::numeric AS on_hand FROM balances WHERE workspace_id=$1 GROUP BY sku_id
+      SELECT sku_id,quantity AS on_hand FROM (${require('../projections/postgres-sku-stock').source()}) stock
     ), commitments_by_sku AS MATERIALIZED (
       SELECT sku_id,SUM(quantity)::numeric AS committed FROM sales_stock_commitments WHERE workspace_id=$1 GROUP BY sku_id
     ), incoming_by_sku AS MATERIALIZED (
