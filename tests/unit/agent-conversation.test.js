@@ -9,6 +9,12 @@ test('a rejected read query is an explained failure while uncertain usage and op
  goal.checkpoint.harness.inflight={kind:'business_database_read'};assert.equal(contract.state(goal).phase,'interrupted');delete goal.checkpoint.harness.inflight;
  goal.tool_calls=1;assert.equal(contract.state(goal).phase,'interrupted');
 });
+test('interrupted work shows only an evidenced partial result and keeps uncertain provider usage protected',()=>{
+ const goal={id:'partial-read',status:'BLOCKED',answer:'Customer A owes $50.',checkpoint:{boundedRead:true,harness:{completionSource:'partial_verified_receipt',interruption:{code:'OPERATION_INTERRUPTED'},inflight:{kind:'business_database_read'}}}};
+ assert.match(contract.state(goal).message,/Customer A owes \$50/);
+ delete goal.checkpoint.harness.completionSource;goal.answer='Reconcile its canonical records before retrying.';assert.doesNotMatch(contract.state(goal).message,/canonical/);
+ goal.checkpoint.harness.modelUsagePending=true;goal.checkpoint.harness.readQueryInvalid=true;assert.equal(contract.state(goal).phase,'usage_review');
+});
 test('ordinary leading Markdown links and bracketed business text are not protocol envelopes',()=>{
  for(const answer of ['[Customer order](/orders/example) is complete.','["Warehouse"](/locations) has the recorded stock.','[מלאי](/inventory) נבדק.','[Article] is the product label.']){
   assert.equal(contract.publicText(answer),answer);

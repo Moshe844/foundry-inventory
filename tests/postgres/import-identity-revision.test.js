@@ -12,4 +12,20 @@ test('preview revisions retain unchanged identities and replace changed, invalid
  await imports.approve(db,ctx,plan.id,plan.integrityHash);const result=await imports.execute(db,ctx,plan.id);assert(result.verified);assert.equal(result.units,9);
  assert.equal((await db.query("SELECT count(*)::int n FROM skus WHERE workspace_id=$1 AND code='REV-A'",[ctx.workspaceId])).rows[0].n,1);
  assert.equal(Number((await db.query('SELECT sum(on_hand) AS n FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,created.skuIds[0]])).rows[0].n),5);assert((await imports.execute(db,ctx,plan.id)).duplicate);
+ assert.equal((await identities()).rows.length,0,'Verified committed imports must release their temporary execution identities');
+});
+test('execution-cache cleanup preserves previews, paused imports, tenant scope and every durable receipt',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,imports=require('../../src/imports/postgres-service'),cache=require('../../src/imports/postgres-execution-cache');
+ const plan=await imports.analyse(db,ctx,{text:'Name,SKU,Qty,Cost\nResume cache item,CACHE-RESUME,3,2',allowModel:false,defaultLocationId:f.location.id});
+ const remaining=async()=>Number((await db.query('SELECT count(*) n FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,plan.id])).rows[0].n);
+ assert.equal(await remaining(),1);assert.equal((await cache.releaseCompleted(db,ctx,plan.id)).eligible,false);assert.equal(await remaining(),1);
+ await imports.approve(db,ctx,plan.id,plan.integrityHash);
+ await assert.rejects(imports.execute(db,ctx,plan.id,{beforeCommit:()=>{throw Error('pause before verification commit');}}),/pause before verification commit/);
+ assert.equal((await cache.releaseCompleted(db,ctx,plan.id)).eligible,false);assert.equal(await remaining(),1,'Resume still needs its preparation identities');
+ assert.equal((await cache.releaseCompleted(db,{workspaceId:'another-workspace'},plan.id)).eligible,false);assert.equal(await remaining(),1);
+ const result=await imports.execute(db,ctx,plan.id);assert.equal(result.verified,true);assert.equal(result.executionCache.state,'RELEASED');assert.equal(result.executionCache.removed,1);assert.equal(await remaining(),0);
+ const source=(await db.query('SELECT raw,status,movement_ids FROM import_rows WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,plan.id])).rows;assert.equal(source.length,1);assert.equal(source[0].status,'IMPORTED');assert(source[0].raw);assert(source[0].movement_ids);
+ const receipt=(await db.query('SELECT count(*)::int n FROM import_verifications WHERE workspace_id=$1 AND import_id=$2 AND verified=1',[ctx.workspaceId,plan.id])).rows[0];assert.equal(receipt.n,1);
+ assert.equal((await imports.execute(db,ctx,plan.id)).duplicate,true);assert.equal(Number((await db.query("SELECT sum(quantity_delta) n FROM movements WHERE workspace_id=$1 AND sku_id=(SELECT sku_id FROM import_rows WHERE workspace_id=$1 AND import_id=$2)",[ctx.workspaceId,plan.id])).rows[0].n),3);
+ await assert.rejects(cache.releaseCompleted(db,ctx,plan.id,{batchSize:1000000}),TypeError);
 });

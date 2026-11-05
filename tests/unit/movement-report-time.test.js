@@ -20,6 +20,13 @@ test('movement day comparisons bound calendar days without assuming a 24-hour UT
   const q=reports.queryFor(reports.normalize({dataset:'movements',summary:true,aggregate:'sum',measure:'quantity_delta',filters:[{field:'occurred_on',operator,value:'2026-11-01'}]},{role:'owner'}),'workspace-one');assert(q.sql.includes('stockchief_movement_instant(m.occurred_at)'+fragment),operator);assert.doesNotMatch(q.sql,/interval '24 hours'/);
  }
 });
+test('movement headlines sum the bounded quantities without grouping or converting timestamps',()=>{
+ const q=reports.queryFor(reports.normalize({dataset:'movements',summary:true,aggregate:'sum',measure:'quantity_delta',filters:[{field:'occurred_on',operator:'equals',value:'2026-11-01'}]},{role:'owner'}),'workspace-one',{dateContext:{timeZone:'America/New_York'}});
+ assert.match(q.sql,/SELECT SUM\("quantity_delta"\)/);assert.match(q.sql,/stockchief_movement_instant\(m\.occurred_at\)>=/);
+ assert.doesNotMatch(q.sql,/movement_instants|GROUP BY|to_char|JOIN items/);
+ const all=reports.queryFor(reports.normalize({dataset:'movements',summary:true,aggregate:'sum',measure:'quantity_delta'},{role:'owner'}),'workspace-one',{dateContext:{timeZone:'America/New_York'}});
+ assert.deepEqual(all.values,['workspace-one',201,0],'An unfiltered scalar total must not bind an unused time-zone parameter');
+});
 test('composed movement reads retain date parameters belonging to their own metric',()=>{
  const composed=require('../../src/reports/postgres-composed'),config=composed.normalize({dataset:'composed',dimension:'sku',metrics:[
   {alias:'stock',dataset:'stock',aggregate:'sum',measure:'on_hand',filters:[{field:'location',operator:'equals',value:'Main'}]},

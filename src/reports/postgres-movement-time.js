@@ -2,6 +2,9 @@
 const zone="(SELECT coalesce(w.time_zone,a.time_zone,'UTC') FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1)";
 const instant='stockchief_movement_instant(m.occurred_at)';
 const boundsMarker='/* movement_date_bounds */';
+// A headline needs one additive total, not a timestamp table that is then
+// immediately summed again. Apply the same indexed bounds to the raw quantity.
+const additiveTotalSource=`SELECT m.quantity_delta::numeric AS quantity_delta FROM movements m WHERE m.workspace_id=$1 ${boundsMarker}`;
 // A receipt batch often contains many movements at the same instant. Preserve
 // exact additive quantities, then convert each distinct timestamp once. Counts,
 // averages and row-value filters must continue to read individual events.
@@ -15,7 +18,8 @@ function applied(filter){return filter.field==='occurred_on'&&['after','at_least
 function bound(source,config,{parameterBase=1,dateContext=null,values=null}={}){
  // The clock was already read for this report. Binding its zone lets PostgreSQL
  // estimate the actual indexed date range instead of an unknown InitPlan value.
- const reportZone=dateContext?.timeZone&&values?`$${values.push(dateContext.timeZone)}::text`:zone;
+ const needsZone=source.includes(zone)||config.filters.some(filter=>applied(filter)&&filter.operator!=='is_null');
+ const reportZone=needsZone&&dateContext?.timeZone&&values?`$${values.push(dateContext.timeZone)}::text`:zone;
  if(reportZone!==zone)source=source.replaceAll(zone,reportZone);
  let parameter=parameterBase;const predicates=[];
  for(const filter of config.filters){
@@ -46,4 +50,4 @@ async function warnings(database,workspaceId){
   LIMIT 3`,[workspaceId])).rows;
  return rows.length?['Some stock movement dates need review: '+rows.map(r=>r.label).join(', ')+'. These movements are excluded from date-filtered totals.']:[];
 }
-module.exports={bound,applied,warnings,additiveSource};
+module.exports={bound,applied,warnings,additiveSource,additiveTotalSource};
