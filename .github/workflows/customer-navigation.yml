@@ -54,7 +54,7 @@ jobs:
         run: |
           mkdir -p output/customer-navigation-ci
           set -euo pipefail
-          node --test tests/postgres/owner-session-redirect.test.js 2>&1 | tee output/customer-navigation-ci/owner-session-redirect.log
+          node --test --test-concurrency=1 tests/postgres/owner-session-redirect.test.js tests/postgres/anonymous-session-publication.test.js tests/postgres/auth-http.test.js tests/postgres/auth-middleware.test.js 2>&1 | tee output/customer-navigation-ci/owner-session-redirect.log
       - if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           mkdir -p output/customer-navigation-ci

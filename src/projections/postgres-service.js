@@ -230,11 +230,17 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
     includeLocationStock?database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
       LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
       WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]):{rows:[]},
-    database.query(`SELECT m.id,m.operation,m.quantity_delta,m.reference,m.notes,m.occurred_at,
+    database.query(`WITH recent_movements AS MATERIALIZED(
+      SELECT id,seq,operation,quantity_delta,reference,notes,occurred_at,item_id,sku_id,location_id,actor_user_id
+      FROM movements WHERE workspace_id=$1 ORDER BY occurred_at DESC,seq DESC LIMIT 12)
+      SELECT m.id,m.operation,m.quantity_delta,m.reference,m.notes,m.occurred_at,
       i.name AS item_name,s.code,l.name AS location_name,u.name AS actor_name
-      FROM movements m JOIN items i ON i.id=m.item_id JOIN skus s ON s.id=m.sku_id
-      JOIN locations l ON l.id=m.location_id LEFT JOIN users u ON u.id=m.actor_user_id
-      WHERE m.workspace_id=$1 ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 12`,[workspaceId]),
+      FROM recent_movements m
+      JOIN LATERAL(SELECT name FROM items WHERE id=m.item_id OFFSET 0)i ON true
+      JOIN LATERAL(SELECT code FROM skus WHERE id=m.sku_id OFFSET 0)s ON true
+      JOIN LATERAL(SELECT name FROM locations WHERE id=m.location_id OFFSET 0)l ON true
+      LEFT JOIN LATERAL(SELECT name FROM users WHERE id=m.actor_user_id OFFSET 0)u ON true
+      ORDER BY m.occurred_at DESC,m.seq DESC`,[workspaceId]),
     database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`,[workspaceId]),
     database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1

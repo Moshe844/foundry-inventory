@@ -1,4 +1,5 @@
 'use strict';
+process.env.NODE_ENV='test';
 
 const path = require('node:path');
 const test = require('node:test');
@@ -28,7 +29,7 @@ function makeApp(database,connectionString) {
   const store=createPostgresSessionStore(connectionString,{sweepIntervalMs:86400000});
   app.use(session({name:'foundry.sid',secret:'postgres-http-test-secret',store,resave:false,
     saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:false,maxAge:86400000}}));
-  app.use((req,res,next)=>{res.locals.appName='StockChief';res.locals.origin='http://stockchief.test';next();});
+  app.use((req,res,next)=>{res.locals.appName='StockChief';res.locals.origin='http://stockchief.test';res.locals.assetVersion='auth-http-fixture';next();});
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
   app.use(authMiddleware.loadUser(database));
@@ -54,7 +55,7 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
     });
     const agent=request.agent(first.app);
     const registration=await agent.get('/register');
-    assert.equal(registration.status,200);
+    assert.equal(registration.status,200,registration.body.error);
     const malformed=await agent.post('/register').type('form').send({
       _csrf:csrfFrom(registration.text),name:'Invalid Owner',businessName:'Invalid Business',
       email:'not-an-email',password:'12345677',
@@ -84,7 +85,7 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
     const registrationAfterError=await agent.get('/register');
     const registered=await agent.post('/register').type('form').send({
       _csrf:csrfFrom(registrationAfterError.text),name:'Browser Owner',businessName:'Shared Postgres Inventory',
-      email:'browser@example.test',password:'browser-password',
+      email:'browser@example.test',password:'Browser-password!',
     });
     assert.equal(registered.status,302);
     assert.equal(registered.headers.location,'/onboarding');
@@ -102,7 +103,7 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
       email:'browser@example.test',password:'wrong-password'});
     assert.equal(bad.status,401);
     const good=await stranger.post('/login').type('form').send({_csrf:csrfFrom(login.text),
-      email:'browser@example.test',password:'browser-password',next:'/whoami'});
+      email:'browser@example.test',password:'Browser-password!',next:'/whoami'});
     assert.equal(good.status,302);
     assert.equal(good.headers.location,'/whoami');
     const sessionCookie=good.headers['set-cookie'].find((value)=>value.startsWith('foundry.sid='));
@@ -112,7 +113,7 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
     const remembered=request.agent(second.app);
     const rememberedLogin=await remembered.get('/login');
     const rememberedResult=await remembered.post('/login').type('form').send({_csrf:csrfFrom(rememberedLogin.text),
-      email:'browser@example.test',password:'browser-password',rememberMe:'1'});
+      email:'browser@example.test',password:'Browser-password!',rememberMe:'1'});
     assert.equal(rememberedResult.status,302);
     const persistentCookie=rememberedResult.headers['set-cookie'].find((value)=>value.startsWith('foundry.sid='));
     const expiry=/Expires=([^;]+)/i.exec(persistentCookie)?.[1];

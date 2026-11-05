@@ -71,11 +71,22 @@ function scopedCsrfToken(session) {
 }
 function csrf(req, res, next) {
   if (!req.session) return next();
-  if (!req.session.csrfToken) {
+  const newToken=!req.session.csrfToken;
+  if (newToken) {
     req.session.csrfToken = crypto.randomBytes(24).toString('base64url');
   }
   res.locals.csrfToken = scopedCsrfToken(req.session);
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    // express-session may flush form HTML and Set-Cookie before its end-of-
+    // response save finishes. A background read in that gap creates another
+    // session and replaces the cookie, invalidating the form's CSRF token.
+    // Publish a fresh token only after the shared session store has it.
+    if(newToken&&typeof req.session.save==='function')return req.session.save(error=>{
+      if(error)req.session=null; // Do not retry publishing a failed initial save while rendering its error.
+      next(error);
+    });
+    return next();
+  }
 
   // A form that accidentally carries the field twice arrives as an array.
   // Comparing that to the token would fail as "session expired", which is a
