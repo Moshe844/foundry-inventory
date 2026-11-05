@@ -34,16 +34,19 @@ test('Home opens Ask immediately and shows the question there while the backend 
     await page.locator('input[name="password"]').fill('handoff-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('handoff-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
+    // Rendering pauses once the form is sending, so the page records its own pending message.
+    await page.addInitScript(()=>{new MutationObserver(()=>{const said=document.querySelector('.rm-turn--pending .rm-turn__said');
+      if(said&&document.querySelector('[data-thinking-text]'))sessionStorage.setItem('pendingQuestion',said.textContent);}).observe(document,{childList:true,subtree:true});});
     await page.goto(base);
     await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Which part of the stock should I check first?');
     await page.getByRole('button',{name:'Continue'}).click();
     await page.waitForURL(/\/ask\?fresh=/);
     assert.equal(new URL(page.url()).pathname,'/ask');
-    await page.locator('[data-thinking-text]').waitFor({timeout:2500});
-    assert.match(await page.locator('main').innerText(),/Which part of the stock should I check first\?/);
+    await new Promise((resolve)=>setTimeout(resolve,1500));
     releaseModel();
     await page.waitForURL(/\/ask\?chat=[^#]+#latest$/);
     await page.getByText(/No products have ever been recorded in StockChief; you have 0 units on hand/).waitFor();
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('pendingQuestion')),'Which part of the stock should I check first?','The question shows while the backend works');
     assert.match(await page.locator('main').innerText(),/No products have ever been recorded in StockChief; you have 0 units on hand/);
     assert.equal(await page.locator('.rm-composer__attach').count(),1);
     assert.match(await page.locator('.rm-composer__attach').getAttribute('title'),/Attach an inventory table \(CSV, Excel, PDF or image\)/);
