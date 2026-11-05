@@ -125,8 +125,7 @@ async function inventoryPosition(database,workspaceId){
     FROM item_position`,[workspaceId]);
   const [locations,cost,names,coverage]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
-    database.query(`SELECT COALESCE(SUM(costed_units),0)::numeric AS units,
-      COALESCE(SUM(book_cost_minor),0)::bigint AS cost FROM inventory_cost_coverage_totals WHERE workspace_id=$1`,[workspaceId]),
+    require('../projections/postgres-cost-summaries').totals(database,workspaceId),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
     require('../accounting/customer-money').inventoryCoverage(database,workspaceId),
   ]);

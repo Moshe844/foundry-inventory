@@ -10,7 +10,8 @@ async function scheduleOnce(database,options={}){
   const result=await jobs.enqueue(database,{kind:'system.runtime-sweep',idempotencyKey:`runtime-sweep:${bucket}`,
     payload:{now},priority:10,maxAttempts:5,availableAt:now,now});
   // Measurement scheduling commits independently of later runtime sweep work.
-  await require('../commercial/storage-capacity').schedule(database,{now});return result;
+  await require('../commercial/storage-capacity').schedule(database,{now});
+  await require('../projections/postgres-cost-summaries').schedule(database,{now});return result;
 }
 
 function start(database,options={}){
