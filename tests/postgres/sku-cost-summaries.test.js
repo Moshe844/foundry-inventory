@@ -40,6 +40,17 @@ test('SKU cost summaries retain exact committed costs through concurrent receipt
  t.diagnostic(JSON.stringify({costSummarySnapshotRace:true,concurrentReceiptMs,rollbackSafe:true,fractionalUnits:true,archivedValue:true,singleConnection:true,sourceWriterBlocked:false,paidCalls:0}));
 });
 
+test('summary rollback probes preserve zero-value empty positions even when they sort first',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,emptySku='000-empty-cost-summary';
+ await db.query("INSERT INTO skus(id,workspace_id,item_id,code,created_at) SELECT $3,workspace_id,item_id,'EMPTY-COST-SUMMARY',created_at FROM skus WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,f.item.skuIds[0],emptySku]);
+ await db.query('INSERT INTO accounting_inventory_cost_balances(workspace_id,sku_id,location_id,quantity_units,total_cost_minor,updated_at) VALUES($1,$2,$3,0,0,$4)',[ctx.workspaceId,emptySku,f.location.id,new Date().toISOString()]);
+ assert.equal((await db.query('SELECT sku_id FROM accounting_inventory_cost_balances WHERE workspace_id=$1 ORDER BY sku_id,location_id LIMIT 1',[ctx.workspaceId])).rows[0].sku_id,emptySku);
+ await assert.rejects(db.query('UPDATE accounting_inventory_cost_balances SET total_cost_minor=1 WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,emptySku]),{code:'23514'});
+ const result=await require('../helpers/sku-cost-summary-checks').check(db,ctx);assert(result.dirtyFallback&&result.exactCanonicalCosts);
+ const empty=(await db.query('SELECT quantity_units,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,emptySku])).rows[0];assert.equal(Number(empty.quantity_units),0);assert.equal(Number(empty.total_cost_minor),0);
+ assert.equal(Number((await summaries.value(db,ctx.workspaceId)).minor),400);
+});
+
 test('bounded summary jobs continue after a completed partial job without duplicating a scheduler bucket',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,now=180000;
  await summaries.schedule(db,{now});await summaries.schedule(db,{now});
