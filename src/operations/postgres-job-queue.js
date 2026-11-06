@@ -182,7 +182,10 @@ async function fail(database, id, token, error, options = {}) {
       AND status = 'RUNNING' AND lease_expires_at > $3 FOR UPDATE`, [id, token, now]);
     if (!owned.rows.length) return null;
     const row = owned.rows[0];
-    const retryable = options.retryable !== false;
+    // PostgreSQL disk_full needs operator recovery, not another immediate
+    // write attempt. Keep the checkpoint and allow an explicit retry only
+    // after capacity is restored. Connection/recovery errors remain retryable.
+    const retryable = options.retryable !== false && error?.code !== '53100';
     const commercialPause=error?.code==='entitlement_required';
     const dead = !commercialPause&&(!retryable || row.attempt_count >= row.max_attempts);
     const delay = options.retryAfterMs ?? Math.min(900000, 1000 * (2 ** Math.min(20, row.attempt_count - 1)));

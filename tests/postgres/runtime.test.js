@@ -67,6 +67,41 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
     const events = await database.query('SELECT event_type FROM stockchief_runtime.job_events WHERE job_id = $1', [queued.job.id]);
     assert.deepEqual(new Set(events.rows.map((row) => row.event_type)), new Set(['ENQUEUED','CLAIMED','DEAD_LETTERED','MANUAL_RETRY']));
   });
+  await context.test('disk-full jobs stop immediately and retain a scoped manual recovery path', async () => {
+    const queued = await jobs.enqueue(database, { workspaceId: 'workspace-one', kind: 'qualification.disk-full',
+      idempotencyKey: 'disk-full', maxAttempts: 5, now: 4000 });
+    const owned = await jobs.claim(database, { owner: 'disk-worker', kinds: ['qualification.disk-full'], now: 4000 });
+    const stopped = await jobs.fail(database, owned.id, owned.leaseToken,
+      Object.assign(new Error('No space left on device'), { code: '53100' }), { now: 4001, retryable: true });
+    assert.equal(stopped.status, 'DEAD');
+    assert.equal(stopped.attemptCount, 1);
+    assert.equal(stopped.lastError.code, '53100');
+    assert.equal(stopped.lastError.retryable, false);
+    assert.equal(await jobs.claim(second, { owner: 'disk-worker-two', kinds: ['qualification.disk-full'], now: 7000 }), null);
+    assert.equal(await jobs.retryDead(database, queued.job.id, 'workspace-two', { now: 7001 }), null);
+    const resumed = await jobs.retryDead(database, queued.job.id, 'workspace-one', { now: 7001, by: 'operator' });
+    assert.equal(resumed.id, queued.job.id);
+    assert.equal(resumed.status, 'RETRY');
+    const recovered = await jobs.claim(second, { owner: 'disk-recovered', kinds: ['qualification.disk-full'], now: 7002 });
+    assert.equal(await jobs.complete(second, recovered.id, recovered.leaseToken, { verified: true }, { now: 7003 }), true);
+    const events = (await database.query('SELECT event_type,detail FROM stockchief_runtime.job_events WHERE job_id=$1', [queued.job.id])).rows;
+    assert.equal(events.filter(row => row.event_type === 'RETRY_SCHEDULED').length, 0);
+    assert.equal(events.filter(row => row.event_type === 'DEAD_LETTERED').length, 1);
+    assert.equal(events.filter(row => row.event_type === 'MANUAL_RETRY').length, 1);
+  });
+  await context.test('temporary database recovery errors still retry without losing the job', async () => {
+    const queued = await jobs.enqueue(database, { workspaceId: 'workspace-one', kind: 'qualification.recovery',
+      idempotencyKey: 'database-recovery', maxAttempts: 5, now: 8000 });
+    const owned = await jobs.claim(database, { owner: 'recovery-worker', kinds: ['qualification.recovery'], now: 8000 });
+    const stopped = await jobs.fail(database, owned.id, owned.leaseToken,
+      Object.assign(new Error('The database system is in recovery mode'), { code: '57P03' }), { now: 8001 });
+    assert.equal(stopped.status, 'RETRY');
+    assert.equal(stopped.lastError.retryable, true);
+    assert.equal(await jobs.claim(second, { owner: 'recovery-worker-two', kinds: ['qualification.recovery'], now: 8002 }), null);
+    const recovered = await jobs.claim(second, { owner: 'recovery-worker-two', kinds: ['qualification.recovery'], now: stopped.availableAt });
+    assert.equal(recovered.id, queued.job.id);
+    assert.equal(await jobs.complete(second, recovered.id, recovered.leaseToken, { verified: true }, { now: stopped.availableAt + 1 }), true);
+  });
   await context.test('rollback and immutable history prevent partial or rewritten evidence', async () => {
     await assert.rejects(database.transaction(async (client) => {
       await client.query(`INSERT INTO workspaces(id, name, created_at)
