@@ -49,6 +49,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  // Run canonical operational changes against the full imported database, then
  // roll back each scenario so the subsequent measurements use identical stock.
  async function isolated(work){const rollback=Error('End isolated scale scenario');await assert.rejects(db.transaction(async c=>{await work({query:c.query.bind(c),transaction:fn=>fn(c)});throw rollback;}),error=>error===rollback);}
+ await t.test('D19 sales, tax and expense reports exclude 150,000 opening rows before joining catalogue records',async()=>isolated(async c=>{t.diagnostic(JSON.stringify(await require('../helpers/report-ledger-account-checks').check(c,ctx,{large:true})));}));
  await t.test('D19 a report with no reorder rules does not probe the 50,000-SKU catalogue',async()=>isolated(async c=>{t.diagnostic(JSON.stringify(await require('../helpers/report-reorder-existence-checks').check(c,ctx)));}));
  await t.test('A3 replenishment evaluates demand once per durable cycle across forecast and planning pages at 50,000 SKUs / 150,000 positions',async()=>isolated(async c=>{
   const result=await require('../helpers/replenishment-cycle-checks').check(c,ctx);t.diagnostic(JSON.stringify({replenishmentCycle:result}));

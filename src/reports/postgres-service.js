@@ -326,7 +326,7 @@ async function run(database,ctx,actor,spec,options={}){
     const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
     const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds,includeOverall});
     return client.query(query.sql,query.values);
-  },{isolation:config.dataset==='profit_activity'?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
+  },{isolation:require('./postgres-profit-scope').required(config)?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
   const warnings=config.dataset==='movements'&&actor.role==='owner'
     ?await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['movement-date-warnings'],()=>require('./postgres-movement-time').warnings(database,ctx.workspaceId),{domain:'business'}):[];
   const hasMore=fetched.length>allowed;
@@ -466,7 +466,7 @@ async function countAtMost(database,ctx,actor,spec,maximum){
       SELECT 1 FROM source ${where} ${groups.length?`GROUP BY ${groups.join(',')}`:''}
       LIMIT $${limitIndex}) bounded`;
     return client.query(sql,queryValues);
-  },{isolation:config.dataset==='profit_activity'?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000,jit:false})).rows[0];
+  },{isolation:require('./postgres-profit-scope').required(config)?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000,jit:false})).rows[0];
   return Math.min(Number(row.count),config.topN??Number.POSITIVE_INFINITY);
 }
 function drilldownSpec(spec,values,actor,sourceAlias=null){
