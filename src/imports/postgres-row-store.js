@@ -76,10 +76,19 @@ async function revise(database,workspaceId,importId,current,rows){
 async function markImported(database,workspaceId,importId,rows){
  if(!rows.length)return;
  const batch=rows.map(row=>({id:row.id,item_id:row.itemId,sku_id:row.skuId,location_id:row.locationId,movement_ids:JSON.stringify(row.movementIds),quantity:row.quantity,imported_at:row.at}));
- const result=await database.query(`UPDATE import_rows saved SET status='IMPORTED',item_id=x.item_id,sku_id=x.sku_id,location_id=x.location_id,
+ // Freeze and lock only this batch's primary-key matches. A scope/row-number
+ // index cannot bound an ID-only update: with stale statistics PostgreSQL
+ // otherwise walks the complete source again for each committed batch.
+ // Update through the stable primary key, not ctid: a concurrent writer can
+ // replace a physical tuple while READ COMMITTED waits for its row lock.
+ const result=await database.query(`WITH targets AS MATERIALIZED (
+  SELECT x.* FROM jsonb_to_recordset($3::jsonb)
+   AS x(id text,item_id text,sku_id text,location_id text,movement_ids text,quantity numeric,imported_at text)
+  JOIN LATERAL (SELECT workspace_id,import_id FROM import_rows WHERE id=x.id OFFSET 0 FOR UPDATE) matched
+   ON matched.workspace_id=$1 AND matched.import_id=$2
+ ) UPDATE import_rows saved SET status='IMPORTED',item_id=x.item_id,sku_id=x.sku_id,location_id=x.location_id,
    movement_ids=x.movement_ids,quantity=x.quantity,imported_at=x.imported_at
-  FROM jsonb_to_recordset($3::jsonb) AS x(id text,item_id text,sku_id text,location_id text,movement_ids text,quantity numeric,imported_at text)
-  WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=ANY($4::text[]) AND saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch),batch.map(r=>r.id)]);
+  FROM targets x WHERE saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch)]);
  if(result.rowCount!==rows.length)throw new Error('The imported row identities did not reconcile.');
 }
 module.exports={insert,revise,markImported,executionRows,executionPages};
