@@ -14,7 +14,7 @@ async function check(db,ctx,{closedJobs=50000,emptyWorkspaces=100}={}){
    // Full round-17 certification uses its actual canonical stock positions.
    await c.query('CREATE TEMP TABLE maintenance_balance_fixture(workspace_id text NOT NULL,sku_id text NOT NULL,location_id text NOT NULL) ON COMMIT DROP');
    await c.query("INSERT INTO maintenance_balance_fixture SELECT $1,'sku-'||n,'location' FROM generate_series(1,150000)n",[ctx.workspaceId]);
-   await c.query('CREATE INDEX maintenance_balance_scope ON maintenance_balance_fixture(workspace_id,sku_id,location_id)');await c.query('ANALYZE maintenance_balance_fixture');
+   await c.query('CREATE INDEX maintenance_balance_scope ON maintenance_balance_fixture(workspace_id,location_id,sku_id)');await c.query('ANALYZE maintenance_balance_fixture');
    testedSchedule=scheduleSql.replaceAll('FROM balances b','FROM pg_temp.maintenance_balance_fixture b');assert.notEqual(testedSchedule,scheduleSql);
    await c.query('CREATE TEMP TABLE maintenance_movement_fixture(workspace_id text NOT NULL,occurred_at text NOT NULL,seq bigint NOT NULL) ON COMMIT DROP');
    await c.query("INSERT INTO maintenance_movement_fixture SELECT $1,'2026-01-01T00:00:00.000Z',n FROM generate_series(1,150000)n",[ctx.workspaceId]);await c.query('CREATE INDEX maintenance_movement_scope ON maintenance_movement_fixture(workspace_id,occurred_at DESC,seq DESC)');await c.query('ANALYZE maintenance_movement_fixture');
