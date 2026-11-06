@@ -83,11 +83,11 @@ async function purgeWorkspace(c,workspaceId){
  // Keep byte counters until canonical deletes (including SKU-capacity updates)
  // have finished. They are maintained by triggers rather than foreign keys.
  const deletionOrder=[...order.filter(r=>!capacityCounter(r)&&!storageCounter(r)),...order.filter(capacityCounter),...order.filter(storageCounter)];
- // These append-only histories permit deletion only through their workspace
- // FK cascade. Keep their guards active and let the final workspace delete
- // remove them after all cross-tenant checks and governed purge checks pass.
- const workspaceCascadeOnly=r=>r.schema==='public'&&['catalogue_change_history','security_event_history'].includes(r.name);
- for(const r of deletionOrder)if(!workspaceCascadeOnly(r))await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
+ // Immutable audit history is removed by the workspace cascade; sealed ERP
+ // source records are removed by their package cascade after its header is
+ // gone. Keep both guards active, including all cross-tenant purge checks.
+ const parentCascadeOnly=r=>r.schema==='public'&&['catalogue_change_history','security_event_history','migration_records'].includes(r.name);
+ for(const r of deletionOrder)if(!parentCascadeOnly(r))await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
  await c.query('UPDATE accounts SET last_workspace_id=NULL WHERE last_workspace_id=$1',[workspaceId]);
  await c.query('DELETE FROM workspaces WHERE id=$1',[workspaceId]);return {deleted:true};
 }
