@@ -31,7 +31,18 @@ test('shared resource measurements preserve attribution and failed work without 
   })));
   const rows=(await db.query("SELECT * FROM commercial_resource_measurements WHERE operation='test'")).rows;
   assert.equal(rows.length,2);for(const row of rows){assert.equal(row.account_id,row.id);assert.equal(row.attribution,'TENANT');
-   assert.equal(Number(row.database_queries),2);assert.ok(Number(row.database_microseconds)>0);assert.ok(Number(row.elapsed_microseconds)>0);}
+   assert.equal(Number(row.database_queries),4);assert.ok(Number(row.database_microseconds)>0);assert.ok(Number(row.elapsed_microseconds)>0);}
+ });
+ await t.test('deferred commit checks, rejected commits and session-lock round trips are measured',async()=>{
+  await db.query(`CREATE TABLE resource_boundary_probe(id integer PRIMARY KEY);
+   CREATE FUNCTION resource_boundary_delay() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.05); IF NEW.id<0 THEN RAISE EXCEPTION 'Deferred resource probe failed' USING ERRCODE='23514'; END IF; RETURN NULL; END $$;
+   CREATE CONSTRAINT TRIGGER resource_boundary_check AFTER INSERT ON resource_boundary_probe DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION resource_boundary_delay()`);
+  await metrics.measure(db,{id:'deferred-success',runtimeKind:'worker',operation:'boundary',scope:scope(a)},()=>db.transaction(c=>c.query('INSERT INTO resource_boundary_probe VALUES(1)')));
+  await assert.rejects(metrics.measure(db,{id:'deferred-failed',runtimeKind:'worker',operation:'boundary',scope:scope(a)},()=>db.transaction(c=>c.query('INSERT INTO resource_boundary_probe VALUES(-1)'))),e=>e.code==='23514');
+  await metrics.measure(db,{id:'session-lock',runtimeKind:'worker',operation:'boundary',scope:scope(a)},()=>db.withSessionLock('resource-boundary-probe',c=>c.query('SELECT 1')));
+  const measured=new Map((await db.query("SELECT * FROM commercial_resource_measurements WHERE operation='boundary'")).rows.map(r=>[r.id,r]));
+  for(const [id,count]of [['deferred-success',3],['deferred-failed',4],['session-lock',3]]){assert.equal(Number(measured.get(id).database_queries),count);if(id.startsWith('deferred'))assert(Number(measured.get(id).database_microseconds)>=45000,'The deferred check at commit must be included in database time');}
+  assert.equal(measured.get('deferred-failed').outcome,'FAILED');assert.deepEqual((await db.query('SELECT id FROM resource_boundary_probe')).rows,[{id:1}]);
  });
  await t.test('cross-account and unauthenticated work remain explicit shared overhead',async()=>{
   await metrics.measure(db,{id:'mixed',runtimeKind:'worker',operation:'mixed',scope:scope(a)},()=>context.run({scope:scope(b)},()=>db.query('SELECT 1')));

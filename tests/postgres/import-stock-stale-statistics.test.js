@@ -11,11 +11,12 @@ test('stock execution uses primary-key source probes at 150,000 rows before stat
    SELECT $1,$2,'stale-stock-'||n,n,'product','variant',$3 FROM generate_series($4::int,$5::int)n`,[ctx.workspaceId,plan.id,sku,start,start+4999]);
  }
  const timings=[];
- for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{
+ for(const order of ['sku','item'])for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{
   await c.query('SET LOCAL plan_cache_mode='+mode);let measured=false;
-  const reader={query:async(sql,values)=>{const explained=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+sql,values)).rows[0]['QUERY PLAN'][0],nodes=[];const walk=p=>{nodes.push(p);for(const child of p.Plans||[])walk(child);};walk(explained.Plan);
-   const probes=nodes.filter(p=>p['Relation Name']==='import_rows');assert(probes.length);assert(probes.every(p=>p['Index Name']==='import_rows_pkey'),'Frozen source rows must use their unique row IDs regardless of scope statistics');assert(probes.every(p=>p['Actual Rows']<=1&&p['Actual Loops']<=2000));assert(explained['Execution Time']<1500);timings.push({mode,ms:explained['Execution Time']});measured=true;return c.query(sql,values);}};
-  let page;for await(const rows of store.executionPages(reader,ctx.workspaceId,plan.id,{orderBySku:true,lock:false,batchSize:2000,cursor:{key:sku,rowNumber:99,rowId:''}})){page=rows;break;}
+  const reader={query:async(sql,values)=>{const before=(await c.query("SELECT seq_tup_read,idx_tup_fetch FROM pg_stat_xact_user_tables WHERE relname='import_execution_identities'")).rows[0],explained=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+sql,values)).rows[0]['QUERY PLAN'][0],nodes=[];const walk=p=>{nodes.push(p);for(const child of p.Plans||[])walk(child);};walk(explained.Plan);
+   if(order==='item'){const after=(await c.query("SELECT seq_tup_read,idx_tup_fetch FROM pg_stat_xact_user_tables WHERE relname='import_execution_identities'")).rows[0];assert.equal(Number(after.seq_tup_read)-Number(before.seq_tup_read),0);assert(Number(after.idx_tup_fetch)-Number(before.idx_tup_fetch)<=2000,'Product order must not read and sort the remaining 150,000 identities');}
+   const probes=nodes.filter(p=>p['Relation Name']==='import_rows');assert(probes.length);assert(probes.every(p=>p['Index Name']==='import_rows_pkey'),'Frozen source rows must use their unique row IDs regardless of scope statistics');assert(probes.every(p=>p['Actual Rows']<=1&&p['Actual Loops']<=2000));assert(explained['Execution Time']<1500);timings.push({order,mode,ms:explained['Execution Time']});measured=true;return c.query(sql,values);}};
+  let page;for await(const rows of store.executionPages(reader,ctx.workspaceId,plan.id,{orderBySku:order==='sku',orderByItem:order==='item',lock:false,batchSize:2000,cursor:{itemKey:'product',key:sku,rowNumber:99,rowId:''}})){page=rows;break;}
   assert(measured);assert.equal(page.length,2000);assert.equal(page[0].rowNumber,100);assert.equal(page.at(-1).rowNumber,2099);assert.equal(new Set(page.map(row=>row.id)).size,2000);
  },{readOnly:true,isolation:'REPEATABLE READ',statementTimeoutMs:10000,jit:false});
  t.diagnostic(JSON.stringify({staleSourceRows:150000,primaryKeySourceProbes:true,sourcePageBound:2000,timings,paidCalls:0}));

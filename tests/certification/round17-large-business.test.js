@@ -7,7 +7,7 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  await t.test('A3 additive preview reads no historical stock positions across 50,000 SKUs and five warehouses',()=>{assert.equal(f.additivePreviewPositionReads,0);});
  await t.test('A3 movement and cost history retain exact bounded access after retiring the legacy chronology index',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/sku-movement-access-checks').check(db,ctx)));});
  await t.test('A3 compact history prefixes preserve every movement and stable timestamp pages across the large dataset',async()=>{t.diagnostic(JSON.stringify(await require('../helpers/compact-history-index-checks').check(db,ctx)));});
- await t.test('A3 large stock imports pin SKU-local pages and their durable resume cursor',async()=>{const saved=(await db.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.stockPlan.id])).rows[0].apply_checkpoint;assert.equal(saved.executionOrder,'sku');assert.equal(saved.savedRows,150000);assert(saved.executionCursor?.key&&saved.executionCursor.rowId);});
+ await t.test('A3 large stock imports pin product-local pages and their durable resume cursor',async()=>{const saved=(await db.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.stockPlan.id])).rows[0].apply_checkpoint;assert.equal(saved.executionOrder,'item');assert.equal(saved.savedRows,150000);assert(saved.executionCursor?.itemKey&&saved.executionCursor.key&&saved.executionCursor.rowId);});
  await t.test('A3 cached 50,000-SKU reads make no database revision query or backlog scan',async()=>{
   const statements=[],isolated={...db,query:(sql,values)=>{statements.push(sql);return db.query(sql,values);}},cache=require('../../src/lib/versioned-read-model');let computations=0;
   const read=()=>cache.read(isolated,ctx.workspaceId,['qualification-cache'],async()=>{computations++;return (await isolated.query('SELECT (SELECT count(*)::int FROM skus WHERE workspace_id=$1) skus,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions',[ctx.workspaceId])).rows[0];},{domain:'business'});
@@ -49,6 +49,8 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  // Run canonical operational changes against the full imported database, then
  // roll back each scenario so the subsequent measurements use identical stock.
  async function isolated(work){const rollback=Error('End isolated scale scenario');await assert.rejects(db.transaction(async c=>{await work({query:c.query.bind(c),transaction:fn=>fn(c)});throw rollback;}),error=>error===rollback);}
+ await t.test('D19 sales, tax and expense reports exclude 150,000 opening rows before joining catalogue records',async()=>isolated(async c=>{t.diagnostic(JSON.stringify(await require('../helpers/report-ledger-account-checks').check(c,ctx,{large:true})));}));
+ await t.test('D19 a report with no reorder rules does not probe the 50,000-SKU catalogue',async()=>isolated(async c=>{t.diagnostic(JSON.stringify(await require('../helpers/report-reorder-existence-checks').check(c,ctx)));}));
  await t.test('A3 replenishment evaluates demand once per durable cycle across forecast and planning pages at 50,000 SKUs / 150,000 positions',async()=>isolated(async c=>{
   const result=await require('../helpers/replenishment-cycle-checks').check(c,ctx);t.diagnostic(JSON.stringify({replenishmentCycle:result}));
  }));

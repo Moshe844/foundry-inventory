@@ -1,6 +1,7 @@
 'use strict';
 
 const { Pool } = require('pg');
+const resourceMetrics = require('../commercial/resource-metrics');
 
 function connectionOptions(connectionString, options = {}) {
   const statementTimeoutMs=options.statementTimeoutMs??30000;
@@ -66,14 +67,19 @@ function openPostgres(connectionString, options = {}) {
       if(error.code==='23514'&&['inventory_plan_capacity','commercial_storage_capacity'].includes(error.constraint))
         throw new (require('../commercial/entitlements').EntitlementError)(error.message,{constraint:error.constraint});
       throw error;
-    }finally{require('../commercial/resource-metrics').queryFinished(start);}};
+    }finally{resourceMetrics.queryFinished(start);}};
+  // COMMIT includes deferred foreign-key/constraint checks and WAL flushes.
+  // Omitting these round trips attributes database time to application work
+  // and hides the cost of rolled-back attempts. Preserve control-query errors.
+  const controlQuery=async(client,statement,values)=>{const start=process.hrtime.bigint();
+    try{return await client.query(statement,values);}finally{resourceMetrics.queryFinished(start);}};
   const query = async(statement, values = []) => {const result=await measuredQuery(pool,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;};
   async function withSessionLock(key,operation){
     const client=await pool.connect();let locked=false,discard=false;
-    try{locked=(await client.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[key])).rows[0].locked;
+    try{locked=(await controlQuery(client,'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[key])).rows[0].locked;
       if(!locked)return {busy:true};
       return await operation({query:async(statement,values=[])=>{const result=await measuredQuery(client,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;},transaction:(fn,settings)=>transaction(fn,settings,client)});
-    }finally{try{if(locked)await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);}catch{discard=true;}client.release(discard);}
+    }finally{try{if(locked)await controlQuery(client,'SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);}catch{discard=true;}client.release(discard);}
   }
   async function listen(channel,onNotification){
     if(!/^[a-z][a-z0-9_]{0,62}$/.test(channel)||typeof onNotification!=='function')throw new TypeError('Invalid PostgreSQL notification subscription.');
@@ -110,17 +116,17 @@ function openPostgres(connectionString, options = {}) {
         // round trip. These literals are enum/positive-integer validated above;
         // no application SQL or user text is interpolated here. Do not start
         // the operation until PostgreSQL acknowledges every setup statement.
-        await client.query(`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''};` +
+        await controlQuery(client,`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''};` +
           ` SET LOCAL statement_timeout = '${statementTimeoutMs}ms';` +
           ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`+
           (settings.jit===undefined?'':`; SET LOCAL jit = '${settings.jit?'on':'off'}'`));
         let wrote=false,business=false;const workspaces=new Set();
         const result = await operation({ query: async(statement, values = []) => {const result=await measuredQuery(client,statement,values);if(mutated(statement,result)){wrote=true;business||=affectsBusiness(statement);for(const id of workspaceIds(values))workspaces.add(id);}return result;} });
-        await client.query('COMMIT');
+        await controlQuery(client,'COMMIT');
         if(wrote)changed(workspaces,business);
         return result;
       } catch (error) {
-        try { await client.query('ROLLBACK'); } catch { discard = true; }
+        try { await controlQuery(client,'ROLLBACK'); } catch { discard = true; }
         if (!['40001', '40P01'].includes(error.code) || attempt >= retries) throw error;
       } finally {
         if(!leasedClient)client.release(discard);
