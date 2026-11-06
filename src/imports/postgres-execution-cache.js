@@ -10,9 +10,14 @@ async function releaseCompleted(database,ctx,planId,{batchSize=5000}={}){
    AND NOT EXISTS(SELECT 1 FROM import_executions e WHERE e.workspace_id=p.workspace_id AND e.import_id=p.id AND e.status='EXECUTING')
    FOR UPDATE OF p SKIP LOCKED`,[ctx.workspaceId,planId])).rows[0];
   if(!plan)return {removed:0,done:false,eligible:false};
-  const removed=Number((await client.query(`WITH removed AS (
-   DELETE FROM import_execution_identities e WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.row_id IN (
-    SELECT row_id FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 ORDER BY row_number,row_id LIMIT $3)
+  // Freeze and lock this page before deleting it. A semi-join can repeatedly
+  // walk the entire import when statistics still describe an older source.
+  // Resolve the delete through the stable primary keys, including when a
+  // concurrent writer replaces a tuple while READ COMMITTED waits for it.
+  const removed=Number((await client.query(`WITH targets AS MATERIALIZED (
+   SELECT row_id FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2
+    ORDER BY row_number,row_id LIMIT $3 FOR UPDATE), removed AS (
+   DELETE FROM import_execution_identities e WHERE e.row_id=ANY(ARRAY(SELECT row_id FROM targets))
    RETURNING e.row_id) SELECT count(*)::int n FROM removed`,[ctx.workspaceId,planId,batchSize])).rows[0].n);
   const done=removed<batchSize;
   if(done)await client.query("UPDATE import_plans SET execution_identity_hash=NULL WHERE workspace_id=$1 AND id=$2 AND status='SUCCEEDED'",[ctx.workspaceId,planId]);
