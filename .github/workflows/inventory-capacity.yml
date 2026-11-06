@@ -148,7 +148,7 @@ jobs:
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/import-batch-receipts.test.js tests/postgres/batched-deferred-weight.test.js tests/postgres/batched-catalogue-projections.test.js tests/postgres/batched-cutover-boundary.test.js tests/postgres/import-final-cost-coverage.test.js 2>&1 | tee output/inventory-ci/batched-import-guards.log
+          node --test --test-concurrency=2 tests/postgres/import-batch-receipts.test.js tests/postgres/batched-deferred-weight.test.js tests/postgres/batched-catalogue-projections.test.js tests/postgres/batched-cutover-boundary.test.js tests/postgres/import-final-cost-coverage.test.js tests/postgres/bounded-stock-precision.test.js 2>&1 | tee output/inventory-ci/batched-import-guards.log
       - name: ERP cutover and exact quantity regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
