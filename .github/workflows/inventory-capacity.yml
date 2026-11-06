@@ -72,6 +72,9 @@ jobs:
       - name: Imported source index integrity and write amplification
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
         run: node --test tests/postgres/catalog-source-index-policy.test.js
+      - name: Bounded verified import cache cleanup
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
+        run: node --test tests/postgres/import-cache-cleanup-scale.test.js
       - name: Combined staging order money, refunds, plan locks and storage registration
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: node --test --test-concurrency=2 tests/postgres/runtime.test.js tests/postgres/order-money-truth.test.js tests/postgres/read-committed-write-invariants.test.js tests/postgres/read-side-business-totals.test.js tests/postgres/assistant-commercial-boundaries.test.js tests/postgres/environment-agent-commercial.test.js tests/postgres/bulk-approve-decisions.test.js tests/postgres/round10-refund-retention.test.js
@@ -145,7 +148,7 @@ jobs:
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/import-batch-receipts.test.js tests/postgres/batched-deferred-weight.test.js tests/postgres/batched-catalogue-projections.test.js 2>&1 | tee output/inventory-ci/batched-import-guards.log
+          node --test --test-concurrency=2 tests/postgres/import-batch-receipts.test.js tests/postgres/batched-deferred-weight.test.js tests/postgres/batched-catalogue-projections.test.js tests/postgres/batched-cutover-boundary.test.js 2>&1 | tee output/inventory-ci/batched-import-guards.log
       - name: ERP cutover and exact quantity regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
