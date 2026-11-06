@@ -9,8 +9,8 @@ test('durable import receipts bind exact values, approval, scope and contiguous 
  await receipts.record(db,ctx,plan,input(0,'first'));
  await assert.rejects(receipts.totals(db,ctx,plan),/Saved import verification/,'A partial receipt set cannot mark an import verified');
  await assert.rejects(db.query('UPDATE import_batch_receipts SET quantity_delta=999 WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,plan.id]),/cannot be changed/);
- await db.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id,JSON.stringify({savedRows:1})]);await receipts.record(db,ctx,plan,input(1,'second'));
- assert.deepEqual(await receipts.totals(db,ctx,plan),{batches:2,rows:2,units:0.25,costRecords:2,value:100,asset:100});
+ await db.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id,JSON.stringify({savedRows:1})]);await receipts.record(db,ctx,plan,{...input(1,'second'),units:-0.025,valueMinor:-10,totals:{value:{value:'-10',movements:1},posted:{value:'-10'}}});
+ assert.deepEqual(await receipts.totals(db,ctx,plan),{batches:2,rows:2,units:0.1,costRecords:2,value:40,asset:40});
  await assert.rejects(receipts.totals(db,{...ctx,workspaceId:'foreign-workspace'},plan),/Saved import verification/);
  await assert.rejects(receipts.totals(db,ctx,{...plan,integrityHash:'changed-approval'}),/Saved import verification/);
  // A forged offset must be rejected even when its values and total row count

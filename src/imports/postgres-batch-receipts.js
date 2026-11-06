@@ -1,17 +1,18 @@
 'use strict';
 const {createHash}=require('node:crypto'),exact=require('../domain/exact-quantity'),{ValidationError}=require('../domain/errors');
 const invalid=()=>new ValidationError('Saved import verification does not match its approved batches. The recorded stock remains safe; review the saved import.');
+const signed=value=>exact.canonical(value,{signed:true});
 async function record(client,ctx,plan,{offset,rows,units,costRecords,valueMinor,totals}){
  if(!Number.isSafeInteger(offset)||offset<0||!rows.length||rows.length>2000||new Set(rows.map(r=>r.id)).size!==rows.length)throw invalid();
  if(!Number.isSafeInteger(costRecords)||costRecords<0||costRecords>rows.length||!Number.isSafeInteger(valueMinor)
-  ||Number(totals.value.movements)!==costRecords||exact.canonical(totals.value.value)!==exact.canonical(valueMinor)
-  ||exact.canonical(totals.posted.value)!==exact.canonical(valueMinor))throw invalid();
+  ||Number(totals.value.movements)!==costRecords||signed(totals.value.value)!==signed(valueMinor)
+  ||signed(totals.posted.value)!==signed(valueMinor))throw invalid();
  const sourceHash=createHash('sha256').update(JSON.stringify(rows.map(r=>r.id))).digest('hex');
  const result=await client.query(`INSERT INTO import_batch_receipts(workspace_id,import_id,start_offset,end_offset,row_count,approval_hash,source_rows_hash,quantity_delta,cost_records,value_minor,asset_minor)
  SELECT $1,$2,$3::bigint,$3::bigint+$4::int,$4::int,$5,$6,$7,$8,$9,$10 FROM import_plans p
  WHERE p.workspace_id=$1 AND p.id=$2 AND p.integrity_hash=$5 AND p.approval_status='APPROVED'
   AND coalesce((p.apply_checkpoint->>'savedRows')::bigint,0)=$3`,
- [ctx.workspaceId,plan.id,offset,rows.length,plan.integrityHash,sourceHash,exact.canonical(units),costRecords,valueMinor,totals.posted.value]);
+ [ctx.workspaceId,plan.id,offset,rows.length,plan.integrityHash,sourceHash,signed(units),costRecords,valueMinor,totals.posted.value]);
  if(result.rowCount!==1)throw invalid();
 }
 async function totals(client,ctx,plan){
