@@ -25,7 +25,7 @@ async function measurement(db,workspaceId,relation=null,options={}){
  const yielding=options.yieldToImports===true,pollMs=options.bulkPollMs??1000;
  if(!Number.isSafeInteger(pollMs)||pollMs<20||pollMs>5000)throw new TypeError('Storage work needs a bounded import polling interval.');
  let nextProbe=0;
- const waitForImports=async({insideTransaction=false}={})=>{if(!yielding||Date.now()<nextProbe)return;
+ const waitForImports=async({insideTransaction=false,force=false}={})=>{if(!yielding||!force&&Date.now()<nextProbe)return;
   for(;;){const active=(await db.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE status='RUNNING'
    AND (kind=ANY($1::text[]) OR lease_owner LIKE '%:bulk')
    AND lease_expires_at>floor(extract(epoch FROM statement_timestamp())*1000) LIMIT 1`,
@@ -52,13 +52,20 @@ async function measurement(db,workspaceId,relation=null,options={}){
   await c.query('SET LOCAL cursor_tuple_fraction=1.0');
   const rows=[];for(const entry of registry){
    await c.query(`DECLARE stockchief_storage_rows NO SCROLL CURSOR FOR SELECT ${entry.bytes_expression} AS bytes FROM ${entry.relation} t WHERE t.workspace_id=$1`,[workspaceId]);
-   let bytes=0n;for(;;){if(canProbeDuringRead)await waitForImports({insideTransaction:true});const batch=(await c.query('FETCH FORWARD 1000 FROM stockchief_storage_rows')).rows;
+   let bytes=0n;for(;;){if(canProbeDuringRead)await waitForImports({insideTransaction:true});const began=performance.now(),batch=(await c.query('FETCH FORWARD 1000 FROM stockchief_storage_rows')).rows;
     for(const row of batch)bytes+=BigInt(row.bytes||0);
     if(batch.length<1000)break;
-    await new Promise(resolve=>setTimeout(resolve,50));
+    // Share time with customer work in proportion to this bounded read. A
+    // fixed 50 ms pause holds old MVCC snapshots for minutes even when each
+    // fetch takes a millisecond, delaying vacuum and concurrent index swaps.
+    // Slow batches retain the previous maximum pause; fast reads yield too.
+    await new Promise(resolve=>setTimeout(resolve,Math.min(50,Math.max(1,Math.ceil(performance.now()-began)))));
    }
    await c.query('CLOSE stockchief_storage_rows');rows.push({relation:entry.relation,bytes:bytes.toString()});
   }
+  // A short audit can finish before its next periodic probe. Do not publish
+  // it if an import started during its final page; release this snapshot.
+  if(canProbeDuringRead)await waitForImports({insideTransaction:true,force:true});
   return {...instant,rows};
  },{isolation:'REPEATABLE READ',readOnly:true,jit:false});
 }

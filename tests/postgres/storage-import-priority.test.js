@@ -18,8 +18,10 @@ test('storage audits give active imports priority and release their old snapshot
  await t.test('an import that starts during an audit releases xmin and retries from a fresh exact snapshot',async()=>{
   const before=await expected();let job;fetches=0;activeSeen=0;onFirstFetch=async()=>{job=await claim();};
   const inspector=require('../../src/db/postgres').openPostgres(f.cluster.connectionString,{max:1});
-  const audit=storage.baseline(observed,ctx.workspaceId,'suppliers',{yieldToImports:true,bulkPollMs:20});
-  try{await assert.rejects(audit,error=>error.code==='storage_audit_yielded'&&error.retryable===true&&error.retryAfterMs===5000);assert.equal(fetches,1);
+  // The audit finishes before its periodic probe is due. Its final fresh
+  // check must still detect the import and leave the published bytes intact.
+  const audit=storage.baseline(observed,ctx.workspaceId,'suppliers',{yieldToImports:true,bulkPollMs:5000});
+  try{await assert.rejects(audit,error=>error.code==='storage_audit_yielded'&&error.retryable===true&&error.retryAfterMs===5000);assert(fetches>=1&&fetches<=4,'A fast audit must still detect the import before publishing its old snapshot');
    const activity=(await inspector.query('SELECT backend_xmin,xact_start FROM pg_stat_activity WHERE pid=$1',[auditPid])).rows[0];assert.equal(activity.backend_xmin,null);assert.equal(activity.xact_start,null);
    assert.equal((await db.query("SELECT baseline_bytes::text bytes FROM commercial_storage_usage WHERE workspace_id=$1 AND relation='suppliers'::regclass",[ctx.workspaceId])).rows[0].bytes,before);
    await db.query("UPDATE suppliers SET name=name||'-after-snapshot' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
