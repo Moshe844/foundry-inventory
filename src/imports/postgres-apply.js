@@ -6,12 +6,18 @@ const addExact=(a,b)=>exact.safeNumber(exact.add(a,b),{signed:true});
 async function run(database,ctx,plan,executionId,inputOptions,deps){
  const id=plan.id,options=inputOptions,batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
  const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows}),...(Number.isSafeInteger(checkpoint?.skusPlanned)?{preparedTotal:checkpoint.skusPlanned}:{})});
- async function phase(operation){return database.transaction(async client=>{
+ async function phase(operation,onRetry){let attempts=0;return database.transaction(async client=>{
+  if(attempts++>0)onRetry?.();
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
   if(!locked||locked.approval_status!=='APPROVED'||locked.integrity_hash!==plan.integrityHash)throw new ValidationError('The approved import changed. Its saved batches remain recorded.');
   await deps.assertOperator(client,ctx);await deps.assertSourceClaim(client,ctx,plan);await enforcement.workspace(client,ctx.workspaceId,'imports.spreadsheet');await deps.bulkPlanning(client);
+  if(batchSize===2000)await client.query("SET LOCAL stockchief.defer_import_coverage='on'");
   const saved=locked.apply_checkpoint||{};if(saved.hash&&saved.hash!==plan.integrityHash)throw new ValidationError('Saved import progress belongs to another approval.');
-  const result=await operation(client,saved);await inputOptions.beforeBatchCommit?.();return result;
+  const result=await operation(client,saved);
+  // Flush the final physical/cost pair before exposing this batch to hooks or
+  // committing it. The deferred database trigger also protects other exits.
+  if(batchSize===2000)await client.query('SELECT stockchief_flush_import_coverage()');
+  await inputOptions.beforeBatchCommit?.();return result;
  },{isolation:'READ COMMITTED',retrySafe:true});}
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
  do {checkpoint=await phase(async(client,saved)=>{
@@ -45,10 +51,29 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:exact.costMinor(row.parsed.quantity||0,row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
- for await(const chunk of rowStore.executionPages(database,ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',cursor:checkpoint.executionCursor})){
-  await identities.hydrate(database,ctx,plan,chunk,checkpoint);const priorSaved=Number(checkpoint.savedRows||0);
+ // Lock a source page inside the transaction that applies it. An autocommit
+ // SELECT FOR UPDATE releases its locks before the stock write even starts,
+ // and adds a separate durable transaction for every page of a large file.
+ let pageClient;
+ const sourcePages=()=>rowStore.executionPages({query:(...args)=>pageClient.query(...args)},ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',cursor:checkpoint.executionCursor});
+ let pages=sourcePages();
+ for(;;){
+  let chunk=null,done=false;const priorSaved=Number(checkpoint.savedRows||0);
   await emit('processing');
   const result=await phase(async(client,saved)=>{
+   // A retry rebuilds its generator from the last committed checkpoint, so
+   // its selected rows are locked again in the new applying transaction.
+   if(!chunk&&!done){pageClient=client;try{const next=await pages.next();chunk=next.value;done=Boolean(next.done);}catch(error){pages=sourcePages();throw error;}}
+   if(done)return {done:true};
+   // Serial/measured pages can be split into smaller buffered chunks. Their
+   // earlier page lock ended with the previous commit; lock this chunk again.
+   if(batchSize>500&&chunk.length<batchSize){
+    const lockedRows=await client.query(`SELECT r.id FROM unnest($3::text[]) wanted(id)
+     JOIN LATERAL(SELECT id,workspace_id,import_id FROM import_rows WHERE id=wanted.id OFFSET 0 FOR UPDATE) r
+      ON r.workspace_id=$1 AND r.import_id=$2`,[ctx.workspaceId,id,chunk.map(r=>r.id)]);
+    if(lockedRows.rowCount!==chunk.length)throw new ValidationError('The selected source rows no longer match this import. Saved batches remain recorded.');
+   }
+   await identities.hydrate(client,ctx,plan,chunk,checkpoint);
    const sourceRows=chunk,options={...inputOptions,beforeRow:value=>inputOptions.beforeRow?.({...value,rowsImported:priorSaved+value.rowsImported})},publishProgress=()=>{};
    const salePriceBySku=new Map();
    for(const row of chunk)if(!row.parsed.existingSkuId&&checkpoint.initialPricesPrepared&&row.parsed.sellingPriceMinor!==null)salePriceBySku.set(row.parsed.createdSkuId,row.parsed.currency+':'+row.parsed.sellingPriceMinor);
@@ -154,7 +179,8 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    const next=await save(client,{...saved,...(saved.executionOrder==='sku'?{executionCursor:chunk.at(-1).executionCursor}:{}),savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:Math.min(...chunk.map(r=>r.rowNumber)),lastRow:Math.max(...chunk.map(r=>r.rowNumber)),checks}});
    await client.query('UPDATE import_executions SET items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,stage=$7 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,executionId,next.itemsCreated,next.skusCreated,next.savedRows,next.units,'processing']);
    return {checkpoint:next,prices:[...salePriceBySku]};
-  });
+  },()=>{chunk=null;done=false;pages=sourcePages();});
+  if(result.done)break;
   checkpoint=result.checkpoint;await emit('processing');
  }
  await emit('verifying');
