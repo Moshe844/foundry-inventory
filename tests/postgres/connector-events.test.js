@@ -63,9 +63,12 @@ test('PostgreSQL connector events authenticate, commit atomically, replay once a
       WHERE workspace_id=$1 AND operation='event_ingestion'`,[ctx.workspaceId])).rows[0].count,'2');
     await page.goto(`${base}/`);assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');
     await page.getByRole('link',{name:/^Needs you\b/}).click();
+    // Navigation first displays the shared shell. Wait for the requested
+    // mapping card before reading the destination, rather than racing it.
+    const unmatched=page.locator('.ny-card').filter({hasText:'Unknown sku from Commerce event feed'});
+    await unmatched.waitFor({state:'visible'});
     assert.match(await page.locator('main').innerText(),/Unknown sku from Commerce event feed/);
     assert.match(await page.locator('main').innerText(),/Conflicting provider event needs reconciliation/);
-    const unmatched=page.locator('.ny-card').filter({hasText:'Unknown sku from Commerce event feed'});
     await unmatched.getByText('More',{exact:true}).click();
     assert.match(await unmatched.innerText(),/Choose the matching StockChief record once/);
     await page.goto(`${base}/settings/connections/${feed.connection.id}`);
