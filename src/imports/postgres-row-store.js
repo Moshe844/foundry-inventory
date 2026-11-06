@@ -1,26 +1,27 @@
 'use strict';
 const CHUNK=500;
-// A SKU's source rows keep their original order, including repeated receipts
-// with different costs and locations. Only independent SKUs change order.
-async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported}){
- let last=cursor||{key:'',rowNumber:-1,rowId:''};
+// A product's variants stay in neighbouring batches. A SKU's source rows keep
+// their original order, including different costs and locations. The old SKU
+// cursor remains valid for imports approved before product-local ordering.
+async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported,orderByItem=false}){
+ let last=cursor||{itemKey:'',key:'',rowNumber:-1,rowId:''};
  for(;;){
   // Probe the unique source ID before checking scope. Statistics from an
   // older import must not select a scope index and rescan this whole source
   // for each row. Both workspace and import remain mandatory join checks.
   const page=(await client.query(`WITH page AS MATERIALIZED(
-   SELECT row_id,row_number,coalesce(existing_sku_id,product_key||':'||variant_key) AS execution_key
+   ${orderByItem?`SELECT * FROM stockchief_import_item_page($1,$2,$6,$3,$4,$5,${batchSize})`:`SELECT row_id,row_number,coalesce(existing_sku_id,product_key||':'||variant_key) AS execution_key
    FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2
     AND (coalesce(existing_sku_id,product_key||':'||variant_key),row_number,row_id)>($3::text,$4::bigint,$5::text)
-   ORDER BY coalesce(existing_sku_id,product_key||':'||variant_key),row_number,row_id LIMIT ${batchSize})
-   SELECT p.execution_key,r.id,r.row_number,r.parsed,r.item_id,r.sku_id,r.location_id,r.status
+   ORDER BY coalesce(existing_sku_id,product_key||':'||variant_key),row_number,row_id LIMIT ${batchSize}`})
+   SELECT ${orderByItem?'p.item_key,':''}p.execution_key,r.id,r.row_number,r.parsed,r.item_id,r.sku_id,r.location_id,r.status
    FROM page p JOIN LATERAL(SELECT id,row_number,parsed,item_id,sku_id,location_id,status,workspace_id,import_id FROM import_rows
     WHERE id=p.row_id OFFSET 0${lock?' FOR UPDATE':''}) r ON r.workspace_id=$1 AND r.import_id=$2
-   ORDER BY p.execution_key,p.row_number,p.row_id`,[workspaceId,importId,last.key,last.rowNumber,last.rowId])).rows;
+   ORDER BY ${orderByItem?'p.item_key,':''}p.execution_key,p.row_number,p.row_id`,[workspaceId,importId,last.key,last.rowNumber,last.rowId,...(orderByItem?[last.itemKey]:[])])).rows;
   if(!page.length)break;
   if(page.some(row=>!(includeImported?['VALID','NEEDS_REVIEW','IMPORTED']:['VALID','NEEDS_REVIEW']).includes(row.status)))throw new (require('../domain/errors').ValidationError)('Saved stock import progress does not match its approved source rows. Its recorded batches remain safe.');
   const rows=page.map(row=>{const parsed=typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed;if(includeImported&&row.sku_id){if(!parsed.existingSkuId)parsed.createdSkuId=row.sku_id;if(!parsed.existingItemId)parsed.createdItemId=row.item_id;if(row.location_id)parsed.locationId=row.location_id;}
-   return {id:row.id,rowNumber:Number(row.row_number),parsed,imported:row.status==='IMPORTED',executionCursor:{key:row.execution_key,rowNumber:Number(row.row_number),rowId:row.id}};});
+   return {id:row.id,rowNumber:Number(row.row_number),parsed,imported:row.status==='IMPORTED',executionCursor:{...(orderByItem?{itemKey:row.item_key}:{}),key:row.execution_key,rowNumber:Number(row.row_number),rowId:row.id}};});
   last=rows.at(-1).executionCursor;
   const size=rows.some(row=>!['quantity','lot'].includes(row.parsed.trackingMode)||row.parsed.secondaryUnitLabel)?Math.min(CHUNK,batchSize):batchSize;
   for(let start=0;start<rows.length;start+=size)yield rows.slice(start,start+size);
@@ -29,9 +30,9 @@ async function* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,in
 // Read only the frozen execution inputs, in index order. Reading and sorting
 // every raw source row in one statement makes the first step grow with the
 // complete workbook and can time out before progress is published.
-async function* executionPages(client,workspaceId,importId,{includeImported=false,lock=true,batchSize=CHUNK,orderBySku=false,cursor=null}={}){
+async function* executionPages(client,workspaceId,importId,{includeImported=false,lock=true,batchSize=CHUNK,orderBySku=false,orderByItem=false,cursor=null}={}){
  if(!Number.isSafeInteger(batchSize)||batchSize<1||batchSize>2000)throw new TypeError('Import execution pages must contain one to 2,000 rows.');
- if(orderBySku){yield* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported});return;}
+ if(orderBySku||orderByItem){yield* stockPages(client,workspaceId,importId,{batchSize,lock,cursor,includeImported,orderByItem});return;}
  let lastRow=-1,lastId='';
  for(;;){
   const page=(await client.query(`SELECT id,row_number,parsed,item_id,sku_id,location_id,status FROM import_rows

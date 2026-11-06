@@ -38,11 +38,12 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   if(!saved.executionOrder&&!saved.catalogueStarted&&plan.recordsValid>=5000&&plan.transformations.importMode==='add'&&plan.fieldMappings.quantity!==undefined){
    // A category shared by several variants must keep its source-file winner.
    // Conflicting parent updates and older unclassified caches stay in source
-   // order; ordinary stock and consistent categories can use SKU locality.
+   // order; ordinary stock and consistent categories can group each product's
+   // variants without changing a SKU's source order or final supplier cost.
    const unsafe=(await client.query(`SELECT EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND source_category IS NULL)
     OR EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND source_category<>''
      GROUP BY coalesce(existing_item_id,product_key) HAVING count(DISTINCT source_category)>1) AS unsafe`,[ctx.workspaceId,id])).rows[0].unsafe;
-   if(!unsafe)executionOrder='sku';
+   if(!unsafe)executionOrder='item';
   }
   return save(client,{...saved,version:3,batchReceiptVersion:1,executionOrder,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await businessTime.today(client,ctx.workspaceId),...created,savedRows:0,units:0});
  });await emit('preparing',checkpoint.skusCreated);
@@ -55,7 +56,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  // SELECT FOR UPDATE releases its locks before the stock write even starts,
  // and adds a separate durable transaction for every page of a large file.
  let pageClient;
- const sourcePages=()=>rowStore.executionPages({query:(...args)=>pageClient.query(...args)},ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',cursor:checkpoint.executionCursor});
+ const sourcePages=()=>rowStore.executionPages({query:(...args)=>pageClient.query(...args)},ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',orderByItem:checkpoint.executionOrder==='item',cursor:checkpoint.executionCursor});
  let pages=sourcePages();
  for(;;){
   let chunk=null,done=false;const priorSaved=Number(checkpoint.savedRows||0);
@@ -176,7 +177,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    const checks=[{name:'Rows saved',expected:chunk.length,observed:rowsImported,ok:rowsImported===chunk.length},{name:'Stock movement units',expected:expectedUnits,observed:units,ok:units===expectedUnits},{name:'Cost records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost',expected:value,observed:Number(totals.value.value),ok:value===Number(totals.value.value)},{name:'Inventory asset',expected:value,observed:Number(totals.posted.value),ok:value===Number(totals.posted.value)}];
    if(!checks.every(check=>check.ok))throw new ValidationError('The imported stock and accounting evidence did not reconcile. The current batch was not saved.',{checks});
    if(saved.batchReceiptVersion===1)await batchReceipts.record(client,ctx,plan,{offset:priorSaved,rows:chunk,units,costRecords:valued,valueMinor:value,totals});
-   const next=await save(client,{...saved,...(saved.executionOrder==='sku'?{executionCursor:chunk.at(-1).executionCursor}:{}),savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:Math.min(...chunk.map(r=>r.rowNumber)),lastRow:Math.max(...chunk.map(r=>r.rowNumber)),checks}});
+   const next=await save(client,{...saved,...(['sku','item'].includes(saved.executionOrder)?{executionCursor:chunk.at(-1).executionCursor}:{}),savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:Math.min(...chunk.map(r=>r.rowNumber)),lastRow:Math.max(...chunk.map(r=>r.rowNumber)),checks}});
    await client.query('UPDATE import_executions SET items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,stage=$7 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,executionId,next.itemsCreated,next.skusCreated,next.savedRows,next.units,'processing']);
    return {checkpoint:next,prices:[...salePriceBySku]};
   },()=>{chunk=null;done=false;pages=sourcePages();});
@@ -192,7 +193,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   await deps.bulkPlanning(client);
   // Match the committed journal batches. Returning to file-order pages after
   // SKU-local execution would revisit most journal batches for every page.
-  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize,orderBySku:checkpoint.executionOrder==='sku'})){
+  for await(const page of rowStore.executionPages(client,ctx.workspaceId,id,{includeImported:true,lock:false,batchSize,orderBySku:checkpoint.executionOrder==='sku',orderByItem:checkpoint.executionOrder==='item'})){
    const observed=await verification.totals(client,ctx.workspaceId,page.map(r=>r.id));
    totals.value.value+=BigInt(observed.value.value);totals.value.movements+=observed.value.movements;totals.posted.value+=BigInt(observed.posted.value);
    for(const row of page){expectedUnits=addExact(expectedUnits,expectedDelta(row));expectedValue=addExact(expectedValue,expectedCost(row));if(expectsCostRecord(row))valued++;}
