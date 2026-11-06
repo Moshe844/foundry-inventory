@@ -21,6 +21,8 @@ const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
 const {newAppendId}=require('../lib/append-id');
 const exactQuantity=require('../domain/exact-quantity');
+const catalogIdentity=require('../domain/catalog-identity'),stockQuantity=require('../domain/stock-quantity'),physicalInput=require('../domain/physical-stock-input');
+const sourceIdentity=require('./source-identity'),sourceMoney=require('./source-money'),documentRowsService=require('./document-rows');
 const addExact=(a,b)=>exactQuantity.safeNumber(exactQuantity.add(a,b),{signed:true});
 
 const PLAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -83,7 +85,7 @@ function problem(code, message) {
 }
 
 async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null,includePositions=true}={}) {
-  const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
+  const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>catalogIdentity.codeKey(c)))];
   // Scoped pages need an index lookup even under force_generic_plan; a nullable
   // OR forces every catalogue row through a large ANY array for every page.
   const skuFilter=alias=>keys===null?'$2::text[] IS NULL':`lower(btrim(${alias}code))=ANY($2::text[])`;
@@ -109,7 +111,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
   }
   const skuByCode = new Map();
   for (const row of skus.rows) {
-    const key=require('../domain/catalog-identity').codeKey(row.code);
+    const key=catalogIdentity.codeKey(row.code);
     const matches=skuByCode.get(key) || [];
     matches.push(row);skuByCode.set(key,matches);
   }
@@ -130,17 +132,18 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   const unknownLocations=new Map();
   const defaultLocation=context.locations.find((row)=>row.id===input.defaultLocationId) ||
     (context.locations.length===1 ? context.locations[0] : null);
-  const documentRows=require('./document-rows').classify(sheet,mappings,{precedingProducts:context.validationState.documentProducts||0,
+  const documentRows=documentRowsService.classify(sheet,mappings,{precedingProducts:context.validationState.documentProducts||0,
     precedingStrongProducts:context.validationState.strongDocumentProducts||0,inDocumentTail:context.validationState.inDocumentTail||false,rowRoles:input.documentRowRoles||{}});
   context.validationState.documentProducts=documentRows.productCount;
   context.validationState.strongDocumentProducts=documentRows.strongProductCount;
   context.validationState.inDocumentTail=documentRows.inDocumentTail;
+  const headerCurrencies=['unitCost','sellingPrice'].flatMap(field=>sourceMoney.codes(sheet.columns?.find(c=>c.index===mappings[field])?.name||''));
   for (const [position,row] of sheet.rows.entries()) {
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
     const imageRowConfirmed=input.imageReadingConfirmed===true||Boolean(input.imageReviewedRows?.has(Number(row.sourceRow)));
     if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
-    const sourceIdentity=require('./source-identity'),variants=sourceIdentity.options(row,mappings,proposal);
+    const variants=sourceIdentity.options(row,mappings,proposal);
     const code=sourceCode&&(proposal.variantBases||[]).includes(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
     const rawName=trimOrNull(textCell(row,mappings.name));
     const name=rawName || code;
@@ -154,7 +157,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     // A source cannot invent a fractional stocking unit. A saved item's
     // precision and increment are the authority for its imported counts.
     if(existingMatches.length===1&&(quantityRead.ok&&quantityRead.value!==null||quantityRead.problem==='fractional_quantity')){
-      try{const cleaned=String(quantitySource).trim().replace(/[\s,](?=\d{3}\b)/g,'').replace(/^\+/,'');quantityRead={ok:true,value:require('../domain/stock-quantity').validate(existingMatches[0],cleaned,{positive:false})};}
+      try{const cleaned=String(quantitySource).trim().replace(/[\s,](?=\d{3}\b)/g,'').replace(/^\+/,'');quantityRead={ok:true,value:stockQuantity.validate(existingMatches[0],cleaned,{positive:false})};}
       catch(error){quantityRead={ok:false,problem:'bad_quantity',message:error.message};}
     }
     let quantity=quantityRead.ok ? quantityRead.value : null;
@@ -173,7 +176,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const statedCurrency=trimOrNull(textCell(row,mappings.currency));
     const yenCurrency=[statedCurrency,context.accountingCurrency].find(c=>['JPY','CNY'].includes(String(c).toUpperCase()));
     const inferredCurrencies=[...new Set(symbolCurrency.map(s=>({'€':'EUR','£':'GBP','¥':yenCurrency?.toUpperCase()})[s]).filter(Boolean))];
-    const sourceMoney=require('./source-money'),moneyEvidence=[costText,sellingText,...['unitCost','sellingPrice'].map(field=>sheet.columns?.find(c=>c.index===mappings[field])?.name||'')],explicitCurrencies=[...new Set(moneyEvidence.flatMap(sourceMoney.codes))];
+    const explicitCurrencies=[...new Set([...sourceMoney.codes(costText),...sourceMoney.codes(sellingText),...headerCurrencies])];
     const currency=(statedCurrency||explicitCurrencies[0]||inferredCurrencies[0]||context.accountingCurrency||'USD').toUpperCase();
     if(explicitCurrencies.some(code=>code!==currency))problems.push(problem('cost_currency_mismatch','The source prices contain conflicting currencies. Confirm each amount before approval.'));
     if((costText||sellingText)&&context.accountingCurrency&&currency!==context.accountingCurrency)problems.push(problem('cost_currency_mismatch',currency+' is not the inventory currency ('+context.accountingCurrency+'). Confirm a supported conversion before importing these prices.'));
@@ -241,7 +244,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       if(context.serials.has(serialKey))problems.push(problem('serial_exists','This serial is already in stock. A receipt cannot receive it again at another location.'));
       state.serials.add(serialKey);
     }
-    try{require('../domain/physical-stock-input').validate({lotReceivedAt:trimOrNull(textCell(row,mappings.receivedAt))||(lotRequired?nowIso():null),expiresAt:trimOrNull(textCell(row,mappings.expiresAt))});}
+    try{physicalInput.validate({lotReceivedAt:trimOrNull(textCell(row,mappings.receivedAt))||(lotRequired?nowIso():null),expiresAt:trimOrNull(textCell(row,mappings.expiresAt))});}
     catch(error){problems.push(problem('invalid_stock_date',error.message));}
     if(quantity>0&&!aggregate)state.quantityTotal=addExact(state.quantityTotal,quantity);
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
@@ -249,7 +252,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
-    try{require('../domain/catalog-identity').unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
+    try{catalogIdentity.unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
     const parsed={name,code,...(code!==sourceCode?{sourceCode,identityNote:'This code identifies a product with several option combinations. Each SKU includes its option values; review these derived codes before approval.'}:{}),description:trimOrNull(textCell(row,mappings.description)),
       ...(existingMatches.length===1&&rawName&&rawName!==existingMatches[0].name?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
