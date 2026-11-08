@@ -1,10 +1,16 @@
 'use strict';
-function source(){return `WITH sku_stock_ready AS MATERIALIZED(SELECT coalesce((SELECT initialized FROM stockchief_runtime.sku_stock_state WHERE workspace_id=$1),false) ready)
- SELECT sku_id,sum(quantity)::numeric quantity FROM(
-  SELECT sku_id,on_hand quantity FROM stockchief_runtime.sku_stock_totals WHERE workspace_id=$1 AND (SELECT ready FROM sku_stock_ready)
-  UNION ALL SELECT sku_id,quantity_delta FROM stockchief_runtime.sku_stock_pending WHERE workspace_id=$1 AND (SELECT ready FROM sku_stock_ready)
-  UNION ALL SELECT b.sku_id,b.on_hand FROM balances b WHERE b.workspace_id=$1 AND NOT(SELECT ready FROM sku_stock_ready)
- ) stock GROUP BY sku_id`;}
+function source(){return `WITH sku_stock_ready AS MATERIALIZED(SELECT coalesce((SELECT initialized FROM stockchief_runtime.sku_stock_state WHERE workspace_id=$1),false) ready),
+ sku_stock_deltas AS MATERIALIZED(
+  SELECT sku_id,sum(quantity_delta)::numeric quantity FROM stockchief_runtime.sku_stock_pending
+  WHERE workspace_id=$1 AND (SELECT ready FROM sku_stock_ready) GROUP BY sku_id)
+ SELECT s.sku_id,(s.on_hand+coalesce(p.quantity,0))::numeric quantity
+ FROM stockchief_runtime.sku_stock_totals s LEFT JOIN sku_stock_deltas p ON p.sku_id=s.sku_id
+ WHERE s.workspace_id=$1 AND (SELECT ready FROM sku_stock_ready)
+ UNION ALL SELECT p.sku_id,p.quantity FROM sku_stock_deltas p
+ WHERE (SELECT ready FROM sku_stock_ready) AND NOT EXISTS(
+  SELECT 1 FROM stockchief_runtime.sku_stock_totals s WHERE s.workspace_id=$1 AND s.sku_id=p.sku_id)
+ UNION ALL SELECT b.sku_id,sum(b.on_hand)::numeric quantity FROM balances b
+ WHERE b.workspace_id=$1 AND NOT(SELECT ready FROM sku_stock_ready) GROUP BY b.sku_id`;}
 async function refreshBatch(db,workspaceId,{beforePublish,batchSize=5000}={}){
  if(!Number.isSafeInteger(batchSize)||batchSize<1||batchSize>5000)throw new TypeError('Choose a bounded stock-summary batch.');
  return db.transaction(async c=>{

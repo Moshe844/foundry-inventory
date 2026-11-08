@@ -210,18 +210,23 @@ async function brief(database,workspaceId,actorId=null,{includeLocationStock=tru
 }
 async function briefData(database,workspaceId,{includeLocationStock,includeAvailability}){
   const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
-    database.query(`WITH stock_by_sku AS MATERIALIZED(${require('./postgres-sku-stock').source()}),sku_stats AS (
+    database.query(`WITH stock_by_sku AS MATERIALIZED(${require('./postgres-sku-stock').source()}),
+     measured_items AS MATERIALIZED(SELECT id FROM items WHERE workspace_id=$1 AND quantity_precision>0),
+     measured_skus AS MATERIALIZED(SELECT s.id FROM measured_items i
+      CROSS JOIN LATERAL(SELECT id FROM skus WHERE workspace_id=$1 AND item_id=i.id OFFSET 0)s),
+     ordinary_units AS(SELECT coalesce((SELECT sum(quantity) FROM stock_by_sku),0)
+       -coalesce((SELECT sum(b.quantity) FROM stock_by_sku b JOIN measured_skus s ON s.id=b.sku_id),0) AS quantity),
+     sku_stats AS (
       SELECT count(*) FILTER(WHERE s.is_active=1) AS sku_count,
-        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count,
-        coalesce(sum(b.quantity) FILTER(WHERE i.quantity_precision=0),0)::numeric AS units_on_hand
-      FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+        count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count
+      FROM skus s
       LEFT JOIN stock_by_sku b ON b.sku_id=s.id WHERE s.workspace_id=$1
     ) SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       sku_stats.sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
-      sku_stats.units_on_hand,
-      EXISTS(SELECT 1 FROM items WHERE workspace_id=$1 AND quantity_precision>0) AS has_measured_stock,
+      (SELECT quantity FROM ordinary_units)::numeric AS units_on_hand,
+      EXISTS(SELECT 1 FROM measured_items) AS has_measured_stock,
       sku_stats.zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
