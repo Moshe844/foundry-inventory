@@ -5,7 +5,12 @@ const READ_PAGE=5000,WRITE_PAGE=1000;
 
 // The temporary index bounds RAM and is rebuildable. Approved source rows and
 // every business effect remain durable in PostgreSQL.
-async function apply(client,ctx,importId){
+async function apply(client,ctx,importId,{beforePage}={}){
+ await beforePage?.();
+ // A global owner rule covers every position for its SKU. When every SKU
+ // already has one, a million-position source needs no default preparation.
+ const uncovered=(await client.query('SELECT EXISTS(SELECT 1 FROM skus s WHERE s.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM reorder_policies p WHERE p.workspace_id=$1 AND p.sku_id=s.id AND p.location_id IS NULL)) uncovered',[ctx.workspaceId])).rows[0].uncovered;
+ if(!uncovered)return 0;
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-reorder-defaults-'));let scratch;
  try{
   scratch=new Database(path.join(directory,'source.sqlite'));
@@ -22,6 +27,7 @@ async function apply(client,ctx,importId){
   }});
   let lastRow=-1,lastId='';
   for(;;){
+   await beforePage?.();
    const rows=(await client.query('SELECT id,row_number,sku_id,location_id,item_id,coalesce(parsed::jsonb->>\'quantity\',quantity::text) quantity FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status=\'IMPORTED\' AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT '+READ_PAGE,[ctx.workspaceId,importId,lastRow,lastId])).rows;
    if(!rows.length)break;store(rows);lastRow=Number(rows.at(-1).row_number);lastId=rows.at(-1).id;
   }
@@ -33,6 +39,7 @@ async function apply(client,ctx,importId){
   const page=scratch.prepare('SELECT r.*,coalesce(m.quantity,?) fallback FROM source r LEFT JOIN product_medians m USING(item_id) WHERE (r.sku_id,r.location_id)>(?,?) ORDER BY r.sku_id,r.location_id LIMIT '+WRITE_PAGE);
   const at=nowIso();let sku='',location='',created=0;
   for(;;){
+   await beforePage?.();
    const rows=page.all(usual,sku,location);if(!rows.length)break;
    const everywhere=new Set((await client.query('SELECT sku_id FROM reorder_policies WHERE workspace_id=$1 AND location_id IS NULL AND sku_id=ANY($2::text[])',[ctx.workspaceId,[...new Set(rows.map(r=>r.sku_id))]])).rows.map(r=>r.sku_id));
    const policies=rows.filter(r=>!everywhere.has(r.sku_id)).map(r=>({id:'rpol_'+createHash('sha256').update(importId+':'+r.sku_id+':'+r.location_id).digest('hex').slice(0,24),sku_id:r.sku_id,location_id:r.location_id,target:r.quantity_sort===null?r.fallback:r.quantity}));
@@ -54,6 +61,7 @@ async function afterStock(client,ctx,plan,executionId){
 async function run(job,database){
  const ready=(await database.query("SELECT 1 FROM import_plans p JOIN import_executions e ON e.workspace_id=p.workspace_id AND e.import_id=p.id JOIN import_verifications v ON v.workspace_id=e.workspace_id AND v.execution_id=e.id AND v.verified=1 WHERE p.workspace_id=$1 AND p.id=$2 AND e.id=$3 AND p.status='SUCCEEDED' AND e.status='SUCCEEDED'",[job.workspaceId,job.payload.importId,job.payload.executionId])).rows.length;
  if(!ready)return {state:'NOT_REQUIRED',created:0};
- return {state:'COMPLETE',created:await apply(database,{workspaceId:job.workspaceId},job.payload.importId)};
+ const beforePage=async()=>{if(!job.leaseToken)return;const valid=(await database.query("SELECT 1 FROM stockchief_runtime.jobs WHERE id=$1 AND workspace_id=$2 AND status='RUNNING' AND lease_token=$3 AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)",[job.id,job.workspaceId,job.leaseToken])).rows.length;if(!valid)throw Object.assign(Error('Reorder preparation stopped because its worker lease changed. Saved stock is unaffected.'),{code:'job_lease_lost'});};
+ return {state:'COMPLETE',created:await apply(database,{workspaceId:job.workspaceId},job.payload.importId,{beforePage})};
 }
 module.exports={apply,afterStock,run};

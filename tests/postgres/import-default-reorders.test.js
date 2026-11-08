@@ -20,6 +20,7 @@ test('large imports commit stock and an atomic retryable reorder job, then prepa
   const result=await db.query(sql,values);if(/FROM import_rows/.test(sql)){pages++;maxRead=Math.max(maxRead,result.rows.length);}return result;
  }};
  assert.equal((await defaults.run({...job,workspaceId:'foreign-workspace'},observed)).state,'NOT_REQUIRED');
+ await assert.rejects(defaults.run({...job,leaseToken:'wrong-lease'},observed),/worker lease changed/);
  const prepared=await defaults.run(job,observed);assert.equal(prepared.state,'COMPLETE');assert.equal(prepared.created,5998);assert(pages>=2);assert.equal(maxRead,5000);assert(maxWrite<=1000);
  assert.equal((await defaults.run(job,observed)).created,0,'Retry does not duplicate or replace rules');assert.equal(await f.balance(),before);
  const rules=(await db.query("SELECT s.code,p.reorder_point::text point,p.target_stock::text target FROM reorder_policies p JOIN skus s ON s.id=p.sku_id WHERE p.workspace_id=$1",[ctx.workspaceId])).rows,by=new Map(rules.map(r=>[r.code,r]));assert.equal(rules.length,6000);assert.deepEqual(by.get('DEFAULT-10'),{code:'DEFAULT-10',point:'7',target:'21'});assert.deepEqual(by.get('DEFAULT-20'),{code:'DEFAULT-20',point:'4',target:'12'});assert.equal(by.get('DEFAULT-0').target,'2');assert.equal(by.get('DEFAULT-19').target,'2');
@@ -36,4 +37,8 @@ test('small measured imports keep exact fractional reorder defaults immediately'
  const result=await imports.execute(db,ctx,plan.id);assert(result.verified);assert.equal(result.reorderDefaults.state,'COMPLETE');
  const source=await imports.rowsFor(db,ctx.workspaceId,plan.id);assert.equal(source.find(r=>r.parsed.code==='MEASURE-DEFAULT-3').quantity,3.75);assert.equal(source.find(r=>r.parsed.code==='MEASURE-DEFAULT-1').quantity,0.000001);
  const rule=(await db.query("SELECT target_stock::text target FROM reorder_policies p JOIN skus s ON s.id=p.sku_id WHERE p.workspace_id=$1 AND s.code='MEASURE-DEFAULT-0'",[ctx.workspaceId])).rows[0];assert.equal(rule.target,'0.000002');
+ const skus=(await db.query('SELECT id FROM skus WHERE workspace_id=$1',[ctx.workspaceId])).rows;
+ await db.transaction(c=>require('../../src/operations/postgres-reorder-policies').setManyInTransaction(c,ctx,skus.map(s=>({skuId:s.id,locationId:null,reorderPoint:0,targetStock:1}))));
+ const guarded={query:(sql,values)=>{assert(!/FROM import_rows/.test(sql),'Complete global owner coverage must skip the source heap');return db.query(sql,values);}};
+ assert.equal(await require('../../src/imports/default-reorder-points').apply(guarded,ctx,plan.id),0);
 });
