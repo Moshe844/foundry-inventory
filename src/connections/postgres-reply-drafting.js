@@ -17,7 +17,9 @@ async function factsFor(database,workspaceId,message){
  // become evidence for another contact's reply.
  if(customers.length+suppliers.length!==1)return [];
  if(customers.length===1){const customer=customers[0];facts.push('The sender is customer '+customer.name+'.');
-  const orders=(await database.query('SELECT id,order_number,status,needed_by,currency FROM sales_orders WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,customer.id])).rows;
+  const history=await require('../commercial/agent-history').access(database,workspaceId);
+  const orders=(await database.query(`SELECT id,order_number,status,needed_by,currency FROM sales_orders WHERE workspace_id=$1 AND customer_id=$2
+    AND ($3::text IS NULL OR order_date >= $3) ORDER BY created_at DESC,id DESC LIMIT 5`,[workspaceId,customer.id,history.salesFrom])).rows;
   for(const order of orders){facts.push('Customer order '+order.order_number+' has status '+order.status+(order.needed_by?' and recorded needed-by date '+order.needed_by:'')+'.');
    const lines=(await database.query(`SELECT l.sku_id,s.code,i.name,l.quantity_ordered,l.quantity_fulfilled,l.unit_price_minor
     FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id

@@ -120,6 +120,7 @@ async function run(db,ctx,key,options={}){
     rows=rows.slice((page-1)*100,page*100);
   }else{
     const args=def.usesDate?[ctx.workspaceId,filter,today]:[ctx.workspaceId,filter];
+    if(def.salesHistory)args.push((await require('../commercial/agent-history').access(db,ctx.workspaceId)).salesFrom);
     let sql=def.sql;
     if(def.priceIncrease){
       const exponents=Object.fromEntries([...Intl.supportedValuesOf('currency'),'CLF','UYW'].map(code=>[code,money.exponent(code)]));

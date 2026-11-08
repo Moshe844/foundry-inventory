@@ -16,6 +16,7 @@
 <% }else{ %>
 <p>Public API access requires an eligible plan and a key scoped to your inventory. Create and revoke keys in Settings. Send keys only over HTTPS and keep them out of browser code.</p>
 <h2>Authentication</h2><pre>Authorization: Bearer YOUR_API_KEY</pre><p>Inventory tokens can have <code>inventory:read</code> and <code>inventory:write</code>. Custom customers can issue an owner token with <code>agent:run</code> for operational reviews.</p>
+<h2>Read the activity log</h2><p>On Custom, the inventory owner can issue a key with <code>audit:read</code> for <code>GET /api/v1/public/audit</code>. Filter with <code>from</code>, <code>to</code>, or <code>q</code>. Send the returned <code>nextCursor</code> as <code>after</code> to read the next page.</p>
 <h2>Run an Agent review</h2><pre>POST /api/v1/public/agent/jobs
 Content-Type: application/json
 Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY

@@ -16,7 +16,7 @@
         <div class="choice-grid">
           <label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label>
           <label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong><%= postgresMode ? 'Receive or correct inventory' : 'Submit inventory commands' %></strong></span></label>
-          <% if(postgresMode){ if(locals.agentApiAvailable){ %><label class="choice"><input type="checkbox" name="scopes" value="agent:run"><span>Run Agent reviews and read their business data</span></label><% }else{ %><p>Agent jobs API · Custom · <a href="/billing">Review plans</a></p><% }} %>
+          <% if(postgresMode){ if(locals.agentApiAvailable){ %><label class="choice"><input type="checkbox" name="scopes" value="agent:run"><span>Run Agent reviews and read their business data</span></label><label class="choice"><input type="checkbox" name="scopes" value="audit:read"><span>Read the inventory activity log</span></label><% }else{ %><p>Agent jobs and activity log API · Custom · <a href="/billing">Review plans</a></p><% }} %>
           <% if (!postgresMode) { %>
             <label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label>
             <label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label>

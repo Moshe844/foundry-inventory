@@ -18,6 +18,7 @@
 <% if (!anything) { %>
   <p class="rm-quiet section">Once StockChief plans, completes or stops work, the outcome appears here. No work has been recorded yet.</p>
 <% } %>
+<% if(locals.activityAfter){ %><p>Your plan shows work since <%= activityAfter.slice(0,10) %>.</p><% } %>
 
 <% sections.forEach(function (section) { %>
   <% if (groups[section.key].length) { %>
@@ -37,6 +38,7 @@
   <% } %>
 <% }) %>
 
+<% if(locals.next){ %><a class="btn" href="/autopilot/history?after=<%= next %>">Older work</a><% } %>
 <% if (operations.length) { %>
   <%
     var outcomeLines = function (value) {

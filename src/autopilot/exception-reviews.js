@@ -59,7 +59,7 @@ module.exports = [
       SELECT order_number AS "Order",name AS "Customer",code AS "SKU",shortage AS "Waiting units",needed_by AS "Needed by",
         allocation_priority AS "Priority",'/orders/'||id AS link FROM waiting WHERE shortage>0
       ORDER BY allocation_priority,needed_by NULLS LAST,order_date,id,code`},
-  {id:116, key:'customer-return-rates', label:'Compare item and customer return rates',
+  {id:116, key:'customer-return-rates', salesHistory:true, label:'Compare item and customer return rates',
     summary:'Ranked by the share of fulfilled units physically returned. Requested or authorized returns enter the figures only when received. Compare the unit counts alongside the percentage.',
     sql:`WITH line_history AS (
       SELECT s.code AS sku,c.id AS customer_id,c.name AS customer,l.quantity_fulfilled AS shipped,
@@ -68,7 +68,7 @@ module.exports = [
       JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
       LEFT JOIN LATERAL (SELECT sum(rl.quantity_received) AS units FROM customer_return_lines rl
         WHERE rl.workspace_id=l.workspace_id AND rl.sales_order_line_id=l.id) r ON true
-      WHERE l.workspace_id=$1 AND l.quantity_fulfilled>0),
+      WHERE l.workspace_id=$1 AND l.quantity_fulfilled>0 AND ($3::text IS NULL OR o.order_date >= $3)),
     rates AS (SELECT 'SKU' AS kind,sku AS name,sum(shipped) AS shipped,sum(returned) AS returned,'/inventory/'||item_id AS link
       FROM line_history WHERE ($2='' OR lower(sku)=lower($2)) GROUP BY sku,item_id
       UNION ALL SELECT 'Customer',customer,sum(shipped),sum(returned),'/sales/customers/'||customer_id

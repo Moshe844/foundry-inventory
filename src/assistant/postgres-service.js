@@ -152,6 +152,11 @@ function salesPeriod(timeframe,now=new Date()){
 
 async function salesActivity(database,ctx,timeframe){
   const period=salesPeriod(timeframe);
+  const history=await require('../commercial/agent-history').access(database,ctx.workspaceId);
+  if(history.salesFrom&&period.from<history.salesFrom){
+    period.from=history.salesFrom;
+    period.label='since '+period.from;
+  }
   const counts=(await database.query(`SELECT COUNT(DISTINCT so.id) AS orders,
     COALESCE(SUM(sol.quantity_fulfilled),0) AS fulfilled_units
     FROM sales_orders so LEFT JOIN sales_order_lines sol ON sol.sales_order_id=so.id
@@ -870,6 +875,7 @@ async function lookupRecords(database,ctx,request,options={}) {
         complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length}};
   }
   if(request.view==='sales_orders'){
+    const history=await require('../commercial/agent-history').access(database,ctx.workspaceId);
     const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
@@ -928,9 +934,9 @@ async function lookupRecords(database,ctx,request,options={}) {
           ORDER BY batch.created_at,batch.id) AS details
         FROM (SELECT shipment.*,COUNT(*) OVER() AS total_matches FROM sales_shipments shipment
           WHERE workspace_id=so.workspace_id AND sales_order_id=so.id ORDER BY created_at,id LIMIT 20) batch) shipments ON true
-      WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
+      WHERE so.workspace_id=$1 AND ($3::text IS NULL OR so.order_date >= $3) AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
         OR so.status ILIKE '%'||$2||'%' OR COALESCE(so.reference,'') ILIKE '%'||$2||'%') ORDER BY so.created_at DESC,so.id LIMIT 100`,
-    [ctx.workspaceId,search]);
+    [ctx.workspaceId,search,history.salesFrom]);
     const rows=result.rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,reference:row.reference,
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),

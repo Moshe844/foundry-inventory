@@ -8,6 +8,10 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 
 The taught-rule allowance is shared across an account’s inventories. Two concurrent attempts to reserve Growth’s fiftieth slot for different warehouses produced one new rule and one rejection. An owner could edit the winning rule and free its slot by removing it.
 
+The activity timeline, purchase and stock audit, and StockChief work history were tested against events 10, 95, 460 and 775 days old. Starter showed the first, Growth the first two, and Pro and Custom all four. CSV export requires Pro or Custom. A Custom owner can issue an inventory-scoped `audit:read` key. An inventory-read key was refused, as was the audit key after downgrade. Underlying business records remain available to authorized people for reconciliation.
+
+The same dated customer orders were tested in the agent’s order lookup, sales summary and customer email evidence. Starter used the most recent 12 months, Growth 24 months and Pro and Custom the available history. Importing old-system history into Custom is a separate workflow.
+
 Owners can set an individual job to Watch only or Ask me first for small count postings, automatic reorders, combining or splitting PO drafts, repeat sales, postage, margin prices, automatic transfers and supplier specifications. Handle routine work is available only within the job’s plan limit and existing authority. An owner changing postage to Ask me first stopped a queued purchase before the simulated carrier was called. Staff changes and stale settings were refused. Per-job controls for other jobs still need integration.
 
 ## Release checks

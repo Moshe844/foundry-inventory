@@ -5,6 +5,58 @@ const test=require('node:test'),assert=require('node:assert/strict'),crypto=requ
 const clients=require('../../src/connections/postgres-public-api'),hooks=require('../../src/connections/postgres-outbound-webhooks');
 const queue=require('../../src/operations/postgres-job-queue'),runtime=require('../../src/operations/postgres-runtime-handlers');
 
+test('agent sales history, activity search, CSV and API use current paid terms',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,browser,subscribe}=f;
+  await subscribe('enterprise');
+  const read=require('../../src/assistant/postgres-service').lookup;
+  const names=['recent','quarter','older','archive'],days=[10,95,460,775],orders=[];
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  for(let i=0;i<days.length;i++){
+    const date=require('../../src/accounting/customer-money').addDays(today,-days[i]);
+    const workId=crypto.randomUUID();
+    await db.query(`INSERT INTO work_items(id,workspace_id,idempotency_key,category,source,execution_status,created_at)
+      VALUES($1,$2,$1,$3,'postgres_autopilot','COMPLETED',$4)`,[workId,ctx.workspaceId,'AgentHistory '+names[i],date+'T08:00:00Z']);
+    await db.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,created_at) VALUES($1,$2,$3,$4,$5)`,
+      [crypto.randomUUID(),ctx.workspaceId,workId,'WorkEvent '+names[i],date+'T08:00:00Z']);
+    await db.query(`INSERT INTO security_event_history(id,workspace_id,actor_id,action,created_at)
+      VALUES($1,$2,$3,$4,$5::timestamptz)`,[crypto.randomUUID(),ctx.workspaceId,ctx.actorId,'HistoryFixture '+names[i],date+'T06:00:00Z']);
+    const created=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:f.location.id,
+      orderDate:date,reference:'Historical fixture '+names[i],idempotencyKey:crypto.randomUUID(),lines:[{skuId:f.item.skuIds[0],quantity:1,unitPriceMinor:1000}]});
+    await f.workflows.confirmSalesOrder(db,ctx,created.salesOrderId,{idempotencyKey:crypto.randomUUID()});
+    orders.push((await db.query('SELECT order_number FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,created.salesOrderId])).rows[0].order_number);
+  }
+  const mint=scopes=>clients.create(db,ctx,{name:'Activity reader',scopes});
+  const api='/api/v1/public/audit',token=(await mint(['audit:read'])).token,ordinary=(await mint(['inventory:read'])).token;
+  const call=key=>browser.get(api).query({q:'HistoryFixture'}).set('Authorization','Bearer '+key);
+  await call(ordinary).expect(403);
+  for(const [tier,logs,sales] of [['starter',1,2],['growth',2,3],['pro',4,4],['enterprise',4,4]]){
+    await subscribe(tier);
+    for(const route of ['/audit','/activity']){
+      const result=await browser.get(route).query({q:'HistoryFixture',from:'2000-01-01'}).expect(200);
+      for(let i=0;i<names.length;i++)assert.equal(result.text.includes('HistoryFixture '+names[i]),i<logs,tier+' '+route+' '+names[i]);
+      if(route==='/audit')assert.equal(result.text.includes('>Export CSV</a>'),logs===4);
+    }
+    const overview=await read(db,ctx,{view:'sales_activity',timeframe:'all_time'});
+    const work=await browser.get('/autopilot/history').expect(200);
+    const events=await browser.get('/audit').query({q:'WorkEvent'}).expect(200);
+    for(let i=0;i<names.length;i++){
+      assert.equal(work.text.includes('AgentHistory '+names[i]),i<logs);
+      assert.equal(events.text.includes('StockChief WorkEvent '+names[i]),i<logs);
+    }
+    assert.equal(overview.rows[0].value,sales);
+    const evidence=await read(db,ctx,{view:'sales_orders',search:'Historical fixture'});
+    assert.equal(evidence.rows.length,sales);
+    const facts=await require('../../src/connections/postgres-reply-drafting').factsFor(db,ctx.workspaceId,{sender:'receiver@example.test'});
+    for(let i=0;i<orders.length;i++)assert.equal(facts.some(v=>v.includes('Customer order '+orders[i]+' has status')),i<sales);
+    const csv=await browser.get('/audit/export').query({q:'HistoryFixture'}).expect(logs===4?200:402);
+    if(logs===4)assert.ok(csv.text.includes('HistoryFixture archive'));
+    if(tier!=='enterprise'){
+      await assert.rejects(mint(['audit:read']),e=>e.code==='entitlement_required');
+      await call(token).expect(402);
+    }else assert.deepEqual((await call(token).expect(200)).body.data.map(r=>r.action),names.map(n=>'HistoryFixture '+n));
+  }
+});
+
 test('only Custom can start an agent review by API and receive the signed completion event',{timeout:240000},async t=>{
   const {db,ctx,browser,subscribe}=await require('../helpers/agent-workflow-fixture').fixture(t);
   const mint=scopes=>clients.create(db,ctx,{name:'ERP test system',scopes});
