@@ -53,7 +53,8 @@ async function apply(client,ctx,importId,{beforePage}={}){
   fs.rmSync(resolved,{recursive:true,force:true});
  }
 }
-async function afterStock(client,ctx,plan,executionId){
+async function afterStock(client,ctx,plan,executionId,{covered=false}={}){
+ if(covered)return {state:'COMPLETE',created:0};
  if(plan.recordsValid<5000)return {state:'COMPLETE',created:await apply(client,ctx,plan.id)};
  const queued=await require('../operations/postgres-job-queue').enqueue({query:client.query.bind(client),transaction:fn=>fn(client)},{workspaceId:ctx.workspaceId,kind:'import.initialize-reorders',idempotencyKey:'import-reorders:'+plan.id,payload:{importId:plan.id,executionId},priority:60,maxAttempts:5});
  return {state:'QUEUED',jobId:queued.job.id};
