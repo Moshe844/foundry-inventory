@@ -59,8 +59,17 @@ test('agent jobs run through paid plans, posted books, stock records and approve
     await plan(tier);
     for(const d of reviews.definitions){
       const call=()=>reviews.run(db,ctx,d.key,{filter:d.requiresFilter?'some-exact-filter':''});
-      if(policy.permits(tier,d.id,'suggest')) assert.ok(Array.isArray((await call()).rows),tier+' '+d.key);
+      if(policy.permits(tier,d.id,'suggest')){
+        const result=await call();
+        assert.equal(result.mode,policy.allowance(tier,d.id),tier+' '+d.key);
+        assert.ok(Array.isArray(result.rows),tier+' '+d.key);
+        if(result.mode==='suggest'){
+          assert.ok(result.rows.length<=1,tier+' '+d.key);
+          for(const row of result.rows)assert.deepEqual(Object.keys(row),['Suggestion'],tier+' '+d.key);
+        }
+      }
       else await assert.rejects(call(),e=>e.code==='entitlement_required',tier+' '+d.key);
+      if(!policy.permits(tier,d.id,'automatic'))await assert.rejects(reviews.run(db,ctx,d.key,{scheduled:true}),e=>e.code==='entitlement_required',tier+' '+d.key);
     }
   }
   await plan('starter');

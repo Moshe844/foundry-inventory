@@ -69,8 +69,15 @@ const suggestions={
   99:r=>'Review supplier invoice '+r.Invoice+' with '+r.Supplier+'. '+r.Problem,
   105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
+  109:r=>r['Week beginning']+' · '+r.Currency+'. '+r.Review,
   148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
 };
+
+function firstSuggestion(def,rows){
+  const describe=suggestions[def.id];
+  if(!describe)return [];
+  return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));
+}
 
 async function run(db,ctx,key,options={}){
   const def=keys.get(key);
@@ -87,8 +94,8 @@ async function run(db,ctx,key,options={}){
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
-    if(mode==='suggest'&&suggestions[def.id])return {label:def.label,summary:result.summary,
-      rows:result.rows.slice(0,1).map(row=>({Suggestion:suggestions[def.id](row)})),mode,more:false,page:1,filterable:true,...inputs};
+    if(mode==='suggest')return {label:def.label,summary:result.summary,
+      rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...inputs};
   }
@@ -115,8 +122,8 @@ async function run(db,ctx,key,options={}){
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
   if(def.id===105)for(const row of rows){row.Amount=row.Amount!=null&&row.Currency?money.format(row.Amount,row.Currency):null;}
   if(def.id===196)for(const row of rows) row.link='/autopilot/lots?'+new URLSearchParams({sku:row.SKU,lot:row.Lot});
-  if(mode==='suggest' && suggestions[def.id]){
-    rows=rows.slice(0,1).map(r=>({Suggestion:suggestions[def.id](r)}));more=false;
+  if(mode==='suggest'){
+    rows=firstSuggestion(def,rows);more=false;
   }
   return {label:def.label,summary,rows,more,page,mode,filterable:!def.read};
 }

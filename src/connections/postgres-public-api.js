@@ -7,7 +7,7 @@ const commercialUsage=require('../entitlements/postgres-service');
 const commercialControl=require('../commercial/control-service');
 
 const PREFIX='fnd_api_';
-const ALLOWED_SCOPES=Object.freeze(['inventory:read','inventory:write']);
+const ALLOWED_SCOPES=Object.freeze(['inventory:read','inventory:write','agent:run']);
 const hash=(value)=>crypto.createHash('sha256').update(String(value)).digest('hex');
 
 function parse(value,fallback=[]){
@@ -30,7 +30,9 @@ async function create(database,ctx,input={}){
   const selected=scopes(input.scopes);const visible=crypto.randomBytes(6).toString('hex');
   const token=`${PREFIX}${visible}.${crypto.randomBytes(32).toString('base64url')}`;
   const row={id:newId('apiclient'),prefix:`${PREFIX}${visible}`,name,scopes:selected};
-  await database.transaction(async client=>{const scope=await commercialUsage.ownerScopeForWorkspace(client,ctx.workspaceId);await commercialUsage.assertCapability(client,scope,'api.public');await commercialUsage.assertMeterCapacity(client,scope,'api_keys',1);await client.query(`INSERT INTO public_api_clients
+  await database.transaction(async client=>{
+    if(selected.includes('agent:run'))await require('./agent-review-api').issuer(client,ctx);
+    const scope=await commercialUsage.ownerScopeForWorkspace(client,ctx.workspaceId);await commercialUsage.assertCapability(client,scope,'api.public');await commercialUsage.assertMeterCapacity(client,scope,'api_keys',1);await client.query(`INSERT INTO public_api_clients
     (id,workspace_id,name,scopes,token_prefix,token_hash,created_by_user_id,created_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[row.id,ctx.workspaceId,name,JSON.stringify(selected),row.prefix,
     hash(token),ctx.actorId,nowIso()]);
