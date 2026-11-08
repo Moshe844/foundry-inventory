@@ -84,24 +84,24 @@ function problem(code, message) {
   return { code, message };
 }
 
-async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null,includePositions=true}={}) {
+async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null,rowNumbers=null,supplierNames=null,includePositions=true,includePrices=true,includeReorders=true,includeSerials=true,includeSuppliers=true,shared=null}={}) {
   const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>catalogIdentity.codeKey(c)))];
   // Scoped pages need an index lookup even under force_generic_plan; a nullable
   // OR forces every catalogue row through a large ANY array for every page.
   const skuFilter=alias=>keys===null?'$2::text[] IS NULL':`lower(btrim(${alias}code))=ANY($2::text[])`;
   const scopedSkus=`SELECT id FROM skus WHERE workspace_id=$1 AND ${skuFilter('')}`;
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
-    database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
+    shared?{rows:shared.locations}:database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT s.id,s.code,s.barcode,s.item_id,i.name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND ${skuFilter('s.')}`,[workspaceId,keys]),
-    database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
-    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ${skuFilter('s.')}`,[workspaceId,keys]),
+    shared?{rows:[{enabled:shared.accountingReady?1:0,base_currency:shared.accountingCurrency}]}:database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
+    includeSerials?database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ${skuFilter('s.')}`,[workspaceId,keys]):{rows:[]},
     includePositions?database.query(`SELECT b.sku_id,b.location_id,b.on_hand,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id) AS has_history,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
       FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]):{rows:[]},
-    database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]),
-    database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
-    database.query(`SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id IN (${scopedSkus}) ORDER BY sku_id,currency,created_at DESC,id DESC`,[workspaceId,keys]),
+    includeSuppliers?database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(name)=ANY($2::text[]))',[workspaceId,supplierNames]):{rows:[]},
+    includeReorders?database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]):{rows:[]},
+    includePrices?database.query(`SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id IN (${scopedSkus}) ORDER BY sku_id,currency,created_at DESC,id DESC`,[workspaceId,keys]):{rows:[]},
   ]);
   const locationByName = new Map();
   for (const row of locations.rows) {
@@ -508,7 +508,11 @@ async function analyse(database, ctx, input) {
   // Additive receipts do not overwrite an earlier stock count. Their price,
   // cost and receipt checks stay live at execution; only count imports need
   // a frozen before-position and a scan of the SKU's other warehouses.
-  const scopeRows=rows=>({sourceHash,includePositions:input.importMode!=='add',rowNumbers:rows.map(r=>r.sourceRow),supplierNames:rows.map(r=>textCell(r,proposal.mappings.supplierName).toLowerCase()).filter(Boolean),
+  const includePrices=proposal.mappings.sellingPrice!==undefined||Object.values(input.moneyOverrides||{}).some(row=>row?.sellingPrice!==undefined);
+  const hasQuantity=proposal.mappings.quantity!==undefined||Object.keys(input.quantityOverrides||{}).length>0;
+  const scopeRows=rows=>({sourceHash,includePositions:hasQuantity&&input.importMode!=='add',includePrices,
+    includeSerials:proposal.mappings.serial!==undefined,includeReorders:['reorderPoint','targetStock','leadTimeDays'].some(key=>proposal.mappings[key]!==undefined),includeSuppliers:proposal.mappings.supplierName!==undefined,
+    rowNumbers:rows.map(r=>r.sourceRow),supplierNames:rows.map(r=>textCell(r,proposal.mappings.supplierName).toLowerCase()).filter(Boolean),
     codes:rows.flatMap(r=>{const code=Object.hasOwn(input.codeOverrides||{},r.sourceRow)?input.codeOverrides[r.sourceRow]:textCell(r,proposal.mappings.code);
       return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,proposal.mappings,proposal))]:[];})});
   const context=await workspaceContext(database,ctx.workspaceId,scopeRows(streaming?[]:sheet.rows));
@@ -565,7 +569,10 @@ async function analyse(database, ctx, input) {
     const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map(),analysisBatchSize=sheet.rows.length>=5000?2000:500;
     for(let start=0;start<sheet.rows.length;start+=analysisBatchSize){
       const sourceRows=sheet.rows.slice(start,start+analysisBatchSize);
-      const batchContext=await workspaceContext(client,ctx.workspaceId,scopeRows(sourceRows));
+      // Location answers and the default accounting currency belong to this
+      // one preview. Execution rechecks live stock, authority, prices and books.
+      // Other source facts are read only when a mapped column needs them.
+      const batchContext=await workspaceContext(client,ctx.workspaceId,{...scopeRows(sourceRows),shared:validationContext});
       const batch=validateRows({...sheet,rows:sourceRows},proposal.mappings,proposal,
         {...batchContext,locations:validationContext.locations,locationByName:validationContext.locationByName,validationState:validationContext.validationState},input);
       trackingSummary?.add(batch.rows);
