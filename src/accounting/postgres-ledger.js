@@ -144,7 +144,11 @@ async function postManyInTransaction(client,ctx,inputs){
     const accounts=(await client.query('SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))',[ctx.workspaceId,keys,ids])).rows;
     const byKey=new Map(accounts.map(row=>[row.system_key,row.id])),byId=new Set(accounts.map(row=>row.id));
     if(keys.some(key=>!byKey.has(key))||ids.some(id=>!byId.has(id))||allLines.some(line=>!line.accountKey&&!line.accountId))throw new ValidationError('One or more accounting control accounts are missing or inactive.');
-    const firstNumber=Number((await client.query('SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].next),at=nowIso(),journalRows=[],journalLines=[];
+    const allocated=(await client.query(`INSERT INTO stockchief_runtime.business_number_counters AS saved(workspace_id,kind,prefix,last_number)
+      VALUES($1,'accounting_journal_entries','JE',$2::bigint) ON CONFLICT(workspace_id,kind,prefix) DO UPDATE SET last_number=saved.last_number+EXCLUDED.last_number
+      WHERE saved.last_number<=9007199254740991-EXCLUDED.last_number RETURNING last_number`,[ctx.workspaceId,rows.length])).rows[0];
+    if(!allocated)throw new ValidationError('Journal numbering has reached its supported range. Contact support before recording another entry.');
+    const firstNumber=Number(allocated.last_number)-rows.length+1,at=nowIso(),journalRows=[],journalLines=[];
     for(const [index,row]of rows.entries()){
       const input=row.input,id=newAppendId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
       journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify({...input.metadata,postingCalendar:{basis:input.postingDate?'EXPLICIT_DATE':input.postingInstant?'BUSINESS_EVENT_INSTANT':'BUSINESS_CURRENT_DATE',timeZone:calendar?.timeZone||ctx.businessTimeZone||null,instant:input.postingInstant||(!input.postingDate?at:null)}}),reversal_of_entry_id:input.reversalOfEntryId||null});
