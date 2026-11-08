@@ -31,7 +31,7 @@ test('large imports, reorder points and stock wording work the same for every bu
  const shortage=await require('../../src/purchasing/postgres-shortage-list').read(db,ctx.workspaceId,{});
  assert.equal(shortage.atOrBelowTotal,12);for(const code of ['BX009-40','BX119-40'])assert(shortage.rows.some(r=>r.sku_code===code||r.code===code||r.displayName.includes('Style '+code.slice(2,5).replace(/^0+(?=\d)/,'')+' Boot')),code);
  for(const width of [1440,390]){const seen=await pages(width,owner.email,['/','/inventory?view=flat&group=empty','/inventory','/purchasing']);
-  assert.match(seen['/'],/Out of stock 12 of 600 SKUs/);
+  assert.match(seen['/'],/Out of stock 12 of 600 SKUs/);assert.doesNotMatch(seen['/'],/products? watched/);
   assert.match(seen['/inventory?view=flat&group=empty'],/BX009-40 Out of stock/);assert.doesNotMatch(seen['/inventory?view=flat&group=empty'],/\bLow\b/);
   assert.doesNotMatch(seen['/inventory'],/PRODUCT-ITEM_/i);assert.match(seen['/inventory'],/BX000-36/);
   assert.match(seen['/purchasing'],/12 items at or below their reorder point/);}

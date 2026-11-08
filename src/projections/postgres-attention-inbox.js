@@ -15,7 +15,7 @@ async function summary(db,workspaceId){
  return {rows};
 }
 async function page(db,workspaceId,input={}){
- const category=String(input.category||'').slice(0,100),location=String(input.location||'').slice(0,160),q=String(input.q||'').trim().slice(0,120),pageSize=[25,50,75].includes(Number(input.pageSize))?Number(input.pageSize):50,page=Math.min(10000,Math.max(1,Number.parseInt(input.page,10)||1));
+ const category=String(input.category||'').slice(0,100),location=String(input.location||'').slice(0,160),q=String(input.q||'').trim().slice(0,120),pageSize=require('../web/presentation/pagination').SIZES.includes(Number(input.pageSize))?Number(input.pageSize):50,page=Math.min(10000,Math.max(1,Number.parseInt(input.page,10)||1));
  const rows=(await db.query(`WITH candidates AS(${source}),costs AS(${values}) SELECT c.*,v.stock_value,s.code,s.variant_label,i.name AS product,count(*) OVER() AS total FROM candidates c LEFT JOIN costs v ON v.sku_id=c.sku_id LEFT JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id LEFT JOIN items i ON i.workspace_id=c.workspace_id AND i.id=c.item_id WHERE ($2='' OR c.category=$2) AND ($3='' OR c.location_id=$3) AND ($4='' OR c.title ILIKE '%'||$4||'%' OR s.code ILIKE '%'||$4||'%' OR i.name ILIKE '%'||$4||'%' OR s.variant_label ILIKE '%'||$4||'%') ORDER BY v.stock_value DESC NULLS LAST,c.priority_score DESC,c.first_detected_at,c.id LIMIT ${pageSize+1} OFFSET $5`,[workspaceId,category,location,q,(page-1)*pageSize])).rows;
  const currency=(await db.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[workspaceId])).rows[0]?.base_currency||'USD';return {rows:rows.slice(0,pageSize),hasMore:rows.length>pageSize,total:Number(rows[0]?.total||0),category,location,q,page,currency};
 }

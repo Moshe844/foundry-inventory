@@ -584,6 +584,10 @@ input[type="number"], .rm-ledger__v, .rm-told__m, .rm-spine__d {
   transition: color var(--dur-1) var(--ease);
 }
 .rm-back:hover, .page-back:hover, .back-link:hover, .breadcrumb a:hover { color: var(--ink); }
+/* One way back per page: the "Back to" link knows where you came from, so a
+   page's own fallback link below it stays out of sight. */
+.page-back ~ :is(.rm-back, .back-link, .rm-head__back, .ox-back),
+.page-back ~ * :is(.rm-back, .back-link, .rm-head__back, .ox-back) { display: none !important; }
 .breadcrumb { gap: 6px; flex-wrap: wrap; }
 .breadcrumb a { color: var(--muted); font-weight: 500; }
 

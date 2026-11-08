@@ -15,6 +15,8 @@ const aliases=[
  ['/signup','/register'],['/help','/guide'],['/team','/settings?section=team#people'],['/settings/team','/settings?section=team#people'],['/profile','/settings?section=advanced#account'],['/account','/settings?section=advanced#account'],['/receive','/purchasing/receive'],['/warehouse','/warehouse/operations'],['/sales/returns','/returns'],['/billing','/settings/billing'],
  ['/sales','/orders'],['/sales/new','/orders/new'],['/customers','/sales/customers'],['/accounting','/accounting/books'],['/money/books','/accounting/books'],['/accounting/accounts','/accounting/chart'],['/overview','/'],['/foundry/briefing','/'],
 ];
+// Every menu name is also an address: typing /buy or /stock lands on that menu's page.
+for(const entry of [...sections,...footer]){const from='/'+entry.label.toLowerCase().replace(/[^a-z0-9]+/g,'-');if(from!==entry.href&&!aliases.some(([known])=>known===from))aliases.push([from,entry.href]);}
 const settingsSectionHashes=Object.freeze({'people':'team','ask-preferences':'ai','ai-spending':'advanced','email-alerts':'notifications','account':'advanced','integrity-check':'data'});
 function withQuery(destination,original){
  const next=new URL(destination,'http://stockchief.invalid'),source=new URL(original,'http://stockchief.invalid'),defaults=new URLSearchParams(next.search);

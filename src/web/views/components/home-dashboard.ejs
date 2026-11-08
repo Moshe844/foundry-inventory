@@ -55,7 +55,7 @@
 
   <div class="hm-rail">
   <% if(locals.homeSummary){ %><section class="hm-block hm-work" aria-labelledby="home-work-title"><header><h2 id="home-work-title">This week</h2><a href="/autopilot/history">See its work</a></header>
-    <div class="hm-work__panel"><dl class="hm-stats"><div><dd><%= helpers.qty(homeSummary.watching) %></dd><dt><%= homeSummary.watching===1?'product':'products' %> watched</dt></div><div><dd><%= helpers.qty(homeSummary.found) %></dd><dt><%= homeSummary.found===1?'issue':'issues' %> found</dt></div><div><dd><%= helpers.qty(homeSummary.doneAlone) %></dd><dt>handled on its own</dt></div><div><dd><%= helpers.qty(homeSummary.doneApproved) %></dd><dt>resolved after approval</dt></div></dl>
+    <div class="hm-work__panel"><dl class="hm-stats"><div><dd><%= helpers.qty(homeSummary.watching) %></dd><dt><%= homeSummary.watching===1?'SKU':'SKUs' %> watched</dt></div><div><dd><%= helpers.qty(homeSummary.found) %></dd><dt><%= homeSummary.found===1?'issue':'issues' %> found</dt></div><div><dd><%= helpers.qty(homeSummary.doneAlone) %></dd><dt>handled on its own</dt></div><div><dd><%= helpers.qty(homeSummary.doneApproved) %></dd><dt>resolved after approval</dt></div></dl>
     <p class="hm-work__mode"><%= homeSummary.canAutomate?'StockChief acts on its own within the limits you set.':'StockChief asks you before anything consequential.' %> <a href="/autopilot">Change this</a></p></div>
   </section><% } %>
   <% if(handling.length){ %><section class="sc-home-block hm-block" data-home-section="progress" aria-labelledby="home-progress-title">

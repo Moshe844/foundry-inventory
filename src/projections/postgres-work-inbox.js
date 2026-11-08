@@ -13,7 +13,7 @@ async function summary(db,workspaceId){
  return {rows};
 }
 async function page(db,workspaceId,input){
- const kind=input.kind==='transfer'?'transfer':'purchase',location=String(input.location||'').slice(0,160),currency=String(input.currency||'').slice(0,8),q=String(input.q||'').trim().slice(0,200),pageSize=[25,50,75].includes(Number(input.pageSize))?Number(input.pageSize):50,page=Math.min(1000000,Math.max(1,Number.parseInt(input.page,10)||1));
+ const kind=input.kind==='transfer'?'transfer':'purchase',location=String(input.location||'').slice(0,160),currency=String(input.currency||'').slice(0,8),q=String(input.q||'').trim().slice(0,200),pageSize=require('../web/presentation/pagination').SIZES.includes(Number(input.pageSize))?Number(input.pageSize):50,page=Math.min(1000000,Math.max(1,Number.parseInt(input.page,10)||1));
  const rows=(await db.query(`WITH candidates AS (${base}) SELECT w.*,c.money,c.currency,count(*) OVER() AS total FROM candidates c JOIN work_items w ON w.id=c.id AND w.workspace_id=$1 WHERE c.kind=$2 AND c.location=$3 AND c.currency=$4 AND ($5::text='' OR w.recommended_action::jsonb->>'displayName' ILIKE '%'||$5||'%' OR w.recommended_action::jsonb->>'code' ILIKE '%'||$5||'%') ORDER BY c.money DESC NULLS LAST,c.priority DESC,c.created_at,c.id LIMIT ${pageSize+1} OFFSET $6`,[workspaceId,kind,location,currency,q,(page-1)*pageSize])).rows;
  return {rows:rows.slice(0,pageSize).map(r=>({...r,action:JSON.parse(r.recommended_action),evidence:typeof r.source_evidence==='string'?JSON.parse(r.source_evidence||'[]'):r.source_evidence||[]})),total:Number(rows[0]?.total||0),hasMore:rows.length>pageSize,kind,location,currency,q,page};
 }

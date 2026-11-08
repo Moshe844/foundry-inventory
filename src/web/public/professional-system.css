@@ -38,6 +38,9 @@ body a{color:#4F46E5}
 /* One pager for every long list. */
 .pager-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; width:100%; padding:10px 2px 0; font-size:13px; color:#475467; }
 .pager-bar__count { font-variant-numeric:tabular-nums; }
+.pager-bar__jump { display:inline-flex; align-items:center; gap:6px; margin:0; }
+.pager-bar__jump label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; margin:0; white-space:nowrap; font-size:13px; font-weight:400; color:#475467; }
+.pager-bar__jump input { width:4.5em; min-height:32px; padding:4px 6px; text-align:center; font-variant-numeric:tabular-nums; }
 .pager-bar__size { display:flex; align-items:center; margin:0; }
 .pager-bar__size label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; margin:0; white-space:nowrap; font-size:13px; font-weight:400; color:#475467; }
 .pager-bar .pager-bar__size select { flex:none; width:68px; min-height:30px; padding:2px 22px 2px 8px; font-size:13px; }

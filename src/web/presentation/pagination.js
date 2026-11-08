@@ -1,6 +1,6 @@
 'use strict';
 // One way to page through a long list: 25 rows unless the person chose more.
-const SIZES=Object.freeze([25,50,75]);
+const SIZES=Object.freeze([25,50,75,100]);
 const MAX_PAGE=1000000;
 
 function pageSize(req){
@@ -20,7 +20,7 @@ function pager(req,{page,size,offset=(page-1)*size,total=null,hasMore=false,show
   const hasNext=total===null?hasMore:page<pages;
   const from=(total===0||shown===0)?0:offset+1;
   const hidden=[...new URL(req.originalUrl,'http://local').searchParams].filter(([key])=>!['rows','page','after','offset'].includes(key));
-  return {page,pages,size,sizes:SIZES,total,from,to:from?from+shown-1:0,hidden,
+  return {page,pages,size,sizes:SIZES,total,from,to:from?from+shown-1:0,hidden,jump:Boolean(pages&&pages>1),
     show:total===null?page>1||hasMore||size>SIZES[0]:total>SIZES[0]||size>SIZES[0],
     previousHref:page>1?hrefWith(req,{page:page===2?null:page-1,after:null,offset:null}):null,
     nextHref:hasNext?hrefWith(req,{page:page+1,offset:null,...next}):null};

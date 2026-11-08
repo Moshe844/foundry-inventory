@@ -48,11 +48,13 @@ function postgresPageRenderer(req,res,next){
       if(referer.host===req.get('host')){const href=`${referer.pathname}${referer.search}`;
         if(href!==currentHref)arrivedFrom=require('./presentation/return-navigation').resolve(currentHref,href,req.session?.renderedPageLabels);}}
     catch{arrivedFrom=null;}}
+    // Menu pages are always one click away in the menu, so they get no "Back to" link.
+    const menuPage=(()=>{const nav=require('./presentation/navigation'),path=currentHref.split('?')[0];return [...nav.sections,...nav.footer].some(entry=>entry.href===path);})();
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
       moreSections,panelMode:req.path==='/ask'&&req.query.panel==='1',navigation:require('./presentation/navigation'),pageSection:require('./presentation/navigation').sectionFor(req.path),
       assetVersion:res.locals.assetVersion,
       flash:flashMessages,csrfToken:res.locals.csrfToken,
-      backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),
+      backTo:data.suppressBack||menuPage?null:(data.backTo || arrivedFrom || data.backToFallback || null),
       onboardingEntry,
       navigationArrival:null,agentArrival,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,
       currentHref,screenGuide:data.screenGuide || null,
