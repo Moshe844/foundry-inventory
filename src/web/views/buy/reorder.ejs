@@ -22,7 +22,7 @@
   <header class="ox-head">
     <div>
       <h1 class="ox-title">What to order</h1>
-      <p class="ox-sub"><%= R.count %> item<%= R.count === 1 ? '' : 's' %> at or below their reorder point<% if (R.groups.length) { %> · <%= R.groups.length %> supplier<%= R.groups.length === 1 ? '' : 's' %><% } %></p>
+      <p class="ox-sub"><%= helpers.qty(R.count) %> item<%= R.count === 1 ? '' : 's' %> at or below their reorder point<% if (R.groups.length) { %> · <%= R.groups.length %> supplier<%= R.groups.length === 1 ? '' : 's' %><% } %></p>
     </div>
     <div class="ox-head__actions">
       <a class="ox-btn ox-btn--ghost ox-hide-sm" href="/reorder-rules">Reorder settings</a>

@@ -927,6 +927,6 @@ html:root body .sc-phone-extras { display:none; }
 html:root body .ask-download > summary::before,html:root body .ask-download > summary::after { content:none !important; display:none !important; }
 @media (max-width:760px) {
  html:root body table.sc-mobile-table { overflow:visible; }
- html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn) { grid-column:1/-1; flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+ html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn) { grid-column:1/-1; flex-direction:row; flex-wrap:wrap; align-items:center !important; gap:8px 12px; }
  html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn)::before { display:none; }
 }

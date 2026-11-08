@@ -74,8 +74,11 @@ async function lastDirect(db,ctx,options){
 }
 const PERIOD=/^(?:(?:what|how)\s+about|and|for|in|just|only|same\s+for|now)?\s*(?:for\s+|in\s+)?(last\s+month|this\s+month|today|yesterday|this\s+week|last\s+week|last\s+7\s+days|this\s+year|last\s+year|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/i;
 // "Just the late ones", "what about last month", "and Nike": the same question, one thing changed.
+// A follow-up may also ask for the answer as a table ("all of them, give me a table").
+// The table part changes only how the answer is shown, so read the rest on its own.
+const tablePart=/(?:^|[,;]\s*|\s+(?:and\s+|then\s+)?)(?:(?:please\s+)?(?:give|show|put|make|turn|send|display)\s+(?:me\s+)?(?:(?:it|this|that|them)\s+)?(?:(?:as|in|into)\s+)?(?:a\s+)?(?:proper\s+|real\s+|nice\s+)?table|(?:as|in|into)\s+a\s+(?:proper\s+|real\s+|nice\s+)?table)(?:\s+(?:please|format|view))?$/i;
 function followUpQuery(message,earlier){
- const text=clean(message).replace(/[.!?]+$/,'').trim();if(!text||text.split(/\s+/).length>8)return null;
+ const text=clean(message).replace(/[.!?]+$/,'').trim().replace(tablePart,'').replace(/[,;\s]+$/,'').trim();if(!text)return earlier;if(text.split(/\s+/).length>8)return null;
  if(earlier.kind==='balances'){
   if(/^(?:(?:only|just|show(?:\s+me)?|and|(?:what|how)\s+about)\s+)*(?:the\s+)?(?:late|overdue|past\s+due)(?:\s+(?:ones?|only|invoices?|bills?|customers?|suppliers?))?$/i.test(text)||/^(?:how\s+much|what)\s+(?:of\s+(?:that|it)\s+)?is\s+(?:late|overdue|past\s+due)$/i.test(text))return {...earlier,late:true};
   if(/^(?:(?:show(?:\s+me)?|and|(?:what|how)\s+about)\s+)?(?:all|everyone|everybody|all\s+of\s+them)$/i.test(text))return {kind:'balances',side:earlier.side,late:false};

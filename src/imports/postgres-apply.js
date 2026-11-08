@@ -209,6 +209,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   const at=nowIso(),verificationId=newId('impverify'),observed={itemsCreated:checkpoint.itemsCreated,itemsUpdated:checkpoint.itemsUpdated,skusCreated:checkpoint.skusCreated,rowsImported:count,units:checkpoint.units};
   await client.query("INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,observed,problems,created_at) VALUES($1,$2,$3,$4,1,$5,$6,'[]',$7)",[verificationId,ctx.workspaceId,id,executionId,JSON.stringify(checks),JSON.stringify(observed),at]);
   await client.query("UPDATE import_executions SET status='SUCCEEDED',stage='verified',items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,result=$7,finished_at=$8 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,executionId,checkpoint.itemsCreated,checkpoint.skusCreated,count,checkpoint.units,JSON.stringify({verificationId,verified:true,checks,durable:true}),at]);
+  await require('./default-reorder-points').apply(client,ctx,id);
   await save(client,{...checkpoint,complete:true});await client.query("UPDATE import_plans SET status='SUCCEEDED',completed_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,at]);await storage.finish(client,ctx.workspaceId,'import:'+id);await inputOptions.beforeCommit?.();return {...observed,executionId,verificationId,verified:true,checks,durable:true,...(receiptProof?{batchReceipts:{batches:receiptProof.batches,rows:receiptProof.rows,legacyFullScan:false}}:{})};
  });
 }
