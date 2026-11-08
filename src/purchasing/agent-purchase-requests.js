@@ -9,7 +9,7 @@ async function access(db, ctx) {
   const actor = (await db.query('SELECT id,role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
   if (!actor) throw new AuthorizationError();
   const state = await agent.requireWorkspaceJob(db,ctx.workspaceId,41,'draft');
-  if (!agent.usesAgentTerms(state)) throw new ValidationError('Review your current plan terms to use agent purchase requests.');
+  if (!agent.usesAgentTerms(state)) throw new (require('../commercial/entitlements').EntitlementError)('Review your current plan terms to use agent purchase requests.');
   return actor;
 }
 

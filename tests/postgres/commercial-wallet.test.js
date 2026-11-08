@@ -23,7 +23,14 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
  const event=(type,object,id=newId('evt'))=>({id,type,created:++sequence,data:{object}});
  await commercial.handleBillingEvent(db,event('customer.subscription.created',remote()));
  await db.query("UPDATE commercial_plan_meters SET included_units=20 WHERE plan_id='starter' AND meter='ai_work_credits'");
- await costs.snapshotPlanVersion(db,'starter');await db.query("UPDATE account_subscriptions SET plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE') WHERE account_id=$1",[business.accountId]);
+ // This suite verifies the previously accepted one-time wallet contract.
+ // New Agent v3 monthly add-ons have their own payment/renewal suite. Keep
+ // the small synthetic allowance under the historical contract's semantics.
+ const walletVersion=await costs.snapshotPlanVersion(db,'starter');
+ await db.query(`UPDATE commercial_plan_versions v SET configuration=old.configuration,
+  meters=(SELECT jsonb_agg(m) FROM jsonb_array_elements(v.meters)m WHERE m->>'meter' NOT IN('agent_documents','agent_edi'))
+  FROM commercial_plan_versions old WHERE old.id='approved-2026-11-02:starter' AND v.id=$1`,[walletVersion.id]);
+ await db.query('UPDATE account_subscriptions SET plan_version_id=$2 WHERE account_id=$1',[business.accountId,walletVersion.id]);
  await db.query("UPDATE commercial_usage_packs SET units=10,amount_minor=100,stripe_price_id='price_pack_'||id WHERE id='ai-500-v1'");
  const provider={createAddonCheckout:async(i)=>({id:`cs_${i.purchaseId}`,url:'https://stripe.example.test/pay'}),
   retrieveSubscription:async()=>remote(),retrievePaymentMethod:async()=>({id:'pm_wallet',customer:'cus_wallet'}),
@@ -296,7 +303,9 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
    assert.doesNotMatch(await page.locator('body').innerText(),/AI communication drafts|Routine auto-send|Business-email understanding/);
    await page.goto(`${base}/login`);await page.getByLabel('Email').fill('wallet@example.test');await page.locator('input[name="password"]').fill('wallet-password-long');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('wallet-password-long');
    await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);await page.goto(`${base}/billing`);
-   assert.equal(await page.locator('[data-usage-category]').count(),5);assert.match(await page.locator('body').innerText(),/Plan & billing/);
+   const expectedUsage=(await usage.summary(db,scope)).meters.filter(m=>m.definition?.kind==='USAGE'&&m.definition.customerVisible);
+   for(const meter of expectedUsage)assert.equal(await page.locator('[data-usage-category="'+meter.meter+'"]').count(),1);
+   assert.equal(await page.locator('[data-usage-category]').count(),expectedUsage.length);assert.match(await page.locator('body').innerText(),/Plan & billing/);
    assert.match(await page.locator('body').innerText(),/Plan changes are paused/);for(const buy of await page.locator('form[action="/billing/buy-more"] button').all())assert.equal(await buy.isDisabled(),true);
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
  });

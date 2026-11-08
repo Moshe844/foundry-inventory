@@ -18,6 +18,13 @@ function createPostgresAutopilotRouter(database){
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
   const requests=require('../../purchasing/agent-purchase-requests');
+  // A locked destination remains a useful page. The underlying services still
+  // enforce the plan on every read and mutation; only the HTML presentation changes.
+  async function agentPage(req,res,view,locals,load){
+    try{return res.page(view,{...locals,...(await load())});}
+    catch(error){if(error.code!=='entitlement_required')throw error;
+      return res.page('autopilot/locked',{...locals,message:error.message});}
+  }
   const lots=require('../../autopilot/lot-controls');
   const edi=require('../../connections/postgres-orderful-test');
   router.get('/autopilot/orderful',requireAuth,owner,asyncRoute(async(req,res)=>{
@@ -85,8 +92,8 @@ function createPostgresAutopilotRouter(database){
     const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
     res.page('autopilot/review-result',{title:result.label,nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},result,filter:req.query.filter||''});
   }));
-  router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/purchase-requests',{
-    title:'Staff purchase requests',nav:'purchasing',requestKey:newId('req'),...(await requests.page(database,req.ctx))})));
+  router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/purchase-requests',{
+    title:'Staff purchase requests',nav:'purchasing',requestKey:newId('req')},()=>requests.page(database,req.ctx))));
   router.post('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>{
     await requests.submit(database,req.ctx,req.body);res.redirect(303,'/purchasing/requests');
   }));
@@ -95,9 +102,9 @@ function createPostgresAutopilotRouter(database){
     res.redirect(303,po?'/purchasing/orders/'+encodeURIComponent(po):'/purchasing/requests');
   }));
   const timeSaved=require('../../autopilot/time-saved');
-  router.get('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/time-saved',{
+  router.get('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/time-saved',{
     title:'Time saved',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('timing'),
-    ...(await timeSaved.report(database,req.ctx,req.query.period))})));
+    },()=>timeSaved.report(database,req.ctx,req.query.period))));
   router.post('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>{
     await timeSaved.sample(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/time-saved'+(req.body.period==='month'?'?period=month':''));

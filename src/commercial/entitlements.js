@@ -161,7 +161,7 @@ async function meterState(database, scope, meter, options = {}) {
   if(!scope.workspaceId&&subscription?.plan_configuration?.locationAccounting==='sites_and_sublocations'&&['locations','sublocations','custom_roles'].includes(meter)){
     const inventories=(await database.query('SELECT id,name FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL',[scope.accountId])).rows;
     let highest=null;for(const inventory of inventories){const state=await meterState(database,{...scope,workspaceId:inventory.id},meter,{...options,subscription});const ratio=state.hardLimit===null?0:state.used/Math.max(1,state.hardLimit);
-      if(!highest||ratio>highest.ratio)highest={...state,inventoryName:inventory.name,workspaceId:inventory.id,ratio};}
+      if(!highest||ratio>highest.ratio||(ratio===highest.ratio&&state.used>highest.used))highest={...state,inventoryName:inventory.name,workspaceId:inventory.id,ratio};}
     if(highest){delete highest.ratio;return highest;}
   }
   if (!subscription && !config.commercial.requirePaidWorkspace) return {meter,label:definition.label,definition,used:0,reserved:0,

@@ -5,7 +5,9 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  await require('../../src/db/migrate-postgres').migratePostgres(db);t.after(async()=>{await db.close();await cluster.stop();});
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Channel verification',email:randomUUID()+'@example.test',password:'Test!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
- await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,source) VALUES('commerce-metered',$1,'growth',(SELECT id FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE'),'ACTIVE','ISOLATED_TEST') ON CONFLICT(account_id) DO UPDATE SET plan_id=excluded.plan_id,plan_version_id=excluded.plan_version_id",[owner.accountId]);
+ // This existing synchronization contract retains its accepted authority;
+ // Agent v3 shadow-mode behavior is covered by its dedicated workflow tests.
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,source) VALUES('commerce-metered',$1,'growth','approved-2026-11-02:growth','ACTIVE','ISOLATED_TEST') ON CONFLICT(account_id) DO UPDATE SET plan_id=excluded.plan_id,plan_version_id=excluded.plan_version_id",[owner.accountId]);
  const usage=async effectId=>(await db.query("SELECT status,units,detail FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='connected_operations' AND idempotency_key=$3",[owner.accountId,ctx.workspaceId,ctx.workspaceId+':commerce-write:'+effectId])).rows[0];
  const cat=require('../../src/domain/postgres-catalog-service'),locations=require('../../src/domain/postgres-location-service'),prices=require('../../src/pricing/postgres-service'),sync=require('../../src/connections/postgres-commerce-sync');
  const product=await cat.createItem(db,ctx,{name:'Orchid vessel',baseCode:'ORC-7',trackingMode:'quantity',unitLabel:'unit'}),sku=product.skuIds[0];
