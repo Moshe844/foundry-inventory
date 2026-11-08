@@ -2,6 +2,7 @@
 const {ValidationError}=require('../domain/errors'),{newId,nowIso}=require('../lib/util'),catalog=require('../domain/postgres-catalog-service'),inventory=require('../domain/postgres-inventory-engine'),costing=require('../accounting/postgres-costing'),postgresPrices=require('../pricing/postgres-service'),commerce=require('../operations/postgres-commerce'),plannedLocations=require('./planned-locations'),rowStore=require('./postgres-row-store'),verification=require('./postgres-verification');
 const enforcement=require('../commercial/enforcement'),entitlements=require('../commercial/entitlements'),identities=require('./postgres-execution-identities'),prepareCatalogue=require('./postgres-prepare-catalogue'),businessTime=require('../lib/business-time'),openingValues=require('./postgres-opening-values'),barcodes=require('./postgres-barcodes'),physicalCount=require('../accounting/postgres-physical-count'),currency=require('../domain/currency'),catalogFacts=require('../domain/postgres-catalog-facts'),reorderPolicies=require('../operations/postgres-reorder-policies'),storage=require('../commercial/storage-capacity'),batchReceipts=require('./postgres-batch-receipts');
 const exact=require('../domain/exact-quantity');
+const {createHash}=require('node:crypto');
 const addExact=(a,b)=>exact.safeNumber(exact.add(a,b),{signed:true});
 async function run(database,ctx,plan,executionId,inputOptions,deps){
  const id=plan.id,options=inputOptions,batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
@@ -109,10 +110,13 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
         if(catalogueCosts.length)await postgresPrices.setPurchaseCostsInTransaction(client,ctx,catalogueCosts);
         if(newPrices.length)await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
         if(initialPrices.length)await postgresPrices.setPricesInTransaction(client,ctx,initialPrices,{initialize:true});
-        const receivedRows=await inventory.receiveManyInTransaction(client,ctx,receiving.map(row=>({
+        const receiptInputs=receiving.map(row=>({
           skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,locationId:row.parsed.locationId,quantity:expectedDelta(row),
           serials:row.parsed.serial?[row.parsed.serial]:undefined,lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
-          notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,idempotencyKey:`import:${id}:row:${row.id}`})));
+          notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,idempotencyKey:`import:${id}:row:${row.id}`}));
+        const receiptKey=receiving.length&&batchSize>=2000&&checkpoint.batchReceiptVersion===1
+          ?`import:${id}:receipts:`+createHash('sha256').update(JSON.stringify([plan.integrityHash,receiving.map(row=>row.id)])).digest('hex'):null;
+        const receivedRows=receiptKey?await inventory.receiveBatchInTransaction(client,ctx,receiptInputs,receiptKey):await inventory.receiveManyInTransaction(client,ctx,receiptInputs);
         const receiptByRow=new Map(receiving.map((row,index)=>[row.id,receivedRows[index]]));
         const countedByRow=new Map();
         for(const row of chunk.filter(row=>isCount(row)&&expectedDelta(row)<0)){

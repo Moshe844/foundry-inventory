@@ -1,0 +1,18 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('large approved imports resume compact receipt batches without duplicate stock, journals or source identities',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,imports=require('../../src/imports/postgres-service');
+ const definitions=Array.from({length:501},(_,n)=>({name:'Receipt recovery product '+n,trackingMode:'quantity',variants:Array.from({length:n===500?1:10},(_,v)=>({key:'variant-'+v,code:'RCPT-'+n+'-'+v,options:[{name:'Option',value:String(v)}]}))}));
+ for(let start=0;start<definitions.length;start+=100)await db.transaction(c=>require('../../src/domain/postgres-catalog-service').createImportedItemsInTransaction(c,ctx,definitions.slice(start,start+100)),{isolation:'READ COMMITTED'});
+ const rows=definitions.flatMap(product=>product.variants.map(variant=>[product.name,variant.code,'Dispatch',1,'1.00',variant.code].join(',')));
+ const before=await f.balance(),plan=await imports.analyse(db,ctx,{text:'Product,SKU,Location,Quantity,Unit cost,Source reference\n'+rows.join('\n'),importMode:'add',allowModel:false});assert.equal(plan.recordsValid,5001);assert.equal(plan.recordsInvalid,0);await imports.approve(db,ctx,plan.id,plan.integrityHash);
+ await assert.rejects(imports.execute(db,ctx,plan.id,{beforeRow:({rowsImported})=>{if(rowsImported===2300)throw Error('Interrupted inside receipt batch');}}),/Interrupted inside receipt batch/);
+ const partial=(await db.query("SELECT (apply_checkpoint->>'savedRows')::int saved FROM import_plans WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,plan.id])).rows[0];assert.equal(partial.saved,2000);assert.equal(await f.balance(),before+2000);
+ const operations=async()=>(await db.query("SELECT idempotency_key,result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive-batch' AND idempotency_key LIKE $2 ORDER BY idempotency_key",[ctx.workspaceId,'import:'+plan.id+':receipts:%'])).rows;
+ assert.equal((await operations()).length,1);
+ const result=await imports.execute(db,ctx,plan.id);assert.equal(result.verified,true);assert.deepEqual(result.batchReceipts,{batches:3,rows:5001,legacyFullScan:false});assert.equal(await f.balance(),before+5001);
+ const saved=await operations();assert.equal(saved.length,3);const ids=saved.flatMap(r=>r.result.receipts.map(receipt=>receipt.movementId));assert.equal(ids.length,5001);assert.equal(new Set(ids).size,5001);
+ const actual=(await db.query("SELECT (SELECT count(*)::int FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED') source_rows,(SELECT count(*)::int FROM movements WHERE workspace_id=$1 AND id=ANY($3::text[])) movements,(SELECT sum(cost_delta_minor)::text FROM accounting_inventory_cost_movements WHERE workspace_id=$1 AND inventory_movement_id=ANY($3::text[])) cost_minor,(SELECT count(*)::int FROM accounting_journal_entries WHERE workspace_id=$1 AND source_record_type='import_batch' AND source_record_id=$2) journals",[ctx.workspaceId,plan.id,ids])).rows[0];assert.deepEqual(actual,{source_rows:5001,movements:5001,cost_minor:'500100',journals:3});
+ assert.equal((await db.query("SELECT count(*)::int n FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive' AND idempotency_key LIKE $2",[ctx.workspaceId,'import:'+plan.id+':row:%'])).rows[0].n,0);
+ assert.equal((await imports.execute(db,ctx,plan.id)).duplicate,true);assert.equal(await f.balance(),before+5001);
+});

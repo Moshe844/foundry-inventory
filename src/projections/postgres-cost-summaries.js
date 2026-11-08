@@ -10,8 +10,12 @@ function source(){return `WITH dirty_skus AS MATERIALIZED(
  CROSS JOIN LATERAL(SELECT b.sku_id,sum(b.quantity_units)::numeric AS quantity_units,sum(b.total_cost_minor) AS total_cost_minor
   FROM accounting_inventory_cost_balances b WHERE b.workspace_id=$1 AND b.sku_id=d.sku_id
   GROUP BY b.sku_id OFFSET 0) live`;}
-async function totals(db,workspaceId){return db.query('SELECT coalesce(sum(quantity_units),0)::numeric AS units,coalesce(sum(total_cost_minor),0)::bigint AS cost FROM ('+source()+') costs',[workspaceId]);}
-async function value(db,workspaceId){return (await db.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS minor FROM ('+source()+') costs',[workspaceId])).rows[0];}
+// Global totals need no per-SKU reconstruction. The canonical covering range
+// scan visits this inventory's cost positions once; a large pending projection
+// otherwise repeats an indexed balance lookup for every changed SKU. These
+// aggregate reads stay exact in the caller's snapshot, including pending work.
+async function totals(db,workspaceId){return db.query('SELECT coalesce(sum(quantity_units),0)::numeric AS units,coalesce(sum(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[workspaceId]);}
+async function value(db,workspaceId){return (await db.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[workspaceId])).rows[0];}
 async function refreshBatch(db,workspaceId,{beforePublish}={}){
  return db.transaction(async c=>{
   const snapshot=(await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0].snapshot;

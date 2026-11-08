@@ -2,10 +2,12 @@
 
 const { newId, nowIso } = require('../lib/util');
 const {newAppendId}=require('../lib/append-id');
+const {createHash}=require('node:crypto');
 const { ValidationError, InsufficientStockError, InvariantError } = require('./errors');
 const permissions = require('../actions/permissions');
 const physicalInput=require('./physical-stock-input');
 const exact=require('./exact-quantity'),stockQuantity=require('./stock-quantity');
+const batchReceiptToken=Symbol('atomic inventory receipt batch');
 
 function positiveInteger(value, label = 'Quantity') {
   const number=exact.safeNumber(value,{positive:true,label});
@@ -248,7 +250,31 @@ async function receiveInTransaction(client, rawContext, input) {
   return { ...result, replayed: false };
 }
 
-async function receiveManyInTransaction(client,rawContext,inputs){
+// A durable import already commits and verifies a whole source batch together.
+// Keep its idempotency results together too: one uniquely locked operation with
+// every movement identity, rather than another indexed operation per source row.
+// Ordinary receipts retain their existing per-row idempotency contract.
+async function receiveBatchInTransaction(client,rawContext,inputs,batchKey){
+  const ctx=context(rawContext);
+  if(!Array.isArray(inputs)||!inputs.length||inputs.length>10000)throw new ValidationError('Receive one to 10,000 stock rows in an atomic batch.');
+  if(typeof batchKey!=='string'||!batchKey.trim()||batchKey.length>240)throw new ValidationError('A bounded stock receipt batch reference is required.');
+  const normalized=inputs.map(input=>({...physicalInput.validate(input),quantity:positiveInteger(input.quantity)}));
+  await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[...new Set(normalized.map(i=>i.locationId))]);
+  await requirePermission(client,ctx,permissions.OPERATE,'receive stock');
+  const fingerprint=createHash('sha256').update(JSON.stringify(normalized,(_key,value)=>
+    value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.keys(value).sort().filter(key=>value[key]!==undefined).map(key=>[key,value[key]])):value)).digest('hex');
+  const operation=await beginOperation(client,ctx,'inventory.receive-batch',batchKey);
+  if(operation.replayed){
+    if(operation.result?.fingerprint!==fingerprint||!Array.isArray(operation.result.receipts)||operation.result.receipts.length!==inputs.length)
+      throw new ValidationError('That stock receipt batch reference belongs to different rows. Use its saved result or a new reference.');
+    return operation.result.receipts.map(receipt=>({...receipt,replayed:true}));
+  }
+  const receipts=await receiveManyInTransaction(client,ctx,normalized,batchReceiptToken);
+  await completeOperation(client,operation,{fingerprint,receipts});
+  return receipts;
+}
+
+async function receiveManyInTransaction(client,rawContext,inputs,receiptToken=null){
   const ctx=context(rawContext);if(!Array.isArray(inputs))throw new ValidationError('Stock receipts must be a list.');if(!inputs.length)return [];
   await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[...new Set(inputs.map(i=>i.locationId))]);
   const values=inputs.map((input,index)=>({input:physicalInput.validate(input),index,quantity:positiveInteger(input.quantity),key:String(input.idempotencyKey||newId('operation'))}));
@@ -291,12 +317,12 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;stockQuantity.validate(row,value.quantity);state.after=stockQuantity.validate(row,exact.add(state.after,value.quantity),{positive:false,signed:true,total:true});
     if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
     const result={movementId:newAppendId('mv'),groupId:newAppendId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:receiptLots.get(value.index)?.id||null,serials:[],serialUnitIds:[]};
-    operations.push({id:newAppendId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,lot_id:result.lotId,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
+    if(receiptToken!==batchReceiptToken)operations.push({id:newAppendId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,lot_id:result.lotId,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
   }
   // Results and movement identities are already known. Save their final receipt
   // once in this same transaction; a later failure rolls it back with the stock.
   // Other connections cannot observe completion before those effects commit.
-  const inserted=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key,status,result,completed_at) SELECT x.id,$1,'inventory.receive',x.idempotency_key,'COMPLETED',x.result,now() FROM jsonb_to_recordset($2::jsonb) AS x(id text,idempotency_key text,result jsonb) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING`,[ctx.workspaceId,JSON.stringify(operations)]);if(inserted.rowCount!==values.length)throw new InvariantError('That inventory operation is already running.','operation_in_progress');
+  if(operations.length){const inserted=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key,status,result,completed_at) SELECT x.id,$1,'inventory.receive',x.idempotency_key,'COMPLETED',x.result,now() FROM jsonb_to_recordset($2::jsonb) AS x(id text,idempotency_key text,result jsonb) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING`,[ctx.workspaceId,JSON.stringify(operations)]);if(inserted.rowCount!==values.length)throw new InvariantError('That inventory operation is already running.','operation_in_progress');}
   if([...states.values()].some(s=>s.after!==s.expectedAfter))throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
   const lotPositions=new Map();for(const m of movements){if(!m.lot_id)continue;const key=JSON.stringify([m.lot_id,m.location_id]),p=lotPositions.get(key)||{lot_id:m.lot_id,location_id:m.location_id,quantity:'0'};p.quantity=exact.add(p.quantity,m.quantity_delta);lotPositions.set(key,p);}
   if(lotPositions.size){const payload=JSON.stringify([...lotPositions.values()].sort((a,b)=>a.lot_id.localeCompare(b.lot_id)||a.location_id.localeCompare(b.location_id)));
@@ -539,5 +565,5 @@ async function adjust(database, rawContext, input) {
     { isolation: 'SERIALIZABLE', retrySafe: Boolean(input.idempotencyKey) });
 }
 
-module.exports = { receive, receiveInTransaction, receiveManyInTransaction, issue, issueInTransaction, transfer, transferInTransaction,
+module.exports = { receive, receiveInTransaction, receiveManyInTransaction, receiveBatchInTransaction, issue, issueInTransaction, transfer, transferInTransaction,
   dispatchTransferInTransaction, receiveTransferInTransaction, adjust,adjustInTransaction };
