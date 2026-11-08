@@ -1,7 +1,15 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto'),{Pool,escapeIdentifier:q}=require('pg');
 test('cold inspection roles use immutable login scopes during concurrent reads and native writes without per-session policy DDL',{timeout:180000},async t=>{
- const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString),pool=new Pool({connectionString:cluster.connectionString});let first,second,third,reader,writer;t.after(async()=>{for(const c of[reader,writer])if(c){await c.query('ROLLBACK').catch(()=>{});c.release();}for(const r of[first,second,third])if(r)await r.close();await pool.end();await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString),pool=new Pool({connectionString:cluster.connectionString});let first,second,third,reader,writer;t.after(async()=>{
+  for(const c of[reader,writer])if(c){
+   await c.query('ROLLBACK').catch(()=>{});
+   // pg-pool's end promise can settle before removed sockets emit end. Wait
+   // for these held clients before stopping the disposable PostgreSQL server.
+   const ended=new Promise(resolve=>c.once('end',resolve));c.release(true);await ended;
+  }
+  for(const r of[first,second,third])if(r)await r.close();await pool.end();await db.close();await cluster.stop();
+ });await require('../../src/db/migrate-postgres').migratePostgres(db);
  const auth=require('../../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'Owner',businessName:'Concurrent source',email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()}),foreign=await auth.createBusiness(db,{name:'Other',businessName:'Other source',email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},other={workspaceId:foreign.workspaceId,actorId:foreign.userId},inspection=require('../../scripts/environment-agent-demo/inspection');
  const setupLocks=[];let holdOneSet=true;const setupDatabase={...db,transaction:(fn,settings)=>db.transaction(c=>fn({query:(sql,args)=>{if(/^LOCK TABLE /.test(sql)){setupLocks.push(sql);if(holdOneSet&&sql.includes('"public"."account_subscriptions"'))throw Object.assign(Error('Disposable held policy set'),{code:'55P03'});}return c.query(sql,args);}}),settings)};
  await assert.rejects(inspection.inspectionDatabase(cluster,setupDatabase,ctx),e=>e.code==='55P03');
