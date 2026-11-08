@@ -37,6 +37,8 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   const ask=require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review');
   const inChat=await ask.prepare(null,db,ctx,'What should I pay this week?',{agentJob:'payment-run'});
   assert.match(inChat.rows[0]['Review amount'],/1\.96/);assert.equal(inChat.sources[0].href,'/autopilot/reviews/payment-run');
+  const source=inChat.sources.find(s=>s.kind==='record'&&s.href==='/money/bills/'+bill.billId);
+  assert.ok(source);await browser.get(source.href).expect(200);
   assert.equal(forecast.rows[0]['Supplier bills'],'$2.00');
   assert.equal(forecast.rows[4]['Unbilled PO goods'],'$2.00');
   assert.equal((await reviews.run(db,ctx,'stock-by-location',{filter:code})).rows[0].Units,'4');
@@ -73,6 +75,8 @@ test('agent jobs run through paid plans, posted books, stock records and approve
     }
   }
   await plan('starter');
+  const advice=await ask.prepare(null,db,ctx,'Which supplier should I review?',{agentJob:'supplier-options'});
+  assert.match(advice.coverage,/up to one suggestion/);assert.equal(advice.sources.length,1);
   assert.equal((await reviews.run(db,ctx,'supplier-options')).rows[0].Suggestion.includes('Fixture parts'),true);
   await assert.rejects(reviews.run(db,ctx,'supplier-options',{scheduled:true}),e=>e.code==='entitlement_required');
   await browser.get('/autopilot/reviews/compare-quotes').expect(402);

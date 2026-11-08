@@ -186,13 +186,14 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
-    const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
-      req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
+    const [items,failures,briefDate]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
+      req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):null,
+      req.user.role==='owner'?require('../../autopilot/daily-briefs').latest(database,req.ctx):null]);
     res.locals.attentionCount=items.length;
     items.coverageErrors=[];
     return res.page('manager/needs-you-overview',
       {title:'Needs you',nav:'attention',room:true,suppressBack:true,
-        inbox:items,failures,desk:require('../needs-you-presentation').present(items,req.query),at:zeroBasedIndex(req.query.at)});
+        inbox:items,failures,briefDate,showAllDecisions:req.path==='/needs-you/all',desk:require('../needs-you-presentation').present(items,req.query),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     const size=require('../presentation/pagination').pageSize(req),found=await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner',size);

@@ -122,28 +122,38 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
-      if(['board-pack','year-end-stocktake'].includes(req.params.job))result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});
+      const packs=require('../../accounting/agent-report-packs');
+      if(Object.hasOwn(packs.downloads,req.params.job)&&(req.params.job!=='quarterly-supplier-pack'||result.rows.length)){
+        result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});
+        result.downloadLabel=packs.downloads[req.params.job].label;
+      }
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
+      const watch=require('../../autopilot/activity-watches'),job=watch.definitions.find(d=>d.key===req.params.job);
+      if(job&&[170,171].includes(job.id))result.watchSettings={job:job.id,...await watch.settings(database,req.ctx.workspaceId,job.id)};
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
+  }));
+  router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);
+    await watch.save(database,req.ctx,id,req.body);
+    res.redirect(303,'/autopilot/reviews/'+watch.spec[id].key);
   }));
   router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../autopilot/brand-watches').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/brand-watches');
   }));
   router.get('/autopilot/reviews/:job/download',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const packs=require('../../accounting/agent-report-packs'),files=require('../../accounting/agent-report-pack-files');
+    const packs=require('../../accounting/agent-report-packs');
     const definition=packs.definitions.find(d=>d.key===req.params.job);
     if(!definition)throw new (require('../../domain/errors').NotFoundError)();
     await policy.requireWorkspaceJob(database,req.ctx.workspaceId,definition.id,'suggest');
     const report=await database.transaction(async c=>definition.readPage(c,req.ctx,{download:true,filter:req.query.filter,today:await require('../../lib/business-time').today(c,req.ctx.workspaceId)}),{isolation:'REPEATABLE READ'});
-    const board=definition.id===159;
-    const file=board?await files.boardPdf(report):files.stocktakeWorkbook(report);
-    res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+(board?'.pdf':'.xlsx')).send(file);
+    const format=packs.downloads[definition.key],file=await format.render(report);
+    res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+'.'+format.extension).send(file);
   }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);

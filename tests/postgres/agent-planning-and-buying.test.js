@@ -155,4 +155,21 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     await browser.get(change.link).expect(200);
   }
   await assert.rejects(review('month-end-stock',{filter:today.slice(0,7)}),/completed calendar month/);
+  const priorQuarter=(await require('../../src/purchasing/agent-supplier-pack').report(db,ctx,{today,filter:''})).span;
+  await db.query("UPDATE purchase_orders SET ordered_at=$2 WHERE workspace_id=$1 AND status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')",[ctx.workspaceId,priorQuarter.end+'T10:00:00Z']);
+  const forSupplier=()=>review('quarterly-supplier-pack',{filter:'Alternative'});
+  assert.equal(Number((await forSupplier()).rows[0]['Received by close']),0,'later receipts stay in their actual quarter');
+  await db.query("UPDATE purchase_order_receipts r SET received_at=$3 FROM purchase_orders p WHERE r.workspace_id=$1 AND p.workspace_id=r.workspace_id AND p.id=r.purchase_order_id AND p.supplier_id=$2",[ctx.workspaceId,supplier.id,priorQuarter.end+'T11:00:00Z']);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await plan(tier);
+    const downloadPack=()=>browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id});
+    if(tier==='starter'||tier==='growth'){await downloadPack().expect(402);continue;}
+    const line=(await forSupplier()).rows[0];assert.equal(Number(line.Ordered),4);assert.equal(Number(line['Received by close']),1);
+    const packed=await binary(downloadPack()).expect(200);
+    const library=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=library.getDocument({data:new Uint8Array(packed.body)});
+    const doc=await loading.promise,content=(await (await doc.getPage(1)).getTextContent()).items.map(i=>i.str).join(' ');
+    assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
+    assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
+    await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').expect(400);
+  }
 });

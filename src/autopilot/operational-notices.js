@@ -26,15 +26,18 @@ async function refresh(db,workspaceId){
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
   const today=await require('../lib/business-time').today(db,workspaceId);
   const includeTransfers=policy.permits(account.plan,124,'automatic');
+  const watched=require('./activity-watches').spec;
+  const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
+    .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
-    (includeTransfers?' UNION ALL SELECT 124,\'Transfer\',"Transfer",link,"Due"::date FROM ('+transfers+') t WHERE "Result"=\'Past expected arrival\'':'');
+    (includeTransfers?' UNION ALL SELECT 124,\'Transfer\',"Transfer",link,"Due"::date FROM ('+transfers+') t WHERE "Result"=\'Past expected arrival\'':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
     INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded)
     SELECT $1,job,kind,ref,link,due,$3::date FROM current
     ON CONFLICT(workspace_id,job_id,kind,reference,link) DO UPDATE SET due=excluded.due,last_reminded=excluded.last_reminded,
       reminders=n.reminders+CASE WHEN n.last_reminded<excluded.last_reminded OR n.resolved THEN 1 ELSE 0 END,resolved=false
-    WHERE n.resolved OR (n.job_id<>167 AND (n.last_reminded<excluded.last_reminded OR n.due<>excluded.due))
+    WHERE n.resolved OR (n.job_id IN (124,168) AND (n.last_reminded<excluded.last_reminded OR n.due<>excluded.due))
     RETURNING job_id)
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,[workspaceId,'',today]);
@@ -49,6 +52,9 @@ async function inbox(db,workspaceId,actorId=null){
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
   return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),'automatic')).map(r=>{
+    const watch=require('./activity-watches').spec[r.job_id];
+    if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
+      why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};
     if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
       happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
       recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};

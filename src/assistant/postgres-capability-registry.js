@@ -351,8 +351,17 @@ add('read.agent_review','Run a plan-checked operational review using recorded wo
     if(args.search)query.set('filter',args.search);
     if(change!=null)query.set('change',String(change));
     const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(query.size?'?'+query:'');
-    return {rows:result.rows,summary:result.summary,coverage:result.more?'Open the review for the remaining results.':'All matching results for this review.',
-      sources:[{kind:'page',href,label:result.label}]};
+    const sources=[{kind:'page',href,label:result.label}],visited=new Set([href]);
+    for(const row of result.rows){
+      if(sources.length===13)break;
+      if(typeof row.link!=='string'||!/^\/(?!\/)/.test(row.link)||/[\\\r\n]/.test(row.link)||visited.has(row.link))continue;
+      const record=row.Order||row.Bill||row.Invoice||row.Transfer||row.SKU||row.Product||row.Customer||row.Supplier||row.Activity||row.Month;
+      if(!record)continue;
+      sources.push({kind:'record',href:row.link,label:String(record)});visited.add(row.link);
+    }
+    const coverage=result.mode==='suggest'?'This plan shows up to one suggestion from the matching records.':
+      result.more?'Open the review for the remaining results.':'All matching results for this review.';
+    return {rows:result.rows,summary:result.summary,coverage,sources};
   },async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{required:['agentJob'],ownerOnly:true,view:'agent_review',answerMode:'evidence'});
 add('read.report_schedules','List your private saved reports, definitions, local schedules, next send, last sent, pause state and exact IDs. Coverage is the latest 100 active templates in this inventory.',[],'read',permissions.VIEW,'none',(_service,db,ctx)=>require('../reports/ask-schedules').read(db,ctx),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'report_schedules',answerMode:'evidence'});
 add('read.report_catalogue','Discover permitted report datasets and their exact calculation schemas. Search by dataset name or description; follow nextOffset for more. No second AI model is invoked.',['search','offset'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{const actor=await require('../reports/ask-schedules').actor(db,ctx),term=String(args.search||'').toLowerCase().replaceAll('_',' '),offset=Math.max(0,Number(args.offset)||0),available=governedReports.list(actor).filter(r=>!term||(r.key.replaceAll('_',' ')+' '+r.label).toLowerCase().includes(term));return {rows:available.slice(offset,offset+6).map(r=>({dataset:r.key,label:r.label,...require('../reports/postgres-service').queryContract(r.key,actor)})),extent:{offset,total:available.length,nextOffset:offset+6<available.length?offset+6:null},syntax:require('../reports/postgres-service').querySyntax,timeZone:(await require('../lib/business-time').forWorkspace(db,ctx.workspaceId)).timeZone,sources:[{kind:'page',href:'/reports',label:'Reports'}]};},async(_s,_d,_c,r)=>Array.isArray(r?.rows),{answerMode:'evidence'});

@@ -416,7 +416,10 @@ async function autopilotEvaluate(job,client){
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
   const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
-  if(!job.payload.afterSkuId)await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+  if(!job.payload.afterSkuId){
+    await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+    await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,await require('../commercial/agent-plan').accountState(client,job.workspaceId));
+  }
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
   if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')

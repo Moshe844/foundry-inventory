@@ -74,6 +74,12 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
 }
 const definitions=[
   {id:159,key:'board-pack',label:'Board or investor pack',filterLabel:'Closing month (YYYY-MM)',readPage:board},
+  {id:164,key:'quarterly-supplier-pack',label:'Quarterly pack for a supplier',filterLabel:'Exact supplier name or ID',readPage:require('../purchasing/agent-supplier-pack').report},
   {id:165,key:'year-end-stocktake',label:'Year-end stocktake and valuation pack',filterLabel:'Fiscal year closing month (YYYY-MM)',readPage:yearEnd}
 ];
-module.exports={definitions,board,yearEnd};
+const downloads={
+  'board-pack':{extension:'pdf',label:'Download board pack with charts (PDF)',render:require('./agent-report-pack-files').boardPdf},
+  'quarterly-supplier-pack':{extension:'pdf',label:'Download supplier pack (PDF)',render:require('../purchasing/agent-supplier-pack').pdf},
+  'year-end-stocktake':{extension:'xlsx',label:'Download stocktake and valuation (Excel)',render:require('./agent-report-pack-files').stocktakeWorkbook}
+};
+module.exports={definitions,board,yearEnd,downloads};
