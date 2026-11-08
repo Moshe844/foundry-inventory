@@ -12,7 +12,7 @@ async function qualify(database, product) {
   // Imported provider statement allocations exclude directly metered calls.
   // Read both from the same closed period and use committed customer credits.
   const evidence=(await database.query(`WITH calls AS (
-    SELECT provider,status,actual_minor FROM commercial_model_cost_holds
+    SELECT provider,status,actual_minor,created_at FROM commercial_model_cost_holds
     WHERE account_id=$1 AND created_at>=$2 AND created_at<$3
   ), invoices AS (
     SELECT s.id,s.provider,s.currency,a.amount_minor,s.period_start,s.period_end
@@ -20,12 +20,13 @@ async function qualify(database, product) {
     WHERE a.account_id=$1 AND s.provider IN ('openai','anthropic') AND s.period_start<$3 AND s.period_end>$2
   )
   SELECT (SELECT sum(e.units) FROM commercial_usage_events e WHERE e.account_id=$1 AND e.meter='ai_work_credits'
-    AND e.status='COMMITTED' AND e.occurred_at>=$2 AND e.occurred_at<$3) AS credits,
+    AND e.status='COMMITTED' AND e.detail#>>'{creditPolicy,fixedAgentCredits}'='true' AND e.occurred_at>=$2 AND e.occurred_at<$3) AS credits,
     (SELECT sum(actual_minor) FROM calls WHERE status='SETTLED') AS direct,
     (SELECT sum(amount_minor) FROM invoices) AS invoiced,
     (SELECT array_agg(id ORDER BY id) FROM invoices) AS statement_ids,
-    EXISTS(SELECT 1 FROM calls WHERE status IN ('RESERVED','UNKNOWN')
-      OR (status='SETTLED' AND (actual_minor IS NULL OR provider NOT IN (SELECT provider FROM invoices)))) AS incomplete_calls,
+    EXISTS(SELECT 1 FROM calls c WHERE c.status IN ('RESERVED','UNKNOWN')
+      OR (c.status='SETTLED' AND (c.actual_minor IS NULL OR NOT EXISTS (SELECT 1 FROM invoices i
+        WHERE i.provider=c.provider AND c.created_at>=i.period_start AND c.created_at<i.period_end)))) AS incomplete_calls,
     EXISTS(SELECT 1 FROM invoices WHERE currency<>'USD' OR period_start<$2 OR period_end>$3) AS incomplete_invoices`,
   [review.accountId,new Date(start),new Date(end)])).rows[0];
   const credits=Number(evidence.credits), cost=Number(evidence.direct)+Number(evidence.invoiced);

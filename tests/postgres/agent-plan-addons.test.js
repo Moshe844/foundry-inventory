@@ -51,8 +51,8 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   const review={accountId:scope.accountId,start:'2025-01-01T00:00:00Z',end:'2025-02-01T00:00:00Z'};
   await db.query("UPDATE commercial_capacity_products SET ai_usage_review=$1 WHERE id='agent-monthly-credits'",[review]);
   await assert.rejects(addons.begin(db,scope,input('agent-monthly-credits'),options),/actual usage costs/);
-  const credits=units=>db.query(`INSERT INTO commercial_usage_events(id,account_id,workspace_id,meter,units,idempotency_key,occurred_at,status)
-    VALUES($1,$2,$3,'ai_work_credits',$4,$1,'2025-01-13','COMMITTED')`,[randomUUID(),scope.accountId,scope.workspaceId,units]);
+  const credits=units=>db.query(`INSERT INTO commercial_usage_events(id,account_id,workspace_id,meter,units,idempotency_key,occurred_at,status,detail)
+    VALUES($1,$2,$3,'ai_work_credits',$4,$1,'2025-01-13','COMMITTED','{"creditPolicy":{"fixedAgentCredits":true}}')`,[randomUUID(),scope.accountId,scope.workspaceId,units]);
   await credits(1000);
   await db.query(`INSERT INTO commercial_model_cost_holds(id,account_id,workspace_id,idempotency_key,period_start,period_end,provider,model,operation,
     maximum_minor,actual_minor,status,created_at,settled_at) VALUES($1,$2,$3,$1,$4,$5,'anthropic','fixture','ask',500,500,'SETTLED','2025-01-13','2025-01-13')`,
