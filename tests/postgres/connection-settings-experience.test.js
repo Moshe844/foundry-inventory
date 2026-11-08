@@ -61,7 +61,7 @@ test('Connections, Settings and related pages use their real controls without co
   await page.goto(base+'/settings?section=general');const save=page.getByRole('button',{name:'Save',exact:true});assert(await save.isDisabled());const name=page.getByLabel('Inventory name',{exact:true}),initial=await name.inputValue();await name.fill(initial+' updated');assert(await save.isEnabled());await name.fill(initial);assert(await save.isDisabled());
   await page.goto(base+'/settings?section=ai');assert(await page.getByLabel('Answer style').isVisible());await page.getByLabel('Answer style').fill('Concise');assert(await page.getByRole('button',{name:'Save',exact:true}).isEnabled());
  });
- await t.test('Settings aliases and legacy links open the canonical section without losing the origin',async()=>{
+ await t.test('Settings aliases preserve their query and open the canonical menu without a second back link',async()=>{
   const navigation=require('../../src/web/presentation/navigation'),declare=require('../../src/web/presentation/link-destinations').declare;
   for(const [alias,section,hash]of [['/team','team','people'],['/settings/team','team','people'],['/profile','advanced','account'],['/account','advanced','account']]){
    const response=await context.request.get(base+alias+'?q=preserve&section=general',{maxRedirects:0});assert.equal(response.status(),301);
@@ -72,7 +72,9 @@ test('Connections, Settings and related pages use their real controls without co
   for(const [hash,section]of Object.entries(navigation.settingsSectionHashes)){
    const html=declare('<a href="/settings?q=kept#'+hash+'">Settings control</a>');assert(html.includes('section='+section));assert(html.includes('q=kept'));assert(html.includes('data-dest='));
   }
-  const origin='/orders?q=keep-this-filter';await page.goto(base+origin);await page.evaluate(()=>{const a=document.createElement('a');a.href='/profile';a.textContent='Open profile for routing verification';document.querySelector('main').append(a);});await page.getByRole('link',{name:'Open profile for routing verification',exact:true}).click();await page.waitForURL('**/settings?section=advanced#account');assert.equal(await page.locator('a[data-return-to]').getAttribute('href'),origin);await page.locator('a[data-return-to]').click();await page.waitForURL(base+origin);
+  const origin='/orders?q=keep-this-filter';await page.goto(base+origin);await page.evaluate(()=>{const a=document.createElement('a');a.href='/profile';a.textContent='Open profile for routing verification';document.querySelector('main').append(a);});await page.getByRole('link',{name:'Open profile for routing verification',exact:true}).click();await page.waitForURL('**/settings?section=advanced#account');
+  assert.equal(await page.locator('main a.page-back,a[data-return-to]').count(),0,'Settings is a menu destination and has no extra Back link');
+  await page.getByRole('navigation',{name:'Primary navigation'}).getByRole('link',{name:'Orders',exact:true}).click();await page.waitForURL(base+'/orders');
  });
  await t.test('Orders, Buy, Home, Stock, reports and hero use the requested presentation',async sub=>{
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,created_at,updated_at) VALUES('stock-pill-test',$1,$2,$3,2,8,now(),now())`,[ctx.workspaceId,f.item.skuIds[0],f.location.id]);
