@@ -350,7 +350,7 @@ async function mapParty(database,ctx,connectorId,input={}){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function queuePending(database,ctx,connectorId,input={}){
+async function queuePending(database,ctx,connectorId,input={},options={}){
   const current=await policy(database,ctx.workspaceId,connectorId);
   if(current.stage!=='WRITE_ENABLED')throw new ValidationError('Verified posting is not enabled for this accounting connection.');
   if(!providers.get(current.provider_type)?.verifyJournalEntry)throw new ValidationError('Posting is unavailable for this connection. Read-only accounting remains available.');
@@ -361,13 +361,19 @@ async function queuePending(database,ctx,connectorId,input={}){
   if(blocked.length)throw new ValidationError(
     'Every journal account and customer or supplier identity must be exactly mapped before export. Nothing was queued.');
   const queued=[];await database.transaction(async(client)=>{
+    let agentExport=false;
+    if(options.agentRequested){
+      const agent=require('../commercial/agent-plan'),state=await agent.accountState(client,ctx.workspaceId);
+      agentExport=agent.usesAgentTerms(state);
+      if(agentExport)agent.requireJob(state.plan,184,'draft');
+    }
     const account=(await client.query("SELECT provider_account_id,status,paused_at FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[ctx.workspaceId,connectorId])).rows[0];
     if(!account?.provider_account_id||account.status!=='connected'||account.paused_at)throw new ValidationError('Reconnect the accounting company before queueing exports.');
     for(const journal of targets){
     const effect=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,
       kind:'accounting.journal.export',provider:current.provider_type,aggregateType:'accounting_journal_entry',
       aggregateId:journal.id,idempotencyKey:`accounting-export:${connectorId}:${journal.id}`,
-      requestedByUserId:ctx.actorId,payload:{connectorId,journalEntryId:journal.id,actorId:ctx.actorId,providerAccountId:account.provider_account_id},
+      requestedByUserId:ctx.actorId,payload:{connectorId,journalEntryId:journal.id,actorId:ctx.actorId,providerAccountId:account.provider_account_id,...(agentExport?{agentExport:true}:{})},
       priority:15,maxAttempts:12});queued.push(effect.effect);}}, {isolation:'SERIALIZABLE',retrySafe:true});
   return {queued:queued.length,effects:queued};
 }
@@ -378,6 +384,7 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
   if(claimed.replayed)return {externalId:claimed.effect.providerReference?.externalId||null,replayed:true};
   const effect=claimed.effect;let providerCalled=false,postReturned=false;
   try{
+    if(effect.payload.agentExport)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,184,'draft');
     const connection=await connections.get(database,workspaceId,effect.payload.connectorId);
     if(!effect.payload.providerAccountId||effect.payload.providerAccountId!==connection.provider_account_id)throw new ValidationError('The accounting company changed after this export was queued. Nothing was posted.');
     const current=await policy(database,workspaceId,connection.id);

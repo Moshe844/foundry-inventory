@@ -14,8 +14,8 @@ async function read(db,workspaceId,skuIds){
 async function stock(db,workspaceId,componentIds){
  if(!componentIds.length)return new Map();const today=await require('../lib/business-time').today(db,workspaceId);
  const positions=(await db.query(`SELECT b.sku_id,b.location_id,b.on_hand,
- CASE WHEN i.tracking_mode='lot' THEN coalesce((SELECT sum(lb.quantity) FROM lot_balances lb JOIN lots l ON l.workspace_id=lb.workspace_id AND l.id=lb.lot_id WHERE lb.workspace_id=b.workspace_id AND l.sku_id=b.sku_id AND lb.location_id=b.location_id AND (l.expires_at IS NULL OR l.expires_at::date>=$3::date)),0)
- WHEN i.tracking_mode='serial' THEN (SELECT count(*) FROM serial_units u WHERE u.workspace_id=b.workspace_id AND u.sku_id=b.sku_id AND u.location_id=b.location_id AND u.status='in_stock') ELSE b.on_hand END AS usable
+ CASE WHEN i.tracking_mode='lot' THEN coalesce((SELECT sum(lb.quantity) FROM lot_balances lb JOIN lots l ON l.workspace_id=lb.workspace_id AND l.id=lb.lot_id WHERE lb.workspace_id=b.workspace_id AND l.sku_id=b.sku_id AND lb.location_id=b.location_id AND l.recalled_at IS NULL AND (l.expires_at IS NULL OR l.expires_at::date>=$3::date)),0)
+ WHEN i.tracking_mode='serial' THEN (SELECT count(*) FROM serial_units u WHERE u.workspace_id=b.workspace_id AND u.sku_id=b.sku_id AND u.location_id=b.location_id AND u.status='in_stock' AND NOT EXISTS (SELECT 1 FROM lots l WHERE l.id=u.lot_id AND l.workspace_id=u.workspace_id AND (l.recalled_at IS NOT NULL OR l.expires_at::date<$3::date))) ELSE b.on_hand END AS usable
  FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  JOIN locations loc ON loc.workspace_id=b.workspace_id AND loc.id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand>0 AND loc.is_active=1 AND loc.custody_agreement_id IS NULL`,[workspaceId,componentIds,today])).rows;
  const available=await require('./postgres-stock-availability').readMany(db,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id}))),result=new Map();

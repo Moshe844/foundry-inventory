@@ -1,0 +1,26 @@
+<h1>ShipBob sandbox</h1>
+<% if(linked){ %><form method="post" action="/autopilot/shipbob/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Disconnect sandbox</button></form><% } %>
+<% if(!enabled){ %><p>ShipBob order drafts require Growth. <a href="/billing">Upgrade</a></p>
+<% }else if(!linked){ %><form class="card" method="post" action="/autopilot/shipbob/connect">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Sandbox channel ID <input name="channelId" inputmode="numeric" required></label>
+<label>Sandbox token <input name="apiKey" type="password" autocomplete="new-password" required></label><button class="btn">Verify and connect sandbox</button></form>
+<% }else{ %>
+<% if(review){const p=review.payload,a=p.recipient.address; %><section class="card"><h2>Review test order <%= p.order_number %></h2>
+<p><%= p.recipient.name %> · <%= [a.address1,a.address2,a.city,a.state,a.zip_code,a.country].filter(Boolean).join(', ') %></p>
+<p>Channel <%= review.channelId %> · <%= p.shipping_method %></p><ul><% p.products.forEach(item=>{ %><li><%= item.quantity %> × <%= item.name %> (<%= item.reference_id %>)</li><% }); %></ul>
+<form action="/autopilot/shipbob/<%= p.reference_id %>/send" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= review.hash %>"><button class="btn">Approve and send to sandbox</button></form></section><% } %>
+<section class="card"><h2>Automatic sandbox orders</h2>
+<% if(rule){ %><p>Enabled for <%= rule.name %></p><form method="post" action="/autopilot/shipbob/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" name="action" value="disable">Turn off</button></form><% } %>
+<% if(automatic){ %><form method="post" action="/autopilot/shipbob/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Send newly confirmed delivery orders from <select name="locationId" required><% warehouses.forEach(w=>{ %><option value="<%= w.id %>"><%= w.name %></option><% }); %></select></label><p>Requires automatic work under standing authority after the first 14 days. Uses Standard test shipping.</p><button class="btn" name="action" value="enable">Enable for this warehouse</button></form>
+<% }else{ %><p>Automatic submission requires Pro. <a href="/billing">Upgrade</a></p><% } %></section>
+<h2>Delivery orders</h2><% if(!orders.length){ %><p>No confirmed delivery orders.</p><% } %>
+<% orders.forEach(o=>{ %><section class="card"><h3><a href="/orders/<%= o.id %>"><%= o.order_number %></a></h3>
+<% if(o.provider_order_id){ %><p>ShipBob <%= o.provider_order_id %> · <%= o.provider_status %> · <%= helpers.dateTime(o.observed_at) %></p>
+<% o.shipments.forEach(s=>{ %><p>Shipment <%= s.id %> · <%= s.status %> <% if(s.tracking){ %> · <%= s.carrier %> <%= s.tracking %><% } %></p><% }); %>
+<form method="post" action="/autopilot/shipbob/<%= o.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Refresh tracking</button></form>
+<% }else{ %><a href="?order=<%= o.id %>">Review for sandbox</a><% } %></section><% }); %>
+<h2>Reported sandbox stock</h2><form action="/autopilot/shipbob/stock" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>StockChief SKU <input name="sku" required></label><label>ShipBob inventory ID <input name="inventoryId" inputmode="numeric" required></label><button class="btn">Read sandbox stock</button></form>
+<% stock.forEach(r=>{ %><p><%= r.code %> · <%= r.on_hand %> on hand · <%= r.fulfillable %> fulfillable · <%= helpers.dateTime(r.observed_at) %></p><% }); %>
+<% } %>

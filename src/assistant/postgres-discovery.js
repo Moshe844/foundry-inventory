@@ -43,12 +43,13 @@ async function available(database,ctx){
   const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
     [ctx.workspaceId,ctx.actorId])).rows[0];
   if(!actor)return [];
-  const [factsResult,scope]=await Promise.all([database.query(`SELECT
+  const agent=require('../commercial/agent-plan');
+  const [factsResult,scope,agentState]=await Promise.all([database.query(`SELECT
     (SELECT COUNT(*)::int FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
     (SELECT COUNT(*)::int FROM suppliers WHERE workspace_id=$1 AND status='active') AS suppliers,
     (SELECT COUNT(*)::int FROM workspace_connectors WHERE workspace_id=$1 AND status='connected'
       AND paused_at IS NULL AND provider_type IN ('gmail','microsoft365')) AS mailboxes`,
-  [ctx.workspaceId]),entitlements.ownerScopeForWorkspace(database,ctx.workspaceId)]);
+  [ctx.workspaceId]),entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),agent.accountState(database,ctx.workspaceId)]);
   const facts=factsResult.rows[0];
   const readPermissions=require('./postgres-control-plane').READ_PERMISSIONS;
   const entries=[],permitted=[];
@@ -59,6 +60,8 @@ async function available(database,ctx){
     const permission=contract.kind==='read'?readPermissions[contract.view]||contract.permission:contract.permission;
     if(!permissions.can(actor,permission))continue;
     if(contract.ownerOnly&&actor.role!=='owner')continue;
+    const job=agent.actionJob(contract.name,'draft');
+    if(job&&agent.usesAgentTerms(agentState)&&!agent.permits(agentState.plan,job,'draft'))continue;
     permitted.push({contract,discovery});
   }
   // Reuse the central service's fresh multi-capability snapshot for this one

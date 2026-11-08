@@ -1,0 +1,17 @@
+<h1>Lot controls</h1>
+<form method="get"><label>Item code <input name="sku" value="<%= detail?.lot.sku||'' %>" required></label>
+<label>Lot number <input name="lot" value="<%= detail?.lot.code||'' %>" required></label><button class="btn">Find lot</button></form>
+<% if(detail){const {lot}=detail; %><section class="card"><h2><%= lot.sku %> &middot; <%= lot.code %></h2>
+<p><%= lot.recalled_at?'Under recall':'No active recall' %> &middot; <a href="/autopilot/reviews/recall-trace?filter=<%= encodeURIComponent(lot.code) %>">Trace affected customers</a></p>
+<% if(detail.canRecall||lot.recalled_at){ %><form method="post" action="/autopilot/lots/recall">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= lot.sku %>"><input type="hidden" name="lot" value="<%= lot.code %>">
+<input type="hidden" name="revision" value="<%= lot.recall_revision %>"><label>Reason <input name="reason" minlength="3" maxlength="1000" required></label>
+<button class="btn" name="action" value="<%= lot.recalled_at?'release':'hold' %>"><%= lot.recalled_at?'Release this recall':'Recall and block shipping' %></button></form>
+<% }else{ %><p>Recall holds require Growth. <a href="/billing">Review plans</a></p><% } %>
+<% detail.history.forEach(e=>{ %><p><%= helpers.dateTime(e.occurred_at) %> &middot; <%= e.name %> &middot; <%= e.held?'Recalled':'Released' %> &middot; <%= e.reason %></p><% }); %>
+</section><section class="card"><h2>Certificates</h2><% if(detail.canCertify){detail.certificates.forEach(c=>{ %>
+<p><%= c.kind %> &middot; <% if(c.document_url){ %><a rel="noreferrer" href="<%= c.document_url %>">View document</a> <%= c.expires_on||'' %><% }else{ %>Missing<% } %></p>
+<% }); %><form method="post" action="/autopilot/lots/certificates"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= lot.sku %>"><input type="hidden" name="lot" value="<%= lot.code %>">
+<label>Required for this SKU <select name="kind"><option>CoA</option><option>Safety sheet</option></select></label>
+<label>Document URL for this lot <input type="url" name="documentUrl"></label><label>Expires <input type="date" name="expiresOn"></label>
+<button class="btn">Save requirement and document</button></form><% }else{ %><p>Certificate tracking requires Growth. <a href="/billing">Review plans</a></p><% } %></section><% } %>

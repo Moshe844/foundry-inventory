@@ -47,15 +47,19 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  SELECT s.id AS sku_id,s.code,s.variant_label,s.position AS sku_position,coalesce(source_version.version,0)::text AS source_version,i.id AS item_id,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
   COALESCE(b.on_hand,0)::numeric AS on_hand,COALESCE(c.quantity,0)::numeric AS committed,COALESCE(inc.quantity,0)::numeric AS incoming,
   COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::numeric AS issued,rp.id AS policy_id,rp.location_id AS policy_location_id,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,
-  (SELECT to_jsonb(global_policy) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
+  (SELECT to_jsonb(global_policy)||jsonb_build_object('effective_lead',coalesce((
+    SELECT coalesce(lead.observed_lead,global_policy.lead_time_days,lead.configured_lead) FROM stockchief_runtime.supplier_planning_leads lead
+    JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id
+    AND (global_policy.preferred_supplier_id IS NULL OR lead.supplier_id=global_policy.preferred_supplier_id)
+    ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1),global_policy.lead_time_days,$7)) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
   (SELECT value FROM operational_preferences preference WHERE preference.workspace_id=$1 AND preference.key='target_days_of_stock') AS saved_cover_days,
-  COALESCE(rp.lead_time_days,terms.lead_time_days,$7) AS lead_time_days,cost.amount_minor AS cost_minor
+  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead,$7) AS lead_time_days,cost.amount_minor AS cost_minor
  FROM positions pos CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=pos.sku_id LIMIT 1)s
  CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id LIMIT 1)i
  JOIN active_locations l ON l.id=pos.location_id LEFT JOIN stockchief_runtime.replenishment_source_versions source_version ON source_version.workspace_id=s.workspace_id AND source_version.sku_id=s.id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
  LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id LEFT JOIN demand d ON d.sku_id=s.id AND d.location_id=l.id
  LEFT JOIN LATERAL(SELECT * FROM reorder_policies p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id AND(p.location_id=l.id OR p.location_id IS NULL) ORDER BY(p.location_id IS NOT NULL) DESC,p.updated_at DESC,p.id LIMIT 1) rp ON true
- LEFT JOIN LATERAL(SELECT COALESCE(si.lead_time_days,supplier.default_lead_time_days) AS lead_time_days FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.is_active=1 AND supplier.status='active' AND(rp.preferred_supplier_id IS NULL OR si.supplier_id=rp.preferred_supplier_id) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),COALESCE(si.lead_time_days,supplier.default_lead_time_days,$7),si.id LIMIT 1) terms ON true
+ LEFT JOIN LATERAL(SELECT lead.observed_lead,lead.configured_lead FROM stockchief_runtime.supplier_planning_leads lead JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id AND(rp.preferred_supplier_id IS NULL OR si.supplier_id=rp.preferred_supplier_id) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),COALESCE(lead.effective_lead,$7),si.id LIMIT 1) terms ON true
  LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
  WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id
  ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds,...(cycleId?[cycleId]:[])]);
@@ -64,7 +68,7 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  for(const row of result.rows){if(row.saved_cover_days!==null&&row.saved_cover_days!==undefined){let saved;try{saved=JSON.parse(row.saved_cover_days);}catch{throw new(require('../domain/errors').ValidationError)('Review the saved target days of stock before replenishment can continue.');}const days=Number(saved&&typeof saved==='object'?saved.value:saved);if(!Number.isSafeInteger(days)||days<1)throw new(require('../domain/errors').ValidationError)('Target days of stock must be a positive whole number.');row.cover_days=days;}const stock=current.get(availability.key(row.sku_id,row.location_id));if(stock){row.committed=stock.committed+stock.reserved;row.rental_reserved=stock.rentalReserved;}if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
  const rows=[];for(const positions of bySku.values()){
   const global=positions[0].global_policy;
-  if(global){const total={...positions[0],...global,lead_time_days:global.lead_time_days??positions[0].lead_time_days,policy_id:global.id,policy_location_id:null,scope:'workspace',location_id:null,location_name:'All locations',receivingOptions};for(const key of ['on_hand','committed','incoming','issue_events','issued'])total[key]=positions.reduce((sum,p)=>sum+Number(p[key]||0),0);rows.push(total);
+  if(global){const total={...positions[0],...global,lead_time_days:global.effective_lead,policy_id:global.id,policy_location_id:null,scope:'workspace',location_id:null,location_name:'All locations',receivingOptions};for(const key of ['on_hand','committed','incoming','issue_events','issued'])total[key]=positions.reduce((sum,p)=>sum+Number(p[key]||0),0);rows.push(total);
    for(const row of positions){if(row.policy_location_id===null){row.planning_suppressed=true;row.scope='position';}rows.push(row);}
   }else rows.push(...positions);
  }

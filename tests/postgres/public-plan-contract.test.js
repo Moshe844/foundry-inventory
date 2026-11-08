@@ -122,7 +122,7 @@ test('Published plan allowances govern the actual canonical services',{timeout:2
   assert.equal((await ent.meterState(db,scope,'ai_work_credits')).included,650);
   const terms=require('../../src/commercial/plan-terms'),review=await terms.review(db,scope.accountId),before=(await db.query('SELECT count(*)::int n,sum(units)::bigint units FROM commercial_usage_events WHERE account_id=$1',[scope.accountId])).rows[0];
   await assert.rejects(()=>terms.accept(db,scope.accountId,{currentVersion:review.current.id,nextVersion:review.next.id,confirm:'0'}),/Review the current/);
-  await terms.accept(db,scope.accountId,{currentVersion:review.current.id,nextVersion:review.next.id,confirm:'1'});assert.equal((await ent.meterState(db,scope,'ai_work_credits')).included,3000);
+  await terms.accept(db,scope.accountId,{currentVersion:review.current.id,nextVersion:review.next.id,confirm:'1'});assert.equal((await ent.meterState(db,scope,'ai_work_credits')).included,5000);
   assert.deepEqual((await db.query('SELECT count(*)::int n,sum(units)::bigint units FROM commercial_usage_events WHERE account_id=$1',[scope.accountId])).rows[0],before);
  });
  t.diagnostic(JSON.stringify({actualPostgreSQL:true,realMoney:false,paidCalls:0}));

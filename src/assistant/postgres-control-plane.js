@@ -119,6 +119,14 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
   if(contract.ownerOnly&&actor.role!=='owner')throw new (require('../domain/errors').ValidationError)('This operation requires the business owner.');
+  const agent=require('../commercial/agent-plan'), job=agent.actionJob(contract.name,'draft');
+  if(job){
+    const state=await agent.accountState(database,ctx.workspaceId);
+    if(agent.usesAgentTerms(state) && !agent.permits(state.plan,job,'draft')){
+      try{agent.requireJob(state.plan,job,'draft');}
+      catch(error){return {result:{status:'CLARIFY',answer:error.message,handoff:{href:'/billing',label:'Review plans'},rows:[],columns:[],reason:'entitlement'},args:step.args,provenance:{}};}
+    }
+  }
   if(contract.commercialUnavailable?.length){
     const capability=contract.commercialUnavailable[0];
     let recommended=null;

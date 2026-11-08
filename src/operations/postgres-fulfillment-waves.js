@@ -269,7 +269,8 @@ async function scan(database,ctx,id,input){
 }
 
 async function eligibleLot(client,workspaceId,lotId){
- const lot=(await client.query('SELECT code,expires_at FROM lots WHERE workspace_id=$1 AND id=$2',[workspaceId,lotId])).rows[0];
+ const lot=(await client.query('SELECT code,expires_at,recalled_at FROM lots WHERE workspace_id=$1 AND id=$2',[workspaceId,lotId])).rows[0];
+ if(lot?.recalled_at)throw new ValidationError('This batch is under recall. Choose another batch.');
  if(lot?.expires_at&&String(lot.expires_at).slice(0,10)<await require('../lib/business-time').today(client,workspaceId))
   throw new ValidationError('This batch has expired. Choose eligible stock; expired stock requires an explicit disposal operation.');
 }

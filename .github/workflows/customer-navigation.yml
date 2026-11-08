@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [core, crawl, shipping]
+        group: [core, crawl, shipping, agent-plans]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -49,6 +49,11 @@ jobs:
           fi
           npx playwright install --with-deps chromium firefox
           mkdir -p output/customer-navigation-ci
+      - name: Agent plan permissions and operational workflows
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agent-plans' }}
+        run: |
+          set -euo pipefail
+          npm run test:agent-plans 2>&1 | tee output/customer-navigation-ci/agent-plans.log
       - name: Private authentication persists before redirects
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |

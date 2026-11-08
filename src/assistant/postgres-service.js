@@ -1770,6 +1770,11 @@ async function prepareAction(database,ctx,message,request,options={}) {
 }
 
 async function createProposal(database,ctx,message,actionType,payload,summary) {
+  const agent=require('../commercial/agent-plan'), job=agent.actionJob(actionType,'draft',payload);
+  if(job){
+    const state=await agent.accountState(database,ctx.workspaceId);
+    if(agent.usesAgentTerms(state))agent.requireJob(state.plan,job,'draft');
+  }
   if(actionType==='customer_invoice.create'){
     const quote=await require('../pricing/postgres-invoice-pricing').quote(database,ctx,payload);
     if(quote.violations.length)throw new ValidationError('The invoice exceeds a pricing safeguard. Nothing was prepared.');
@@ -1932,7 +1937,8 @@ async function buildReportDefinition(database,ctx,message,{provider=null,priorRe
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
   if(!require('../reports/builder-entry').standardDefinition(message,'USD')){const availability=await require('../reports/build-availability').state(database,{provider:raw});if(!availability.available)return {status:'CLARIFY',answer:availability.message,creditsUsed:0,rows:[],columns:[]};}
-  const prefix=newId('report-build'),funded=fundedAskProvider(database,ctx,raw,prefix),settlement=require('../reports/build-usage');
+  const reportModel=(db,context,provider,operation,key,options={})=>require('../commercial/model').wrap(db,context,provider,operation,key,{...options,includedReport:true});
+  const prefix=newId('report-build'),funded=fundedAskProvider(database,ctx,raw,prefix,reportModel),settlement=require('../reports/build-usage');
   try{const result=await require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
     // A generated definition is only useful once its permissions and draft storage succeed.
     if(result.reportConfig&&acceptReport)result.reportConfig=await acceptReport(result.reportConfig);
@@ -2098,6 +2104,12 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
       'proposal_not_pending');
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
+    const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
+    if(agentAccount.plan && agentAccount.shadow && contract.name!=='report.template.create') throw new ValidationError('StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.');
+    const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
+    if(job && agentPolicy.usesAgentTerms(agentAccount))agentPolicy.requireJob(agentAccount.plan,job,operation);
+    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
+      throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
         WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
       if(!plan||plan.actor_user_id!==ctx.actorId||plan.authorization_mode!=='MISSION'

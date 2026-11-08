@@ -64,7 +64,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, matching and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:addons.currentPacks(await addons.packs(database)),capacityProducts:await require('../../commercial/capacity-addons').catalog(database),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
+    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:[],capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{agentOffer:true}),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),planSelection:req.session.commercialSelection||null,
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
@@ -135,7 +135,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       summary.meters=summary.meters.map(m=>m.meter==='locations'?{...accountLocations,currentInventoryUsed:localLocations.used}:m);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,upgradeOutcome,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
-      capacityProducts:await require('../../commercial/capacity-addons').catalog(database),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
+      capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{subscription:summary.subscription}),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
       packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
       planPortal:release.stagingTestCheckout()&&Boolean(process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID),

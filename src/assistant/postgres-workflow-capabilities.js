@@ -181,8 +181,9 @@ async function supplierBill(database,ctx,supplier,args){
   const number=String(args.supplierInvoiceNumber||'').trim();
   const description=String(args.description||'').trim();
   const quantity=Number(args.quantity);
-  const unitCostMinor=Math.round(Number(args.unitAmount)*100);
-  const taxMinor=args.tax==null?0:Math.round(Number(args.tax)*100);
+  const currency=require('../domain/currency');
+  const unitCostMinor=currency.toMinor(args.unitAmount,order.currency,{label:'Invoice unit price'});
+  const taxMinor=args.tax==null?0:currency.toMinor(args.tax,order.currency,{label:'Invoice tax'});
   if(!number||number.length>80)throw new ValidationError('State the supplier’s invoice number (up to 80 characters).');
   if(!description||description.length>250)throw new ValidationError('State the bill line description (up to 250 characters).');
   if(!Number.isFinite(quantity)||quantity<=0||!Number.isSafeInteger(unitCostMinor)||unitCostMinor<0||
@@ -206,8 +207,9 @@ async function purchaseOrderSupplierInvoice(database,ctx,order,args){
   if(args.invoiceDocument){let document;try{document=JSON.parse(args.invoiceDocument);}catch{throw new ValidationError('Read the complete invoice into its structured document contract.');}return require('../purchasing/postgres-invoice-preparation').prepare(database,ctx,order,document);}
   const number=String(args.supplierInvoiceNumber||'').trim();
   const quantity=Number(args.quantity);
-  const unitCostMinor=Math.round(Number(args.unitAmount)*100);
-  const taxMinor=args.tax==null?0:Math.round(Number(args.tax)*100);
+  const currency=require('../domain/currency');
+  const unitCostMinor=currency.toMinor(args.unitAmount,order.currency,{label:'Invoice unit price'});
+  const taxMinor=args.tax==null?0:currency.toMinor(args.tax,order.currency,{label:'Invoice tax'});
   if(!number||number.length>80)throw new ValidationError('State the supplier’s exact invoice number (up to 80 characters).');
   if(!Number.isSafeInteger(quantity)||quantity<1||!Number.isSafeInteger(unitCostMinor)||unitCostMinor<0
     ||!Number.isSafeInteger(taxMinor)||taxMinor<0)throw new ValidationError(
@@ -231,7 +233,7 @@ async function purchaseOrderSupplierInvoice(database,ctx,order,args){
   if(matching.length!==1)throw new ValidationError(matching.length?
     'This purchase order has several products. Name the exact invoiced SKU.':
     'The invoiced product does not match a line on this purchase order.');
-  const line=matching[0],approvedCostMinor=Math.round(Number(line.unit_cost)*100);
+  const line=matching[0],approvedCostMinor=currency.toMinor(line.unit_cost,order.currency,{optional:true,label:'Approved PO cost'});
   const disputed=Number(line.billed_units)+quantity>Number(line.quantity_received_units)
     ||unitCostMinor!==approvedCostMinor;
   const totalMinor=quantity*unitCostMinor+taxMinor;
@@ -638,17 +640,19 @@ async function supplierReturnRequest(database,ctx,order,args){
   `Request return of ${quantity} ${line.code} from ${order.po_number} to its supplier. `+
     'Stock remains on hand until shipping is separately approved; a credit is not assumed.');
 }
-function supplierCredit(_database,_ctx,row,args){
+async function supplierCredit(database,ctx,row,args){
   requireState(row,['AWAITING_CREDIT'],'This supplier return');
   if(!row.supplier_bill_id)throw new ValidationError('This return has no matched open supplier bill. Match it in the supplier-return screen first.');
-  const amountMinor=moneyMinor(args.amount,'Received supplier credit');
+  const bill=(await database.query('SELECT currency FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,row.supplier_bill_id,row.supplier_id])).rows[0];
+  if(!bill)throw new ValidationError('The matched supplier bill is unavailable.');
+  const amountMinor=require('../domain/currency').userToMinor(args.amount,bill.currency,{label:'Received supplier credit'});
   if(amountMinor<=0)throw new ValidationError('The received supplier credit must be positive.');
   const creditNumber=String(args.creditNumber||'').trim();
   if(!creditNumber)throw new ValidationError('State the supplier’s actual credit-note number.');
   const creditDate=dateOnly(args.creditDate,'Credit date');
   return prepareResult({recordId:row.id,amountMinor,creditNumber,creditDate},
     `Reconcile supplier credit ${creditNumber} for ${row.return_number} at `+
-    `${pricing.formatMinor(amountMinor,row.currency||'USD')}. This reduces the matched payable, `+
+    `${pricing.formatMinor(amountMinor,bill.currency)}. This reduces the matched payable, `+
     'posts the cost difference, and marks any expected-credit mismatch explicitly.');
 }
 function warehouseScan(_database,_ctx,row,args){
@@ -1024,7 +1028,7 @@ const SPECS=Object.freeze([
         FOR UPDATE`,[ctx.workspaceId,p.purchaseOrderLineId,p.purchaseOrderId])).rows[0];
       if(!current||Number(current.quantity_received_units)!==p.expectedReceivedUnits
         ||Number(current.billed_units)!==p.expectedBilledUnits
-        ||Math.round(Number(current.unit_cost)*100)!==p.expectedApprovedCostMinor)
+        ||require('../domain/currency').toMinor(current.unit_cost,p.currency,{optional:true,label:'Approved PO cost'})!==p.expectedApprovedCostMinor)
         throw new ValidationError('The purchase order or received quantity changed after review. Ask again.');
       const duplicate=(await client.query(`SELECT id FROM accounting_supplier_bills
         WHERE workspace_id=$1 AND supplier_id=$2 AND supplier_invoice_number=$3 AND status<>'VOID'`,
@@ -1580,7 +1584,7 @@ const SPECS=Object.freeze([
       throw new ValidationError('Choose a QuickBooks or Xero accounting connection.');
       return prepareResult({recordId:row.id},`Queue ready posted journals for ${row.display_name}. `+
         'The worker will contact the provider; queued is not posted.');},
-    execute:(client,ctx,p)=>accountingSync.queuePending(sameClient(client),ctx,p.recordId,{}),
+    execute:(client,ctx,p)=>accountingSync.queuePending(sameClient(client),ctx,p.recordId,{}, {agentRequested:true}),
     verify:async(client,ctx,r,p)=>{
       if(!Number.isSafeInteger(r.queued)||r.queued!==r.effects?.length)return false;
       for(const effect of r.effects){

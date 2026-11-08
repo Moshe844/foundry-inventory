@@ -1,0 +1,22 @@
+<h1>Orderful retail test</h1>
+<% if(linked){ %><form method="post" action="/autopilot/orderful/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Disconnect test relationship</button></form><% } %>
+<% if(!enabled){ %><p>Retail EDI requires Pro with the EDI add-on, or Custom. <a href="/billing">Review plans and add-ons</a></p>
+<% }else if(!linked){ %><form class="card" method="post" action="/autopilot/orderful/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Orderful API key <input type="password" name="apiKey" autocomplete="new-password" required></label>
+<label>Retailer test ISA ID <input name="buyer" required></label><label>Your test ISA ID <input name="seller" required></label>
+<label>Test inbound PO transaction UUID <input name="transactionId" required></label>
+<label>StockChief customer <select name="customerId" required><% customers.forEach(c=>{ %><option value="<%= c.id %>"><%= c.name %></option><% }); %></select></label>
+<label>Fulfillment location <select name="locationId" required><% locations.forEach(l=>{ %><option value="<%= l.id %>"><%= l.name %></option><% }); %></select></label>
+<label>Agreed order currency <input name="currency" minlength="3" maxlength="3" required></label><button class="btn">Verify and connect</button></form>
+<% }else{ %><section class="card"><h2>Scheduled EDI</h2><p>Check this test relationship every five minutes. Import new POs as drafts. Send acknowledgments after confirmation, notices after shipment, and invoices after final fulfillment.</p>
+<form method="post" action="/autopilot/orderful/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" name="action" value="<%= rule?'disable':'enable' %>"><%= rule?'Disable scheduled EDI':'Enable scheduled EDI' %></button></form>
+<% if(rule){ %><p>Inbox checked through <%= helpers.dateTime(rule.checked_through) %>. Requires active standing authority. <%= rule.last_issue||'' %></p><% } %>
+<% issues.forEach(i=>{ %><p>Retailer PO <%= i.business_number %> · <%= i.issue %> · <%= i.transaction_id %></p><% }); %></section>
+<form method="post" action="/autopilot/orderful/receive"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Inbound PO or change transaction UUID <input name="transactionId" required></label><button class="btn">Read test transaction</button></form>
+<% records.forEach(o=>{ %><section class="card"><h2><%= o.purchase_order_number %></h2><p><a href="/orders/<%= o.sales_order_id %>"><%= o.order_number %></a> · <%= o.status %></p>
+<% if(o.superseding_message_id){ %><p>A change from the retailer needs review. Outgoing documents are on hold.</p><ul><% o.changes.forEach(change=>{ %><li><%= helpers.dateTime(change.received) %> · <%= change.purpose||"Order change" %> · <%= change.transaction %></li><% }); %></ul>
+<% }else{const actions=[{kind:'ack',id:o.sales_order_id,label:'Acknowledge confirmed order'},...o.shipments.map(s=>({kind:'ship',id:s.id,label:'Send notice for '+s.number})),...o.invoices.map(i=>({kind:'invoice',id:i.id,label:'Send invoice '+i.number}))]; %>
+<% actions.forEach(a=>{const sent=o.submitted.find(s=>s.kind===a.kind && s.id===a.id);if(!sent){ %><form method="post" action="/autopilot/orderful/<%= o.source_id %>/<%= a.kind %>/<%= a.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn"><%= a.label %></button></form>
+<% }else{ %><p><%= a.label %> · <%= ({SUBMITTING:'Awaiting provider confirmation',ACCEPTED:'Accepted for processing',ACKNOWLEDGED:'Retailer acknowledged',DELIVERED:'Delivered',FAILED:'Provider rejected submission',REJECTED:'Needs retailer review'})[sent.status] %></p>
+<form method="post" action="/autopilot/orderful/<%= o.source_id %>/<%= a.kind %>/<%= a.id %>/reconcile"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Outbound transaction UUID <input name="providerUuid" value="<%= sent.uuid||'' %>" required></label><button class="btn">Verify with Orderful</button></form><% } }); } %></section><% }); } %>

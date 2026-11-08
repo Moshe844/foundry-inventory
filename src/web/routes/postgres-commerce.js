@@ -512,7 +512,10 @@ function createPostgresCommerceRouter(database,options={}){
       await commerce.purchaseOrders(database,req.ctx.workspaceId),{...req.query,pageSize:size},can,dateToday(req));
     const lowCount=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,{})
       .then((found)=>Math.max(found.rows.length,Number(found.atOrBelowTotal||0))).catch(()=>0);
-    return res.page('buy/orders',{title:'Purchase orders',nav:'purchasing',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),lowCount,suppressBack:true,
+    const agentPolicy=require('../../commercial/agent-plan');
+    const agentState=await agentPolicy.accountState(database,req.ctx.workspaceId);
+    const purchaseRequests=agentPolicy.usesAgentTerms(agentState)?agentPolicy.allowance(agentState.plan,41):null;
+    return res.page('buy/orders',{purchaseRequests,title:'Purchase orders',nav:'purchasing',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),lowCount,suppressBack:true,
       ownSectionTabs:true,screenGuide:null,permissions:can});
   }));
   router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),asyncRoute(async(req,res)=>{
@@ -667,9 +670,10 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.get('/purchasing/orders/:id',requirePermission(permissions.VIEW_PURCHASING,'see purchase orders'),asyncRoute(async(req,res)=>{
-    const [page,supplierReturns]=await Promise.all([
+    const [page,supplierReturns,linkResponses]=await Promise.all([
       purchaseOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listSupplierReturns(database,req.ctx.workspaceId,req.params.id),
+      require('../../purchasing/supplier-order-link').responses(database,req.ctx.workspaceId,req.params.id),
     ]);
     const buyView=require('../buy-view');
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
@@ -678,9 +682,18 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
-      permissions:can,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      permissions:can,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
+  }));
+
+  router.get('/purchasing/orders/:id/supplier-files/:file',requirePermission(permissions.VIEW_PURCHASING,'review supplier documents'),asyncRoute(async(req,res)=>{
+    const saved=(await database.query(`SELECT r.contents,r.kind FROM stockchief_runtime.supplier_link_submissions r
+      JOIN stockchief_runtime.supplier_order_links l USING(token_hash)
+      WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.id=$3 AND r.contents IS NOT NULL`,
+      [req.ctx.workspaceId,req.params.id,req.params.file])).rows[0];
+    if(!saved) return res.sendStatus(404);
+    res.set({'Cache-Control':'no-store','Content-Type':'application/pdf','Content-Disposition':'attachment; filename="'+saved.kind+'.pdf"'}).send(saved.contents);
   }));
 
   router.get('/purchasing/orders/:id/document',requirePermission(permissions.VIEW_PURCHASING,'see purchase orders'),asyncRoute(async(req,res)=>{

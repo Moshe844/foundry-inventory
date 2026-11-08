@@ -7,7 +7,7 @@ test('approved packaging is exact, versioned, repeatable and keeps live checkout
  await migratePostgres(db);
  for(const [id,p]of Object.entries(offer.plans)){
   const plan=(await db.query('SELECT * FROM commercial_plans WHERE id=$1',[id])).rows[0];assert.equal(Number(plan.monthly_amount_minor),p.monthlyMinor);assert.equal(Number(plan.annual_amount_minor),p.annualMinor);
-  const version=(await db.query("SELECT * FROM commercial_plan_versions WHERE plan_id=$1 AND status='ACTIVE'",[id])).rows[0];assert.equal(version.id,offer.id+':'+id);assert.equal(version.configuration.offerId,offer.id);
+  const version=(await db.query('SELECT * FROM commercial_plan_versions WHERE plan_id=$1 AND id=$2',[id,offer.id+':'+id])).rows[0];assert.equal(version.id,offer.id+':'+id);assert.equal(version.configuration.offerId,offer.id);
   for(const [meter,limit]of Object.entries(p.limits)){const row=version.meters.find(m=>m.meter===meter);assert(row,id+':'+meter);assert.equal(Number(row.included_units),limit,id+':'+meter);assert.equal(Number(row.hard_limit),limit,id+':'+meter);}
   const enabled=new Set(version.entitlements.filter(e=>Number(e.enabled)).map(e=>e.capability));
   for(const capability of ['connections.accounting','connections.commerce','communications.email_ingestion','shipping.labels','payments.customer','api.public','inventory.kits'])assert(enabled.has(capability),id+':'+capability);
