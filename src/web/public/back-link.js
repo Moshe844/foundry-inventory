@@ -33,7 +33,13 @@
   var back = store.from[here];
   var samePlace = function (link) { var to = new URL(link.href); return to.pathname === back.href.split('?')[0]; };
   if (back && back.label) links.forEach(function (link) {
-    if (samePlace(link)) return;
+    // Same page as the link already names: keep its words, but return to the
+    // exact list page, filter and sort that was open.
+    if (samePlace(link)) {
+      link.setAttribute('href', back.href);
+      if (link.hasAttribute('data-dest')) link.setAttribute('data-dest', back.href);
+      return;
+    }
     link.setAttribute('href', back.href);
     if (link.hasAttribute('data-dest')) link.setAttribute('data-dest', back.href);
     link.setAttribute('data-return-to', '');
