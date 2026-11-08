@@ -12,7 +12,7 @@ function specification(job,env=process.env){
   return {args:['--max-old-space-size=256',path.join(root,'scripts/certify-staging-variant-load.js'),'--hosted-sessions',...(tenants?['--qa-workspaces',JSON.stringify(tenants)]:['--qa-workspace-id',job.workspaceId]),'--release',release,'--seconds','120','--output',output],timeout:300000};
  }
  const mode=job.payload?.mode,run=job.payload?.run;if(job.kind!=='qualification.staging-million'||!['prepare','million','verify','remeasure'].includes(mode)||!/^[a-z0-9-]{6,60}$/.test(run||''))throw Error('Invalid bounded qualification request.');
- return {args:['--max-old-space-size=1280',path.join(root,'scripts/certify-staging-million.js'),'--mode',mode,'--run',run,'--release',release],timeout:2700000};
+ return {args:['--max-old-space-size=1280',path.join(root,'scripts/certify-staging-million.js'),'--mode',mode,'--run',run,'--release',release,'--capacity-job',job.id],timeout:2700000};
 }
 async function run(job,db){
  const spec=specification(job),identity=(await db.query("SELECT w.name,a.email FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=a.id AND x.disabled_at IS NOT NULL)",[job.workspaceId])).rows[0];
@@ -32,8 +32,8 @@ async function run(job,db){
 function failureReason(code,signal,evidence,stderr=''){
  if(code===0)return null;
  const measured=evidence?.imports?.[evidence.latestStock150k||'stock150k:150000'];
- if(['prepare','remeasure'].includes(evidence?.mode)&&measured?.verified&&measured.rows===150000&&Number.isFinite(measured.elapsedMs)&&measured.elapsedMs>=300000)
-  return `All 150,000 rows were verified, but the import took ${(measured.elapsedMs/1000).toFixed(1)} seconds. The five-minute target is not met.`;
+ if(['prepare','remeasure'].includes(evidence?.mode)&&measured?.verified&&measured.rows===150000&&Number.isFinite(measured.elapsedMs)&&measured.elapsedMs>=60000)
+  return `All 150,000 rows were verified, but the import took ${(measured.elapsedMs/1000).toFixed(1)} seconds. The 60-second target is not met.`;
  for(const line of stderr.trim().split(/\r?\n/).reverse()){try{const parsed=JSON.parse(line);if(typeof parsed.message==='string'&&parsed.message)return parsed.message;}catch{}}
  return signal?'The qualification worker stopped before recording a verified result. Review its saved import progress.':'The bounded qualification did not return a verified result. Review its saved import progress.';
 }

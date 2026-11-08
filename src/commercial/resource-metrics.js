@@ -3,15 +3,19 @@ const {AsyncLocalStorage}=require('node:async_hooks');const {newId}=require('../
 const storage=new AsyncLocalStorage();let persistenceFailures=0;let lastFailureAt=null;
 function create(input){return {id:input.id||newId('resource'),runtimeKind:input.runtimeKind,operation:input.operation,
  resourceId:process.env.RENDER_SERVICE_ID||process.env.STOCKCHIEF_RESOURCE_ID||`local:${input.runtimeKind}`,
- startedAt:new Date(),started:process.hrtime.bigint(),queries:0,databaseMicros:0,scope:null,mixed:false};}
+ startedAt:new Date(),started:process.hrtime.bigint(),queries:0,databaseMicros:0,slowQueries:[],scope:null,mixed:false};}
 function attribute(scope){const state=storage.getStore();if(!state||!scope?.accountId)return;
  if(state.scope&&state.scope.accountId!==scope.accountId){state.mixed=true;state.scope=null;return;}
  if(state.mixed)return;
  if(state.scope&&state.scope.workspaceId!==scope.workspaceId)state.scope={accountId:scope.accountId};
  else state.scope={accountId:scope.accountId,workspaceId:scope.workspaceId||null};
 }
-function queryFinished(start){const state=storage.getStore();if(!state)return;
- state.queries++;state.databaseMicros+=Number((process.hrtime.bigint()-start)/1000n);
+function queryFinished(start,statement){const state=storage.getStore();if(!state)return;
+ const micros=Number((process.hrtime.bigint()-start)/1000n);state.queries++;state.databaseMicros+=micros;
+ if(state.runtimeKind==='web'&&micros>=25000&&typeof statement==='string'){
+  const shape=statement.replace(/\$(\w*)\$[\s\S]*?\$\1\$/g,'?').replace(/'(?:''|[^'])*'/g,'?').replace(/\b\d+(?:\.\d+)?\b/g,'?').replace(/\s+/g,' ').trim().slice(0,240);
+  state.slowQueries.push({sql:shape,ms:Math.round(micros/1000)});state.slowQueries.sort((a,b)=>b.ms-a.ms);state.slowQueries.length=Math.min(state.slowQueries.length,5);
+ }
 }
 async function persist(database,state,outcome){
  const finishedAt=new Date();const micros=Number((process.hrtime.bigint()-state.started)/1000n);
@@ -43,6 +47,8 @@ function middleware(database){return (req,res,next)=>{
     req.account?.id?{accountId:req.account.id}:null);
    // Store route templates, never URLs, query strings, tokens or request bodies.
    state.operation=`${req.method} ${req.route?.path||'unmatched-or-static'}`;
+   const elapsedMs=Number((process.hrtime.bigint()-state.started)/1000000n);
+   if(elapsedMs>=500)console.info('STOCKCHIEF_SLOW_REQUEST',JSON.stringify({route:state.operation,status:res.statusCode,elapsedMs,queries:state.queries,slowQueries:state.slowQueries}));
    void persist(database,state,res.writableFinished?String(res.statusCode):'ABORTED').catch(failure);
   };
   res.once('finish',done);res.once('close',done);next();

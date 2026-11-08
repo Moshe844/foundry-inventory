@@ -1,0 +1,12 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('synthetic qualification progress survives expired monitors and preserves its capacity lease',{timeout:90000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,queue=require('../../src/operations/postgres-job-queue'),checkpoint=require('../../scripts/lib/staging-qualification-checkpoint'),run='checkpoint-fixture',release='a'.repeat(40);
+ await db.query('UPDATE workspaces SET name=$2 WHERE id=$1',[ctx.workspaceId,'Synthetic ERP release million '+run]);await db.query('UPDATE accounts SET email=$2 WHERE id=$1',[f.owner.accountId,'stockchief-million-'+run+'@example.test']);
+ const queued=await queue.enqueue(db,{workspaceId:ctx.workspaceId,kind:'qualification.staging-million',idempotencyKey:'checkpoint',payload:{run,release,capacityLease:{preserved:true}},priority:1}),job=await queue.claim(db,{owner:'checkpoint-test',kinds:['qualification.staging-million'],leaseMs:60000});assert.equal(job.id,queued.job.id);
+ const scope={jobId:job.id,release,run},state={run,ctx,configured:false,imports:{stock:{verified:false,planId:'durable-plan',progress:[{rows:2000}]}}};
+ await checkpoint.save(db,scope,state);assert.deepEqual((await queue.get(db,job.id,ctx.workspaceId)).payload.capacityLease,{preserved:true});const recovered=await checkpoint.restore(db,scope);assert.equal(recovered.workspaceId,ctx.workspaceId);assert.equal(recovered.configured,false);assert.deepEqual(recovered.imports,state.imports);
+ await assert.rejects(checkpoint.save(db,{...scope,release:'b'.repeat(40)},state),/running job changed/);await assert.rejects(checkpoint.save(db,scope,{...state,ctx:{...ctx,actorId:'usr_foreign'}}),/running job changed/);
+ await queue.complete(db,job.id,job.leaseToken,{passed:false,problem:'Expired monitor'});const second=await queue.enqueue(db,{workspaceId:ctx.workspaceId,kind:'qualification.staging-million',idempotencyKey:'checkpoint-resume',payload:{run,release},priority:1}),resume=await queue.claim(db,{owner:'checkpoint-resume',kinds:['qualification.staging-million']});assert.equal(resume.id,second.job.id);assert.equal((await checkpoint.restore(db,{...scope,jobId:resume.id})).imports.stock.planId,'durable-plan');
+ await assert.rejects(checkpoint.save(db,scope,state),/running job changed/);assert.equal(await checkpoint.restore(db,{...scope,jobId:resume.id,run:'different-fixture'}),undefined);
+});
