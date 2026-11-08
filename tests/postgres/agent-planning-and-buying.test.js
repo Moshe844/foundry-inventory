@@ -62,10 +62,25 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   }
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at)
     VALUES($1,$2,$3,$4,20,30,0,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
+  await db.query("UPDATE sales_orders SET needed_by=$3 WHERE workspace_id=$1 AND id IN (SELECT sales_order_id FROM sales_shipments WHERE id=ANY($2))",[ctx.workspaceId,parcels,ago(today,-1)]);
+  await f.shipping.applyTracking(db,ctx,parcels[0],{status:'DELIVERED',externalEventId:'service-level-first',occurredAt:ago(today,-1)+'T12:00:00Z'});
+  for(const [id,prediction,comparable] of [['closed',10,1],['stockout',90,0]]){
+    await db.query(`INSERT INTO demand_forecasts(id,workspace_id,sku_id,as_of,horizon_days,horizon_end,horizon_units,confidence,model_version,created_at)
+      VALUES($1,$2,$3,$4,7,$5,$6,'moderate','fixture',$4)`,[id,ctx.workspaceId,sku,ago(today,-9),ago(today,-2),prediction]);
+    await db.query(`INSERT INTO forecast_outcomes(id,workspace_id,forecast_id,sku_id,scored_at,predicted_units,actual_units,error_units,absolute_error,comparable,created_at)
+      VALUES($1,$2,$1,$3,$4,$5,8,$6,$6,$7,$4)`,[id,ctx.workspaceId,sku,ago(today,-1)+'T12:00:00Z',prediction,prediction-8,comparable]);
+  }
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
     const row=(await review('reorder-explanation')).rows.find(r=>r.Warehouse==='Dispatch');
     assert.equal(row.Available,5);assert.equal(row.Incoming,7);assert.equal(row['Units to order'],18);
+    if(tier==='starter')await browser.get('/autopilot/reviews/service-levels').expect(402);
+    else{
+      const service=await review('service-levels',{filter:'',scheduled:true}),customer=service.rows.find(r=>r['Party type']==='Customer'),vendor=service.rows.find(r=>r.Name==='Alternative');
+      assert.match(service.summary,/1 comparable SKU forecast,.*2\.00 units/);
+      assert.equal(customer['Due orders'],2);assert.equal(Number(customer['Fill rate %']),100);assert.equal(Number(customer['OTIF %']),50);
+      assert.equal(Number(vendor['Fill rate %']),25);assert.equal(Number(vendor['OTIF %']),0);
+    }
     if(tier==='starter'){
       await browser.get('/autopilot/reviews/demand-scenario').query({change:20}).expect(402);
       assert.doesNotMatch((await browser.get('/autopilot/reviews').expect(200)).text,/href="\/autopilot\/reviews\/demand-scenario"/);
@@ -98,8 +113,37 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   }
   await ledger.post(db,ctx,{postingDate:prior,sourceKey:'historical-stock',description:'Historical purchase for report',lines:[
     {accountKey:'INVENTORY_ASSET',debitMinor:3000},{accountKey:'CASH',creditMinor:3000}]});
+  const counts=require('../../src/operations/postgres-count-reviews');
+  const physical=Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND location_id=$2 AND sku_id=$3',[ctx.workspaceId,f.location.id,sku])).rows[0].on_hand);
+  const count=await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Year close count',lines:[{skuId:sku,quantity:physical}]});
+  await counts.approve(db,ctx,count.id,(await counts.get(db,ctx,count.id)).integrity_hash);
+  await db.query("UPDATE physical_count_reviews SET approved_at=($2::date+time '12:00') AT TIME ZONE 'UTC' WHERE id=$1",[count.id,end]);
+  await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Pending count',lines:[{skuId:sku,quantity:physical}]});
+  const download=(job)=>browser.get('/autopilot/reviews/'+job+'/download').query({filter:end.slice(0,7)});
+  const binary=(req)=>req.buffer(true).parse((res,done)=>{const chunks=[];res.on('data',v=>chunks.push(v));res.on('end',()=>done(null,Buffer.concat(chunks)));});
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
+    if(tier!=='enterprise'){
+      await download('board-pack').expect(402);
+      await browser.get('/autopilot/reviews/board-pack').expect(402);
+    }else{
+      const preview=await browser.get('/autopilot/reviews/board-pack').query({filter:end.slice(0,7)}).expect(200);
+      assert.match(preview.text,/Download board pack with charts/);
+      const pdf=await binary(download('board-pack')).expect(200).expect('Content-Type',/application\/pdf/);
+      const pdfjs=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=pdfjs.getDocument({data:new Uint8Array(pdf.body)}),document=await loading.promise;
+      const first=await document.getPage(1),text=(await first.getTextContent()).items.map(i=>i.str).join(' ');
+      for(const figure of ['$22.00','$9.00','$13.00'])assert.ok(text.includes(figure),figure);
+      assert.ok((await first.getOperatorList()).fnArray.includes(pdfjs.OPS.constructPath),'PDF contains chart geometry');
+      assert.equal(document.numPages,1);await loading.destroy();
+    }
+    if(tier==='starter')await download('year-end-stocktake').expect(402);
+    else{
+      const pack=await binary(download('year-end-stocktake')).expect(200);
+      const xlsx=require('xlsx'),workbook=xlsx.read(pack.body,{type:'buffer'});
+      assert.equal(xlsx.utils.sheet_to_json(workbook.Sheets['Closing valuation']).find(r=>r.SKU==='Unassigned ledger entries')['Closing value'],15);
+      const lines=xlsx.utils.sheet_to_json(workbook.Sheets['Approved count lines']);
+      assert.equal(lines.length,1);assert.equal(lines[0].SKU,code);assert.equal(lines[0].Reference,'Year close count');assert.equal(lines[0].Counted,physical);
+    }
     if(tier==='starter'){
       for(const key of ['month-end-stock','margin-change'])await assert.rejects(review(key,{filter:end.slice(0,7)}),e=>e.code==='entitlement_required');continue;
     }

@@ -470,7 +470,9 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
   for(const change of changes) apply(ctx.workspaceId,change);
   const drafts=await client.query(`SELECT count(*) n FROM stockchief_runtime.agent_draft_rules r JOIN workspaces w ON w.id=r.workspace_id
     WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[state.accountId]);
-  if(keys.size+Number(drafts.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
+  const brands=await client.query(`SELECT count(*) n FROM stockchief_runtime.agent_brand_watches r JOIN workspaces w ON w.id=r.workspace_id
+    WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[state.accountId]);
+  if(keys.size+Number(drafts.rows[0].n)+Number(brands.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 
 async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);

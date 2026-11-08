@@ -30,7 +30,15 @@ async function runtimeFailures(database,workspaceId){
   return {attempts:rows.reduce((sum,row)=>sum+number(row.attempts),0),causes:rows};
 }
 
-function needs(database,workspaceId,actorId=null){return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),()=>require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)));}
+function needs(database,workspaceId,actorId=null){
+  return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
+    const [items,notices]=await Promise.all([
+      require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)),
+      actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
+    ]);
+    return items.concat(notices).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+  });
+}
 // Share only permission-independent source facts. Membership, private agent
 // approvals, de-duplication and final permissions remain per actor.
 function needsInputs(connection,workspaceId){return require('../lib/versioned-read-model').read(connection,workspaceId,['needs-inputs'],async()=>{
@@ -121,7 +129,6 @@ async function needsUncached(database,workspaceId,actorId=null){
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
-  if(actor?.role==='owner')items.push(...await require('../autopilot/operational-notices').inbox(database,workspaceId));
   if(batchExpiry.expired||batchExpiry.soon)items.push({kind:'inventory',grouped:true,importance:batchExpiry.expired?'Urgent':'Important',priority:batchExpiry.expired?94:70,title:batchExpiry.expired?batchExpiry.expired+' batches have expired':batchExpiry.soon+' batches expire within 30 days',happened:batchExpiry.expired+' expired batches; '+batchExpiry.soon+' more expire within 30 days.',why:'Expired stock is blocked from sale. Review batch stock before picking or disposing of it.',recommendation:'Review the batches and their locations. Use unexpired stock with the earliest expiry first.',href:'/warehouse/batches',actionLabel:'Review batch expiry',sourceId:'batch-expiry'});
   for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Needs You',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Needs You',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
@@ -201,7 +208,7 @@ async function needsUncached(database,workspaceId,actorId=null){
     actionLabel:'Verify provider outcome',sourceId:row.id,createdAt:row.created_at,updatedAt:row.completed_at,at:row.completed_at});
   const zone=calendar.timeZone,{readableTimes}=require('../web/presentation/time-zones');
   for(const item of items)for(const field of ['title','happened','why','recommendation'])if(item[field])item[field]=readableTimes(item[field],zone);
-  return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+  return items.filter(item=>!actorId||visible(item,actor));
 }
 
 async function brief(database,workspaceId,actorId=null,{includeLocationStock=true,includeAvailability=true}={}){

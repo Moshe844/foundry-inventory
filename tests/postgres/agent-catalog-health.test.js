@@ -4,6 +4,52 @@ process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
 const reviews=require('../../src/autopilot/job-reviews');
 
+test('plain-language brand watches follow new SKUs, fractional stock, recovery and the shared Starter rule cap',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
+  const module=require('../../src/autopilot/brand-watches'),notices=require('../../src/autopilot/operational-notices');
+  const catalog=require('../../src/domain/postgres-catalog-service'),inventory=require('../../src/domain/postgres-inventory-engine');
+  const uid=require('node:crypto').randomUUID,worker=require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate;
+  await subscribe('starter');
+  const add=async(code,brand)=>{
+    const product=await catalog.createItem(db,ctx,{name:'Measured '+code,baseCode:code,trackingMode:'quantity',unitLabel:'kg',quantityPrecision:2,quantityIncrement:'0.01'});
+    await db.query('INSERT INTO catalogue_item_facts(workspace_id,item_id,facts,created_at,updated_at) VALUES($1,$2,$3,now(),now())',[ctx.workspaceId,product.itemId,JSON.stringify({brand})]);
+    return product.skuIds[0];
+  };
+  const first=await add('WATCH-A','Nike'),receive=(skuId,quantity)=>inventory.receive(db,ctx,{skuId,quantity,locationId:f.location.id,idempotencyKey:uid()});
+  await receive(first,'19.75');
+  const root='/autopilot/reviews/brand-watches',page=await browser.get(root).expect(200);
+  await browser.post(root+'/rules').type('form').send({_csrf:f.csrf(page.text),instruction:'Tell me if any Nike item drops under 20'}).expect(303);
+  const read=()=>reviews.run(db,ctx,'brand-watches',{scheduled:true});
+  const seen=()=>db.query("SELECT reference,resolved,reminders FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=167 ORDER BY reference",[ctx.workspaceId]);
+  const evaluate=()=>db.transaction(c=>worker({id:uid(),workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,requestedByUser:true}},c));
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);const result=await read();
+    assert.deepEqual(result.rows.map(r=>[r.SKU,Number(r['On hand'])]),[['WATCH-A',19.75]]);
+    assert.match((await browser.get('/needs-you').expect(200)).text,/Stock below a brand watch level/);
+  }
+  await receive(first,'0.25');
+  await add('WATCH-B','NIKE');await add('WATCH-C','Other');
+  await evaluate();await notices.refresh(db,ctx.workspaceId);
+  assert.deepEqual((await read()).rows.map(r=>r.SKU),['WATCH-B']);
+  assert.deepEqual((await seen()).rows.map(r=>[r.reference,r.resolved,r.reminders]),[['WATCH-A',true,1],['WATCH-B',false,1]]);
+  await module.save(db,ctx,{instruction:'Notify me when any Nike item is at or below 20'});
+  assert.equal((await seen()).rows[0].reminders,2);
+  await assert.rejects(module.save(db,{...ctx,actorId:'missing'},{remove:'Nike'}),/owner/);
+  await assert.rejects(module.save(db,ctx,{instruction:'Tell me if any Unrecorded item drops under 5'}),/No active product/);
+  await subscribe('starter');
+  for(let i=0;i<4;i++){await add('FILL-'+i,'Brand '+i);await module.save(db,ctx,{instruction:'Tell me if any Brand '+i+' item drops under 1'});}
+  await assert.rejects(module.save(db,ctx,{instruction:'Tell me if any Other item drops under 1'}),/5 active rules/);
+  await module.save(db,ctx,{remove:'Nike'});
+  await module.save(db,ctx,{instruction:'Tell me if any Other item drops under 1'});
+  assert.equal((await seen()).rows.filter(r=>r.reference.startsWith('WATCH-')&&!r.resolved).length,1);
+  const native=require('../../src/manager/postgres-stock-threshold-alerts');
+  await db.query(`INSERT INTO stockchief_runtime.stock_threshold_rules(id,workspace_id,sku_id,threshold,comparator,metric,stated_as,approved_by_user_id)
+    VALUES('fraction-test',$1,$2,21,'below','on_hand','Below 21 kg',$3)`,[ctx.workspaceId,first,ctx.actorId]);
+  await receive(first,'0.75');await native.evaluate(db,{workspaceId:ctx.workspaceId});
+  const receipt=(await db.query("SELECT last_evaluation FROM stockchief_runtime.stock_threshold_rules WHERE id='fraction-test'")).rows[0].last_evaluation;
+  assert.equal(receipt.observed,20.75);assert.equal(receipt.conditionMet,true);
+});
+
 test('day-one health scores active product records and exposes exact fixes at each plan level',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t);
   const {db,ctx,subscribe,browser}=f,catalog=require('../../src/domain/postgres-catalog-service');

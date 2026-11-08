@@ -5,6 +5,10 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  ...require('../accounting/agent-report-packs').definitions,
+  {id:163,key:'service-levels',label:'Forecast accuracy, fill rate and on-time delivery',filterLabel:'Customer or supplier name',readPage:require('../forecasting/agent-service-levels').report},
+  {id:167,key:'brand-watches',label:'Watch stock levels by brand',sql:require('./brand-watches').matching,
+    summary:'Compares the physical quantity of each active SKU across locations against the saved watch for its product brand.'},
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
     summary:'Compare dispatch, physical receipt, recorded damage or loss and units still in transit. Overdue transfers get an in-app follow-up in Needs you.'},
   {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},

@@ -1,4 +1,11 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Brand watch instruction <input name="instruction" required maxlength="320" placeholder="Tell me if any Nike item drops under 20"></label>
+<button class="btn">Save watch</button></form>
+<% for(const w of result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<span><%= w.brand_name %> · <%= w.inclusive?'At or below':'Below' %> <%= w.threshold %> units</span>
+<button name="remove" value="<%= w.brand_name %>" class="btn">Remove watch</button></form><% } } %>
+<% if(result.download){ %><p><a class="btn" href="<%= result.download %>"><%= result.download.includes('/board-pack/')?'Download board pack with charts (PDF)':'Download stocktake and valuation (Excel)' %></a></p><% } %>
 <% if(result.specForm){ %><form method="post" action="/autopilot/reviews/supplier-specifications/prepare">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Approved supplier file <input required name="sourceImport" value="<%= filter %>"></label>
 <label>File page <input type="number" name="sourcePage" min="1" value="<%= result.page||1 %>" required></label>
