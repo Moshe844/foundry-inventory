@@ -705,6 +705,9 @@ async function accountMapping(database,ctx,row,args){
 
 const SPECS=Object.freeze([
   require('../purchasing/agent-regroup-orders').spec(24),require('../purchasing/agent-regroup-orders').spec(25),
+  {name:'catalog.fill_supplier_specs',description:'Fill missing barcodes, unit weights and dimensions from the exact approved supplier file. Skip unknown units, duplicate barcodes or conflicting evidence. Optionally restrict to a named SKU.',
+    fields:['sourceImport','sourcePage','sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
+    build:require('../domain/agent-supplier-specs').build,execute:require('../domain/agent-supplier-specs').execute,verify:require('../domain/agent-supplier-specs').verify},
   {name:'catalog.restore_margin',description:'Prepare the exact new selling price for a named SKU after its purchase cost increases, preserving the previous margin percentage. A person must approve every price change.',
     fields:['sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
     build:require('../pricing/agent-margin-prices').build,execute:require('../pricing/agent-margin-prices').execute,verify:require('../pricing/agent-margin-prices').verify},

@@ -7,7 +7,12 @@ const activities = new Map([
   ['supplier-response','File a supplier confirmation or document'],
   ['staff-request','Create a purchase order from an approved staff request'],
   ['invoice-match','Enter and match a supplier invoice from an agent proposal'],
-  ['accounting-export','Export and verify an agent-queued accounting journal']
+  ['accounting-export','Export and verify an agent-queued accounting journal'],
+  ['count-adjustment','Post a stock count difference within the owner’s limit'],
+  ['repeat-sale','Prepare a repeat customer order at current prices'],
+  ['margin-price','Calculate and record an individually approved price change'],
+  ['combine-purchases','Combine compatible purchase order drafts'],
+  ['split-purchase','Split a purchase order into separate drafts']
 ]);
 
 async function access(db, ctx) {
@@ -52,7 +57,22 @@ async function report(db,ctx,window='week') {
         AND a.result->>'status' IN ('OPEN','DISPUTED') GROUP BY b.id UNION ALL
     SELECT 'accounting-export',min(e.completed_at) FROM stockchief_runtime.provider_effects e
       WHERE e.workspace_id=$1 AND e.kind='accounting.journal.export' AND e.status='SUCCEEDED'
-        AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id
+        AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id UNION ALL
+    SELECT 'count-adjustment',r.approved_at FROM physical_count_reviews r
+      WHERE r.workspace_id=$1 AND r.status='COMPLETED' AND r.agent_decision->>'action'='post'
+        AND (r.result->>'changed')::int>0 UNION ALL
+    SELECT 'repeat-sale',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN sales_orders o ON o.workspace_id=a.workspace_id AND o.id=a.result->>'salesOrderId'
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='sales_order.repeat' GROUP BY o.id UNION ALL
+    SELECT 'margin-price',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN sku_prices p ON p.workspace_id=a.workspace_id AND p.id=a.result->>'id'
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='catalog.restore_margin' GROUP BY p.id UNION ALL
+    SELECT CASE a.action_type WHEN 'purchase_order.combine_drafts' THEN 'combine-purchases' ELSE 'split-purchase' END,a.executed_at
+      FROM stockchief_runtime.assistant_action_proposals a
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type IN ('purchase_order.combine_drafts','purchase_order.split_draft')
+        AND jsonb_array_length(a.result->'drafts')>0 AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(a.result->'drafts') d(id)
+          WHERE NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.workspace_id=a.workspace_id AND p.id=d.id))
   )
   SELECT activity,count(*)::integer AS n FROM events
   WHERE occurred>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND occurred<=CURRENT_TIMESTAMP GROUP BY activity`,[ctx.workspaceId,days])).rows;

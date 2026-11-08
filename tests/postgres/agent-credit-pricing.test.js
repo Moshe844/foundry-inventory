@@ -55,4 +55,6 @@ test('credit reviews reconcile partial billing and price proposals protect margi
   assert.equal((await reviews.run(db,ctx,'order-credit-limits',{filter:pending.orderNumber})).rows[0].Result,'Within limit');
   await db.query('UPDATE sales_orders SET discount_minor=discount_minor+25 WHERE id=$1',[partial.salesOrderId]);
   assert.ok((await reviews.run(db,ctx,'order-price-exceptions',{filter:partial.orderNumber})).rows.some(r=>r.Problem==='Order discount differs from approved quote'));
+  const roi=await require('../../src/autopilot/time-saved').report(db,ctx);
+  assert.equal(roi.rows.find(r=>r.key==='margin-price').count,1);
 });

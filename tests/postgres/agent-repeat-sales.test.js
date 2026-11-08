@@ -72,4 +72,6 @@ test('repeating last month’s order uses current prices, refuses ambiguity and 
     [{result:auto},{result:{status:'CLARIFY'}}]);
   const result=await assistant.executeMission(db,ctx,auto.proposal.id);
   assert.equal(result.result.pricing.totalMinor,2400);
+  const roi=await require('../../src/autopilot/time-saved').report(db,ctx);
+  assert.equal(roi.rows.find(r=>r.key==='repeat-sale').count,5);
 });

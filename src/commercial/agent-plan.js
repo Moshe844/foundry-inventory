@@ -65,12 +65,13 @@ function purchaseLimits(state) {
 
 async function requireWorkspaceJob(database, workspaceId, id, operation, {trained=false}={}) {
   const state = await accountState(database,workspaceId);
+  const plan=usesAgentTerms(state)?state.plan:null;
   let edi = false;
-  if (id === 185 && state.plan === 'pro') {
+  if (id === 185 && plan === 'pro') {
     const access=await require('./entitlements').meterState(database,{accountId:state.accountId,workspaceId},'agent_edi');
     edi=access.hardLimit !== null && access.hardLimit >= 1;
   }
-  requireJob(state.plan,id,operation,{trained,edi});
+  requireJob(plan,id,operation,{trained,edi});
   return state;
 }
 
@@ -118,6 +119,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
+  ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
@@ -141,6 +143,12 @@ function actionJob(name,operation,payload) {
   return actionJobs.get(name);
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
+const newAgentActions=new Set(['purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
+function actionPlan(state,name){
+  if(usesAgentTerms(state))return state.plan;
+  // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
+  return newAgentActions.has(name)?null:undefined;
+}
 const humanSteps=new Set([
   'catalog.restore_margin',
   'inventory.receive','purchase_order.receive','transfer.receive','customer_return.receive',
@@ -179,4 +187,4 @@ async function customerOrderNeedsPerson(db,workspaceId,capability,payload,propos
   return !known.rowCount;
 }
 
-module.exports = { actionJob,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
+module.exports = { actionJob,actionPlan,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };

@@ -18,7 +18,11 @@ function createPostgresOnboardingRouter(database) {
       [req.ctx.workspaceId]);
     if(state.isComplete && products.rows.length && req.query.add!=='1')return res.redirect(303,'/inventory');
     const entry=await exploration.state(database,req.ctx.workspaceId,req.account.id);
+    const agent=require('../../commercial/agent-plan');
+    const account=req.user?.role==='owner'?await agent.accountState(database,req.ctx.workspaceId):null;
+    const showCatalogHealth=account&&agent.usesAgentTerms(account)&&agent.permits(account.plan,200,'suggest');
     return res.page('onboarding/start',{title:'Get your inventory into StockChief',nav:'inventory',state,
+      showCatalogHealth,
       paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,canOperate:true,suppressBack:true,onboardingEntry:entry,
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));

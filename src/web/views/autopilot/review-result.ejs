@@ -1,4 +1,8 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.specForm){ %><form method="post" action="/autopilot/reviews/supplier-specifications/prepare">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Approved supplier file <input required name="sourceImport" value="<%= filter %>"></label>
+<label>File page <input type="number" name="sourcePage" min="1" value="<%= result.page||1 %>" required></label>
+<label>Limit to one SKU (optional) <input name="sku"></label><button class="btn">Review missing fields</button></form><% } %>
 <% if(result.purchaseGrouping){ %><form method="post" action="/autopilot/reviews/<%= result.purchaseGrouping %>/regroup"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <label><%= result.purchaseGrouping==='combine-draft-orders'?'Draft PO numbers, separated by commas':'Draft PO number' %> <input required name="sourceOrders"></label>
 <% if(result.purchaseGrouping==='split-draft-orders'){ %><label>Split by <select name="splitStrategy"><option value="warehouse">Receiving warehouse</option><option value="budget">Value per order</option><option value="delivery-date">Delivery date</option></select></label>
@@ -12,7 +16,7 @@
 <button name="mode" value="<%= result.overdueRule?'off':'on' %>" class="btn"><%= result.overdueRule?'Turn off overdue-order holds':'Enable overdue-order holds' %></button></form>
 <% } else { %><p>Automatic holds require Pro. <a href="/billing">Upgrade</a></p><% } %>
 <% } %>
-<% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label>Change in sales (%) <input type="number" name="change" step="0.01" min="-100" max="1000" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
+<% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label><%= result.changeLabel||'Change in sales (%)' %> <input type="number" name="change" step="0.01" min="<%= result.minChange??-100 %>" max="<%= result.maxChange??1000 %>" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
 <% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>f!=='link'); %><div class="card"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
 <% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %><% if(result.reviewPrices&&f==='Suggested selling price'){ %><form method="post" action="/autopilot/reviews/margin-prices/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= r.SKU %>"><button class="btn">Prepare price change</button></form><% } %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>">Open</a></td><% } %></tr><% }); %>
 </tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p>No matching records.</p><% } %>

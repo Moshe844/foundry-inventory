@@ -64,4 +64,9 @@ test('count rules post small differences once and require a physical recount abo
   await autonomy.setMode(db,ctx,{role:'owner'},'SUPERVISED');
   assert.equal((await reviews.get(db,ctx,(await reviews.prepare(db,ctx,input(12))).id)).status,'PENDING');
   assert.equal(await balance(),13);
+  const time=require('../../src/autopilot/time-saved');
+  const counted=report=>report.rows.find(r=>r.key==='count-adjustment');
+  assert.deepEqual([counted(await time.report(db,ctx)).count,counted(await time.report(db,ctx)).minutes],[2,null]);
+  await time.sample(db,ctx,{activity:'count-adjustment',manualMinutes:4,reviewMinutes:1,requestKey:'count-timing-01'});
+  assert.equal(counted(await time.report(db,ctx)).minutes,6);
 });

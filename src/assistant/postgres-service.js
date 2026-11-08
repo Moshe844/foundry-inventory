@@ -1773,7 +1773,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
   const agent=require('../commercial/agent-plan'), job=agent.actionJob(actionType,'draft',payload);
   if(job){
     const state=await agent.accountState(database,ctx.workspaceId);
-    if(agent.usesAgentTerms(state))agent.requireJob(state.plan,job,'draft');
+    const plan=agent.actionPlan(state,actionType);
+    if(plan!==undefined)agent.requireJob(plan,job,'draft');
   }
   if(actionType==='customer_invoice.create'){
     const quote=await require('../pricing/postgres-invoice-pricing').quote(database,ctx,payload);
@@ -2108,9 +2109,10 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,Boolean(missionPlanId));
     if(stopped)throw new ValidationError(stopped);
     const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
-    if(job && agentPolicy.usesAgentTerms(agentAccount)){
+    const tier=agentPolicy.actionPlan(agentAccount,contract.name);
+    if(job && tier!==undefined){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
-      agentPolicy.requireJob(agentAccount.plan,job,operation,{trained});
+      agentPolicy.requireJob(tier,job,operation,{trained});
     }
     if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');

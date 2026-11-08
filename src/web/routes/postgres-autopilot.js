@@ -115,6 +115,7 @@ function createPostgresAutopilotRouter(database){
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
+      if(req.params.job==='supplier-specifications')result.specForm=true;
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
@@ -139,6 +140,12 @@ function createPostgresAutopilotRouter(database){
       return {line:Number(match[1]),date:match[2]};
     }));
     const prepared=await assistant.prepareAction(database,req.ctx,'Review replacement purchase orders',args);
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/reviews/supplier-specifications/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await policy.requireWorkspaceJob(database,req.ctx.workspaceId,129,'draft');
+    const prepared=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Review the supplier file product specifications',
+      {action:'catalog.fill_supplier_specs',sourceImport:req.body.sourceImport,sourcePage:Number(req.body.sourcePage||1),sku:req.body.sku||undefined});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
   router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/purchase-requests',{

@@ -82,4 +82,7 @@ test('regrouping draft POs preserves money and units, blocks stale drafts and en
     [{result:splitAgain},{result:{status:'CLARIFY'}}]);
   const automaticSplit=await assistant.executeMission(db,ctx,splitAgain.proposal.id);
   assert.equal(automaticSplit.result.drafts.length,2);
+  const roi=await require('../../src/autopilot/time-saved').report(db,ctx);
+  assert.equal(roi.rows.find(r=>r.key==='split-purchase').count,4);
+  assert.equal(roi.rows.find(r=>r.key==='combine-purchases').count,2);
 });

@@ -111,7 +111,8 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   const time=require('../../src/autopilot/time-saved');
   const measured=await time.report(db,ctx);
   assert.equal(measured.minutes,null);
-  assert.deepEqual(measured.rows.map(r=>[r.key,r.count]),[['repeat-order',0],['supplier-response',5],['staff-request',0],['invoice-match',0],['accounting-export',0]]);assert.equal(measured.coverage,5);
+  assert.deepEqual(measured.rows.filter(r=>r.count).map(r=>[r.key,r.count]),[['supplier-response',5]]);
+  assert.equal(measured.coverage,5);
   await assert.rejects(time.report(db,{...ctx,actorId:'another-owner'}),/owner/);
   const timing={activity:'supplier-response',manualMinutes:7,reviewMinutes:1,requestKey:randomUUID()};
   await time.sample(db,ctx,timing);await time.sample(db,ctx,timing);
@@ -204,4 +205,10 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   assert.equal(agentPlan.purchaseLimits(await agentPlan.accountState(db,ctx.workspaceId)),null);
   await autonomy.pause(db,ctx,{role:'accountant'},'Leaving for the day');
   await assert.rejects(autonomy.resume(db,ctx,{role:'staff'}),/owner/);
+  await subscribe('growth');
+  const legacy=await db.query(`UPDATE account_subscriptions SET plan_version_id=(SELECT id FROM commercial_plan_versions
+    WHERE plan_id='growth' AND (configuration->>'offerId') IS DISTINCT FROM 'agent-v3' ORDER BY version_number LIMIT 1)
+    WHERE account_id=$1 RETURNING plan_version_id`,[owner.accountId]);
+  assert.ok(legacy.rows[0].plan_version_id);
+  await assert.rejects(time.report(db,ctx),e=>e.code==='entitlement_required');
 });

@@ -416,7 +416,8 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           const account=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
           const policy=require('../commercial/agent-plan'),job=policy.actionJob(contract.name,'automatic');
           const trained=job&&policy.allowance(account.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
-          const outsidePlan=job && policy.usesAgentTerms(account) && !policy.permits(account.plan,job,'automatic',{trained});
+          const tier=policy.actionPlan(account,contract.name);
+          const outsidePlan=job && tier!==undefined && !policy.permits(tier,job,'automatic',{trained});
           const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
           const stopped=await policy.stopped(database,ctx.workspaceId,account,contract.name,true);
           if(account.plan && (stopped || policy.needsPerson(contract.name) || outsidePlan || newCustomerOrAddress)){

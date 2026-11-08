@@ -5,6 +5,16 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},
+  {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
+  {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
+  {id:200,key:'catalog-health',label:'Check your catalog health score',readPage:require('./catalog-health').health},
+  {id:126,key:'catalog-fixes',label:'Find duplicates and missing product data',readPage:async(db,ctx,options)=>({
+    ...await require('./catalog-health').findings(db,ctx,options),summary:'Review the flagged fields against the product or supplier record.'})},
+  {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
+  {id:9,key:'slow-stock',label:'Find dead and slow stock',readPage:require('../forecasting/agent-excess-stock').slowStock},
+  {id:86,key:'clearance-plan',label:'Estimate proceeds from clearance stock',readPage:require('../forecasting/agent-excess-stock').clearance,
+    requiresChange:true,changeLabel:'Proposed markdown (%)',minChange:0,maxChange:100},
   {id:58,key:'timely-shipping-rates',label:'Find the least expensive service meeting the delivery date',readPage:require('../shipping/agent-delivery-rates').review},
   ...require('../sales/agent-credit-pricing'),
   ...require('../sales/agent-order-checks').definitions,
@@ -29,6 +39,11 @@ function offers(state){
 }
 
 const suggestions={
+  162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
+  126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
+  17:r=>r.SKU+' at '+r.Location+' · '+r.Review+'.',
+  9:r=>r.SKU+' at '+r.Location+' · '+r.Finding+'. '+r['Suggested next step'],
+  86:r=>'Review '+r['Clearance units']+' units of '+r.SKU+' at '+r.Location+' for clearance.',
   58:r=>r.Service?'Consider '+r.Service+' at '+r.Price+' for '+r.Shipment+'. Carrier arrival '+r['Carrier arrival']+'.':r.Shipment+' · '+r.Status+'.',
   54:r=>'Check order '+r.Order+' for '+r.Customer+'. '+r['Unreserved units']+' unreserved units and '+r['Overdue invoices']+' overdue invoices.',
   55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
@@ -69,10 +84,11 @@ async function run(db,ctx,key,options={}){
   let rows,summary=def.summary,more=false;
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
+    const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
     if(mode==='suggest'&&suggestions[def.id])return {label:def.label,summary:result.summary,
-      rows:result.rows.slice(0,1).map(row=>({Suggestion:suggestions[def.id](row)})),mode,more:false,page:1,filterable:true};
+      rows:result.rows.slice(0,1).map(row=>({Suggestion:suggestions[def.id](row)})),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
-      requiresChange:def.requiresChange,change:options.change,filterLabel:def.filterLabel};
+      ...inputs};
   }
   if(def.read){
     const result=await def.read(db,ctx,{today,adviceOnly:mode==='suggest'});
