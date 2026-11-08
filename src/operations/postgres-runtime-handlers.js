@@ -417,6 +417,7 @@ async function autopilotEvaluate(job,client){
   const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   if(!job.payload.afterSkuId){
+    await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,await require('../commercial/agent-plan').accountState(client,job.workspaceId));
   }

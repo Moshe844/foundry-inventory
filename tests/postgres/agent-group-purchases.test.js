@@ -2,6 +2,75 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const assistant=require('../../src/assistant/postgres-service');
+test('purchase threshold binds two authorized people to the exact amount, items and terms',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
+  const dual=require('../../src/purchasing/dual-approval'),auth=require('../../src/domain/postgres-auth-service');
+  const authz=require('../../src/actions/permissions');
+  const manager=await auth.createBusiness(db,{name:'Manager',businessName:'Separate inventory',email:randomUUID()+'@example.test',password:f.password});
+  const staff={workspaceId:ctx.workspaceId,actorId:'staff-'+randomUUID()};
+  await db.query(`INSERT INTO users(id,workspace_id,account_id,name,role,permissions,created_at)
+    VALUES($1,$2,$3,'Buyer','staff',$4,now()::text)`,[staff.actorId,ctx.workspaceId,manager.accountId,authz.encodeGrant([authz.VIEW_PURCHASING,authz.APPROVE_PO])]);
+  const seniorAccount=await auth.createBusiness(db,{name:'Senior buyer',businessName:'Other inventory',email:randomUUID()+'@example.test',password:f.password});
+  const senior='senior-'+randomUUID();
+  await db.query(`INSERT INTO users(id,workspace_id,account_id,name,role,permissions,po_approval_limit_minor,po_approval_currency,created_at)
+    VALUES($1,$2,$3,'Senior buyer','staff',$4,25000,'USD',now()::text)`,[senior,ctx.workspaceId,seniorAccount.accountId,authz.encodeGrant([authz.VIEW_PURCHASING,authz.APPROVE_PO])]);
+  await db.query("UPDATE users SET po_approval_limit_minor=2000,po_approval_currency='USD' WHERE id=$1",[staff.actorId]);
+  const settings='/autopilot/reviews/purchase-approval-threshold',save='/autopilot/purchase-approval-threshold';
+  for(const tier of ['starter','growth']){
+    await subscribe(tier);
+    const page=await browser.get(settings).expect(402);assert.match(page.text,/Pro/);
+    await assert.rejects(dual.configure(db,ctx,{revision:0,currency:'USD',amount:'10'}),e=>e.code==='entitlement_required');
+  }
+  await subscribe('pro');
+  const page=await browser.get(settings).expect(200);
+  await browser.post(save).type('form').send({_csrf:f.csrf(page.text),revision:0,currency:'USD',amount:'10'}).expect(303);
+  await assert.rejects(dual.configure(db,staff,{revision:1,currency:'USD',amount:'11'}),/owner/);
+  await assert.rejects(dual.configure(db,ctx,{revision:0,currency:'USD',amount:'11'}),/changed/);
+  const create=currency=>workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,currency,
+    idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantityUnits:2,unitCost:5}]});
+  const direct=(id,actor=ctx)=>workflows.approvePurchaseOrder(db,actor,id,{idempotencyKey:randomUUID()});
+  const exactly=await create('USD');assert.equal((await direct(exactly.purchaseOrderId)).status,'APPROVED');
+  const order=await create('USD'),id=order.purchaseOrderId,url='/purchasing/orders/'+id;
+  await db.query(`INSERT INTO purchase_order_charges(id,workspace_id,purchase_order_id,label,kind,amount_minor,created_at)
+    VALUES($1,$2,$3,'Freight','freight',1,now()::text)`,[randomUUID(),ctx.workspaceId,id]);
+  const digest=async()=>(await dual.view(db,ctx,id)).digest;
+  const ui=await browser.get(url).expect(200),original=await digest();assert.match(ui.text,/Two-person approval/);assert.match(ui.text,/\$10\.01/);
+  await assert.rejects(direct(id),/Two authorized people/);
+  const ownerSign=()=>browser.post(url+'/sign').type('form').send({_csrf:f.csrf(ui.text),digest:original}).expect(303);
+  await ownerSign();await ownerSign();assert.equal((await dual.view(db,ctx,id)).people.length,1);
+  const routing=require('../../src/purchasing/approval-routing'),inbox=require('../../src/projections/postgres-service');
+  const hasPurchase=async actor=>(await inbox.needs(db,ctx.workspaceId,actor)).some(entry=>entry.sourceId==='po-signature-'+id);
+  assert.equal(await hasPurchase(staff.actorId),true);assert.equal(await hasPurchase(senior),false);assert.equal(await hasPurchase(ctx.actorId),false);
+  await db.query("UPDATE stockchief_runtime.purchase_approval_signatures SET signed_at=now()-interval '25 hours' WHERE purchase_order_id=$1",[id]);
+  assert.equal(await hasPurchase(staff.actorId),false);assert.equal(await hasPurchase(senior),true);
+  const escalation=await browser.get('/autopilot/reviews/purchase-review-escalation').expect(200);
+  assert.match(escalation.text,/Senior buyer/);assert.match(escalation.text,/response window passed/);
+  await assert.rejects(workflows.placePurchaseOrder(db,ctx,id,{idempotencyKey:randomUUID()}),/Approve the purchase order/);
+  await assert.rejects(dual.sign(db,{workspaceId:manager.workspaceId,actorId:manager.userId},id,original),e=>['not_found','entitlement_required'].includes(e.code));
+  await db.query('UPDATE purchase_order_lines SET unit_cost=6,line_total=12 WHERE id=$1',[order.lineIds[0]]);
+  await assert.rejects(dual.sign(db,staff,id,original),/changed/);
+  const current=await digest();assert.notEqual(current,original);
+  await subscribe('growth');await assert.rejects(dual.sign(db,ctx,id,current),/Pro/);
+  assert.deepEqual(await routing.assignments(db,ctx.workspaceId),[]);await browser.get('/autopilot/reviews/purchase-review-routing').expect(402);
+  await assert.rejects(direct(id),/Pro/);assert.equal((await dual.view(db,ctx,id)).locked,true);
+  await subscribe('enterprise');
+  await db.query("UPDATE users SET po_approval_limit_minor=1200,po_approval_currency='USD' WHERE id=$1",[staff.actorId]);
+  await assert.rejects(dual.sign(db,staff,id,current),/above your/);
+  await db.query('UPDATE users SET po_approval_limit_minor=1300 WHERE id=$1',[staff.actorId]);
+  assert.equal((await dual.sign(db,staff,id,current)).status,'WAITING_FOR_SECOND_SIGNER');
+  await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[staff.actorId,authz.encodeGrant([authz.VIEW_PURCHASING])]);
+  assert.equal((await dual.sign(db,ctx,id,current)).status,'WAITING_FOR_SECOND_SIGNER');
+  await assert.rejects(direct(id),/Two authorized people/);
+  await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[staff.actorId,authz.encodeGrant([authz.VIEW_PURCHASING,authz.APPROVE_PO])]);
+  assert.equal((await dual.sign(db,staff,id,current)).status,'APPROVED');
+  assert.equal((await dual.sign(db,staff,id,current)).status,'APPROVED');
+  assert.deepEqual(await routing.assignments(db,ctx.workspaceId),[]);
+  assert.equal((await db.query("SELECT count(*)::int n FROM purchase_order_events WHERE purchase_order_id=$1 AND event='approved'",[id])).rows[0].n,1);
+  await subscribe('starter');await assert.rejects(workflows.placePurchaseOrder(db,ctx,id,{idempotencyKey:randomUUID()}),/Pro/);
+  await assert.rejects(dual.guardOrderMessage(db,ctx.workspaceId,id),/Pro/);
+  await subscribe('pro');assert.equal((await workflows.placePurchaseOrder(db,ctx,id,{idempotencyKey:randomUUID()})).status,'ORDERED');
+  const foreign=await create('EUR');await assert.rejects(direct(foreign.purchaseOrderId),/Two authorized people/);
+});
 test('regrouping draft POs preserves money and units, blocks stale drafts and enforces every tier',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:10});
   const {db,ctx,subscribe,workflows,browser}=f,sku=f.item.skuIds[0];

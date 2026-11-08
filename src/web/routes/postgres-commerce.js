@@ -679,10 +679,11 @@ function createPostgresCommerceRouter(database,options={}){
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
+    const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
-      permissions:can,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      permissions:can,dualApproval,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));
@@ -709,6 +710,8 @@ function createPostgresCommerceRouter(database,options={}){
     if(!page.order.isEditable)throw new ValidationError('Only a draft purchase order can be repriced.');
     const prices=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
     await database.transaction(async(client)=>{
+      const order=(await client.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[req.ctx.workspaceId,req.params.id])).rows[0];
+      if(!order||!['DRAFT','AWAITING_APPROVAL'].includes(order.status))throw new ValidationError('Only a draft purchase order can be repriced.');
       for(const line of page.order.lines){
         if(!Object.prototype.hasOwnProperty.call(prices,line.id))continue;
         const unitCost=Number(prices[line.id]);
@@ -803,6 +806,11 @@ function createPostgresCommerceRouter(database,options={}){
     await workflows.approvePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'po-approve')});
     req.flash('success','Purchase order approved. It has not been sent yet.');
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
+  }));
+  router.post('/purchasing/orders/:id/sign',requirePermission(permissions.APPROVE_PO,'sign purchase orders'),asyncRoute(async(req,res)=>{
+    const result=await require('../../purchasing/dual-approval').sign(database,req.ctx,req.params.id,req.body.digest);
+    req.flash('success',result.status==='APPROVED'?'Two people have signed. The purchase order is approved.':'Your signature is recorded. A second authorized person must review this order.');
+    res.redirect(303,'/purchasing/orders/'+encodeURIComponent(req.params.id));
   }));
 
   router.post('/purchasing/orders/:id/place',requirePermission(permissions.APPROVE_PO,'place purchase orders'),asyncRoute(async(req,res)=>{

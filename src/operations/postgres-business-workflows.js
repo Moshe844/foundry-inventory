@@ -283,6 +283,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
       WHERE purchase_order_id=$1 AND workspace_id=$2 AND unit_cost IS NULL`, [purchaseOrderId, ctx.workspaceId]);
     if (Number(missing.rows[0].count)) throw new ValidationError('Every purchase-order line needs an approved cost.');
     await require('./postgres-team-access').assertPurchaseApproval(client,ctx,order);
+    await require('../purchasing/dual-approval').assertApproved(client,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='APPROVED',approved_by_user_id=$3,
       approved_at=COALESCE(approved_at,$4),updated_at=$4 WHERE id=$1 AND workspace_id=$2`,
@@ -304,6 +305,7 @@ async function placePurchaseOrder(database, rawContext, purchaseOrderId, input) 
     const order = await requireRow(client, `SELECT * FROM purchase_orders
       WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, [purchaseOrderId, ctx.workspaceId], 'That purchase order was not found.');
     if (!['APPROVED', 'ORDERED'].includes(order.status)) throw new ValidationError('Approve the purchase order before placing it.');
+    if(order.status==='APPROVED')await require('../purchasing/dual-approval').assertApproved(client,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='ORDERED',ordered_at=COALESCE(ordered_at,$3),updated_at=$3
       WHERE id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId, at]);

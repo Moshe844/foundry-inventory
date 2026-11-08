@@ -32,11 +32,13 @@ async function runtimeFailures(database,workspaceId){
 
 function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
-    const [items,notices]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
+      actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
+      actorId?require('../operations/agent-count-tasks').inbox(database,workspaceId,actorId):[],
     ]);
-    return items.concat(notices).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent

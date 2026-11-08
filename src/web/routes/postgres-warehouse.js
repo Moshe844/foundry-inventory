@@ -34,8 +34,26 @@ function createPostgresWarehouseRouter(database){
     res.redirect(303,'/warehouse/counts/reviews/'+req.params.id);
   }));
   const campaigns=require('../../operations/postgres-count-campaigns');
+  const tasks=require('../../operations/agent-count-tasks');
+  router.post('/warehouse/count-assignments',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.assign(database,req.ctx,req.body);res.redirect(303,'/autopilot/reviews/staff-count-progress');
+  }));
+  router.post('/warehouse/count-schedules',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.schedule(database,req.ctx,req.body);res.redirect(303,'/autopilot/reviews/staff-count-lists');
+  }));
+  router.post('/warehouse/counts/campaigns/:id/staff-quantities',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.importObserved(database,req.ctx,req.params.id,req.body.revision);res.redirect(303,'/warehouse/counts/campaigns/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/warehouse/counts/campaigns',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{const created=await campaigns.create(database,req.ctx,req.body);return res.redirect(303,'/warehouse/counts/campaigns/'+created.id);}));
-  router.get('/warehouse/counts/campaigns/:id',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>res.page('warehouse/count-campaign',{title:'Warehouse count worksheet',nav:'inventory',...await campaigns.page(database,req.ctx,req.params.id,req.query)})));
+  router.get('/warehouse/counts/campaigns/:id',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
+    const data=await campaigns.page(database,req.ctx,req.params.id,req.query);
+    let observed=false;
+    if(req.user.role==='owner'&&data.campaign.status==='DRAFT'&&(await database.query('SELECT 1 FROM stockchief_runtime.agent_count_tasks WHERE workspace_id=$1 AND campaign_id=$2 AND observed_at IS NOT NULL',[req.ctx.workspaceId,req.params.id])).rowCount){
+      const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId);
+      observed=policy.usesAgentTerms(state)&&policy.permits(state.plan,177,'draft');
+    }
+    res.page('warehouse/count-campaign',{title:'Warehouse count worksheet',nav:'inventory',...data,observed});
+  }));
   router.post('/warehouse/counts/campaigns/:id/save',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{const result=await campaigns.save(database,req.ctx,req.params.id,req.body);if(req.is('application/json'))return res.json(result);return res.redirect(303,'/warehouse/counts/campaigns/'+req.params.id);}));
   router.get('/warehouse/counts/campaigns/:id/export',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
    await campaigns.page(database,req.ctx,req.params.id);res.type('text/csv').attachment('stock-count-worksheet.csv');const csv=value=>{let text=String(value??'');if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};

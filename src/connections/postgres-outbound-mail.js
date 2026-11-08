@@ -141,6 +141,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(prepared.purchaseOrderId){
     const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id,status FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
     if(!order)throw new ValidationError('The supplier message must refer to this supplier’s purchase order.');
+    await require('../purchasing/dual-approval').guardOrderMessage(client,ctx.workspaceId,order.id);
     if(!inserted.rowCount && (message.purchase_order_id!==order.id || message.supplier_id!==prepared.recipientId))
       throw new ValidationError('This send reference already belongs to a different message.');
     if(inserted.rowCount){
@@ -213,6 +214,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
+        if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
         if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;

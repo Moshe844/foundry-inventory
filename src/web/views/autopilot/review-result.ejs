@@ -1,4 +1,21 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.countAssignments){ const config=result.countAssignments; %><form method="post" action="/warehouse/count-assignments">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= config.requestKey %>">
+<label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>"><%= loc.name %></option><% } %></select></label>
+<label>Person who counts <select name="counterId" required><% for(const p of config.people){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
+<button class="btn">Assign one count</button>
+<details><summary>Repeat this assignment</summary><p>StockChief assigns the next list when routine work is enabled and the previous worksheet has closed.</p>
+<label>First count <input type="date" name="firstDay" value="<%= config.today %>"></label>
+<label>Days between counts <input type="number" name="days" min="1" max="366" value="7"></label><button class="btn" formaction="/warehouse/count-schedules">Save schedule</button></details></form>
+<% for(const schedule of config.schedules){ %><form method="post" action="/warehouse/count-schedules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= schedule.id %>">
+<p><%= schedule.name %> · <%= schedule.counter %> · every <%= schedule.interval_days %> days · next <%= schedule.due %></p>
+<% if(schedule.last_issue){ %><p><%= schedule.last_issue %></p><% } %><button class="btn" name="remove" value="1">Stop scheduled count</button></form><% } } %>
+<% if(result.purchaseThreshold){ const rule=result.purchaseThreshold; %><form method="post" action="/autopilot/purchase-approval-threshold">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+<label>Currency <input required name="currency" minlength="3" maxlength="3" placeholder="USD" value="<%= rule.currency||'' %>"></label>
+<label>Purchase amount above which two people must sign <input name="amount" inputmode="decimal" value="<%= rule.amount %>"></label>
+<label>Hours before passing an unanswered request to the next eligible reviewer <input type="number" min="1" max="720" name="escalationHours" value="<%= rule.escalation_hours %>" required></label>
+<p>Leave the amount empty to turn the rule off.</p><button class="btn">Save threshold</button></form><% } %>
 <% if(result.watchSettings){ const w=result.watchSettings; %><form method="post" action="/autopilot/alert-settings/<%= w.job %>">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= w.revision %>">
 <% if(w.job===170){ %><label>Alert below this gross margin (%) <input name="marginPct" type="number" min="0" max="100" step=".01" value="<%= w.margin_pct??'' %>"></label>

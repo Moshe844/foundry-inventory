@@ -3,6 +3,13 @@ const express=require('express'),access=require('../../operations/postgres-wareh
 const {asyncRoute,requireAuth,requirePermission}=require('../middleware'),{newId}=require('../../lib/util');
 function createRouter(db){
  const router=express.Router();router.use(requireAuth);
+ const tasks=require('../../operations/agent-count-tasks');
+ router.get('/warehouse/my-counts/:id',requirePermission(permissions.COUNT_STOCK,'perform stock counts'),asyncRoute(async(req,res)=>{
+  res.render('warehouse/my-count',{...await tasks.page(db,req.ctx,req.params.id),restricted:await access.scope(db,req.ctx)!==null});
+ }));
+ router.post('/warehouse/my-counts/:id',requirePermission(permissions.COUNT_STOCK,'perform stock counts'),asyncRoute(async(req,res)=>{
+  await tasks.record(db,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/my-counts/'+encodeURIComponent(req.params.id));
+ }));
  router.get('/warehouse/stock',asyncRoute(async(req,res)=>{
   await require('../../commercial/enforcement').workspace(db,req.ctx.workspaceId,'inventory.core');
   const roots=await access.scope(db,req.ctx),locations=await access.locations(db,req.ctx.workspaceId,roots);
@@ -13,6 +20,7 @@ function createRouter(db){
    WHERE s.workspace_id=$1 AND (b.sku_id IS NOT NULL OR $4<>'') AND s.id>$3 AND s.is_active=1 AND i.is_active=1
    AND ($4='' OR s.code ILIKE '%'||$4||'%' OR s.barcode=$4 OR i.name ILIKE '%'||$4||'%' OR s.variant_label ILIKE '%'||$4||'%') ORDER BY s.id LIMIT 101`,[req.ctx.workspaceId,locationId,after,q])).rows:[];
   res.locals.flash=req.session.flash||[];req.session.flash=[];
+  res.locals.countTasks=permissions.can(req.user,permissions.COUNT_STOCK)?await tasks.inbox(db,req.ctx.workspaceId,req.ctx.actorId):[];
   return res.render('warehouse/stock-access',{title:'Warehouse stock',locations,locationId,q,rows:rows.slice(0,100),next:rows.length>100?rows[99].id:null,operationKey:newId('warehouse-receipt'),canReceive:permissions.can(req.user,permissions.OPERATE),canCount:permissions.can(req.user,permissions.ADJUST),message:String(req.query.saved||'')==='1'?'Stock received with its purchase cost.':String(req.query.saved||'')==='count'?'Count saved for an owner to review.':null,restricted:roots!==null});
  }));
  router.post('/warehouse/stock/receive',requirePermission(permissions.OPERATE,'receive stock'),asyncRoute(async(req,res)=>{
@@ -29,6 +37,8 @@ function createRouter(db){
 }
 function protection(db){const router=createRouter(db);return async(req,res,next)=>{
  try{
+  const countPath=/^\/warehouse\/my-counts\/[A-Za-z0-9_-]+$/.test(req.path)&&['GET','POST'].includes(req.method);
+  if(countPath)return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
