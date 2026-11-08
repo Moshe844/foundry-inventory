@@ -24,3 +24,27 @@ test('the combined release preserves historical authority, gates new terms and m
  await require('../../src/commercial/storage-capacity').baseline(db,ctx.workspaceId,'stockchief_runtime.agent_playbook_runs');
  const measured=(await db.query("SELECT u.baseline_bytes::text bytes,(SELECT sum(octet_length(convert_to(to_jsonb(t)::text,'UTF8')))::text FROM stockchief_runtime.agent_playbook_runs t WHERE workspace_id=$1) exact FROM commercial_storage_usage u WHERE u.workspace_id=$1 AND u.relation='stockchief_runtime.agent_playbook_runs'::regclass",[ctx.workspaceId])).rows[0];assert.equal(measured.bytes,measured.exact);assert(Number(measured.bytes)>4096);
 });
+
+test('locked agent destinations explain access without granting a write or changing accepted terms',{timeout:120000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner}=f,request=require('supertest');
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
+ f.cleanup(()=>app.locals.sessionStore.close());
+ const client=request.agent(app),csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
+ const login=await client.get('/login');await client.post('/login').type('form').send({_csrf:csrf(login.text),email:f.email,password:f.password});
+ for(const path of ['/purchasing/requests','/autopilot/time-saved']){
+  const page=await client.get(path);assert.equal(page.status,200);assert.match(page.text,/data-agent-plan-locked/);assert.match(page.text,/Review plans and terms/);
+ }
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status) VALUES($1,$2,'starter','agent-v3:starter','COMP')",[randomUUID(),owner.accountId]);
+ const locked=await client.get('/purchasing/requests');assert.match(locked.text,/Growth plan/);
+ const denied=await client.post('/purchasing/requests').type('form').send({_csrf:csrf(locked.text),sku:'none',reason:'Denied purchase request',quantity:1,locationId:f.location.id,requestKey:'locked-request-1'});
+ assert.equal(denied.status,303); // HTML errors return to the form with a message.
+ await assert.rejects(require('../../src/purchasing/agent-purchase-requests').submit(db,ctx,{sku:'none',reason:'Denied purchase request',quantity:1,locationId:f.location.id,requestKey:'locked-request-2'}),e=>e.code==='entitlement_required');
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.purchase_requests WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+ await db.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id='approved-2026-11-02:pro' WHERE account_id=$1",[owner.accountId]);
+ assert.match((await client.get('/purchasing/requests')).text,/data-agent-plan-locked/);
+ assert.equal((await db.query('SELECT plan_version_id FROM account_subscriptions WHERE account_id=$1',[owner.accountId])).rows[0].plan_version_id,'approved-2026-11-02:pro');
+ await db.query("UPDATE account_subscriptions SET plan_version_id='agent-v3:pro' WHERE account_id=$1",[owner.accountId]);
+ for(const path of ['/purchasing/requests','/autopilot/time-saved']){
+  const page=await client.get(path);assert.equal(page.status,200);assert.doesNotMatch(page.text,/data-agent-plan-locked/);
+ }
+});

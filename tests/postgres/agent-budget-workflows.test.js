@@ -27,7 +27,8 @@ test('monthly buying capacity counts a partially billed order once and checks th
     if(tier==='starter'){
       assert.deepEqual(Object.keys(actual.rows[0]),['Suggestion']);
       await assert.rejects(budgets.save(db,ctx,{...input,revision:1}),denied);
-      assert.ok((await browser.get('/purchasing/budgets')).status>=400);
+      const locked=await browser.get('/purchasing/budgets').expect(200);
+      assert.match(locked.text,/requires the Growth plan/);assert.doesNotMatch(locked.text,/name="amount"/);
     }else{
       const usd=actual.rows.find(r=>r.Currency==='USD');
       assert.equal(usd['Billed purchases'],'$2.00');assert.equal(usd['Budget less actual'],'$8.00');
@@ -35,7 +36,8 @@ test('monthly buying capacity counts a partially billed order once and checks th
     }
     if(tier!=='enterprise'){
       await assert.rejects(reviews.run(db,ctx,'open-to-buy',{scheduled:true}),denied);
-      assert.ok((await browser.get('/autopilot/reviews/open-to-buy')).status>=400);
+      const locked=await browser.get('/autopilot/reviews/open-to-buy').expect(402);
+      assert.match(locked.text,/requires the Custom plan/);assert.doesNotMatch(locked.text,/\$6\.00/);
     }else{
       const capacity=await reviews.run(db,ctx,'open-to-buy',{filter:month,scheduled:true});
       const usd=capacity.rows.find(r=>r.Currency==='USD'),eur=capacity.rows.find(r=>r.Currency==='EUR');
