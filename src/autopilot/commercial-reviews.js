@@ -26,9 +26,10 @@ module.exports=[
       AND l.quantity_units>l.quantity_received_units AND ($2='' OR lower(s.code)=lower($2) OR lower(v.name)=lower($2))
     ORDER BY p.expected_date,p.id,l.line_number`,usesDate:true},
   {id:78,key:'customer-check-in',label:'Draft check-ins for inactive customers',summary:'Customers with at least two shipped orders and no shipment in 90 days. Review the draft before contacting anyone.',sql:`
-    WITH sales AS (SELECT o.customer_id,max(h.shipped_at::timestamptz)::date AS last_sale,count(DISTINCT o.id) AS n
+    WITH sales AS (SELECT o.customer_id,max(h.shipped_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC'))::date AS last_sale,count(DISTINCT o.id) AS n
       FROM sales_orders o JOIN sales_shipments h ON h.sales_order_id=o.id AND h.workspace_id=o.workspace_id
-      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.shipped_at IS NOT NULL GROUP BY o.customer_id)
+      JOIN workspaces w ON w.id=o.workspace_id JOIN accounts a ON a.id=w.owner_account_id
+      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.customer_return_id IS NULL AND h.shipped_at IS NOT NULL GROUP BY o.customer_id)
     SELECT c.name AS "Customer",s.last_sale::text AS "Last shipment",s.n AS "Previous orders",
       'Hello '||c.name||', our last shipment to you was on '||s.last_sale::text||'. Would you like an updated stock list or help planning your next order?' AS "Draft"
     FROM sales s JOIN customers c ON c.id=s.customer_id AND c.record_state='ACTIVE'
@@ -69,11 +70,22 @@ module.exports=[
     CROSS JOIN LATERAL jsonb_array_elements(b.exception_detail::jsonb->'differences') d
     WHERE b.workspace_id=$1 AND b.status='DISPUTED' AND ($2='' OR lower(s.name)=lower($2) OR lower(b.supplier_invoice_number)=lower($2))
     ORDER BY b.issue_date,b.id,(d->>'line')::integer NULLS LAST,d->>'kind'`},
-  {id:105,key:'supplier-credits',label:'Trace supplier credits to their bills',summary:'Posted supplier credit notes with their source bill and posting reference. For returns still awaiting credit, open supplier returns.',sql:`
-    SELECT s.name AS "Supplier",coalesce(c.credit_number,'Unnumbered credit') AS "Credit",c.credit_date AS "Credit date",c.amount_minor AS "Amount",
-      b.currency AS "Currency",b.bill_number AS "Bill",b.status AS "Bill status",'/money/bills/'||b.id AS link
-    FROM accounting_supplier_credits c JOIN suppliers s ON s.id=c.supplier_id JOIN accounting_supplier_bills b ON b.workspace_id=c.workspace_id AND b.id=c.supplier_bill_id
-    WHERE c.workspace_id=$1 AND ($2='' OR lower(s.name)=lower($2) OR lower(c.credit_number)=lower($2)) ORDER BY c.credit_date DESC,c.id`},
+  {id:105,key:'supplier-credits',label:'Trace supplier credits to their bills',summary:'Returns awaiting a credit appear first, followed by posted credit notes and the supplier bills they reduced.',sql:`
+    WITH credits AS (
+      SELECT s.name AS supplier,r.return_number AS reference,'Awaiting credit' AS status,r.expected_credit_minor AS amount,
+        b.currency,b.bill_number AS bill,r.shipped_at::timestamptz AS recorded,'/supplier-returns/'||r.id AS link,0 AS priority
+      FROM supplier_returns r JOIN suppliers s ON s.id=r.supplier_id AND s.workspace_id=r.workspace_id
+      LEFT JOIN accounting_supplier_bills b ON b.workspace_id=r.workspace_id AND b.id=r.supplier_bill_id
+      WHERE r.workspace_id=$1 AND r.status='AWAITING_CREDIT'
+      UNION ALL SELECT s.name,coalesce(c.credit_number,'Unnumbered credit'),
+        CASE WHEN r.status='CREDIT_MISMATCH' THEN 'Applied · amount differs from expected' ELSE 'Applied to bill' END,
+        c.amount_minor,b.currency,b.bill_number,c.created_at::timestamptz,'/money/bills/'||b.id,1
+      FROM accounting_supplier_credits c JOIN suppliers s ON s.id=c.supplier_id AND s.workspace_id=c.workspace_id
+      JOIN accounting_supplier_bills b ON b.workspace_id=c.workspace_id AND b.id=c.supplier_bill_id
+      LEFT JOIN supplier_returns r ON r.workspace_id=c.workspace_id AND r.supplier_credit_id=c.id WHERE c.workspace_id=$1)
+    SELECT supplier AS "Supplier",reference AS "Credit or return",status AS "Status",amount AS "Amount",
+      currency AS "Currency",bill AS "Bill",link FROM credits
+    WHERE ($2='' OR lower(supplier)=lower($2) OR lower(reference)=lower($2)) ORDER BY priority,recorded DESC,reference,link`},
   {id:148,key:'rising-demand',label:'Find items selling faster',summary:'Shipped units in the last seven days compared with the preceding seven days. Products with no earlier shipments are identified separately.',sql:`
     WITH demand AS (SELECT l.sku_id,coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '7 days'),0) AS current_units,
       coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '7 days'),0) AS previous_units FROM sales_shipments h

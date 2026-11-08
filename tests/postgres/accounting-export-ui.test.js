@@ -14,6 +14,13 @@ const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
 
 test('real Chromium governs PostgreSQL accounting export and a worker posts each journal exactly once',
   {timeout:240000},async(context)=>{
+    const previousClient=process.env.QUICKBOOKS_CLIENT_ID,previousSecret=process.env.QUICKBOOKS_CLIENT_SECRET;
+    process.env.QUICKBOOKS_CLIENT_ID='offline-wire-fixture';
+    process.env.QUICKBOOKS_CLIENT_SECRET='offline-wire-fixture';
+    context.after(()=>{
+      if(previousClient===undefined)delete process.env.QUICKBOOKS_CLIENT_ID;else process.env.QUICKBOOKS_CLIENT_ID=previousClient;
+      if(previousSecret===undefined)delete process.env.QUICKBOOKS_CLIENT_SECRET;else process.env.QUICKBOOKS_CLIENT_SECRET=previousSecret;
+    });
     let providerWrites=0,refreshes=0;let mode='success';const posted=[];
     const nativeQbo=require('../../src/connections/providers/quickbooks'),oldFetch=global.fetch,oldEnvironment=process.env.QUICKBOOKS_ENVIRONMENT,remoteJournals=new Map();process.env.QUICKBOOKS_ENVIRONMENT='sandbox';
     global.fetch=async(value,options={})=>{
@@ -80,6 +87,7 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='books-pg@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
+    await database.query("UPDATE accounts SET created_at=(now()-interval '21 days')::text WHERE id=(SELECT owner_account_id FROM workspaces WHERE id=$1)",[ctx.workspaceId]);
     async function askAndApprove(message,capability,args){
       askPlans.set(message,{capability,args});
       const prior=(await database.query('SELECT id FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1',[ctx.workspaceId])).rows[0]?.id;
@@ -215,5 +223,14 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     assert.equal((await jobs.get(database,mismatchJob.id,ctx.workspaceId)).status,'COMPLETED','A verified recovery must clear the active dead letter without re-executing it');
     assert.equal((await database.query("SELECT count(*) AS n FROM stockchief_runtime.job_events WHERE job_id=$1 AND event_type='VERIFICATION_RECOVERED'",[mismatchJob.id])).rows[0].n,'1');
     const repeat=await require('../../src/accounting/postgres-integration-sync').verifyExistingExport(database,ctx,effectId);assert.equal(repeat.replayed,true);assert.equal(providerWrites,3);
+    const timeSaved=await require('../../src/autopilot/time-saved').report(database,ctx,'month');
+    assert.equal(timeSaved.rows.find(r=>r.key==='accounting-export').count,1,'Only the verified agent-queued journal earns time credit');
+    const guarded=await ledger.post(database,ctx,{postingDate:'2026-09-23',sourceKey:'accounting-export-plan-change',description:'Queued before downgrade',sourceType:'manual_certification',createdByType:'USER',lines:[
+      {accountKey:'CASH',debitMinor:25},{accountKey:'OPERATING_EXPENSE',creditMinor:25}]});
+    const queued=await sync.queuePending(database,ctx,connectionId,{entryIds:[guarded.entry.id]},{agentRequested:true});
+    assert.equal(queued.effects.length,1);assert.equal(queued.effects[0].payload.agentExport,true);
+    await database.query("UPDATE account_subscriptions SET plan_id='growth',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE') WHERE account_id=(SELECT owner_account_id FROM workspaces WHERE id=$1)",[ctx.workspaceId]);
+    await assert.rejects(sync.executeExportEffect(database,ctx.workspaceId,queued.effects[0].id,{provider:adapter}),e=>e.code==='entitlement_required');
+    assert.equal(providerWrites,3,'A queued agent export may not reach the provider after downgrade');
     assert.deepEqual(errors,[]);
   });

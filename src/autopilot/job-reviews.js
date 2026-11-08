@@ -5,7 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
-  ...require('./inventory-reviews'),...require('./commercial-reviews'),...require('./traceability-reviews'),
+  ...require('./inventory-reviews'),...require('./planning-reviews'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},
   {id:108,key:'early-discounts',label:'Find early-payment discounts',read:(db,ctx,options)=>cash.payments(db,ctx,{...options,discountsOnly:true})},
   {id:109,key:'cash-forecast',label:'Forecast thirteen weeks of cash flow',read:cash.forecast}
@@ -34,7 +34,7 @@ const suggestions={
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
   91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',
   99:r=>'Review supplier invoice '+r.Invoice+' with '+r.Supplier+'. '+r.Problem,
-  105:r=>'Check supplier credit '+r.Credit+' against bill '+r.Bill+'.',
+  105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
   148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
 };
@@ -51,6 +51,11 @@ async function run(db,ctx,key,options={}){
   if(def.requiresFilter && !filter) return {label:def.label,summary:'Enter the exact '+(def.prompt||(def.id===195?'serial number':'SKU'))+' to look up.',rows:[],mode,filterable:true};
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
   let rows,summary=def.summary,more=false;
+  if(def.readPage){
+    const result=await def.readPage(db,ctx,{filter,page,change:options.change});
+    return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      requiresChange:def.requiresChange,change:options.change};
+  }
   if(def.read){
     const result=await def.read(db,ctx,{today,adviceOnly:mode==='suggest'});
     rows=result.rows;summary=result.summary;
@@ -72,7 +77,7 @@ async function run(db,ctx,key,options={}){
     }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
-  if(def.id===105)for(const row of rows){row.Amount=money.format(row.Amount,row.Currency);}
+  if(def.id===105)for(const row of rows){row.Amount=row.Amount!=null&&row.Currency?money.format(row.Amount,row.Currency):null;}
   if(def.id===196)for(const row of rows) row.link='/autopilot/lots?'+new URLSearchParams({sku:row.SKU,lot:row.Lot});
   if(mode==='suggest' && suggestions[def.id]){
     rows=rows.slice(0,1).map(r=>({Suggestion:suggestions[def.id](r)}));more=false;

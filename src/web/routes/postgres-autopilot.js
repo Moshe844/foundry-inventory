@@ -82,7 +82,7 @@ function createPostgresAutopilotRouter(database){
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page});
+    const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
     res.page('autopilot/review-result',{title:result.label,nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},result,filter:req.query.filter||''});
   }));
   router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/purchase-requests',{

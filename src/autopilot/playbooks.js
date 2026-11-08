@@ -13,7 +13,7 @@ const steps=new Map([
  ['combined-stock',{job:125,label:'Summarize stock across owned inventories'}],
 ]);
 const reviews=require('./job-reviews');
-for(const d of reviews.definitions.filter(d=>!d.requiresFilter)){
+for(const d of reviews.definitions.filter(d=>!d.requiresFilter&&!d.requiresChange)){
   steps.set(d.key,{job:d.id,label:d.label,review:true});
 }
 const limits={growth:10,pro:100,enterprise:Infinity};

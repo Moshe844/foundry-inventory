@@ -96,6 +96,14 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   const saved=(await db.query('SELECT p.status,l.quantity_units FROM purchase_orders p JOIN purchase_order_lines l ON l.purchase_order_id=p.id WHERE p.id=$1',[po])).rows;
   assert.equal(saved.length,1);assert.equal(saved[0].status,'DRAFT');assert.equal(Number(saved[0].quantity_units),3);
   assert.equal(await f.balance(),4);assert.equal((await db.query('SELECT count(*) AS n FROM accounting_payments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+  const roi=require('../../src/autopilot/time-saved');
+  const sample={activity:'staff-request',manualMinutes:8,reviewMinutes:2,requestKey:randomUUID()};
+  await roi.sample(db,ctx,sample);await roi.sample(db,ctx,sample);
+  const monthly=await roi.report(db,ctx,'month');
+  assert.deepEqual(monthly.rows.find(r=>r.key==='staff-request'),{key:'staff-request',label:'Create a purchase order from an approved staff request',count:1,samples:1,minutes:6});
+  assert.deepEqual(monthly.amounts,[{currency:'USD',flagged:'$1.50',applied:'$0.00'}]);assert.equal(monthly.planPrice,'$499.00');
+  const reportPage=await browser.get('/autopilot/time-saved?period=month').expect(200);
+  assert.match(reportPage.text,/\$1\.50/);assert.match(reportPage.text,/\$499\.00/);
   // Record two more received orders. Each is one lead observation even when split across deliveries.
   for(const daysAgo of [6,9]){
     const order=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,
@@ -111,5 +119,54 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   assert.equal(Number(leads['Configured days']),4);
   const planning=await require('../../src/forecasting/postgres-planning-service').position(db,ctx.workspaceId,{onlySkuIds:[sku]});
   assert.equal(planning[0].leadTimeDays,5);
+  await plan('pro');
+  await db.query("UPDATE accounts SET created_at=(now()-interval '21 days')::text WHERE id=$1",[owner.accountId]);
+  const returns=require('../../src/operations/postgres-returns'),assistant=require('../../src/assistant/postgres-service');
+  const returned=await returns.requestSupplierReturn(db,ctx,{supplierId:'fixture-supplier',supplierBillId:bill.billId,expectedCreditMinor:100,idempotencyKey:randomUUID(),
+    lines:[{skuId:sku,locationId:f.location.id,quantity:1}]});
+  await returns.authorizeSupplierReturn(db,ctx,returned.supplierReturnId,{idempotencyKey:randomUUID()});
+  await returns.shipSupplierReturn(db,ctx,returned.supplierReturnId,{idempotencyKey:randomUUID()});
+  const beforeCredit=(await reviews.run(db,ctx,'supplier-credits')).rows;
+  assert.equal(beforeCredit[0].Status,'Awaiting credit');assert.equal(beforeCredit[0].Amount,'$1.00');
+  const credit=await assistant.prepareAction(db,ctx,'Apply received credit CN-101 for one dollar',{action:'supplier_return.reconcile',
+    recordReference:returned.supplierReturnId,amount:'1.00',creditNumber:'CN-101',creditDate:today});
+  assert.equal(credit.status,'PREPARED');
+  await assistant.executeProposal(db,ctx,credit.proposal.id);await assistant.executeProposal(db,ctx,credit.proposal.id);
+  const afterCredit=(await reviews.run(db,ctx,'supplier-credits')).rows;
+  assert.equal(afterCredit.length,1);assert.equal(afterCredit[0].Status,'Applied to bill');assert.equal(afterCredit[0]['Credit or return'],'CN-101');
+  assert.deepEqual((await roi.report(db,ctx,'month')).amounts,[{currency:'USD',flagged:'$1.50',applied:'$1.00'}]);
+  const remaining=await db.query('SELECT balance_minor FROM accounting_supplier_bills WHERE id=$1',[bill.billId]);
+  assert.equal(Number(remaining.rows[0].balance_minor),100);
+  // One verified delivery provides eight units. Each paid tier records its own
+  // supplier email and matches one physical unit; reapproving preserves one bill.
+  const invoiceOrder=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,
+    idempotencyKey:randomUUID(),lines:[{skuId:sku,quantityUnits:8,unitCost:1}]});
+  await workflows.approvePurchaseOrder(db,ctx,invoiceOrder.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.placePurchaseOrder(db,ctx,invoiceOrder.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.receivePurchaseOrder(db,ctx,invoiceOrder.purchaseOrderId,{idempotencyKey:randomUUID(),lines:[{lineId:invoiceOrder.lineIds[0],quantity:8,locationId:f.location.id}]});
+  const mailbox=randomUUID(),sender='invoices@example.test';
+  await db.query("UPDATE suppliers SET email=$2 WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId,sender]);
+  await db.query("INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,created_at,updated_at) VALUES($1,$2,$1,'Invoice mailbox','gmail','[]','{}','connected','[]',now()::text,now()::text)",[mailbox,ctx.workspaceId]);
+  const physical=await f.balance();
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await plan(tier);
+    const invoiceNumber='IN-'+tier;
+    const source=await require('../../src/connections/postgres-mail').capture(db,{id:mailbox,workspace_id:ctx.workspaceId,provider_type:'gmail'},
+      {messageId:randomUUID(),sender,subject:invoiceNumber,bodyText:invoiceNumber+' for '+invoiceOrder.poNumber+': one '+code+' at USD 1.00.'});
+    const doc={supplierInvoiceNumber:invoiceNumber,currency:'USD',issueDate:today,documentTotalMinor:100,sourceMessageId:source.messageId,
+      lines:[{sku:code,quantityBasis:'stock',quantity:1,unitCostMinor:100}]};
+    const prepared=await assistant.prepareAction(db,ctx,'Match this supplier invoice to its PO and delivery',{action:'purchase_order.record_supplier_invoice',
+      recordReference:invoiceOrder.purchaseOrderId,invoiceDocument:JSON.stringify(doc)});
+    assert.equal(prepared.status,'PREPARED');
+    assert.equal((await db.query('SELECT id FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_invoice_number=$2',[ctx.workspaceId,invoiceNumber])).rowCount,0);
+    const savedBill=await assistant.executeProposal(db,ctx,prepared.proposal.id);
+    assert.equal(savedBill.result.status,'OPEN');
+    assert.equal((await assistant.executeProposal(db,ctx,prepared.proposal.id)).result.billId,savedBill.result.billId);
+    const stored=await db.query('SELECT balance_minor,journal_entry_id FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_invoice_number=$2',[ctx.workspaceId,invoiceNumber]);
+    assert.equal(stored.rowCount,1);assert.equal(Number(stored.rows[0].balance_minor),100);assert.ok(stored.rows[0].journal_entry_id);
+  }
+  assert.equal((await roi.report(db,ctx,'month')).rows.find(r=>r.key==='invoice-match').count,4);
+  assert.equal(await f.balance(),physical);
+  assert.equal((await db.query('SELECT id FROM accounting_payments WHERE workspace_id=$1',[ctx.workspaceId])).rowCount,0);
   await assert.rejects(reviews.run(db,{...ctx,actorId:'other-account'},'payment-run'),/owner/);
 });

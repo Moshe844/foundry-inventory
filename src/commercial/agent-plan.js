@@ -117,9 +117,14 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
-  ['warehouse.wave.create',57],['customer_return.refund',107],['customer_return.credit_receipt',107],
+  ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
+  ['sales_order.reserve_all',12],['sales_order.allocation_priority',65],
+  ['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
+  ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
+  ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
   ['inventory.transfer',118],['transfer.approve',118],['shipping.label',59],['shipping.batch_purchase',59],
-  ['supplier_return.ship',115],['purchase_order.record_supplier_invoice',98],['report.template.create',154]
+  ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],
+  ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);
 function actionJob(name,operation) {
   if(operation==='automatic' && ['transfer.approve','inventory.transfer'].includes(name)) return 119;
@@ -131,7 +136,7 @@ const humanSteps=new Set([
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
   'customer_return.refund','supplier_payment.record','sales_order.cancel','catalog.set_price',
   'catalog.set_purchase_cost','pricing.rule.configure','supplier.link_product','supplier.update',
-  'contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
+  'customer_return.inspect','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
 function needsPerson(capability){return humanSteps.has(capability)||separateApproval.has(capability);}

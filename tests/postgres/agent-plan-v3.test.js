@@ -111,7 +111,7 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   const time=require('../../src/autopilot/time-saved');
   const measured=await time.report(db,ctx);
   assert.equal(measured.minutes,null);
-  assert.deepEqual(measured.rows.map(r=>r.count),[0,5]);
+  assert.deepEqual(measured.rows.map(r=>[r.key,r.count]),[['repeat-order',0],['supplier-response',5],['staff-request',0],['invoice-match',0],['accounting-export',0]]);assert.equal(measured.coverage,5);
   await assert.rejects(time.report(db,{...ctx,actorId:'another-owner'}),/owner/);
   const timing={activity:'supplier-response',manualMinutes:7,reviewMinutes:1,requestKey:randomUUID()};
   await time.sample(db,ctx,timing);await time.sample(db,ctx,timing);
@@ -150,6 +150,22 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   assert.equal((await ent.meterState(db,scope,'agent_documents')).used,51);
   await subscribe('starter');
   const assistant=require('../../src/assistant/postgres-service');
+  const expensiveActions=[
+    ['manufacturing.create_work_order',14],['sales_order.reserve_all',12],['sales_order.allocation_priority',65],
+    ['warehouse.wave.scan',57],['customer_return.inspect',113],['shipping.return_parcel',112],
+    ['customer_return.receive',114],['supplier_return.reconcile',115],['connection.accounting_export',184]
+  ];
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);
+    const available=await require('../../src/assistant/postgres-discovery').available(db,ctx);
+    for(const [action,job] of expensiveActions){
+      assert.equal(agentPlan.actionJob(action,'draft'),job);
+      if(agentPlan.permits(tier,job,'draft'))continue;
+      assert.ok(!available.some(c=>c.name===action),tier+' discovery '+action);
+      await assert.rejects(assistant.createProposal(db,ctx,'Review this action',action,{},'Review'),e=>e.code==='entitlement_required',tier+' proposal '+action);
+    }
+  }
+  await subscribe('starter');
   const refund=()=>assistant.createProposal(db,ctx,'Prepare refund','customer_return.refund',{},'Review refund.');
   await assert.rejects(refund(),/Pro/);
   await subscribe('growth');await assert.rejects(refund(),/Pro/);

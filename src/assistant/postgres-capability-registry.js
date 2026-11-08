@@ -14,6 +14,7 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  demandChangePercent:{type:'number',minimum:-100,maximum:1000,description:'The sales change percentage specified by the user for a demand scenario.'},
   agentJob:{type:'string',enum:agentReviews.definitions.map(d=>d.key),description:'Choose the requested inventory-agent review by its registered job name.'},
   supplierDocument:{type:'string',maxLength:32000,description:'Exact supplier evidence JSON: documentType order_acknowledgement/shipment_notice/backorder_notice/quotation/price_update/capacity_notice/substitution_offer/dispute, sourceMessageId, optional sourceAttachmentHash, evidenceQuote copied from the new supplier text or readable attachment, optional documentReference, expectedArrivalDate YYYY-MM-DD, currency, exceptionDetail, lines[{purchaseOrderLineId or supplierSku or sku,quantity,quantityBasis stock/purchase,unitCostMinor if supplied}]. Quantities and costs retain the document unit basis; the canonical matcher uses the PO pack snapshot. No physical receipt, bill, payment or send is inferred.'},
   correctionKinds:{type:'string',maxLength:100,description:'JSON array of requested historical corrections: calendar and/or pending_return_cost. Read accounting correction evidence first. Only proven automatic dates and unresolved legacy refund-cost recognition can be corrected; original journals and stock remain intact.'},
@@ -334,10 +335,13 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 add('read.custody','Read the latest 100 rental and consignment agreement headers. Pass an exact recordReference to read that agreement and 50 product lines, following extent.nextOffset with offset. Read booking capacity, expected-return dependencies and bounded recurring billing terms and invoices on the exact agreement. Due dates never prove a physical return.',['recordReference','offset'],'read',permissions.VIEW,'none',(_service,db,ctx,_text,args)=>require('../custody/ask-contracts').read(db,ctx,args),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'custody',recordKind:'custody_agreement',answerMode:'evidence',commercialCapability:'inventory.core'});
 add('read.agent_review','Run a plan-checked operational review using recorded workspace data. Available reviews include '+agentReviews.definitions.map(d=>d.key).join(', ')+'. Use search for an exact SKU, lot, serial or other accepted filter.',
-  ['agentJob','search'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
-    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search});
-    const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(args.search?'?filter='+encodeURIComponent(args.search):'');
-    return {rows:result.rows,summary:result.summary,coverage:result.more?'First 100 records. Open the review for additional pages.':'All matching results for this review.',
+  ['agentJob','search','demandChangePercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
+    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change:args.demandChangePercent});
+    const query=new URLSearchParams();
+    if(args.search)query.set('filter',args.search);
+    if(args.demandChangePercent!=null)query.set('change',String(args.demandChangePercent));
+    const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(query.size?'?'+query:'');
+    return {rows:result.rows,summary:result.summary,coverage:result.more?'Open the review for the remaining results.':'All matching results for this review.',
       sources:[{kind:'page',href,label:result.label}]};
   },async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{required:['agentJob'],ownerOnly:true,view:'agent_review',answerMode:'evidence'});
 add('read.report_schedules','List your private saved reports, definitions, local schedules, next send, last sent, pause state and exact IDs. Coverage is the latest 100 active templates in this inventory.',[],'read',permissions.VIEW,'none',(_service,db,ctx)=>require('../reports/ask-schedules').read(db,ctx),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'report_schedules',answerMode:'evidence'});
