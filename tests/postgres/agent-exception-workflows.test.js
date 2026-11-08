@@ -6,6 +6,41 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const returns=require('../../src/operations/postgres-returns');
 
+test('scheduled transfer follow-ups reach the inbox, retain partial receipts and clear on arrival',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:10});
+  const {db,ctx,subscribe,browser}=f,tr=require('../../src/transfers/postgres-transfer-service');
+  const notices=require('../../src/autopilot/operational-notices'),handler=require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate;
+  await subscribe('pro');
+  const destination=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'East store',kind:'warehouse'});
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),past=require('../../src/accounting/customer-money').addDays(today,-2);
+  const transfer=await tr.request(db,ctx,{fromLocationId:f.location.id,toLocationId:destination.id,expectedArrivalDate:past,
+    idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantity:4}]});
+  for(const operation of ['approve','pick','dispatch','markInTransit'])await tr[operation](db,ctx,transfer.id,{idempotencyKey:randomUUID()});
+  const [line]=(await tr.get(db,ctx.workspaceId,transfer.id)).lines;
+  await db.transaction(c=>handler({id:randomUUID(),workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,requestedByUser:true}},c));
+  await notices.refresh(db,ctx.workspaceId);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);const report=()=>reviews.run(db,ctx,'transfer-arrivals');
+    if(tier==='starter'){
+      await assert.rejects(report(),e=>e.code==='entitlement_required');
+      assert.equal((await notices.inbox(db,ctx.workspaceId)).some(n=>n.sourceId==='agent-notice-124'),false);
+    }else{
+      const [r]=(await report()).rows;
+      assert.equal(r.Result,'Past expected arrival');assert.equal(Number(r['Still in transit']),4);assert.equal(r['In-app reminders'],1);
+      assert.ok((await notices.inbox(db,ctx.workspaceId)).some(n=>n.href==='/autopilot/reviews/transfer-arrivals'));
+    }
+  }
+  const view=await browser.get('/needs-you').expect(200);assert.match(view.text,/Overdue warehouse transfers/);
+  const receive=(received,lost)=>tr.receive(db,ctx,transfer.id,{idempotencyKey:randomUUID(),lines:[{lineId:line.id,received,lost,damaged:0}]});
+  await receive(2,0);await notices.refresh(db,ctx.workspaceId);
+  const partial=(await reviews.run(db,ctx,'transfer-arrivals')).rows[0];
+  assert.equal(Number(partial['Still in transit']),2);assert.equal(Number(partial.Received),2);
+  await receive(1,1);await notices.refresh(db,ctx.workspaceId);
+  const closed=(await reviews.run(db,ctx,'transfer-arrivals')).rows[0];
+  assert.equal(closed.Result,'Closed with a difference');assert.equal(Number(closed['Lost or damaged']),1);
+  assert.equal((await notices.inbox(db,ctx.workspaceId)).some(n=>n.sourceId==='agent-notice-124'),false);
+});
+
 test('exception reviews distinguish shortages, deliveries, overdue documents and physically received returns on each tier', {timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:10});
   const {db,ctx,workflows,shipping,subscribe,browser}=f;

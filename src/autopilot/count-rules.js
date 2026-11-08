@@ -48,6 +48,7 @@ async function evaluate(client, ctx, payload, supplied) {
   const evidence = {owner:rule.authorized_by, currency:rule.currency, limitMinor:Number(rule.limit_minor), exposureMinor:exposure};
   if (exposure > Number(rule.limit_minor)) return {...evidence, action:'recount'};
   if (!rule.automatic || state.mode !== 'POLICY_AUTOMATED' || !plan.permits(account.plan,6,'automatic')) return null;
+  if(await require('./job-modes').restriction(client,ctx.workspaceId,6,true))return null;
   // A counter cannot bring an adjustment below the ceiling by entering a lower price.
   if (supplied.some(line => String(line.unitCost ?? '').trim()) || payload.lines.some(line => line.delta && !line.costDeltaMinor)) return null;
   return {...evidence, action:'post'};

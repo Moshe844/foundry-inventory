@@ -2106,7 +2106,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
-    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,Boolean(missionPlanId));
+    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,Boolean(missionPlanId),proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
     const tier=agentPolicy.actionPlan(agentAccount,contract.name);

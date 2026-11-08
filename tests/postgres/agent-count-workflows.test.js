@@ -61,6 +61,11 @@ test('count rules post small differences once and require a physical recount abo
   const custom = await reviews.prepare(db,ctx,input(13));
   assert.equal((await reviews.get(db,ctx,custom.id)).status,'COMPLETED');
   assert.equal(await balance(),13);
+  const jobModes=require('../../src/autopilot/job-modes');
+  await jobModes.save(db,ctx,6,{mode:'ask',revision:0});
+  assert.equal((await reviews.get(db,ctx,(await reviews.prepare(db,ctx,input(12))).id)).status,'PENDING');
+  assert.equal(await balance(),13);
+  await jobModes.save(db,ctx,6,{mode:'inherit',revision:1});
   await autonomy.setMode(db,ctx,{role:'owner'},'SUPERVISED');
   assert.equal((await reviews.get(db,ctx,(await reviews.prepare(db,ctx,input(12))).id)).status,'PENDING');
   assert.equal(await balance(),13);

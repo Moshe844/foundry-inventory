@@ -17,6 +17,14 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const jobModes=require('../../autopilot/job-modes');
+  router.get('/autopilot/job-modes',requireAuth,owner,asyncRoute(async(req,res)=>{
+    res.page('autopilot/job-modes',{title:'Authority by job',nav:'autopilot',jobs:await jobModes.page(database,req.ctx),modes:jobModes.modes});
+  }));
+  router.post('/autopilot/job-modes/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await jobModes.save(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/autopilot/job-modes#job-'+Number(req.params.id));
+  }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
   router.post('/actions/:id/draft-rule',requireAuth,owner,asyncRoute(async(req,res)=>{

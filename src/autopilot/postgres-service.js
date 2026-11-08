@@ -268,6 +268,8 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   if(agentPlan.usesAgentTerms(account) || !account.plan && (account.subscribed || require('../config').commercial.requirePaidWorkspace)){
     if(account.shadow || !agentPlan.permits(account.plan,candidate.type==='transfer'?119:20,'automatic'))
       return {decision:'needs_approval',reason:'Your current plan or shadow period requires approval for this action.',policy};
+    const restriction=await require('./job-modes').restriction(database,workspaceId,candidate.type==='transfer'?119:20,true);
+    if(restriction)return {decision:'needs_approval',reason:restriction,policy};
     if(candidate.type==='purchase'){
       const reason=await agentPlan.purchaseReview(database,workspaceId,candidate,policy,account,committedPurchaseOrderId);
       if(reason) return {decision:'needs_approval',reason,policy};

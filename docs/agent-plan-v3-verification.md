@@ -6,6 +6,8 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 
 Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium to repeat the plan and workflow tests.
 
+Owners can set an individual job to Watch only or Ask me first for small count postings, automatic reorders, combining or splitting PO drafts, repeat sales, postage, margin prices, automatic transfers and supplier specifications. Handle routine work is available only within the job’s plan limit and existing authority. An owner changing postage to Ask me first stopped a queued purchase before the simulated carrier was called. Staff changes and stale settings were refused. Per-job controls for other jobs still need integration.
+
 ## Release checks
 
 - Exercise the eligible and denied plan modes through the UI, Ask, direct requests and queued work after a downgrade. Verify the inventory, money, document or provider result and replay each write.
@@ -141,7 +143,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 121 | Picks the best warehouse to ship each order from. | Excluded | Draft | Alone | Alone | Policy only |
 | 122 | Plans a re-slot: fast movers near packing, with a move list. | Excluded | Excluded | Draft | Alone | Policy only |
 | 123 | Tracks stock at 3PLs and consignment locations. | Excluded | Alone | Alone | Alone | Policy only |
-| 124 | Checks transfers arrived complete and chases ones stuck in transit. | Excluded | Alone | Alone | Alone | Policy only |
+| 124 | Checks transfers arrived complete and chases ones stuck in transit. | Excluded | Alone | Alone | Alone | The worker checks dispatched against physically received, lost and damaged units. It posts a daily owner follow-up in Needs you for late transfers. A four-unit test transfer stayed open after two arrived, then closed with one recorded loss; reruns did not duplicate reminders. Growth, Pro and Custom saw the follow-up, Starter was denied. |
 | 125 | Rolls up stock across several companies or inventories. | Excluded | Excluded | Excluded | Alone | Custom cross-inventory summary ran on test data. A Growth and a Pro attempt were blocked. |
 | 126 | Finds duplicates, missing cost or weight, and bad SKUs, and fixes them in bulk. | Suggest | Draft | Trained | Alone | Scans active products for ambiguous codes, duplicate barcodes and missing weight or purchase cost. Starter receives a single suggestion. Growth, Pro and Custom see affected records. The supplier-file action can fill missing barcode and measured specifications in bulk. General duplicate merging and missing purchase-cost repairs remain open. |
 | 127 | Creates products from a supplier catalog or price list. | Excluded | Draft | Alone | Alone | Policy only |
@@ -185,7 +187,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 165 | Year-end stocktake and valuation pack for your accountant. | Excluded | Alone | Alone | Alone | Policy only |
 | 166 | Low stock and stock-out alerts. | Alone | Alone | Alone | Alone | Low-stock report runs as a playbook step. End-to-end alert delivery remains open. |
 | 167 | Watch rules in plain words ("tell me if any Nike item drops under 20"). | Alone | Alone | Alone | Alone | Policy only |
-| 168 | Late POs, late shipments and overdue invoices. | Alone | Alone | Alone | Alone | Operational exceptions review includes overdue purchase orders, customer and supplier invoices and shipped parcels. Verified open and cleared records using business dates. External alert delivery remains open. |
+| 168 | Late POs, late shipments and overdue invoices. | Alone | Alone | Alone | Alone | Operational exceptions review includes overdue purchase orders, customer and supplier invoices and shipped parcels. Verified open and cleared records using business dates. The scheduled worker creates in-app overdue notices by record and business date. External alert delivery remains open. |
 | 169 | Sales channel problems: oversell risk, sync stopped. | Alone | Alone | Alone | Alone | Policy only |
 | 170 | Cost and margin alerts: cost up, margin under your %. | Excluded | Alone | Alone | Alone | Policy only |
 | 171 | Unusual activity: big adjustment, changes at night. | Excluded | Excluded | Alone | Alone | Policy only |

@@ -46,6 +46,25 @@ test('the carrier sees only eligible purchases after current-plan, per-label and
   const check=async parts=>{const rate=bundle(parts);return require('../../src/shipping/agent-postage').assertPurchase(db,ctx.workspaceId,'automatic',
     {currency:'USD',amount_minor:rate.amountMinor,provider_rate_id:rate.rateIds.join(','),package_amounts_minor:rate.packageAmountsMinor});};
   await check([2300,2500]);await assert.rejects(check([2000,2600]),/\$25/);
+  const settings=require('../../src/autopilot/job-modes');
+  const queued=await proposal('growth',1500),worker=await spend(queued),priorBuys=buys;
+  const modesPage=await f.browser.get('/autopilot/job-modes').expect(200);
+  await f.browser.post('/autopilot/job-modes/59').type('form').send({_csrf:f.csrf(modesPage.text),mode:'ask',revision:0}).expect(303);
+  await assert.rejects(worker(),/Ask me first/);assert.equal(buys,priorBuys);
+  await assert.rejects(settings.save(db,ctx,59,{mode:'routine',revision:0}),/has changed/);
+  await assert.rejects(settings.save(db,{...ctx,actorId:'other-user'},59,{mode:'routine',revision:1}),/Only the business owner/);
+  const manual=await proposal('growth',1500);await(await spend(manual,false))();assert.equal(buys,priorBuys+1);
+  await settings.save(db,ctx,59,{mode:'watch',revision:1});
+  const watched=await proposal('growth',1500);await assert.rejects(spend(watched,false),/Watch only/);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);const offers=await settings.page(db,ctx);
+    assert.equal(offers.find(j=>j.id===59).allowed.includes('routine'),tier!=='starter');
+    assert.equal(offers.find(j=>j.id===6).allowed.length>0,['pro','enterprise'].includes(tier));
+    assert.equal(offers.find(j=>j.id===77).allowed.includes('routine'),false);
+  }
+  await subscribe('starter');
+  await assert.rejects(settings.save(db,ctx,59,{mode:'routine',revision:2}),/cannot run at that level/);
+  await settings.save(db,ctx,59,{mode:'inherit',revision:2});
   const timely=await f.parcel(),today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
   const days=n=>require('../../src/accounting/customer-money').addDays(today,n);
   await db.query('UPDATE sales_orders SET needed_by=$2 WHERE id=$1',[timely.order.salesOrderId,days(4)]);

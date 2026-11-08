@@ -159,13 +159,14 @@ const humanSteps=new Set([
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
 function needsPerson(capability){return humanSteps.has(capability)||separateApproval.has(capability);}
-async function stopped(db,workspaceId,account,capability,automatic){
+async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
   const {rows:[config]}=await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId]);
   if(config?.mode==='OBSERVE')return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
   if(automatic&&(Number(config?.paused)||Number(config?.suspended)))return 'Automatic work is paused. Review the inventory’s automation settings.';
-  return null;
+  const job=actionJob(capability,automatic?'automatic':'draft',payload);
+  return require('../autopilot/job-modes').restriction(db,workspaceId,job,automatic);
 }
 
 async function customerOrderNeedsPerson(db,workspaceId,capability,payload,proposalId=null){
