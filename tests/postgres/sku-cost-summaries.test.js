@@ -60,3 +60,32 @@ test('bounded summary jobs continue after a completed partial job without duplic
  const handlers=require('../../src/operations/postgres-runtime-handlers').create({});assert.equal(typeof handlers['inventory.refresh-cost-summary'],'function');
  const done=await require('../../src/operations/postgres-job-queue').processOne(db,handlers,{owner:'cost-summary-fixture',kinds:['inventory.refresh-cost-summary'],now:now+30000});assert.equal(done.status,'COMPLETED',JSON.stringify(done.lastError));assert.equal(Number((await summaries.value(db,ctx.workspaceId)).minor),400);
 });
+
+test('cost summary reads stay within the inventory through 500000 unrelated summary rows',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ const other=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Other owner',businessName:'Unrelated summary history',email:require('node:crypto').randomUUID()+'@example.test',password:'Other!'+require('node:crypto').randomUUID()});
+ await summaries.refresh(db,ctx.workspaceId);
+ // Place this inventory's summary physically behind the unrelated rows. A
+ // probabilistic EXISTS startup plan then has to walk the foreign heap first.
+ await db.query('DELETE FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1',[ctx.workspaceId]);
+ await db.query(`INSERT INTO stockchief_runtime.sku_cost_totals(workspace_id,sku_id,quantity_units,total_cost_minor)
+  SELECT $1,'foreign-summary-'||n,1,100 FROM generate_series(1,500000)n`,[other.workspaceId]);
+ await db.query(`INSERT INTO stockchief_runtime.sku_cost_totals(workspace_id,sku_id,quantity_units,total_cost_minor)
+  SELECT $1,'empty-summary-'||n,0,0 FROM generate_series(1,49999)n
+  UNION ALL SELECT $1,$2,4,400`,[ctx.workspaceId,f.item.skuIds[0]]);
+ await db.query('ANALYZE stockchief_runtime.sku_cost_totals');
+ const observations=[];
+ function nodes(plan,out=[]){out.push(plan);for(const child of plan.Plans||[])nodes(child,out);return out;}
+ for(const mode of ['force_generic_plan','force_custom_plan'])await db.transaction(async c=>{
+  await c.query("SELECT set_config('plan_cache_mode',$1,true)",[mode]);
+  const actual=(await c.query(summaries.totalsSql,[ctx.workspaceId])).rows[0];assert.equal(Number(actual.units),4);assert.equal(Number(actual.cost),400);
+  const plan=(await c.query('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+summaries.totalsSql,[ctx.workspaceId])).rows[0]['QUERY PLAN'][0];
+  const discarded=nodes(plan.Plan).filter(n=>n['Relation Name']==='sku_cost_totals'&&n['Actual Loops']>0)
+   .reduce((sum,n)=>sum+Number(n['Rows Removed by Filter']||0)*n['Actual Loops'],0);
+  t.diagnostic(JSON.stringify({mode,relations:nodes(plan.Plan).filter(n=>n['Relation Name']==='sku_cost_totals').map(n=>({node:n['Node Type'],index:n['Index Name'],rows:n['Actual Rows'],loops:n['Actual Loops'],filtered:n['Rows Removed by Filter']}))}));
+  assert(discarded<100,'A tenant summary must not search unrelated summary rows for its first match: '+discarded);
+  observations.push({mode,discardedForeignRows:discarded,executionMs:plan['Execution Time']});
+ },{readOnly:true,jit:false});
+ assert.equal(Number((await summaries.value(db,'missing-summary-inventory')).minor),0);
+ t.diagnostic(JSON.stringify({foreignSummaryRows:500000,ownSummaryRows:50000,observations,sourceStockUnchanged:await f.balance()===4,paidCalls:0}));
+});
