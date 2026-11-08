@@ -12,8 +12,8 @@ test('Render staging deploys separate PostgreSQL web and worker processes agains
   const blueprint = fs.readFileSync(path.join(root, 'render.yaml'), 'utf8');
   assert.match(blueprint, /generation:\s+off/);
   assert.match(blueprint, /name:\s+stockchief-staging\b/);
-  assert.match(blueprint, /name:\s+stockchief-staging-web\b[\s\S]*startCommand:\s+npm run start:postgres-web/);
-  assert.match(blueprint, /name:\s+stockchief-staging-worker\b[\s\S]*startCommand:\s+npm run start:postgres-worker/);
+  assert.match(blueprint, /name:\s+stockchief-staging-web\b[\s\S]*startCommand:\s+exec node src\/postgres-web-server\.js/);
+  assert.match(blueprint, /name:\s+stockchief-staging-worker\b[\s\S]*startCommand:\s+exec node src\/postgres-worker-server\.js/);
   assert.equal((blueprint.match(/repo:\s+https:\/\/github\.com\/Moshe844\/foundry-inventory/g) || []).length, 2);
   assert.equal((blueprint.match(/property:\s+connectionString/g) || []).length, 2);
   assert.equal((blueprint.match(/fromGroup:\s+stockchief-staging-runtime/g) || []).length, 2);

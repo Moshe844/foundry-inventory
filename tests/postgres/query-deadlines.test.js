@@ -5,6 +5,12 @@ test('pooled statements stop on the PostgreSQL server, roll back incomplete writ
  assert.equal(connectionOptions(cluster.connectionString).statement_timeout,30000);
  for(const value of [0,-1,Infinity,NaN,'100',2147483648])assert.throws(()=>connectionOptions(cluster.connectionString,{statementTimeoutMs:value}),/statement timeout/);
  const db=openPostgres(cluster.connectionString,{max:2,statementTimeoutMs:100,applicationName:'isolated-server-deadline'});t.after(async()=>{await db.close();await cluster.stop();});
+ assert.equal((await db.query('SHOW jit')).rows[0].jit,'off','Interactive pool connections avoid per-request compilation');
+ await db.transaction(async c=>assert.equal((await c.query('SHOW jit')).rows[0].jit,'on'),{readOnly:true,jit:true});
+ assert.equal((await db.query('SHOW jit')).rows[0].jit,'off','An analytical override cannot leak into the next request');
+ const analytic=openPostgres(cluster.connectionString,{max:1,jit:true});
+ try{assert.equal((await analytic.query('SHOW jit')).rows[0].jit,'on');}finally{await analytic.close();}
+ for(const jit of ['off',0,null])assert.throws(()=>connectionOptions(cluster.connectionString,{jit}),/boolean connection setting/);
  await db.query('CREATE TABLE deadline_rows(id integer)');
  await assert.rejects(db.query('INSERT INTO deadline_rows SELECT 1 FROM pg_sleep(0.3)'),e=>e.code==='57014');
  assert.equal((await db.query('SELECT count(*)::int n FROM deadline_rows')).rows[0].n,0);
