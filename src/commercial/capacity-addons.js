@@ -45,7 +45,13 @@ async function receive(client,event){
   const lines=o.lines?.data||[],matching=lines.filter(l=>(id(l.pricing?.price_details?.price)||id(l.price)||id(l.plan))===order.price_id);
   if(o.status!=='paid'||o.lines?.has_more||matching.length!==1||Number(matching[0].quantity)!==Number(order.quantity)||String(o.currency).toUpperCase()!==order.currency||Number(o.total)!==Number(order.amount_minor))throw new ValidationError('The paid add-on invoice differs from the approved price and quantity.');
   const period=matching[0].period;if(!period?.start||!period?.end||Number(period.end)<=Number(period.start))throw new ValidationError('The add-on invoice has no valid paid period.');
-  await client.query(`INSERT INTO commercial_capacity_payments(invoice_id,order_id,period_start,period_end,amount_minor,provider_event_id) VALUES($1,$2,to_timestamp($3),to_timestamp($4),$5,$6) ON CONFLICT(invoice_id) DO NOTHING`,[o.id,order.id,period.start,period.end,order.amount_minor,event.id]);
+  const payment=await client.query(`INSERT INTO commercial_capacity_payments(invoice_id,order_id,period_start,period_end,amount_minor,provider_event_id)
+    VALUES($1,$2,to_timestamp($3),to_timestamp($4),$5,$6) ON CONFLICT(invoice_id) DO NOTHING RETURNING invoice_id`,[o.id,order.id,period.start,period.end,order.amount_minor,event.id]);
+  if(!payment.rowCount){
+    const replay=await client.query(`SELECT 1 FROM commercial_capacity_payments WHERE invoice_id=$1 AND order_id=$2
+      AND period_start=to_timestamp($3) AND period_end=to_timestamp($4) AND amount_minor=$5`,[o.id,order.id,period.start,period.end,order.amount_minor]);
+    if(!replay.rowCount) throw new ValidationError('This invoice reference conflicts with a different paid order or period.');
+  }
   if(['agent-monthly-credits','agent-monthly-documents'].includes(order.product_id)){
     const category=order.product_id==='agent-monthly-credits'?'ai_work_credits':'agent_documents';
     await client.query(`INSERT INTO commercial_usage_grants(id,account_id,category,capacity_invoice_id,units,expires_at)

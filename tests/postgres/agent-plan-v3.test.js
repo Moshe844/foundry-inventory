@@ -120,6 +120,44 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   await db.query("UPDATE supplier_communications SET status='SENT',external_message_id='simulated-provider-receipt',sent_at=(now()-interval '8 days')::text WHERE id=$1",[executed.outcome.communicationId]);
   assert.equal((await time.report(db,ctx,'week')).minutes,30);
   assert.equal((await time.report(db,ctx,'month')).minutes,38);
+  const connector=(await db.query("SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='gmail'",[ctx.workspaceId])).rows[0];
+  const mail=require('../../src/connections/postgres-outbound-mail'),sendKey=randomUUID();
+  const manual={recipientKind:'supplier',recipientId:supplier.id,recipientEmail:'repeat@example.test',connectorId:connector.id,
+    subject:'Approved order',body:'Please confirm this purchase order.',purchaseOrderId:first.purchaseOrderId};
+  const queueManual=(payload,key)=>db.transaction(c=>mail.queueInTransaction(c,ctx,payload,key));
+  const starterMessage=await queueManual(manual,sendKey);
+  assert.equal((await queueManual(manual,sendKey)).communicationId,starterMessage.communicationId);
+  await assert.rejects(queueManual({...manual,purchaseOrderId:executed.purchase_order_id},sendKey),/different message/);
+  const starterBody=(await db.query('SELECT body FROM supplier_communications WHERE id=$1',[starterMessage.communicationId])).rows[0].body;
+  assert.equal((await links.lookup(db,starterBody.split('/supplier/order/')[1])).id,first.purchaseOrderId);
+  const scope={accountId:owner.accountId,workspaceId:ctx.workspaceId},ent=require('../../src/commercial/entitlements');
+  const used={meter:'agent_documents',units:49,idempotencyKey:'already-processed'};
+  await ent.reserveUsage(db,scope,used);await ent.commitUsage(db,scope,used);
+  const capture=require('../../src/connections/postgres-mail').capture,extract=require('../../src/connections/postgres-attachments').extractMessage;
+  async function doc(name) {
+    const note=await capture(db,{...connector,workspace_id:ctx.workspaceId,provider_type:'gmail'},{messageId:randomUUID(),sender:'repeat@example.test',
+      subject:'Supplier file',bodyText:'Attached',attachments:[{filename:name,mimeType:'text/plain',contentBase64:Buffer.from('Confirmed units and order reference').toString('base64')}]});
+    return note.messageId;
+  }
+  assert.equal((await extract(db,ctx.workspaceId,await doc('unsupported.foo'))).attachments[0].status,'NEEDS_REVIEW');
+  const lastIncluded=await doc('fiftieth.txt'),overLimit=await doc('fifty-first.txt');
+  assert.equal((await extract(db,ctx.workspaceId,lastIncluded)).attachments[0].status,'READABLE');
+  assert.equal((await extract(db,ctx.workspaceId,lastIncluded)).attachments[0].status,'READABLE');
+  assert.equal((await extract(db,ctx.workspaceId,overLimit)).attachments[0].status,'NEEDS_REVIEW');
+  assert.equal((await ent.meterState(db,scope,'agent_documents')).used,50);
+  await subscribe('growth');
+  assert.equal((await extract(db,ctx.workspaceId,overLimit)).attachments[0].status,'READABLE');
+  assert.equal((await ent.meterState(db,scope,'agent_documents')).used,51);
+  await subscribe('starter');
+  const assistant=require('../../src/assistant/postgres-service');
+  const refund=()=>assistant.createProposal(db,ctx,'Prepare refund','customer_return.refund',{},'Review refund.');
+  await assert.rejects(refund(),/Pro/);
+  await subscribe('growth');await assert.rejects(refund(),/Pro/);
+  await subscribe('pro');const preparedRefund=await refund();
+  await subscribe('starter');
+  await assert.rejects(assistant.executeProposal(db,ctx,preparedRefund.proposal.id),/Pro/);
+  const savedRefund=await assistant.getProposal(db,ctx.workspaceId,preparedRefund.proposal.id);
+  assert.equal(savedRefund.status,'PENDING');
   const beforeSend=await autonomy.evaluate(db,ctx.workspaceId,executed.recommendedAction,await autonomy.getState(db,ctx.workspaceId),{committedPurchaseOrderId:executed.purchase_order_id});
   assert.notEqual(beforeSend.decision,'authorized');
   const instructions=require('../../src/manager/postgres-operating-instructions');

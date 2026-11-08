@@ -1770,6 +1770,11 @@ async function prepareAction(database,ctx,message,request,options={}) {
 }
 
 async function createProposal(database,ctx,message,actionType,payload,summary) {
+  const agent=require('../commercial/agent-plan'), job=agent.actionJob(actionType,'draft');
+  if(job){
+    const state=await agent.accountState(database,ctx.workspaceId);
+    if(agent.usesAgentTerms(state))agent.requireJob(state.plan,job,'draft');
+  }
   if(actionType==='customer_invoice.create'){
     const quote=await require('../pricing/postgres-invoice-pricing').quote(database,ctx,payload);
     if(quote.violations.length)throw new ValidationError('The invoice exceeds a pricing safeguard. Nothing was prepared.');
@@ -2101,6 +2106,8 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
     if(agentAccount.plan && agentAccount.shadow && contract.name!=='report.template.create') throw new ValidationError('StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.');
+    const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation);
+    if(job && agentPolicy.usesAgentTerms(agentAccount))agentPolicy.requireJob(agentAccount.plan,job,operation);
     if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans

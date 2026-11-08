@@ -414,7 +414,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         if(stored.state==='WAITING'&&claimed.authorization_mode==='MISSION'
           &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
           const account=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
-          if(account.plan && (account.shadow || require('../commercial/agent-plan').needsPerson(contract.name))){
+          const policy=require('../commercial/agent-plan'),job=policy.actionJob(contract.name,'automatic');
+          const outsidePlan=job && policy.usesAgentTerms(account) && !policy.permits(account.plan,job,'automatic');
+          if(account.plan && ((account.shadow && contract.name!=='report.template.create') || policy.needsPerson(contract.name) || outsidePlan)){
             stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
             await update(database,claimed,token,steps,'WAITING_USER');
             break;

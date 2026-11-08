@@ -35,6 +35,11 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
       lines:{has_more:false,data:[{quantity:1,price:{id:productId},period:{start:current-5,end:current+86400}}]}};
     await assert.rejects(send('invoice.paid',{...invoice,total:amount-1}),/differs/);
     await send('invoice.paid',invoice);await send('invoice.paid',invoice);
+    if(productId==='agent-monthly-documents'){
+      const renewal={...invoice,id:'renewal_'+order.id,lines:{has_more:false,data:[{...invoice.lines.data[0],period:{start:current+86400,end:current+172800}}]}};
+      await send('invoice.paid',renewal);await send('invoice.paid',renewal);
+      await assert.rejects(send('invoice.paid',{...renewal,id:invoice.id}),/different paid order or period/);
+    }
     return order;
   }
   await plan('starter');
@@ -75,7 +80,8 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   assert.equal((await ent.meterState(db,{accountId:owner.accountId},'workspaces')).hardLimit,2);
   assert.equal((await ent.meterState(db,scope,'locations')).hardLimit,7);
   const later=new Date((current+86405)*1000);
-  assert.equal((await ent.meterState(db,scope,'agent_documents',{now:later})).purchasedRemaining,0);
+  assert.equal((await ent.meterState(db,scope,'agent_documents',{now:later})).purchasedRemaining,500);
+  assert.equal((await ent.meterState(db,scope,'agent_documents',{now:new Date((current+172805)*1000)})).purchasedRemaining,0);
   await plan('growth');
   assert.equal((await ent.meterState(db,scope,'agent_documents')).included,500);
   await assert.rejects(policy.requireWorkspaceJob(db,scope.workspaceId,185,'automatic'),/Custom/);

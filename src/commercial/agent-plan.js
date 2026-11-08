@@ -45,6 +45,8 @@ async function accountState(database, workspaceId) {
 
 function requireJob(plan, id, operation, facts) {
   if (permits(plan, id, operation, facts)) return;
+  if(id===185 && facts?.edi!==true)
+    throw new EntitlementError('EDI requires Pro with the EDI add-on, or Custom.',{jobId:id,currentPlan:plan,minimum:'pro',addon:'agent-pro-edi'});
   const minimum = plans.find(p => permits(p, id, operation, facts));
   throw new EntitlementError(minimum
     ? `This agent job requires the ${labels[minimum]} plan for that level of control.`
@@ -112,6 +114,18 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 
 // A mission approval cannot substitute for confirming the physical or
 // financial fact at the moment this particular action is ready.
+// A broad mission has no trusted supplier, SKU, price or rolling spend proof.
+const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
+const actionJobs=new Map([
+  ['warehouse.wave.create',57],['customer_return.refund',107],['customer_return.credit_receipt',107],
+  ['inventory.transfer',118],['transfer.approve',118],['shipping.label',59],['shipping.batch_purchase',59],
+  ['supplier_return.ship',115],['purchase_order.record_supplier_invoice',98],['report.template.create',154]
+]);
+function actionJob(name,operation) {
+  if(operation==='automatic' && ['transfer.approve','inventory.transfer'].includes(name)) return 119;
+  return actionJobs.get(name);
+}
+function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
 const humanSteps=new Set([
   'inventory.receive','purchase_order.receive','transfer.receive','customer_return.receive',
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
@@ -120,6 +134,6 @@ const humanSteps=new Set([
   'contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
-function needsPerson(capability){return humanSteps.has(capability);}
+function needsPerson(capability){return humanSteps.has(capability)||separateApproval.has(capability);}
 
-module.exports = { needsPerson, requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
+module.exports = { actionJob,usesAgentTerms,needsPerson, requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
