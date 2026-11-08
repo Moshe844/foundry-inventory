@@ -14,6 +14,7 @@
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
     <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %><% if(run.itemsUpdated>0){ %>, updated <%= helpers.qty(run.itemsUpdated) %> <%= helpers.plural(run.itemsUpdated, 'product') %><% } %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
       <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
+      <% if(run.verified&&run.reorderDefaults){ %><p role="status"><%= run.reorderDefaults.label %></p><% } %>
       <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= helpers.dateTime(activity.startedAt) %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= helpers.dateTime(activity.completedAt) %></time><% } %></p><% } %>
       <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>
       <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>

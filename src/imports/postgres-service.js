@@ -67,11 +67,15 @@ function hydratePlan(row) {
 }
 
 function hydrateRow(row) {
+  const parsed=json(row.parsed,{});
+  // Historical receipt columns are whole-unit values. The approved parsed
+  // source preserves exact measured quantities, including an explicit null.
+  const quantity=Object.hasOwn(parsed,'quantity')?parsed.quantity:row.quantity;
   return {
     id:row.id, importId:row.import_id, rowNumber:Number(row.row_number), raw:json(row.raw,[]),
-    parsed:json(row.parsed,{}), status:row.status, problems:json(row.problems,[]),
+    parsed, status:row.status, problems:json(row.problems,[]),
     itemId:row.item_id, skuId:row.sku_id, locationId:row.location_id,
-    movementIds:json(row.movement_ids,[]), quantity:row.quantity === null ? null : Number(row.quantity),
+    movementIds:json(row.movement_ids,[]), quantity:quantity === null ? null : Number(quantity),
     importedAt:row.imported_at,
   };
 }
@@ -1093,16 +1097,19 @@ async function retryExecution(database,ctx,id,expectedHash,executionId){
 }
 
 async function report(database, workspaceId, id) {
-  const result=await database.query(`SELECT e.*,v.verified,v.checks,v.observed,v.problems FROM import_executions e
+  const result=await database.query(`SELECT e.*,v.verified,v.checks,v.observed,v.problems,d.status AS defaults_status,d.result AS defaults_result FROM import_executions e
     LEFT JOIN import_verifications v ON v.execution_id=e.id
+    LEFT JOIN stockchief_runtime.jobs d ON d.id=e.result::jsonb#>>'{reorderDefaults,jobId}' AND d.workspace_id=e.workspace_id AND d.kind='import.initialize-reorders'
     WHERE e.workspace_id=$1 AND e.import_id=$2 ORDER BY e.started_at DESC LIMIT 1`,[workspaceId,id]);
   if(!result.rows.length)return null;
   const row=result.rows[0];
+  const defaults=json(row.result,{}).reorderDefaults;
+  const reorderDefaults=!defaults?null:defaults.state==='COMPLETE'||row.defaults_status==='COMPLETED'&&json(row.defaults_result,{}).state==='COMPLETE'?{state:'COMPLETE',label:'Default reorder points are ready.'}:['DEAD','PAUSED','CANCELLED'].includes(row.defaults_status)?{state:'NEEDS_REVIEW',label:'Stock is ready. Default reorder points need review; you can set your own in What to order.'}:{state:'PREPARING',label:'Stock is ready. Default reorder points are being prepared in the background; you can set your own any time.'};
   return {id:row.id,status:row.status,stage:row.stage,itemsCreated:Number(row.items_created),
     skusCreated:Number(row.skus_created),rowsImported:Number(row.rows_imported),unitsEstablished:Number(row.units_established),
     itemsUpdated:json(row.observed,{}).itemsUpdated??null,
     verified:Number(row.verified)===1,checks:json(row.checks,[]),observed:json(row.observed,{}),
-    problems:json(row.problems,[]),errorMessage:row.error_message};
+    problems:json(row.problems,[]),errorMessage:row.error_message,reorderDefaults};
 }
 
 async function cancel(database, ctx, id) {
