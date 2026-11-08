@@ -1,6 +1,19 @@
 'use strict';
 
 module.exports=[
+  {id:24,key:'combine-draft-orders',label:'Combine unsent supplier orders',summary:'Draft orders for the same supplier, currency and delivery date can share one replacement PO. Original drafts stay in the history. Shipping savings depend on the supplier’s actual charges.',
+    sql:`WITH draft AS (SELECT p.*,s.name FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
+      WHERE p.workspace_id=$1 AND p.status='DRAFT' AND ($2='' OR lower(s.name)=lower($2)))
+      SELECT name AS "Supplier",currency AS "Currency",expected_date AS "Expected date",count(*) AS "Drafts",
+      array_to_string((array_agg(po_number ORDER BY order_date,id))[1:20],', ') AS "PO numbers"
+      FROM draft GROUP BY supplier_id,name,currency,expected_date HAVING count(*)>1 ORDER BY name,currency,expected_date NULLS LAST,supplier_id`},
+  {id:25,key:'split-draft-orders',label:'Split a draft purchase order',summary:'Split a draft into separate orders for each receiving warehouse, a maximum goods value per order, or delivery dates assigned to the original line numbers. Each replacement needs its usual approval before placement.',
+    sql:`SELECT p.po_number AS "PO",s.name AS "Supplier",p.expected_date AS "Expected date",count(l.id) AS "Lines",'/purchasing/orders/'||p.id AS link
+      FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
+      JOIN purchase_order_lines l ON l.workspace_id=p.workspace_id AND l.purchase_order_id=p.id
+      WHERE p.workspace_id=$1 AND p.status='DRAFT' AND ($2='' OR lower(s.name)=lower($2) OR lower(p.po_number)=lower($2))
+      GROUP BY p.id,p.po_number,s.name,p.expected_date ORDER BY p.expected_date NULLS LAST,p.po_number,p.id`},
+  {id:77,key:'margin-prices',label:'Review selling prices after a cost increase',readPage:require('../pricing/agent-margin-prices').review},
   {id:23,key:'supplier-minimums',label:'Review supplier minimums and free shipping',readPage:require('../purchasing/agent-order-quantities').supplierMinimums},
   {id:27,key:'supplier-packs',label:'Check supplier pack and case orders',summary:'Replenishment rounds the required units up to a complete purchasing unit and to the supplier’s order multiple.',
     sql:`SELECT k.code AS "SKU",v.name AS "Supplier",si.units_per_purchase_unit AS "Units per pack",

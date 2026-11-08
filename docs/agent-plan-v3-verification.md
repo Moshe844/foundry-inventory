@@ -41,8 +41,8 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 21 | Keeps reorder points and min/max up to date from real sales. | Suggest | Trained | Alone | Alone | Policy only |
 | 22 | Picks the cheapest or fastest supplier for each item. | Suggest | Suggest | Trained | Alone | A linked supplier is ranked from saved terms and measured lead time. Starter receives a suggestion. Automatic supplier switching and a competitive two-supplier case need verification. |
 | 23 | Tops up an order to hit the supplier's minimum or free shipping. | Suggest | Trained | Alone | Alone | A seven-unit shortage with a supplier selling pairs of three-unit cases produced twelve units. It rose to eighteen when the extra six dollars cost less than shipping or a separate sixteen-dollar minimum required it. Starter got a suggestion. A stale approval was refused. |
-| 24 | Combines small orders into one PO to save shipping. | Excluded | Trained | Alone | Alone | Policy only |
-| 25 | Splits big POs by budget, warehouse or delivery date. | Excluded | Excluded | Trained | Alone | Policy only |
+| 24 | Combines small orders into one PO to save shipping. | Excluded | Trained | Alone | Alone | Two warehouse drafts became one supplier PO with unchanged units and goods value, both original orders retained as cancelled. Starter was denied, and a competing or downgraded proposal could not replace the same drafts. An approved Growth mission combined matching drafts under its taught supplier and dollar limit. Over-limit and revoked rules were refused. |
+| 25 | Splits big POs by budget, warehouse or delivery date. | Excluded | Excluded | Trained | Alone | Split drafts by warehouse, line delivery dates and goods value. Seven units at $2 became three unsent POs of $6, $6 and $2. Verified Starter and Growth denials, stale status, Pro and Custom approvals. Pro split a draft by location within the scope of a taught rule and an approved mission. |
 | 26 | Plans buying to a monthly budget (open-to-buy). | Excluded | Excluded | Excluded | Alone | Custom open-to-buy subtracts posted bill lines and unbilled order commitments once. Authenticated page, scheduled run, separate currencies, competing budget edits and lower-plan denials tested. Automated PO budget allocation remains open. |
 | 27 | Orders in full cases, packs or pallets, not loose units. | Excluded | Trained | Alone | Alone | Verified six packs of three on the stored eighteen-unit PO. All eligible tiers expose saved pack terms. Starter could neither generate this agent order nor approve a higher-plan pack proposal after a downgrade. |
 | 28 | Emails approved POs to the supplier. | Draft | Alone | Alone | Alone | Approved PO reaches the supplier outbox. No external mailbox delivery was tested. |
@@ -70,13 +70,13 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 50 | Tells sales and customers when a waited-for item is back in stock. | Excluded | Draft | Alone | Alone | Policy only |
 | 51 | Puts new stock on QC hold until it passes inspection, so it can't be sold early. | Excluded | Trained | Alone | Alone | Policy only |
 | 52 | Creates sales orders from customer emails and PDFs. | Excluded | Draft | Alone | Alone | Policy only |
-| 53 | Repeats a customer's usual order from one sentence ("same as last month"). | Excluded | Trained | Alone | Alone | Ask prepares a repeat draft from a named customer and previous calendar month at current prices. Tested current totals, all tiers, ambiguous history, shadow, downgrade, stale quotes and replay. Autonomous execution with trained authority and natural-language model routing still need verification. |
+| 53 | Repeats a customer's usual order from one sentence ("same as last month"). | Excluded | Trained | Alone | Alone | Ask prepares a repeat draft from a named customer and previous calendar month at current prices. Tested current totals, all tiers, ambiguous history, shadow, downgrade, stale quotes and replay. A trained Growth mission created the same customer draft within its amount limit. A new delivery address needed an individual approval. Live language-model routing remains unverified. |
 | 54 | Checks each order for stock, credit, address and price problems. | Suggest | Alone | Alone | Alone | The open-order check showed four unreserved units and an overdue invoice on a partially allocated order. Verified Starter gets a suggestion and higher tiers see address, price and receivable checks. |
 | 55 | Holds orders for customers who are overdue. | Excluded | Suggest | Alone | Alone | Pro and Custom with an owner-enabled rule and active automation blocked an order for an overdue receivable. A partial payment kept the hold. Full payment released the same draft. Growth gets a suggestion and neither lower tier can enable the rule. |
 | 56 | Releases orders to the warehouse in the best pick order. | Excluded | Trained | Alone | Alone | Policy only |
 | 57 | Builds pick lists and pick waves by zone. | Excluded | Trained | Alone | Alone | The agent gates wave creation, scanning, packing, shortages and refresh before proposal generation and again at execution. Starter discovery and scan proposal denials were exercised. Full physical wave verification per eligible tier remains open. |
-| 58 | Picks the cheapest shipping rate that still meets the promise date. | Suggest | Trained | Alone | Alone | Policy only |
-| 59 | Buys shipping labels (within your $ per label). | Draft | Alone | Alone | Alone | Policy only |
+| 58 | Picks the cheapest shipping rate that still meets the promise date. | Suggest | Trained | Alone | Alone | Selects the lowest eligible current quote in each currency that meets the promised date. Verified all four tiers with a cheaper late rate, a timely rate, a faster rate and missing or expired delivery estimates. Starter receives a suggestion. |
+| 59 | Buys shipping labels (within your $ per label). | Draft | Alone | Alone | Alone | Real approval and background purchase routes tested with a simulated carrier. Starter requires individual approval. Growth halts at $25.01 per label and checks each label in a multi-piece quote. A downgrade before the carrier call stops purchase. Owner spending limits apply on every tier. |
 | 60 | Tells customers their order has shipped, with tracking. | Alone | Alone | Alone | Alone | Policy only |
 | 61 | Splits an order when part is out of stock and ships the rest. | Excluded | Excluded | Trained | Alone | Policy only |
 | 62 | Watches tracking and flags late or lost parcels. | Excluded | Alone | Alone | Alone | Tracking review identifies overdue parcels and carrier exceptions through the owner page. Tested all plans and clearing the exception. Live carrier updates still need verification. |
@@ -86,7 +86,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 66 | Books freight pickups for pallets (LTL). | Excluded | Excluded | Excluded | Alone | Policy only |
 | 67 | Creates standing and recurring customer orders on their schedule. | Excluded | Trained | Alone | Alone | Policy only |
 | 68 | Takes pre-orders on incoming stock and fills them as soon as it arrives. | Excluded | Draft | Alone | Alone | Policy only |
-| 69 | Checks the ship-to address before buying a label. | Alone | Alone | Alone | Alone | Policy only |
+| 69 | Checks the ship-to address before buying a label. | Alone | Alone | Alone | Alone | The purchase queue and worker check the saved destination and current order address before buying. An incomplete or changed address stops the carrier call. Tests include Starter, Growth, Pro and Custom. |
 | 70 | Prepares international paperwork: commercial invoice, HS codes and customs forms. | Excluded | Draft | Alone | Alone | Policy only |
 | 71 | Plans delivery routes for your own vans. | Excluded | Excluded | Trained | Alone | Policy only |
 | 72 | Answers customer emails about stock, delivery dates and order status. | Excluded | Trained | Alone | Alone | Policy only |
@@ -94,12 +94,12 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 74 | Follows up on open quotes after the number of days you choose. | Excluded | Trained | Alone | Alone | Policy only |
 | 75 | Turns an accepted quote into an order. | Excluded | Draft | Alone | Alone | Policy only |
 | 76 | Uses each customer's own price list, discounts and terms. | Excluded | Alone | Alone | Alone | Policy only |
-| 77 | Suggests new selling prices when costs go up, to protect margin. | Suggest | Suggest | Draft | Draft | Policy only |
+| 77 | Suggests new selling prices when costs go up, to protect margin. | Suggest | Suggest | Draft | Draft | A cost rise from $4 to $5 produced a $12.50 suggestion on a previously $10 item. Starter and Growth could not prepare the price change. The Pro proposal required a person, failed after downgrade, and Custom approval updated the actual catalog. |
 | 78 | Finds customers who stopped buying and drafts a check-in. | Excluded | Excluded | Trained | Alone | Two fulfilled orders for the same customer, backdated by 100 days, produce a check-in draft naming the customer. A recent shipment prevents that draft. Growth direct access is denied. |
 | 79 | Adds "customers also buy" items to quotes. | Suggest | Draft | Alone | Alone | A fulfilled coffee order and grinder produce a matching companion-item suggestion. Writing the item to a quote is outstanding. |
-| 80 | Checks credit limits before big orders. | Suggest | Alone | Alone | Alone | Policy only |
+| 80 | Checks credit limits before big orders. | Suggest | Alone | Alone | Alone | A partially billed order, an unpaid invoice and a new draft produced $4.50 exposure against a $4 limit without double counting. Paying the invoice cleared the excess. Starter received a suggestion and other tiers saw the breakdown. |
 | 81 | Sends a customer their account statement when asked. | Excluded | Trained | Alone | Alone | Policy only |
-| 82 | Flags orders priced below cost or with a wrong discount. | Alone | Alone | Alone | Alone | Policy only |
+| 82 | Flags orders priced below cost or with a wrong discount. | Alone | Alone | Alone | Alone | All four plans flagged an order priced below its recorded cost. A deliberately mismatched discount on an existing order was flagged against its saved quote. |
 | 83 | Takes orders by WhatsApp, SMS or a simple B2B order page. | Excluded | Excluded | Trained | Alone | Policy only |
 | 84 | Answers stock and delivery questions in your website chat, inside your rules. | Excluded | Excluded | Alone | Alone | Policy only |
 | 85 | Shows true net margin per item, channel and customer, after marketplace fees, shipping and returns. | Suggest | Alone | Alone | Alone | Policy only |
@@ -227,7 +227,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 207 | Follows rules you write in plain words ("always split POs over $10k"). Starter: up to 5. | Alone | Alone | Alone | Alone | Five Starter reorder instructions saved; sixth rejected and existing rule edited. Other rule types need scenarios. |
 | 208 | Learns from your approvals and stops asking about what you always OK. | Excluded | Alone | Alone | Alone | Policy only |
 | 209 | Suggests a new rule when it sees you fix the same thing again and again. | Excluded | Alone | Alone | Alone | Policy only |
-| 210 | Tests a new rule on past data first and shows what it would have done. | Excluded | Alone | Alone | Alone | Policy only |
+| 210 | Tests a new rule on past data first and shows what it would have done. | Excluded | Alone | Alone | Alone | For a draft consolidation rule, the owner tested a $12 cap against past completed operations before enabling it. The page showed one of one examples inside the cap. Other rule types still need historical simulation. |
 | 211 | Learns each customer's and supplier's habits. | Excluded | Alone | Alone | Alone | Policy only |
 | 212 | Reads your SOP documents and follows them. | Excluded | Excluded | Alone | Alone | Policy only |
 | 213 | Runs your custom playbooks (multi-step jobs), on a schedule too. | Excluded | Trained | Alone | Alone | Saved playbooks include eligible operational reviews. Growth cap, scheduled execution, replay and permission changes are verified. Parameterized lookups are run on demand. |

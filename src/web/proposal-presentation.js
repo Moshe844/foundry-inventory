@@ -12,7 +12,7 @@ function impact(type){
  return 'Changes a business record';
 }
 function fields(payload){
- const result=[],hidden=new Set(['integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
+ const result=[],hidden=new Set(['training','integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
  function walk(value,path,depth){
   if(result.length>=120||depth>5||value===null||value===undefined||value==='')return;
   if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{value=JSON.parse(value);}catch{}}

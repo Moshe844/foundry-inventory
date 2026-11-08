@@ -653,7 +653,9 @@ function createPostgresAskRouter(database,options={}){
       ?Object.values(native.checkpoint?.harness?.approvalDeliveries||{}).find(d=>d.proposalId===proposal.id
         &&d.decision?.source==='human_user'&&d.decision.approved===true&&d.decision.scope?.kind==='mission'
         &&d.decision.scope.id===mission.id&&d.decision.scope.sha256===mission.plan_hash):null;
-    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    const trainingService=require('../../autopilot/draft-authority');
+    const draftTraining=req.user?.role==='owner'&&trainingService.jobs.has(proposal.action_type)?await trainingService.settings(database,req.ctx,proposal.id,req.query.draftMaximum):null;
+    return res.page('attention/postgres-proposal',{draftTraining,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});

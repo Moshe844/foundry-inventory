@@ -229,12 +229,12 @@ async function quote(database,ctx,shipmentId,options={}){
       await client.query(`INSERT INTO shipment_rates
         (id,workspace_id,shipment_id,provider,provider_rate_id,carrier,service,amount_minor,currency,
          delivery_days,delivery_date,delivery_guaranteed,quoted_at,created_at,connector_id,account_fingerprint,
-         parcel_fingerprint,provider_shipment_ids)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17::jsonb)
+         parcel_fingerprint,provider_shipment_ids,package_amounts_minor)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
         ON CONFLICT(shipment_id,connector_id,provider_rate_id) DO NOTHING`,[newId('rate'),ctx.workspaceId,shipmentId,
         account.provider,(rate.rateIds||[rate.rateId]).join(','),rate.carrier,rate.service,rate.amountMinor,
         rate.currency||'USD',rate.deliveryDays??null,rate.deliveryDate||null,rate.guaranteed?1:0,now,
-        account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[])]);
+        account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[]),JSON.stringify(rate.packageAmountsMinor||null)]);
     }
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return state(database,ctx.workspaceId,shipmentId);
@@ -276,9 +276,12 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     if(!require('./service-eligibility').allowed(rate,shipment.shipping_options||{}))throw new ValidationError('This postal service requires confirmed content eligibility. Review label preferences and request fresh rates before buying.');
     if(Date.now()-new Date(rate.quoted_at).getTime()>30*60_000)throw new ValidationError('This carrier quote expired. Refresh rates before purchasing a label.');
     const account=rate.connector_id?await accounts.forWorkspace(client,ctx.workspaceId,{connectorId:rate.connector_id,provider:rate.provider}):null;
+    const postage=require('./agent-postage'),approvedView=await state(client,ctx.workspaceId,shipmentId);
     if(!account||accountFingerprint(account)!==rate.account_fingerprint||
-      quoteFingerprint(await state(client,ctx.workspaceId,shipmentId))!==rate.parcel_fingerprint)
+      quoteFingerprint(approvedView)!==rate.parcel_fingerprint)
       throw new ValidationError('The parcel or shipping account changed. Request fresh rates before purchasing.');
+    if(!approvedView.to.complete||!approvedView.from.complete)throw new ValidationError('Complete the delivery and dispatch addresses before buying a label.');
+    await postage.assertPurchase(client,ctx.workspaceId,ctx.agentPostageScope,rate);
     await require('./postgres-purchase-policy').assertWithin(client,ctx,rate);
     const id=newId('shiptxn');const now=nowIso();
     await client.query(`INSERT INTO shipping_label_transactions
@@ -289,6 +292,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'shipping.label.purchase',
       provider:rate.provider,aggregateType:'shipment',aggregateId:shipmentId,idempotencyKey:key,
       requestedByUserId:ctx.actorId,payload:{transactionId:id,shipmentId,rateId:rate.id,actorId:ctx.actorId,
+        agentPostageScope:ctx.agentPostageScope||'manual',addressFingerprint:postage.addressFingerprint(approvedView),
         providerRateId:rate.provider_rate_id,currency:rate.currency,connectorId:rate.connector_id,isReturn:Boolean(shipment.customer_return_id),
         accountFingerprint:rate.account_fingerprint,providerShipmentIds:rate.provider_shipment_ids,packageCount:(await packagesFor(client,ctx.workspaceId,shipmentId)).length,options:require('./parcel-contract').options(shipment.shipping_options||{})},
       priority:10,maxAttempts:12});
@@ -395,6 +399,13 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought,checkpointedReference=null;
   try{
+    const postage=require('./agent-postage');
+    const scope=input.agentPostageScope??await postage.previousScope(database,workspaceId,effect);
+    if(scope!=='manual')await postage.assertPurchase(database,workspaceId,scope,rate);
+    await database.transaction(client=>require('./postgres-purchase-policy').assertWithin(client,ctx,rate,input.transactionId),{isolation:'SERIALIZABLE',retrySafe:true});
+    const freshView=await state(database,workspaceId,input.shipmentId);
+    if(!freshView.to.complete||!freshView.from.complete||input.addressFingerprint&&postage.addressFingerprint(freshView)!==input.addressFingerprint)
+      throw new ValidationError('The delivery or dispatch address changed or is incomplete. Review the address and request fresh rates.');
     if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(database,workspaceId,shipment.sales_order_id);
     await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,

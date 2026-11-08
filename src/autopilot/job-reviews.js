@@ -5,6 +5,8 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  {id:58,key:'timely-shipping-rates',label:'Find the least expensive service meeting the delivery date',readPage:require('../shipping/agent-delivery-rates').review},
+  ...require('../sales/agent-credit-pricing'),
   ...require('../sales/agent-order-checks').definitions,
   ...require('./exception-reviews'),
   ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
@@ -27,6 +29,7 @@ function offers(state){
 }
 
 const suggestions={
+  58:r=>r.Service?'Consider '+r.Service+' at '+r.Price+' for '+r.Shipment+'. Carrier arrival '+r['Carrier arrival']+'.':r.Shipment+' · '+r.Status+'.',
   54:r=>'Check order '+r.Order+' for '+r.Customer+'. '+r['Unreserved units']+' unreserved units and '+r['Overdue invoices']+' overdue invoices.',
   55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
   3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
@@ -41,6 +44,8 @@ const suggestions={
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',
   44:r=>'Review '+r.Order+' against its delivery record for '+r.SKU+'.',
   79:r=>'Consider '+r.Product+' for this quote. It appeared in '+r['Shared orders']+' shared orders.',
+  80:r=>'Review the credit limit for '+r.Customer+' before confirming '+r.Order+'. '+r.Result+'.',
+  77:r=>'Consider a selling price of '+r['Suggested selling price']+' for '+r.SKU+' after its cost rose to '+r['Current cost']+'.',
   88:r=>'Review the ordering history for '+r.Customer+'. '+r.Health+'.',
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
   91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',

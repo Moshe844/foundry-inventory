@@ -2105,11 +2105,17 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
-    if(agentAccount.plan && agentAccount.shadow && contract.name!=='report.template.create') throw new ValidationError('StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.');
+    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,Boolean(missionPlanId));
+    if(stopped)throw new ValidationError(stopped);
     const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
-    if(job && agentPolicy.usesAgentTerms(agentAccount))agentPolicy.requireJob(agentAccount.plan,job,operation);
+    if(job && agentPolicy.usesAgentTerms(agentAccount)){
+      const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
+      agentPolicy.requireJob(agentAccount.plan,job,operation,{trained});
+    }
     if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
+    if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload))
+      throw new ValidationError('Individually approve the first order for this customer or delivery address.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
         WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
       if(!plan||plan.actor_user_id!==ctx.actorId||plan.authorization_mode!=='MISSION'
@@ -2130,7 +2136,8 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     for(const capability of contract.additionalCommercialCapabilities||[])await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capability);
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
-    const result=await contract.execute(client,ctx,payload);
+    const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
+    const result=await contract.execute(client,postage?{...ctx,agentPostageScope:missionPlanId?'automatic':'individual'}:ctx,payload);
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
         'proposal_result_unverified');

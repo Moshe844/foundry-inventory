@@ -704,6 +704,10 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  require('../purchasing/agent-regroup-orders').spec(24),require('../purchasing/agent-regroup-orders').spec(25),
+  {name:'catalog.restore_margin',description:'Prepare the exact new selling price for a named SKU after its purchase cost increases, preserving the previous margin percentage. A person must approve every price change.',
+    fields:['sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
+    build:require('../pricing/agent-margin-prices').build,execute:require('../pricing/agent-margin-prices').execute,verify:require('../pricing/agent-margin-prices').verify},
   {name:'sales_order.repeat',description:'Repeat a named customer’s last confirmed order or the order from last calendar month as a new draft at current prices. Use repeatPeriod previous-month for “same as last month”. If several orders match that month, ask for the source order number.',
     record:'customer',fields:['recordReference','repeatPeriod','sourceOrderNumber'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
     resultingRecords:['sales_order'],resultRecordKind:'sales_order',resultReference:'salesOrderId',resultDisplayReference:'orderNumber',

@@ -64,7 +64,7 @@ async function check(db,ctx,{filter,page,today},overdueOnly=false){
     return {...shared,'Unreserved units':Number(r.unreserved||0),'Missing line prices':Number(r.no_price),
       'Delivery address':r.delivery_method==='PICKUP'?'Pickup':parse(r.ship_to_address).complete?'Complete':'Needs review',
       'Credit limit check':r.credit_limit_minor==null?'No saved limit':r.base_currency!==r.currency||r.other_currency?'Currency conversion needed':
-        Number(r.same_currency_debt)>Number(r.credit_limit_minor)?'Outstanding invoices exceed limit':'Within recorded limit',
+        Number(r.same_currency_debt)>Number(r.credit_limit_minor)?'Outstanding invoices exceed limit':'Existing invoices within limit',
       'Outstanding in order currency':money.format(r.same_currency_debt,r.currency)};
   }),more:rows.length>50,summary:overdueOnly?'Open orders from customers with an unpaid invoice past its due date. Settled invoices clear automatically.':
     'Checks current reservations, line prices, delivery address, overdue invoices and recorded credit limits. Draft orders have not yet reserved stock.'};

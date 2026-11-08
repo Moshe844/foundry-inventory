@@ -38,7 +38,9 @@ async function prepare(db,ctx,customer,args){
   const quote=await pricing.prepareQuote(db,ctx,input);
   if(quote.violations.length)throw new ValidationError('The current prices require review before repeating this order.');
   const address=input.deliveryMethod==='SHIP'?customer.shipping_address:null;
-  return {payload:{recordId:customer.id,sourceOrderNumber:order.order_number,sourceOrderId:order.id,
+  const training=require('../autopilot/draft-authority').scope(customer.id,input.currency,quote.totalMinor,
+    [input.deliveryMethod,...new Set(items.map(i=>i.sku_id).sort())],customer.name+' · '+items.map(i=>i.code).join(', ')+' · '+input.deliveryMethod.toLowerCase());
+  return {payload:{recordId:customer.id,sourceOrderNumber:order.order_number,sourceOrderId:order.id,training,
       address,input:{...input,pricingQuoteHash:pricing.quoteHash(quote)}},
     summary:'Create a draft for '+customer.name+' from '+order.order_number+' at current prices. '+
       items.map(i=>i.quantity_ordered+' × '+i.code).join(', ')+'. Total '+format(quote.totalMinor,quote.currency)+'. '+
@@ -49,7 +51,9 @@ async function execute(client,ctx,p){
   const {rows:[customer]}=await client.query("SELECT * FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE' FOR SHARE",[ctx.workspaceId,p.recordId]);
   if(!customer)throw new ValidationError('This customer is no longer active.');
   const current=await prepare(client,ctx,customer,{sourceOrderNumber:p.sourceOrderNumber});
-  if(pricing.hash(current.payload)!==pricing.hash({recordId:p.recordId,sourceOrderNumber:p.sourceOrderNumber,sourceOrderId:p.sourceOrderId,address:p.address,input:p.input}))
+  const comparable={...current.payload};
+  if(!p.training)delete comparable.training;
+  if(pricing.hash(comparable)!==pricing.hash({recordId:p.recordId,sourceOrderNumber:p.sourceOrderNumber,sourceOrderId:p.sourceOrderId,address:p.address,input:p.input,...(p.training?{training:p.training}:{})}))
     throw new ValidationError('The source order, date, destination or prices changed. Review the repeat order again.');
   return require('../operations/postgres-business-workflows').createSalesOrderInTransaction(client,ctx,{...p.input,
     reference:p.sourceOrderNumber,idempotencyKey:p.idempotencyKey});

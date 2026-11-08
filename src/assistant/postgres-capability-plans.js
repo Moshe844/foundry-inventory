@@ -415,8 +415,11 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
           const account=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
           const policy=require('../commercial/agent-plan'),job=policy.actionJob(contract.name,'automatic');
-          const outsidePlan=job && policy.usesAgentTerms(account) && !policy.permits(account.plan,job,'automatic');
-          if(account.plan && ((account.shadow && contract.name!=='report.template.create') || policy.needsPerson(contract.name) || outsidePlan)){
+          const trained=job&&policy.allowance(account.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
+          const outsidePlan=job && policy.usesAgentTerms(account) && !policy.permits(account.plan,job,'automatic',{trained});
+          const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
+          const stopped=await policy.stopped(database,ctx.workspaceId,account,contract.name,true);
+          if(account.plan && (stopped || policy.needsPerson(contract.name) || outsidePlan || newCustomerOrAddress)){
             stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
             await update(database,claimed,token,steps,'WAITING_USER');
             break;

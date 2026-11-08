@@ -19,6 +19,10 @@ function createPostgresAutopilotRouter(database){
   const policy=require('../../commercial/agent-plan');
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
+  router.post('/actions/:id/draft-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/draft-authority').save(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/actions/'+encodeURIComponent(req.params.id));
+  }));
   const buying=require('../../purchasing/agent-order-quantities');
   router.get('/purchasing/freight/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/freight-terms',{title:'Supplier freight terms',nav:'purchasing'},
@@ -110,6 +114,8 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
+      if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
+      if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
@@ -117,6 +123,23 @@ function createPostgresAutopilotRouter(database){
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);
     res.redirect(303,'/autopilot/reviews/overdue-customer-orders');
+  }));
+  router.post('/autopilot/reviews/margin-prices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review the selling price after the cost increase',
+      {action:'catalog.restore_margin',sku:req.body.sku});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const actions={'combine-draft-orders':'purchase_order.combine_drafts','split-draft-orders':'purchase_order.split_draft'};
+    if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a purchase-order grouping.');
+    const args={action:actions[req.params.job],sourceOrders:req.body.sourceOrders,splitStrategy:req.body.splitStrategy,budgetAmount:req.body.budgetAmount};
+    if(args.splitStrategy==='delivery-date')args.lineDates=JSON.stringify(String(req.body.lineDates||'').trim().split(/\r?\n/).map(line=>{
+      const match=/^\s*(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line);
+      if(!match)throw new ValidationError('Enter one line number and date per row, for example 1 2027-02-14.');
+      return {line:Number(match[1]),date:match[2]};
+    }));
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review replacement purchase orders',args);
+    res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
   router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/purchase-requests',{
     title:'Staff purchase requests',nav:'purchasing',requestKey:newId('req')},()=>requests.page(database,req.ctx))));

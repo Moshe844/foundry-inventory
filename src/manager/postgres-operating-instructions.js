@@ -447,7 +447,7 @@ function target(change){if(change.domain==='replenishment')return `replenishment
   if(change.domain==='capability_authority')return `authority:capability:${change.capabilityName}`;
   if(change.domain==='stock_protection')return `guard:${change.skuId}:${change.locationId||'*'}`;return null;}
 
-async function checkRuleLimit(client,ctx,changes) {
+async function checkRuleLimit(client,ctx,changes,additional=0) {
   const state=await require('../commercial/agent-plan').accountState(client,ctx.workspaceId);
   const limit={starter:5,growth:50,pro:500}[state.plan];
   if(!limit) return;
@@ -468,7 +468,9 @@ async function checkRuleLimit(client,ctx,changes) {
   for(const row of history.rows) for(const change of parse(row.resolved_changes,[])) apply(row.workspace_id,change);
   const before=keys.size;
   for(const change of changes) apply(ctx.workspaceId,change);
-  if(keys.size>limit && keys.size>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
+  const drafts=await client.query(`SELECT count(*) n FROM stockchief_runtime.agent_draft_rules r JOIN workspaces w ON w.id=r.workspace_id
+    WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[state.accountId]);
+  if(keys.size+Number(drafts.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 
 async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);
@@ -514,5 +516,5 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
   await database.query(`UPDATE operating_instruction_proposals SET status='SUPERSEDED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
-module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm};
+module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm,checkRuleLimit};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions',prepareReorderForm:'ask.prepare_actions'});

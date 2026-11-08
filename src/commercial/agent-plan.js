@@ -118,6 +118,8 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
+  ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
+  ['catalog.restore_margin',77],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['sales_order.repeat',53],['sales_order.allocation_priority',65],
   ['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
@@ -140,6 +142,7 @@ function actionJob(name,operation,payload) {
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
 const humanSteps=new Set([
+  'catalog.restore_margin',
   'inventory.receive','purchase_order.receive','transfer.receive','customer_return.receive',
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
   'customer_return.refund','supplier_payment.record','sales_order.cancel','catalog.set_price',
@@ -148,5 +151,32 @@ const humanSteps=new Set([
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
 function needsPerson(capability){return humanSteps.has(capability)||separateApproval.has(capability);}
+async function stopped(db,workspaceId,account,capability,automatic){
+  if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
+  if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
+  const {rows:[config]}=await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId]);
+  if(config?.mode==='OBSERVE')return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
+  if(automatic&&(Number(config?.paused)||Number(config?.suspended)))return 'Automatic work is paused. Review the inventory’s automation settings.';
+  return null;
+}
 
-module.exports = { actionJob,usesAgentTerms,needsPerson, requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
+async function customerOrderNeedsPerson(db,workspaceId,capability,payload,proposalId=null){
+  if(!['sales_order.create','sales_order.repeat'].includes(capability))return false;
+  if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',
+    [workspaceId,proposalId,capability])).rows[0]?.payload;
+  const order=capability==='sales_order.repeat'?payload?.input:payload;
+  if(!order?.customerId)return true;
+  const pickup=order.deliveryMethod==='PICKUP';
+  const destination=capability==='sales_order.repeat'?payload.address:order.shipToAddress;
+  if(!pickup&&!destination)return true;
+  // These two capabilities create staff-directed orders. Authenticated
+  // storefront order ingestion has a separate entry point.
+  const known=await db.query(`SELECT 1 FROM sales_orders o WHERE o.workspace_id=$1 AND o.customer_id=$2
+    AND o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED','FULFILLED')
+    AND coalesce(o.customer_decision_required,0)=0 AND coalesce(o.delivery_decision_required,0)=0
+    AND ($3 OR o.delivery_method='SHIP' AND lower(trim(o.ship_to_address))=lower(trim($4::text))) LIMIT 1`,
+    [workspaceId,order.customerId,pickup,destination||null]);
+  return !known.rowCount;
+}
+
+module.exports = { actionJob,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
