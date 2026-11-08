@@ -67,12 +67,12 @@ function openPostgres(connectionString, options = {}) {
       if(error.code==='23514'&&['inventory_plan_capacity','commercial_storage_capacity'].includes(error.constraint))
         throw new (require('../commercial/entitlements').EntitlementError)(error.message,{constraint:error.constraint});
       throw error;
-    }finally{resourceMetrics.queryFinished(start);}};
+    }finally{resourceMetrics.queryFinished(start,statement);}};
   // COMMIT includes deferred foreign-key/constraint checks and WAL flushes.
   // Omitting these round trips attributes database time to application work
   // and hides the cost of rolled-back attempts. Preserve control-query errors.
   const controlQuery=async(client,statement,values)=>{const start=process.hrtime.bigint();
-    try{return await client.query(statement,values);}finally{resourceMetrics.queryFinished(start);}};
+    try{return await client.query(statement,values);}finally{resourceMetrics.queryFinished(start,statement);}};
   const query = async(statement, values = []) => {const result=await measuredQuery(pool,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;};
   async function withSessionLock(key,operation){
     const client=await pool.connect();let locked=false,discard=false;

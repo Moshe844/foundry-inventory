@@ -77,7 +77,7 @@ jobs:
         run: node --test tests/postgres/import-cache-cleanup-scale.test.js
       - name: Hosted qualification uses normal login and cleans up synthetic credentials
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
-        run: node --test tests/postgres/staging-load-login.test.js
+        run: node --test tests/postgres/staging-load-login.test.js tests/postgres/staging-qualification-checkpoint.test.js
       - name: Compact import receipts, exact replay and global stock costs
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: node --test --test-concurrency=1 tests/postgres/atomic-receipt-batches.test.js tests/postgres/import-compact-receipt-recovery.test.js tests/postgres/global-stock-cost-totals.test.js
