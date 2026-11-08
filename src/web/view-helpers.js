@@ -63,6 +63,13 @@ function timeAgo(iso,timeZone='UTC') {
 
 function dateTime(iso,timeZone='UTC') { return require('./presentation/formatting').forTimeZone(timeZone).dateTime(iso); }
 
+// Products with variants get an internal placeholder code when the owner gave none.
+// Show the owner's own code, otherwise a real SKU, never the placeholder.
+function productCode(code, fallback) {
+  const own = String(code || '').trim();
+  return own && !/^PRODUCT-ITEM_[A-Z0-9]+$/i.test(own) ? own : (fallback || '');
+}
+
 function trackingLabel(mode, hasVariants) {
   const base = TRACKING_MODES[mode] ? TRACKING_MODES[mode].label : mode;
   return hasVariants ? `${base} · Variants` : base;
@@ -232,6 +239,7 @@ module.exports = {
   dateTime,
   timeAgo,
   trackingLabel,
+  productCode,
   trackingBadgeClass,
   operationLabel,
   locationKindLabel,

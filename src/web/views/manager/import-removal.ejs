@@ -46,7 +46,7 @@
             <input type="checkbox" name="itemIds" value="<%= item.id %>" data-selection-item>
             <span class="selection-row__main">
               <strong><%= item.name %></strong>
-              <small><%= item.baseCode || item.variants.map(function (variant) { return variant.code; }).join(', ') %></small>
+              <small><%= helpers.productCode(item.baseCode) || item.variants.map(function (variant) { return variant.code; }).join(', ') %></small>
             </span>
             <span class="selection-row__meta"><strong><%= item.onHand %></strong> on hand</span>
           </label>

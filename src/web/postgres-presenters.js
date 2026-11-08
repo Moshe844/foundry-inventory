@@ -80,7 +80,7 @@ async function homeUncached(database,workspaceId,actorId=null){
     ORDER BY executed_at DESC,id DESC LIMIT 8`,[workspaceId,actorId,dayStart])).rows:[];
   const completedWork=[...handled.filter(e=>e.at&&new Date(e.at)>=new Date(dayStart)),...executed.filter(e=>{const contract=require('../assistant/postgres-capability-registry').registry.get(e.action_type);return contract&&(!contract.ownerOnly||e.role==='owner')&&require('../actions/permissions').can(e,contract.permission);}).map(e=>({headline:e.summary,detail:'Completed through Ask StockChief',link:'/actions/'+e.id,at:e.executed_at}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,8);
   const noticed=[];
-  if(brief.stats.zeroCount>0)noticed.push({text:`${brief.stats.zeroCount} item${brief.stats.zeroCount===1?' is':'s are'} currently out of stock.`,
+  if(brief.stats.zeroCount>0)noticed.push({text:brief.stats.skuCount?`${brief.stats.zeroCount.toLocaleString('en-US')} of ${brief.stats.skuCount.toLocaleString('en-US')} SKU${brief.stats.skuCount===1?' is':'s are'} out of stock.`:`${brief.stats.zeroCount} item${brief.stats.zeroCount===1?' is':'s are'} currently out of stock.`,
     detail:'Open inventory to see which ones; customer shortages needing a decision are listed above.',href:'/inventory'});
   return {brief,completedWork,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:active,setup:null,
     status:{paused:state.paused,pausedReason:state.pausedReason,suspended:state.suspended,

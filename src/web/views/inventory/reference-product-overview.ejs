@@ -2,7 +2,7 @@
       Keep its supported actions usable without inventing PostgreSQL-only facts. */ %>
 <a class="back-link" href="/inventory">‹ Stock</a>
 <section class="sc-business-card">
-  <header><div><h1><%= item.name %><%= item.is_active?'':' · Archived' %></h1><p><%= item.base_code||skus[0]?.code %> · <%= item.unit_label %> · <%= helpers.trackingLabel(mode) %></p></div>
+  <header><div><h1><%= item.name %><%= item.is_active?'':' · Archived' %></h1><p><%= helpers.productCode(item.base_code, skus[0]?.code) %> · <%= item.unit_label %> · <%= helpers.trackingLabel(mode) %></p></div>
   <div class="sc-product-actions"><button class="btn" type="button" data-modal-open="modal-edit">Edit details</button>
   <% if(item.has_variants&&canOperate&&item.is_active){ %><button class="btn" type="button" data-modal-open="modal-variant">Add variant</button><% } %>
   <% if(canAct){ %><button class="btn btn--primary" type="button" data-modal-open="modal-receive">Some came in</button><button class="btn" type="button" data-modal-open="modal-issue">Sold or used</button><button class="btn" type="button" data-modal-open="modal-adjust">Adjust stock</button><button class="btn" type="button" data-modal-open="modal-transfer" <%= locations.length<2?'disabled':'' %>>Move stock</button><% } %>

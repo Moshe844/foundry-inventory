@@ -272,7 +272,7 @@
           <h3 class="detail-head">At zero</h3>
           <ul class="plain-list">
             <% stats.zeroStock.forEach(function (item) { %>
-              <li><a href="/inventory/<%= item.id %>"><%= item.name %></a><% if (item.base_code) { %> <span class="t-muted mono"><%= item.base_code %></span><% } %></li>
+              <li><a href="/inventory/<%= item.id %>"><%= item.name %></a><% if (helpers.productCode(item.base_code)) { %> <span class="t-muted mono"><%= helpers.productCode(item.base_code) %></span><% } %></li>
             <% }) %>
           </ul>
           <% if (stats.zeroCount > stats.zeroStock.length) { %>

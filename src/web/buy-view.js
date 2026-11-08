@@ -389,7 +389,7 @@ async function reorderView(database, workspaceId, overview) {
     const deliverTo = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || locations.rows[0]?.id || null;
     return { ...group, deliverTo, totalMinor: group.items.reduce((sum, item) => sum + (item.costMinor || 0), 0) };
   }).sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
-  return { groups: list, unlinked, count: seen.size, hasMore: Boolean(overview.hasMore), nextAfter: overview.nextAfterSkuId,
+  return { groups: list, unlinked, count: Math.max(seen.size, Number(overview.atOrBelowTotal || 0)), hasMore: Boolean(overview.hasMore), nextAfter: overview.nextAfterSkuId,
     totalMinor: list.reduce((sum, group) => sum + group.totalMinor, 0) };
 }
 

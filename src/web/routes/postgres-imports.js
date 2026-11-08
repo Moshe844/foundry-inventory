@@ -123,6 +123,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
+      missingLocationCount:savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)?savedSummary.missingLocationRows:null,
       missingAccountingSetup:missingAccounting.rows.length>0,
       locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,approvalReview,
     });

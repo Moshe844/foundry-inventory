@@ -3,7 +3,7 @@
   <div class="rm-title">
     <div>
       <h1><%= item.name %><% if (!item.is_active) { %> <span class="rm-pillbadge">Archived</span><% } %></h1>
-      <p><span class="mono"><%= item.base_code || skus[0].code %></span> · <%= helpers.trackingLabel(item.tracking_mode) %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %><% if (item.description) { %> · <%= item.description %><% } %></p>
+      <p><span class="mono"><%= helpers.productCode(item.base_code, skus[0].code) %></span> · <%= helpers.trackingLabel(item.tracking_mode) %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %><% if (item.description) { %> · <%= item.description %><% } %></p>
     </div>
     <div class="rm-title__do">
       <% if (item.is_active) { %><button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit">Edit details</button><% } %>

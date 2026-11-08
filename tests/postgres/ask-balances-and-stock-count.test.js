@@ -62,6 +62,8 @@ test('Ask answers the unpaid list on two accounts with no model, and count gains
   assert.match((await ask('Who owes me money?')).answer,/Total owed: \$270\.00/);
   assert.match((await ask('just the late ones')).answer,/Nobody is late paying you/);
   assert.match((await ask('all of them')).answer,/Total owed: \$270\.00/);
+  assert.match((await ask('just the late ones')).answer,/Nobody is late paying you/);
+  assert.match((await ask('what about all of them, give me a table')).answer,/Total owed: \$270\.00/,'a follow-up that also asks for a table needs no AI');
   assert.match((await ask('what about '+name)).answer,/\$270\.00/);
   assert.match((await ask('and Nobody Real Inc')).answer,/no unpaid invoices for Nobody Real Inc/);
   assert.match((await ask('what about bills?')).answer,/no unpaid bills/i);

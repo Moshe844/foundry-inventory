@@ -511,7 +511,7 @@ function createPostgresCommerceRouter(database,options={}){
     const list=await require('../buy-view').purchaseOrdersList(database,req.ctx.workspaceId,
       await commerce.purchaseOrders(database,req.ctx.workspaceId),{...req.query,pageSize:size},can,dateToday(req));
     const lowCount=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,{})
-      .then((found)=>found.rows.length).catch(()=>0);
+      .then((found)=>Math.max(found.rows.length,Number(found.atOrBelowTotal||0))).catch(()=>0);
     return res.page('buy/orders',{title:'Purchase orders',nav:'purchasing',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),lowCount,suppressBack:true,
       ownSectionTabs:true,screenGuide:null,permissions:can});
   }));
