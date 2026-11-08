@@ -13,7 +13,7 @@ function source({scopeItems=false,skuIdsOnly=false}={}){
   AND b.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active<>1)) GROUP BY b.sku_id) inactive ON inactive.sku_id=total.sku_id
  WHERE EXISTS(SELECT 1 FROM eligible_policies WHERE location_id IS NULL)`;
  return `WITH ${selected}eligible_policies AS MATERIALIZED(
- SELECT p.* FROM reorder_policies p ${policyScope}
+ SELECT ${skuIdsOnly?'':'p.workspace_id,'}p.sku_id,p.location_id,p.reorder_point${skuIdsOnly?'':',p.target_stock'} FROM reorder_policies p ${policyScope}
  WHERE p.workspace_id=$1 AND p.reorder_point IS NOT NULL
  ${skuIdsOnly?'AND (p.location_id IS NULL OR p.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1)))':''}),
  stock_positions AS NOT MATERIALIZED(
@@ -28,8 +28,8 @@ function source({scopeItems=false,skuIdsOnly=false}={}){
  CROSS JOIN LATERAL(SELECT b.sku_id,b.location_id,b.on_hand FROM balances b
   WHERE b.workspace_id=$1 AND b.location_id=sites.location_id AND b.sku_id=ANY(sites.sku_ids) OFFSET 0) stock),
  low_positions AS MATERIALIZED(
- SELECT p.workspace_id,p.sku_id,p.location_id,p.reorder_point,p.target_stock,
- coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)::numeric AS on_hand
+ SELECT ${skuIdsOnly?'p.sku_id':`p.workspace_id,p.sku_id,p.location_id,p.reorder_point,p.target_stock,
+ coalesce(CASE WHEN p.location_id IS NULL THEN total.on_hand ELSE stock.on_hand END,0)::numeric AS on_hand`}
  FROM eligible_policies p
  LEFT JOIN local_stock stock ON stock.sku_id=p.sku_id AND stock.location_id=p.location_id
  LEFT JOIN stock_totals total ON total.sku_id=p.sku_id

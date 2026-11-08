@@ -10,12 +10,33 @@ function source(){return `WITH dirty_skus AS MATERIALIZED(
  CROSS JOIN LATERAL(SELECT b.sku_id,sum(b.quantity_units)::numeric AS quantity_units,sum(b.total_cost_minor) AS total_cost_minor
   FROM accounting_inventory_cost_balances b WHERE b.workspace_id=$1 AND b.sku_id=d.sku_id
   GROUP BY b.sku_id OFFSET 0) live`;}
-// Global totals need no per-SKU reconstruction. The canonical covering range
-// scan visits this inventory's cost positions once; a large pending projection
-// otherwise repeats an indexed balance lookup for every changed SKU. These
-// aggregate reads stay exact in the caller's snapshot, including pending work.
-async function totals(db,workspaceId){return db.query('SELECT coalesce(sum(quantity_units),0)::numeric AS units,coalesce(sum(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[workspaceId]);}
-async function value(db,workspaceId){return (await db.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[workspaceId])).rows[0];}
+// Clean summaries contain one row per SKU, rather than one per bin. Reconcile
+// a small dirty set in this same statement snapshot. Bound the queue probe:
+// a large backlog uses one canonical range scan, never one lookup per SKU.
+const totalsSql=`WITH pending_sample AS MATERIALIZED(
+ SELECT sku_id FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1 ORDER BY change_xid,sku_id LIMIT 1001
+), dirty AS MATERIALIZED(SELECT DISTINCT sku_id FROM pending_sample),
+ mode AS MATERIALIZED(SELECT (SELECT count(*) FROM pending_sample)<=1000
+  AND EXISTS(SELECT 1 FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1) AS summarized),
+ saved AS MATERIALIZED(
+  SELECT coalesce(sum(quantity_units),0) units,coalesce(sum(total_cost_minor),0) cost FROM stockchief_runtime.sku_cost_totals
+  WHERE workspace_id=$1 AND (SELECT summarized FROM mode)
+ ), changed_saved AS MATERIALIZED(
+  SELECT coalesce(sum(s.quantity_units),0) units,coalesce(sum(s.total_cost_minor),0) cost FROM dirty d
+  CROSS JOIN LATERAL(SELECT quantity_units,total_cost_minor FROM stockchief_runtime.sku_cost_totals
+   WHERE workspace_id=$1 AND sku_id=d.sku_id OFFSET 0)s WHERE (SELECT summarized FROM mode)
+ ), changed_live AS MATERIALIZED(
+  SELECT coalesce(sum(s.quantity_units),0) units,coalesce(sum(s.total_cost_minor),0) cost FROM dirty d
+  CROSS JOIN LATERAL(SELECT quantity_units,total_cost_minor FROM accounting_inventory_cost_balances
+   WHERE workspace_id=$1 AND sku_id=d.sku_id OFFSET 0)s WHERE (SELECT summarized FROM mode)
+ ), canonical AS MATERIALIZED(
+  SELECT coalesce(sum(quantity_units),0) units,coalesce(sum(total_cost_minor),0) cost FROM accounting_inventory_cost_balances
+  WHERE workspace_id=$1 AND NOT(SELECT summarized FROM mode)
+ ) SELECT (saved.units-changed_saved.units+changed_live.units+canonical.units)::numeric units,
+  (saved.cost-changed_saved.cost+changed_live.cost+canonical.cost)::bigint cost
+ FROM saved,changed_saved,changed_live,canonical`;
+async function totals(db,workspaceId){return db.query(totalsSql,[workspaceId]);}
+async function value(db,workspaceId){return {minor:(await totals(db,workspaceId)).rows[0].cost};}
 async function refreshBatch(db,workspaceId,{beforePublish}={}){
  return db.transaction(async c=>{
   const snapshot=(await c.query('SELECT pg_current_snapshot()::text snapshot')).rows[0].snapshot;
@@ -62,4 +83,4 @@ async function schedule(db,{now=Date.now()}={}){
  for(const row of rows)await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:row.id,kind:'inventory.refresh-cost-summary',idempotencyKey:'sku-cost:'+row.sku_id+':'+row.change_xid+':'+Math.floor(now/30000),priority:80,maxAttempts:5,now});
  return rows.length;
 }
-module.exports={source,totals,value,refreshBatch,refresh,schedule};
+module.exports={source,totals,value,totalsSql,refreshBatch,refresh,schedule};
