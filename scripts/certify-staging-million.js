@@ -6,7 +6,7 @@ const mode=arg('mode','prepare'),run=arg('run');
 if(!['prepare','million','verify','remeasure'].includes(mode)||!/^[a-z0-9-]{6,60}$/.test(run||''))throw Error('Choose prepare, million, verify or remeasure and a stable qualification run ID.');
 if(process.env.RENDER_SERVICE_ID!=='srv-daqh418473hc73853e7g')throw Error('Only the existing StockChief staging worker may run this qualification.');
 const url=require('./lib/staging-database-guard').assertDatabase(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL);
-const db=require('../src/db/postgres').openPostgres(url.href,{max:2,applicationName:'staging-million-row-qualification'}),imports=require('../src/imports/postgres-service');
+const db=require('../src/db/postgres').openPostgres(url.href,{max:4,applicationName:'staging-million-row-qualification'}),imports=require('../src/imports/postgres-service');
 const root=path.join(os.tmpdir(),'stockchief-million-'+run);fs.mkdirSync(root,{recursive:true});
 const stateFile=path.join(root,'checkpoint.json'),{warehouses}=require('./lib/staging-million-source');let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{run,paidCalls:0};
 const checkpoint=require('./lib/staging-qualification-checkpoint'),checkpointScope={jobId:arg('capacity-job'),release:arg('release'),run};

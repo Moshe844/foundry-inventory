@@ -93,7 +93,7 @@ function openPostgres(connectionString, options = {}) {
     const unavailable=()=>Object.assign(new Error('The protected database session is no longer available. Saved batches remain safe.'),{code:'55P03'});
     try{identity=(await controlQuery(client,'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked,pg_backend_pid() AS pid,hashtextextended($1,0)::text AS hash',[key])).rows[0];locked=identity.locked;
       if(!locked)return {busy:true};
-      return await operation({...sessionHandle(client),shareLock:async()=>{
+      return await operation({...sessionHandle(client),sharedSessionCapacity:pool.options.max,shareLock:async()=>{
         if(shared||observed.broken())throw unavailable();
         // Acquire shared ownership before releasing exclusive ownership. No
         // catalogue writer can enter between preparation and the lane sessions.

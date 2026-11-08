@@ -3,7 +3,8 @@
 `FOUNDRY_IMPORT_STOCK_WORKERS` is an operator setting, disabled by default.
 Values 1–4 opt eligible **new** stock imports into four persistent partitions,
 served by that many independent sessions. Start with 2; reserve pool capacity
-for the coordinator, job heartbeat and other worker lanes. Customer input cannot
+for the job heartbeat and other worker lanes. The coordinator serves the first
+lane, and concurrency is capped to leave one pool slot free. Customer input cannot
 set concurrency. Existing partial serial imports retain their original order.
 
 Eligibility requires at least 5,000 additive rows for existing ordinary quantity

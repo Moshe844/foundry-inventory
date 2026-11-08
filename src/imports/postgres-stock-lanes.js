@@ -49,10 +49,10 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
  let nextLane=0,failure=null;
  // Once an import has durable lanes, turning concurrency off still resumes
  // the same frozen order with one session. Never switch its receipt format.
- const count=Math.max(1,workers());let delivery=Promise.resolve();
+ const count=Math.min(Math.max(1,workers()),Math.max(1,Number(database.sharedSessionCapacity||2)-1));let delivery=Promise.resolve();
  const deliver=checkpoint=>{const task=delivery.then(()=>onProgress(checkpoint));delivery=task.catch(()=>{});return task;};
  await database.shareLock();
- const jobs=Array.from({length:count},()=>database.withSharedSession(async session=>{
+ const work=async session=>{
   while(!failure){const lane=nextLane++;if(lane>=4)return;
    for(;;){if(failure)return;
     try{const outcome=await session.transaction(async client=>{
@@ -88,7 +88,10 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
     }catch(error){failure ||=error;return;}
    }
   }
- }).catch(error=>{failure ||=error;}));
+ };
+ // The coordinator also owns a lane. Leave a pool slot for lease fencing;
+ // a small qualification pool must not wait for a connection it already owns.
+ const jobs=Array.from({length:count},(_,index)=>(index===0?work(database):database.withSharedSession(work)).catch(error=>{failure ||=error;}));
  await Promise.all(jobs);await delivery;if(failure)throw failure;
  return (await database.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0].apply_checkpoint;
 }
