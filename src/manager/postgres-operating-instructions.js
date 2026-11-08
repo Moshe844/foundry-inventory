@@ -474,6 +474,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_count_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_count_schedules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.location_reorder_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.supplier_negotiation_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_overdue_order_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.class_service_levels WHERE workspace_id IN(SELECT id FROM owned)) AS n`,[state.accountId]);
   if(keys.size+Number(configured.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }

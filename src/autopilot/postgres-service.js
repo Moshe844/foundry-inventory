@@ -78,10 +78,23 @@ async function pause(database,ctx,membership,reason){permissions.assertCan(membe
   await database.query(`UPDATE workspace_autopilot SET paused=1,paused_at=$2,paused_by_user_id=$3,
     paused_reason=$4,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,at,ctx.actorId,String(reason||'').trim()||null]);
   return getState(database,ctx.workspaceId);}
-async function resume(database,ctx,membership){assertOperate(membership);const current=await ensure(database,ctx.workspaceId);
-  if(current.suspended || current.paused)assertAdmin(membership);await database.query(`UPDATE workspace_autopilot SET paused=0,paused_at=NULL,
-    paused_by_user_id=NULL,paused_reason=NULL,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);
-  return getState(database,ctx.workspaceId);}
+async function resume(database,ctx,membership){
+  assertOperate(membership);
+  return database.transaction(async c=>{
+    await ensure(c,ctx.workspaceId);
+    const current=(await c.query('SELECT * FROM workspace_autopilot WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId])).rows[0];
+    if(Number(current.suspended)||Number(current.paused)){
+      assertAdmin(membership);
+      const owner=(await c.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',[ctx.workspaceId,ctx.actorId])).rows[0];
+      assertAdmin(owner);
+    }
+    await c.query(`UPDATE workspace_autopilot SET paused=0,paused_at=NULL,paused_by_user_id=NULL,paused_reason=NULL,
+      anomaly_acknowledged_at=CASE WHEN paused=1 AND paused_reason LIKE 'Unusual automatic activity%' THEN now() ELSE anomaly_acknowledged_at END,
+      updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);
+    if(Number(current.paused))await require('../operations/postgres-security-audit').record(c,ctx,{action:'Resumed automatic work',before:{reason:current.paused_reason}});
+    return getState(c,ctx.workspaceId);
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
 
 const scopeReviewSql=`EXISTS(SELECT 1 FROM operating_instruction_proposals instruction
  CROSS JOIN LATERAL jsonb_array_elements(instruction.applied_records::jsonb) applied
@@ -419,6 +432,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     throw new ValidationError('That work is not ready to execute.');if(item.approval_requirement!=='NONE'&&!approvedBy)
     throw new ValidationError('This work needs a person to approve it.');
   if(item.approval_requirement==='NONE'){
+    await require('./circuit-breaker').refresh(client,ctx.workspaceId);
     const currentState=await getState(scoped,ctx.workspaceId);const currentEvaluation=await evaluate(scoped,ctx.workspaceId,item.recommendedAction,currentState);
     if(currentEvaluation.decision!=='authorized'||currentEvaluation.policy?.id!==item.policy_id||
       currentEvaluation.policy?.integrityHash!==item.policyEvaluation.policyHash){

@@ -2,6 +2,42 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const assistant=require('../../src/assistant/postgres-service');
+test('unusual automatic spending or volume pauses the inventory until an owner reviews it',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
+  await db.query("UPDATE accounts SET created_at=(now()-interval '60 days')::text WHERE id=$1",[f.owner.accountId]);
+  const auto=require('../../src/autopilot/postgres-service'),guard=require('../../src/autopilot/circuit-breaker');
+  const time=require('../../src/lib/business-time'),today=await time.today(db,ctx.workspaceId);
+  const stamp=days=>days?require('../../src/accounting/customer-money').addDays(today,-days)+'T13:00:00Z':new Date().toISOString();
+  const path='/autopilot/reviews/unusual-automatic-activity';
+  await subscribe('growth');await auto.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  async function commitment(days,unitCost,approval='NONE',currency='USD'){
+    const id=randomUUID(),at=stamp(days);
+    const {purchaseOrderId}=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,currency,
+      idempotencyKey:id,lines:[{skuId:f.item.skuIds[0],quantityUnits:1,unitCost}]});
+    await workflows.approvePurchaseOrder(db,ctx,purchaseOrderId,{idempotencyKey:randomUUID()});
+    await db.query(`INSERT INTO work_items(id,workspace_id,category,source,idempotency_key,approval_requirement,
+      execution_status,purchase_order_id,approved_at,created_at) VALUES($1,$2,'replenishment_plan','postgres_autopilot',$1,$3,'COMPLETED',$4,$5,$5)`,
+      [id,ctx.workspaceId,approval,purchaseOrderId,at]);
+  }
+  for(const d of [4,3,2,1])await commitment(d,10);
+  await commitment(0,500,'REQUIRED');await commitment(0,250,'NONE','EUR');
+  assert.deepEqual(await guard.observations(db,ctx.workspaceId),[]);
+  await commitment(0,25);
+  const refresh=()=>db.transaction(c=>guard.refresh(c,ctx.workspaceId));
+  await subscribe('starter');await browser.get(path).expect(402);await refresh();assert.equal((await auto.getState(db,ctx.workspaceId)).paused,false);
+  await subscribe('growth');await browser.get(path).expect(200);
+  const run=()=>db.transaction(c=>require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate({workspaceId:ctx.workspaceId,id:randomUUID(),payload:{actorId:ctx.actorId}},c));
+  await run();assert.match((await auto.getState(db,ctx.workspaceId)).pausedReason,/\$25\.00/);
+  await refresh();assert.equal((await db.query("SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action='Paused unusual automatic activity'",[ctx.workspaceId])).rows[0].n,1);
+  await assert.rejects(require('../../src/shipping/agent-postage').assertPurchase(db,ctx.workspaceId,'automatic',{amount_minor:100,currency:'USD'}),/paused/);
+  const account=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Team member',businessName:'Separate inventory',email:randomUUID()+'@example.test',password:f.password});
+  const staff={workspaceId:ctx.workspaceId,actorId:randomUUID()};await db.query("INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,'Team member','staff',now()::text)",[staff.actorId,ctx.workspaceId,account.accountId]);
+  await assert.rejects(auto.resume(db,staff,{role:'owner'}),/owner/);
+  await auto.resume(db,ctx,{role:'owner'});await refresh();assert.equal((await auto.getState(db,ctx.workspaceId)).paused,false);
+  await subscribe('pro');for(let i=0;i<3;i++)await commitment(0,1);
+  await refresh();assert.match((await auto.getState(db,ctx.workspaceId)).pausedReason,/3 automatic actions/);
+  await subscribe('enterprise');assert.match((await browser.get(path).expect(200)).text,/Actions/);
+});
 test('the carrier sees only eligible purchases after current-plan, per-label and delivery address checks',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:30}),{db,ctx,shipping,subscribe}=f;
   await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);

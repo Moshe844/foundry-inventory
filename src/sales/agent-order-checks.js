@@ -19,6 +19,7 @@ async function configure(db,ctx,choice){
     const state=await require('../autopilot/job-reviews').ownerState(client,ctx);
     if(choice==='on'){
       policy.requireJob(policy.usesAgentTerms(state)?state.plan:null,55,'automatic');
+      if(!await rule(client,ctx.workspaceId))await require('../manager/postgres-operating-instructions').checkRuleLimit(client,ctx,[],1);
       await client.query(`INSERT INTO stockchief_runtime.agent_overdue_order_rules(workspace_id,authorized_by) VALUES($1,$2)
         ON CONFLICT(workspace_id) DO UPDATE SET authorized_by=EXCLUDED.authorized_by,updated_at=now()`,[ctx.workspaceId,ctx.actorId]);
     }else await client.query('DELETE FROM stockchief_runtime.agent_overdue_order_rules WHERE workspace_id=$1',[ctx.workspaceId]);

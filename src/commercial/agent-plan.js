@@ -120,6 +120,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['planning.safety_stock',150],
+  ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],

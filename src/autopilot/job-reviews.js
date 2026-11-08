@@ -12,6 +12,8 @@ const definitions=[
   require('../purchasing/dual-approval').definition,
   ...require('../purchasing/approval-routing').definitions,
   require('./vacation-deputy').definition,
+  require('./circuit-breaker').definition,
+  ...require('./partner-habits').definitions,
   ...require('../operations/agent-count-tasks').definitions,
   ...require('../accounting/agent-report-packs').definitions,
   ...require('./activity-watches').definitions,
@@ -112,6 +114,7 @@ async function run(db,ctx,key,options={}){
     if(mode==='suggest')return {label:def.label,summary:result.summary,
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...inputs};
   }
   if(def.read){

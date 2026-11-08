@@ -7,6 +7,64 @@ const autonomy=require('../../src/autopilot/postgres-service');
 const terms=require('../../src/purchasing/agent-order-quantities');
 const reviews=require('../../src/autopilot/job-reviews');
 
+test('partner patterns and supplier negotiation drafts use dated evidence and current authority',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:50}),{db,ctx,subscribe,browser,workflows}=f;
+  const vendor='fixture-supplier',sku=f.item.skuIds[0],today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const day=n=>require('../../src/accounting/customer-money').addDays(today,-n);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '18 days')::text WHERE id=$1",[f.owner.accountId]);
+  await db.query("UPDATE suppliers SET email='vendor@example.test' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,vendor]);
+  await subscribe('pro');
+  async function delivery(placed,expected,received){
+    const order=await workflows.createPurchaseOrder(db,ctx,{supplierId:vendor,destinationLocationId:f.location.id,expectedDate:day(expected),
+      idempotencyKey:randomUUID(),lines:[{skuId:sku,quantityUnits:1,unitCost:2}]});
+    await workflows.approvePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});
+    await workflows.placePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});
+    await workflows.receivePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID(),lines:[{lineId:order.lineIds[0],quantity:1,locationId:f.location.id}]});
+    await db.query('UPDATE purchase_orders SET ordered_at=$2,expected_date=$3 WHERE id=$1',[order.purchaseOrderId,day(placed)+'T12:00:00Z',day(expected)]);
+    await db.query('UPDATE purchase_order_receipts SET received_at=$2 WHERE purchase_order_id=$1',[order.purchaseOrderId,day(received)+'T12:00:00Z']);
+    return order;
+  }
+  await delivery(40,35,32);await delivery(24,18,16);await delivery(12,5,5);
+  for(const ago of [32,18,4,4]){
+    const x=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',orderDate:day(ago),deliveryMethod:'PICKUP',fulfillmentLocationId:f.location.id,
+      idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:1,unitPriceMinor:700}]});
+    await workflows.confirmSalesOrder(db,ctx,x.salesOrderId,{idempotencyKey:randomUUID()});
+  }
+  const key='supplier-negotiation',address='/autopilot/reviews/'+key,service=require('../../src/purchasing/negotiation-drafts');
+  const review=()=>reviews.run(db,ctx,key,{filter:vendor});
+  const habits=()=>reviews.run(db,ctx,'partner-habits');
+  await subscribe('starter');await assert.rejects(habits(),/Growth/);
+  for(const tier of ['starter','growth']){
+    await subscribe(tier);await browser.get(address).query({filter:vendor}).expect(402);
+    await assert.rejects(service.prepare(db,ctx,{supplier:vendor}),/Pro/);
+  }
+  for(const tier of ['growth','pro','enterprise']){
+    await subscribe(tier);const result=(await habits()).rows;
+    const customer=result.find(r=>r.Type==='Customer'),supplier=result.find(r=>r.Type==='Supplier');
+    assert.equal(customer.Pattern,'Orders about every 14 days');assert.equal(customer['Estimated next order'],day(-10));
+    assert.equal(supplier.Pattern,'Delivers in about 7 days');
+    await browser.get(supplier.link).expect(200);
+  }
+  await subscribe('pro');const old=(await review()).negotiationForm;
+  await delivery(8,5,4);await assert.rejects(service.prepare(db,ctx,old),/evidence changed/);
+  const current=await review(),form=current.negotiationForm,page=await browser.get(address).query({filter:vendor}).expect(200);
+  assert.equal(current.rows[0]['Late deliveries'],3);assert.match(page.text,/Recurring negotiation drafts require Custom/);
+  await assert.rejects(service.configure(db,ctx,form),/Custom/);
+  const saved=await browser.post('/autopilot/negotiation-draft').type('form').send({...form,_csrf:f.csrf(page.text)}).expect(303);
+  const detail=await browser.get(saved.headers.location).expect(200);assert.match(detail.text,/Unsent draft/);assert.match(detail.text,/3 of 4 completed orders/);
+  assert.equal(saved.headers.location,'/messages/supplier/'+await service.prepare(db,ctx,form));
+  await subscribe('enterprise');await autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await service.configure(db,ctx,form);
+  await db.transaction(c=>service.queue(c,ctx.workspaceId,today));
+  const job=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.supplier-negotiation'",[ctx.workspaceId])).rows[0];
+  const run=()=>db.transaction(c=>require('../../src/operations/postgres-runtime-handlers').create()['agent.supplier-negotiation']({workspaceId:ctx.workspaceId,payload:job.payload},c));
+  await delivery(6,4,3);await subscribe('growth');assert.ok((await run()).skipped);await browser.get(saved.headers.location).expect(402);
+  await subscribe('enterprise');const newer=await run();assert.ok(newer.draft);assert.equal((await run()).draft,newer.draft);
+  const all=(await db.query("SELECT status,body FROM supplier_communications WHERE workspace_id=$1 AND message_kind='agent_negotiation'",[ctx.workspaceId])).rows;
+  assert.equal(all.length,2);assert.ok(all.every(m=>m.status==='PREPARED'));assert.ok(all.some(m=>m.body.includes('4 of 5 completed orders')));
+  await service.configure(db,ctx,{supplier:vendor,revision:job.payload.revision,remove:'1'});assert.ok((await run()).skipped);
+});
+
 test('supplier terms round a real order to cases and add goods only within the freight saving or supplier minimum',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:4});
   const {db,ctx,subscribe,browser}=f,sku=f.item.skuIds[0],vendor='fixture-supplier';

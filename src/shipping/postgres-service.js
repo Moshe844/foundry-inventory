@@ -401,6 +401,7 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   try{
     const postage=require('./agent-postage');
     const scope=input.agentPostageScope??await postage.previousScope(database,workspaceId,effect);
+    if(scope==='automatic')await database.transaction(c=>require('../autopilot/circuit-breaker').refresh(c,workspaceId),{isolation:'SERIALIZABLE',retrySafe:true});
     if(scope!=='manual')await postage.assertPurchase(database,workspaceId,scope,rate);
     await database.transaction(client=>require('./postgres-purchase-policy').assertWithin(client,ctx,rate,input.transactionId),{isolation:'SERIALIZABLE',retrySafe:true});
     const freshView=await state(database,workspaceId,input.shipmentId);

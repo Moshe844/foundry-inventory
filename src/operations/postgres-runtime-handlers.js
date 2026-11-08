@@ -418,10 +418,12 @@ async function autopilotEvaluate(job,client){
   const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   if(!job.payload.afterSkuId){
+    await require('../autopilot/circuit-breaker').refresh(client,job.workspaceId);
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
+    if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
     if(require('../commercial/agent-plan').usesAgentTerms(account)&&account.plan){
       const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
@@ -690,6 +692,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
   'agent.api_review':(job,client)=>require('../connections/agent-review-api').execute(job,client),
+  'agent.supplier-negotiation':(job,client)=>require('../purchasing/negotiation-drafts').processJob(client,job),
   'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'maintenance'})};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,

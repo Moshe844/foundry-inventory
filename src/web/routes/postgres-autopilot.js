@@ -152,6 +152,14 @@ function createPostgresAutopilotRouter(database){
     await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/vacation-deputy');
   }));
+  router.post('/autopilot/negotiation-draft',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const id=await require('../../purchasing/negotiation-drafts').prepare(database,req.ctx,req.body);
+    res.redirect(303,'/messages/supplier/'+id);
+  }));
+  router.post('/autopilot/negotiation-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/negotiation-drafts').configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/supplier-negotiation?'+new URLSearchParams({filter:req.body.supplier}));
+  }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/purchase-approval-threshold');
