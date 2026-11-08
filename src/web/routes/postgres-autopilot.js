@@ -131,6 +131,7 @@ function createPostgresAutopilotRouter(database){
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment')};
+      if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
         const rule=await require('../../purchasing/dual-approval').setting(database,req.ctx.workspaceId);
         result.purchaseThreshold={...rule,amount:rule.amount_minor==null?'':require('../../domain/currency').fromMinor(rule.amount_minor,rule.currency)};
@@ -146,6 +147,10 @@ function createPostgresAutopilotRouter(database){
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);
     await watch.save(database,req.ctx,id,req.body);
     res.redirect(303,'/autopilot/reviews/'+watch.spec[id].key);
+  }));
+  router.post('/autopilot/vacation-deputy',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/vacation-deputy');
   }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);

@@ -2,6 +2,38 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const assistant=require('../../src/assistant/postgres-service');
+test('vacation coverage sends open purchases and transfers only to a currently qualified deputy',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
+  const auth=require('../../src/domain/postgres-auth-service'),p=require('../../src/actions/permissions'),vacation=require('../../src/autopilot/vacation-deputy');
+  const colleague=await auth.createBusiness(db,{name:'Holiday buyer',businessName:'Independent business',email:randomUUID()+'@example.test',password:f.password});
+  const actor={workspaceId:ctx.workspaceId,actorId:randomUUID()},grant=[p.VIEW_PURCHASING,p.APPROVE_PO,p.VIEW_TRANSFERS,p.APPROVE_TRANSFER];
+  await db.query(`INSERT INTO users(id,workspace_id,account_id,name,role,permissions,po_approval_limit_minor,po_approval_currency,created_at)
+    VALUES($1,$2,$3,'Holiday buyer','staff',$4,2000,'USD',now()::text)`,[actor.actorId,ctx.workspaceId,colleague.accountId,p.encodeGrant(grant)]);
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),add=require('../../src/accounting/customer-money').addDays;
+  const input={deputyId:actor.actorId,start:today,end:add(today,3),revision:0},path='/autopilot/reviews/vacation-deputy';
+  await subscribe('starter');await browser.get(path).expect(402);await assert.rejects(vacation.save(db,ctx,input),/Growth/);
+  await subscribe('growth');const page=await browser.get(path).expect(200);assert.match(page.text,/Holiday buyer/);
+  await assert.rejects(vacation.save(db,actor,input),/owner/);
+  await assert.rejects(vacation.save(db,ctx,{...input,deputyId:colleague.userId}),/current team member/);
+  await browser.post('/autopilot/vacation-deputy').type('form').send({_csrf:f.csrf(page.text),...input}).expect(303);
+  await assert.rejects(vacation.save(db,ctx,input),/changed/);
+  const buy=cost=>workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,
+    idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantityUnits:1,unitCost:cost}]});
+  const small=(await buy(20)).purchaseOrderId,large=(await buy(21)).purchaseOrderId;
+  const dst=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Vacation transfer site',kind:'warehouse'});
+  const transfers=require('../../src/transfers/postgres-transfer-service');
+  const move=await transfers.request(db,ctx,{fromLocationId:f.location.id,toLocationId:dst.id,reason:'Balance stock',idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantity:1}]});
+  const received=async()=>(await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,actor.actorId)).filter(r=>r.sourceId?.startsWith('vacation-')).map(r=>r.sourceId.slice(9)).sort();
+  for(const tier of ['growth','pro','enterprise']){await subscribe(tier);assert.deepEqual(await received(),[small,move.id].sort());}
+  await subscribe('starter');assert.deepEqual(await received(),[]);
+  await subscribe('growth');await vacation.save(db,ctx,{...input,start:add(today,1),revision:1});assert.deepEqual(await received(),[]);
+  await vacation.save(db,ctx,{...input,revision:2});await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[actor.actorId,p.encodeGrant([p.VIEW_PURCHASING,p.APPROVE_PO])]);
+  assert.deepEqual(await received(),[small]);
+  await assert.rejects(workflows.approvePurchaseOrder(db,actor,large,{idempotencyKey:randomUUID()}),/above your/);
+  assert.equal((await workflows.approvePurchaseOrder(db,actor,small,{idempotencyKey:randomUUID()})).status,'APPROVED');assert.deepEqual(await received(),[]);
+  await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[actor.actorId,p.encodeGrant(grant)]);assert.deepEqual(await received(),[move.id]);
+  await vacation.save(db,ctx,{remove:'1',revision:3});assert.deepEqual(await received(),[]);
+});
 test('purchase threshold binds two authorized people to the exact amount, items and terms',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
   const dual=require('../../src/purchasing/dual-approval'),auth=require('../../src/domain/postgres-auth-service');

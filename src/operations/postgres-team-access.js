@@ -62,13 +62,17 @@ async function assertPurchaseApproval(c,ctx,order){
  const amount=await purchaseAmount(c,ctx.workspaceId,order);
  if(amount>Number(actor.po_approval_limit_minor))throw new AuthorizationError('This purchase totals '+money.format(amount,order.currency)+', above your '+money.format(Number(actor.po_approval_limit_minor),order.currency)+' approval limit. Ask an owner or an authorized manager to approve it.');
 }
+function purchaseTotalsSql(workspace,order,scale){
+ return `SELECT coalesce(sum(round(l.unit_cost::numeric*coalesce(l.secondary_quantity_ordered,l.quantity_units)*${scale})),0) AS lines,
+ count(*)>0 AND count(l.unit_cost)=count(*) AS priced,
+ (SELECT coalesce(sum(amount_minor),0) FROM purchase_order_charges WHERE workspace_id=${workspace} AND purchase_order_id=${order} AND kind<>'deposit') AS charges
+ FROM purchase_order_lines l WHERE l.workspace_id=${workspace} AND l.purchase_order_id=${order}`;
+}
 async function purchaseAmount(c,workspaceId,order){
- const scale=10**money.exponent(order.currency),totals=(await c.query(`SELECT
- (SELECT coalesce(sum(round(unit_cost::numeric*coalesce(secondary_quantity_ordered,quantity_units)*$3)),0)::text FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2) lines,
- (SELECT coalesce(sum(amount_minor),0)::text FROM purchase_order_charges WHERE workspace_id=$1 AND purchase_order_id=$2 AND kind<>'deposit') charges`,[workspaceId,order.id,scale])).rows[0];
+ const scale=10**money.exponent(order.currency),totals=(await c.query(purchaseTotalsSql('$1','$2','$3::numeric'),[workspaceId,order.id,scale])).rows[0];
  const amount=money.sum([money.integer(totals.lines),money.integer(totals.charges,'Purchase charges',{signed:true})]);
  if(amount<0)throw new ValidationError('The purchase total needs review before approval.');
  return amount;
 }
-module.exports={list,saveRole,assign,assertPurchaseApproval,purchaseAmount,capability};
+module.exports={list,saveRole,assign,assertPurchaseApproval,purchaseAmount,purchaseTotalsSql,capability};
 

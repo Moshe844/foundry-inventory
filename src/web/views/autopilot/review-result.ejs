@@ -1,4 +1,13 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.vacation){ const {rule,people,today}=result.vacation; %>
+<form method="post" action="/autopilot/vacation-deputy">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+  <label>Deputy <select required name="deputyId"><option value="">Choose a team member</option><% for(const p of people){ %><option value="<%= p.id %>" <%= p.id===rule.deputy_id?'selected':'' %>><%= p.name %></option><% } %></select></label>
+  <label>First day <input type="date" required name="start" value="<%= rule.starts_on||today %>"></label>
+  <label>Last day <input type="date" required name="end" value="<%= rule.ends_on||today %>"></label>
+  <% if(people.length){ %><button class="btn">Save vacation coverage</button><% }else{ %><p>A deputy needs permission to approve purchases or transfers across this inventory. <a href="/settings?section=team#team-authority">Review team access</a></p><% } %>
+  <% if(rule.deputy_id){ %><button class="btn" name="remove" value="1" formnovalidate>End coverage</button><% } %>
+</form><% } %>
 <% if(result.countAssignments){ const config=result.countAssignments; %><form method="post" action="/warehouse/count-assignments">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= config.requestKey %>">
 <label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>"><%= loc.name %></option><% } %></select></label>

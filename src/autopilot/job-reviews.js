@@ -11,6 +11,7 @@ const definitions=[
   require('../reports/manager-presentation').definition,
   require('../purchasing/dual-approval').definition,
   ...require('../purchasing/approval-routing').definitions,
+  require('./vacation-deputy').definition,
   ...require('../operations/agent-count-tasks').definitions,
   ...require('../accounting/agent-report-packs').definitions,
   ...require('./activity-watches').definitions,
