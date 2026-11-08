@@ -1,6 +1,14 @@
 'use strict';
 
 module.exports=[
+  {id:23,key:'supplier-minimums',label:'Review supplier minimums and free shipping',readPage:require('../purchasing/agent-order-quantities').supplierMinimums},
+  {id:27,key:'supplier-packs',label:'Check supplier pack and case orders',summary:'Replenishment rounds the required units up to a complete purchasing unit and to the supplier’s order multiple.',
+    sql:`SELECT k.code AS "SKU",v.name AS "Supplier",si.units_per_purchase_unit AS "Units per pack",
+      si.order_multiple AS "Order multiple in packs",si.minimum_order_quantity AS "Minimum packs" FROM supplier_items si
+      JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id AND v.status='active'
+      JOIN skus k ON k.workspace_id=si.workspace_id AND k.id=si.sku_id AND k.is_active=1
+      WHERE si.workspace_id=$1 AND si.is_active=1 AND ($2='' OR lower(k.code)=lower($2) OR lower(v.name)=lower($2))
+      ORDER BY k.code,v.name,si.id`},
   {id:26,key:'open-to-buy',label:'Plan purchasing within the monthly budget',filterLabel:'Month (YYYY-MM)',readPage:(db,ctx,options)=>require('../purchasing/agent-budgets').report(db,ctx,options,true)},
   {id:110,key:'purchase-budget',label:'Compare purchase budgets with actual spending',filterLabel:'Month (YYYY-MM)',readPage:require('../purchasing/agent-budgets').report},
   {id:22,key:'supplier-options',label:'Compare buying options',summary:'Active supplier terms for each SKU. Cost ranks compare the same currency. Lead-time ranks use observed delivery times after three received orders, then saved item or supplier terms if available. Check minimums before ordering.',sql:`

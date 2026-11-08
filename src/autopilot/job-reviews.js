@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  ...require('../sales/agent-order-checks').definitions,
   ...require('./exception-reviews'),
   ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},
@@ -26,6 +27,8 @@ function offers(state){
 }
 
 const suggestions={
+  54:r=>'Check order '+r.Order+' for '+r.Customer+'. '+r['Unreserved units']+' unreserved units and '+r['Overdue invoices']+' overdue invoices.',
+  55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
   3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
   64:r=>'Review '+r.Order+' for '+r.Customer+'. '+r['Waiting units']+' units of '+r.SKU+' are still waiting for stock.',
   116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled units were returned.',
@@ -34,6 +37,7 @@ const suggestions={
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
   22:r=>'Check the saved price and delivery terms with '+r.Supplier+' for '+r.SKU+'.',
+  23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',
   44:r=>'Review '+r.Order+' against its delivery record for '+r.SKU+'.',
   79:r=>'Consider '+r.Product+' for this quote. It appeared in '+r['Shared orders']+' shared orders.',

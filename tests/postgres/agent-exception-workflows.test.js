@@ -44,6 +44,19 @@ test('exception reviews distinguish shortages, deliveries, overdue documents and
     const waiting=await read('waiting-orders');
     const losses=await read('stock-exceptions');
     const rates=await read('customer-return-rates');
+    const checks=await read('sales-order-checks',{filter:later.orderNumber});
+    if(tier==='starter'){
+      assert.match(checks.rows[0].Suggestion,/4 unreserved units and 1 overdue/);
+      await assert.rejects(read('overdue-customer-orders'),e=>e.code==='entitlement_required');
+    }else{
+      assert.equal(checks.rows[0]['Unreserved units'],4);assert.equal(checks.rows[0]['Delivery address'],'Pickup');
+      assert.equal(checks.rows[0]['Missing line prices'],0);assert.equal(checks.rows[0]['Overdue invoices'],1);
+      const debt=await read('overdue-customer-orders',{filter:later.orderNumber});
+      if(tier==='growth'){
+        assert.match(debt.rows[0].Suggestion,/credit hold/);
+        assert.match((await browser.get('/autopilot/reviews/overdue-customer-orders').expect(200)).text,/Automatic holds require Pro/);
+      }else assert.equal(debt.rows[0]['Oldest due date'],yesterday);
+    }
     if(tier==='starter'){
       await assert.rejects(read('parcel-exceptions'),e=>e.code==='entitlement_required');
       assert.match(waiting.rows[0].Suggestion,/4 units/);
@@ -62,4 +75,30 @@ test('exception reviews distinguish shortages, deliveries, overdue documents and
   await db.query("UPDATE sales_shipments SET status='DELIVERED' WHERE id=$1",[parcel.shipmentId]);
   assert.equal((await read('parcel-exceptions')).rows.length,0);
   assert.ok(!(await read('overdue-work')).rows.some(r=>r.Type==='Shipment'));
+  const holds=require('../../src/sales/agent-order-checks');
+  const draft=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:side.id,
+    idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:1,unitPriceMinor:1200}]});
+  const confirm=()=>workflows.confirmSalesOrder(db,ctx,draft.salesOrderId,{idempotencyKey:randomUUID()});
+  await subscribe('pro');
+  const holdPage=await browser.get('/autopilot/reviews/overdue-customer-orders').expect(200);
+  await browser.post('/autopilot/reviews/overdue-customer-orders/rule').type('form').send({_csrf:f.csrf(holdPage.text),mode:'on'}).expect(303);
+  await holds.assertCanRelease(db,ctx.workspaceId,draft.salesOrderId);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '15 days')::text WHERE id=$1",[f.owner.accountId]);
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await assert.rejects(confirm(),/on hold/);
+  let current=await db.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,draft.salesOrderId]);
+  assert.equal(current.rows[0].status,'DRAFT');
+  for(const tier of ['starter','growth']){
+    await subscribe(tier);
+    await assert.rejects(holds.configure(db,ctx,'on'),e=>e.code==='entitlement_required');
+    await holds.assertCanRelease(db,ctx.workspaceId,draft.salesOrderId);
+  }
+  await subscribe('enterprise');
+  await assert.rejects(confirm(),/on hold/);
+  const invoice=(await db.query('SELECT * FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,parcel.order.salesOrderId])).rows[0];
+  const pay=amountMinor=>workflows.recordCustomerPayment(db,ctx,{customerId:'fixture-customer',customerInvoiceId:invoice.id,method:'cash',paymentDate:today,amountMinor,idempotencyKey:randomUUID()});
+  await pay(1);await assert.rejects(confirm(),/on hold/);
+  await pay(Number(invoice.balance_minor)-1);
+  await confirm();
+  assert.equal((await read('overdue-customer-orders')).rows.length,0);
 });

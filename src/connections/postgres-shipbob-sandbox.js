@@ -96,7 +96,8 @@ async function send(db,ctx,orderId,expectedHash,transport,generation=null){
   },{isolation:'SERIALIZABLE',retrySafe:true});
   if(generation)await validateRule(db,ctx,orderId,generation);
   else await access(db,ctx);
-  const response=await (await remote(db,ctx,con,transport)).send(review.payload);
+  const response=await (await remote(db,ctx,con,transport)).send(review.payload,
+    ()=>require('../sales/agent-order-checks').assertCanRelease(db,ctx.workspaceId,orderId));
   await save(db,ctx,orderId,review.hash,response);
 }
 async function refresh(db,ctx,orderId,transport){

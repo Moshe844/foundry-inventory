@@ -42,9 +42,10 @@ function client({apiKey,channelId},fetchImpl=fetch){
       const channels=await call('channel');
       if(!Array.isArray(channels)||!channels.some(c=>String(c.id)===channel))throw new ValidationError('This sandbox token cannot see that channel.');
     },
-    async send(payload){
+    async send(payload,beforeCreate){
       const existing=await find(payload.reference_id);
       if(existing)return checkOrder(existing,payload);
+      if(beforeCreate)await beforeCreate();
       try{return checkOrder(await call('order',payload),payload);}
       catch(error){if(error.providerStatus!==422)throw error;const duplicate=await find(payload.reference_id);if(!duplicate)throw error;return checkOrder(duplicate,payload);}
     },

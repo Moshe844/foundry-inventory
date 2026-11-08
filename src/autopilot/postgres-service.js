@@ -236,7 +236,7 @@ function position(row){return {...row,...require('../purchasing/replenishment-de
 
 async function planningSuppliers(database,workspaceId,skuIds){
  if(!skuIds.length)return new Map();
- const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,
+ const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,
   COALESCE(lead.effective_lead,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   JOIN stockchief_runtime.supplier_planning_leads lead ON lead.supplier_item_id=si.id
@@ -244,19 +244,16 @@ async function planningSuppliers(database,workspaceId,skuIds){
   ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId,skuIds])).rows;
  const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
 }
-async function supplierChoice(database,workspaceId,shortage,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
-    s.currency,s.minimum_order_amount,COALESCE(lead.effective_lead,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
+async function supplierChoice(database,workspaceId,shortage,state,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
+    s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,COALESCE(lead.effective_lead,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   JOIN stockchief_runtime.supplier_planning_leads lead ON lead.supplier_item_id=si.id
   WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
     AND ($3::text IS NULL OR si.supplier_id=$3) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,
   [workspaceId,shortage.sku_id,shortage.preferred_supplier_id]);const selected=result.rows[0];if(!selected)return null;
-  const unitsPer=Number(selected.units_per_purchase_unit||1);let purchaseUnits=Math.ceil(Math.max(shortage.default_order_quantity??0,shortage.needed)/unitsPer);
-  purchaseUnits=Math.max(purchaseUnits,Number(selected.minimum_order_quantity||1));const multiple=Number(selected.order_multiple||1);
-  purchaseUnits=Math.ceil(purchaseUnits/multiple)*multiple;const quantity=purchaseUnits*unitsPer;
-  const unitCost=selected.last_unit_cost===null?null:Number(selected.last_unit_cost),currency=require('../domain/currency');
-  const valueMinor=unitCost===null?null:currency.integer(currency.toMinor(String(unitCost),selected.currency,{label:'Supplier unit cost'})*quantity,'Supplier order value');
-  return {...selected,unitsPer,purchaseUnits,quantity,unitCost,value:valueMinor===null?null:Number(currency.fromMinor(valueMinor,selected.currency))};}
+  const buying=require('../purchasing/agent-order-quantities');
+  const resultQty=buying.quantities(selected,Math.max(shortage.default_order_quantity??0,shortage.needed),state.agentTerms);
+  return {...selected,...resultQty,restriction:buying.restriction(state,resultQty)};}
 
 async function evaluate(database,workspaceId,candidate,state,{committedPurchaseOrderId=null}={}){if(state.mode===MODES.OBSERVE)
   return {decision:'needs_approval',reason:'StockChief is set to watch only.',policy:null};
@@ -358,7 +355,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
         sourceSafety:transfer.sourceSafety,priority:90,urgency:shortage.available<=0?'immediate':'soon',evidence:[
           {fact:'destination_available',value:shortage.available},{fact:'destination_reorder_point',value:shortage.reorder},
           {fact:'source_available',value:source.available},{fact:'source_safety_stock',value:source.safety}]};
-    }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},suppliers);if(!supplier){considered.push({skuId:shortage.sku_id,reason:'no_supplier'});continue;}
+    }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},state,suppliers);if(!supplier||supplier.restriction){considered.push({skuId:shortage.sku_id,reason:supplier?.restriction||'no_supplier'});continue;}
       candidate={type:'purchase',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
@@ -366,7 +363,8 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
         reorderPoint:shortage.reorder,targetStock:shortage.target,priority:88,urgency:shortage.available<=0?'immediate':'soon',evidence:[
           {fact:'available',value:shortage.available},{fact:'incoming',value:shortage.incoming},{fact:'reorder_point',value:shortage.reorder},
-          {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)}]};}
+          {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)},
+          ...(supplier.topUp?[{fact:'supplier_top_up',value:supplier.topUp}]:[])]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
   }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
@@ -386,7 +384,9 @@ async function revalidate(database,workspaceId,action){
    throw new ValidationError('The source can no longer spare this transfer while keeping its protected stock. StockChief did nothing.');
   return;
  }
- const supplier=await supplierChoice(database,workspaceId,{...destination,needed:require('../purchasing/replenishment-decision').requiredUnits(destination)});
+ const state=await getState(database,workspaceId);
+ const supplier=await supplierChoice(database,workspaceId,{...destination,needed:require('../purchasing/replenishment-decision').requiredUnits(destination)},state);
+ if(supplier?.restriction)throw new ValidationError(supplier.restriction);
  if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency)
   throw new ValidationError('Supplier terms, price or the required quantity changed after this decision. Review a fresh recommendation.');
 }
@@ -564,7 +564,8 @@ async function lowestStockDraft(database,workspaceId){
  const policy=rules.find(r=>r.location_id)||rules[0],place=places.find(p=>p.id===policy?.location_id)||places[0];if(!place)return {...base,question:selected.name+' has the lowest stock. Add a receiving location before preparing its purchase order.'};
  if(!policy||policy.target_stock==null&&!policy.default_order_quantity)return {...base,question:selected.name+' ('+selected.code+') has the lowest stock: '+selected.on_hand+'. What quantity should its draft order use? No reorder quantity is saved.'};
  const shortage=position({...policy,sku_id:selected.id,on_hand:policy.location_id?place.on_hand:selected.on_hand,committed:policy.location_id?place.committed:places.reduce((n,p)=>n+Number(p.committed),0),incoming:policy.location_id?place.incoming:places.reduce((n,p)=>n+Number(p.incoming),0),issued:0,issue_events:0});shortage.needed=Math.max(0,Number(shortage.target||0)-shortage.projected);if(!shortage.needed&&!policy.default_order_quantity)return {...base,question:selected.name+' has the lowest stock, but available and incoming stock already meet its saved target. No additional quantity is recommended.'};
- const supplier=await supplierChoice(database,workspaceId,shortage);if(!supplier)return {...base,question:selected.name+' has the lowest stock. Link a supplier before preparing its purchase order.'};
+ const supplier=await supplierChoice(database,workspaceId,shortage,await getState(database,workspaceId));if(!supplier)return {...base,question:selected.name+' has the lowest stock. Link a supplier before preparing its purchase order.'};
+ if(supplier.restriction)return {...base,question:supplier.restriction};
  const today=await require('../lib/business-time').today(database,workspaceId),date=new Date(today+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Number(supplier.effective_lead));return {...base,sku:selected.code,supplier:supplier.supplier_name,location:place.name,quantity:supplier.quantity,unitCost:supplier.unitCost,currency:supplier.currency,expectedDate:date.toISOString().slice(0,10)};
 }
 module.exports={supplierDeliveryReadiness,lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,

@@ -19,6 +19,15 @@ function createPostgresAutopilotRouter(database){
   const policy=require('../../commercial/agent-plan');
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
+  const buying=require('../../purchasing/agent-order-quantities');
+  router.get('/purchasing/freight/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const supplier=await buying.freightSettings(database,req.ctx,req.params.id);
+    res.page('autopilot/freight-terms',{title:'Supplier freight terms',nav:'purchasing',supplier});
+  }));
+  router.post('/purchasing/freight/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await buying.saveFreight(database,req.ctx,{...req.body,supplierId:req.params.id});
+    res.redirect(303,'/autopilot/reviews/supplier-minimums');
+  }));
   router.get('/purchasing/budgets',requireAuth,owner,asyncRoute(async(req,res)=>{
     res.page('autopilot/purchase-budgets',{title:'Purchase budgets',nav:'purchasing',...(await budgets.settings(database,req.ctx,req.query.month))});
   }));
@@ -91,7 +100,12 @@ function createPostgresAutopilotRouter(database){
   }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
+    if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
     res.page('autopilot/review-result',{title:result.label,nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},result,filter:req.query.filter||''});
+  }));
+  router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);
+    res.redirect(303,'/autopilot/reviews/overdue-customer-orders');
   }));
   router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/purchase-requests',{
     title:'Staff purchase requests',nav:'purchasing',requestKey:newId('req'),...(await requests.page(database,req.ctx))})));

@@ -718,6 +718,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const order = await requireRow(client, `SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
       [salesOrderId, ctx.workspaceId], 'That sales order was not found.');
     if (!['DRAFT', 'CONFIRMED', 'BACKORDERED'].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const lines = await client.query(`SELECT * FROM sales_order_lines
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const kitComponents=(await client.query('SELECT c.component_sku_id,c.sales_order_line_id FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE c.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows,kitLines=new Set(kitComponents.map(c=>c.sales_order_line_id));
@@ -790,6 +791,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     if (!['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'].includes(order.status)) {
       throw new ValidationError('Confirm and allocate the sales order before fulfilling it.');
     }
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
     const trackedLines=await require('./postgres-tracked-sales').expand(client,ctx,salesOrderId,input.lines,at);

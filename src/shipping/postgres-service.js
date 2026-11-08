@@ -44,6 +44,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
       [ctx.workspaceId,salesOrderId])).rows[0];
     if(!order)throw new NotFoundError('That sales order was not found.');
     if(order.delivery_method!=='SHIP')throw new ValidationError('Only orders marked for shipping need a carrier parcel.');
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const destination=input.shipToAddress||order.ship_to_address;
     if(!addresses.parse(destination).complete)throw new ValidationError(addresses.why(addresses.parse(destination)));
     const actor=await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId]);
@@ -261,6 +262,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
     if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
+    if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,shipment.sales_order_id);
     if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel already has an external label. StockChief will not buy a second label. Manage the existing label in its shipping account.');
     if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('A label purchase or void is pending or needs review for this shipment.');
     if((await client.query(`SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2
@@ -393,6 +395,7 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought,checkpointedReference=null;
   try{
+    if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(database,workspaceId,shipment.sales_order_id);
     await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,
       provider:rate.provider,operation:'label_purchase',unit:'label'},()=>provider.buy(held.ctx,
