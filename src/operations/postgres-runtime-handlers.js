@@ -420,7 +420,12 @@ async function autopilotEvaluate(job,client){
   if(!job.payload.afterSkuId){
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
-    await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,await require('../commercial/agent-plan').accountState(client,job.workspaceId));
+    const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
+    await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
+    if(require('../commercial/agent-plan').usesAgentTerms(account)&&account.plan){
+      const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
+    }
   }
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
@@ -652,6 +657,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);

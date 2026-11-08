@@ -5,6 +5,37 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const commerce=require('../../src/operations/postgres-commerce');
 
+test('local sales tune location thresholds only within current plan and owner authority',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:360}),{db,ctx,subscribe,browser,csrf}=f;
+  const skuId=f.item.skuIds[0],locationId=f.location.id;
+  const rules=require('../../src/forecasting/location-reorder-rules'),plans=require('../../src/forecasting/postgres-planning-service');
+  const modes=require('../../src/autopilot/job-modes'),authority=require('../../src/autopilot/postgres-service'),inv=require('../../src/domain/postgres-inventory-engine');
+  const run=()=>plans.refreshRecommendations(db,ctx.workspaceId,{limitSkus:250});
+  const values=async id=>(await db.query('SELECT reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,skuId,id])).rows.map(r=>[Number(r.reorder_point),Number(r.target_stock)]);
+  const issue=(where,qty,reason)=>inv.issue(db,ctx,{skuId,locationId:where,quantity:qty,reasonCode:reason,idempotencyKey:randomUUID()});
+  const second=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'North site',kind:'warehouse'});
+  await inv.transfer(db,ctx,{skuId,sourceLocationId:locationId,destinationLocationId:second.id,quantity:80,idempotencyKey:randomUUID()});
+  await issue(locationId,45,'sold');await issue(locationId,45,'sold');await issue(locationId,50,'damaged');
+  await issue(second.id,15,'sold');await issue(second.id,15,'sold');
+  await subscribe('starter');const locked=await browser.get('/autopilot/reviews/reorder-settings').expect(200);assert.match(locked.text,/120 units sold in 90 days/);assert.doesNotMatch(locked.text,/name="ceiling"/);
+  await assert.rejects(rules.configure(db,ctx,{skuId,locationId,ceiling:30}),/Growth/);
+  await subscribe('growth');const setup=await browser.get('/planning').expect(200);
+  await browser.post('/planning/location-reorder-rules').type('form').send({_csrf:csrf(setup.text),position:JSON.stringify([skuId,locationId]),ceiling:29}).expect(303);
+  await run();assert.deepEqual(await values(locationId),[]);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
+  await authority.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await run();assert.deepEqual(await values(locationId),[],'The proposed 30-unit target exceeds the trained ceiling');
+  await rules.configure(db,ctx,{skuId,locationId,ceiling:30});await run();await run();
+  assert.deepEqual(await values(locationId),[[21,30]]);assert.deepEqual(await values(second.id),[]);
+  assert.equal((await db.query("SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action='Updated location reorder thresholds'",[ctx.workspaceId])).rows[0].n,1);
+  await modes.save(db,ctx,120,{mode:'routine',revision:0});await run();assert.deepEqual(await values(second.id),[],'Growth needs a trained location even when routine work is selected');
+  await subscribe('pro');await run();assert.deepEqual(await values(second.id),[[8,11]]);
+  await issue(second.id,15,'sold');await subscribe('starter');await rules.runPage(db,ctx.workspaceId,[skuId]);assert.deepEqual(await values(second.id),[[8,11]]);
+  await subscribe('enterprise');await modes.save(db,ctx,120,{mode:'ask',revision:1});await run();assert.deepEqual(await values(second.id),[[8,11]]);
+  await modes.save(db,ctx,120,{mode:'routine',revision:2});await run();assert.deepEqual(await values(second.id),[[11,15]]);
+  await rules.configure(db,ctx,{skuId,locationId,remove:'1'});
+});
+
 test('sales scenarios, partial supplier deliveries and competing quotations use stored inventory records and the current plan', {timeout:240000},async t=>{
   const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:12}),{db,ctx,workflows}=f;
   const sku=f.item.skuIds[0],code=(await db.query('SELECT code FROM skus WHERE id=$1',[sku])).rows[0].code;

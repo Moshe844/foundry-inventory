@@ -4,6 +4,7 @@ const {asyncRoute,requireAuth,requirePermission}=require('../middleware'),{newId
 function createRouter(db){
  const router=express.Router();router.use(requireAuth);
  const tasks=require('../../operations/agent-count-tasks');
+ router.get('/guide',asyncRoute(async(req,res)=>res.render('warehouse/guide',await require('../../assistant/staff-guide').read(db,req.ctx,req.query.q))));
  router.get('/warehouse/my-counts/:id',requirePermission(permissions.COUNT_STOCK,'perform stock counts'),asyncRoute(async(req,res)=>{
   res.render('warehouse/my-count',{...await tasks.page(db,req.ctx,req.params.id),restricted:await access.scope(db,req.ctx)!==null});
  }));
@@ -41,6 +42,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(countPath)return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
+  if(req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');
   return res.status(403).json({error:'warehouse_access_required',message:'Your access is limited to assigned warehouses. Use Warehouse stock or ask your inventory owner to update your access.'});

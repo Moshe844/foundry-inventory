@@ -6,6 +6,37 @@ const {randomUUID}=require('node:crypto');
 const {addDays}=require('../../src/accounting/customer-money');
 const reviews=require('../../src/autopilot/job-reviews');
 
+test('monthly ABC classes use costed physical sales across the four plans and prioritize the next count',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:3}),{db,ctx,subscribe,browser}=f;
+  const time=require('../../src/lib/business-time'),dates=require('../../src/accounting/customer-money'),catalog=require('../../src/domain/postgres-catalog-service');
+  const start=(await time.today(db,ctx.workspaceId)).slice(0,7)+'-01',saleDay=dates.addDays(start,-2)+'T17:00:00Z',receiptDay=dates.addDays(start,-3)+'T17:00:00Z';
+  const inventory=require('../../src/domain/postgres-inventory-engine'),receipts=require('../../src/accounting/postgres-stock-receipt'),issues=require('../../src/accounting/postgres-stock-removal');
+  await subscribe('growth');
+  await db.query('UPDATE accounting_settings SET accounting_start_date=$2 WHERE workspace_id=$1',[ctx.workspaceId,receiptDay.slice(0,10)]);
+  for(const [code,cost] of [['Z-HEAVY',80],['M-MEDIUM',15],['A-LIGHT',5],['U-UNKNOWN',null]]){
+    const item=await catalog.createItem(db,ctx,{name:code,baseCode:code,trackingMode:'quantity'});
+    const base={skuId:item.skuIds[0],locationId:f.location.id};
+    await (cost===null?inventory:receipts).receive(db,ctx,{...base,quantity:cost===5?101:2,unitCost:cost,occurredAt:receiptDay,idempotencyKey:randomUUID()});
+    await (cost===null?inventory:issues).issue(db,ctx,{...base,quantity:1,reasonCode:'sold',occurredAt:saleDay,idempotencyKey:randomUUID()});
+  }
+  const h=require('../../src/operations/postgres-runtime-handlers'),job={workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId},id:randomUUID()};
+  await db.transaction(c=>h.autopilotEvaluate(job,c));
+  assert.ok((await db.query("SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='planning.monthly-product-classes'",[ctx.workspaceId])).rowCount);
+  const calculate=()=>db.transaction(c=>h.create()['planning.monthly-product-classes'](job,c));
+  assert.equal((await calculate()).withSales,4);assert.equal((await calculate()).replayed,true);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);
+    const result=await reviews.run(db,ctx,'monthly-product-classes');
+    const byCode=new Map(result.rows.map(r=>[r['Product code'],r]));
+    for(const [key,label] of [['Z-HEAVY','A'],['M-MEDIUM','B'],['A-LIGHT','C'],['U-UNKNOWN','Review']])assert.equal(byCode.get(key).Class,label);
+    assert.equal(byCode.get('Z-HEAVY')['Sale cost'],'$80.00');assert.equal(byCode.get('U-UNKNOWN')['Sale cost'],null);
+    assert.deepEqual((await reviews.run(db,ctx,'monthly-product-classes',{filter:'B'})).rows.map(r=>r.Product),['M-MEDIUM']);
+    await browser.get('/autopilot/reviews/monthly-product-classes').expect(200);
+  }
+  const priorities=(await reviews.run(db,ctx,'count-priorities')).rows;assert.equal(priorities[0].SKU,'Z-HEAVY');
+  assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.product_class_months WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
+});
+
 test('dated orders forecast weekly demand and posted stock issues quantify the margin at risk across plans',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:250});
   const {db,ctx,subscribe,browser,workflows}=f,sku=f.item.skuIds[0];

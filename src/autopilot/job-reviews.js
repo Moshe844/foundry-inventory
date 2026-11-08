@@ -5,6 +5,8 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
+  {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
   require('../connections/agent-mail-triage').definition,
   require('../reports/manager-presentation').definition,
   require('../purchasing/dual-approval').definition,
@@ -67,6 +69,7 @@ const suggestions={
   144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
+  21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
   22:r=>'Check the saved price and delivery terms with '+r.Supplier+' for '+r.SKU+'.',
   23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',

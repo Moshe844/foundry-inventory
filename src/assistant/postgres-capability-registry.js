@@ -343,6 +343,12 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
       ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:{})},
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 add('read.custody','Read the latest 100 rental and consignment agreement headers. Pass an exact recordReference to read that agreement and 50 product lines, following extent.nextOffset with offset. Read booking capacity, expected-return dependencies and bounded recurring billing terms and invoices on the exact agreement. Due dates never prove a physical return.',['recordReference','offset'],'read',permissions.VIEW,'none',(_service,db,ctx,_text,args)=>require('../custody/ask-contracts').read(db,ctx,args),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'custody',recordKind:'custody_agreement',answerMode:'evidence',commercialCapability:'inventory.core'});
+add('read.staff_guide','Answer how-to questions about using StockChief. Return instructions and destinations available to this employee on the current inventory plan. Pass the user’s question as search.',
+  ['search'],'read',permissions.VIEW,'none',async(_service,db,ctx,text,args)=>{
+    const guide=await require('./staff-guide').read(db,ctx,args.search||text,{requireAgent:true});
+    return {rows:guide.topics.map(t=>({task:t.title,instructions:t.path,destination:t.href})),
+      sources:[{kind:'page',href:'/guide?q='+encodeURIComponent(guide.query),label:'Staff guide'}],coverage:guide.topics.length?'Matching staff instructions':'No matching staff instructions for this role'};
+  },async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),{answerMode:'evidence'});
 add('read.agent_review','Run a plan-checked operational review using recorded workspace data. Available reviews include '+agentReviews.definitions.map(d=>d.key).join(', ')+'. Use search for an exact SKU, lot, serial or other accepted filter.',
   ['agentJob','search','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
     const change=args.agentJob==='clearance-plan'?args.markdownPercent:args.demandChangePercent;

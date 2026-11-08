@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Warehouse stock · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
 <h1>Warehouse stock</h1><p><%= workspace.name %> · <%= restricted?'Your assigned warehouses and their bins. Inventory-wide reports and order management require inventory-wide access.':'All warehouses' %></p>
 <% if(message){ %><p role="status"><%= message %></p><% } %>
+<p><a href="/guide">Staff guide</a></p>
 <% for(const task of locals.countTasks||[]){ %><p><%= task.title %> · <a href="<%= task.href %>"><%= task.actionLabel %></a></p><% } %>
 <% for(const notice of locals.flash||[]){ %><p role="status"><%= notice.message %></p><% } %>
 <form method="get" action="/warehouse/stock"><label>Location<select name="locationId"><% for(const l of locations){ %><option value="<%= l.id %>" <%= l.id===locationId?'selected':'' %>><%= l.name %></option><% } %></select></label><label>Product, variant, SKU or barcode<input name="q" value="<%= q %>"></label><button>Find stock</button></form>

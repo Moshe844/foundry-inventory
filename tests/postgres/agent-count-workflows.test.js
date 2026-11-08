@@ -32,6 +32,21 @@ test('assigned counters use a blind phone list, while the owner verifies quantit
   await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Sign in',exact:true}).click()]);
   await mobile.goto(base+'/inventories');const token=await mobile.locator('[name=_csrf]').first().inputValue();
   await mobile.request.post(base+'/inventories/switch',{form:{_csrf:token,workspaceId:ctx.workspaceId}});
+  const guide=require('../../src/assistant/postgres-capability-registry').registry.get('read.staff_guide');
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);
+    const help=await guide.prepare(null,db,counter,'Where is my assigned count?',{});
+    assert.equal(help.rows.some(r=>r.task==='Complete my assigned count'),tier!=='starter');
+    assert.equal(help.rows.some(r=>r.destination==='/warehouse/counts/new'),false);
+    assert.equal((await guide.prepare(null,db,counter,'How do I change purchasing authority?',{})).rows.length,0);
+    const ownerGuide=await browser.get('/guide').query({q:'receive a purchase order'}).expect(200);
+    assert.match(ownerGuide.text,/only the quantity that arrived/);
+  }
+  await subscribe('growth');await mobile.goto(base+'/guide');await mobile.getByLabel('How do I…?').fill('Where is my assigned count?');
+  await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Find instructions'}).click()]);
+  assert.equal(await mobile.getByRole('link',{name:'Find my count'}).isVisible(),true);
+  assert.equal(await mobile.getByRole('link',{name:'Report a count'}).count(),0);
+  await mobile.goto(base+'/guide?q=unknown-question-xyz');assert.match(await mobile.locator('main').innerText(),/No matching instructions/);
   await mobile.goto(base+'/needs-you/all');await mobile.getByRole('link',{name:'Open my count'}).click();assert.equal(new URL(mobile.url()).pathname,path);
   const content=await mobile.locator('main').innerText();assert.match(content,/0 of 1 positions/);assert.doesNotMatch(content,/unit cost|recorded quantity|\$20\.00/i);
   await mobile.getByLabel('Physical quantity').fill('19');await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Save count'}).click()]);

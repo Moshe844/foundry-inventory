@@ -96,7 +96,8 @@ async function page(db,ctx,id){
   const assigned=await task(db,ctx,id);
   const {rows}=await db.query(`SELECT l.location_id,l.sku_id,loc.name AS location,i.name AS product,s.code FROM warehouse_count_campaign_lines l
     JOIN locations loc ON loc.id=l.location_id JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id
-    WHERE l.workspace_id=$1 AND l.campaign_id=$2 AND l.counter_quantity IS NULL ORDER BY loc.name,s.code,l.sku_id LIMIT 25`,[ctx.workspaceId,id]);
+    LEFT JOIN stockchief_runtime.product_class_values abc ON abc.workspace_id=l.workspace_id AND abc.item_id=i.id AND abc.month_start=date_trunc('month',$3::date)::date
+    WHERE l.workspace_id=$1 AND l.campaign_id=$2 AND l.counter_quantity IS NULL ORDER BY loc.name,CASE abc.class WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,s.code,l.sku_id LIMIT 25`,[ctx.workspaceId,id,await time.today(db,ctx.workspaceId)]);
   const progress=(await db.query('SELECT count(*)::int total,count(counter_quantity)::int done FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2',[ctx.workspaceId,id])).rows[0];
   return {assigned,rows,progress};
 }
