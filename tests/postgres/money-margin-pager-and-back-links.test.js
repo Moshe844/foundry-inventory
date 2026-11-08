@@ -48,9 +48,14 @@ test('profit parts add up, margins leave count gains out, lists jump pages, one 
   // Menu pages have no "Back to"; a product page has exactly one way back, even from a filtered list.
   for(const menu of ['/reports','/inventory','/money','/orders'])
   {await page.goto(base+'/');await page.goto(base+menu);assert.equal(await page.locator('main a.page-back').count(),0,menu);}
-  await page.goto(base+'/inventory?rows=50&sort=name');
+  await page.goto(base+'/inventory?rows=25&sort=name&page=3');
   await Promise.all([page.waitForURL(/\/inventory\/item_/),page.locator('main a[href^="/inventory/item_"]').first().click()]);
   assert.equal(await visibleBack(page).count(),1,'one way back on a product page');
+  // That way back returns to the exact list page, sort and size that was open, also after a reload.
+  for(const reload of [false,true]){if(reload)await page.reload();
+   assert.equal(await visibleBack(page).first().getAttribute('href'),'/inventory?rows=25&sort=name&page=3',reload?'after reload':'first visit');}
+  await Promise.all([page.waitForURL(/page=3/),visibleBack(page).first().click()]);
+  assert.match((await page.locator('[data-pager]').innerText()).replace(/\s+/g,' '),/51–75 of \d+/);
   await page.goto(base+"/reports");await page.goto(base+"/inventory/"+(f.item.itemId||f.item.id));{const all=await page.locator(".page-back,.back-link,.rm-head__back,.ox-back,.rm-back").evaluateAll(n=>n.map(a=>[a.className,a.textContent.trim(),a.getAttribute("href"),getComputedStyle(a).display,a.hidden]));assert.equal(await visibleBack(page).count(),1,JSON.stringify(all)+" "+page.url());}
   // Every menu name is also an address.
   for(const [typed,lands] of [['/buy','/purchasing/orders'],['/stock','/inventory'],['/home','/']]){const response=await page.goto(base+typed);assert.equal(response.status(),200,typed);assert.equal(new URL(page.url()).pathname,lands);}
