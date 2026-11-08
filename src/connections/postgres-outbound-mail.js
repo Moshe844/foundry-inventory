@@ -69,10 +69,29 @@ async function resolveRecipient(database,workspaceId,search,kind=null){
   return rows.length===1?{row:rows[0]}:rows.length?{ambiguous:rows}:{notFound:true};
 }
 
+const orderLinkIntro='\n\nConfirm this order, propose a date, or send documents: ';
+async function approvedBodyMatches(client,ctx,message,payload){
+  if(message.body===payload.body)return true;
+  if(payload.recipientKind!=='supplier'||!payload.purchaseOrderId||!message.body.startsWith(payload.body+orderLinkIntro))return false;
+  const url=message.body.slice(payload.body.length+orderLinkIntro.length),token=url.split('/').at(-1);
+  const origin=require('../config').connections.publicOrigin;
+  if(!origin||!/^[A-Za-z0-9_-]{43}$/.test(token)||url!==new URL('/supplier/order/'+token,origin).href)return false;
+  const links=require('../purchasing/supplier-order-link');
+  const order=await links.lookup(client,token);
+  return order.id===payload.purchaseOrderId&&order.workspace_id===ctx.workspaceId;
+}
 function tableFor(kind){return kind==='supplier'?'supplier_communications':'customer_communications';}
 
-async function queueInTransaction(client,ctx,payload,idempotencyKey){
+async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   await requireOperator(client,ctx);
+  let agentJob=null;
+  if(options.agentRequested){
+    const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
+    if(policy.usesAgentTerms(state)){
+      agentJob=policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
+      policy.requireJob(state.plan,agentJob,'draft');
+    }
+  }
   const prepared={...payload};
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(prepared.recipientEmail||'')))
     throw new ValidationError('Review the exact recipient email address before sending.');
@@ -120,15 +139,16 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
   const message=inserted.rows[0]||(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND idempotency_key=$2`,
     [ctx.workspaceId,idempotencyKey])).rows[0];
   if(prepared.purchaseOrderId){
-    const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
+    const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id,status FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
     if(!order)throw new ValidationError('The supplier message must refer to this supplier’s purchase order.');
     if(!inserted.rowCount && (message.purchase_order_id!==order.id || message.supplier_id!==prepared.recipientId))
       throw new ValidationError('This send reference already belongs to a different message.');
     if(inserted.rowCount){
       const state=await require('../commercial/agent-plan').accountState(client,ctx.workspaceId);
       if(state.plan && (state.terms.offerId==='agent-v3' || state.plan==='enterprise')){
+        if(!['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(order.status))throw new ValidationError('Approve this purchase order before sending it to its supplier.');
         const url=await require('../purchasing/supplier-order-link').issue(client,ctx.workspaceId,order.id,recipient,require('../config').connections.publicOrigin);
-        await client.query("UPDATE supplier_communications SET body=body||$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,message.id,'\n\nConfirm this order, propose a date, or send documents: '+url]);
+        await client.query("UPDATE supplier_communications SET body=body||$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,message.id,orderLinkIntro+url]);
       }
     }
     await client.query('UPDATE supplier_communications SET purchase_order_id=$3 WHERE workspace_id=$1 AND id=$2 AND (purchase_order_id IS NULL OR purchase_order_id=$3)',[ctx.workspaceId,message.id,order.id]);
@@ -136,7 +156,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',
     provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
-    payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
+    payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(agentJob?{agentJob}:{}),...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
   return {communicationId:message.id,communicationKind,status:message.status,effectId:queued.effect.id,
     queued:queued.effect.status==='PENDING'};
 }
@@ -157,10 +177,22 @@ async function get(database,workspaceId,kind,id){
 async function executeSendEffect(database,workspaceId,effectId,options={}){
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   const effect=claimed.effect;const input=effect.payload;const kind=input.communicationKind;
+  let agentJob=input.agentJob;
   if(claimed.replayed)return {message:await get(database,workspaceId,kind,effect.aggregateId),replayed:true};
   const table=tableFor(kind);const provider=options.provider||defaultProviders.get(effect.provider);let providerCalled=false;
   try{
     const loaded=await database.transaction(async(client)=>{
+      // Older proposal deliveries predate the stored job number. Resolve only the
+      // executed proposal for this effect so owner-composed mail stays distinct.
+      if(!agentJob){
+        const original=(await client.query(`SELECT payload,idempotency_key FROM stockchief_runtime.assistant_action_proposals
+          WHERE workspace_id=$1 AND action_type='communication.send_email' AND status='EXECUTED' AND idempotency_key=$2 AND result->>'effectId'=$3`,
+          [workspaceId,effect.idempotencyKey,effect.id])).rows[0];
+        if(original){
+          const policy=require('../commercial/agent-plan'),account=await policy.accountState(client,workspaceId);
+          if(policy.usesAgentTerms(account))agentJob=policy.actionJob('communication.send_email','draft',{...original.payload,idempotencyKey:original.idempotency_key});
+        }
+      }
       const message=(await client.query(`UPDATE ${table} SET status='SENDING',updated_at=$3
         WHERE workspace_id=$1 AND id=$2 AND status='QUEUED' RETURNING *`,[workspaceId,input.communicationId,nowIso()])).rows[0];
       const connection=(await client.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2`,
@@ -168,6 +200,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!message)throw Object.assign(new ValidationError('That queued message is no longer pending.'),{code:'email_outbox_not_pending'});
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
+      if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(client,workspaceId,agentJob,'draft');
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -176,6 +209,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
     const providerCredentials=await providerService.loadProviderCredentials(database,loaded.connection,provider);
     const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
       key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},async()=>{
+        if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,agentJob,'draft');
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
@@ -211,5 +245,5 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
   }
 }
 
-module.exports={contacts,mailboxes,resolveMailbox,resolveRecipient,queueInTransaction,get,executeSendEffect};
+module.exports={approvedBodyMatches,contacts,mailboxes,resolveMailbox,resolveRecipient,queueInTransaction,get,executeSendEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueInTransaction:'communications.send_approved',executeSendEffect:'communications.send_approved'});

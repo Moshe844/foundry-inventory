@@ -67,7 +67,7 @@ const EXECUTORS=Object.freeze({
       [ctx.workspaceId,result.contactId])).rows[0];
     return Boolean(row&&row.name===payload.name&&(row.email||null)===(payload.email||null));
   }},
-  'communication.send_email':{execute:(client,ctx,payload)=>mail.queueInTransaction(client,ctx,payload,payload.idempotencyKey),
+  'communication.send_email':{execute:(client,ctx,payload)=>mail.queueInTransaction(client,ctx,payload,payload.idempotencyKey,{agentRequested:true}),
     verify:async(client,ctx,result,payload)=>{
       if(!result?.communicationId||!result?.effectId||!['supplier','customer'].includes(result.communicationKind))return false;
       const table=result.communicationKind==='supplier'?'supplier_communications':'customer_communications';
@@ -76,7 +76,7 @@ const EXECUTORS=Object.freeze({
       const effect=(await client.query(`SELECT kind,aggregate_id FROM stockchief_runtime.provider_effects
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,result.effectId])).rows[0];
       return Boolean(message&&effect&&String(message.recipient).toLowerCase()===String(payload.recipientEmail).toLowerCase()
-        &&message.subject===payload.subject&&message.body===payload.body
+        &&message.subject===payload.subject&&await mail.approvedBodyMatches(client,ctx,message,payload)
         &&message.connector_id===payload.connectorId&&message.status==='QUEUED'
         &&effect.kind==='mail.outbound.send'&&effect.aggregate_id===result.communicationId);
     }},

@@ -126,7 +126,14 @@ const actionJobs=new Map([
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);
-function actionJob(name,operation) {
+function actionJob(name,operation,payload) {
+  if(name==='communication.send_email'&&payload){
+    const phase=payload.followUpPhase||(/^supplier-follow-up:[^:]+:(supplier_confirmation_due|supplier_delivery_late):\d+$/.exec(payload.idempotencyKey||'')||[])[1];
+    if(phase==='supplier_confirmation_due')return 29;
+    if(phase==='supplier_delivery_late')return 30;
+    if(payload.recipientKind==='supplier'&&payload.purchaseOrderId)return 28;
+    return payload.recipientKind==='supplier'?89:187;
+  }
   if(operation==='automatic' && ['transfer.approve','inventory.transfer'].includes(name)) return 119;
   return actionJobs.get(name);
 }

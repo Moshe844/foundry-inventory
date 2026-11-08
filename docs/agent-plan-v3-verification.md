@@ -4,6 +4,8 @@ Verification is on the draft branch using synthetic business records and disposa
 
 The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** (a person approves), **Suggest** and **Excluded**. Section 11 governs rows 35 and 213 by owner decision. Pro also needs the paid EDI add-on for row 185. Custom purchasing requires contract limits.
 
+Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium to repeat the plan and workflow tests.
+
 ## Release checks
 
 - Exercise the eligible and denied plan modes through the UI, Ask, direct requests and queued work after a downgrade. Verify the inventory, money, document or provider result and replay each write.
@@ -44,8 +46,8 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 26 | Plans buying to a monthly budget (open-to-buy). | Excluded | Excluded | Excluded | Alone | Policy only |
 | 27 | Orders in full cases, packs or pallets, not loose units. | Excluded | Trained | Alone | Alone | Policy only |
 | 28 | Emails approved POs to the supplier. | Draft | Alone | Alone | Alone | Approved PO reaches the supplier outbox. No external mailbox delivery was tested. |
-| 29 | Asks the supplier to confirm each PO and saves the ship date. | Excluded | Trained | Alone | Alone | Policy only |
-| 30 | Chases late supplier deliveries. | Excluded | Alone | Alone | Alone | Policy only |
+| 29 | Asks the supplier to confirm each PO and saves the ship date. | Excluded | Trained | Alone | Alone | A scoped supplier follow-up is created by the replenishment workflow under approved limits. Confirmation replies stop a queued request. Growth requires an active trained supplier rule for an unattended confirmation. Authenticated mail delivery is outstanding. |
+| 30 | Chases late supplier deliveries. | Excluded | Alone | Alone | Alone | A Growth owner can approve a delivery chase for a PO. The test revokes the tier after queuing and confirms zero provider sends, including for an older queued message. Sending through a real mailbox remains open. |
 | 31 | Updates a PO when the supplier changes qty, price or date (asks over your limit). | Excluded | Excluded | Trained | Alone | Policy only |
 | 32 | Finds old open POs that will never arrive, so "incoming" is real. | Suggest | Alone | Alone | Alone | A four-unit approved PO overdue by two days with one unit received shows three units still due. Starter sees the supplier follow-up suggestion. The report does not cancel the order automatically. |
 | 33 | The moment an item hits its reorder point, sends you a ready PO with a "Send to supplier" button. | Draft | Draft | Alone | Alone | Policy only |
@@ -104,7 +106,7 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 86 | Builds a clearance plan with the cash it should bring back. A person approves prices. | Suggest | Draft | Draft | Draft | Policy only |
 | 87 | Checks prices match across channels and flags minimum advertised price (MAP) breaks. | Excluded | Alone | Alone | Alone | Policy only |
 | 88 | Scores each customer's health and flags the ones buying less. | Suggest | Alone | Alone | Alone | The customer health review counts a recorded carrier handoff, and identifies new activity. The four-plan access test also runs this review. |
-| 89 | Emails suppliers about orders, dates and questions. | Excluded | Trained | Alone | Alone | Policy only |
+| 89 | Emails suppliers about orders, dates and questions. | Excluded | Trained | Alone | Alone | General supplier email preparation is denied on Starter. An eligible PO-specific follow-up retains a scoped supplier link and requires fresh send authority. Provider acceptance from a real mailbox remains unverified. |
 | 90 | Scores each supplier: on time, fill rate, price changes, errors. | Suggest | Alone | Alone | Alone | Fully received PO produces 100% fill on a supplier scorecard. Multiple suppliers with late and disputed deliveries still need a populated scenario. |
 | 91 | Spots supplier price increases on invoices and price lists. | Suggest | Alone | Alone | Alone | Recorded invoice 50% over approved price is linked to its PO. Supplier price-list comparison still needs a positive source document. |
 | 92 | Compares quotes from several suppliers for the same item. | Excluded | Draft | Alone | Alone | Two separate supplier mailbox messages with quotations for the same SKU create source-linked rows at $1.25 and $1.50. Growth, Pro and Custom receive the comparison. Starter is denied. |
@@ -172,8 +174,8 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 154 | Builds a report from one sentence. | Alone | Alone | Alone | Alone | One-sentence governed report generated, saved and queried locally. Provider outputs were simulated. Graph and schedule browser regressions exercised the reports service. |
 | 155 | Emails reports on a schedule. | Alone | Alone | Alone | Alone | Report schedule saved against PostgreSQL. External email delivery needs a provider run. |
 | 156 | Sends a briefing: what happened and what needs you. | Alone | Alone | Alone | Alone | Policy only |
-| 157 | Explains changes ("why did margin drop in March?"). | Excluded | Alone | Alone | Alone | Policy only |
-| 158 | Month-end stock value and cost of goods report. | Excluded | Alone | Alone | Alone | Policy only |
+| 157 | Explains changes ("why did margin drop in March?"). | Excluded | Alone | Alone | Alone | The prior two calendar months use posted revenue and cost of goods. In the test revenue grew $2, costs grew $3 and gross profit fell $1. Starter was denied. Growth, Pro and Custom opened the underlying ledger. The report explains the accounting change. Operational causes such as mix still need analysis. |
+| 158 | Month-end stock value and cost of goods report. | Excluded | Alone | Alone | Alone | A historical $30 inventory purchase and two cost-of-goods postings produce $15 of month-end stock and $9 cost of goods for the selected month. The current-month receipt is excluded. Growth, Pro and Custom see the ledger-backed result and Starter is denied. |
 | 159 | Board or investor pack with charts. | Excluded | Excluded | Excluded | Alone | Policy only |
 | 160 | Exports any answer to Excel or PDF. | Alone | Alone | Alone | Alone | Policy only |
 | 161 | Monthly ROI report: hours saved (counted from real actions) and $ caught vs your plan price. | Alone | Alone | Alone | Alone | Seven- and thirty-day reports count five kinds of evidenced work. One approved staff PO saves six minutes using the recorded sample. An open $1.50 price difference, a $1.00 applied supplier credit and the account base price are listed separately. Accounting exports count only once after the provider record has been verified. Figures in these tests use fictional business data. |

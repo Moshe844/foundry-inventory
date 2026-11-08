@@ -5,7 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
-  ...require('./inventory-reviews'),...require('./planning-reviews'),...require('./commercial-reviews'),...require('./traceability-reviews'),
+  ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},
   {id:108,key:'early-discounts',label:'Find early-payment discounts',read:(db,ctx,options)=>cash.payments(db,ctx,{...options,discountsOnly:true})},
   {id:109,key:'cash-forecast',label:'Forecast thirteen weeks of cash flow',read:cash.forecast}
@@ -52,9 +52,9 @@ async function run(db,ctx,key,options={}){
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
   let rows,summary=def.summary,more=false;
   if(def.readPage){
-    const result=await def.readPage(db,ctx,{filter,page,change:options.change});
+    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
-      requiresChange:def.requiresChange,change:options.change};
+      requiresChange:def.requiresChange,change:options.change,filterLabel:def.filterLabel};
   }
   if(def.read){
     const result=await def.read(db,ctx,{today,adviceOnly:mode==='suggest'});

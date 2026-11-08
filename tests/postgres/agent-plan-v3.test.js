@@ -174,6 +174,20 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   await assert.rejects(assistant.executeProposal(db,ctx,preparedRefund.proposal.id),/Pro/);
   const savedRefund=await assistant.getProposal(db,ctx.workspaceId,preparedRefund.proposal.id);
   assert.equal(savedRefund.status,'PENDING');
+  const followup={...manual,followUpPhase:'supplier_delivery_late',subject:'Late delivery',body:'Please confirm the outstanding delivery.'};
+  await assert.rejects(assistant.createProposal(db,ctx,'Chase this delivery','communication.send_email',followup,'Ask the supplier for a date.'),/Growth/);
+  await assert.rejects(assistant.createProposal(db,ctx,'Email the supplier','communication.send_email',{...manual,purchaseOrderId:null},'Discuss buying terms.'),/Growth/);
+  await subscribe('growth');
+  const chase=await assistant.createProposal(db,ctx,'Chase this delivery','communication.send_email',followup,'Ask the supplier for a date.');
+  const tracked=await assistant.executeProposal(db,ctx,chase.proposal.id);
+  const effect=(await db.query('SELECT payload FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,tracked.result.effectId])).rows[0];
+  assert.equal(effect.payload.agentJob,30);
+  // Exercise a queued delivery created before the job marker existed.
+  await db.query("UPDATE stockchief_runtime.provider_effects SET payload=payload-'agentJob' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,tracked.result.effectId]);
+  await subscribe('starter');
+  let providerCalls=0;
+  await assert.rejects(mail.executeSendEffect(db,ctx.workspaceId,tracked.result.effectId,{provider:{send:async()=>{providerCalls++;return {externalMessageId:'incorrect-delivery'};}}}),/Growth/);
+  assert.equal(providerCalls,0);
   const beforeSend=await autonomy.evaluate(db,ctx.workspaceId,executed.recommendedAction,await autonomy.getState(db,ctx.workspaceId),{committedPurchaseOrderId:executed.purchase_order_id});
   assert.notEqual(beforeSend.decision,'authorized');
   const instructions=require('../../src/manager/postgres-operating-instructions');

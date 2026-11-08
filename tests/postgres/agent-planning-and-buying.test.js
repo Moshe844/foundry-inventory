@@ -88,4 +88,27 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   await db.query("UPDATE sales_shipments SET shipped_at=(now()-interval '100 days')::text WHERE workspace_id=$1 AND id=ANY($2)",[ctx.workspaceId,parcels]);
   assert.match((await review('customer-check-in',{filter:'Receiver'})).rows[0].Draft,/Hello Receiver/);
   await plan('growth');await assert.rejects(review('customer-check-in',{filter:'Receiver'}),e=>e.code==='entitlement_required');
+  const end=ago(today.slice(0,7)+'-01',-1),start=end.slice(0,7)+'-01',prior=ago(start,-1);
+  await db.query('UPDATE accounting_settings SET accounting_start_date=$2 WHERE workspace_id=$1',[ctx.workspaceId,ago(prior.slice(0,7)+'-01',-1)]);
+  const ledger=require('../../src/accounting/postgres-ledger');
+  for(const [date,price,cost] of [[prior,2000,600],[end,2200,900]]){
+    await ledger.post(db,ctx,{postingDate:date,sourceKey:'sale-'+date,description:'Fixture monthly sale',lines:[
+      {accountKey:'CASH',debitMinor:price},{accountKey:'SALES_REVENUE',creditMinor:price},
+      {accountKey:'COST_OF_GOODS_SOLD',debitMinor:cost},{accountKey:'INVENTORY_ASSET',creditMinor:cost}]});
+  }
+  await ledger.post(db,ctx,{postingDate:prior,sourceKey:'historical-stock',description:'Historical purchase for report',lines:[
+    {accountKey:'INVENTORY_ASSET',debitMinor:3000},{accountKey:'CASH',creditMinor:3000}]});
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await plan(tier);
+    if(tier==='starter'){
+      for(const key of ['month-end-stock','margin-change'])await assert.rejects(review(key,{filter:end.slice(0,7)}),e=>e.code==='entitlement_required');continue;
+    }
+    const close=(await review('month-end-stock',{filter:end.slice(0,7)})).rows[0];
+    assert.equal(close['Stock on books at month end'],'$15.00');assert.equal(close['Cost of goods sold'],'$9.00');
+    const change=(await review('margin-change',{filter:end.slice(0,7)})).rows[0];
+    assert.equal(change['Gross profit'],'$13.00');assert.equal(change['Revenue change'],'$2.00');assert.equal(change['Cost of goods change'],'$3.00');
+    assert.equal(change['Gross profit change'],'-$1.00');
+    await browser.get(change.link).expect(200);
+  }
+  await assert.rejects(review('month-end-stock',{filter:today.slice(0,7)}),/completed calendar month/);
 });
