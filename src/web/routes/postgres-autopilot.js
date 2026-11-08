@@ -13,6 +13,28 @@ const {newId}=require('../../lib/util');
 
 function createPostgresAutopilotRouter(database){
   const router=express.Router();
+  const playbooks=require('../../autopilot/playbooks');
+  const owner=require('../middleware').requireOwner;
+  const timeSaved=require('../../autopilot/time-saved');
+  router.get('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/time-saved',{
+    title:'Time saved',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('timing'),
+    ...(await timeSaved.report(database,req.ctx,req.query.period))})));
+  router.post('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await timeSaved.sample(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/time-saved'+(req.body.period==='month'?'?period=month':''));
+  }));
+  router.get('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/playbooks',{
+    title:'Playbooks',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('run'),
+    ...(await playbooks.list(database,req.ctx))})));
+  router.post('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await playbooks.create(database,req.ctx,req.body);res.redirect(303,'/autopilot/playbooks');
+  }));
+  router.post('/autopilot/playbooks/:id/run',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await playbooks.run(database,req.ctx,req.params.id,req.body.requestKey);res.redirect(303,'/autopilot/playbooks');
+  }));
+  router.post('/autopilot/playbooks/:id/delete',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await playbooks.remove(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/playbooks');
+  }));
   router.get('/autopilot/progress',requireAuth,asyncRoute(async(req,res)=>res.json(
     await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId))));
   router.get('/autopilot',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-settings',{

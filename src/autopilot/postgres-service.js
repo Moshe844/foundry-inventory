@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
+const agentPlan = require('../commercial/agent-plan');
+const { AuthorizationError } = require('../domain/errors');
 const capabilityDefinitions = require('./capabilities');
 const transfers = require('../transfers/postgres-transfer-service');
 const workflows = require('../operations/postgres-business-workflows');
@@ -26,7 +28,9 @@ function integer(value,label,{minimum=0,maximum=1000000}={}){const number=Number
   if(!Number.isSafeInteger(number)||number<minimum||number>maximum)throw new ValidationError(`${label} must be a whole number between ${minimum} and ${maximum}.`);return number;}
 function money(value,label){const number=Number(value);if(!Number.isFinite(number)||number<=0||number>100000000)
   throw new ValidationError(`${label} must be a positive amount.`);return number;}
-function assertAdmin(membership){permissions.assertCan(membership,permissions.ADMIN,'change StockChief authority');}
+function assertAdmin(membership) {
+  if (membership?.role !== 'owner') throw new AuthorizationError('Only the owner can increase StockChief authority.');
+}
 function assertOperate(membership){permissions.assertCan(membership,permissions.OPERATE,'operate StockChief');}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
   transaction:(operation)=>operation(client)};}
@@ -50,26 +54,32 @@ async function getState(database,workspaceId){
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id LEFT JOIN account_subscriptions s ON s.account_id=w.owner_account_id
     LEFT JOIN commercial_plan_versions v ON v.id=s.plan_version_id AND v.plan_id=s.plan_id WHERE w.id=$1`,[workspaceId])).rows[0];
   if(!row)throw new NotFoundError('That inventory could not be found.');
-  if(row.mode===MODES.POLICY_AUTOMATED){const key=row.effective_plan_version_id&&!row.effective_plan_configuration?.offerId?'authority.advanced':'authority.autonomous';
+  const account = await agentPlan.accountState(database, workspaceId);
+  if (account.plan && account.shadow) row.mode = MODES.OBSERVE;
+  if(row.mode===MODES.POLICY_AUTOMATED){const key=account.plan==='growth' && account.terms.offerId==='agent-v3' ? 'automation.trusted_purchasing' : row.effective_plan_version_id&&!row.effective_plan_configuration?.offerId?'authority.advanced':'authority.autonomous';
     if(!(await entitlements.capabilityState(database,{accountId:row.owner_account_id,workspaceId},key)).enabled)row.mode=MODES.SUPERVISED;}
-  return stateFrom({...row,mode:row.mode||MODES.SUPERVISED,paused:row.paused??0,suspended:row.suspended??0});
+  return {...stateFrom({...row,mode:row.mode||MODES.SUPERVISED,paused:row.paused??0,suspended:row.suspended??0}),plan:account.plan,shadowEndsAt:account.shadow && account.plan ? account.shadowEndsAt : null};
 }
 async function autonomousCapability(database,workspaceId){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId),sub=await entitlements.subscriptionFor(database,scope.accountId);
+ if(sub?.plan_id==='growth' && sub.plan_configuration?.offerId==='agent-v3') return 'automation.trusted_purchasing';
  return sub?.plan_version_id&&!sub.plan_configuration?.offerId?'authority.advanced':'authority.autonomous';}
 
 async function setMode(database,ctx,membership,mode){if(!Object.values(MODES).includes(mode))
   throw new ValidationError('Choose watch only, ask first, or bounded automatic work.');
+  const account = await agentPlan.accountState(database, ctx.workspaceId);
+  if (account.plan && account.shadow && mode !== MODES.OBSERVE) throw new ValidationError('StockChief is watching during the first 14 days. Set authority after shadow mode ends.');
+  if (mode===MODES.POLICY_AUTOMATED && account.plan) agentPlan.requireJob(account.plan,20,'automatic');
   if(mode==='POLICY_AUTOMATED')await require('../commercial/enforcement').workspace(database,ctx.workspaceId,await autonomousCapability(database,ctx.workspaceId));
   const current=await ensure(database,ctx.workspaceId);const rank={OBSERVE:0,SUPERVISED:1,POLICY_AUTOMATED:2};
   if(rank[mode]>rank[current.mode])assertAdmin(membership);else assertOperate(membership);
   await database.query('UPDATE workspace_autopilot SET mode=$2,updated_at=$3 WHERE workspace_id=$1',[ctx.workspaceId,mode,nowIso()]);
   return getState(database,ctx.workspaceId);}
-async function pause(database,ctx,membership,reason){assertOperate(membership);await ensure(database,ctx.workspaceId);const at=nowIso();
+async function pause(database,ctx,membership,reason){permissions.assertCan(membership,permissions.VIEW,'pause StockChief');await ensure(database,ctx.workspaceId);const at=nowIso();
   await database.query(`UPDATE workspace_autopilot SET paused=1,paused_at=$2,paused_by_user_id=$3,
     paused_reason=$4,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,at,ctx.actorId,String(reason||'').trim()||null]);
   return getState(database,ctx.workspaceId);}
 async function resume(database,ctx,membership){assertOperate(membership);const current=await ensure(database,ctx.workspaceId);
-  if(current.suspended)assertAdmin(membership);await database.query(`UPDATE workspace_autopilot SET paused=0,paused_at=NULL,
+  if(current.suspended || current.paused)assertAdmin(membership);await database.query(`UPDATE workspace_autopilot SET paused=0,paused_at=NULL,
     paused_by_user_id=NULL,paused_reason=NULL,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);
   return getState(database,ctx.workspaceId);}
 
@@ -100,7 +110,12 @@ async function listCapabilities(database,workspaceId){const rows=(await database
 
 async function setCapability(database,ctx,membership,capability,granted){if(!capabilityDefinitions.CAPABILITIES[capability])
   throw new ValidationError(`There is no StockChief job called "${capability}".`);
+  const account = await agentPlan.accountState(database,ctx.workspaceId);
+  const trusted = account.plan==='growth' && account.terms.offerId==='agent-v3';
+  if(granted && account.shadow && account.plan) throw new ValidationError('Set authority after the first 14 days of shadow mode.');
+  if(granted && trusted && !['supplier_document_review','replenishment','supplier_emails'].includes(capability)) throw new ValidationError('This automatic job requires the Pro plan.');
   if(granted)await require('../commercial/enforcement').workspace(database,ctx.workspaceId,
+    trusted && ['replenishment','supplier_emails'].includes(capability)?'automation.trusted_purchasing':
     capability==='supplier_document_review'?'communications.ai_drafts':capability==='replenishment'?'automation.purchasing':capability==='inventory_transfers'?'automation.transfers':await autonomousCapability(database,ctx.workspaceId));
   if(granted)assertAdmin(membership);else assertOperate(membership);const at=nowIso();
   await database.query(`INSERT INTO autopilot_capabilities
@@ -111,6 +126,10 @@ async function setCapability(database,ctx,membership,capability,granted){if(!cap
 
 async function capabilityMay(database,workspaceId,capability){if(!capabilityDefinitions.CAPABILITIES[capability])
   throw new ValidationError(`There is no StockChief job called "${capability}".`);const state=await getState(database,workspaceId);
+  if(state.plan==='growth' && !['supplier_document_review','replenishment','supplier_emails'].includes(capability))
+    return {allowed:false,because:'Your current plan does not authorize this automatic job.'};
+  if(state.plan==='starter' && capability!=='supplier_document_review')
+    return {allowed:false,because:'Starter needs your approval for this job.'};
   if(state.paused)return {allowed:false,because:'StockChief is paused.'};
   if(state.suspended)return {allowed:false,because:'StockChief has stopped itself and is waiting to be looked at.'};
   if(state.mode==='OBSERVE')return {allowed:false,because:'StockChief is set to watch only.'};
@@ -134,7 +153,23 @@ async function supplierDeliveryReadiness(database,workspaceId,supplierId){
   return {ready:true,supplier,mailbox};
 }
 
-async function replacePolicy(client,ctx,input){await ensure(client,ctx.workspaceId);const prior=(await client.query(`SELECT * FROM automation_policies
+async function replacePolicy(client,ctx,input){
+  if(input.enabled) {
+    const state=await agentPlan.accountState(client,ctx.workspaceId);
+    if (state.plan || state.subscribed || require('../config').commercial.requirePaidWorkspace) {
+      agentPlan.requireJob(state.plan,input.action===ACTIONS.TRANSFER?119:20,'automatic');
+      if(state.shadow) throw new ValidationError('Set authority after the first 14 days of shadow mode.');
+      if(input.action===ACTIONS.PURCHASE){
+        const cap=agentPlan.purchaseLimits(state);
+        if(!cap) throw new ValidationError('Agree purchasing limits before enabling automatic orders.');
+        if(!(input.maximumValue>0 && input.maximumValue<=cap.perOrder && input.thresholds?.maxValuePerWeek>0 && input.thresholds.maxValuePerWeek<=cap.perWeek))
+          throw new ValidationError(`Your plan allows up to ${cap.currency} ${cap.perOrder} per order and ${cap.perWeek} per week.`);
+        if(input.thresholds.currency && input.thresholds.currency!==cap.currency) throw new ValidationError('Use the currency of the approved purchasing limits.');
+        if(state.plan==='growth' && !input.itemScope?.length) throw new ValidationError('Choose trusted item codes for automatic repeat orders.');
+      }
+    }
+  }
+  await ensure(client,ctx.workspaceId);const prior=(await client.query(`SELECT * FROM automation_policies
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC`,[ctx.workspaceId])).rows
   .find((row)=>parse(row.allowed_action_types,[]).includes(input.action));const at=nowIso();
   if(prior)await client.query(`UPDATE automation_policies SET enabled=0,disabled_at=$2,disabled_by_user_id=$3,
@@ -168,6 +203,14 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(supplierScope.length){const found=await client.query(`SELECT id FROM suppliers WHERE workspace_id=$1
       AND id=ANY($2::text[]) AND status='active'`,[ctx.workspaceId,supplierScope]);
       if(found.rows.length!==supplierScope.length)throw new ValidationError('One selected supplier is unavailable.');}
+    let itemScope=[];
+    if(purchaseEnabled && input.trustedItemCodes){
+      const codes=[...new Set(String(input.trustedItemCodes).split(/[\r\n,]+/).map(code=>code.trim()).filter(Boolean))];
+      if (codes.length>1000) throw new ValidationError('Choose up to 1,000 trusted item codes per rule.');
+      const selected=await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND code=ANY($2::text[]) AND is_active=1',[ctx.workspaceId,codes]);
+      if(selected.rows.length!==codes.length) throw new ValidationError('One or more trusted item codes could not be found in this inventory.');
+      itemScope=selected.rows.map(row=>row.id);
+    }
     const baseCurrency=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
     if(purchaseEnabled)for(const [amount,label]of [[maximumValue,'Purchase-order limit'],[weeklyValue,'Seven-day purchasing limit']])require('../domain/currency').toMinor(String(amount),baseCurrency,{label});
     const clock=await require('../lib/business-time').forWorkspace(client,ctx.workspaceId),expiresAt=input.authorityExpiresDate?require('../lib/business-time').dayBoundary(input.authorityExpiresDate,clock.timeZone,{nextDay:true}):null;
@@ -176,7 +219,7 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
       description:'Move stock between approved locations when one can safely spare what another needs.',locationScope,
       conditions:['destination_stockout_risk','source_above_safety','no_conflicting_transfer'],thresholds:{expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone},maximumQuantity});
     const purchaseId=await replacePolicy(client,ctx,{enabled:purchaseEnabled,action:ACTIONS.PURCHASE,name:'Routine replenishment',
-      description:'Approve supplier orders inside supplier, per-order and rolling seven-day limits.',supplierScope,
+      description:'Approve supplier orders inside supplier, per-order and rolling seven-day limits.',supplierScope,itemScope,
       conditions:['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],
       maximumValue,thresholds:{maxValuePerWeek:weeklyValue,currency:baseCurrency,expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone,supplierFollowUps}});
     const at=nowIso();for(const [capability,granted] of [['inventory_transfers',transferEnabled],['replenishment',purchaseEnabled]])
@@ -222,6 +265,15 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
   if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
   if(!policy){const review=(await listPolicies(database,workspaceId)).some(p=>p.enabled&&p.scopeNeedsReview&&p.actions.includes(action));return {decision:'needs_approval',reason:review?'An earlier standing rule needs review because its product restriction was not retained. No automatic action is authorized.':'No approved standing authority covers this action.',policy:null};}
+  const account=await agentPlan.accountState(database,workspaceId);
+  if(account.subscribed || require('../config').commercial.requirePaidWorkspace){
+    if(account.shadow || !agentPlan.permits(account.plan,candidate.type==='transfer'?119:20,'automatic'))
+      return {decision:'needs_approval',reason:'Your current plan or shadow period requires approval for this action.',policy};
+    if(candidate.type==='purchase'){
+      const reason=await agentPlan.purchaseReview(database,workspaceId,candidate,policy,account,committedPurchaseOrderId);
+      if(reason) return {decision:'needs_approval',reason,policy};
+    }
+  }
   if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
   if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
   if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
@@ -285,7 +337,8 @@ async function persistPlannedWork(database,workspaceId,entries){
 }
 
 async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null,cycleId=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');
-  const state=await ensure(database,workspaceId);
+  await ensure(database,workspaceId);
+  const state=await getState(database,workspaceId);
   if(!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
   planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
@@ -354,6 +407,7 @@ async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped
 
 async function execute(database,ctx,workId,{approvedBy=null}={}){
   return database.transaction(async(client)=>{const scoped=scopedDatabase(client);
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('account-purchase:'||owner_account_id,0)) FROM workspaces WHERE id=$1",[ctx.workspaceId]);
   await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId);
   await client.query('SELECT id FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,workId]);
   const item=await getWork(scoped,ctx.workspaceId,workId);
@@ -369,11 +423,16 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       return getWork(scoped,ctx.workspaceId,item.id);
     }
   }
+  const effectState=await getState(scoped,ctx.workspaceId);
+  if(effectState.shadowEndsAt) throw new ValidationError('During the first 14 days StockChief only watches. You can enter the transaction manually.');
+  if(item.recommendedAction.type==='transfer' && effectState.plan==='starter') throw new ValidationError('Starter can suggest a transfer. Record the transfer manually.');
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
   const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
   const chargeAutomatic=automatic&&!(await entitlements.subscriptionFor(client,scope.accountId))?.plan_configuration?.offerId;
-  if(automatic){await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'automation.transfers':'automation.purchasing');
+  if(automatic){const account=await agentPlan.accountState(client,ctx.workspaceId);
+    await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'automation.transfers':
+      account.plan==='growth'?'automation.trusted_purchasing':'automation.purchasing');
     if(chargeAutomatic)await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
       detail:{operation:'autopilot_action',workId:item.id}});}
   await revalidate(scoped,ctx.workspaceId,item.recommendedAction);const at=nowIso();
@@ -488,7 +547,9 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
   database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name`,[workspaceId]),
   database.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name`,[workspaceId]),
   database.query(`SELECT * FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot' ORDER BY created_at DESC,id DESC LIMIT 30`,[workspaceId])]);
-  return {state,policies,capabilities,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
+  const purchasePolicy=policies.find(policy=>policy.active && policy.actions.includes(ACTIONS.PURCHASE));
+  const trustedCodes=purchasePolicy?.itemScope.length ? (await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY code',[workspaceId,purchasePolicy.itemScope])).rows.map(row=>row.code) : [];
+  return {state,policies,capabilities,trustedCodes,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
     maintenanceProgress:await require('../operations/postgres-maintenance-progress').read(database,workspaceId),
     transferPolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.TRANSFER))||null,
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}

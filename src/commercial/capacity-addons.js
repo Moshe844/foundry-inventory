@@ -1,13 +1,21 @@
 'use strict';
 const {newId}=require('../lib/util'),{ValidationError}=require('../domain/errors'),entitlements=require('./entitlements'),stripe=require('./stripe-billing');
 const id=v=>typeof v==='string'?v:v?.id;
-async function catalog(db){return (await db.query("SELECT * FROM commercial_capacity_products WHERE active=true ORDER BY display_order,id")).rows;}
+async function catalog(db,{subscription,agentOffer=false}={}){
+ const current=agentOffer || subscription?.plan_configuration?.offerId==='agent-v3' || subscription?.plan_id==='enterprise';
+ const rows=(await db.query('SELECT * FROM commercial_capacity_products WHERE active=true ORDER BY display_order,id')).rows;
+ return rows.filter(product=>current ? product.eligible_plans && (!subscription || product.eligible_plans.includes(subscription.plan_id)) : !product.eligible_plans);
+}
 async function list(db,accountId){return (await db.query(`SELECT o.*,p.label,p.meter,p.units_per_pack,p.monthly_amount_minor FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 ORDER BY o.created_at DESC`,[accountId])).rows;}
 async function begin(db,scope,input,options={}){
  await require('./release').assertSubscriptionCheckoutOpen(db,options);await require('./wallet').assertScope(db,scope);
  const sub=await entitlements.subscriptionFor(db,scope.accountId);if(!sub?.stripe_customer_id||!entitlements.operationalAccess(sub).canOperate||sub.cancel_at_period_end)throw new ValidationError('An active renewing subscription is required to add capacity.');
  const product=(await db.query('SELECT * FROM commercial_capacity_products WHERE id=$1 AND active=true',[input.productId])).rows[0],quantity=Number(input.quantity);
+ if(product?.eligible_plans && (!product.eligible_plans.includes(sub.plan_id) || (sub.plan_id!=='enterprise' && sub.plan_configuration?.offerId!=='agent-v3'))) throw new ValidationError('This add-on is not available under your current plan terms.');
+ if(product && !product.eligible_plans && sub.plan_configuration?.offerId==='agent-v3') throw new ValidationError('Choose an add-on included in your current plan offer.');
+ if(product?.meter==='agent_edi' && quantity!==1) throw new ValidationError('Choose one EDI add-on.');
  if(!product?.stripe_price_id||!Number.isSafeInteger(quantity)||quantity<1||quantity>1000||!input.idempotencyKey)throw new ValidationError('Choose a configured add-on and a quantity from 1 to 1,000.');
+ const aiFunding=await require('./recurring-ai-funding').qualify(db,product);
  const workspaceId=product.capacity_scope==='INVENTORY'?scope.workspaceId:null;
  if(product.capacity_scope==='INVENTORY'&&(!workspaceId||!sub.plan_configuration?.offerId))throw new ValidationError('Choose an inventory and review the updated plan terms before adding warehouses and bins.');
  if((await entitlements.meterState(db,scope,product.meter)).hardLimit===null)throw new ValidationError('Your plan already includes this capacity without a limit. No purchase is needed.');
@@ -17,7 +25,7 @@ async function begin(db,scope,input,options={}){
   await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['capacity-order:'+scope.accountId+':'+input.idempotencyKey]);
   const prior=(await c.query('SELECT * FROM commercial_capacity_orders WHERE account_id=$1 AND request_key=$2',[scope.accountId,input.idempotencyKey])).rows[0];
   if(prior){if(prior.product_id!==product.id||Number(prior.quantity)!==quantity||prior.workspace_id!==workspaceId)throw new ValidationError('That purchase reference belongs to a different add-on or inventory.');return prior;}
-  return (await c.query(`INSERT INTO commercial_capacity_orders(id,account_id,product_id,quantity,units,amount_minor,currency,price_id,stripe_customer_id,request_key,workspace_id,entitlements) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb) RETURNING *`,[newId('capacity'),scope.accountId,product.id,quantity,quantity*Number(product.units_per_pack),quantity*Number(product.monthly_amount_minor),product.currency,product.stripe_price_id,sub.stripe_customer_id,input.idempotencyKey,workspaceId,JSON.stringify(product.entitlements)])).rows[0];
+  return (await c.query(`INSERT INTO commercial_capacity_orders(id,account_id,product_id,quantity,units,amount_minor,currency,price_id,stripe_customer_id,request_key,workspace_id,entitlements,ai_funding) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb) RETURNING *`,[newId('capacity'),scope.accountId,product.id,quantity,quantity*Number(product.units_per_pack),quantity*Number(product.monthly_amount_minor),product.currency,product.stripe_price_id,sub.stripe_customer_id,input.idempotencyKey,workspaceId,JSON.stringify(product.entitlements),aiFunding?JSON.stringify(aiFunding):null])).rows[0];
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(order.status!=='PENDING')return {url:input.origin+'/billing',order};
  const checkout=await provider.createCapacityCheckout({orderId:order.id,accountId:scope.accountId,customerId:sub.stripe_customer_id,priceId:order.price_id,quantity,successUrl:input.origin+'/billing?capacity=pending',cancelUrl:input.origin+'/billing?capacity=cancelled'},options.providerOptions||{});
@@ -38,6 +46,13 @@ async function receive(client,event){
   if(o.status!=='paid'||o.lines?.has_more||matching.length!==1||Number(matching[0].quantity)!==Number(order.quantity)||String(o.currency).toUpperCase()!==order.currency||Number(o.total)!==Number(order.amount_minor))throw new ValidationError('The paid add-on invoice differs from the approved price and quantity.');
   const period=matching[0].period;if(!period?.start||!period?.end||Number(period.end)<=Number(period.start))throw new ValidationError('The add-on invoice has no valid paid period.');
   await client.query(`INSERT INTO commercial_capacity_payments(invoice_id,order_id,period_start,period_end,amount_minor,provider_event_id) VALUES($1,$2,to_timestamp($3),to_timestamp($4),$5,$6) ON CONFLICT(invoice_id) DO NOTHING`,[o.id,order.id,period.start,period.end,order.amount_minor,event.id]);
+  if(['agent-monthly-credits','agent-monthly-documents'].includes(order.product_id)){
+    const category=order.product_id==='agent-monthly-credits'?'ai_work_credits':'agent_documents';
+    await client.query(`INSERT INTO commercial_usage_grants(id,account_id,category,capacity_invoice_id,units,expires_at)
+      VALUES ($1,$2,$3,$4,$5,to_timestamp($6)) ON CONFLICT(capacity_invoice_id) DO NOTHING`,
+      [newId('grant'),order.account_id,category,o.id,order.units,period.end]);
+    if(category==='ai_work_credits') await require('./recurring-ai-funding').fundInvoice(client,order,o.id);
+  }
   // A delayed invoice may extend paid-through, but can never undo cancellation.
   await client.query(`UPDATE commercial_capacity_orders SET stripe_subscription_id=coalesce(stripe_subscription_id,$2),status=CASE WHEN status='CANCELLED' THEN status ELSE 'ACTIVE' END,paid_through=greatest(paid_through,to_timestamp($3)),updated_at=now() WHERE id=$1`,[order.id,subscriptionId,period.end]);
   const intent=id(o.payment_intent),intents=[...new Set([intent,...(o.payments?.data||[]).filter(p=>p.status==='paid'&&p.payment?.type==='payment_intent').map(p=>id(p.payment.payment_intent))].filter(Boolean))];

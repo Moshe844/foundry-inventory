@@ -1,0 +1,14 @@
+<h1>Time saved</h1>
+<nav aria-label="Report period"><a href="?period=week">Last 7 days</a> &middot; <a href="?period=month">Last 30 days</a></nav>
+<section class="card"><h2>Last <%= days %> days in this inventory</h2>
+<% if(minutes===null){ %><p>Add a timed sample to estimate the hours saved.</p><% } else { %>
+<p><strong><%= (minutes/60).toLocaleString(undefined,{maximumFractionDigits:2}) %> hours</strong> estimated from completed tasks with a timing sample.</p><% } %>
+<table><thead><tr><th>Task</th><th>Completed</th><th>Timing samples</th><th>Net minutes saved</th></tr></thead><tbody>
+<% rows.forEach(r=>{ %><tr><td><%= r.label %></td><td><%= r.count %></td><td><%= r.samples %></td><td><%= r.minutes===null?'Unmeasured':r.minutes.toLocaleString(undefined,{maximumFractionDigits:2}) %></td></tr><% }); %></tbody></table>
+<p>Repeat orders count after the mail provider confirms sending. Supplier responses count once per order and distinct response. Each estimate uses the average manual time minus time your team still spends.</p></section>
+<form class="card" action="/autopilot/time-saved" method="post"><h2>Record a timed sample</h2>
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>"><input type="hidden" name="period" value="<%= days===7?'week':'month' %>">
+<label>Task <select name="activity"><% rows.forEach(r=>{ %><option value="<%= r.key %>"><%= r.label %></option><% }); %></select></label>
+<label>Minutes spent doing one example manually <input type="number" name="manualMinutes" min="0" max="1440" step="0.01" required></label>
+<label>Minutes spent checking or correcting a comparable StockChief task <input type="number" name="reviewMinutes" min="0" max="1440" step="0.01" required></label>
+<button class="btn btn--primary">Save timed sample</button></form>

@@ -122,6 +122,15 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
   if(prepared.purchaseOrderId){
     const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
     if(!order)throw new ValidationError('The supplier message must refer to this supplier’s purchase order.');
+    if(!inserted.rowCount && (message.purchase_order_id!==order.id || message.supplier_id!==prepared.recipientId))
+      throw new ValidationError('This send reference already belongs to a different message.');
+    if(inserted.rowCount){
+      const state=await require('../commercial/agent-plan').accountState(client,ctx.workspaceId);
+      if(state.plan && (state.terms.offerId==='agent-v3' || state.plan==='enterprise')){
+        const url=await require('../purchasing/supplier-order-link').issue(client,ctx.workspaceId,order.id,recipient,require('../config').connections.publicOrigin);
+        await client.query("UPDATE supplier_communications SET body=body||$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,message.id,'\n\nConfirm this order, propose a date, or send documents: '+url]);
+      }
+    }
     await client.query('UPDATE supplier_communications SET purchase_order_id=$3 WHERE workspace_id=$1 AND id=$2 AND (purchase_order_id IS NULL OR purchase_order_id=$3)',[ctx.workspaceId,message.id,order.id]);
   }
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',

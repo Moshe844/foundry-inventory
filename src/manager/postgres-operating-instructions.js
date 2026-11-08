@@ -447,6 +447,30 @@ function target(change){if(change.domain==='replenishment')return `replenishment
   if(change.domain==='capability_authority')return `authority:capability:${change.capabilityName}`;
   if(change.domain==='stock_protection')return `guard:${change.skuId}:${change.locationId||'*'}`;return null;}
 
+async function checkRuleLimit(client,ctx,changes) {
+  const state=await require('../commercial/agent-plan').accountState(client,ctx.workspaceId);
+  const limit={starter:5,growth:50,pro:500}[state.plan];
+  if(!limit) return;
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('agent-rules:'||$1,0))",[state.accountId]);
+  // Reconstruct effective targets, including older proposals partly superseded
+  // by a newer one. A removal frees its slot and editing reuses the same slot.
+  const history=await client.query(`SELECT p.workspace_id,p.resolved_changes
+    FROM operating_instruction_proposals p JOIN workspaces w ON w.id=p.workspace_id
+    WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND p.approved_at IS NOT NULL
+    ORDER BY p.approved_at,p.id`,[state.accountId]);
+  const keys=new Set();
+  function apply(workspaceId,change){
+    const actionTarget=target(change);
+    if(!actionTarget) throw new ValidationError('This rule needs a recognized target.');
+    const key=workspaceId+'/'+actionTarget;
+    if(change.operation==='remove') keys.delete(key); else keys.add(key);
+  }
+  for(const row of history.rows) for(const change of parse(row.resolved_changes,[])) apply(row.workspace_id,change);
+  const before=keys.size;
+  for(const change of changes) apply(ctx.workspaceId,change);
+  if(keys.size>limit && keys.size>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
+}
+
 async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);
   const proposal=await get(client,ctx.workspaceId,id,true);if(proposal.status==='APPROVED')return {...proposal,replayed:true};
   if(proposal.status!=='PENDING')throw new InvariantError('That standing instruction is no longer waiting for approval.','instruction_not_pending');
@@ -459,6 +483,7 @@ async function approve(database,ctx,id,expectedHash){const approved=await databa
       'instruction_policy_contract_changed');
   for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority','capability_authority'].includes(change.domain))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
+  await checkRuleLimit(client,ctx,proposal.resolvedChanges);
   const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs,sourceProposalId:id}));
   const keys=new Set(proposal.resolvedChanges.map(target).filter(Boolean));const prior=(await client.query(`SELECT * FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status='APPROVED' AND id<>$2 FOR UPDATE`,[ctx.workspaceId,id])).rows;

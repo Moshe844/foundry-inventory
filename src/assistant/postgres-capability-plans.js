@@ -413,6 +413,12 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         continued.push(outcome.result);
         if(stored.state==='WAITING'&&claimed.authorization_mode==='MISSION'
           &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
+          const account=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
+          if(account.plan && (account.shadow || require('../commercial/agent-plan').needsPerson(contract.name))){
+            stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
+            await update(database,claimed,token,steps,'WAITING_USER');
+            break;
+          }
           if(!approvedStepSafe({...claimed,steps},next,outcome.args,dependencyArgs)){
             stored.state='WAITING_USER';stored.reason='mission_scope_incomplete';
             await update(database,claimed,token,steps,'WAITING_USER');

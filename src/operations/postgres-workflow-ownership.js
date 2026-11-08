@@ -51,7 +51,13 @@ async function purchase(database,workspaceId,id,prior,clock){
  const po=(await database.query(`SELECT p.*,s.name AS supplier_name,s.follow_up_days FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id WHERE p.workspace_id=$1 AND p.id=$2`,[workspaceId,id])).rows[0];
  if(!po)return missing();
  const lines=(await database.query('SELECT id,sku_id,quantity_units,quantity_received_units FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY line_number,id',[workspaceId,id])).rows;
- const documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED' ORDER BY d.processed_at,d.id`,[workspaceId,id])).rows;
+ const documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED'
+ UNION ALL SELECT r.id,CASE WHEN r.kind='date' OR (r.expected_date IS NOT NULL AND p.expected_date IS NOT NULL AND r.expected_date<>p.expected_date::date) THEN 'NEEDS_REVIEW' ELSE 'MATCHED' END,
+  'order_acknowledgement',json_build_object('expectedArrivalDate',r.expected_date)::text,'[]',to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),NULL
+ FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l USING(token_hash)
+ JOIN purchase_orders p ON p.id=l.purchase_order_id AND p.workspace_id=l.workspace_id
+ WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind IN ('confirm','date')
+ ORDER BY processed_at,id`,[workspaceId,id])).rows;
  const bills=(await database.query("SELECT id,status FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2 AND status<>'VOID'",[workspaceId,id])).rows;
  const proof={purchaseOrderId:id,status:po.status,ordered:lines.reduce((n,l)=>n+Number(l.quantity_units),0),received:lines.reduce((n,l)=>n+Number(l.quantity_received_units),0),documentIds:documents.map(d=>d.id),billIds:bills.map(b=>b.id)};
  const base={recordId:id,reference:po.po_number,href:kinds.purchase.href+id,party:po.supplier_name,proof};

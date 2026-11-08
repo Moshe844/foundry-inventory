@@ -12,8 +12,24 @@ async function extractMessage(database,workspaceId,messageId){
     if(createHash('sha256').update(row.content).digest('hex')!==row.content_hash)throw new ValidationError('The saved attachment failed its integrity check.');
     if(row.extraction_status!=='READABLE'||!text){if(Date.now()>deadline)throw new ValidationError('This message has more documents than can be read in one bounded review. The remaining originals need review.');text=await require('./document-reader').read({filename:row.filename,buffer:row.content});}
   }catch(e){status='NEEDS_REVIEW';error=e instanceof ValidationError?e.message:'StockChief could not read this attachment completely. Review the original before using its figures.';}
-  await database.query(`UPDATE connection_email_attachments SET extracted_text=$4,extraction_status=$5,extraction_error=$6
+  await database.transaction(async client=>{
+    if(status==='READABLE'){
+      const ent=require('../commercial/entitlements'),scope=await ent.ownerScopeForWorkspace(client,workspaceId);
+      const sub=await ent.subscriptionFor(client,scope.accountId);
+      if(sub?.plan_configuration?.offerId==='agent-v3'){
+        const usage={meter:'agent_documents',units:1,idempotencyKey:'attachment:'+row.id+':'+row.content_hash};
+        try {
+          await ent.reserveUsage(client,scope,usage);
+          await ent.commitUsage(client,scope,usage);
+        } catch(e) {
+          if(!(e instanceof ent.EntitlementError)) throw e;
+          status='NEEDS_REVIEW';text=null;error='Your document allowance has been reached. Review the original or add documents and retry.';
+        }
+      }
+    }
+    await client.query(`UPDATE connection_email_attachments SET extracted_text=$4,extraction_status=$5,extraction_error=$6
     WHERE workspace_id=$1 AND message_id=$2 AND id=$3 AND content_hash=$7`,[workspaceId,messageId,row.id,text||null,status,error,row.content_hash]);
+  },{isolation:'SERIALIZABLE',retrySafe:true});
   results.push({attachmentId:row.id,status,characters:text?.length||0});
  }
  const review=await require('./postgres-document-review').prepare(database,workspaceId,messageId);
