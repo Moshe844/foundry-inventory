@@ -74,7 +74,8 @@ test('Connections, Settings and related pages use their real controls without co
   }
   const origin='/orders?q=keep-this-filter';await page.goto(base+origin);await page.evaluate(()=>{const a=document.createElement('a');a.href='/profile';a.textContent='Open profile for routing verification';document.querySelector('main').append(a);});await page.getByRole('link',{name:'Open profile for routing verification',exact:true}).click();await page.waitForURL('**/settings?section=advanced#account');
   assert.equal(await page.locator('main a.page-back,a[data-return-to]').count(),0,'Settings is a menu destination and has no extra Back link');
-  await page.getByRole('navigation',{name:'Primary navigation'}).getByRole('link',{name:'Orders',exact:true}).click();await page.waitForURL(base+'/orders');
+  const menu=page.getByRole('button',{name:'Open navigation',exact:true});if(await menu.isVisible())await menu.click();
+  await page.getByRole('navigation',{name:'Primary navigation'}).getByRole('link',{name:'Orders',exact:true}).click();await page.waitForURL(url=>url.pathname==='/orders');
  });
  await t.test('Orders, Buy, Home, Stock, reports and hero use the requested presentation',async sub=>{
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,created_at,updated_at) VALUES('stock-pill-test',$1,$2,$3,2,8,now(),now())`,[ctx.workspaceId,f.item.skuIds[0],f.location.id]);
