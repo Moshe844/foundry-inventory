@@ -19,6 +19,28 @@ function createPostgresAutopilotRouter(database){
   const policy=require('../../commercial/agent-plan');
   const requests=require('../../purchasing/agent-purchase-requests');
   const lots=require('../../autopilot/lot-controls');
+  const edi=require('../../connections/postgres-orderful-test');
+  router.get('/autopilot/orderful',requireAuth,owner,asyncRoute(async(req,res)=>{
+    res.page('autopilot/orderful',{title:'Orderful retail test',nav:'autopilot',...(await edi.dashboard(database,req.ctx))});
+  }));
+  router.post('/autopilot/orderful/connect',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.connect(database,req.ctx,req.body);res.redirect(303,'/autopilot/orderful');
+  }));
+  router.post('/autopilot/orderful/disconnect',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.disconnect(database,req.ctx);res.redirect(303,'/autopilot/orderful');
+  }));
+  router.post('/autopilot/orderful/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.configure(database,req.ctx,req.body.action);res.redirect(303,'/autopilot/orderful');
+  }));
+  router.post('/autopilot/orderful/receive',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.receive(database,req.ctx,req.body.transactionId);res.redirect(303,'/autopilot/orderful');
+  }));
+  router.post('/autopilot/orderful/:source/:kind/:record/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.send(database,req.ctx,req.params.source,req.params.kind,req.params.record);res.redirect(303,'/autopilot/orderful');
+  }));
+  router.post('/autopilot/orderful/:source/:kind/:record/reconcile',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await edi.reconcile(database,req.ctx,req.params.source,req.params.kind,req.params.record,req.body.providerUuid);res.redirect(303,'/autopilot/orderful');
+  }));
   const shipbob=require('../../connections/postgres-shipbob-sandbox');
   router.get('/autopilot/shipbob',requireAuth,owner,asyncRoute(async(req,res)=>{
     const data=await shipbob.dashboard(database,req.ctx);
@@ -55,7 +77,9 @@ function createPostgresAutopilotRouter(database){
   }
   router.get('/autopilot/reviews',requireAuth,owner,asyncRoute(async(req,res)=>{
     const state=await reviews.ownerState(database,req.ctx);
-    res.page('autopilot/reviews',{title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
+    let ediEnabled=true;
+    try{await edi.access(database,req.ctx);}catch(error){if(error.code!=='entitlement_required')throw error;ediEnabled=false;}
+    res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page});

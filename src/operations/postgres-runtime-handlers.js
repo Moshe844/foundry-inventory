@@ -391,6 +391,7 @@ async function runtimeSweep(job,client,options={}){
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
   await require('../connections/postgres-shipbob-sandbox').schedule(client);
+  await require('../connections/postgres-orderful-test').schedule(client);
   const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
   const scheduledGoals=await require('../assistant/postgres-goal-resume').sweep(scopedDatabase(client));
   const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
@@ -632,6 +633,10 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   // The durable request is its completion receipt if the worker stops afterward.
   'developer.account-delete':external((job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId)),
     'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
+  'orderful.test-inbox':external(async(job,database)=>{
+    try{return await require('../connections/postgres-orderful-test').poll(database,job,options.orderfulFetch);}
+    catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
+  }),
   'shipbob.sandbox-order':external(async(job,database)=>{
     try{return await require('../connections/postgres-shipbob-sandbox').runJob(database,job,options.shipbobFetch);}
     catch(error){if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
