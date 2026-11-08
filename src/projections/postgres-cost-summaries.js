@@ -17,10 +17,16 @@ const totalsSql=`WITH pending_sample AS MATERIALIZED(
  SELECT sku_id FROM stockchief_runtime.sku_cost_pending WHERE workspace_id=$1 ORDER BY change_xid,sku_id LIMIT 1001
 ), dirty AS MATERIALIZED(SELECT DISTINCT sku_id FROM pending_sample),
  mode AS MATERIALIZED(SELECT (SELECT count(*) FROM pending_sample)<=1000
-  AND EXISTS(SELECT 1 FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1) AS summarized),
+  -- A bare EXISTS can choose a sequential scan through other inventories to
+  -- find its first match. Keep this presence probe on the scoped primary key.
+  AND (SELECT sku_id FROM stockchief_runtime.sku_cost_totals WHERE workspace_id=$1 ORDER BY sku_id LIMIT 1) IS NOT NULL AS summarized),
  saved AS MATERIALIZED(
-  SELECT coalesce(sum(quantity_units),0) units,coalesce(sum(total_cost_minor),0) cost FROM stockchief_runtime.sku_cost_totals
-  WHERE workspace_id=$1 AND (SELECT summarized FROM mode)
+  -- Preserve the scoped range before aggregation. A parallel sequential sum
+  -- otherwise scans other inventories when this tenant's row estimate is skewed.
+  SELECT coalesce(sum(quantity_units),0) units,coalesce(sum(total_cost_minor),0) cost FROM (
+   SELECT quantity_units,total_cost_minor FROM stockchief_runtime.sku_cost_totals
+   WHERE workspace_id=$1 AND (SELECT summarized FROM mode) ORDER BY sku_id OFFSET 0
+  ) scoped_totals
  ), changed_saved AS MATERIALIZED(
   SELECT coalesce(sum(s.quantity_units),0) units,coalesce(sum(s.total_cost_minor),0) cost FROM dirty d
   CROSS JOIN LATERAL(SELECT quantity_units,total_cost_minor FROM stockchief_runtime.sku_cost_totals
