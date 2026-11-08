@@ -78,6 +78,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test tests/postgres/orders-redesign-ui.test.js tests/postgres/buy-redesign-ui.test.js 2>&1 | tee output/customer-navigation-ci/orders-redesign.log
+      - name: Profit parts, large pages and one way back
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'shipping' }}
+        run: |
+          set -euo pipefail
+          node --test tests/postgres/money-margin-pager-and-back-links.test.js 2>&1 | tee output/customer-navigation-ci/money-pagination-navigation.log
       - name: Shipping connections and customer addresses
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'shipping' }}
         run: |
