@@ -26,6 +26,8 @@ async function configure(db, ctx, input) {
       if (!books) throw new ValidationError('Set up the inventory currency first.');
       const limit = money.userToMinor(input.limit, books.base_currency);
       if (limit <= 0) throw new ValidationError('Enter a positive limit for the whole count.');
+      const present=await client.query('SELECT 1 FROM stockchief_runtime.agent_count_rules WHERE workspace_id=$1',[ctx.workspaceId]);
+      await require('../manager/postgres-operating-instructions').checkRuleLimit(client,ctx,[],present.rowCount?0:1);
       await client.query(`INSERT INTO stockchief_runtime.agent_count_rules(workspace_id,authorized_by,currency,limit_minor,automatic)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT(workspace_id) DO UPDATE SET authorized_by=EXCLUDED.authorized_by,
         currency=EXCLUDED.currency,limit_minor=EXCLUDED.limit_minor,automatic=EXCLUDED.automatic,updated_at=now()`,

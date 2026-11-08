@@ -22,6 +22,8 @@ async function configure(db,ctx,{skuId,locationId,ceiling,remove}){
     const found=(await c.query(`SELECT 1 FROM skus s JOIN locations l ON l.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND l.id=$3 AND l.is_active=1 AND l.custody_agreement_id IS NULL`,[ctx.workspaceId,skuId,locationId])).rowCount;
     if(!found)throw new ValidationError('Choose an active product and location from this inventory.');
+    const present=await c.query('SELECT 1 FROM stockchief_runtime.location_reorder_rules WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,skuId,locationId]);
+    await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],present.rowCount?0:1);
     await c.query(`INSERT INTO stockchief_runtime.location_reorder_rules(workspace_id,sku_id,location_id,authorized_by,ceiling)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(workspace_id,sku_id,location_id) DO UPDATE SET ceiling=EXCLUDED.ceiling,authorized_by=EXCLUDED.authorized_by`,[ctx.workspaceId,skuId,locationId,ctx.actorId,value]);
     await audit.record(c,ctx,{action:'Authorized automatic reorder thresholds',after:{skuId,locationId,ceiling:value}});
@@ -53,7 +55,7 @@ async function runPage(db,workspaceId,skuIds){
       GROUP BY d.sku_id,d.location_id`,[workspaceId,selected])).rows;
     const byLocation=new Map(sales.map(s=>[key(s),s]));
     for(const row of current){
-      if(!row.location_id||row.planning_suppressed||row.tracking_mode!=='quantity')continue;
+      if(!row.location_id||row.planning_suppressed||row.tracking_mode!=='quantity'||row.lead_time_assumed)continue;
       const rule=authorized.get(key(row))||(autonomous?{sku_id:row.sku_id,location_id:row.location_id,ceiling:null,authorized_by:general.updated_by}:null);
       if(!rule)continue;
       const recorded=byLocation.get(key(row));

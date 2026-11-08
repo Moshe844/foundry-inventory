@@ -53,6 +53,8 @@ async function schedule(db,ctx,input){
     const zones=await access.locations(c,ctx.workspaceId,[input.locationId]);
     if(!zones.length)throw new ValidationError('Choose an active location from this inventory.');
     await counter(c,{workspaceId:ctx.workspaceId,actorId:input.counterId},zones.map(l=>l.id));
+    const present=await c.query('SELECT 1 FROM stockchief_runtime.agent_count_schedules WHERE workspace_id=$1 AND location_id=$2',[ctx.workspaceId,input.locationId]);
+    await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],present.rowCount?0:1);
     await c.query(`INSERT INTO stockchief_runtime.agent_count_schedules(workspace_id,location_id,counter_id,owner_id,interval_days,next_due)
       VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,location_id) DO UPDATE SET counter_id=$3,owner_id=$4,interval_days=$5,next_due=$6,last_issue=NULL`,
       [ctx.workspaceId,input.locationId,input.counterId,ctx.actorId,days,day]);

@@ -11,9 +11,11 @@ test('local sales tune location thresholds only within current plan and owner au
   const rules=require('../../src/forecasting/location-reorder-rules'),plans=require('../../src/forecasting/postgres-planning-service');
   const modes=require('../../src/autopilot/job-modes'),authority=require('../../src/autopilot/postgres-service'),inv=require('../../src/domain/postgres-inventory-engine');
   const run=()=>plans.refreshRecommendations(db,ctx.workspaceId,{limitSkus:250});
-  const values=async id=>(await db.query('SELECT reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,skuId,id])).rows.map(r=>[Number(r.reorder_point),Number(r.target_stock)]);
+  const values=async id=>(await db.query('SELECT reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND reorder_point IS NOT NULL',[ctx.workspaceId,skuId,id])).rows.map(r=>[Number(r.reorder_point),Number(r.target_stock)]);
   const issue=(where,qty,reason)=>inv.issue(db,ctx,{skuId,locationId:where,quantity:qty,reasonCode:reason,idempotencyKey:randomUUID()});
   const second=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'North site',kind:'warehouse'});
+  for(const site of [locationId,second.id])await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,lead_time_days,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,14,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,skuId,site]);
   await inv.transfer(db,ctx,{skuId,sourceLocationId:locationId,destinationLocationId:second.id,quantity:80,idempotencyKey:randomUUID()});
   await issue(locationId,45,'sold');await issue(locationId,45,'sold');await issue(locationId,50,'damaged');
   await issue(second.id,15,'sold');await issue(second.id,15,'sold');
@@ -34,6 +36,16 @@ test('local sales tune location thresholds only within current plan and owner au
   await subscribe('enterprise');await modes.save(db,ctx,120,{mode:'ask',revision:1});await run();assert.deepEqual(await values(second.id),[[8,11]]);
   await modes.save(db,ctx,120,{mode:'routine',revision:2});await run();assert.deepEqual(await values(second.id),[[11,15]]);
   await rules.configure(db,ctx,{skuId,locationId,remove:'1'});
+  await subscribe('growth');
+  await db.query(`INSERT INTO stockchief_runtime.agent_brand_watches(workspace_id,brand_key,brand_name,threshold,inclusive,updated_by)
+    SELECT $1,'brand-'||i,'Brand '||i,12,true,$2 FROM generate_series(1,49) i`,[ctx.workspaceId,ctx.actorId]);
+  const competing=await Promise.allSettled([locationId,second.id].map(id=>rules.configure(db,ctx,{skuId,locationId:id,ceiling:20})));
+  assert.equal(competing.filter(r=>r.status==='fulfilled').length,1);
+  assert.match(competing.find(r=>r.status==='rejected').reason.message,/50 active rules/);
+  const winner=competing[0].status==='fulfilled'?locationId:second.id,other=winner===locationId?second.id:locationId;
+  await rules.configure(db,ctx,{skuId,locationId:winner,ceiling:21});
+  await rules.configure(db,ctx,{skuId,locationId:winner,remove:'1'});
+  await rules.configure(db,ctx,{skuId,locationId:other,ceiling:20});
 });
 
 test('sales scenarios, partial supplier deliveries and competing quotations use stored inventory records and the current plan', {timeout:240000},async t=>{

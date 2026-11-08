@@ -658,6 +658,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
+  'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);

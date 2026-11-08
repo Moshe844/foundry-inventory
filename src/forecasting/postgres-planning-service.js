@@ -153,7 +153,9 @@ async function refreshRecommendations(database,workspaceId,options={}){
   let afterSkuId=options.afterSkuId||null;
   for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250,cycleId:options.cycleId||null});
    await ensureRecommendations(database,workspaceId,rows);
-   await require('./location-reorder-rules').runPage(database,workspaceId,[...new Set(rows.map(r=>r.sku_id))]);
+   const selected=[...new Set(rows.map(r=>r.sku_id))];
+   await require('./location-reorder-rules').runPage(database,workspaceId,selected);
+   await require('./agent-safety-stock').queuePage(database,workspaceId,selected);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;
   }
