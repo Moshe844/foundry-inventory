@@ -1,6 +1,8 @@
 'use strict';
 
 module.exports=[
+  {id:26,key:'open-to-buy',label:'Plan purchasing within the monthly budget',filterLabel:'Month (YYYY-MM)',readPage:(db,ctx,options)=>require('../purchasing/agent-budgets').report(db,ctx,options,true)},
+  {id:110,key:'purchase-budget',label:'Compare purchase budgets with actual spending',filterLabel:'Month (YYYY-MM)',readPage:require('../purchasing/agent-budgets').report},
   {id:22,key:'supplier-options',label:'Compare buying options',summary:'Active supplier terms for each SKU. Cost ranks compare the same currency. Lead-time ranks use observed delivery times after three received orders, then saved item or supplier terms if available. Check minimums before ordering.',sql:`
     WITH offers AS (SELECT si.*,s.currency,s.name,lead.effective_lead AS days
       FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id

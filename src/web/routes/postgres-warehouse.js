@@ -21,7 +21,17 @@ function createPostgresWarehouseRouter(database){
     const q=String(req.query.q||'').trim().slice(0,120),category=String(req.query.category||'').trim().slice(0,120),locationId=String(req.query.locationId||'').slice(0,160);
     const rows=(await database.query(`SELECT i.id,i.name,i.tracking_mode,i.secondary_unit_label,i.quantity_increment,s.id AS sku_id,s.code,s.variant_label,coalesce(b.on_hand,0) AS on_hand FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=$4 WHERE i.workspace_id=$1 AND i.is_active=1 AND s.is_active=1 AND ($2='' OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR s.variant_label ILIKE '%'||$2||'%') AND ($3='' OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=i.workspace_id AND f.item_id=i.id AND f.category ILIKE '%'||$3||'%')) ORDER BY lower(i.name),s.code LIMIT 51`,[req.ctx.workspaceId,q,category,locationId])).rows;
     const countWorksheets=(await database.query('SELECT id,title,status FROM warehouse_count_campaigns WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 30',[req.ctx.workspaceId])).rows,pendingCounts=req.user.role==='owner'?(await database.query("SELECT id,payload->'location'->>'name' location_name FROM physical_count_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at DESC LIMIT 30",[req.ctx.workspaceId])).rows:[];
-    return res.page('warehouse/count-picker',{title:'Record a physical count',nav:'inventory',countWorksheets,pendingCounts,rows:rows.slice(0,50),hasMore:rows.length>50,q,category,locationId,locations:await require('../../domain/postgres-location-service').listHierarchy(database,req.ctx.workspaceId,{includeStock:false})});
+    const ruleSettings=await require('../../autopilot/count-rules').settings(database,req.ctx);
+    const countRule=req.user.role==='owner'?ruleSettings:{enabled:false,automaticSubmission:ruleSettings.enabled&&ruleSettings.rule?.automatic};
+    return res.page('warehouse/count-picker',{title:'Record a physical count',nav:'inventory',countRule,submissionKey:newId('count'),countWorksheets,pendingCounts,rows:rows.slice(0,50),hasMore:rows.length>50,q,category,locationId,locations:await require('../../domain/postgres-location-service').listHierarchy(database,req.ctx.workspaceId,{includeStock:false})});
+  }));
+  router.post('/warehouse/counts/rule',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/count-rules').configure(database,req.ctx,req.body);
+    res.redirect(303,'/warehouse/counts/new');
+  }));
+  router.post('/warehouse/counts/reviews/:id/recount',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
+    await require('../../operations/postgres-count-reviews').recount(database,req.ctx,req.params.id,req.body.quantities);
+    res.redirect(303,'/warehouse/counts/reviews/'+req.params.id);
   }));
   const campaigns=require('../../operations/postgres-count-campaigns');
   router.post('/warehouse/counts/campaigns',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{const created=await campaigns.create(database,req.ctx,req.body);return res.redirect(303,'/warehouse/counts/campaigns/'+created.id);}));

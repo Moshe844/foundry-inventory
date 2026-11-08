@@ -1,0 +1,67 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {randomUUID} = require('node:crypto');
+const reviews = require('../../src/operations/postgres-count-reviews');
+const rules = require('../../src/autopilot/count-rules');
+const autonomy = require('../../src/autopilot/postgres-service');
+
+test('count rules post small differences once and require a physical recount above the owner limit', {timeout:240000}, async t => {
+  const {db,ctx,owner,browser,subscribe,csrf,location,item,balance} = await require('../helpers/agent-workflow-fixture').fixture(t,{units:20});
+  const sku = item.skuIds[0];
+  const form = () => browser.get('/warehouse/counts/new').expect(200);
+  const input = (quantity,submissionKey=randomUUID()) => ({locationId:location.id,submissionKey,lines:[{skuId:sku,quantity}]});
+  for(const tier of ['starter','growth']){
+    await subscribe(tier);
+    assert.match((await form()).text,/require Pro/);
+    await assert.rejects(rules.configure(db,ctx,{mode:'automatic',limit:'2.00'}),e=>e.code==='entitlement_required');
+    assert.doesNotMatch((await form()).text,/action="\/warehouse\/counts\/rule"/);
+  }
+  await subscribe('pro');
+  const setup = await form();
+  await browser.post('/warehouse/counts/rule').type('form').send({_csrf:csrf(setup.text),mode:'automatic',limit:'2.00'}).expect(303);
+  const shadow = await reviews.prepare(db,ctx,input(19));
+  assert.equal((await reviews.get(db,ctx,shadow.id)).status,'PENDING');
+  assert.equal(await balance(),20);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[owner.accountId]);
+  await autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const ready = await form();
+  const first = input(18,/name="submissionKey" value="([^"]+)"/.exec(ready.text)[1]);
+  const submitted = await browser.post('/warehouse/counts/reviews').type('form').send({
+    locationId:location.id, submissionKey:first.submissionKey, 'lines[0][skuId]':sku,'lines[0][quantity]':'18',_csrf:csrf(ready.text)
+  }).expect(303);
+  const posted = await browser.get(submitted.headers.location).expect(200);
+  assert.ok(posted.text.includes('posted this count'),posted.text.match(/role="alert"[^>]*>[\s\S]{0,290}/)?.[0] || submitted.headers.location);
+  assert.equal(await balance(),18);
+  const retry = await reviews.prepare(db,ctx,{...first,lines:[{skuId:sku,quantity:'18'}]});
+  assert.ok(submitted.headers.location.endsWith(retry.id));
+  await assert.rejects(reviews.prepare(db,ctx,{...first,lines:[{skuId:sku,quantity:17}]}),/already submitted/);
+  assert.equal(await balance(),18);
+  const large = await reviews.prepare(db,ctx,input(14));
+  const pending = await reviews.get(db,ctx,large.id);
+  assert.equal(pending.recount_required,true);
+  await assert.rejects(reviews.approve(db,ctx,large.id,pending.integrity_hash),/again/);
+  await assert.rejects(reviews.recount(db,ctx,large.id,{[sku]:'13'}),/differs/);
+  assert.equal(await balance(),18);
+  const second = await browser.get('/warehouse/counts/reviews/'+large.id).expect(200);
+  assert.match(second.text,/Recount required/);
+  await browser.post('/warehouse/counts/reviews/'+large.id+'/recount').type('form').send({_csrf:csrf(second.text),quantities:{[sku]:'14'}}).expect(303);
+  assert.equal(await balance(),18);
+  const approved = await reviews.approve(db,ctx,large.id,pending.integrity_hash);
+  assert.equal(approved.changed,1);
+  assert.equal((await reviews.approve(db,ctx,large.id,pending.integrity_hash)).replayed,true);
+  assert.equal(await balance(),14);
+  await subscribe('growth');
+  const downgraded = await reviews.prepare(db,ctx,input(13));
+  assert.equal((await reviews.get(db,ctx,downgraded.id)).status,'PENDING');
+  assert.equal(await balance(),14);
+  await subscribe('enterprise');
+  await rules.configure(db,ctx,{mode:'automatic',limit:1});
+  const custom = await reviews.prepare(db,ctx,input(13));
+  assert.equal((await reviews.get(db,ctx,custom.id)).status,'COMPLETED');
+  assert.equal(await balance(),13);
+  await autonomy.setMode(db,ctx,{role:'owner'},'SUPERVISED');
+  assert.equal((await reviews.get(db,ctx,(await reviews.prepare(db,ctx,input(12))).id)).status,'PENDING');
+  assert.equal(await balance(),13);
+});

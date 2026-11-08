@@ -18,6 +18,14 @@ function createPostgresAutopilotRouter(database){
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
   const requests=require('../../purchasing/agent-purchase-requests');
+  const budgets=require('../../purchasing/agent-budgets');
+  router.get('/purchasing/budgets',requireAuth,owner,asyncRoute(async(req,res)=>{
+    res.page('autopilot/purchase-budgets',{title:'Purchase budgets',nav:'purchasing',...(await budgets.settings(database,req.ctx,req.query.month))});
+  }));
+  router.post('/purchasing/budgets',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await budgets.save(database,req.ctx,req.body);
+    res.redirect(303,'/purchasing/budgets?'+new URLSearchParams({month:req.body.month}));
+  }));
   const lots=require('../../autopilot/lot-controls');
   const edi=require('../../connections/postgres-orderful-test');
   router.get('/autopilot/orderful',requireAuth,owner,asyncRoute(async(req,res)=>{

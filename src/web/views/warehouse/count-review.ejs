@@ -1,3 +1,13 @@
 <a href="/warehouse/counts/new">Back to physical counts</a><h1>Review physical count</h1><p><%= review.payload.location.name %> · <%= review.status==='COMPLETED'?'Count complete.':'One approval posts all of these variances together. If stock changes, review a new count.' %></p>
 <div class="table-scroll"><table class="table"><thead><tr><th>Variant</th><th>Recorded</th><th>Counted</th><th>Difference</th><th>Stock value change</th></tr></thead><tbody><% for(const line of review.payload.lines){ %><tr><td><%= line.label %> · <%= line.code %></td><td><%= line.before.physical %></td><td><%= line.quantity %></td><td><%= line.delta>0?'+':'' %><%= line.delta %></td><td><%= helpers.money(line.costDeltaMinor,review.payload.currency) %></td></tr><% } %></tbody></table></div>
-<% if(review.status==='PENDING'){ %><form method="post" action="/warehouse/counts/reviews/<%= review.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= review.integrity_hash %>"><button class="btn btn--primary" type="submit">Approve all count variances</button></form><% } %>
+<% if(review.agent_decision?.action==='post'){ %>
+<p>StockChief posted this count under the owner's <%= helpers.money(review.agent_decision.limitMinor,review.payload.currency) %> limit.</p>
+<% } %>
+<% if(review.recount_required&&!review.recounted_at){ %>
+<form method="post" action="/warehouse/counts/reviews/<%= review.id %>/recount"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+ <h2>Recount required</h2><p>The differences exceed the owner's limit. Count each changed item again and enter what you find.</p>
+ <% for(const line of review.payload.lines.filter(line=>line.delta!==0)){ %><label><%= line.code %> at <%= review.payload.location.name %>
+ <input name="quantities[<%= line.skuId %>]" type="number" step="any" min="0" required></label><% } %>
+ <button class="btn">Confirm physical recount</button>
+</form>
+<% }else if(review.status==='PENDING'&&currentUser.role==='owner'){ %><form method="post" action="/warehouse/counts/reviews/<%= review.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= review.integrity_hash %>"><button class="btn btn--primary" type="submit">Approve all count variances</button></form><% } %>

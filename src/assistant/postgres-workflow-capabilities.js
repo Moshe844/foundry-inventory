@@ -704,6 +704,10 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  {name:'sales_order.repeat',description:'Repeat a named customer’s last confirmed order or the order from last calendar month as a new draft at current prices. Use repeatPeriod previous-month for “same as last month”. If several orders match that month, ask for the source order number.',
+    record:'customer',fields:['recordReference','repeatPeriod','sourceOrderNumber'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
+    resultingRecords:['sales_order'],resultRecordKind:'sales_order',resultReference:'salesOrderId',resultDisplayReference:'orderNumber',
+    build:require('./repeat-customer-order').prepare,execute:require('./repeat-customer-order').execute,verify:require('./repeat-customer-order').verify},
   ...require('./postgres-record-aliases').specs,
   {name:'customer_return.credit_receipt',description:'Prepare an owner-approved credit note for goods already received on a legacy refund return. Preserve physical receipts, original journals and cash. Review exact original receipt dates, discount, tax, invoice balance and any deferred-cost release. Never duplicates an existing credit or refund.',record:'customer_return',fields:['recordReference'],permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,capability:'returns.core',resultingRecords:['accounting_return_receipt_credits','accounting_customer_invoices','accounting_journal_entries'],
    build:async(db,ctx,row)=>{const review=await require('../operations/postgres-legacy-return-credits').preview(db,ctx,row.id);return prepareResult({recordId:row.id,review},'Credit '+pricing.formatMinor(review.totalMinor,review.currency)+' for received '+review.returnNumber+' including '+pricing.formatMinor(review.taxMinor,review.currency)+' tax, on its recorded receipt dates: '+[...new Set(review.batches.map(b=>b.postingDate))].join(', ')+'. Recognize '+pricing.formatMinor(review.pendingCostMinor,review.currency)+' of returned cost. Reduce unpaid invoice amounts and record paid portions as owed refunds. No cash or stock moves.');},

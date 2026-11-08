@@ -20,12 +20,12 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 |---:|---|---|---|---|---|---|
 | 1 | Tells you how many of any item, size, lot or serial you have, and where. | Alone | Alone | Alone | Alone | Starter can trace a lot and an issued serial. The mixed-order test checks the live stock after partial shipment and recall. |
 | 2 | Explains why a stock number changed, with every move behind it. | Alone | Alone | Alone | Alone | Recorded receipt changes the position from 0 to 4. The review returns both balances and the movement. |
-| 3 | Checks every day for negative stock, stuck transfers and odd adjustments. | Suggest | Alone | Alone | Alone | Policy only |
+| 3 | Checks every day for negative stock, stuck transfers and odd adjustments. | Suggest | Alone | Alone | Alone | Warehouse discrepancy review locates negative stock, repeated negative adjustments and overdue transfers. Tested all plans and the Starter suggestion. Proactive delivery still needs verification. |
 | 4 | Plans today's cycle count: which shelves to count, by value and risk. | Suggest | Draft | Alone | Alone | A two-warehouse SKU prioritizes the shelf with two negative adjustments ahead of a shelf with three units and no corrections. Starter receives one suggestion. |
 | 5 | Turns a count sheet or shelf photo into stock adjustments. | Excluded | Excluded | Trained | Alone | Policy only |
-| 6 | Posts small count differences on its own, under your $ limit. | Excluded | Excluded | Alone | Alone | Policy only |
+| 6 | Posts small count differences on its own, under your $ limit. | Excluded | Excluded | Alone | Alone | An owner-set limit posts a physical count using the inventory ledger and accounting transaction. Verified tier, shadow, amount, evidence and replay checks. |
 | 7 | Sends staff a count list on their phone and checks it as they go. | Excluded | Trained | Alone | Alone | Policy only |
-| 8 | Asks for a recount when a count looks wrong, before anything is posted. | Excluded | Excluded | Alone | Alone | Policy only |
+| 8 | Asks for a recount when a count looks wrong, before anything is posted. | Excluded | Excluded | Alone | Alone | An above-limit difference requires a matching independent count submission before the owner may approve. Verified downgrade and stale stock handling. |
 | 9 | Finds dead and slow stock and suggests: discount, return or move it. | Suggest | Draft | Trained | Alone | Policy only |
 | 10 | Flags likely shrink or theft patterns (same item, same shift, again). | Excluded | Alone | Alone | Alone | Two recorded count corrections for the same SKU at the same warehouse and local time band produce one two-unit loss flag. Starter is denied. |
 | 11 | Moves stock to the right bin after a wrong put-away or mis-scan. | Excluded | Excluded | Trained | Alone | Policy only |
@@ -43,7 +43,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 23 | Tops up an order to hit the supplier's minimum or free shipping. | Suggest | Trained | Alone | Alone | Policy only |
 | 24 | Combines small orders into one PO to save shipping. | Excluded | Trained | Alone | Alone | Policy only |
 | 25 | Splits big POs by budget, warehouse or delivery date. | Excluded | Excluded | Trained | Alone | Policy only |
-| 26 | Plans buying to a monthly budget (open-to-buy). | Excluded | Excluded | Excluded | Alone | Policy only |
+| 26 | Plans buying to a monthly budget (open-to-buy). | Excluded | Excluded | Excluded | Alone | Custom open-to-buy subtracts posted bill lines and unbilled order commitments once. Authenticated page, scheduled run, separate currencies, competing budget edits and lower-plan denials tested. Automated PO budget allocation remains open. |
 | 27 | Orders in full cases, packs or pallets, not loose units. | Excluded | Trained | Alone | Alone | Policy only |
 | 28 | Emails approved POs to the supplier. | Draft | Alone | Alone | Alone | Approved PO reaches the supplier outbox. No external mailbox delivery was tested. |
 | 29 | Asks the supplier to confirm each PO and saves the ship date. | Excluded | Trained | Alone | Alone | A scoped supplier follow-up is created by the replenishment workflow under approved limits. Confirmation replies stop a queued request. Growth requires an active trained supplier rule for an unattended confirmation. Authenticated mail delivery is outstanding. |
@@ -70,7 +70,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 50 | Tells sales and customers when a waited-for item is back in stock. | Excluded | Draft | Alone | Alone | Policy only |
 | 51 | Puts new stock on QC hold until it passes inspection, so it can't be sold early. | Excluded | Trained | Alone | Alone | Policy only |
 | 52 | Creates sales orders from customer emails and PDFs. | Excluded | Draft | Alone | Alone | Policy only |
-| 53 | Repeats a customer's usual order from one sentence ("same as last month"). | Excluded | Trained | Alone | Alone | Policy only |
+| 53 | Repeats a customer's usual order from one sentence ("same as last month"). | Excluded | Trained | Alone | Alone | Ask prepares a repeat draft from a named customer and previous calendar month at current prices. Tested current totals, all tiers, ambiguous history, shadow, downgrade, stale quotes and replay. Autonomous execution with trained authority and natural-language model routing still need verification. |
 | 54 | Checks each order for stock, credit, address and price problems. | Suggest | Alone | Alone | Alone | Policy only |
 | 55 | Holds orders for customers who are overdue. | Excluded | Suggest | Alone | Alone | Policy only |
 | 56 | Releases orders to the warehouse in the best pick order. | Excluded | Trained | Alone | Alone | Policy only |
@@ -79,9 +79,9 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 59 | Buys shipping labels (within your $ per label). | Draft | Alone | Alone | Alone | Policy only |
 | 60 | Tells customers their order has shipped, with tracking. | Alone | Alone | Alone | Alone | Policy only |
 | 61 | Splits an order when part is out of stock and ships the rest. | Excluded | Excluded | Trained | Alone | Policy only |
-| 62 | Watches tracking and flags late or lost parcels. | Excluded | Alone | Alone | Alone | Policy only |
+| 62 | Watches tracking and flags late or lost parcels. | Excluded | Alone | Alone | Alone | Tracking review identifies overdue parcels and carrier exceptions through the owner page. Tested all plans and clearing the exception. Live carrier updates still need verification. |
 | 63 | Files carrier claims for lost or damaged parcels. | Excluded | Excluded | Trained | Alone | Policy only |
-| 64 | Manages backorders: who's waiting and what ships first. | Suggest | Draft | Alone | Alone | Policy only |
+| 64 | Manages backorders: who's waiting and what ships first. | Suggest | Draft | Alone | Alone | Backorder review shows unallocated quantities in priority order and distinguishes partially allocated orders. Starter sees a suggestion. Automatic release and dispatch remain open. |
 | 65 | Shares out scarce stock between orders by your priority rules. | Excluded | Excluded | Trained | Alone | Starter and Growth cannot prepare a change to an order’s allocation priority through Ask. Rule-based, multi-order allocation on eligible tiers still needs testing. |
 | 66 | Books freight pickups for pallets (LTL). | Excluded | Excluded | Excluded | Alone | Policy only |
 | 67 | Creates standing and recurring customer orders on their schedule. | Excluded | Trained | Alone | Alone | Policy only |
@@ -127,13 +127,13 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 107 | Prepares refunds and credits. A person always approves. | Excluded | Excluded | Draft | Draft | Starter and Growth refund preparation and an existing Pro proposal after downgrade have denial tests. A complete refund still needs a money-safe test. |
 | 108 | Catches early-payment discounts (like 2% off in 10 days) and puts them in the payment run. | Suggest | Alone | Alone | Alone | A posted $2.00 bill with original 2/10 net 30 terms produces a $0.04 opportunity and $1.96 payment review amount after supplier terms change. |
 | 109 | Forecasts cash for 13 weeks: PO payments due vs money coming in. | Excluded | Suggest | Alone | Alone | Thirteen forecast weeks are returned per currency. A bill for half a PO is in its due week. Only the unbilled half appears in the later supplier-terms week. |
-| 110 | Tracks purchase budget vs actual, by month and category. | Suggest | Alone | Alone | Alone | Policy only |
+| 110 | Tracks purchase budget vs actual, by month and category. | Suggest | Alone | Alone | Alone | Monthly category budgets compare posted purchases in their original currency. Tested a partial bill, owner edits with revision checks, Starter suggestions and Growth, Pro and Custom figures. |
 | 111 | Creates a return (RMA) from a customer's return email. | Excluded | Trained | Alone | Alone | Policy only |
 | 112 | Sends the return label and instructions. | Excluded | Trained | Alone | Alone | Ask refuses Starter return-postage preparation, and discovery omits the locked action. A provider receipt and delivered customer instructions still need verification. |
 | 113 | Decides restock, repair or scrap by your rules. | Excluded | Excluded | Trained | Alone | Starter and Growth cannot prepare an agent return inspection. Eligible automated disposition based on explicit rules and an inspection still needs verification. |
 | 114 | Puts returned items back into stock after staff check them. | Excluded | Draft | Alone | Alone | Starter agent preparation to receive a customer return was denied. An eligible received return with inspection and restock needs an agent scenario. |
 | 115 | Sends faulty goods back to the supplier and tracks the credit. | Excluded | Excluded | Trained | Alone | The agent gates supplier return requests, authorization, shipment and credit reconciliation. A shipped return followed by a Pro-approved credit reduces the correct open bill once. The lower tiers cannot prepare the reconciliation. |
-| 116 | Spots items and customers with high return rates. | Suggest | Alone | Alone | Alone | Policy only |
+| 116 | Spots items and customers with high return rates. | Suggest | Alone | Alone | Alone | Return rates use physically received goods and fulfilled units by customer and SKU. Verified an actual receipt updates the result and Starter sees only a suggestion. |
 | 117 | Shows stock across all locations in one answer. | Alone | Alone | Alone | Alone | One SKU was received at Dispatch and transferred to Annex. The review reports nine units at Dispatch and three at Annex from the posted physical records. |
 | 118 | Suggests transfers to balance stock between locations. | Suggest | Trained | Alone | Alone | Growth cannot enable autonomous transfers. |
 | 119 | Makes transfers on its own, under your unit limit. | Excluded | Excluded | Alone | Alone | Growth transfer execution is gated; Pro can configure unit limits. An actual completed transfer per tier remains open. |
@@ -161,14 +161,14 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 141 | Does the paperwork from a voice note ("3 boxes of X just came in"). | Excluded | Draft | Alone | Alone | Policy only |
 | 142 | Files every document on the right PO, order or product. | Excluded | Alone | Alone | Alone | Policy only |
 | 143 | Reads contracts and pulls out prices, terms and end dates. | Suggest | Suggest | Alone | Alone | Policy only |
-| 144 | Forecasts demand for each item, with seasons. | Suggest | Alone | Alone | Alone | Policy only |
+| 144 | Forecasts demand for each item, with seasons. | Suggest | Alone | Alone | Alone | Confirmed sales on fifteen prior weekdays produced the expected seven- and thirty-day forecasts. Growth and higher see the selected model and its held-out error. Starter gets one suggestion. |
 | 145 | Plans stock for a promotion or sale and drafts the POs. | Excluded | Excluded | Draft | Alone | Policy only |
-| 146 | Forecasts new products using similar items. | Excluded | Suggest | Alone | Alone | Policy only |
+| 146 | Forecasts new products using similar items. | Excluded | Suggest | Alone | Alone | A matching category and compatible units yielded 30 projected units from confirmed orders on a comparison SKU. An unrelated item returned no estimate. Verified Starter denial, Growth suggestion and both higher tiers. |
 | 147 | Plans ahead for holidays and supplier shutdowns (e.g. Chinese New Year). | Excluded | Suggest | Alone | Alone | Policy only |
 | 148 | Spots trends early: an item suddenly selling faster. | Suggest | Alone | Alone | Alone | The rising-demand review identifies a newly shipped SKU from an actual recorded carrier handoff. |
 | 149 | Answers "what if" questions ("what if sales go up 20%?"). | Excluded | Alone | Alone | Alone | Growth, Pro and Custom model the 30-day effect of a sales percentage specified by the user. Three shipped units in 90 days produce baseline demand of 1 and projected demand of 1.2 at +20%. A 100% decrease yields zero. Starter direct access refused. This covers sales volume scenarios. |
 | 150 | Sets safety stock by how often you can afford to run out. | Excluded | Draft | Alone | Alone | Policy only |
-| 151 | Shows when each item will run out, and what running out costs. | Alone | Alone | Alone | Alone | Policy only |
+| 151 | Shows when each item will run out, and what running out costs. | Alone | Alone | Alone | Alone | A fulfilled parcel and recorded prices produced the tested available units, projected stockout date and daily gross margin at risk on all four plans. |
 | 152 | Answers any question in plain words, in any language. | Alone | Alone | Alone | Alone | Policy only |
 | 153 | Shows the records behind every answer. | Alone | Alone | Alone | Alone | Policy only |
 | 154 | Builds a report from one sentence. | Alone | Alone | Alone | Alone | One-sentence governed report generated, saved and queried locally. Provider outputs were simulated. Graph and schedule browser regressions exercised the reports service. |
@@ -177,7 +177,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 157 | Explains changes ("why did margin drop in March?"). | Excluded | Alone | Alone | Alone | The prior two calendar months use posted revenue and cost of goods. In the test revenue grew $2, costs grew $3 and gross profit fell $1. Starter was denied. Growth, Pro and Custom opened the underlying ledger. The report explains the accounting change. Operational causes such as mix still need analysis. |
 | 158 | Month-end stock value and cost of goods report. | Excluded | Alone | Alone | Alone | A historical $30 inventory purchase and two cost-of-goods postings produce $15 of month-end stock and $9 cost of goods for the selected month. The current-month receipt is excluded. Growth, Pro and Custom see the ledger-backed result and Starter is denied. |
 | 159 | Board or investor pack with charts. | Excluded | Excluded | Excluded | Alone | Policy only |
-| 160 | Exports any answer to Excel or PDF. | Alone | Alone | Alone | Alone | Policy only |
+| 160 | Exports any answer to Excel or PDF. | Alone | Alone | Alone | Alone | Both saved Ask answers and native goals export prose to Excel and PDF on every plan. Existing table exports and phone download controls tested. |
 | 161 | Monthly ROI report: hours saved (counted from real actions) and $ caught vs your plan price. | Alone | Alone | Alone | Alone | Seven- and thirty-day reports count five kinds of evidenced work. One approved staff PO saves six minutes using the recorded sample. An open $1.50 price difference, a $1.00 applied supplier credit and the account base price are listed separately. Accounting exports count only once after the provider record has been verified. Figures in these tests use fictional business data. |
 | 162 | Stock health report: turns, GMROI and days of supply per item. | Suggest | Alone | Alone | Alone | Policy only |
 | 163 | Forecast accuracy, fill rate and on-time-in-full, for customers and suppliers. | Excluded | Alone | Alone | Alone | Policy only |
@@ -185,7 +185,7 @@ Run `npm run test:agent-plans` with Node 22, PostgreSQL and Playwright Chromium 
 | 165 | Year-end stocktake and valuation pack for your accountant. | Excluded | Alone | Alone | Alone | Policy only |
 | 166 | Low stock and stock-out alerts. | Alone | Alone | Alone | Alone | Low-stock report runs as a playbook step. End-to-end alert delivery remains open. |
 | 167 | Watch rules in plain words ("tell me if any Nike item drops under 20"). | Alone | Alone | Alone | Alone | Policy only |
-| 168 | Late POs, late shipments and overdue invoices. | Alone | Alone | Alone | Alone | Policy only |
+| 168 | Late POs, late shipments and overdue invoices. | Alone | Alone | Alone | Alone | Operational exceptions review includes overdue purchase orders, customer and supplier invoices and shipped parcels. Verified open and cleared records using business dates. External alert delivery remains open. |
 | 169 | Sales channel problems: oversell risk, sync stopped. | Alone | Alone | Alone | Alone | Policy only |
 | 170 | Cost and margin alerts: cost up, margin under your %. | Excluded | Alone | Alone | Alone | Policy only |
 | 171 | Unusual activity: big adjustment, changes at night. | Excluded | Excluded | Alone | Alone | Policy only |

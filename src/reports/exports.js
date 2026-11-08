@@ -103,7 +103,7 @@ async function pdf(result){
       const fontSize=result.columns.length>8?7:8;
       const drawHeader=()=>{
         doc.fillColor('#25243b').fontSize(15).text(result.config.title,margin,margin,{width:usable});
-        doc.fillColor('#646477').fontSize(8).text(`PostgreSQL source | checked ${result.asOf} | ${result.rows.length} verified rows`,
+        doc.fillColor('#646477').fontSize(8).text(result.sourceLabel||`PostgreSQL source | checked ${result.asOf} | ${result.rows.length} verified rows`,
           margin,doc.y+4,{width:usable});
         doc.y+=15;const top=doc.y;
         doc.fontSize(fontSize);

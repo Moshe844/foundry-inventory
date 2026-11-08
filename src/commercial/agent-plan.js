@@ -119,7 +119,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
-  ['sales_order.reserve_all',12],['sales_order.allocation_priority',65],
+  ['sales_order.reserve_all',12],['sales_order.repeat',53],['sales_order.allocation_priority',65],
   ['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],

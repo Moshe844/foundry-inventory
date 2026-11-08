@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  ...require('./exception-reviews'),
   ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},
   {id:108,key:'early-discounts',label:'Find early-payment discounts',read:(db,ctx,options)=>cash.payments(db,ctx,{...options,discountsOnly:true})},
@@ -25,6 +26,12 @@ function offers(state){
 }
 
 const suggestions={
+  3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
+  64:r=>'Review '+r.Order+' for '+r.Customer+'. '+r['Waiting units']+' units of '+r.SKU+' are still waiting for stock.',
+  116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled units were returned.',
+  110:r=>'Review the '+r.Month+' purchase budget for '+r.Category+' in '+r.Currency+'.',
+  144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
+  146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
   22:r=>'Check the saved price and delivery terms with '+r.Supplier+' for '+r.SKU+'.',
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',
@@ -53,6 +60,8 @@ async function run(db,ctx,key,options={}){
   let rows,summary=def.summary,more=false;
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
+    if(mode==='suggest'&&suggestions[def.id])return {label:def.label,summary:result.summary,
+      rows:result.rows.slice(0,1).map(row=>({Suggestion:suggestions[def.id](row)})),mode,more:false,page:1,filterable:true};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       requiresChange:def.requiresChange,change:options.change,filterLabel:def.filterLabel};
   }
