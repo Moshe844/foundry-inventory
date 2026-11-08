@@ -23,8 +23,13 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
  do {checkpoint=await phase(async(client,saved)=>{
   await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));
-  const imported=saved.catalogueStarted&&!saved.cataloguePrepared?0:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
-  if(saved.cataloguePrepared){if(Number(saved.savedRows)!==imported)throw new ValidationError('Saved import progress does not match its recorded rows. Its existing records remain safe.');return saved;}
+  // Each receipt commits only after this batch's source-row update count,
+  // physical movements, costs and journal values reconcile. Its immutable
+  // contiguous offsets are the durable progress index. Recounting the large
+  // mutable source heap here defeats that index and can time out on resume.
+  const receiptProgress=saved.cataloguePrepared&&saved.batchReceiptVersion===1?await batchReceipts.progress(client,ctx,plan):null;
+  const imported=receiptProgress?receiptProgress.rows:saved.catalogueStarted&&!saved.cataloguePrepared?0:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);
+  if(saved.cataloguePrepared){if(Number(saved.savedRows)!==imported||receiptProgress&&addExact(saved.units||0,0)!==receiptProgress.units)throw new ValidationError('Saved import progress does not match its recorded rows. Its existing records remain safe.');return saved;}
   // Frozen input pages use explicit ordered index keys. Table-wide planner
   // maintenance runs after completion rather than scanning every import here.
   if(imported)throw new ValidationError('This import has saved records without a matching execution checkpoint. Review its saved result.');
@@ -205,7 +210,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  },{isolation:'REPEATABLE READ',readOnly:true});
  const checks=[{name:'Rows imported',expected:plan.recordsValid,observed:checkpoint.savedRows,ok:checkpoint.savedRows===plan.recordsValid},{name:'Net stock change',expected:expectedUnits,observed:checkpoint.units,ok:checkpoint.units===expectedUnits},{name:'Valued receipt records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost change in minor units',expected:expectedValue,observed:Number(totals.value.value),ok:expectedValue===Number(totals.value.value)},{name:'Inventory asset posted in minor units',expected:expectedValue,observed:Number(totals.posted.value),ok:expectedValue===Number(totals.posted.value)}];
  if(!checks.every(check=>check.ok))throw new ValidationError('Saved import records need reconciliation. Verified batches remain recorded.',{checks});
- return phase(async client=>{const count=Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);if(count!==plan.recordsValid)throw new ValidationError('Some approved rows remain unsaved. Continue the import.');
+ return phase(async client=>{const count=receiptProof?receiptProof.rows:Number((await client.query("SELECT count(*) n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED'",[ctx.workspaceId,id])).rows[0].n);if(count!==plan.recordsValid)throw new ValidationError('Some approved rows remain unsaved. Continue the import.');
   const at=nowIso(),verificationId=newId('impverify'),observed={itemsCreated:checkpoint.itemsCreated,itemsUpdated:checkpoint.itemsUpdated,skusCreated:checkpoint.skusCreated,rowsImported:count,units:checkpoint.units};
   await client.query("INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,observed,problems,created_at) VALUES($1,$2,$3,$4,1,$5,$6,'[]',$7)",[verificationId,ctx.workspaceId,id,executionId,JSON.stringify(checks),JSON.stringify(observed),at]);
   await client.query("UPDATE import_executions SET status='SUCCEEDED',stage='verified',items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,result=$7,finished_at=$8 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,executionId,checkpoint.itemsCreated,checkpoint.skusCreated,count,checkpoint.units,JSON.stringify({verificationId,verified:true,checks,durable:true}),at]);

@@ -7,6 +7,7 @@ test('durable import receipts bind exact values, approval, scope and contiguous 
  await assert.rejects(receipts.record(db,ctx,plan,{...input(0,'bad'),totals:{value:{value:'49',movements:1},posted:{value:'50'}}}),/Saved import verification/);
  await assert.rejects(receipts.record(db,{...ctx,workspaceId:'foreign-workspace'},plan,input(0,'foreign')),/Saved import verification/);
  await receipts.record(db,ctx,plan,input(0,'first'));
+ assert.deepEqual(await receipts.progress(db,ctx,plan),{batches:1,rows:1,units:0.125,costRecords:1,value:50,asset:50});
  await assert.rejects(receipts.totals(db,ctx,plan),/Saved import verification/,'A partial receipt set cannot mark an import verified');
  await assert.rejects(db.query('UPDATE import_batch_receipts SET quantity_delta=999 WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,plan.id]),/cannot be changed/);
  await db.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id,JSON.stringify({savedRows:1})]);await receipts.record(db,ctx,plan,{...input(1,'second'),units:-0.025,valueMinor:-10,totals:{value:{value:'-10',movements:1},posted:{value:'-10'}}});
@@ -18,6 +19,7 @@ test('durable import receipts bind exact values, approval, scope and contiguous 
  const other=await imports.analyse(db,ctx,{text:'Product,SKU\nGap,PROOF-GAP',allowModel:false});
  await db.query('INSERT INTO import_batch_receipts(workspace_id,import_id,start_offset,end_offset,row_count,approval_hash,source_rows_hash,quantity_delta,cost_records,value_minor,asset_minor) VALUES($1,$2,2,3,1,$3,$4,0,0,0,0)',[ctx.workspaceId,other.id,other.integrityHash,'gap']);
  await assert.rejects(receipts.totals(db,ctx,other),/Saved import verification/);
+ await assert.rejects(receipts.progress(db,ctx,other),/Saved import verification/,'Partial progress must also reject gaps');
 });
 test('an older saved import retains canonical reconciliation when durable receipts were not recorded',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,imports=require('../../src/imports/postgres-service');

@@ -15,7 +15,7 @@ async function record(client,ctx,plan,{offset,rows,units,costRecords,valueMinor,
  [ctx.workspaceId,plan.id,offset,rows.length,plan.integrityHash,sourceHash,signed(units),costRecords,valueMinor,totals.posted.value]);
  if(result.rowCount!==1)throw invalid();
 }
-async function totals(client,ctx,plan){
+async function progress(client,ctx,plan){
  const row=(await client.query(`WITH receipts AS (
   SELECT r.*,lag(end_offset,1,0::bigint) OVER(ORDER BY start_offset) AS previous_end
   FROM import_batch_receipts r WHERE workspace_id=$1 AND import_id=$2)
@@ -27,7 +27,12 @@ async function totals(client,ctx,plan){
  if(!row||Number(row.invalid))throw invalid();
  const number=value=>exact.safeNumber(value,{signed:true});
  const result={batches:Number(row.batches),rows:number(row.rows),units:number(row.units),costRecords:number(row.cost_records),value:number(row.value),asset:number(row.asset)};
- if(result.rows!==plan.recordsValid||result.batches<1||result.value!==result.asset)throw invalid();
+ if(result.rows<0||result.rows>plan.recordsValid||result.rows>0&&result.batches<1||result.value!==result.asset)throw invalid();
  return result;
 }
-module.exports={record,totals};
+async function totals(client,ctx,plan){
+ const result=await progress(client,ctx,plan);
+ if(result.rows!==plan.recordsValid||result.batches<1)throw invalid();
+ return result;
+}
+module.exports={record,progress,totals};
