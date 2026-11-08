@@ -1,0 +1,4 @@
+<h1>Agent reviews</h1><p><a href="/autopilot/lots">Manage lot recalls and certificates</a> &middot; <% if(shipbobEnabled){ %><a href="/autopilot/shipbob">ShipBob sandbox</a><% }else{ %>ShipBob requires Growth · <a href="/billing">Upgrade</a><% } %></p><div class="card"><table><thead><tr><th>Job</th><th>Your plan</th></tr></thead><tbody>
+<% for(const o of offers){ %><tr><td><% if(o.mode!=='excluded'){ %><a href="/autopilot/reviews/<%= o.key %>"><%= o.label %></a><% }else{ %><%= o.label %><% } %></td><td>
+<% if(o.mode==='excluded'){ %><%= o.minimum %> &middot; <a href="/billing">Review plans</a><% }else{ %><%= ({alone:'Included',trained:'Requires a trained rule for automation',draft:'Draft for review',suggest:'Suggestion'})[o.mode] %><% } %>
+</td></tr><% } %></tbody></table></div>

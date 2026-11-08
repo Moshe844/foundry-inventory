@@ -15,7 +15,8 @@
     <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled===false?'disabled':'' %> <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
     <div class="form-actions"><button class="btn btn--primary" type="submit">Save control level</button></div></form></div></section>
 
-<% if(locals.user?.role==='owner'||locals.currentUser?.role==='owner'){ %><p><a href="/autopilot/playbooks">Manage scheduled playbooks</a> &middot; <a href="/autopilot/time-saved">Time saved</a></p><% } %>
+<% if(locals.user?.role==='owner'||locals.currentUser?.role==='owner'){ %><p><a href="/autopilot/reviews">Agent reviews</a> &middot; <a href="/autopilot/playbooks">Manage scheduled playbooks</a> &middot; <a href="/autopilot/time-saved">Time saved</a></p><% } %>
+<% if(['growth','pro','enterprise'].includes(state.plan)){ %><p><a href="/purchasing/requests">Staff purchase requests</a></p><% } else { %><p>Staff purchase requests require Growth. <a href="/billing">Review plans</a></p><% } %>
 <section class="card" id="jobs"><div class="card-head"><div><h2>Which jobs StockChief may do on its own</h2>
   <p class="muted">Every job is separate. Authorising a customer email never authorises purchasing, payments, transfers, or postage.</p></div></div>
   <div class="card-body"><div class="job-list"><% capabilities.forEach(function(job){ %><div class="job">

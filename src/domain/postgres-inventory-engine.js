@@ -161,6 +161,8 @@ async function resolveLot(client, ctx, row, input, at, create) {
 }
 
 function assertLotEligible(lot,input){
+  if(lot?.recalled_at && !['damaged','damage','expired','disposal','loss','lost'].includes(input.reasonCode))
+    throw new InvariantError('Batch '+lot.code+' is under recall. Choose another batch.', 'lot_recalled');
   if(!lot?.expires_at)return;
   const expiry=String(lot.expires_at).slice(0,10);
   const when=String(input.occurredAt||nowIso()).slice(0,10);
@@ -170,9 +172,11 @@ function assertLotEligible(lot,input){
 
 async function serialBatchDeltas(client,ctx,ids,sourceLocationId,destinationLocationId,at,input={}){
   if(!ids.length)return;
-  const groups=(await client.query(`SELECT lot.id,lot.code,lot.expires_at,COUNT(*)::integer AS units,SUM(unit.secondary_quantity) AS weight
+  if(input.issue)await client.query(`SELECT id FROM lots WHERE workspace_id=$1 AND id IN
+    (SELECT lot_id FROM serial_units WHERE workspace_id=$1 AND id=ANY($2::text[])) ORDER BY id FOR SHARE`,[ctx.workspaceId,ids]);
+  const groups=(await client.query(`SELECT lot.id,lot.code,lot.expires_at,lot.recalled_at,COUNT(*)::integer AS units,SUM(unit.secondary_quantity) AS weight
     FROM serial_units unit JOIN lots lot ON lot.id=unit.lot_id AND lot.workspace_id=unit.workspace_id
-    WHERE unit.workspace_id=$1 AND unit.id=ANY($2::text[]) GROUP BY lot.id,lot.code,lot.expires_at ORDER BY lot.id`,
+    WHERE unit.workspace_id=$1 AND unit.id=ANY($2::text[]) GROUP BY lot.id,lot.code,lot.expires_at,lot.recalled_at ORDER BY lot.id`,
   [ctx.workspaceId,ids])).rows;
   for(const lot of groups){
     if(input.issue)assertLotEligible(lot,input);

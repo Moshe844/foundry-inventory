@@ -10,5 +10,5 @@
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>"><button class="btn">Run now</button></form><% } %>
 <% if(b.result){ %><h3>Results from <%= helpers.dateTime(b.ran_at) %></h3><% b.result.forEach(r=>{ %><h4><%= r.label %></h4><p><%= r.summary %><% if(r.link){ %> <a href="<%= r.link %>">View report</a><% } %></p>
 <% if(r.rows?.length){const fields=Object.keys(r.rows[0]); %><table><thead><tr><% fields.forEach(k=>{ %><th><%= k.replaceAll('_',' ') %></th><% }); %></tr></thead><tbody>
-<% r.rows.forEach(row=>{ %><tr><% fields.forEach(k=>{ %><td><%= row[k] %></td><% }); %></tr><% }); %></tbody></table><% } %><% }); %><% } %>
+<% r.rows.forEach(row=>{ %><tr><% fields.forEach(k=>{ %><td><% if(k==='link' && typeof row[k]==='string' && row[k].startsWith('/') && !row[k].startsWith('//')){ %><a href="<%= row[k] %>">Open record</a><% }else{ %><%= row[k] %><% } %></td><% }); %></tr><% }); %></tbody></table><% } %><% }); %><% } %>
 <form method="post" action="/autopilot/playbooks/<%= b.id %>/delete"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Delete playbook</button></form></section><% }); %>

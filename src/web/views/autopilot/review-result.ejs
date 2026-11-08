@@ -1,0 +1,7 @@
+<h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.filterable){ %><form method="get"><label>Filter by exact code, name or reference <input name="filter" value="<%= filter %>" maxlength="150"></label><button class="btn">Look up</button></form><% } %>
+<% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>f!=='link'); %><div class="card"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
+<% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>">Open</a></td><% } %></tr><% }); %>
+</tbody></table></div><% }else{ %><p>No matching records.</p><% } %>
+<% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %>">Previous page</a><% } %>
+<% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %>">Next page</a><% } %>

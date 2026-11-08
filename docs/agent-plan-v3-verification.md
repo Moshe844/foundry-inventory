@@ -1,6 +1,6 @@
 # Agent plan verification
 
-The table follows all 214 jobs in the Agent plan v3 PDF. Every listed plan assignment has an independent policy test. The last column records the operational evidence from this change. A row marked **Policy only** still needs a scenario that enters through StockChief and verifies its stored or external result. Other suites may already exercise parts of the job.
+Verification is on the draft branch using synthetic business records and disposable PostgreSQL databases. The table follows all 214 jobs in the Agent plan v3 PDF. Every listed plan assignment has an independent policy test. The last column records the operational evidence from this change. A row marked **Policy only** still needs a scenario that enters through StockChief and verifies its stored or external result. Other suites may already exercise parts of the job.
 
 The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** (a person approves), **Suggest** and **Excluded**. Section 11 governs rows 35 and 213 by owner decision. Pro also needs the paid EDI add-on for row 185. Custom purchasing requires contract limits.
 
@@ -16,16 +16,16 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 
 | # | Job | Starter $199 | Growth $499 | Pro $999 | Custom | Workflow evidence |
 |---:|---|---|---|---|---|---|
-| 1 | Tells you how many of any item, size, lot or serial you have, and where. | Alone | Alone | Alone | Alone | Policy only |
-| 2 | Explains why a stock number changed, with every move behind it. | Alone | Alone | Alone | Alone | Policy only |
+| 1 | Tells you how many of any item, size, lot or serial you have, and where. | Alone | Alone | Alone | Alone | Starter can trace a lot and an issued serial. The mixed-order test checks the live stock after partial shipment and recall. |
+| 2 | Explains why a stock number changed, with every move behind it. | Alone | Alone | Alone | Alone | Recorded receipt changes the position from 0 to 4. The review returns both balances and the movement. |
 | 3 | Checks every day for negative stock, stuck transfers and odd adjustments. | Suggest | Alone | Alone | Alone | Policy only |
-| 4 | Plans today's cycle count: which shelves to count, by value and risk. | Suggest | Draft | Alone | Alone | Policy only |
+| 4 | Plans today's cycle count: which shelves to count, by value and risk. | Suggest | Draft | Alone | Alone | Cycle count priority uses shelf, adjustments and carrying value. A nonempty stock position was tested. Multi-shelf ordering needs a populated scenario. |
 | 5 | Turns a count sheet or shelf photo into stock adjustments. | Excluded | Excluded | Trained | Alone | Policy only |
 | 6 | Posts small count differences on its own, under your $ limit. | Excluded | Excluded | Alone | Alone | Policy only |
 | 7 | Sends staff a count list on their phone and checks it as they go. | Excluded | Trained | Alone | Alone | Policy only |
 | 8 | Asks for a recount when a count looks wrong, before anything is posted. | Excluded | Excluded | Alone | Alone | Policy only |
 | 9 | Finds dead and slow stock and suggests: discount, return or move it. | Suggest | Draft | Trained | Alone | Policy only |
-| 10 | Flags likely shrink or theft patterns (same item, same shift, again). | Excluded | Alone | Alone | Alone | Policy only |
+| 10 | Flags likely shrink or theft patterns (same item, same shift, again). | Excluded | Alone | Alone | Alone | The repeated-loss query and plan boundaries run on PostgreSQL. A positive repeated-shift loss scenario is pending. |
 | 11 | Moves stock to the right bin after a wrong put-away or mis-scan. | Excluded | Excluded | Trained | Alone | Policy only |
 | 12 | Reserves stock for big customers or upcoming orders. | Excluded | Excluded | Trained | Alone | Policy only |
 | 13 | Tracks kits and bundles: shows how many you can build now and reorders the parts. | Suggest | Draft | Alone | Alone | Policy only |
@@ -37,7 +37,7 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 19 | Drafts purchase orders from the reorder list, grouped by supplier. | Draft | Trained | Alone | Alone | Replenishment tests exercise a single-supplier PO. Multi-supplier grouping still needs a scenario. |
 | 20 | Places reorders on its own, under your $ limits per PO and per week. Growth: only to your Autopilot suppliers, with small limits. | Excluded | Alone | Alone | Alone | Growth repeat PO, supplier and SKU scope, per-order limits and a downgrade before delivery. External mail was simulated. |
 | 21 | Keeps reorder points and min/max up to date from real sales. | Suggest | Trained | Alone | Alone | Policy only |
-| 22 | Picks the cheapest or fastest supplier for each item. | Suggest | Suggest | Trained | Alone | Policy only |
+| 22 | Picks the cheapest or fastest supplier for each item. | Suggest | Suggest | Trained | Alone | A linked supplier is ranked from saved terms and measured lead time. Starter receives a suggestion. Automatic supplier switching and a competitive two-supplier case need verification. |
 | 23 | Tops up an order to hit the supplier's minimum or free shipping. | Suggest | Trained | Alone | Alone | Policy only |
 | 24 | Combines small orders into one PO to save shipping. | Excluded | Trained | Alone | Alone | Policy only |
 | 25 | Splits big POs by budget, warehouse or delivery date. | Excluded | Excluded | Trained | Alone | Policy only |
@@ -47,19 +47,19 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 29 | Asks the supplier to confirm each PO and saves the ship date. | Excluded | Trained | Alone | Alone | Policy only |
 | 30 | Chases late supplier deliveries. | Excluded | Alone | Alone | Alone | Policy only |
 | 31 | Updates a PO when the supplier changes qty, price or date (asks over your limit). | Excluded | Excluded | Trained | Alone | Policy only |
-| 32 | Finds old open POs that will never arrive, so "incoming" is real. | Suggest | Alone | Alone | Alone | Policy only |
+| 32 | Finds old open POs that will never arrive, so "incoming" is real. | Suggest | Alone | Alone | Alone | Overdue-balance query and per-plan access exercised. A late, partially received PO scenario remains open. |
 | 33 | The moment an item hits its reorder point, sends you a ready PO with a "Send to supplier" button. | Draft | Draft | Alone | Alone | Policy only |
-| 34 | Uses real supplier lead times (actual vs promised) in every reorder. | Alone | Alone | Alone | Alone | Policy only |
+| 34 | Uses real supplier lead times (actual vs promised) in every reorder. | Alone | Alone | Alone | Alone | Three received purchase orders, including split receipts, produce five observed planning days versus four configured. The replenishment engine reads the observed value. Existing replenishment cycle, concurrency and scale tests passed. |
 | 35 | Gives suppliers a link, no login, to confirm a PO, change the date or upload their invoice or ship notice. | Draft | Alone | Alone | Alone | Starter owner-approved PO and Growth repeat PO produce scoped links. Chromium submitted a confirmation and a file. Service tests cover date validation, invoices and ship notices. |
 | 36 | Shares your stock and a 12-week forecast with key suppliers every week. | Excluded | Draft | Alone | Alone | Policy only |
 | 37 | Drop-ship: a customer order becomes a PO for the supplier to ship direct, with tracking passed back. | Excluded | Draft | Alone | Alone | Policy only |
 | 38 | Plans import orders to fill a 20 ft or 40 ft container by volume and weight. | Excluded | Excluded | Trained | Alone | Policy only |
 | 39 | Tracks ocean and air shipments and deposits, and keeps ETAs up to date. | Excluded | Alone | Alone | Alone | Policy only |
 | 40 | Handles POs in other currencies and alerts you when exchange rates change landed cost. | Suggest | Alone | Alone | Alone | Policy only |
-| 41 | Turns staff purchase requests ("we need more tape") into an approval, then a PO. | Excluded | Alone | Alone | Alone | Policy only |
+| 41 | Turns staff purchase requests ("we need more tape") into an approval, then a PO. | Excluded | Alone | Alone | Alone | Staff warehouse restrictions, submission, repeat submission, owner decision, decline, downgrade and draft PO quantity verified on PostgreSQL. Browser-form HTTP requests use login and CSRF. |
 | 42 | Manages blanket POs: scheduled releases against a supplier contract. | Excluded | Excluded | Trained | Alone | Policy only |
 | 43 | Fills the receiving form from the packing slip. A person taps confirm. | Excluded | Draft | Alone | Alone | Policy only |
-| 44 | Checks what arrived against the PO: short, over or wrong item. | Suggest | Alone | Alone | Alone | Policy only |
+| 44 | Checks what arrived against the PO: short, over or wrong item. | Suggest | Alone | Alone | Alone | Received PO is compared with its order line in the agent review. A wrong item, over-delivery and partial delivery are still needed in the per-plan review test. |
 | 45 | Opens a claim with the supplier for short or damaged items. | Excluded | Excluded | Trained | Alone | Policy only |
 | 46 | Adds photos of damaged boxes to the claim. | Excluded | Draft | Alone | Alone | Policy only |
 | 47 | Prints labels and tells staff where to put each item away. | Excluded | Trained | Alone | Alone | Policy only |
@@ -93,8 +93,8 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 75 | Turns an accepted quote into an order. | Excluded | Draft | Alone | Alone | Policy only |
 | 76 | Uses each customer's own price list, discounts and terms. | Excluded | Alone | Alone | Alone | Policy only |
 | 77 | Suggests new selling prices when costs go up, to protect margin. | Suggest | Suggest | Draft | Draft | Policy only |
-| 78 | Finds customers who stopped buying and drafts a check-in. | Excluded | Excluded | Trained | Alone | Policy only |
-| 79 | Adds "customers also buy" items to quotes. | Suggest | Draft | Alone | Alone | Policy only |
+| 78 | Finds customers who stopped buying and drafts a check-in. | Excluded | Excluded | Trained | Alone | Workspace-scoped inactive-buyer check-in drafts are available in reviews and eligible playbooks. An actual lapsed-customer example is pending. |
+| 79 | Adds "customers also buy" items to quotes. | Suggest | Draft | Alone | Alone | A fulfilled coffee order and grinder produce a matching companion-item suggestion. Writing the item to a quote is outstanding. |
 | 80 | Checks credit limits before big orders. | Suggest | Alone | Alone | Alone | Policy only |
 | 81 | Sends a customer their account statement when asked. | Excluded | Trained | Alone | Alone | Policy only |
 | 82 | Flags orders priced below cost or with a wrong discount. | Alone | Alone | Alone | Alone | Policy only |
@@ -103,28 +103,28 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 85 | Shows true net margin per item, channel and customer, after marketplace fees, shipping and returns. | Suggest | Alone | Alone | Alone | Policy only |
 | 86 | Builds a clearance plan with the cash it should bring back. A person approves prices. | Suggest | Draft | Draft | Draft | Policy only |
 | 87 | Checks prices match across channels and flags minimum advertised price (MAP) breaks. | Excluded | Alone | Alone | Alone | Policy only |
-| 88 | Scores each customer's health and flags the ones buying less. | Suggest | Alone | Alone | Alone | Policy only |
+| 88 | Scores each customer's health and flags the ones buying less. | Suggest | Alone | Alone | Alone | The customer health review counts a recorded carrier handoff, and identifies new activity. The four-plan access test also runs this review. |
 | 89 | Emails suppliers about orders, dates and questions. | Excluded | Trained | Alone | Alone | Policy only |
-| 90 | Scores each supplier: on time, fill rate, price changes, errors. | Suggest | Alone | Alone | Alone | Policy only |
-| 91 | Spots supplier price increases on invoices and price lists. | Suggest | Alone | Alone | Alone | Policy only |
-| 92 | Compares quotes from several suppliers for the same item. | Excluded | Draft | Alone | Alone | Policy only |
+| 90 | Scores each supplier: on time, fill rate, price changes, errors. | Suggest | Alone | Alone | Alone | Fully received PO produces 100% fill on a supplier scorecard. Multiple suppliers with late and disputed deliveries still need a populated scenario. |
+| 91 | Spots supplier price increases on invoices and price lists. | Suggest | Alone | Alone | Alone | Recorded invoice 50% over approved price is linked to its PO. Supplier price-list comparison still needs a positive source document. |
+| 92 | Compares quotes from several suppliers for the same item. | Excluded | Draft | Alone | Alone | Latest supplier quotations can be compared by common item and currency, with document status retained. Competing quotes still need a populated comparison. |
 | 93 | Sends requests for quotes (RFQs) to several suppliers. | Excluded | Excluded | Trained | Alone | Policy only |
 | 94 | Drafts a negotiation email with your data ("you were late 6 times"). | Excluded | Excluded | Draft | Trained | Policy only |
 | 95 | Switches to your backup supplier when the main one is out, or doesn't confirm in the days you set. | Excluded | Excluded | Trained | Alone | Policy only |
 | 96 | Keeps supplier lead times, MOQs and contacts up to date from their emails. | Excluded | Trained | Alone | Alone | Policy only |
 | 97 | Tracks supplier rebates and volume discounts so you claim them. | Excluded | Suggest | Alone | Alone | Policy only |
 | 98 | Reads supplier invoices and matches them to the PO and the receipt. | Draft | Draft | Alone | Alone | Mailbox extraction reaches the 50-document Starter limit. Reading the 51st succeeds after upgrade. Full three-way matching still needs a per-plan scenario. |
-| 99 | Flags invoice errors: wrong price, double billing, items never received. | Suggest | Alone | Alone | Alone | Policy only |
+| 99 | Flags invoice errors: wrong price, double billing, items never received. | Suggest | Alone | Alone | Alone | Overbilled quantity and higher price correctly produce two differences. A duplicate with changed evidence is rejected and the disputed invoice stays out of the pay run. |
 | 100 | Disputes wrong invoices with the supplier. | Excluded | Excluded | Trained | Alone | Policy only |
 | 101 | Creates customer invoices when orders ship. | Excluded | Trained | Alone | Alone | Policy only |
 | 102 | Sends payment reminders on your schedule. | Excluded | Trained | Alone | Alone | Policy only |
 | 103 | Matches customer payments to invoices. | Excluded | Trained | Alone | Alone | Policy only |
-| 104 | Prepares the weekly supplier payment run. You approve and pay. | Excluded | Draft | Alone | Alone | Policy only |
-| 105 | Tracks supplier credit notes and makes sure they get used. | Excluded | Suggest | Alone | Alone | Policy only |
+| 104 | Prepares the weekly supplier payment run. You approve and pay. | Excluded | Draft | Alone | Alone | A posted bill due this week appears in the payment run. Expected review amount subtracts the documented early discount. No payment is posted. |
+| 105 | Tracks supplier credit notes and makes sure they get used. | Excluded | Suggest | Alone | Alone | Review traces posted credit notes to the bill and currency. A positive supplier credit and an outstanding claim both need a populated scenario. |
 | 106 | Shows how much cash is tied up in stock, and what to free up. | Alone | Alone | Alone | Alone | Stock value report ran as one step in a Growth playbook. |
 | 107 | Prepares refunds and credits. A person always approves. | Excluded | Excluded | Draft | Draft | Starter and Growth refund preparation and an existing Pro proposal after downgrade have denial tests. A complete refund still needs a money-safe test. |
-| 108 | Catches early-payment discounts (like 2% off in 10 days) and puts them in the payment run. | Suggest | Alone | Alone | Alone | Policy only |
-| 109 | Forecasts cash for 13 weeks: PO payments due vs money coming in. | Excluded | Suggest | Alone | Alone | Policy only |
+| 108 | Catches early-payment discounts (like 2% off in 10 days) and puts them in the payment run. | Suggest | Alone | Alone | Alone | A posted $2.00 bill with original 2/10 net 30 terms produces a $0.04 opportunity and $1.96 payment review amount after supplier terms change. |
+| 109 | Forecasts cash for 13 weeks: PO payments due vs money coming in. | Excluded | Suggest | Alone | Alone | Thirteen forecast weeks are returned per currency. A bill for half a PO is in its due week. Only the unbilled half appears in the later supplier-terms week. |
 | 110 | Tracks purchase budget vs actual, by month and category. | Suggest | Alone | Alone | Alone | Policy only |
 | 111 | Creates a return (RMA) from a customer's return email. | Excluded | Trained | Alone | Alone | Policy only |
 | 112 | Sends the return label and instructions. | Excluded | Trained | Alone | Alone | Policy only |
@@ -132,7 +132,7 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 114 | Puts returned items back into stock after staff check them. | Excluded | Draft | Alone | Alone | Policy only |
 | 115 | Sends faulty goods back to the supplier and tracks the credit. | Excluded | Excluded | Trained | Alone | Policy only |
 | 116 | Spots items and customers with high return rates. | Suggest | Alone | Alone | Alone | Policy only |
-| 117 | Shows stock across all locations in one answer. | Alone | Alone | Alone | Alone | Policy only |
+| 117 | Shows stock across all locations in one answer. | Alone | Alone | Alone | Alone | Current stock by location includes the four-unit delivery. A populated multi-location scenario through this review remains open. |
 | 118 | Suggests transfers to balance stock between locations. | Suggest | Trained | Alone | Alone | Growth cannot enable autonomous transfers. |
 | 119 | Makes transfers on its own, under your unit limit. | Excluded | Excluded | Alone | Alone | Growth transfer execution is gated; Pro can configure unit limits. An actual completed transfer per tier remains open. |
 | 120 | Sets reorder points per location. | Excluded | Trained | Alone | Alone | Policy only |
@@ -163,7 +163,7 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 145 | Plans stock for a promotion or sale and drafts the POs. | Excluded | Excluded | Draft | Alone | Policy only |
 | 146 | Forecasts new products using similar items. | Excluded | Suggest | Alone | Alone | Policy only |
 | 147 | Plans ahead for holidays and supplier shutdowns (e.g. Chinese New Year). | Excluded | Suggest | Alone | Alone | Policy only |
-| 148 | Spots trends early: an item suddenly selling faster. | Suggest | Alone | Alone | Alone | Policy only |
+| 148 | Spots trends early: an item suddenly selling faster. | Suggest | Alone | Alone | Alone | The rising-demand review identifies a newly shipped SKU from an actual recorded carrier handoff. |
 | 149 | Answers "what if" questions ("what if sales go up 20%?"). | Excluded | Alone | Alone | Alone | Policy only |
 | 150 | Sets safety stock by how often you can afford to run out. | Excluded | Draft | Alone | Alone | Policy only |
 | 151 | Shows when each item will run out, and what running out costs. | Alone | Alone | Alone | Alone | Policy only |
@@ -201,18 +201,18 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 183 | Sets stock buffers per channel so you never oversell. | Excluded | Draft | Alone | Alone | Policy only |
 | 184 | Sends invoices and bills to QuickBooks or Xero. | Excluded | Excluded | Trained | Alone | Policy only |
 | 185 | Handles EDI orders, ship notices (ASN) and invoices with big retailers. Pro: paid add-on. | Excluded | Excluded | Alone | Alone | Paid Pro EDI entitlement and Custom inclusion exercised. Orderful retailer interchange still requires an adapter and authenticated sandbox run. |
-| 186 | Sends orders to your 3PL and reads their stock and shipping back. | Excluded | Draft | Alone | Alone | ShipBob order submission, inventory reconciliation and shipment tracking still require an adapter and authenticated sandbox run. |
+| 186 | Sends orders to your 3PL and reads their stock and shipping back. | Excluded | Draft | Alone | Alone | ShipBob test API adapter connects a verified channel, approves and submits an order, recovers a lost response without duplicate orders, and reads split tracking and inventory quantities. Growth manual, Pro warehouse rule, shadow period, revoked authority and queued downgrade tested with simulated transport. Live sandbox credentials and qualification outstanding. |
 | 187 | Reads your Gmail or Outlook and drafts replies. | Excluded | Draft | Alone | Alone | Policy only |
 | 188 | Answers you in Slack, Teams or WhatsApp. | Excluded | Excluded | Alone | Alone | Policy only |
 | 189 | Starts jobs from your other systems (API) and sends webhooks. | Excluded | Excluded | Excluded | Alone | Policy only |
 | 190 | Moves your data in from your old system on day one. | Excluded | Draft | Alone | Alone | Policy only |
-| 191 | Warns before stock expires and suggests where to sell it first. | Alone | Alone | Alone | Alone | Policy only |
+| 191 | Warns before stock expires and suggests where to sell it first. | Alone | Alone | Alone | Alone | Expiring inventory is paired to an unfilled order due before expiry, verified by its order number. Expiry-prioritized goods then ship. |
 | 192 | Picks oldest or soonest-to-expire first (FIFO / FEFO) when reserving. | Excluded | Draft | Alone | Alone | Policy only |
-| 193 | Traces a recall in minutes: which customers got which lot. | Alone | Alone | Alone | Alone | Policy only |
-| 194 | Blocks recalled or expired lots from being shipped. | Excluded | Alone | Alone | Alone | Policy only |
-| 195 | Shows a serial number's full history. | Alone | Alone | Alone | Alone | Policy only |
-| 196 | Links certificates (CoA, safety sheets) to lots and flags missing ones. | Excluded | Draft | Alone | Alone | Policy only |
-| 197 | Prepares audit and compliance reports. | Excluded | Draft | Alone | Alone | Policy only |
+| 193 | Traces a recall in minutes: which customers got which lot. | Alone | Alone | Alone | Alone | The posted stock issue identifies which customer received the lot and the number of units, across two fulfillments. Starter can trace after a downgrade. |
+| 194 | Blocks recalled or expired lots from being shipped. | Excluded | Alone | Alone | Alone | Owner recalls a batch through the authenticated form. Normal issue and earliest-expiry fulfillment both refuse it, including after downgrade. Release and stale revision checked. |
+| 195 | Shows a serial number's full history. | Alone | Alone | Alone | Alone | A scanned serial has its receipt and issue in order. After handoff the exact serial lookup shows it as issued. |
+| 196 | Links certificates (CoA, safety sheets) to lots and flags missing ones. | Excluded | Draft | Alone | Alone | An owner marks a certificate required, then supplies an expired and a current document. The coverage review changes status each time. Starter direct write denied. |
+| 197 | Prepares audit and compliance reports. | Excluded | Draft | Alone | Alone | The lot audit lists the logged recall, responsible person, time and reason, with two decisions after release. Other compliance reports are outside this scenario. |
 | 198 | Shadow mode: for 14 days it only watches, then shows what it would have done and saved. | Alone | Alone | Alone | Alone | New-account purchasing stays in shadow mode for 14 days. Full coverage and the end-of-shadow comparison remain open. |
 | 199 | Shows how sure it is on every action, and asks when it isn't sure enough. | Alone | Alone | Alone | Alone | Policy only |
 | 200 | Gives you a data health score on day one, with a fix list. | Alone | Alone | Alone | Alone | Policy only |
@@ -228,5 +228,5 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 | 210 | Tests a new rule on past data first and shows what it would have done. | Excluded | Alone | Alone | Alone | Policy only |
 | 211 | Learns each customer's and supplier's habits. | Excluded | Alone | Alone | Alone | Policy only |
 | 212 | Reads your SOP documents and follows them. | Excluded | Excluded | Alone | Alone | Policy only |
-| 213 | Runs your custom playbooks (multi-step jobs), on a schedule too. | Excluded | Trained | Alone | Alone | Owner-defined steps, Growth ten-playbook cap, scheduled execution, replay, step-level permissions and downgrade tested. Implemented steps cover four named read/report jobs. |
+| 213 | Runs your custom playbooks (multi-step jobs), on a schedule too. | Excluded | Trained | Alone | Alone | Saved playbooks include eligible operational reviews. Growth cap, scheduled execution, replay and permission changes are verified. Parameterized lookups are run on demand. |
 | 214 | Remembers how each manager likes their reports and approvals. | Excluded | Excluded | Excluded | Alone | Policy only |

@@ -15,6 +15,61 @@ function createPostgresAutopilotRouter(database){
   const router=express.Router();
   const playbooks=require('../../autopilot/playbooks');
   const owner=require('../middleware').requireOwner;
+  const reviews=require('../../autopilot/job-reviews');
+  const policy=require('../../commercial/agent-plan');
+  const requests=require('../../purchasing/agent-purchase-requests');
+  const lots=require('../../autopilot/lot-controls');
+  const shipbob=require('../../connections/postgres-shipbob-sandbox');
+  router.get('/autopilot/shipbob',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const data=await shipbob.dashboard(database,req.ctx);
+    const review=req.query.order?await shipbob.draft(database,req.ctx,req.query.order):null;
+    res.page('autopilot/shipbob-sandbox',{title:'ShipBob sandbox',nav:'autopilot',...data,review});
+  }));
+  router.post('/autopilot/shipbob/connect',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.connect(database,req.ctx,req.body);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.post('/autopilot/shipbob/disconnect',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.disconnect(database,req.ctx);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.post('/autopilot/shipbob/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.configureRule(database,req.ctx,req.body);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.post('/autopilot/shipbob/stock',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.stock(database,req.ctx,req.body);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.post('/autopilot/shipbob/:order/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.send(database,req.ctx,req.params.order,req.body.reviewHash);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.post('/autopilot/shipbob/:order/refresh',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await shipbob.refresh(database,req.ctx,req.params.order);res.redirect(303,'/autopilot/shipbob');
+  }));
+  router.get('/autopilot/lots',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const detail=req.query.lot||req.query.sku?await lots.details(database,req.ctx,req.query):null;
+    res.page('autopilot/lot-controls',{title:'Lot controls',nav:'autopilot',detail});
+  }));
+  for(const [path,action] of [['recall',lots.recall],['certificates',lots.certificate]]){
+    router.post('/autopilot/lots/'+path,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await action(database,req.ctx,req.body);
+      res.redirect(303,'/autopilot/lots?'+new URLSearchParams({sku:req.body.sku,lot:req.body.lot}));
+    }));
+  }
+  router.get('/autopilot/reviews',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const state=await reviews.ownerState(database,req.ctx);
+    res.page('autopilot/reviews',{title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
+  }));
+  router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page});
+    res.page('autopilot/review-result',{title:result.label,nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},result,filter:req.query.filter||''});
+  }));
+  router.get('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/purchase-requests',{
+    title:'Staff purchase requests',nav:'purchasing',requestKey:newId('req'),...(await requests.page(database,req.ctx))})));
+  router.post('/purchasing/requests',requireAuth,asyncRoute(async(req,res)=>{
+    await requests.submit(database,req.ctx,req.body);res.redirect(303,'/purchasing/requests');
+  }));
+  router.post('/purchasing/requests/:id/decision',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const po=await requests.decide(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,po?'/purchasing/orders/'+encodeURIComponent(po):'/purchasing/requests');
+  }));
   const timeSaved=require('../../autopilot/time-saved');
   router.get('/autopilot/time-saved',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/time-saved',{
     title:'Time saved',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('timing'),

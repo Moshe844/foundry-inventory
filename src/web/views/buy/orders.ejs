@@ -24,6 +24,8 @@
       <p class="ox-sub"><%= L.counts.all %> order<%= L.counts.all === 1 ? '' : 's' %><% if (L.counts.approve) { %> · <span class="ox-dot ox-dot--amber" aria-hidden="true"></span> <%= L.counts.approve %> draft<%= L.counts.approve === 1 ? '' : 's' %> to approve<% } %><% if (L.counts.way) { %> · <%= L.counts.way %> on the way<% } %></p>
     </div>
     <div class="ox-head__actions">
+      <% if (locals.purchaseRequests === 'excluded') { %><a class="ox-btn ox-btn--ghost" href="/billing">Staff requests · Upgrade to Growth</a>
+      <% } else if (locals.purchaseRequests) { %><a class="ox-btn ox-btn--ghost" href="/purchasing/requests">Staff requests</a><% } %>
       <% if (permissions.receive) { %><a class="ox-btn ox-btn--ghost ox-hide-sm" href="/purchasing/receive">Receive delivery</a><% } %>
       <% if (permissions.create) { %><a class="ox-btn ox-btn--primary" href="/purchasing/orders/new" data-ox-new-po><span aria-hidden="true">+</span> New purchase order</a><% } %>
     </div>

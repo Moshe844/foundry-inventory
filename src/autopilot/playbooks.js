@@ -12,8 +12,14 @@ const steps=new Map([
  ['supplier-review',{job:164,label:'Prepare quarterly supplier review figures'}],
  ['combined-stock',{job:125,label:'Summarize stock across owned inventories'}],
 ]);
+const reviews=require('./job-reviews');
+for(const d of reviews.definitions.filter(d=>!d.requiresFilter)){
+  steps.set(d.key,{job:d.id,label:d.label,review:true});
+}
 const limits={growth:10,pro:100,enterprise:Infinity};
-const choices=plan=>[...steps].filter(([,s])=>agent.permits(plan,s.job,'automatic')).map(([key,s])=>({key,label:s.label}));
+// Selecting a read-only review in a saved owner playbook supplies its schedule and scope.
+const canRunStep=(plan,s)=>Boolean(s)&&agent.permits(plan,s.job,'automatic',{trained:s.review===true});
+const choices=plan=>[...steps].filter(([,s])=>canRunStep(plan,s)).map(([key,s])=>({key,label:s.label}));
 
 async function owner(db,ctx){
   const actor=(await db.query(`SELECT u.* FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
@@ -25,7 +31,8 @@ async function authorize(db,ctx,keys){
   const actor=await owner(db,ctx),state=await agent.requireWorkspaceJob(db,ctx.workspaceId,213,'automatic',{trained:true});
   for(const key of keys){
     if(!steps.has(key)) throw new ValidationError('Choose a supported playbook step.');
-    agent.requireJob(state.plan,steps.get(key).job,'automatic');
+    const step=steps.get(key);
+    agent.requireJob(agent.usesAgentTerms(state)?state.plan:null,step.job,'automatic',{trained:step.review===true});
   }
   return {actor,state};
 }
@@ -50,6 +57,10 @@ async function create(db,ctx,input){
 
 async function runStep(db,ctx,actor,key){
   const def=steps.get(key);
+  if(def.review){
+    const {summary,rows,more}=await reviews.run(db,ctx,key,{scheduled:true,trained:true});
+    return {label:def.label,summary:summary+(more?' View the full review for additional records.':''),rows,link:'/autopilot/reviews/'+key};
+  }
   if(def.report){
     const output=await reports.run(db,ctx,actor,def.report,{});
     return {label:def.label,summary:output.headline,link:'/reports/business/'+def.report};
@@ -101,11 +112,12 @@ async function schedule(client){
 async function list(db,ctx){
   await owner(db,ctx);
   const state=await agent.accountState(db,ctx.workspaceId);
+  const tier=agent.usesAgentTerms(state)?state.plan:null;
   const records=await db.query(`SELECT b.*,r.result,r.created_at AS ran_at FROM stockchief_runtime.agent_playbooks b
     LEFT JOIN LATERAL (SELECT * FROM stockchief_runtime.agent_playbook_runs WHERE playbook_id=b.id ORDER BY created_at DESC LIMIT 1) r ON true
     WHERE workspace_id=$1 ORDER BY b.created_at,b.id`,[ctx.workspaceId]);
-  return {choices:choices(state.plan),enabled:agent.permits(state.plan,213,'automatic',{trained:true}),books:records.rows.map(b=>({...b,
-    result:b.steps.every(key=>steps.has(key)&&agent.permits(state.plan,steps.get(key).job,'automatic'))&&agent.permits(state.plan,213,'automatic',{trained:true})?b.result:null}))};
+  return {choices:choices(tier),enabled:agent.permits(tier,213,'automatic',{trained:true}),books:records.rows.map(b=>({...b,
+    result:b.steps.every(key=>canRunStep(tier,steps.get(key)))&&agent.permits(tier,213,'automatic',{trained:true})?b.result:null}))};
 }
 async function remove(db,ctx,id){
   await owner(db,ctx);
