@@ -9,7 +9,7 @@ The permitted modes are **Alone**, **Trained** (after an owner rule), **Draft** 
 - Exercise the eligible and denied plan modes through the UI, Ask, direct requests and queued work after a downgrade. Verify the inventory, money, document or provider result and replay each write.
 - Use Orderful's demo retail relationship to run the inbound order, acknowledgment, ship notice and invoice. Match the retailer's accepted documents to StockChief records.
 - Use ShipBob's sandbox to submit a test sales order and reconcile the resulting provider order, shipment, tracking and inventory with StockChief. Exercise retries using the same order reference.
-- Keep the $49 AI pack pending. Qualify it with actual provider invoices and the corresponding usage ledger, including failed work. Current policy allows a maximum $29.40 of provider spend per pack. Test fixtures do not qualify a sale.
+- Keep the $49 AI pack pending. Qualify it with actual provider invoices and the corresponding usage ledger, including failed work. Checkout reads settled model spending, imported provider statement allocations and committed customer credits for the same closed review period. Current policy allows a maximum $29.40 of provider spend per pack. The November 8 staging check found 4,008 settled model calls and zero OpenAI or Anthropic statement lines in the preceding 30 days. Test fixtures do not qualify a sale.
 - Measure a representative business week against timed manual work. The current hours report measures two workflows. The business's total hours saved and cash recovered remain unmeasured.
 
 ## Jobs and plan permissions

@@ -17,6 +17,7 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
     ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,plan_version_id=EXCLUDED.plan_version_id`,[randomUUID(),scope.accountId,id,customer]);}
   const current=Math.floor(Date.now()/1000),catalog=await addons.catalog(db,{agentOffer:true});
   assert.equal(catalog.length,4);
+  assert.equal(catalog.find(p=>p.id==='agent-monthly-credits').awaiting_ai_review,true);
   const terms=(await db.query("SELECT * FROM commercial_plan_versions WHERE id LIKE 'agent-v3:%'")).rows;
   assert.equal(terms.length,3);
   for(const v of terms) assert.equal(Number(v.annual_amount_minor),10*Number(v.monthly_amount_minor));
@@ -47,17 +48,28 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   await assert.rejects(addons.begin(db,scope,input('agent-pro-edi'),options),/current plan/);
   await assert.rejects(addons.begin(db,scope,input('agent-monthly-credits'),options),/actual usage costs/);
   // Synthetic reconciliation for exercising checkout and grants. No real customer usage.
-  const review={providerInvoiceReference:'test-provider-invoice',usageLedgerReference:'test-usage-ledger',measuredCredits:5000,providerCostMinor:7500};
-  const reviewCost=()=>db.query("UPDATE commercial_capacity_products SET ai_usage_review=$1 WHERE id='agent-monthly-credits'",[review]);
-  await reviewCost();
+  const review={accountId:scope.accountId,start:'2025-01-01T00:00:00Z',end:'2025-02-01T00:00:00Z'};
+  await db.query("UPDATE commercial_capacity_products SET ai_usage_review=$1 WHERE id='agent-monthly-credits'",[review]);
+  await assert.rejects(addons.begin(db,scope,input('agent-monthly-credits'),options),/actual usage costs/);
+  const credits=units=>db.query(`INSERT INTO commercial_usage_events(id,account_id,workspace_id,meter,units,idempotency_key,occurred_at,status)
+    VALUES($1,$2,$3,'ai_work_credits',$4,$1,'2025-01-13','COMMITTED')`,[randomUUID(),scope.accountId,scope.workspaceId,units]);
+  await credits(1000);
+  await db.query(`INSERT INTO commercial_model_cost_holds(id,account_id,workspace_id,idempotency_key,period_start,period_end,provider,model,operation,
+    maximum_minor,actual_minor,status,created_at,settled_at) VALUES($1,$2,$3,$1,$4,$5,'anthropic','fixture','ask',500,500,'SETTLED','2025-01-13','2025-01-13')`,
+    [randomUUID(),scope.accountId,scope.workspaceId,review.start,review.end]);
+  await db.query(`INSERT INTO commercial_provider_cost_statements(id,provider,external_line_id,resource_id,period_start,period_end,amount_minor,currency,
+      evidence_reference,evidence_sha256,attested_by_account_id,allocation_basis,source_snapshot)
+    VALUES('fixture-statement','anthropic','fixture-line','fixture-resource',$1,$2,1700,'USD','Synthetic local fixture',repeat('a',64),$3,'fixture','{}')`,
+    [review.start,review.end,scope.accountId]);
+  await db.query("INSERT INTO commercial_provider_cost_allocations(statement_id,account_id,weight,amount_minor) VALUES('fixture-statement',$1,1,1700)",[scope.accountId]);
   await assert.rejects(addons.begin(db,scope,input('agent-monthly-credits'),options),/funding margin/);
-  review.providerCostMinor=2200;
-  await reviewCost();
+  await credits(4000);
   const ceilings={model_input:0.003,cache_write_1h:0.004,model_output:0.01};
   for(const [op,rate] of Object.entries(ceilings)) await db.query(`INSERT INTO commercial_cost_rates
     (id,provider,model,provider_version,operation,unit,cost_per_unit_minor,currency,effective_from,source,pricing_basis,confidence)
     VALUES($1,'openai','fixture','fixture-version',$2,'token',$3,'USD',now(),'SYNTHETIC RATE ONLY','VERIFIED_PUBLIC','HIGH')`,[randomUUID(),op,rate]);
   await db.query("UPDATE commercial_usage_packs SET approved_model_rate_ceiling=approved_model_rate_ceiling||$1::jsonb WHERE id='ai-2500-v4'",[JSON.stringify({'openai/fixture/fixture-version':ceilings})]);
+  assert.equal((await addons.catalog(db,{agentOffer:true})).find(p=>p.id==='agent-monthly-credits').awaiting_ai_review,false);
   await buy('agent-monthly-credits',4900);
   const budgets=await db.query('SELECT * FROM commercial_model_grant_budgets WHERE account_id=$1',[scope.accountId]);
   assert.equal(budgets.rowCount,1);

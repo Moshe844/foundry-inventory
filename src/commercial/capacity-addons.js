@@ -4,7 +4,14 @@ const id=v=>typeof v==='string'?v:v?.id;
 async function catalog(db,{subscription,agentOffer=false}={}){
  const current=agentOffer || subscription?.plan_configuration?.offerId==='agent-v3' || subscription?.plan_id==='enterprise';
  const rows=(await db.query('SELECT * FROM commercial_capacity_products WHERE active=true ORDER BY display_order,id')).rows;
- return rows.filter(product=>current ? product.eligible_plans && (!subscription || product.eligible_plans.includes(subscription.plan_id)) : !product.eligible_plans);
+ const products=rows.filter(product=>current ? product.eligible_plans && (!subscription || product.eligible_plans.includes(subscription.plan_id)) : !product.eligible_plans);
+ for(const product of products){
+   if(product.id!=='agent-monthly-credits') continue;
+   try{await require('./recurring-ai-funding').qualify(db,product);product.awaiting_ai_review=false;}
+   catch(error){if(!(error instanceof ValidationError))throw error;product.awaiting_ai_review=true;}
+   delete product.ai_usage_review;
+ }
+ return products;
 }
 async function list(db,accountId){return (await db.query(`SELECT o.*,p.label,p.meter,p.units_per_pack,p.monthly_amount_minor FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 ORDER BY o.created_at DESC`,[accountId])).rows;}
 async function begin(db,scope,input,options={}){
