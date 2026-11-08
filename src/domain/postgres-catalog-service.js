@@ -113,7 +113,8 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
     variants:Array.isArray(input.variants)&&input.variants.length?input.variants:[{}]}));
   if(normalized.some(i=>['lot','serial'].includes(i.trackingMode)))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['catalog:'+ctx.workspaceId]);
+  if(!(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',['catalog:'+ctx.workspaceId])).rows[0].acquired)
+    throw new ValidationError('Another import or product update is already running in this inventory. Its saved records remain safe; try again after it finishes.');
   const commercialScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
   await require('../commercial/entitlements').assertMeterCapacity(client,commercialScope,'products',normalized.filter(i=>!i.appendToItemId).length);
   const candidates=normalized.flatMap(input=>input.variants.map(v=>trimOrNull(v.code)||[codeSlug(input.name),...(v.options||[]).map(p=>codeSlug(p.value))].filter(Boolean).join('-')||'SKU'));

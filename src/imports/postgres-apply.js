@@ -58,32 +58,10 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
  await emit('preparing',plan.recordsValid);
 
  const settingCounts=plan.transformations.importMode==='set',isCount=row=>settingCounts&&row.parsed.existingSkuId&&row.parsed.quantity!==null,expectedDelta=row=>isCount(row)?row.parsed.countQuantityDelta:(row.parsed.quantity||0),expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:exact.costMinor(row.parsed.quantity||0,row.parsed.unitCostMinor||0),expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
- // Lock a source page inside the transaction that applies it. An autocommit
- // SELECT FOR UPDATE releases its locks before the stock write even starts,
- // and adds a separate durable transaction for every page of a large file.
- let pageClient;
- const sourcePages=()=>rowStore.executionPages({query:(...args)=>pageClient.query(...args)},ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',orderByItem:checkpoint.executionOrder==='item',cursor:checkpoint.executionCursor});
- let pages=sourcePages();
- for(;;){
-  let chunk=null,done=false;const priorSaved=Number(checkpoint.savedRows||0);
-  await emit('processing');
-  const result=await phase(async(client,saved)=>{
-   // A retry rebuilds its generator from the last committed checkpoint, so
-   // its selected rows are locked again in the new applying transaction.
-   if(!chunk&&!done){pageClient=client;try{const next=await pages.next();chunk=next.value;done=Boolean(next.done);}catch(error){pages=sourcePages();throw error;}}
-   if(done)return {done:true};
-   // Serial/measured pages can be split into smaller buffered chunks. Their
-   // earlier page lock ended with the previous commit; lock this chunk again.
-   if(batchSize>500&&chunk.length<batchSize){
-    const lockedRows=await client.query(`SELECT r.id FROM unnest($3::text[]) wanted(id)
-     JOIN LATERAL(SELECT id,workspace_id,import_id FROM import_rows WHERE id=wanted.id OFFSET 0 FOR UPDATE) r
-      ON r.workspace_id=$1 AND r.import_id=$2`,[ctx.workspaceId,id,chunk.map(r=>r.id)]);
-    if(lockedRows.rowCount!==chunk.length)throw new ValidationError('The selected source rows no longer match this import. Saved batches remain recorded.');
-   }
-   await identities.hydrate(client,ctx,plan,chunk,checkpoint);
+ async function applyChunk(client,saved,chunk,priorSaved){
    const sourceRows=chunk,options={...inputOptions,beforeRow:value=>inputOptions.beforeRow?.({...value,rowsImported:priorSaved+value.rowsImported})},publishProgress=()=>{};
    const salePriceBySku=new Map();
-   for(const row of chunk)if(!row.parsed.existingSkuId&&checkpoint.initialPricesPrepared&&row.parsed.sellingPriceMinor!==null)salePriceBySku.set(row.parsed.createdSkuId,row.parsed.currency+':'+row.parsed.sellingPriceMinor);
+   for(const row of chunk)if(!row.parsed.existingSkuId&&saved.initialPricesPrepared&&row.parsed.sellingPriceMinor!==null)salePriceBySku.set(row.parsed.createdSkuId,row.parsed.currency+':'+row.parsed.sellingPriceMinor);
    const pricedExisting=[...new Set(chunk.filter(r=>r.parsed.existingSkuId&&r.parsed.sellingPriceMinor!==null).map(r=>r.parsed.existingSkuId))];
    const priorPrices=pricedExisting.length?(await client.query("SELECT DISTINCT e.existing_sku_id AS sku_id,e.currency,e.selling_price_minor AS amount FROM import_execution_identities e JOIN import_rows r ON r.id=e.row_id AND r.workspace_id=e.workspace_id AND r.import_id=e.import_id WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.existing_sku_id=ANY($3::text[]) AND e.selling_price_minor IS NOT NULL AND r.status='IMPORTED'",[ctx.workspaceId,id,pricedExisting])).rows:[];
    for(const row of priorPrices)salePriceBySku.set(row.sku_id,row.currency+':'+row.amount);
@@ -119,7 +97,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
           skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,locationId:row.parsed.locationId,quantity:expectedDelta(row),
           serials:row.parsed.serial?[row.parsed.serial]:undefined,lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
           notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,idempotencyKey:`import:${id}:row:${row.id}`}));
-        const receiptKey=receiving.length&&batchSize>=2000&&checkpoint.batchReceiptVersion===1
+        const receiptKey=receiving.length&&batchSize>=2000&&saved.batchReceiptVersion===1
           ?`import:${id}:receipts:`+createHash('sha256').update(JSON.stringify([plan.integrityHash,receiving.map(row=>row.id)])).digest('hex'):null;
         const receivedRows=receiptKey?await inventory.receiveBatchInTransaction(client,ctx,receiptInputs,receiptKey):await inventory.receiveManyInTransaction(client,ctx,receiptInputs);
         const receiptByRow=new Map(receiving.map((row,index)=>[row.id,receivedRows[index]]));
@@ -146,7 +124,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
             movementIds.push(received.movementId);units=addExact(units,expectedDelta(row));
             if(row.parsed.unitCostMinor!==null){
               const totalCostMinor=exact.costMinor(expectedDelta(row),row.parsed.unitCostMinor);
-              pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:checkpoint.postingDate,count:isCount(row),opening:row.parsed.inventoryBefore?.physical===0&&row.parsed.inventoryBefore?.costed===0&&(row.parsed.inventoryBefore.hasHistory===false||row.parsed.inventoryBefore.hasHistory===undefined&&!historic.has(JSON.stringify([skuId,row.parsed.locationId])))});
+              pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:saved.postingDate,count:isCount(row),opening:row.parsed.inventoryBefore?.physical===0&&row.parsed.inventoryBefore?.costed===0&&(row.parsed.inventoryBefore.hasHistory===false||row.parsed.inventoryBefore.hasHistory===undefined&&!historic.has(JSON.stringify([skuId,row.parsed.locationId])))});
               if(pendingValues.length>=batchSize)await flushValues();
             }
           }
@@ -185,6 +163,32 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
    const totals=await verification.totals(client,ctx.workspaceId,chunk.map(row=>row.id)),value=chunk.reduce((n,row)=>addExact(n,expectedCost(row)),0),expectedUnits=chunk.reduce((n,row)=>addExact(n,expectedDelta(row)),0),valued=chunk.filter(expectsCostRecord).length;
    const checks=[{name:'Rows saved',expected:chunk.length,observed:rowsImported,ok:rowsImported===chunk.length},{name:'Stock movement units',expected:expectedUnits,observed:units,ok:units===expectedUnits},{name:'Cost records',expected:valued,observed:totals.value.movements,ok:valued===totals.value.movements},{name:'Inventory cost',expected:value,observed:Number(totals.value.value),ok:value===Number(totals.value.value)},{name:'Inventory asset',expected:value,observed:Number(totals.posted.value),ok:value===Number(totals.posted.value)}];
    if(!checks.every(check=>check.ok))throw new ValidationError('The imported stock and accounting evidence did not reconcile. The current batch was not saved.',{checks});
+   return {units,rowsImported,totals,value,valued,expectedUnits,checks,salePriceBySku};
+ }
+ // Lock a source page inside the transaction that applies it. An autocommit
+ // SELECT FOR UPDATE releases its locks before the stock write even starts,
+ // and adds a separate durable transaction for every page of a large file.
+ let pageClient;
+ const sourcePages=()=>rowStore.executionPages({query:(...args)=>pageClient.query(...args)},ctx.workspaceId,id,{batchSize,orderBySku:checkpoint.executionOrder==='sku',orderByItem:checkpoint.executionOrder==='item',cursor:checkpoint.executionCursor});
+ let pages=sourcePages();
+ for(;;){
+  let chunk=null,done=false;const priorSaved=Number(checkpoint.savedRows||0);
+  await emit('processing');
+  const result=await phase(async(client,saved)=>{
+   // A retry rebuilds its generator from the last committed checkpoint, so
+   // its selected rows are locked again in the new applying transaction.
+   if(!chunk&&!done){pageClient=client;try{const next=await pages.next();chunk=next.value;done=Boolean(next.done);}catch(error){pages=sourcePages();throw error;}}
+   if(done)return {done:true};
+   // Serial/measured pages can be split into smaller buffered chunks. Their
+   // earlier page lock ended with the previous commit; lock this chunk again.
+   if(batchSize>500&&chunk.length<batchSize){
+    const lockedRows=await client.query(`SELECT r.id FROM unnest($3::text[]) wanted(id)
+     JOIN LATERAL(SELECT id,workspace_id,import_id FROM import_rows WHERE id=wanted.id OFFSET 0 FOR UPDATE) r
+      ON r.workspace_id=$1 AND r.import_id=$2`,[ctx.workspaceId,id,chunk.map(r=>r.id)]);
+    if(lockedRows.rowCount!==chunk.length)throw new ValidationError('The selected source rows no longer match this import. Saved batches remain recorded.');
+   }
+   await identities.hydrate(client,ctx,plan,chunk,checkpoint);
+   const {units,totals,value,valued,checks,salePriceBySku}=await applyChunk(client,saved,chunk,priorSaved);
    if(saved.batchReceiptVersion===1)await batchReceipts.record(client,ctx,plan,{offset:priorSaved,rows:chunk,units,costRecords:valued,valueMinor:value,totals});
    const defaultReordersCovered=saved.defaultReordersCovered===true&&chunk.every(row=>Object.keys(row.parsed.reorder||{}).some(key=>key!=='leadTimeDays'||!row.parsed.supplierName));
    const next=await save(client,{...saved,...(['sku','item'].includes(saved.executionOrder)?{executionCursor:chunk.at(-1).executionCursor}:{}),defaultReordersCovered,savedRows:priorSaved+chunk.length,units:addExact(saved.units||0,units),lastBatch:{executionId,firstRow:Math.min(...chunk.map(r=>r.rowNumber)),lastRow:Math.max(...chunk.map(r=>r.rowNumber)),checks}});
