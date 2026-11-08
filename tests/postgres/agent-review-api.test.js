@@ -51,3 +51,34 @@ test('only Custom can start an agent review by API and receive the signed comple
   await clients.revoke(db,ctx.workspaceId,client.id,ctx.actorId);
   await browser.get(base+'/'+pending.body.jobId).set('Authorization',auth(client.token)).expect(401);
 });
+test('Custom managers keep their own report period, download format and decision order in each inventory',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,subscribe}=f;
+  const prefs=require('../../src/reports/manager-presentation'),path='/reports/my-preferences';
+  const choice={revision:0,report_period:'last_month',download_format:'xlsx',inbox_sort:'oldest'};
+  for(const tier of ['starter','growth','pro']){
+    await subscribe(tier);await browser.get(path).expect(402);
+    await assert.rejects(prefs.save(db,ctx,choice),e=>e.code==='entitlement_required');
+  }
+  await subscribe('enterprise');const page=await browser.get(path).expect(200);
+  await browser.post(path).type('form').send({...choice,_csrf:f.csrf(page.text)}).expect(303);
+  await assert.rejects(prefs.save(db,ctx,choice),/changed/);
+  const second=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Second manager',businessName:'Independent space',email:crypto.randomUUID()+'@example.test',password:f.password});
+  const colleague={workspaceId:ctx.workspaceId,actorId:crypto.randomUUID()};
+  await db.query("INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,'Reporting manager','accountant',now()::text)",[colleague.actorId,ctx.workspaceId,second.accountId]);
+  assert.equal((await prefs.personal(db,colleague)).download_format,'default');
+  await prefs.save(db,colleague,{...choice,actorId:ctx.actorId,report_period:'last_7_days',download_format:'pdf',inbox_sort:'newest'});
+  assert.equal((await prefs.personal(db,colleague)).download_format,'pdf');assert.equal((await prefs.personal(db,ctx)).download_format,'xlsx');
+  const range=await prefs.dateQuery(db,ctx,{},await prefs.personal(db,ctx)),reportHome=await browser.get('/reports').expect(200);
+  assert.match(reportHome.text,new RegExp('name="from" value="'+range.from+'"'));
+  assert.match((await browser.get('/reports').query({from:'2024-01-02',to:'2024-01-10'}).expect(200)).text,/name="from" value="2024-01-02"/);
+  assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="oldest"/);
+  assert.match((await browser.get('/needs-you/all?sort=priority').expect(200)).text,/data-decision-sort="priority"/);
+  const saved=await require('../../src/reports/postgres-service').save(db,ctx,{role:'owner',email:f.email},{dataset:'stock',title:'Manager stock',columns:['sku','on_hand'],sort:'sku'});
+  const report='/reports/saved/'+saved.id;
+  assert.match((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
+  const file=await browser.get(report+'/export.xlsx').expect(200);assert.match(file.headers['content-type'],/spreadsheet/);
+  await subscribe('pro');assert.equal(await prefs.personal(db,ctx),null);
+  assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="priority"/);
+  assert.doesNotMatch((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
+  await subscribe('enterprise');assert.equal((await prefs.personal(db,ctx)).inbox_sort,'oldest');
+});

@@ -1,0 +1,8 @@
+<h1>My report and approval preferences</h1>
+<form method="post" action="/reports/my-preferences">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= current.revision %>">
+  <% for(const [key,label] of [['report_period','Default report dates'],['download_format','Preferred report download'],['inbox_sort','Order of decisions in Needs you']]){ %>
+  <label><%= label %><select name="<%= key %>"><% for(const [value,title] of Object.entries(choices[key])){ %><option value="<%= value %>" <%= current[key]===value?'selected':'' %>><%= title %></option><% } %></select></label>
+  <% } %><button class="btn btn--primary">Save my preferences</button>
+</form>
+<p><a href="/reports">Reports</a> · <a href="/needs-you/all">Needs you</a></p>
