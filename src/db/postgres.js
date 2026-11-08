@@ -61,11 +61,18 @@ function openPostgres(connectionString, options = {}) {
     return false;
   };
   const errors = [];
-  pool.on('error', (error) => {
+  const recordConnectionError=(error) => {
     errors.push({ code: error.code || 'connection_error', at: new Date().toISOString() });
     if (errors.length > 20) errors.shift();
     if (options.onError) options.onError(error);
-  });
+  };
+  pool.on('error',recordConnectionError);
+  function observeLease(client){
+    let broken=false;
+    const failed=error=>{broken=true;recordConnectionError(error);};
+    client.on('error',failed);
+    return {broken:()=>broken,close:()=>client.off('error',failed)};
+  }
   const measuredQuery=async(target,statement,values)=>{const start=process.hrtime.bigint();
     try{return await target.query(statement,values);}catch(error){
       if(error.code==='55000'&&String(error.message).startsWith('This inventory is completing its ERP cutover.'))throw new (require('../domain/errors').InvariantError)(error.message,'cutover_in_progress');
@@ -80,12 +87,37 @@ function openPostgres(connectionString, options = {}) {
   const controlQuery=async(client,statement,values)=>{const start=process.hrtime.bigint();
     try{return await client.query(statement,values);}finally{resourceMetrics.queryFinished(start,statement);}};
   const query = async(statement, values = []) => {const result=await measuredQuery(pool,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;};
+  const sessionHandle=client=>({query:async(statement,values=[])=>{const result=await measuredQuery(client,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;},transaction:(fn,settings)=>transaction(fn,settings,client)});
   async function withSessionLock(key,operation){
-    const client=await pool.connect();let locked=false,discard=false;
-    try{locked=(await controlQuery(client,'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[key])).rows[0].locked;
+    const client=await pool.connect(),observed=observeLease(client);let locked=false,discard=false,shared=false,identity;
+    const unavailable=()=>Object.assign(new Error('The protected database session is no longer available. Saved batches remain safe.'),{code:'55P03'});
+    try{identity=(await controlQuery(client,'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked,pg_backend_pid() AS pid,hashtextextended($1,0)::text AS hash',[key])).rows[0];locked=identity.locked;
       if(!locked)return {busy:true};
-      return await operation({query:async(statement,values=[])=>{const result=await measuredQuery(client,statement,values);if(mutated(statement,result))changed(workspaceIds(values),affectsBusiness(statement));return result;},transaction:(fn,settings)=>transaction(fn,settings,client)});
-    }finally{try{if(locked)await controlQuery(client,'SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);}catch{discard=true;}client.release(discard);}
+      return await operation({...sessionHandle(client),sharedSessionCapacity:pool.options.max,shareLock:async()=>{
+        if(shared||observed.broken())throw unavailable();
+        // Acquire shared ownership before releasing exclusive ownership. No
+        // catalogue writer can enter between preparation and the lane sessions.
+        await controlQuery(client,'SELECT pg_advisory_lock_shared(hashtextextended($1,0))',[key]);
+        try{if(!(await controlQuery(client,'SELECT pg_advisory_unlock(hashtextextended($1,0)) AS released',[key])).rows[0].released)throw unavailable();shared=true;}
+        catch(error){await controlQuery(client,'SELECT pg_advisory_unlock_shared(hashtextextended($1,0))',[key]).catch(()=>{});throw error;}
+      },withSharedSession:async operation=>{
+        if(!shared||observed.broken())throw unavailable();
+        const fork=await pool.connect(),forkObserved=observeLease(fork);let held=false,broken=false;
+        try{
+          // A queued legacy exclusive writer must not leave a lane waiting
+          // behind its own coordinator. Refuse safely and preserve progress.
+          held=(await controlQuery(fork,'SELECT pg_try_advisory_lock_shared(hashtextextended($1,0)) AS acquired',[key])).rows[0].acquired;
+          if(!held)throw unavailable();
+          const parent=(await controlQuery(fork,`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=$1 AND granted AND mode='ShareLock'
+            AND classid=(($2::bigint>>32)&4294967295)::oid AND objid=($2::bigint&4294967295)::oid AND objsubid=1) AS owned`,[identity.pid,identity.hash])).rows[0].owned;
+          if(!parent||observed.broken())throw unavailable();
+          // This session retains its shared lease across all its commits. A
+          // coordinator disconnect cannot expose unfinished lane writes to a
+          // second import or metadata writer.
+          return await operation(sessionHandle(fork));
+        }finally{try{if(held)await controlQuery(fork,'SELECT pg_advisory_unlock_shared(hashtextextended($1,0))',[key]);}catch{broken=true;}fork.release(broken||forkObserved.broken());forkObserved.close();}
+      }});
+    }finally{try{if(locked)await controlQuery(client,shared?'SELECT pg_advisory_unlock_shared(hashtextextended($1,0))':'SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);}catch{discard=true;}client.release(discard||observed.broken());observed.close();}
   }
   async function listen(channel,onNotification){
     if(!/^[a-z][a-z0-9_]{0,62}$/.test(channel)||typeof onNotification!=='function')throw new TypeError('Invalid PostgreSQL notification subscription.');
@@ -115,7 +147,7 @@ function openPostgres(connectionString, options = {}) {
       if (!Number.isSafeInteger(timeout) || timeout < 1) throw new TypeError('PostgreSQL transaction timeouts must be positive integer milliseconds.');
     }
     for (let attempt = 0; ; attempt += 1) {
-      const client = leasedClient || await pool.connect();
+      const client = leasedClient || await pool.connect(),observed=leasedClient?null:observeLease(client);
       let discard = false;
       try {
         // Establish the SAME transaction-local protections in one protocol
@@ -135,7 +167,7 @@ function openPostgres(connectionString, options = {}) {
         try { await controlQuery(client,'ROLLBACK'); } catch { discard = true; }
         if (!['40001', '40P01'].includes(error.code) || attempt >= retries) throw error;
       } finally {
-        if(!leasedClient)client.release(discard);
+        if(!leasedClient){client.release(discard||observed.broken());observed.close();}
       }
       const backoff = Math.min(1000, retryBaseDelayMs * (2 ** Math.min(attempt, 6)));
       // Spread retries across the growing window. A fixed 15ms jitter keeps

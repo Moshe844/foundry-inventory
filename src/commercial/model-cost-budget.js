@@ -140,9 +140,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    [scope.accountId,scope.workspaceId,fundingReference])).rows[0];
   const grantIds=fundedRequest?.grant_ids||[];
   if(grantIds.length)await client.query('SELECT id FROM commercial_usage_grants WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[grantIds]);
-  const usage=(await client.query(`SELECT a.grant_id,a.units,k.version AS pack_version,b.budget_minor,b.cost_model_key,
+  const usage=(await client.query(`SELECT a.grant_id,a.units,CASE WHEN g.capacity_invoice_id IS NOT NULL THEN 4 ELSE k.version END AS pack_version,b.budget_minor,b.cost_model_key,
     b.approved_model_rate_ceiling,
-    g.revoked_units,g.dispute_hold_units,g.units AS grant_units,g.workspace_id AS grant_workspace_id,p.allocation_scope,b.account_id AS budget_account_id,
+    g.revoked_units,g.dispute_hold_units,g.units AS grant_units,g.workspace_id AS grant_workspace_id,CASE WHEN g.capacity_invoice_id IS NOT NULL THEN 'ACCOUNT' ELSE p.allocation_scope END AS allocation_scope,b.account_id AS budget_account_id,
     b.workspace_id AS budget_workspace_id
     FROM commercial_usage_events e JOIN commercial_usage_allocations a ON a.event_id=e.id
     LEFT JOIN commercial_usage_grants g ON g.id=a.grant_id
@@ -155,7 +155,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   if(fundingReference!==idempotencyKey&&!fundedRequest)
    throw new ValidationError('This internal model call has no funded Ask request. No provider call was made.');
   const totalUnits=usage.reduce((sum,row)=>sum+Number(row.units),0);
-  if(creditsOnly()&&(!fundedRequest||totalUnits<=0))throw new ValidationError('Reserve available AI credits before starting this model request.');
+  const includedReport=goalScope.includedReport===true && operation==='ask' && subscription?.plan_configuration?.offerId==='agent-v3';
+  if(creditsOnly()&&!includedReport&&(!fundedRequest||totalUnits<=0))throw new ValidationError('Reserve available AI credits before starting this model request.');
   if(usage.some(row=>row.grant_id&&Number(row.pack_version)>=2&&!row.budget_minor))
    throw new RateLimitError('Purchased AI funding is not reconciled. No model call was made.');
   const funded=usage.filter(row=>row.grant_id&&row.budget_minor);
@@ -230,7 +231,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    SELECT held.* FROM held CROSS JOIN (SELECT count(*) FROM allocated) saved`,
    [newId('modelhold'),scope.accountId,scope.workspaceId,idempotencyKey,bounds.start.toISOString(),bounds.end.toISOString(),
     bound.provider,bound.model,operation,bound.maximumMinor,
-    JSON.stringify({...(fundedCredits?{fundingUsageEventId:fundedCredits.eventId,costBoundedCredits:fundedCredits.credits}:{}),inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
+    JSON.stringify({...(includedReport?{includedReport:true}:{}),...(fundedCredits?{fundingUsageEventId:fundedCredits.eventId,costBoundedCredits:fundedCredits.credits}:{}),inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,...(certificationFundingWorkspaceId?{certificationFundingWorkspaceId}:{}),accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
       ...(temporaryGoalApproval?{temporaryGoalApproval:{approvalReference:temporaryGoalApproval.approvalReference,

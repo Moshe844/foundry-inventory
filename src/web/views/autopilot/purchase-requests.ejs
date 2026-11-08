@@ -1,0 +1,9 @@
+<h1>Staff purchase requests</h1>
+<form class="card" method="post" action="/purchasing/requests"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>">
+<label>Item code <input name="sku" required></label><label>Quantity <input type="number" step="any" min="0.000001" name="quantity" required></label>
+<label>Destination <select name="locationId" required><% locations.forEach(l=>{ %><option value="<%= l.id %>"><%= l.name %></option><% }); %></select></label>
+<label>Why is it needed? <input name="reason" maxlength="1000" required></label><button class="btn btn--primary">Request purchase</button></form>
+<% requests.forEach(r=>{ %><section class="card"><h2><%= r.product %> &middot; <%= r.code %></h2><p><%= r.requester %> requested <%= r.quantity %> for <%= r.destination %>. <%= r.reason %></p>
+<% if(r.status==='PENDING'&&canApprove){ %><form method="post" action="/purchasing/requests/<%= r.id %>/decision"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Linked supplier name <input name="supplier" required></label><button class="btn" name="decision" value="approve">Approve and create draft PO</button>
+<button class="btn" name="decision" value="decline" formnovalidate>Decline</button></form><% }else{ %><p><%= r.status %> <% if(r.po_number && canApprove){ %><a href="/purchasing/orders/<%= r.purchase_order_id %>"><%= r.po_number %></a><% } %></p><% } %></section><% }); %>

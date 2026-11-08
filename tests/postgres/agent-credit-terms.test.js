@@ -1,0 +1,30 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
+test('fixed credits cover multi-call questions, file mapping and reports with a depleted customer balance',{timeout:180000},async t=>{
+  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+  t.after(async()=>{await db.close();await cluster.stop();});
+  await require('../../src/db/migrate-postgres').migratePostgres(db);
+  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Credit terms',email:randomUUID()+'@example.test',password:'Demo!'+randomUUID()});
+  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId},scope={...ctx,accountId:owner.accountId};
+  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status) VALUES($1,$2,'starter','agent-v3:starter','ACTIVE')",[randomUUID(),scope.accountId]);
+  const ent=require('../../src/commercial/entitlements'),model=require('../../src/commercial/model');
+  const provider={name:'anthropic',model:PRICED_MODEL,complete:async()=>({data:{ok:true},usage:pricedUsage()})};
+  const request={schemaName:'stockchief_answer',schema:{type:'object',properties:{ok:{type:'boolean'}},required:['ok'],additionalProperties:false},system:'Read only',prompt:'Confirmed?',maxOutputTokens:100};
+  await model.wrap(db,ctx,provider,'ask','question').complete(request);
+  await model.wrap(db,ctx,provider,'ask','verified-answer',{chargeCustomer:false,fundingKey:'question'}).complete(request);
+  assert.equal((await ent.meterState(db,scope,'ai_work_credits')).used,20);
+  await model.wrap(db,ctx,provider,'import_mapping','document').complete(request);
+  assert.equal((await ent.meterState(db,scope,'ai_work_credits')).used,120);
+  await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES($1,$2,'ai_work_credits',120,'Test an exhausted balance')",[randomUUID(),scope.accountId]);
+  const assistant=require('../../src/assistant/postgres-service');
+  const report=await assistant.buildReportDefinition(db,ctx,'Build a monthly line-chart report of inventory movement by date',{provider:{...provider,complete:async input=>{
+    if(input.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
+    assert.equal(input.schemaName,'stockchief_governed_report');
+    return {data:{dataset:'movements',title:'Monthly movement',dateGrain:'month',columns:[],groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[],sort:'occurred_on',direction:'asc',chart:'line'},usage:pricedUsage()};
+  }}});
+  assert.ok(report.reportConfig,report.answer);assert.equal(report.creditsUsed,0);
+  assert.equal((await ent.meterState(db,scope,'ai_work_credits')).used,120);
+  assert.ok((await db.query("SELECT 1 FROM commercial_model_cost_holds WHERE workspace_id=$1 AND detail->>'includedReport'='true' AND status='SETTLED'",[ctx.workspaceId])).rowCount);
+});

@@ -166,6 +166,7 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   });
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
+  app.use(require('./web/routes/supplier-order-link').router(database));
   app.use(require('./lib/request-read-cache').middleware);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
   app.use(require('./web/mfa-middleware')(database));

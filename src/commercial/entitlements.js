@@ -161,7 +161,7 @@ async function meterState(database, scope, meter, options = {}) {
   if(!scope.workspaceId&&subscription?.plan_configuration?.locationAccounting==='sites_and_sublocations'&&['locations','sublocations','custom_roles'].includes(meter)){
     const inventories=(await database.query('SELECT id,name FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL',[scope.accountId])).rows;
     let highest=null;for(const inventory of inventories){const state=await meterState(database,{...scope,workspaceId:inventory.id},meter,{...options,subscription});const ratio=state.hardLimit===null?0:state.used/Math.max(1,state.hardLimit);
-      if(!highest||ratio>highest.ratio)highest={...state,inventoryName:inventory.name,workspaceId:inventory.id,ratio};}
+      if(!highest||ratio>highest.ratio||(ratio===highest.ratio&&state.used>highest.used))highest={...state,inventoryName:inventory.name,workspaceId:inventory.id,ratio};}
     if(highest){delete highest.ratio;return highest;}
   }
   if (!subscription && !config.commercial.requirePaidWorkspace) return {meter,label:definition.label,definition,used:0,reserved:0,
@@ -225,7 +225,7 @@ async function meterState(database, scope, meter, options = {}) {
   const structural=new Set(catalog.METERS.filter(row=>['STRUCTURAL','PER_OPERATION'].includes(row[2])).map(row=>row[0]));
   let hardLimit = override&&structural.has(meter)?(override.limit_units===null?null:Number(override.limit_units)):
     policy.hard_limit === null || policy.hard_limit === undefined ? null : Number(policy.hard_limit);
-  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(CASE WHEN o.entitlements ? $2 THEN (o.entitlements->>$2)::bigint*o.quantity WHEN p.meter=$2 OR ($2='active_skus' AND p.meter='products' AND o.entitlements='{}'::jsonb) THEN o.units ELSE 0 END),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND (o.workspace_id IS NULL OR o.workspace_id=$4) AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null,scope.workspaceId||null])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
+  if(structural.has(meter)&&hardLimit!==null&&!override){const extras=Number((await database.query(`SELECT coalesce(sum(CASE WHEN o.entitlements ? $2 THEN (o.entitlements->>$2)::bigint*o.quantity WHEN p.meter=$2 OR ($2='active_skus' AND p.meter='products' AND o.entitlements='{}'::jsonb) THEN o.units ELSE 0 END),0) units FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 AND (o.workspace_id IS NULL OR o.workspace_id=$4 OR ($2='workspaces' AND o.product_id='agent-location-inventory')) AND (p.eligible_plans IS NULL OR $5=ANY(p.eligible_plans)) AND o.status='ACTIVE' AND o.paid_through>coalesce($3::timestamptz,now())`,[scope.accountId,meter,options.now||null,scope.workspaceId||null,subscription.plan_id])).rows[0].units);hardLimit+=extras;if(included!==null)included+=extras;}
   const overageMode=policy.overage_mode||'PAUSE';
   if(!structural.has(meter)&&hardLimit===null&&included!==null&&['PAUSE','PURCHASE'].includes(overageMode))hardLimit=included;
   const overageUnits = included === null ? 0 : Math.max(0,used-included);

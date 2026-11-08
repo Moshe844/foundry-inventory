@@ -4,6 +4,7 @@ const { DEFAULT_ACCOUNTS } = require('./chart');
 const { newId, nowIso } = require('../lib/util');
 const {newAppendId}=require('../lib/append-id');
 const { ValidationError, AuthorizationError } = require('../domain/errors');
+const importNumberTokens=new WeakMap();
 
 function dateOnly(value) {
   const text = String(value || '').trim();
@@ -26,9 +27,9 @@ async function requireAccountingActor(client, ctx) {
   }
 }
 
-async function ensurePeriod(client, workspaceId, date) {
+async function ensurePeriod(client, workspaceId, date, shared=false) {
   const existing = await client.query(`SELECT * FROM accounting_periods WHERE workspace_id=$1
-    AND starts_on <= $2 AND ends_on >= $2 ORDER BY starts_on DESC LIMIT 1 FOR UPDATE`, [workspaceId,date]);
+    AND starts_on <= $2 AND ends_on >= $2 ORDER BY starts_on DESC LIMIT 1 FOR ${shared?'SHARE':'UPDATE'}`, [workspaceId,date]);
   if (existing.rows.length) {
     if (existing.rows[0].status !== 'OPEN') throw new ValidationError(`The accounting period ending ${existing.rows[0].ends_on} is closed.`);
     return existing.rows[0];
@@ -109,14 +110,52 @@ function normalizeLines(lines) {
   return { normalized,total:debits };
 }
 
-async function postManyInTransaction(client,ctx,inputs){
+async function allocateNumbersInTransaction(client,workspaceId,count){
+ if(!Number.isSafeInteger(count)||count<1)throw new ValidationError('Allocate a positive exact journal count.');
+ const allocated=(await client.query(`INSERT INTO stockchief_runtime.business_number_counters AS saved(workspace_id,kind,prefix,last_number)
+  VALUES($1,'accounting_journal_entries','JE',$2::bigint) ON CONFLICT(workspace_id,kind,prefix) DO UPDATE SET last_number=saved.last_number+EXCLUDED.last_number
+  WHERE saved.last_number<=9007199254740991-EXCLUDED.last_number RETURNING last_number`,[workspaceId,count])).rows[0];
+ if(!allocated)throw new ValidationError('Journal numbering has reached its supported range. Contact support before recording another entry.');
+ return Number(allocated.last_number)-count+1;
+}
+
+async function reserveImportNumbersInTransaction(client,ctx,{importId,approvalHash,count,postingDate}){
+ await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
+ if(!Number.isSafeInteger(count)||count<1)throw new ValidationError('Reserve a positive exact import journal count.');
+ const plan=(await client.query('SELECT integrity_hash,approval_status,records_valid FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,importId])).rows[0];
+ if(!plan||plan.approval_status!=='APPROVED'||plan.integrity_hash!==approvalHash||count>Number(plan.records_valid))throw new ValidationError('The approved import changed before journal numbers were reserved.');
+ const date=dateOnly(postingDate),prior=(await client.query('SELECT * FROM import_journal_reservations WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,importId])).rows[0];
+ if(prior){if(prior.approval_hash!==approvalHash||prior.number_count!==count||prior.posting_date!==date)throw new ValidationError('The import journal reservation belongs to different approved work.');return prior;}
+ const settings=(await client.query('SELECT enabled,accounting_start_date FROM accounting_settings WHERE workspace_id=$1 FOR SHARE',[ctx.workspaceId])).rows[0];
+ if(!settings||!Number(settings.enabled)||date<settings.accounting_start_date)throw new ValidationError('Configure the books and choose an open posting date before reserving import journals.');
+ const period=await ensurePeriod(client,ctx.workspaceId,date);
+ const first=await allocateNumbersInTransaction(client,ctx.workspaceId,count);
+ return (await client.query(`INSERT INTO import_journal_reservations(workspace_id,import_id,approval_hash,start_number,number_count,posting_date,period_id)
+  VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[ctx.workspaceId,importId,approvalHash,first,count,date,period.id])).rows[0];
+}
+
+async function importNumberTokenInTransaction(client,ctx,{importId,approvalHash,offset,sourceRowsHash}){
+ if(!Number.isSafeInteger(offset)||offset<0||!/^[a-f0-9]{64}$/.test(sourceRowsHash||''))throw new ValidationError('The import journal batch identity is invalid.');
+ const r=(await client.query(`SELECT r.* FROM import_journal_reservations r JOIN import_plans p ON p.workspace_id=r.workspace_id AND p.id=r.import_id
+  WHERE r.workspace_id=$1 AND r.import_id=$2 AND r.approval_hash=$3 AND p.integrity_hash=$3 AND p.approval_status='APPROVED'`,[ctx.workspaceId,importId,approvalHash])).rows[0];
+ if(!r||offset>=r.number_count)throw new ValidationError('The import journal batch is outside its approved reservation.');
+ const token=Object.freeze({});importNumberTokens.set(token,{workspaceId:ctx.workspaceId,importId,approvalHash,number:Number(r.start_number)+offset,postingDate:r.posting_date,sourceRowsHash,sourceKey:`import:${importId}:batch:${sourceRowsHash}:opening-value`,used:false});return token;
+}
+
+async function postManyInTransaction(client,ctx,inputs,options={}){
   if(!Array.isArray(inputs))throw new ValidationError('Journal entries must be a list.');
   if(!inputs.length)return [];
+  const reservation=options.reservedImport?importNumberTokens.get(options.reservedImport):null;
+  if(options.reservedImport&&(!reservation||reservation.used||reservation.workspaceId!==ctx.workspaceId))throw new ValidationError('The import journal reservation is invalid or already used.');
   if(!(ctx.verifiedProviderReceipt&&inputs.every(input=>['customer_payment','customer_deposit'].includes(input.sourceType))))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
   const clock=require('../lib/business-time'),calendar=inputs.some(i=>!i.postingDate)?(await clock.forWorkspace(client,ctx.workspaceId)):null;const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate||(input.postingInstant?clock.context(calendar.timeZone,new Date(input.postingInstant)).calendarDate:calendar.calendarDate)),sourceKey=String(input.sourceKey||'').trim();
     if(!sourceKey)throw new ValidationError('A durable accounting source key is required.');
     return {input,postingDate,sourceKey,...normalizeLines(input.lines)};});
+  if(reservation){const row=prepared[0],input=row.input;
+   if(prepared.length!==1||row.sourceKey!==reservation.sourceKey||row.postingDate!==reservation.postingDate||input.sourceType!=='opening_inventory'||input.sourceRecordType!=='import_batch'||input.sourceRecordId!==reservation.importId||input.metadata?.integrityHash!==reservation.approvalHash||input.metadata?.sourceRowsHash!==reservation.sourceRowsHash||input.metadata?.importId!==reservation.importId||row.normalized.some(l=>!((l.accountKey==='INVENTORY_ASSET'&&l.debit>0&&l.credit===0)||(l.accountKey==='OPENING_BALANCE_EQUITY'&&l.credit>0&&l.debit===0))))throw new ValidationError('The journal does not match its approved import batch reservation.');
+   reservation.used=true;
+  }
   const reversedSources=inputs.map(i=>i.reversalOfEntryId).filter(Boolean);
   if(reversedSources.length)await client.query('SELECT id FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,reversedSources]);
   if(reversedSources.length){
@@ -126,9 +165,10 @@ async function postManyInTransaction(client,ctx,inputs){
   }
   if(reversedSources.length&&(await client.query(`SELECT 1 FROM manufacturing_added_costs a JOIN accounting_journal_lines l ON l.workspace_id=a.workspace_id AND l.id=a.source_journal_line_id WHERE a.workspace_id=$1 AND l.entry_id=ANY($2::text[]) AND a.reversed_by_event_id IS NULL LIMIT 1`,[ctx.workspaceId,reversedSources])).rows.length)
     throw new ValidationError('This expense supports production inventory value. Reverse its manufacturing capitalization before reversing the source expense.');
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
+  if(!reservation)await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
   const sourceKeys=[...new Set(prepared.map(row=>row.sourceKey))],prior=(await client.query('SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=ANY($2::text[])',[ctx.workspaceId,sourceKeys])).rows;
   const entries=new Map(prior.map(entry=>[entry.source_key,entry])),fresh=new Map();
+  if(reservation&&prior.some(e=>Number(e.entry_number)!==reservation.number))throw new ValidationError('The saved journal belongs to a different import number reservation.');
   for(const row of prepared)if(!entries.has(row.sourceKey)&&!fresh.has(row.sourceKey))fresh.set(row.sourceKey,row);
   const rows=[...fresh.values()];
   if(rows.length){
@@ -138,17 +178,13 @@ async function postManyInTransaction(client,ctx,inputs){
     for(const row of rows){row.currency=require('../domain/currency').code(row.input.currency||settings.base_currency);
       if(row.currency!==settings.base_currency)throw new ValidationError('This transaction uses '+row.currency+' but the accounting books use '+settings.base_currency+'. A verified currency conversion is required before posting; no foreign amount was relabelled.');
       if(row.postingDate<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
-      if(!periods.has(row.postingDate))periods.set(row.postingDate,await ensurePeriod(client,ctx.workspaceId,row.postingDate));
+      if(!periods.has(row.postingDate))periods.set(row.postingDate,await ensurePeriod(client,ctx.workspaceId,row.postingDate,true));
     }
     const allLines=rows.flatMap(row=>row.normalized),keys=[...new Set(allLines.map(line=>line.accountKey).filter(Boolean))],ids=[...new Set(allLines.map(line=>line.accountId).filter(Boolean))];
     const accounts=(await client.query('SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))',[ctx.workspaceId,keys,ids])).rows;
     const byKey=new Map(accounts.map(row=>[row.system_key,row.id])),byId=new Set(accounts.map(row=>row.id));
     if(keys.some(key=>!byKey.has(key))||ids.some(id=>!byId.has(id))||allLines.some(line=>!line.accountKey&&!line.accountId))throw new ValidationError('One or more accounting control accounts are missing or inactive.');
-    const allocated=(await client.query(`INSERT INTO stockchief_runtime.business_number_counters AS saved(workspace_id,kind,prefix,last_number)
-      VALUES($1,'accounting_journal_entries','JE',$2::bigint) ON CONFLICT(workspace_id,kind,prefix) DO UPDATE SET last_number=saved.last_number+EXCLUDED.last_number
-      WHERE saved.last_number<=9007199254740991-EXCLUDED.last_number RETURNING last_number`,[ctx.workspaceId,rows.length])).rows[0];
-    if(!allocated)throw new ValidationError('Journal numbering has reached its supported range. Contact support before recording another entry.');
-    const firstNumber=Number(allocated.last_number)-rows.length+1,at=nowIso(),journalRows=[],journalLines=[];
+    const firstNumber=reservation?reservation.number:await allocateNumbersInTransaction(client,ctx.workspaceId,rows.length),at=nowIso(),journalRows=[],journalLines=[];
     for(const [index,row]of rows.entries()){
       const input=row.input,id=newAppendId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
       journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify({...input.metadata,postingCalendar:{basis:input.postingDate?'EXPLICIT_DATE':input.postingInstant?'BUSINESS_EVENT_INSTANT':'BUSINESS_CURRENT_DATE',timeZone:calendar?.timeZone||ctx.businessTimeZone||null,instant:input.postingInstant||(!input.postingDate?at:null)}}),reversal_of_entry_id:input.reversalOfEntryId||null});
@@ -185,4 +221,4 @@ async function ensureSystemAccountInTransaction(client,ctx,key){
  let code=descriptor.code;for(let attempt=0;attempt<100;attempt++){if(!(await client.query('SELECT 1 FROM accounting_accounts WHERE workspace_id=$1 AND code=$2',[ctx.workspaceId,code])).rows.length)break;code='SC-'+key+(attempt?'-'+attempt:'');if(attempt===99)throw new ValidationError('Choose an available system account code.');}
  const id=newId('acct'),at=nowIso();await client.query('INSERT INTO accounting_accounts(id,workspace_id,code,name,account_type,subtype,normal_balance,system_key,is_control,active,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,1,$9,$9)',[id,ctx.workspaceId,code,descriptor.name,descriptor.type,descriptor.subtype,descriptor.normal,key,at]);return id;
 }
-module.exports={ensureSystemAccountInTransaction, configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,postManyInTransaction,validatePostingDateInTransaction };
+module.exports={ensureSystemAccountInTransaction,configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,postManyInTransaction,validatePostingDateInTransaction,reserveImportNumbersInTransaction,importNumberTokenInTransaction};

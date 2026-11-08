@@ -487,7 +487,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
             received: Number(purchaseLine.quantity_received_units),
             previouslyBilled: billedUnits, billed: quantity });
         }
-        const approvedUnitCostMinor = Math.round(Number(purchaseLine.unit_cost) * 100);
+        const approvedUnitCostMinor = require('../domain/currency').toMinor(purchaseLine.unit_cost,purchaseOrder.currency,{optional:true,label:'Approved PO price'});
         if (unitCostMinor !== approvedUnitCostMinor) {
           matchStatus = 'EXCEPTION';
           differences.push({ line: index + 1, kind: 'price_outside_approved_cost',
@@ -546,7 +546,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
       taxMinor, totalMinor, posted?.entry.id || null, sourceKey, JSON.stringify({ differences }),
       trimOrNull(input.notes), ctx.actorId, at]);
     const invoiceInput={supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,supplierInvoiceNumber:invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges,taxMinor,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null};
-    await client.query('UPDATE accounting_supplier_bills SET charges=$3::jsonb,document_total_minor=$4,source_message_id=$5,source_attachment_hash=$6,document_fingerprint=$7,invoice_input=$8::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,billId,JSON.stringify(charges),input.documentTotalMinor??null,input.sourceMessageId||null,input.sourceAttachmentHash||null,documentFingerprint,JSON.stringify(invoiceInput)]);
+    await client.query('UPDATE accounting_supplier_bills SET charges=$3::jsonb,document_total_minor=$4,source_message_id=$5,source_attachment_hash=$6,document_fingerprint=$7,invoice_input=$8::jsonb,agreed_discount_terms=$9 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,billId,JSON.stringify(charges),input.documentTotalMinor??null,input.sourceMessageId||null,input.sourceAttachmentHash||null,documentFingerprint,JSON.stringify(invoiceInput),supplier.payment_terms]);
     const defaultDebitAccountId = await accountId(client, ctx.workspaceId,
       purchaseOrder ? 'RECEIVED_NOT_INVOICED' : 'OPERATING_EXPENSE');
     for (const [index, line] of prepared.entries()) {

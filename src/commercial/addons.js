@@ -8,11 +8,15 @@ const paidBudget=require('./paid-model-budget');
 const entitlements=require('../entitlements/postgres-service');
 async function packs(database,scope=null){const rows=(await database.query("SELECT * FROM commercial_usage_packs WHERE status<>'RETIRED' ORDER BY category,units")).rows;
  const creditPolicy=scope?await require('./ai-credit-policy').policy(database,scope):null;
+ if(creditPolicy?.fixedAgentCredits)return [];
  return Promise.all(rows.map(async pack=>{if(creditPolicy&&pack.category==='ai_work_credits'&&Number(pack.version)>=3&&creditPolicy.scale!==Number(pack.credit_unit_scale||1))return {...pack,purchasable:false,termsReviewRequired:true};let funded=false;try{await paidBudget.assertSafePack(database,pack);funded=true;}catch{return {...pack,purchasable:false};}
   return {...pack,purchasable:funded&&pack.status==='APPROVED'&&Boolean(pack.stripe_price_id)};}));}
 async function topups(database,scope){await wallet.assertScope(database,scope);return (await database.query(
  'SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2',[scope.accountId,scope.workspaceId])).rows;}
-async function packFor(database,id,options){const pack=(await database.query('SELECT * FROM commercial_usage_packs WHERE id=$1',[id])).rows[0];
+async function packFor(database,id,options){
+ if(options?.scope && (await entitlements.subscriptionFor(database,options.scope.accountId))?.plan_configuration?.offerId==='agent-v3')
+   throw new ValidationError('Choose one of the monthly add-ons for your current plan.');
+ const pack=(await database.query('SELECT * FROM commercial_usage_packs WHERE id=$1',[id])).rows[0];
  if(!pack||pack.status!=='APPROVED'&&!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('This usage pack is provisional and cannot be purchased.');
  if(options.scope&&(await require('./entitlements').meterState(database,options.scope,pack.category)).remaining===null)
   throw new ValidationError('Your accepted plan has no separate count limit for this usage category. No purchase is needed.');

@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Purchase order <%= order.po_number %> · StockChief</title></head><body><main>
+<h1>Purchase order <%= order.po_number %></h1><p>For <%= order.supplier_name %></p>
+<% if(received){ %><p role="status">Your response was saved.</p><% } %>
+<table><thead><tr><th>Item</th><th>Code</th><th>Units ordered</th></tr></thead><tbody>
+<% lines.forEach(line=>{ %><tr><td><%= line.name %></td><td><%= line.code %></td><td><%= line.quantity_units %></td></tr><% }); %></tbody></table>
+<form method="post" action="<%= currentPath %>/respond"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p><label>Expected delivery date <input type="date" name="date"></label></p>
+<button name="kind" value="confirm">Confirm this order</button> <button name="kind" value="date">Propose a delivery date</button></form>
+<h2>Send a document</h2><form id="supplier-document" data-url="<%= currentPath %>/file/" data-csrf="<%= csrfToken %>">
+<label>Document type <select name="kind"><option value="invoice">Invoice</option><option value="ship-notice">Ship notice</option></select></label>
+<label>PDF, up to 4 MB <input type="file" name="document" accept="application/pdf" required></label>
+<button type="submit">Upload document</button><p role="status" id="upload-status"></p></form>
+</main><script src="/supplier-order-link.js" defer></script></body></html>

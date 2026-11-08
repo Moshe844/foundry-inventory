@@ -8,6 +8,7 @@ function profile(database){
    finally{const totalMs=performance.now()-at,row=transactions.get(stage)||{phase:stage,count:0,attempts:0,totalMs:0,callbackMs:0,boundaryMs:0};row.count++;row.attempts+=attempts;row.totalMs+=totalMs;row.callbackMs+=callbackMs;row.boundaryMs+=totalMs-callbackMs;transactions.set(stage,row);}
   };
   if(original.withSessionLock)out.withSessionLock=(key,fn)=>original.withSessionLock(key,client=>fn(wrap(client)));
+  if(original.withSharedSession)out.withSharedSession=fn=>original.withSharedSession(client=>fn(wrap(client)));
   return out;
  }
  return {database:wrap(database),phase:value=>{phase=value;},report:()=>({elapsedMs:Math.round(performance.now()-started),cpu:process.cpuUsage(cpu),totalQueryMs:Math.round([...queries.values()].reduce((n,r)=>n+r.totalMs,0)),totalQueryCount:[...queries.values()].reduce((n,r)=>n+r.count,0),transactions:[...transactions.values()].map(r=>({...r,totalMs:Math.round(r.totalMs),callbackMs:Math.round(r.callbackMs),boundaryMs:Math.round(r.boundaryMs)})),queries:[...queries.values()].sort((a,b)=>b.totalMs-a.totalMs).slice(0,40).map(r=>({...r,totalMs:Math.round(r.totalMs),maxMs:Math.round(r.maxMs)}))})};

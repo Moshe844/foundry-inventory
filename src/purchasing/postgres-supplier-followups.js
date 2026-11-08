@@ -1,6 +1,8 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),autonomy=require('../autopilot/postgres-service'),outbound=require('../connections/postgres-outbound-mail'),permissions=require('../actions/permissions');
 const json=value=>{if(value&&typeof value==='object')return value;try{return JSON.parse(value||'{}');}catch{return {};}};
+const agent=require('../commercial/agent-plan');
+const followUpJob=phase=>phase==='supplier_delivery_late'?30:29;
 const scoped=c=>({query:(sql,values)=>c.query(sql,values),transaction:f=>f(c)});
 async function authority(client,workspaceId,workId,scope){
  const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2',[workspaceId,workId])).rows[0];if(!work)throw new ValidationError('The supplier follow-up work is not in this business.');
@@ -12,13 +14,17 @@ async function authority(client,workspaceId,workId,scope){
  if((outcome.purchaseOrderId||action.recordId)!==scope.purchaseOrderId||work.policy_id!==scope.policyId)throw new ValidationError('The follow-up must belong to this exact delegated purchase order and policy.');
  if(!order||!['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(order.status)||!policy.supplierScope.includes(order.supplier_id)||policy.itemScope.length&&!policy.itemScope.includes(action.skuId)||followUps.length>options.maximum||!followUps.some(f=>f.key===scope.key))throw new ValidationError('This supplier follow-up no longer matches the approved order and communication count.');
  const owned=followUps.find(f=>f.key===scope.key);
- if(owned.phase==='supplier_confirmation_due'&&(await client.query("SELECT 1 FROM supplier_documents WHERE workspace_id=$1 AND purchase_order_id=$2 AND document_type='order_acknowledgement' AND status='MATCHED' AND processed_at::timestamptz>$3::timestamptz LIMIT 1",[workspaceId,order.id,owned.at])).rows.length)throw new ValidationError('The supplier has already confirmed this order. The old confirmation request was stopped before sending.');
+ const account=await agent.accountState(client,workspaceId);
+ if(agent.usesAgentTerms(account))agent.requireJob(account.plan,followUpJob(owned.phase),'automatic',{trained:true});
+ if(owned.phase==='supplier_confirmation_due'&&(await client.query("SELECT 1 FROM supplier_documents WHERE workspace_id=$1 AND purchase_order_id=$2 AND document_type='order_acknowledgement' AND status='MATCHED' AND processed_at::timestamptz>$3::timestamptz UNION ALL SELECT 1 FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l USING(token_hash) WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind IN ('confirm','date') AND r.created_at>$3::timestamptz LIMIT 1",[workspaceId,order.id,owned.at])).rows.length)throw new ValidationError('The supplier has already confirmed this order. The old confirmation request was stopped before sending.');
  const delivery=await autonomy.supplierDeliveryReadiness(client,workspaceId,order.supplier_id);if(!delivery.ready||delivery.mailbox.id!==scope.connectorId||delivery.supplier.email!==scope.recipientEmail)throw new ValidationError('The supplier email or mailbox changed after the follow-up was prepared.');
  return {policy,options};
 }
 async function prepare(client,workspaceId,work,snapshot,prior,clock){
  if(!['supplier_confirmation_due','supplier_delivery_late'].includes(snapshot.decision?.code))return {snapshot,followUps:prior.followUps||[]};
  const followUps=[...(prior.followUps||[])],last=followUps.at(-1),at=clock.instant;
+ const account=await agent.accountState(client,workspaceId);
+ if(agent.usesAgentTerms(account)&&!agent.permits(account.plan,followUpJob(snapshot.decision.code),'draft'))return {snapshot,followUps};
  const state=await autonomy.getState(client,workspaceId);if(state.paused||state.suspended||state.mode==='OBSERVE')return {snapshot,followUps};
  const po=(await client.query('SELECT p.*,s.name AS supplier_name,s.email,s.watched_connector_id,s.prepare_communications,s.follow_up_days FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id AND s.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[workspaceId,snapshot.recordId])).rows[0];if(!po||!Number(po.prepare_communications))return {snapshot,followUps};
  const owner=(await client.query("SELECT id FROM users WHERE workspace_id=$1 AND role='owner' ORDER BY created_at,id LIMIT 1",[workspaceId])).rows[0];if(!owner)return {snapshot,followUps};
@@ -41,14 +47,14 @@ async function prepare(client,workspaceId,work,snapshot,prior,clock){
  const lines=(await client.query('SELECT l.quantity_units,l.quantity_received_units,l.supplier_sku,s.code FROM purchase_order_lines l JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.line_number,l.id',[workspaceId,po.id])).rows;
  const late=snapshot.decision.code==='supplier_delivery_late',subject=(late?'Delivery update for ':'Please confirm ')+po.po_number,
  body=[`Hello ${po.supplier_name},`,'',late?`Please confirm the delivery status of ${po.po_number}. Our recorded expected date is ${po.expected_date}.`:`Please confirm acceptance of ${po.po_number} and its expected delivery date.`,...lines.map(l=>`${l.supplier_sku||l.code}: ${l.quantity_units} ordered, ${l.quantity_received_units} received.`),'','Please identify any change to quantities, prices or delivery terms so we can review it.'].join('\n');
- const key='supplier-follow-up:'+work.id+':'+snapshot.decision.code+':'+followUps.length,payload={recipientKind:'supplier',recipientId:po.supplier_id,recipientEmail:delivery.supplier.email,recipientName:po.supplier_name,connectorId:delivery.mailbox.id,mailboxName:delivery.mailbox.display_name,purchaseOrderId:po.id,subject,body};
+ const key='supplier-follow-up:'+work.id+':'+snapshot.decision.code+':'+followUps.length,payload={recipientKind:'supplier',recipientId:po.supplier_id,recipientEmail:delivery.supplier.email,recipientName:po.supplier_name,connectorId:delivery.mailbox.id,mailboxName:delivery.mailbox.display_name,purchaseOrderId:po.id,followUpPhase:snapshot.decision.code,subject,body};
  const grant=await autonomy.capabilityMay(client,workspaceId,'supplier_emails');
  if(settings?.version===1&&policy?.active&&state.canAutomate&&grant.allowed&&policy.supplierScope.includes(po.supplier_id)){
   const standing={kind:'purchase_followup',workId:work.id,purchaseOrderId:po.id,policyId:policy.id,policyHash:policy.integrityHash,key,connectorId:delivery.mailbox.id,recipientEmail:delivery.supplier.email};
   followUps.push({key,at,phase:snapshot.decision.code});
   await client.query('UPDATE work_items SET outcome=$3 WHERE workspace_id=$1 AND id=$2',[workspaceId,work.id,JSON.stringify({...prior,followUps})]);
   await authority(client,workspaceId,work.id,standing);
-  const queued=await outbound.queueInTransaction(client,ctx,{...payload,standingAuthority:standing},key);Object.assign(followUps.at(-1),{effectId:queued.effectId,communicationId:queued.communicationId});
+  const queued=await outbound.queueInTransaction(client,ctx,{...payload,standingAuthority:standing},key,{agentRequested:true});Object.assign(followUps.at(-1),{effectId:queued.effectId,communicationId:queued.communicationId});
   return {snapshot:{...snapshot,phase:'AWAITING_FOLLOW_UP_RESPONSE',nextAction:'Verify the supplier follow-up and monitor its response.',decision:null},followUps};
  }
  const proposal=await require('../assistant/postgres-service').createProposal(scoped(client),{...ctx,planStepKey:key},'Follow up on '+po.po_number,'communication.send_email',payload,`Ask ${po.supplier_name} to ${late?'update delivery':'confirm acceptance and delivery'} for ${po.po_number}. ${snapshot.decision.impact} Send only the reviewed message to ${delivery.supplier.email}.`);

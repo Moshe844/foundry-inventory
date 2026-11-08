@@ -19,6 +19,7 @@ const features=[
  ['planning.basic','Review stock shortages and replenishment plans.','growth'],
  ['inventory.transfers','Move stock between your locations.','starter'],
  ['payments.customer','Accept customer card payments through your connected payment account (subject to provider setup).','enterprise'],
+ ['automation.trusted_purchasing','Automatic repeat orders for trusted items and suppliers, up to $500 per order and $2,000 per week.','growth'],
  ['automation.transfers','Automatic transfers within limits you approve.','pro'],
  ['automation.purchasing','Automatic purchasing within limits you approve.','pro'],
  ['warehouse.advanced','Warehouse picking and scan verification.','pro'],
@@ -37,7 +38,7 @@ function enabled(plan,key){return (plan.entitlements||[]).some(e=>catalog.canoni
 function describe(plan){const meters=new Map((plan.meters||[]).map(m=>[m.meter,m]));return {...plan,
  name:plan.id==='enterprise'?'Custom':plan.public_name,
  features:features.filter(([key])=>enabled(plan,key)).map(([capability,text])=>({capability,text})),
- allowances:[...Object.keys(require('./offers/approved-2026-11-02').definitions)].map(key=>({meter:key,label:meters.get(key)?.label||catalog.meter(key)?.label,units:meters.get(key)?.included_units??null,kind:catalog.meter(key)?.kind})),
+ allowances:[...Object.keys(require('./offers/approved-2026-11-02').definitions),...(meters.has('agent_documents')?['agent_documents']:[])].map(key=>({meter:key,label:meters.get(key)?.label||catalog.meter(key)?.label,units:meters.get(key)?.included_units??null,kind:catalog.meter(key)?.kind})),
  approximateWorkSteps:Math.floor(Number(meters.get('ai_work_credits')?.included_units||0)/Number(meters.get('ai_work_credits')?.credit_unit_scale||1)),
  };}
 function purchasableAddons(packs){return packs.filter(p=>p.purchasable===true&&p.status==='APPROVED');}

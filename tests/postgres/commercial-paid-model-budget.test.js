@@ -16,7 +16,7 @@ test('candidate AI pack funds a bounded, grant-linked provider budget, including
   v.status AS version_status FROM commercial_plans p JOIN commercial_plan_versions v
   ON v.id='launch-candidate-2026-10:'||p.id WHERE p.id IN ('starter','growth','pro') ORDER BY p.display_order`)).rows;
  assert.deepEqual(candidate.map(row=>[row.id,Number(row.monthly_amount_minor),Number(row.ai),Number(row.connected),row.version_status]),
-  [['starter',19900,3000,5000,'RETIRED'],['growth',49900,10000,50000,'RETIRED'],['pro',99900,25000,100000,'RETIRED']]);
+  [['starter',19900,5000,5000,'RETIRED'],['growth',49900,10000,50000,'RETIRED'],['pro',99900,25000,100000,'RETIRED']]);
  // Retiring an offer does not rewrite the immutable terms of its subscribers.
  assert.equal(Number((await db.query("SELECT m->>'included_units' units FROM commercial_plan_versions v CROSS JOIN LATERAL jsonb_array_elements(v.meters) m WHERE v.id='launch-candidate-2026-10:starter' AND m->>'meter'='ai_work_credits'")).rows[0].units),650);
  assert.deepEqual((await db.query("SELECT operation,units FROM commercial_operation_policies WHERE operation IN ('ask','instruction','import_mapping') ORDER BY operation")).rows
