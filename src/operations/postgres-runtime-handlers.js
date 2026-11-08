@@ -76,6 +76,7 @@ async function mailReplyDraft(job,database,options={}){
     WHERE message.workspace_id=$1 AND message.id=$2`,[job.workspaceId,messageId])).rows[0];
   const settings=typeof enabled?.config==='string'?JSON.parse(enabled.config||'{}'):enabled?.config||{};
   if(settings.replyPreparationEnabled!==true)return {skipped:'automatic_preparation_off',draftUnchanged:true};
+  if(!await require('../connections/agent-mail-triage').draftAccess(database,job.workspaceId))return {skipped:'draft_capability_unavailable',draftUnchanged:true};
   const row=(await database.query(`SELECT reply_state,reply_sent_at,draft_source FROM connection_email_messages
     WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,messageId])).rows[0];
   if(!row)return {skipped:'message_missing'};
@@ -650,7 +651,12 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key);}
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
-  'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
+  'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'mail.attachment-extract':external(async(job,database)=>{
+    const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
+    const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
+    return order.skipped?result:{...result,order};
+  }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
