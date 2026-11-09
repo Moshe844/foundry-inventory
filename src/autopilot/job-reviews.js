@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../purchasing/agent-supplier-benefits').reviewDefinition,
   require('../purchasing/agent-supplier-email-terms').definition,
   require('../warehouse/agent-bin-corrections').definition,
   require('../sales/agent-customer-return-emails').definition,
@@ -121,6 +122,7 @@ const suggestions={
 };
 
 function firstSuggestion(def,rows){
+  if(def.id===97)return rows.slice(0,1).map(row=>({Suggestion:row.Suggestion,link:row.link}));
   const describe=suggestions[def.id];
   if(!describe)return [];
   return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));

@@ -134,6 +134,9 @@ jobs:
       - name: Supplier email details, exact plan rules and source ordering
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/supplier-email-terms-source.test.js tests/postgres/agent-supplier-email-terms.test.js tests/postgres/agent-work-digest.test.js
+      - name: Supplier benefit sources, exact plan limits and external claim history
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/supplier-benefit-forms.test.js tests/unit/supplier-rebate-calculation.test.js tests/postgres/agent-supplier-benefits.test.js tests/postgres/agent-supplier-benefits-boundaries.test.js tests/postgres/agent-supplier-benefits-ui.test.js tests/postgres/agent-supplier-benefits-removal.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

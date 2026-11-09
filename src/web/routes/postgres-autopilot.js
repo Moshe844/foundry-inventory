@@ -17,6 +17,34 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const supplierBenefits=require('../../purchasing/agent-supplier-benefits');
+  router.get('/autopilot/supplier-benefits',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-benefits',{title:'Supplier rebates and volume discounts',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierBenefits.page(database,req.ctx,{q:req.query.q,after:req.query.after}))));
+  router.post('/autopilot/supplier-benefits/estimate',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const input=await supplierBenefits.resolveCodes(database,req.ctx,req.body),result=await supplierBenefits.estimate(database,req.ctx,input);
+    res.page('autopilot/supplier-benefits',{title:'Supplier benefit estimate',nav:'autopilot',backTo:{href:'/autopilot/supplier-benefits',label:'Supplier benefits'},...await supplierBenefits.page(database,req.ctx,{input: req.body,result})});
+  }));
+  router.post('/autopilot/supplier-benefits',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const input=await supplierBenefits.resolveCodes(database,req.ctx,req.body),saved=await supplierBenefits.configure(database,req.ctx,input);res.redirect(303,'/autopilot/supplier-benefits/'+saved.id);
+  }));
+  router.post('/autopilot/supplier-benefits/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierBenefits.configure(database,req.ctx,{...req.body,id:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/supplier-benefits');
+  }));
+  router.post('/autopilot/supplier-benefits/:id/resume',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierBenefits.configure(database,req.ctx,{...req.body,id:req.params.id,resume:'yes'});res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
+  }));
+  router.get('/autopilot/supplier-benefits/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-benefits',{title:'Review supplier benefit agreement',nav:'autopilot',backTo:{href:'/autopilot/supplier-benefits',label:'Supplier benefits'}},()=>supplierBenefits.page(database,req.ctx,{id:req.params.id,evidencePage:req.query.evidencePage||1,edit:req.query.edit==='1'}))));
+  router.post('/autopilot/supplier-benefits/:id/edit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const input=await supplierBenefits.resolveCodes(database,req.ctx,req.body);await supplierBenefits.configure(database,req.ctx,{...input,id:req.params.id});res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-benefits/:id/scope',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierBenefits.refreshScope(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-benefits/:id/claims',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierBenefits.recordClaim(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-benefits/:id/claims/:claimId',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierBenefits.updateClaim(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
+  }));
   router.get('/autopilot/supplier-forecasts',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Supplier stock forecast',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{q:req.query.q}))));
   router.post('/autopilot/supplier-forecasts/preview',requireAuth,owner,asyncRoute(async(req,res)=>{
     const forecasts=require('../../purchasing/agent-supplier-forecasts'),skuIds=await forecasts.resolveCodes(database,req.ctx.workspaceId,req.body.codes);

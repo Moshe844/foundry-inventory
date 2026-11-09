@@ -1,0 +1,76 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+async function fixture(t){
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:120}),{db,ctx}=f;await f.subscribe('pro');const service=require('../../src/purchasing/agent-supplier-benefits'),today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),until=require('../../src/accounting/customer-money').addDays(today,30),po=(await db.query('SELECT * FROM purchase_orders WHERE workspace_id=$1 LIMIT 1',[ctx.workspaceId])).rows[0],line=(await db.query('SELECT * FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2',[ctx.workspaceId,po.id])).rows[0];
+ await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId:f.item.skuIds[0],purchaseUnit:'case',unitsPerPurchaseUnit:12,lastUnitCost:1});
+ const bill=await f.workflows.recordSupplierInvoice(db,ctx,{supplierId:'fixture-supplier',purchaseOrderId:po.id,supplierInvoiceNumber:'BENEFIT-'+randomUUID(),issueDate:today,dueDate:until,currency:'USD',lines:[{purchaseOrderLineId:line.id,quantity:120,unitCostMinor:100}],documentTotalMinor:12000,idempotencyKey:randomUUID()});assert.equal(bill.status,'OPEN',JSON.stringify(bill));
+ const input=(overrides={})=>({title:'Agreed annual supplier rebate',sourceReference:'Owner-checked agreement '+randomUUID(),currency:'USD',startsOn:today,endsOn:today,claimOn:today,claimBy:until,supplierId:'fixture-supplier',allProducts:'yes',skuIds:[],terms:{basis:'net_spend',benefit:'percentage',method:'retroactive',rounding:'half_up',tiers:[{threshold:'0',rateBasisPoints:1000}]},confirmed:'yes',revision:0,...overrides});
+ const create=(overrides={})=>service.configure(db,ctx,input(overrides));return {...f,service,today,until,po,line,bill,input,create};
+}
+test('supplier benefit facts use actual posted matched purchases at the exact permitted plans without moving stock or money',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,balance=await f.balance(),journals=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),made=await f.create();
+ for(const plan of ['starter','growth','pro','enterprise']){
+  await f.subscribe(plan);if(plan==='starter'){await assert.rejects(service.facts(db,ctx,made.id),e=>e.code==='entitlement_required');await assert.rejects(f.create(),e=>e.code==='entitlement_required');continue;}
+  if(plan==='growth'){await assert.rejects(service.facts(db,ctx,made.id),e=>e.code==='entitlement_required');await assert.rejects(f.create(),e=>e.code==='entitlement_required');continue;}
+  const facts=await service.facts(db,ctx,made.id);assert.equal(facts.result.eligibleNetMinor,'12000');assert.equal(facts.result.potentialBenefitMinor,'1200');assert.equal(facts.eligible.length,1);assert.equal(facts.claimReady,true);assert.deepEqual(facts.warnings,[]);
+ }
+ assert.equal(await f.balance(),balance);assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),journals);
+ await f.subscribe('starter');await service.configure(db,ctx,{id:made.id,revision:1,stop:'yes'});assert.equal((await service.get(db,ctx.workspaceId,made.id)).enabled,false);
+});
+
+test('claim races, audit rollback and acknowledged then withdrawn history retain exact facts and prevent double submission',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,made=await f.create(),facts=await service.facts(db,ctx,made.id),input={requestKey:randomUUID(),expectedFingerprint:facts.sourceFingerprint,amount:'10.00',externalReference:'Actual submission 901',submittedOn:f.today,confirmed:'yes'};
+ const audit=require('../../src/operations/postgres-security-audit'),record=audit.record;audit.record=async()=>{throw Error('Controlled benefit audit failure');};try{await assert.rejects(service.recordClaim(db,ctx,made.id,input),/Controlled benefit audit failure/);}finally{audit.record=record;}
+ assert.equal((await service.facts(db,ctx,made.id)).claims.length,0);
+ const results=await Promise.allSettled([service.recordClaim(db,ctx,made.id,input),service.recordClaim(db,ctx,made.id,{...input,requestKey:randomUUID(),externalReference:'Actual submission 902'})]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ const after=await service.facts(db,ctx,made.id);assert.equal(after.claims.length,1);assert.equal(after.remainingClaimMinor,'200');const claim=after.claims[0];
+ const acknowledgement={revision:1,status:'ACKNOWLEDGED',reference:'Supplier acknowledgement A-2',date:f.today,confirmed:'yes'};await service.updateClaim(db,ctx,made.id,claim.id,acknowledgement);assert.equal((await service.updateClaim(db,ctx,made.id,claim.id,acknowledgement)).replayed,true);
+ await assert.rejects(service.updateClaim(db,ctx,made.id,claim.id,{revision:1,status:'WITHDRAWN',reference:'Withdrawn W-2',date:f.today,confirmed:'yes'}),/Reload this claim/);
+ await service.updateClaim(db,ctx,made.id,claim.id,{revision:2,status:'WITHDRAWN',reference:'Withdrawn W-2',date:f.today,confirmed:'yes'});const withdrawn=await service.facts(db,ctx,made.id);assert.equal(withdrawn.remainingClaimMinor,'1200');assert.equal(withdrawn.claims[0].acknowledgement_reference,acknowledgement.reference);assert.equal(withdrawn.claims[0].withdrawn_reference,'Withdrawn W-2');
+ await assert.rejects(service.updateClaim(db,ctx,made.id,claim.id,{...acknowledgement,revision:3}),/Reload this claim/);
+ await db.query("UPDATE users SET role='viewer' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(service.facts(db,ctx,made.id),e=>e.code==='forbidden');await assert.rejects(service.updateClaim(db,ctx,made.id,claim.id,acknowledgement),e=>e.code==='forbidden');await db.query("UPDATE users SET role='owner' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
+ await assert.rejects(service.facts(db,{...ctx,workspaceId:randomUUID()},made.id),e=>e.code==='forbidden');
+});
+
+test('background benefit checks respect shadow, job Watch, pause, plan downgrade and stopped agreements; Needs you uses saved observations',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,made=await f.create();assert.equal((await service.run(db,ctx.workspaceId)).skipped,'plan_or_watch_period');
+ await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+ const modes=require('../../src/autopilot/job-modes');await modes.save(db,ctx,97,{mode:'watch',revision:0});assert.equal((await service.run(db,ctx.workspaceId)).skipped,'owner_authority');await modes.save(db,ctx,97,{mode:'routine',revision:1});
+ await db.query('UPDATE workspace_autopilot SET paused=1 WHERE workspace_id=$1',[ctx.workspaceId]);assert.equal((await service.run(db,ctx.workspaceId)).skipped,'owner_authority');await db.query('UPDATE workspace_autopilot SET paused=0 WHERE workspace_id=$1',[ctx.workspaceId]);
+ assert.equal((await service.run(db,ctx.workspaceId)).checked,1);assert.equal((await service.run(db,ctx.workspaceId)).checked,0);const needs=await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,ctx.actorId);assert.equal(needs.filter(row=>row.sourceId==='supplier-benefit:'+made.id).length,1);
+ await f.subscribe('growth');assert.deepEqual(await service.inbox(db,ctx.workspaceId,ctx.actorId),[]);assert.equal((await service.run(db,ctx.workspaceId)).skipped,'plan_or_watch_period');await f.subscribe('starter');await service.configure(db,ctx,{id:made.id,revision:1,stop:'yes'});await f.subscribe('pro');assert.equal((await service.run(db,ctx.workspaceId)).checked,0);assert.deepEqual(await service.inbox(db,ctx.workspaceId,ctx.actorId),[]);
+});
+test('quantity programmes preserve exact case prices and require current SKU and stock-unit evidence',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,made=await f.create({allProducts:'no',skuIds:[f.item.skuIds[0]],terms:{basis:'stock_units',benefit:'unit_price',method:'retroactive',rounding:'half_up',pricePerUnits:'12',tiers:[{threshold:'100',unitPriceMinor:'1080'}]}}),facts=await service.facts(db,ctx,made.id);
+ assert.equal(facts.result.eligibleQuantity,'120');assert.equal(facts.result.potentialBenefitMinor,'1200');assert.equal(facts.claimReady,true);
+ await db.query("UPDATE skus SET code=code||'-RENAMED' WHERE id=$1",[f.item.skuIds[0]]);const changed=await service.facts(db,ctx,made.id);assert.equal(changed.claimReady,false);assert.match(changed.warnings.join(' '),/product code or stock unit changed/);
+ await assert.rejects(service.refreshScope(db,ctx,made.id,{revision:1,expectedFingerprint:'stale',confirmed:'yes'}),/Review the current supplier/);await service.refreshScope(db,ctx,made.id,{revision:1,expectedFingerprint:changed.scopeReview.fingerprint,confirmed:'yes'});const reviewed=await service.facts(db,ctx,made.id);assert.equal(reviewed.claimReady,true);assert.equal(reviewed.result.potentialBenefitMinor,'1200');assert.equal(reviewed.program.revision,2);
+});
+test('external claim tracking cannot exceed checked unclaimed benefit or post money, and retries retain the exact submitted facts',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,made=await f.create(),before=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),facts=await service.facts(db,ctx,made.id),input={requestKey:randomUUID(),expectedFingerprint:facts.sourceFingerprint,amount:'10.00',externalReference:'Actual supplier claim portal REF-123',submittedOn:f.today,confirmed:'yes'};
+ const recorded=await service.recordClaim(db,ctx,made.id,input);assert.equal((await service.recordClaim(db,ctx,made.id,input)).replayed,true);assert.equal((await service.recordClaim(db,ctx,made.id,{...input,requestKey:randomUUID()})).replayed,true);await assert.rejects(service.recordClaim(db,ctx,made.id,{...input,amount:'11.00'}),/different submitted work/);
+ const after=await service.facts(db,ctx,made.id);assert.equal(after.submittedMinor,'1000');assert.equal(after.remainingClaimMinor,'200');assert.equal(after.claims[0].status,'SUBMITTED');assert.equal(after.claims[0].id,recorded.id);assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),before);
+ await assert.rejects(service.recordClaim(db,ctx,made.id,{...input,requestKey:randomUUID(),externalReference:'A different actual claim',amount:'3.00',expectedFingerprint:after.sourceFingerprint}),/unclaimed checked benefit/);
+ await f.subscribe('growth');await assert.rejects(service.recordClaim(db,ctx,made.id,{...input,requestKey:randomUUID(),amount:'1.00',expectedFingerprint:after.sourceFingerprint}),e=>e.code==='entitlement_required');
+});
+
+test('native physical supplier returns reduce spend and exact stock units only after their posted credit is reconciled',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,spend=await f.create(),quantity=await f.create({allProducts:'no',skuIds:[f.item.skuIds[0]],terms:{basis:'stock_units',benefit:'unit_price',method:'retroactive',rounding:'half_up',pricePerUnits:'12',tiers:[{threshold:'100',unitPriceMinor:'1080'}]}}),before=await service.facts(db,ctx,spend.id),returns=require('../../src/operations/postgres-returns');
+ const requested=await returns.requestSupplierReturn(db,ctx,{supplierId:'fixture-supplier',supplierBillId:f.bill.billId,expectedCreditMinor:1200,reason:'Actually damaged goods returned',lines:[{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:12}],idempotencyKey:randomUUID()});
+ const pending=await service.facts(db,ctx,spend.id);assert.equal(pending.claimReady,false);assert.equal(pending.result.potentialBenefitMinor,'0');assert.match(pending.holds[0].review,/return.*reconciliation/);
+ await assert.rejects(service.recordClaim(db,ctx,spend.id,{requestKey:randomUUID(),expectedFingerprint:before.sourceFingerprint,amount:'12.00',externalReference:'Stale before return',submittedOn:f.today,confirmed:'yes'}),/current matched purchases/);
+ await returns.authorizeSupplierReturn(db,ctx,requested.supplierReturnId,{idempotencyKey:randomUUID()});await returns.shipSupplierReturn(db,ctx,requested.supplierReturnId,{idempotencyKey:randomUUID()});
+ const creditInput={idempotencyKey:randomUUID(),amountMinor:1200,creditDate:f.today,creditNumber:'Actual return credit R-12'};await returns.reconcileSupplierReturn(db,ctx,requested.supplierReturnId,creditInput);const stock=await f.balance(),journals=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
+ for(const id of [spend.id,quantity.id]){const checked=await service.facts(db,ctx,id);assert.equal(checked.result.eligibleNetMinor,'10800');assert.equal(checked.result.eligibleQuantity,'108');assert.equal(checked.result.potentialBenefitMinor,'1080');assert.equal(checked.claimReady,true);assert.deepEqual(checked.holds,[]);}
+ assert.equal((await returns.reconcileSupplierReturn(db,ctx,requested.supplierReturnId,creditInput)).replayed,true);assert.equal(await f.balance(),stock);assert.equal(stock,108);assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),journals);
+});
+
+test('Growth can estimate its own agreed terms without buying Pro first or creating persistent tracking, while Starter cannot',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f;await f.subscribe('growth');
+ const input=f.input({terms:undefined,basis:'net_spend',benefit:'percentage',method:'retroactive',rounding:'half_up',tiersText:'0.00 | 5\n100.00 | 10'}),before=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
+ const estimate=await service.estimate(db,ctx,input);assert.equal(estimate.estimateOnly,true);assert.equal(estimate.result.potentialBenefitMinor,'1200');assert.equal(estimate.claimReady,false);assert.equal(estimate.program.id,null);
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.agent_supplier_benefit_programs WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),before);
+ await assert.rejects(service.configure(db,ctx,input),e=>e.code==='entitlement_required');await f.subscribe('starter');await assert.rejects(service.estimate(db,ctx,input),e=>e.code==='entitlement_required');
+ await f.subscribe('pro');const made=await f.create();await db.query(`UPDATE accounting_supplier_bills SET charges='[{"kind":"discount","amountMinor":-100}]'::jsonb WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,f.bill.billId]);
+ const held=await service.facts(db,ctx,made.id);assert.equal(held.claimReady,false);assert.equal(held.result.potentialBenefitMinor,'0');assert.match(held.holds[0].review,/invoice-level discount/);
+});
