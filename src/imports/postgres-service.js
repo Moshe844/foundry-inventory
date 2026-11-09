@@ -984,6 +984,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status='SUCCEEDED' AND (p.records_invalid=0 OR p.id=$3) ORDER BY e.finished_at DESC LIMIT 1`,
   [ctx.workspaceId,plan.sourceHash,id])).rows[0];
   if(previous)return {duplicate:true,execution:previous,planId:previous.import_id};
+  await require('./agent-catalog-intake').check(database,ctx,plan);
   const storage=require('../commercial/storage-capacity');await database.transaction(c=>storage.reserve(c,ctx.workspaceId,'import:'+id,storage.importBytes(plan)),{isolation:'READ COMMITTED'});
   let executionId=newId('impexec');
   if(options.retryExecutionId)await requireRolledBackExecution(database,ctx,plan,options.retryExecutionId);

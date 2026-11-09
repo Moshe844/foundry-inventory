@@ -30,6 +30,12 @@ async function refresh(db,workspaceId){
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
+    ` UNION ALL SELECT 206,'Automation',s.month,'/autopilot/reviews/automation-opportunities',(s.month||'-01')::date
+      FROM stockchief_runtime.agent_automation_opportunities s WHERE s.workspace_id=$1 AND s.month=left($3::text,7)
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(s.rows) opportunity JOIN stockchief_runtime.assistant_action_proposals p
+        ON p.workspace_id=s.workspace_id AND '/actions/'||p.id=opportunity->>'link'
+        WHERE NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=p.workspace_id
+          AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
     (includeTransfers?' UNION ALL SELECT 124,\'Transfer\',"Transfer",link,"Due"::date FROM ('+transfers+') t WHERE "Result"=\'Past expected arrival\'':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
@@ -58,6 +64,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
       happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
       recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};
+    if(Number(r.job_id)===206)return {kind:'inventory',grouped:true,importance:'Information',priority:40,title:'Review this month’s automation opportunities',
+      happened:'Repeated owner approvals can become taught routines.',why:'The work stayed inside the same customer, supplier or product scope.',
+      recommendation:'Review the examples and choose the limits for each rule.',href:'/autopilot/reviews/automation-opportunities',actionLabel:'Review routines',sourceId:'agent-notice-206'};
     const transfer=Number(r.job_id)===124,name=transfer?'warehouse transfers':'orders, shipments or invoices';
     return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:transfer?'Overdue warehouse transfers':'Overdue orders, shipments and invoices',
       happened:r.n+' outstanding '+name+'. Earliest due date '+r.due+'.',why:'A scheduled check found work still open past the promised date.',

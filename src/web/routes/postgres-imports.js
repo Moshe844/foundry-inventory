@@ -29,6 +29,11 @@ async function locations(database,workspaceId){
 function createPostgresImportsRouter(database,{provider=null}={}){
   const router=express.Router();
   router.use('/imports',requireAuth);
+  router.use('/imports',(req,_res,next)=>{
+    if(['GET','HEAD'].includes(req.method)&&!require('../../actions/financial-visibility').costs(req.user))
+      return next(new (require('../../domain/errors').AuthorizationError)('Purchase permissions are required to view source files and their costs.'));
+    return next();
+  });
   async function renderStart(req,res){return res.page('imports/start',{
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),

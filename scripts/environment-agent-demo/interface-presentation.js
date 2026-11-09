@@ -3,6 +3,7 @@
 // remains in the durable evidence journal. Never applied to business rows,
 // browser observations or authority checks.
 const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults',INDEX='_stockchiefOperationIndexEncoding',SIGNATURES='_stockchiefSignatureIndexEncoding';
+const ROWS='_stockchiefOperationRows';
 function prefixGroups(names){
  const out=[];for(let i=0;i<names.length;){const first=names[i],family=typeof first==='string'&&first.includes('.')?first.slice(0,first.indexOf('.')+1):null;
   if(!family){out.push(first);i++;continue;}let end=i+1;while(end<names.length&&typeof names[end]==='string'&&names[end].startsWith(family))end++;
@@ -11,21 +12,22 @@ function prefixGroups(names){
  }return out;
 }
 function compact(value){
- if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES].some(key=>Object.hasOwn(value,key)))return value;
+ if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;
  const occurrences=new Map(),referenceBytes=Buffer.byteLength(JSON.stringify({$ref:PREFIX+'d99999'}));let existingReference=false;
- function count(v){if(!v||typeof v!=='object')return;const encoded=JSON.stringify(v);
+ function count(v){if(!v||!['object','string'].includes(typeof v))return;const encoded=JSON.stringify(v);
   if(typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX))existingReference=true;
   if(Buffer.byteLength(encoded)>=referenceBytes+12){const entry=occurrences.get(encoded)||{value:v,count:0};entry.count++;occurrences.set(encoded,entry);}
-  for(const child of Object.values(v))count(child);
+  if(typeof v==='object')for(const child of Object.values(v))count(child);
  }
  count(value);if(existingReference)return value;const candidates=new Map(),definitions={};
  for(const [encoded,entry]of occurrences)if(entry.count>1&&Buffer.byteLength(encoded)*(entry.count-1)>entry.count*referenceBytes+12)candidates.set(encoded,entry.value);
  function visit(v,root=false){
-  if(!v||typeof v!=='object')return v;const encoded=JSON.stringify(v);
+  if(!v||!['object','string'].includes(typeof v))return v;const encoded=JSON.stringify(v);
   if(!root&&candidates.has(encoded)){let key=Object.keys(definitions).find(key=>JSON.stringify(definitions[key])===encoded);
    if(key===undefined){key='d'+Object.keys(definitions).length;definitions[key]=v;}
    return {$ref:PREFIX+key};
   }
+  if(typeof v==='string')return v;
   return Array.isArray(v)?v.map(child=>visit(child)):Object.fromEntries(Object.entries(v).map(([key,child])=>[key,visit(child)]));
  }
  const result=visit(value,true);
@@ -69,10 +71,16 @@ function compact(value){
   const packed=result[field].map(signature=>Array.isArray(signature.names)?{...signature,names:prefixGroups(signature.names)}:signature);
   if(Buffer.byteLength(JSON.stringify(packed))+100<Buffer.byteLength(JSON.stringify(result[field]))){result[field]=packed;result[SIGNATURES]='operation_numbers_and_prefix_groups';}
  }
+ if(result.indexComplete&&result.operations.length&&result.operations.every(op=>typeof op.name==='string'&&typeof op.description==='string')){
+  const rows=result.operations.map(({name,description,...rest})=>Object.keys(rest).length?[name,description,rest]:[name,description]);
+  if(Buffer.byteLength(JSON.stringify(rows))+100<Buffer.byteLength(JSON.stringify(result.operations))){
+   result.operations=rows;result[ROWS]=['name','description','additionalFields'];
+  }
+ }
  return Buffer.byteLength(JSON.stringify(result))<Buffer.byteLength(JSON.stringify(value))?result:value;
 }
 function expand(value){
- if(!value||![KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES].some(key=>Object.hasOwn(value,key)))return value;const definitions=value[KEY]||{};
+ if(!value||![KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;const definitions=value[KEY]||{};
  function visit(v){if(!v||typeof v!=='object')return v;
   if(Object.keys(v).length===1&&typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX)){
    const key=v.$ref.slice(PREFIX.length);if(!Object.hasOwn(definitions,key))throw Error('INTERFACE_REFERENCE_UNAVAILABLE');
@@ -81,7 +89,16 @@ function expand(value){
   }
   return Array.isArray(v)?v.map(visit):Object.fromEntries(Object.entries(v).map(([key,child])=>[key,visit(child)]));
  }
- const {[KEY]:ignored,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,[INDEX]:indexEncoding,[SIGNATURES]:signatureEncoding,...rest}=value;
+ const {[KEY]:ignored,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,[INDEX]:indexEncoding,[SIGNATURES]:signatureEncoding,[ROWS]:rowEncoding,...rest}=value;
+ if(rowEncoding){
+  if(JSON.stringify(rowEncoding)!==JSON.stringify(['name','description','additionalFields']))throw Error('INVALID_INTERFACE_OPERATION_ROWS');
+  rest.operations=rest.operations.map(row=>{
+   if(!Array.isArray(row)||row.length<2||row.length>3||typeof row[0]!=='string'||typeof row[1]!=='string'||
+    row.length===3&&(!row[2]||typeof row[2]!=='object'||Array.isArray(row[2])||Object.hasOwn(row[2],'name')||Object.hasOwn(row[2],'description')))
+    throw Error('INVALID_INTERFACE_OPERATION_ROWS');
+   return {name:row[0],description:row[1],...row[2]};
+  });
+ }
  if(defaults)rest.operations=rest.operations.map(op=>({...defaults,...op}));
  if(datasetDefaults)rest.datasetIndex=rest.datasetIndex.map(dataset=>({...datasetDefaults,...dataset}));
  if(indexEncoding){

@@ -19,12 +19,12 @@ const statusLabel=s=>{const text=String(s||'').replaceAll('_',' ').toLowerCase()
 </div>
 <section class="pd-money sc-product-prices" aria-label="Price and cost">
   <div>Sells for <% if(priceLabel==='Not set'&&owner&&single){ %><a href="/pricing/new?skuId=<%= first.id %>">Set price →</a><% }else{ %><strong><%= priceLabel %></strong><% } %></div>
-  <div>Purchase cost <% if(costLabel==='Not set'&&owner&&single){ %><a href="/pricing/purchase-costs/new?skuId=<%= first.id %>">Set cost →</a><% }else{ %><strong><%= costLabel %></strong><% } %></div>
-  <div>Profit per <%= unit %> <strong class="<%= /^(Not set|Needs)/.test(profitLabel)?'is-quiet':'' %>"><%= profitLabel %></strong></div>
+  <% if(locals.canViewCosts!==false){ %><div>Purchase cost <% if(costLabel==='Not set'&&owner&&single){ %><a href="/pricing/purchase-costs/new?skuId=<%= first.id %>">Set cost →</a><% }else{ %><strong><%= costLabel %></strong><% } %></div><% } %>
+  <% if(locals.canViewMargins!==false){ %><div>Profit per <%= unit %> <strong class="<%= /^(Not set|Needs)/.test(profitLabel)?'is-quiet':'' %>"><%= profitLabel %></strong></div>
   <% if(marginLabel&&marginLabel!=='Not set'){ %><div>Margin <strong><%= marginLabel %></strong></div><% } %>
-  <% if((price&&cost)||(v.money?.profitLabel&&v.money.profitLabel!=='Not set')){ %><small class="sc-business-note">Quoted margin per <%= unit %>; actual sales profit uses the recorded stock cost.</small><% } %>
+  <% if((price&&cost)||(v.money?.profitLabel&&v.money.profitLabel!=='Not set')){ %><small class="sc-business-note">Quoted margin per <%= unit %>; actual sales profit uses the recorded stock cost.</small><% } %><% } %>
 </section>
-<nav class="sc-section-tabs" aria-label="Product tabs"><% for(const [key,label]of [['overview','Overview'],['history','History'],['orders','Orders'],['suppliers','Suppliers & costs']]){ %><a href="<%= base %>?tab=<%= key %>" aria-current="<%= v.tab===key?'page':'false' %>"><%= label %></a><% } %></nav>
+<nav class="sc-section-tabs" aria-label="Product tabs"><% for(const [key,label]of [['overview','Overview'],['history','History'],['orders','Orders'],['suppliers','Suppliers & costs']].filter(([key])=>key!=='suppliers'||locals.canViewCosts!==false)){ %><a href="<%= base %>?tab=<%= key %>" aria-current="<%= v.tab===key?'page':'false' %>"><%= label %></a><% } %></nav>
 <div class="pd-grid <%= variantTotal>1?'pd-grid--wide':'' %>">
 <div class="pd-main">
 <% if(v.tab==='overview'){const peak=Math.max(1,...v.sales.map(r=>Math.abs(r.revenue_minor))),totalSold=v.sales.reduce((n,r)=>n+r.revenue_minor,0),dayKey=value=>String(value instanceof Date?value.toISOString():value).slice(0,10),soldOn=new Map(v.sales.map(r=>[dayKey(r.posting_date),r.revenue_minor])),lastDay=[new Date().toISOString().slice(0,10),...soldOn.keys()].sort().at(-1),salesDays=Array.from({length:Number(v.days)},(_,i)=>new Date(Date.parse(lastDay+'T12:00:00Z')-(Number(v.days)-1-i)*86400000).toISOString().slice(0,10)); %>

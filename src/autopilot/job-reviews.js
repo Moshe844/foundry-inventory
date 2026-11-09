@@ -5,6 +5,9 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../actions/financial-visibility').definition,
+  ...require('./automation-opportunities').definitions,
+  {id:13,key:'kit-capacity',label:'Buildable kits and missing parts',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-parts').review},
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
   {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
@@ -58,6 +61,7 @@ function offers(state){
 }
 
 const suggestions={
+  13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
   17:r=>r.SKU+' at '+r.Location+' · '+r.Review+'.',

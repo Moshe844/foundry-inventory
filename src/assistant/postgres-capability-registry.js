@@ -14,6 +14,9 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  unitQuantity:{type:'string',maxLength:40,description:'Exact decimal quantity to convert.'},
+  fromUnit:{type:'string',maxLength:60,description:'Source unit or the saved supplier purchase unit, such as case, kg or lb.'},
+  quoteValidUntil:{type:'string',maxLength:10,description:'Customer quotation expiry date, YYYY-MM-DD.'},
   demandChangePercent:{type:'number',minimum:-100,maximum:1000,description:'The sales change percentage specified by the user for a demand scenario.'},
   markdownPercent:{type:'number',minimum:0,maximum:100,description:'The proposed markdown specified by the owner for a clearance plan.'},
   agentJob:{type:'string',enum:agentReviews.definitions.map(d=>d.key),description:'Choose the requested inventory-agent review by its registered job name.'},
@@ -331,7 +334,7 @@ const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_or
   transfers:'transfer',customer_returns:'customer_return'};
 const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs','messages','prices']);
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
-  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[]),...(view==='prices'?['priceScope']:[])],'read',permissions.VIEW,'none',
+  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[]),...(view==='prices'?['priceScope']:[])],'read',require('../actions/financial-visibility').readPermissions[view]||permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
     timeframe:args.timeframe||'all_time',...(PAGED_READS.has(view)?{offset:args.offset??0}:{}),...(view==='prices'?{priceScope:args.priceScope||'current'}:{})},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
@@ -343,6 +346,10 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
       ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:{})},
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 add('read.custody','Read the latest 100 rental and consignment agreement headers. Pass an exact recordReference to read that agreement and 50 product lines, following extent.nextOffset with offset. Read booking capacity, expected-return dependencies and bounded recurring billing terms and invoices on the exact agreement. Due dates never prove a physical return.',['recordReference','offset'],'read',permissions.VIEW,'none',(_service,db,ctx,_text,args)=>require('../custody/ask-contracts').read(db,ctx,args),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'custody',recordKind:'custody_agreement',answerMode:'evidence',commercialCapability:'inventory.core'});
+add('read.unit_conversion','Convert an exact product quantity from a measured unit or a saved supplier pack into its stocking unit. Report any stock precision conflict.',
+  ['sku','unitQuantity','fromUnit','supplier'],'read',permissions.VIEW,'none',
+  (_service,db,ctx,_text,args)=>require('../domain/agent-unit-conversion').read(db,ctx,args),async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),
+  {required:['sku','unitQuantity','fromUnit'],answerMode:'evidence'});
 add('read.staff_guide','Answer how-to questions about using StockChief. Return instructions and destinations available to this employee on the current inventory plan. Pass the user’s question as search.',
   ['search'],'read',permissions.VIEW,'none',async(_service,db,ctx,text,args)=>{
     const guide=await require('./staff-guide').read(db,ctx,args.search||text,{requireAgent:true});

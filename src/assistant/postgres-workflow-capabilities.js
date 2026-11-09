@@ -29,6 +29,7 @@ const {nowIso,newId}=require('../lib/util');
 // freezes the exact requested effect for approval. The canonical service
 // validates and executes it again inside the approval transaction.
 const RECORDS=Object.freeze({
+  sales_quotation:{table:'sales_quotations',number:'quote_number',label:'customer quotation'},
   custody_agreement:{table:'custody_agreements',number:'agreement_number',label:'rental or consignment agreement'},
   manufacturing_work_order:{table:'manufacturing_work_orders',number:'order_number',label:'production work order'},
   manufacturing_bom:{table:'manufacturing_boms',number:'id',label:'BOM revision'},
@@ -704,6 +705,9 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  ...require('../imports/agent-catalog-intake').specs,
+  require('../purchasing/agent-kit-parts').spec,
+  ...require('../sales/agent-quotes').specs,
   require('../purchasing/agent-regroup-orders').spec(24),require('../purchasing/agent-regroup-orders').spec(25),
   {name:'catalog.fill_supplier_specs',description:'Fill missing barcodes, unit weights and dimensions from the exact approved supplier file. Skip unknown units, duplicate barcodes or conflicting evidence. Optionally restrict to a named SKU.',
     fields:['sourceImport','sourcePage','sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',

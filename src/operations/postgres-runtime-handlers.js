@@ -427,6 +427,7 @@ async function autopilotEvaluate(job,client){
     if(require('../commercial/agent-plan').usesAgentTerms(account)&&account.plan){
       const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.automation-opportunities',idempotencyKey:'automation:'+month,payload:{},priority:65,maxAttempts:3});
     }
   }
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
@@ -663,6 +664,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
+  'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);

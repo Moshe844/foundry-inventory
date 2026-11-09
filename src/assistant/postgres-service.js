@@ -180,6 +180,11 @@ async function salesActivity(database,ctx,timeframe){
 }
 
 async function lookup(database,ctx,request,options={}) {
+  const permissions=require('../actions/permissions'),required=require('../actions/financial-visibility').readPermissions[request.view];
+  if(required){
+    const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+    permissions.assertCan(actor,required,'read this financial information');
+  }
   const result=await lookupRecords(database,ctx,request,options);
   const kind=require('./postgres-capability-registry').registry.get('read.'+request.view)?.recordKind;
   const collection=kind&&require('../web/postgres-record-destinations').RECORDS[kind]?.collection;

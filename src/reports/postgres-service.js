@@ -21,7 +21,7 @@ const querySyntax=Object.freeze({operators:Object.freeze([...OPERATORS]),aggrega
 // Discovery and execution share the same registered fields and validator enums.
 function queryContract(key,actor){
  if(key==='composed')return composed.queryContract(actor);
- const dataset=registry.get(key);
+ const dataset=registry.get(key,actor);
  if(!dataset||!permissions.can(actor,dataset.permission))return null;
  const fields=Object.keys(dataset.fields),field={type:'string',enum:fields};
  return {schema:{type:'object',additionalProperties:false,required:['dataset'],properties:{
@@ -53,7 +53,7 @@ function fieldList(value,fields,maximum){
 // retain their existing strict validation and are never silently rewritten.
 function inspectionSpec(spec,actor){
   if(!spec||spec.dataset==='composed'||Object.hasOwn(spec,'columns')||Object.hasOwn(spec,'groups')||spec.summary===true)return spec;
-  const dataset=registry.get(spec.dataset);if(!dataset)invalid('Choose an available report dataset.');ensureActor(actor,dataset);
+  const dataset=registry.get(spec.dataset,actor);if(!dataset)invalid('Choose an available report dataset.');ensureActor(actor,dataset);
   const columns=Object.keys(dataset.fields).slice(0,12);
   if(Object.hasOwn(dataset.fields,'currency')&&!columns.includes('currency')){if(columns.length===12)columns.pop();columns.push('currency');}
   return {...spec,columns};
@@ -62,7 +62,7 @@ function normalize(spec,actor){
   spec=spec||{};
   if(spec.dataset==='composed')return composed.normalize(spec,actor);
   const datasetKey=safeText(spec?.dataset,60);
-  const dataset=registry.get(datasetKey);if(!dataset)invalid('Choose an available report dataset.');
+  const dataset=registry.get(datasetKey,actor);if(!dataset)invalid('Choose an available report dataset.');
   ensureActor(actor,dataset);
   const columns=fieldList(spec.columns,dataset.fields,Object.keys(dataset.fields).length);
   const groups=fieldList(spec.groups,dataset.fields,3);

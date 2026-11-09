@@ -126,7 +126,7 @@ const datasets=Object.freeze({
       JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id
       WHERE m.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     fields:{occurred_on:'date',product:'text',sku:'text',location:'text',operation:'text',quantity_delta:'number',reference:'text'}},
-  inventory_valuation:{label:'Recorded inventory book value',permission:permissions.VIEW,
+  inventory_valuation:{label:'Recorded inventory book value',permission:permissions.VIEW_ACCOUNTING,
     aggregateProjections:[{aggregates:['sum'],filterFields:['currency','sku'],groupFields:['sku','currency'],fields:['sku','costed_units','book_cost_minor','currency'],source:`WITH costs_by_sku AS MATERIALIZED(${require('../projections/postgres-cost-summaries').source()})
       SELECT s.code AS sku,b.quantity_units AS costed_units,b.total_cost_minor AS book_cost_minor,a.base_currency AS currency FROM costs_by_sku b JOIN skus s ON s.workspace_id=$1 AND s.id=b.sku_id JOIN accounting_settings a ON a.workspace_id=s.workspace_id AND a.enabled=1`},
       {fields:['sku','costed_units','book_cost_minor','currency'],source:`SELECT s.code AS sku,b.quantity_units::numeric AS costed_units,b.total_cost_minor::bigint AS book_cost_minor,a.base_currency AS currency FROM accounting_inventory_cost_balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id JOIN accounting_settings a ON a.workspace_id=b.workspace_id AND a.enabled=1 WHERE b.workspace_id=$1`}],
@@ -142,7 +142,7 @@ const datasets=Object.freeze({
       WHERE b.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
     fields:{product:'text',variant:'text',product_variant:'text',sku:'text',location:'text',costed_units:'number',
       book_cost_minor:'money_minor',currency:'text',as_of:'date'}},
-  inventory_receipt_age:{label:'Recorded inventory value and receipt recency',permission:permissions.VIEW,
+  inventory_receipt_age:{label:'Recorded inventory value and receipt recency',permission:permissions.VIEW_ACCOUNTING,
     source:`WITH receipts AS (SELECT workspace_id,sku_id,location_id,MAX(created_at) AS last_received_at
       FROM accounting_inventory_cost_events WHERE workspace_id=$1 AND physical_quantity_delta>0
       GROUP BY workspace_id,sku_id,location_id)
@@ -162,7 +162,7 @@ const datasets=Object.freeze({
       LEFT JOIN receipts r ON r.workspace_id=b.workspace_id AND r.sku_id=b.sku_id AND r.location_id=b.location_id
       WHERE b.workspace_id=$1 AND b.quantity_units>0`,recordHref:row=>`/inventory/${row.record_id}`,
     fields:{product:'text',sku:'text',location:'text',costed_units:'number',book_cost_minor:'money_minor',currency:'text',last_received_on:'date',days_since_last_receipt:'number'}},
-  inventory_cost_movements:{label:'Recorded inventory cost changes',permission:permissions.VIEW,
+  inventory_cost_movements:{label:'Recorded inventory cost changes',permission:permissions.VIEW_ACCOUNTING,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       cm.quantity_delta::numeric AS quantity_delta,cm.physical_quantity_delta::numeric AS physical_quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,
       cm.cost_source_type AS source_kind,a.base_currency AS currency,
@@ -515,9 +515,16 @@ const datasets=Object.freeze({
       last_activity_on:'date',processing:'text'}},
 });
 
-function list(actor){return Object.entries(datasets).filter(([,dataset])=>permissions.can(actor,dataset.permission))
+function scoped(key,actor){
+ const dataset=datasets[key];
+ if(!dataset||!actor||key!=='stock'||require('../actions/financial-visibility').costs(actor))return dataset;
+ const hidden=new Set(['costed_units','recorded_cost_minor','currency','cost_status']);
+ return {...dataset,label:'Stock by product, variant and location',fields:Object.fromEntries(Object.entries(dataset.fields).filter(([field])=>!hidden.has(field))),
+  moneyCompleteness:{},enumFields:[],filterValues:{}};
+}
+function list(actor){return Object.entries(datasets).map(([key])=>[key,scoped(key,actor)]).filter(([,dataset])=>permissions.can(actor,dataset.permission))
   .map(([key,dataset])=>({key,label:dataset.label,fields:dataset.fields,
     metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||null,
     ...(dataset.filterValues?{filterValues:dataset.filterValues}:{})}));}
-function get(key){return datasets[key]||null;}
+function get(key,actor){return scoped(key,actor)||null;}
 module.exports={datasets,list,get};
