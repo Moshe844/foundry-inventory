@@ -14,6 +14,7 @@ const activities = new Map([
   ['invoice-dispute','Prepare and send a sourced supplier invoice dispute'],
   ['customer-statement','Prepare and send a requested customer account statement'],
   ['quote-followup','Prepare and send a follow-up on a customer quotation'],
+  ['supplier-forecast','Prepare and share a supplier stock and demand forecast'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -84,6 +85,11 @@ async function report(db,ctx,window='week') {
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
       WHERE m.workspace_id=$1 AND m.stock_ready_order_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
         AND e.payload->'standingAuthority'->>'kind'='stock_ready_notice' GROUP BY m.id UNION ALL
+    SELECT 'supplier-forecast',min(m.sent_at::timestamptz) FROM supplier_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      JOIN stockchief_runtime.agent_supplier_forecast_reports r ON r.workspace_id=m.workspace_id AND r.communication_id=m.id
+      WHERE m.workspace_id=$1 AND m.status='SENT' AND m.external_message_id IS NOT NULL AND e.payload->'standingAuthority'->>'kind'='supplier_forecast'
+        AND e.payload->'standingAuthority'->>'recordId'=r.id AND e.payload->'standingAuthority'->>'sourceFingerprint'=r.source_fingerprint GROUP BY m.id UNION ALL
     SELECT 'invoice-dispute',min(m.sent_at::timestamptz) FROM supplier_communications m
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
       WHERE m.workspace_id=$1 AND m.invoice_dispute_bill_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL

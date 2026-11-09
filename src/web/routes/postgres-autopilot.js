@@ -17,6 +17,21 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.get('/autopilot/supplier-forecasts',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Supplier stock forecast',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{q:req.query.q}))));
+  router.post('/autopilot/supplier-forecasts/preview',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const forecasts=require('../../purchasing/agent-supplier-forecasts'),skuIds=await forecasts.resolveCodes(database,req.ctx.workspaceId,req.body.codes);
+    const saved=await forecasts.preview(database,req.ctx,{supplierId:req.body.supplierId,connectorId:req.body.connectorId,skuIds,requestKey:req.body.requestKey});res.redirect(303,'/autopilot/supplier-forecasts/'+saved.id);
+  }));
+  router.get('/autopilot/supplier-forecasts/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Review supplier forecast',nav:'autopilot',backTo:{href:'/autopilot/supplier-forecasts',label:'Supplier forecasts'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{id:req.params.id}))));
+  router.post('/autopilot/supplier-forecasts/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-supplier-forecasts').send(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-forecasts/:id/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-forecast-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,null,{...req.body,ruleId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/supplier-forecasts');
+  }));
   router.post('/autopilot/customer-statements/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
