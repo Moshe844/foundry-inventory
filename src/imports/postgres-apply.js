@@ -22,6 +22,14 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   await inputOptions.beforeBatchCommit?.();return result;
  },{isolation:'READ COMMITTED',retrySafe:true});}
  async function save(client,value){const next={...value,hash:plan.integrityHash,updatedAt:nowIso()};await client.query('UPDATE import_plans SET apply_checkpoint=$3::jsonb WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(next)]);return next;}
+ // Commit the staged identities first, then let PostgreSQL sample that one
+ // scratch table: every preparing and saving batch below reads it. Staging is
+ // idempotent, so the loop's own call returns at once and resumes skip it.
+ if(plan.recordsValid>=1000){
+  await emit('preparing',0);
+  await phase(async(client,saved)=>{await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));return saved;});
+  await require('./postgres-statistics').refreshStagedIdentities(database);
+ }
  do {checkpoint=await phase(async(client,saved)=>{
   await identities.stage(client,ctx,plan,deps,prepared=>inputOptions.onProgress?.({stage:'preparing',processedRows:Number(saved.savedRows||0),preparedRows:prepared,totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt}));
   // Each receipt commits only after this batch's source-row update count,

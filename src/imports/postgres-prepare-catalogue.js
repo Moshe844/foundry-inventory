@@ -43,20 +43,24 @@ async function prepare(client,ctx,plan,options,deps,saved={}){
   const representatives=(await client.query(`WITH page AS MATERIALIZED(SELECT DISTINCT ON(product_key,variant_key) product_key,variant_key,row_id,row_number
    FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NULL
    AND (product_key,variant_key)>($3::text,$4::text) ORDER BY product_key,variant_key,row_number,row_id LIMIT 500)
-   SELECT page.*,r.parsed FROM page JOIN import_rows r ON r.id=page.row_id ORDER BY page.product_key,page.variant_key`,[...params,lastProduct,lastVariant])).rows;
+   SELECT page.*,r.parsed FROM page JOIN LATERAL(SELECT parsed FROM import_rows WHERE id=page.row_id OFFSET 0) r ON true ORDER BY page.product_key,page.variant_key`,[...params,lastProduct,lastVariant])).rows;
   if(!representatives.length){const counts=await identities.counts(client,ctx,plan);return {cataloguePrepared:true,catalogueChecked:true,itemsCreated,skusCreated,itemsUpdated:counts.updated};}
-  const products=[...new Set(representatives.map(r=>r.product_key))];
+  const products=[...new Set(representatives.map(r=>r.product_key))],lastRepresentative=representatives.at(-1);
   const grouped=new Map(products.map(k=>[k,[]]));for(const row of representatives){row.parsed=typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed;grouped.get(row.product_key).push(row);}
   for(const group of grouped.values())group.sort((a,b)=>Number(a.row_number)-Number(b.row_number)||a.row_id.localeCompare(b.row_id));
-  const firstRows=(await client.query(`WITH first_rows AS MATERIALIZED(SELECT wanted.product_key,first.row_id FROM unnest($3::text[]) wanted(product_key)
-   CROSS JOIN LATERAL(SELECT row_id FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NULL AND product_key=wanted.product_key ORDER BY row_number,row_id LIMIT 1)first)
-   SELECT first_rows.product_key,r.parsed FROM first_rows JOIN LATERAL(SELECT parsed FROM import_rows WHERE id=first_rows.row_id OFFSET 0) r ON true`,[...params,products.filter(p=>p!==lastProduct)])).rows;
+  // Products that start in this batch are exactly those after the continuing
+  // one up to the last representative's: one ordered index range, not a probe each.
+  const firstRows=(await client.query(`WITH first_rows AS MATERIALIZED(SELECT DISTINCT ON(product_key) product_key,row_id FROM import_execution_identities
+   WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NULL AND product_key>$3::text AND product_key<=$4::text ORDER BY product_key,row_number,row_id)
+   SELECT first_rows.product_key,r.parsed FROM first_rows JOIN LATERAL(SELECT parsed FROM import_rows WHERE id=first_rows.row_id OFFSET 0) r ON true`,[...params,lastProduct,lastRepresentative.product_key])).rows;
   const firstByProduct=new Map(firstRows.map(r=>[r.product_key,typeof r.parsed==='string'?JSON.parse(r.parsed):r.parsed]));
-  const quotedPrices=(await client.query(`SELECT wanted.product_key,wanted.variant_key,quote.amount,quote.currency
-   FROM jsonb_to_recordset($3::jsonb) wanted(product_key text,variant_key text)
-   CROSS JOIN LATERAL(SELECT max(e.selling_price_minor)::text amount,max(e.currency) currency FROM import_execution_identities e
-    WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.existing_sku_id IS NULL AND e.product_key=wanted.product_key AND e.variant_key=wanted.variant_key
-      AND e.selling_price_minor IS NOT NULL)quote WHERE quote.amount IS NOT NULL`,[...params,JSON.stringify(representatives.map(r=>({product_key:r.product_key,variant_key:r.variant_key})))])).rows;
+  // This batch's representatives are every new identity after the cursor up
+  // to the last one, so their prices are one ordered index range. A per-SKU
+  // lookup here turned into a full scan per SKU whenever statistics lagged.
+  const quotedPrices=(await client.query(`SELECT product_key,variant_key,max(selling_price_minor)::text amount,max(currency) currency
+   FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NULL AND selling_price_minor IS NOT NULL
+    AND (product_key,variant_key)>($3::text,$4::text) AND (product_key,variant_key)<=($5::text,$6::text)
+   GROUP BY product_key,variant_key`,[...params,lastProduct,lastVariant,lastRepresentative.product_key,lastRepresentative.variant_key])).rows;
   const priceByIdentity=new Map(quotedPrices.map(r=>[r.product_key+':'+r.variant_key,r]));
   const definitions=[];
   for(const [product,group]of grouped){

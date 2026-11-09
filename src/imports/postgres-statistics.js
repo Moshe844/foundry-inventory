@@ -34,6 +34,20 @@ async function refreshAfterImport(database,result){
  return {state:deferred.length?'DEFERRED':'COMPLETE',refreshed,deferred};
 }
 
+// The execution identity cache is emptied when each import completes, so the
+// statistics refresh after completion always records it as empty. The next
+// import then plans every preparing batch against "no rows" and walks its own
+// staged identities from the start, once per batch. Sample only this import
+// scratch table, once it is staged and committed; catalogue and source tables
+// keep their refresh after verified completion. Bounded and safe to skip.
+async function refreshStagedIdentities(database){
+ try{
+  await database.transaction(client=>client.query('ANALYZE public.import_execution_identities (workspace_id,import_id,row_id,row_number,product_key,variant_key,existing_sku_id,existing_item_id)'),
+    {isolation:'READ COMMITTED',statementTimeoutMs:4000,lockTimeoutMs:500});
+  return {state:'COMPLETE'};
+ }catch(error){return {state:'DEFERRED',reason:error.code||'maintenance_unavailable'};}
+}
+
 async function enqueueAfterImport(database,ctx,importId,result){
  if(!result?.verified||!Number.isSafeInteger(Number(result.rowsImported))||Number(result.rowsImported)<500)return {state:'NOT_REQUIRED',refreshed:[],deferred:[]};
  const queued=await require('../operations/postgres-job-queue').enqueue(database,{workspaceId:ctx.workspaceId,kind:'import.refresh-statistics',idempotencyKey:'statistics:'+result.executionId,payload:{importId,executionId:result.executionId},priority:90,maxAttempts:3});
@@ -44,4 +58,4 @@ async function run(job,database){
  if(!row)return {state:'NOT_REQUIRED',refreshed:[],deferred:[]};
  return refreshAfterImport(database,{verified:true,rowsImported:Number(row.rows_imported),...(row.dataset==='suppliers'?{suppliersCreated:0}:{})});
 }
-module.exports={refreshAfterImport,enqueueAfterImport,run};
+module.exports={refreshAfterImport,refreshStagedIdentities,enqueueAfterImport,run};

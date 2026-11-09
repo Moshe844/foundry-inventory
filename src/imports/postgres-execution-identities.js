@@ -38,9 +38,13 @@ async function counts(client,ctx,plan){return (await client.query(`SELECT count(
  count(DISTINCT existing_item_id)::int updated FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2`,[ctx.workspaceId,plan.id])).rows[0];}
 async function hydrate(client,ctx,plan,page,checkpoint){
  const missing=page.filter(row=>!row.parsed.existingSkuId);
- const bindings=missing.length?(await client.query(`SELECT e.row_id,b.item_id,b.sku_id FROM import_execution_identities e
- LEFT JOIN import_catalogue_bindings b ON b.workspace_id=e.workspace_id AND b.import_id=e.import_id AND b.product_key=e.product_key AND b.variant_key=e.variant_key
- WHERE e.workspace_id=$1 AND e.import_id=$2 AND e.row_id=ANY($3::text[])`,[ctx.workspaceId,plan.id,missing.map(r=>r.id)])).rows:[];
+ // Primary-key probes for this page only. Both tables were just filled by this
+ // import, so a join planned from older statistics can scan them in full. The
+ // fence holds only the key: scope columns inside it let the planner pick a
+ // scope index and walk the whole import once per probe.
+ const bindings=missing.length?(await client.query(`SELECT e.row_id,b.item_id,b.sku_id FROM unnest($3::text[]) wanted(row_id)
+ JOIN LATERAL(SELECT row_id,workspace_id,import_id,product_key,variant_key FROM import_execution_identities WHERE row_id=wanted.row_id OFFSET 0) e ON e.workspace_id=$1 AND e.import_id=$2
+ LEFT JOIN LATERAL(SELECT item_id,sku_id FROM import_catalogue_bindings WHERE workspace_id=$1 AND import_id=$2 AND product_key=e.product_key AND variant_key=e.variant_key OFFSET 0) b ON true`,[ctx.workspaceId,plan.id,missing.map(r=>r.id)])).rows:[];
  const byId=new Map(bindings.map(r=>[r.row_id,r]));
  for(const row of page){const p=row.parsed;if(!p.existingSkuId){const b=byId.get(row.id);if(!b?.sku_id)throw new ValidationError('A prepared imported product is missing. Saved stock remains recorded.');p.createdSkuId=b.sku_id;p.createdItemId=b.item_id;}
   if(p.proposedLocationName){p.locationId=checkpoint.locations?.[p.proposedLocationName];if(!p.locationId)throw new ValidationError('A prepared source location is missing.');}}
