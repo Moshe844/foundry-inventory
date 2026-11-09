@@ -18,7 +18,7 @@
 <% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="ox-head">
   <div><h1 class="ox-title"><%= plan.sourceName %></h1>
-    <p class="ox-sub page-sub"><%= Number(plan.recordsDetected).toLocaleString('en-US') %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Review required before approval<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></p>
+    <p class="ox-sub page-sub"><%= Number(plan.recordsDetected).toLocaleString('en-US') %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Review required before approval<% } else { %><%= Number(plan.recordsValid).toLocaleString('en-US') %> ready · <%= Number(plan.recordsInvalid).toLocaleString('en-US') %> need correction<% } %></p>
   </div>
   <div class="ox-head__actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
