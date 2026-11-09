@@ -6,6 +6,7 @@ const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
   require('../warehouse/agent-putaway').definition,
+  require('../accounting/postgres-landed-costs').definition,
   require('../warehouse/agent-pick-release').definition,
   require('./third-party-stock').definition,
   require('../sales/agent-arrived-stock').definition,
@@ -144,6 +145,7 @@ async function run(db,ctx,key,options={}){
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
       ...(result.pickReleaseForm?{pickReleaseForm:result.pickReleaseForm}:{}),
       ...(result.putawayForm?{putawayForm:result.putawayForm}:{}),
+      ...(result.landedCostForm?{landedCostForm:result.landedCostForm}:{}),
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...(result.mapForm?{mapForm:result.mapForm}:{}),

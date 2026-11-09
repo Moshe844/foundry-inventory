@@ -29,6 +29,7 @@ const {nowIso,newId}=require('../lib/util');
 // freezes the exact requested effect for approval. The canonical service
 // validates and executes it again inside the approval transaction.
 const RECORDS=Object.freeze({
+  landed_cost_document:{table:'landed_cost_documents',number:'document_number',label:'received-goods cost allocation'},
   sales_quotation:{table:'sales_quotations',number:'quote_number',label:'customer quotation'},
   custody_agreement:{table:'custody_agreements',number:'agreement_number',label:'rental or consignment agreement'},
   manufacturing_work_order:{table:'manufacturing_work_orders',number:'order_number',label:'production work order'},
@@ -710,6 +711,7 @@ const SPECS=Object.freeze([
   require('../sales/agent-arrived-stock').spec,
   require('../sales/agent-stock-ready').spec,
   require('../warehouse/agent-putaway').spec,
+  require('../accounting/postgres-landed-costs').spec,
   require('../purchasing/agent-invoice-disputes').spec,
   require('../documents/agent-product-facts').spec,
   ...require('../documents/agent-filing').specs,

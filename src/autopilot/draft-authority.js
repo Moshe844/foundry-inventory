@@ -3,7 +3,7 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['landed_cost.apply',49],['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
 }
@@ -16,6 +16,7 @@ async function history(db,ctx,action,bound,amount){
     FROM stockchief_runtime.assistant_action_proposals p WHERE workspace_id=$1 AND action_type=$2 AND status='EXECUTED'
       AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'
       AND result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule'
+      AND ($2<>'landed_cost.apply' OR (result->>'automatic' IS DISTINCT FROM 'true' AND payload->>'needsLandedCostConfirmation'='false'))
       AND ($2<>'supplier_invoice.dispute' OR (payload->>'needsDisputeConfirmation'='false' AND EXISTS(
         SELECT 1 FROM supplier_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
         WHERE m.workspace_id=p.workspace_id AND m.id=p.result->>'communicationId' AND m.invoice_dispute_bill_id=p.payload->>'recordId'
@@ -37,6 +38,7 @@ async function settings(db,ctx,id,maximum){
     preview:amount>0?{...(await history(db,ctx,p.action_type,bound,amount)),maximum:money.fromMinor(amount,bound.currency)}:null,
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
     canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow&&p.result?.replayed!==true&&p.result?.executionAuthority?.kind!=='standing_job_rule'&&
+      (p.action_type!=='landed_cost.apply'||(p.result?.automatic!==true&&p.payload.needsLandedCostConfirmation===false))&&
       (p.action_type!=='supplier_invoice.dispute'||await require('../purchasing/agent-invoice-disputes').confirmedExample(db,ctx.workspaceId,p))};
 }
 async function save(db,ctx,id,input){

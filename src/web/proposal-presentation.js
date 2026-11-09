@@ -25,6 +25,9 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='landed_cost.apply'){
+  const p=proposal.payload.source;return {summary:proposal.summary,impact:'Updates recorded stock cost; quantities and supplier balances stay the same',fields:[{label:'Additional stock cost',value:require('../domain/currency').format(p.totalMinor,p.currency)},{label:'Allocation method',value:p.method},{label:'Expense evidence',value:p.charges.map(c=>c.billNumber+' · '+c.description).join(', ')},{label:'Received products',value:p.lines.map(l=>l.quantity+' × '+l.sku+' at '+l.location).join(', ')}]};
+ }
  if(proposal.action_type==='warehouse.prepare_putaway'){
   const p=proposal.payload.source;return {summary:proposal.summary,impact:'Prepares instructions and labels for received goods',fields:[{label:'Purchase order',value:p.order},{label:'Product',value:p.product+' · '+p.sku},{label:'Received units',value:String(p.quantity)},{label:'Receiving location',value:p.from.name},{label:'Destination bin',value:p.to.name},{label:'Physical stock',value:'Staff must carry out and record the actual movement separately.'}]};
  }

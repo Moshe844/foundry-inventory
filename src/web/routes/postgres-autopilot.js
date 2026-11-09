@@ -185,6 +185,13 @@ function createPostgresAutopilotRouter(database){
     try{await edi.access(database,req.ctx);}catch(error){if(error.code!=='entitlement_required')throw error;ediEnabled=false;}
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
+  const landedCosts=require('../../accounting/postgres-landed-costs');
+  router.get('/autopilot/landed-costs/new',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/landed-cost-new',{title:'Allocate freight, duty and fees',nav:'autopilot',...await landedCosts.sources(database,req.ctx,req.query)})));
+  router.post('/autopilot/landed-costs',requireAuth,owner,asyncRoute(async(req,res)=>{const made=await landedCosts.prepareForm(database,req.ctx,req.body);res.redirect(303,'/autopilot/landed-costs/'+made.id);}));
+  router.get('/autopilot/landed-costs/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/landed-cost',{title:'Received-goods stock cost',nav:'autopilot',...await landedCosts.page(database,req.ctx,req.params.id)})));
+  router.post('/autopilot/landed-costs/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await assistant.prepareAction(database,req.ctx,'Apply this received-goods cost allocation',{action:'landed_cost.apply',recordReference:req.params.id});if(p.status!=='PREPARED')throw new ValidationError('Review the current allocation document first.');res.redirect(303,'/actions/'+p.proposal.id);}));
+  router.post('/autopilot/landed-costs/:id/discard',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.voidDraft(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/landed-costs');}));
+  router.post('/autopilot/landed-costs/:id/reverse',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.reverse(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/landed-costs/'+req.params.id);}));
   router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);
     res.redirect(303,'/warehouse/putaway/'+made.id);
