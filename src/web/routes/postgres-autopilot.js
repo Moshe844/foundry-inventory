@@ -17,6 +17,15 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.post('/autopilot/invoice-reminders/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Prepare the selected customer invoice reminder',{action:'customer_invoice.remind',recordReference:req.body.invoiceNumber,mailbox:req.body.connectorId});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current invoice before preparing its reminder.');
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/invoice-reminders/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-invoice-reminders').configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/invoice-reminders');
+  }));
   router.post('/autopilot/customer-payments/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Match the selected recorded bank credit to its issued invoice',{action:'customer_payment.match_bank_line',recordReference:req.body.invoiceNumber,bankTransaction:req.body.bankTransaction});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');

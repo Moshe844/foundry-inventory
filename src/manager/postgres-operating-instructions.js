@@ -470,6 +470,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
   for(const change of changes) apply(ctx.workspaceId,change);
   const configured=await client.query(`WITH owned AS MATERIALIZED (SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
     SELECT (SELECT count(*) FROM stockchief_runtime.agent_draft_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_invoice_reminder_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_brand_watches WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_count_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_count_schedules WHERE workspace_id IN(SELECT id FROM owned))

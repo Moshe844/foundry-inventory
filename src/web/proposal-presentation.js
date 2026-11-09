@@ -25,6 +25,10 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='customer_invoice.remind'){
+  const p=proposal.payload,words='Hello '+p.customerName+',\n\nOur records show '+require('../domain/currency').format(p.balanceMinor,p.currency)+' outstanding on invoice '+p.invoiceNumber+', due '+p.dueDate+'. Please let us know if you have already paid or have a question about this invoice.\n\nThank you.';
+  return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',value:words}]};
+ }
  if(proposal.action_type==='customer_payment.match_bank_line'){
   const p=proposal.payload,money=require('../domain/currency');
   return {summary:proposal.summary,impact:p.existing?'Reviews an existing bank match':'Records received money against an invoice',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(p.expectedBalanceMinor!=null?[{label:'Invoice balance before matching',value:money.format(p.expectedBalanceMinor,p.currency)},{label:'Invoice balance after matching',value:money.format(p.expectedBalanceMinor-p.amountMinor,p.currency)}]:[])]};

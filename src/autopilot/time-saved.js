@@ -8,6 +8,7 @@ const activities = new Map([
   ['staff-request','Create a purchase order from an approved staff request'],
   ['invoice-match','Enter and match a supplier invoice from an agent proposal'],
   ['customer-receipt','Match a recorded customer bank receipt to its invoice'],
+  ['customer-reminder','Prepare and send a customer invoice payment reminder'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -65,6 +66,10 @@ async function report(db,ctx,window='week') {
       WHERE a.workspace_id=$1 AND a.action_type='customer_payment.match_bank_line' AND a.status='EXECUTED' AND a.result->>'replayed' IS DISTINCT FROM 'true'
         AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED')
       GROUP BY t.id UNION ALL
+    SELECT 'customer-reminder',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      WHERE m.workspace_id=$1 AND m.customer_invoice_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='invoice_reminder' GROUP BY m.id UNION ALL
     SELECT 'accounting-export',min(e.completed_at) FROM stockchief_runtime.provider_effects e
       WHERE e.workspace_id=$1 AND e.kind='accounting.journal.export' AND e.status='SUCCEEDED'
         AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id UNION ALL

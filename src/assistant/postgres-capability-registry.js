@@ -302,6 +302,7 @@ for(const spec of require('./postgres-workflow-capabilities').SPECS)action(spec.
   spec.fields,spec.permission,spec.name,{required:[...(spec.record?['recordReference']:[]),...(spec.name==='customer_return.request'
     ?['quantity','reason','location']:[])],commercialCapability:spec.capability,
     additionalCommercialCapabilities:spec.additionalCapabilities||[],
+    ...(spec.completionGate?{completionGate:spec.completionGate}:{}),
     resultingRecords:spec.resultingRecords||(spec.record?[spec.record]:[]),recordKind:spec.record||null,
     resultReference:spec.resultReference,resultDisplayReference:spec.resultDisplayReference,resultRecordKind:spec.resultRecordKind,
     singleEffectPerTarget:Boolean(spec.singleEffectPerTarget),
