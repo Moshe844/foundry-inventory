@@ -2140,6 +2140,10 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
     const tier=agentPolicy.actionPlan(agentAccount,contract.name);
+    if(automatic&&job&&tier!==undefined&&agentAccount.plan&&agentAccount.plan!=='starter'&&agentPolicy.usesAgentTerms(agentAccount)&&agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount)){
+      agentPolicy.requireJob(tier,job,'draft');
+      throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
+    }
     if(job && tier!==undefined){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
       agentPolicy.requireJob(tier,job,operation,{trained});
@@ -2174,7 +2178,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const invoiceMatch=contract.name==='purchase_order.record_supplier_invoice'&&agentPolicy.usesAgentTerms(agentAccount);
     const arrivedStock=contract.name==='sales_order.reserve_arrived'&&agentPolicy.usesAgentTerms(agentAccount);
     const invoiceDispute=contract.name==='supplier_invoice.dispute'&&agentPolicy.usesAgentTerms(agentAccount);
-    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:invoiceDispute?{...ctx,agentInvoiceDisputeScope:automatic?'automatic':'individual'}:ctx;
+    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:invoiceDispute?{...ctx,agentInvoiceDisputeScope:automatic?'automatic':'individual'}:['warehouse.wave.create','warehouse.release_orders'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount)?{...ctx,agentWarehouseReleaseScope:automatic?'automatic':'individual'}:ctx;
     const executed=await contract.execute(client,executionContext,payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',

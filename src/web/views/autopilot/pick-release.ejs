@@ -1,0 +1,6 @@
+<section class="card"><h2>Prepare a pick release</h2><p>Growth can handle a matching release after you approve an example and teach its goods-value limit. Pro and Custom can handle eligible releases within your saved authority. Every batch is limited to 20 orders.</p>
+<% if(form.orders.length){ %><form method="post" action="/autopilot/pick-release/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>First ready order at this warehouse <select name="order" required><% for(const o of form.orders){ %><option value="<%= o.id %>"><%= o.order_number %> · <%= o.location %> · <%= o.customer %></option><% } %></select></label>
+<label>Maximum orders <input name="quantity" type="number" min="1" max="20" value="20" required></label>
+<label>Picking strategy <select name="strategy"><option value="BATCH">Batch</option><option value="WAVE">Wave</option><option value="CLUSTER">Cluster</option></select></label><% if(form.blocked){ %><p><%= form.blocked %></p><% } %><button class="btn" <%= form.blocked?'disabled':'' %>>Prepare for review</button></form>
+<% }else{ %><p>No eligible fully reserved orders in this view.</p><% } %></section>

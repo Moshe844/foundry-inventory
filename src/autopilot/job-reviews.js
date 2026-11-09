@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../warehouse/agent-pick-release').definition,
   require('./third-party-stock').definition,
   require('../sales/agent-arrived-stock').definition,
   require('../sales/agent-stock-ready').definition,
@@ -140,6 +141,7 @@ async function run(db,ctx,key,options={}){
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
+      ...(result.pickReleaseForm?{pickReleaseForm:result.pickReleaseForm}:{}),
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...(result.mapForm?{mapForm:result.mapForm}:{}),

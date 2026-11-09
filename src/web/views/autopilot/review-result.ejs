@@ -1,5 +1,6 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
+<% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>
 <% if(result.arrivedStockForm){ %><%- include('arrived-stock',{result,csrfToken}) %><% } %>
 <% if(result.stockReadyForm){ %><%- include('stock-ready-updates',{result,csrfToken}) %><% } %>
 <% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>

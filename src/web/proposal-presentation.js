@@ -25,6 +25,12 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='warehouse.release_orders'){
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Releases picking work; stock remains on hand',fields:[{label:'Warehouse',value:p.locationName},{label:'Customer orders',value:p.orderNumbers.join(', ')},{label:'Picking strategy',value:p.strategy},{label:'Maximum orders in this release',value:String(p.limit)},{label:'Goods value',value:require('../domain/currency').format(p.training.amountMinor,p.training.currency)},{label:'Physical checks',value:'Staff must scan the pick and confirm actual handoff.'}]};
+ }
+ if(proposal.action_type==='warehouse.wave.create'){
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Releases picking work; stock remains on hand',fields:[{label:'Customer order',value:p.orderNumber||'The selected customer order'},{label:'Picking strategy',value:p.strategy},{label:'Physical checks',value:'Staff must scan the pick and confirm actual handoff.'}]};
+ }
  if(proposal.action_type==='supplier_invoice.dispute'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues a supplier invoice review request',fields:[{label:'Supplier invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Original document',value:p.sourceEvidence.filename},{label:'Message',value:require('../purchasing/agent-invoice-disputes').compose(p).body},...(p.needsDisputeConfirmation?[{label:'Needs your review',value:'Check the original document and invoice differences individually before sending.'}]:[])]};
  }
