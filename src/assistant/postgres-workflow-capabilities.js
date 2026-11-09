@@ -670,7 +670,7 @@ function warehouseScan(_database,_ctx,row,args){
 function bankImport(_database,_ctx,row,args){
   if(!Number(row.active))throw new ValidationError('This financial account is inactive.');
   const transactionDate=dateOnly(args.transactionDate,'Bank transaction date');
-  const amountMinor=moneyMinor(args.amount,'Bank transaction amount');
+  const amountMinor=require('../domain/currency').toMinor(args.amount,row.currency,{label:'Bank transaction amount',signed:true});
   if(!amountMinor)throw new ValidationError('Bank transaction amount cannot be zero.');
   const description=String(args.description||'').trim();
   if(!description||description.length>500)throw new ValidationError('Give the exact bank transaction description.');
@@ -682,7 +682,7 @@ function bankImport(_database,_ctx,row,args){
 function bankReconcile(_database,_ctx,row,args){
   if(!Number(row.active))throw new ValidationError('This financial account is inactive.');
   const statementEndDate=dateOnly(args.statementEndDate,'Statement ending date');
-  moneyMinor(args.statementEndingBalance,'Statement ending balance');
+  require('../domain/currency').toMinor(args.statementEndingBalance,row.currency,{label:'Statement ending balance',signed:true});
   const complete=String(args.enabled||'').toLowerCase();
   if(!['true','false'].includes(complete))throw new ValidationError(
     'Say whether to complete the reconciliation now or save it for review.');
