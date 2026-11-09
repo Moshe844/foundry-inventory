@@ -1,0 +1,77 @@
+'use strict';
+
+const plan=require('../commercial/agent-plan');
+const reviews=require('../autopilot/job-reviews');
+const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/errors');
+const jobs=require('../operations/postgres-job-queue');
+const kind='agent.api_review';
+const eventType='agent.review.completed';
+
+async function check(db,workspaceId){
+  await plan.requireWorkspaceJob(db,workspaceId,189,'automatic');
+}
+async function available(db,workspaceId){
+  const state=await plan.accountState(db,workspaceId);
+  return plan.usesAgentTerms(state)&&plan.permits(state.plan,189,'automatic');
+}
+async function issuer(db,ctx){
+  await check(db,ctx.workspaceId);
+  const result=await db.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner' FOR SHARE",[ctx.workspaceId,ctx.actorId]);
+  if(!result.rowCount)throw new AuthorizationError('Only the business owner can issue a token for Agent reviews.');
+}
+
+async function authorize(db,workspaceId,clientId){
+  await check(db,workspaceId);
+  const {rows:[row]}=await db.query(`SELECT c.created_by_user_id AS owner FROM public_api_clients c
+    JOIN users u ON u.id=c.created_by_user_id AND u.workspace_id=c.workspace_id AND u.role='owner'
+    WHERE c.workspace_id=$1 AND c.id=$2 AND c.revoked_at IS NULL AND c.scopes::jsonb ? 'agent:run'`,[workspaceId,clientId]);
+  if(!row)throw new AuthorizationError('This job needs an active owner-issued API token with the agent:run scope.');
+  await require('../operations/postgres-warehouse-access').assertInventoryWide(db,{workspaceId,actorId:row.owner});
+  return row.owner;
+}
+
+function inputs(body={}){
+  if(!body||typeof body!=='object'||Array.isArray(body))throw new ValidationError('Supply a review name and its inputs as an object.');
+  const review=reviews.definitions.find(d=>d.key===body.review);
+  if(!review)throw new ValidationError('Choose a registered Agent review.');
+  const filter=String(body.filter??'').trim(),page=Number(body.page??1);
+  if(filter.length>150||!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid review filter and page.');
+  if(review.requiresFilter&&!filter)throw new ValidationError('This review requires an exact SKU or record reference.');
+  if(review.requiresChange&&(body.change==null||String(body.change).trim()===''||!Number.isFinite(Number(body.change))||
+    Number(body.change)<(review.minChange??-100)||Number(body.change)>(review.maxChange??1000)))throw new ValidationError('Supply the percentage required by this review.');
+  return {review:review.key,page,filter,...(review.requiresChange?{change:String(body.change)}:{})};
+}
+
+async function start(db,auth,body,key){
+  const input=inputs(body);
+  await authorize(db,auth.workspaceId,auth.clientId);
+  const result=await require('./postgres-public-api').executeCommand(db,auth,{idempotencyKey:key,commandType:kind,body:input},async(c,operationKey)=>{
+    await authorize(c,auth.workspaceId,auth.clientId);
+    const transaction={query:c.query.bind(c),transaction:fn=>fn(c)};
+    const {job}=await jobs.enqueue(transaction,{workspaceId:auth.workspaceId,kind,idempotencyKey:operationKey,
+      payload:{...input,clientId:auth.clientId},maxAttempts:3});
+    return {jobId:job.id,review:input.review};
+  });
+  return {...result.result,replayed:result.replayed};
+}
+
+async function status(db,auth,id){
+  await authorize(db,auth.workspaceId,auth.clientId);
+  const {rows:[row]}=await db.query(`SELECT id,status,result,payload->>'review' AS review FROM stockchief_runtime.jobs
+    WHERE workspace_id=$1 AND kind=$2 AND id=$3 AND payload->>'clientId'=$4`,[auth.workspaceId,kind,id,auth.clientId]);
+  if(!row)throw new NotFoundError('This token has no such review job.');
+  return {jobId:row.id,status:row.status,review:row.review,...(row.status==='COMPLETED'?{result:row.result}:{}),
+    ...(row.status==='DEAD'?{message:'StockChief could not finish this review. Check the token and current plan.'}:{})};
+}
+
+async function execute(job,db){
+  const actorId=await authorize(db,job.workspaceId,job.payload.clientId);
+  const input=inputs(job.payload),result=await reviews.run(db,{workspaceId:job.workspaceId,actorId},input.review,
+    {filter:input.filter,page:input.page,change:input.change,scheduled:true});
+  const completed={review:input.review,summary:result.summary,rows:result.rows,page:input.page,more:result.more===true};
+  await db.query('SELECT stockchief_capture_webhook_events($1::jsonb)',[JSON.stringify([{id:'agent-review:'+job.id,workspace_id:job.workspaceId,
+    event_type:eventType,created_at:new Date().toISOString(),payload:{jobId:job.id,review:input.review,status:'completed'}}])]);
+  return completed;
+}
+
+module.exports={start,status,execute,check,available,issuer,eventType,kind};

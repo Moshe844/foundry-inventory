@@ -20,10 +20,14 @@ test('a supplied message survives capitalization and whitespace normalization as
 });
 test('planning preflights the existing price bound and reduces its output reservation without losing the current goal or record arguments',async()=>{
  const planner=require('../../src/assistant/postgres-capability-planner'),full=planner.systemFor(),history=[{message:'Earlier product lookup',answer:'A recorded result',status:'ANSWERED',intent:{controlPlane:{capability:'read.inventory',args:{search:'PART-87'}}}}];let checks=0;
- const provider={promptByteAllowance:async request=>{checks++;return request.maxOutputTokens<=1500?20000:0;},complete:async request=>{
+ // The allowance is for system AND goal text. Keep this fixture tied to the
+ // complete registered catalogue instead of the former prompt-only 20 KB
+ // assumption; provider prices and production spending limits are unchanged.
+ const textBudget=Buffer.byteLength(full)+1024;
+ const provider={promptByteAllowance:async request=>{checks++;return request.maxOutputTokens<=1500?textBudget:0;},complete:async request=>{
   const context=JSON.parse(request.prompt);
   if(request.schemaName==='stockchief_capability_plan'){
-   assert.equal(request.maxOutputTokens,1500);assert.equal(context.message,'Where is that stock?');assert.equal(context.conversation[0].arguments.search,'PART-87');
+   assert.equal(request.maxOutputTokens,1500);assert(Buffer.byteLength(request.system)+Buffer.byteLength(request.prompt)<=textBudget);assert.equal(context.message,'Where is that stock?');assert.equal(context.conversation[0].arguments.search,'PART-87');
    return{data:{steps:[{capability:'read.inventory_positions',arguments:[{name:'search',value:'PART-87'}],dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
   }return{data:{aligned:true,reason:'The same product is read with current evidence.'}};
  }};

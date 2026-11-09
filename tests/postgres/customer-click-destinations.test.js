@@ -32,6 +32,17 @@ test('required customer click gate visits page routes and detail families, block
  const artifact=process.env.STOCKCHIEF_CLICK_ARTIFACT_DIR;
  function save(){if(artifact){fs.mkdirSync(artifact,{recursive:true});fs.writeFileSync(path.join(artifact,'click-gate.json'),JSON.stringify({at:new Date().toISOString(),pages:seen.size,linksClicked:clicked,sharedNavigationClicksSkipped,nonGetBlocked:forbidden,failures,pagesChecked:evidence,buttons:buttonEvidence,detailFamilies:details,providerEffects:'not executed; provider launch/return tested separately',paidCalls:0},null,2));}}
  page.on('dialog',d=>d.dismiss());
+ // Direct URLs on an account without Agent terms must name the plan and offer billing.
+ // Any navigation link to these URLs still hits the response check below.
+ for(const [url,plan] of [['/planning/safety-stock','Growth'],['/reports/my-preferences','Custom'],['/autopilot/landed-costs/new','Pro']]){
+  assert(queue.includes(url),'Missing gated route '+url);
+  const response=await page.goto(origin+url),locked=page.locator('[data-agent-plan-locked]');
+  assert.equal(response.status(),402,url);
+  assert((await locked.innerText()).includes('the '+plan+' plan'),url);
+  const [billing]=await Promise.all([page.waitForNavigation(),locked.getByRole('link',{name:'Review plans and terms'}).click()]);
+  assert.equal(new URL(page.url()).pathname,'/settings/billing');assert.equal(billing.status(),200);
+  seen.add(url);evidence.push({page:url,kind:'plan required',plan,status:402});
+ }
  // Deep links can intentionally open a native modal (for example Add a location).
  // Dismiss it through the same control a customer uses before testing background navigation.
  async function dismissOpenDialogs(){let remaining=await page.locator('dialog[open]').count();while(remaining){const dialog=page.locator('dialog[open]').first(),close=dialog.locator('[data-modal-close], [data-close-ask]').first();if(await close.isVisible())await close.click();else await page.keyboard.press('Escape');const after=await page.locator('dialog[open]').count();assert(after<remaining,'Dialog could not be dismissed');remaining=after;}}

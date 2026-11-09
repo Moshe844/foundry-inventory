@@ -105,9 +105,22 @@ function createPostgresReportsRouter(database){
   const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
   router.get('/reports',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
-    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,req.query,{coverage:true}),businessCards=await business.cards(database,req.ctx,actor,req.query);
-    return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,
+    const prefs=require('../../reports/manager-presentation'),managerView=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,managerView);
+    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,query,{coverage:true}),businessCards=await business.cards(database,req.ctx,actor,query);
+    return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,managerView,
       compositions:composed.dimensions(actor)});
+  }));
+  router.get('/reports/my-preferences',asyncRoute(async(req,res)=>{
+    const prefs=require('../../reports/manager-presentation');
+    try{
+      const current=await prefs.personal(database,req.ctx,{required:true});
+      return res.page('reports/manager-preferences',{title:'My report and approval preferences',nav:'accounting',current,choices:prefs.choices});
+    }catch(error){if(error.code!=='entitlement_required')throw error;
+      res.status(402);return res.page('autopilot/locked',{title:'My report and approval preferences',nav:'accounting',message:error.message});}
+  }));
+  router.post('/reports/my-preferences',asyncRoute(async(req,res)=>{
+    await require('../../reports/manager-presentation').save(database,req.ctx,req.body);
+    res.redirect(303,'/reports/my-preferences');
   }));
   router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query),totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'}),profitBreakdown=req.params.key==='profit'?await require('../../accounting/postgres-reports').profitAndLoss(database,req.ctx.workspaceId,{from:report.context.from,to:report.context.to}).catch(()=>null):null;return res.page('reports/business',{profitBreakdown,title:report.definition.title,nav:'accounting',room:true,report,totals});}));
   router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
@@ -286,7 +299,7 @@ function createPostgresReportsRouter(database){
     const saved=await reports.load(database,req.ctx,actor,req.params.id);
     const result=await reports.run(database,req.ctx,actor,saved.definition,{limit:201,offset:req.query.offset});
     return res.page('reports/result',{title:saved.title,nav:'accounting',result,saved,totals:await reports.totals(database,req.ctx,actor,result.config),
-      pageHref:`/reports/saved/${saved.id}`,draftSchedule:null});
+      managerView:await require('../../reports/manager-presentation').personal(database,req.ctx),pageHref:`/reports/saved/${saved.id}`,draftSchedule:null});
   }));
   router.get('/reports/saved/:id/export.:format',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);

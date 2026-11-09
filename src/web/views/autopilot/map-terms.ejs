@@ -1,0 +1,15 @@
+<section class="card card-body section" aria-label="Minimum advertised prices">
+ <h2>Record supplier MAP terms</h2>
+ <form method="post" action="/autopilot/map-terms">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="0">
+  <label>SKU <input name="sku" required></label><label>Minimum advertised price <input name="minimum" inputmode="decimal" required></label>
+  <label>Currency <input name="currency" maxlength="3" value="USD" required></label>
+  <button class="btn">Save supplier terms</button>
+ </form>
+ <% for(const rule of result.mapForm.rules){ %><form method="post" action="/autopilot/map-terms" class="section">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><input type="hidden" name="sku" value="<%= rule.code %>">
+  <strong><%= rule.code %></strong><label>Minimum advertised price <input name="minimum" inputmode="decimal" value="<%= rule.minimum %>" required></label>
+  <label>Currency <input name="currency" maxlength="3" value="<%= rule.currency %>" required></label>
+  <button class="btn">Save terms</button><button class="btn" name="remove" value="1" formnovalidate>Remove terms</button>
+ </form><% } %>
+</section>

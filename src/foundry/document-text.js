@@ -82,7 +82,9 @@ async function extractText(file,limits={}) {
         // pdfjs's decoded-image bound even when a text layer avoids OCR.
         if(limits.maxPages)await page.getOperatorList();
         const content = await page.getTextContent();
-        let pageText = clean(content.items.map((item) => item.str).join(' '));
+        let pageText = clean(limits.preservePdfLines
+          ? content.items.map((item) => item.str+(item.hasEOL?'\n':' ')).join('')
+          : content.items.map((item) => item.str).join(' '));
         // Image-only pages have no usable PDF text layer. Render and OCR only
         // those pages; ordinary PDFs stay fast and preserve their exact text.
         if (pageText.length < 20) {

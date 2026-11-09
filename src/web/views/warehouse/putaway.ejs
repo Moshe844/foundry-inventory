@@ -1,0 +1,11 @@
+<p class="rm-stamp no-print">Received goods · put-away instructions</p>
+<h1>Put <%= instruction.source.quantity %> units of <%= instruction.source.product %> away</h1>
+<p>Purchase order <strong><%= instruction.source.order %></strong> · SKU <%= instruction.source.sku %></p>
+<p>Take the received goods from <strong><%= instruction.source.from.name %></strong> to <strong><%= instruction.source.to.name %></strong>.</p>
+<p>Match the product and both location codes. Report any difference before moving goods. Preparing or printing this sheet does not record a stock movement.</p>
+<% for(const label of labels){ %><section class="rm-label-sheet"><h2><%= label.title %></h2><p><%= label.subtitle %></p><div class="rm-label-barcode"><%- label.svg %></div><code><%= label.barcode %></code></section><% } %>
+<div class="rm-actions no-print"><button class="rm-button rm-button--primary" type="button" onclick="window.print()">Print instructions and labels</button><a class="rm-button" href="<%= putawayBack %>">Back to put-away instructions</a></div>
+<% if(canTeach){ const r=instruction.rule; %><section class="card no-print"><h2>Teach this destination</h2><p>Future receipts of <%= instruction.source.sku %> at <%= instruction.source.from.name %> can use <%= instruction.source.to.name %> after you enable routine work for this job. Each receipt stays within your unit limit.</p>
+<form method="post" action="/autopilot/putaway/<%= instruction.id %>/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<label>Maximum units per receipt <input name="maximum" type="number" min="<%= instruction.source.quantity %>" max="2147483647" value="<%= r?.maximum_quantity||instruction.source.quantity %>" required></label><button class="btn">Save destination rule</button>
+<% if(r){ %><button class="btn" name="remove" value="1" formnovalidate>Stop this destination rule</button><% } %></form></section><% } %>

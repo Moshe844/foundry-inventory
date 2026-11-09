@@ -1,0 +1,11 @@
+<h1>Authority by job</h1>
+<p>The inventory’s overall mode, spending limits and approval rules also apply. Changing a job to Ask me first stops automatic execution of pending work.</p>
+<div class="card"><table><thead><tr><th>Job</th><th>Authority</th></tr></thead><tbody>
+<% for(const job of jobs){ %><tr id="job-<%= job.id %>"><td><%= job.label %></td><td>
+<% if(!job.allowed.length){ %><%= job.minimum %> · <a href="/billing">Review plans</a>
+<% }else{ %><form method="post" action="/autopilot/job-modes/<%= job.id %>">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= job.revision %>">
+<label><span class="sr-only">Authority for <%= job.label %></span>
+<select name="mode"><% for(const key of job.allowed){ %><option value="<%= key %>" <%= job.mode===key?'selected':'' %>><%= modes[key] %></option><% } %></select></label>
+<button class="btn">Save</button></form><% if(job.routineMinimum&&!job.allowed.includes('routine')){ %><p>Automatic work · <%= job.routineMinimum %> · <a href="/billing">Review upgrade</a></p><% } %><% if(!job.allowed.includes(job.mode)){ %><p>Your current plan limits the previous setting.</p><% } %><% } %>
+</td></tr><% } %></tbody></table></div><a href="/autopilot">Back to StockChief AI</a>

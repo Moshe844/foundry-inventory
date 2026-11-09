@@ -16,14 +16,20 @@
   var currentHref = currentStep ? currentStep.href : guidance.next.href;
   var currentAction = currentStep ? currentStep.action : guidance.next.action;
 %>
-<section class="guide-now">
+<% if(typeof guideQuery!=='undefined'){ %>
+<form method="get" action="/guide"><label for="guide-question">How do I…?</label>
+  <input id="guide-question" name="q" maxlength="200" type="search" value="<%= guideQuery %>">
+  <button class="btn" type="submit">Find instructions</button>
+</form>
+<% if(guideQuery && !topics.length){ %><p role="status">No matching instructions for your role. <a href="/support">Contact support</a> or <a href="/guide">browse the guide</a>.</p><% } } %>
+<% if(typeof guideQuery==='undefined'||!guideQuery){ %><section class="guide-now">
   <div><span class="operator-lane__eyebrow">Based on this inventory</span><h2><%= currentTitle %></h2><p><%= currentDetail %></p></div>
   <% if (currentHref && currentAction) { %><a class="btn btn--primary" href="<%= currentHref %>"><%= currentAction %></a><% } %>
-</section>
+</section><% } %>
 
 <div class="task-guide section">
   <% topics.forEach(function (topic, index) { %>
-    <details class="task-guide__topic" <%= index === 0 && guidance.checklistActive ? 'open' : '' %>>
+    <details class="task-guide__topic" <%= index === 0 && (guidance.checklistActive || (typeof guideQuery!=='undefined' && guideQuery)) ? 'open' : '' %>>
       <summary><span><%= topic.title %></span><span class="task-guide__show">Open</span></summary>
       <div class="task-guide__body">
         <p><%= topic.path %></p>
@@ -43,7 +49,7 @@
    * every morning to see whether anything is wrong.
    */
 %>
-<section class="section">
+<% if(typeof guideQuery==='undefined'||!guideQuery){ %><section class="section">
   <div class="section-head"><h2>What StockChief can do today</h2></div>
   <div class="guide-grid">
     <div><h3>Inventory</h3><p>Receive stock, record usage, move inventory between locations, correct counts through controlled adjustments, locate items and explain recorded balances.</p></div>
@@ -68,4 +74,4 @@
       </ul>
     </div>
   </details>
-</section>
+</section><% } %>

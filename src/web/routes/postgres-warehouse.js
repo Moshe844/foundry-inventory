@@ -10,6 +10,15 @@ function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
   router.get('/warehouse/batches',requirePermission(permissions.VIEW,'review batch stock'),asyncRoute(async(req,res)=>{const pagination=require('../presentation/pagination'),size=pagination.pageSize(req),found=await require('../../domain/postgres-batch-expiry').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('warehouse/batch-expiry',{title:'Batch expiry',nav:'inventory',...found,pager:pagination.pager(req,{page:found.page,size,total:found.total,shown:found.rows.length}),locations:await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId)});}));
+  router.get('/warehouse/putaway/:id',requirePermission(permissions.VIEW,'read put-away labels'),asyncRoute(async(req,res)=>{
+    const instruction=await require('../../warehouse/agent-putaway').instruction(database,req.ctx,req.params.id),barcode=require('../../warehouse/labels');
+    const labels=[{title:'Product',subtitle:instruction.source.product,barcode:instruction.source.barcode},
+      {title:'Receiving location',subtitle:instruction.source.from.name,barcode:instruction.source.from.barcode},
+      {title:'Destination bin',subtitle:instruction.source.to.name,barcode:instruction.source.to.barcode}].map(l=>({...l,svg:barcode.code128Svg(l.barcode)}));
+    const state=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId);
+    res.page('warehouse/putaway',{title:'Put-away instructions',nav:'warehouse',instruction,labels,canTeach:req.user.role==='owner'&&!instruction.automatic&&!state.shadow,
+      putawayBack:req.user.role==='owner'?'/autopilot/reviews/putaway-labels':'/warehouse/stock'});
+  }));
   router.get('/warehouse/labels/sku/:id',asyncRoute(async(req,res)=>{
     const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.id);
     const labels=require('../../warehouse/labels'),label={kind:'sku',id:sku.id,title:sku.display_name,
@@ -21,11 +30,39 @@ function createPostgresWarehouseRouter(database){
     const q=String(req.query.q||'').trim().slice(0,120),category=String(req.query.category||'').trim().slice(0,120),locationId=String(req.query.locationId||'').slice(0,160);
     const rows=(await database.query(`SELECT i.id,i.name,i.tracking_mode,i.secondary_unit_label,i.quantity_increment,s.id AS sku_id,s.code,s.variant_label,coalesce(b.on_hand,0) AS on_hand FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=$4 WHERE i.workspace_id=$1 AND i.is_active=1 AND s.is_active=1 AND ($2='' OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR s.variant_label ILIKE '%'||$2||'%') AND ($3='' OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=i.workspace_id AND f.item_id=i.id AND f.category ILIKE '%'||$3||'%')) ORDER BY lower(i.name),s.code LIMIT 51`,[req.ctx.workspaceId,q,category,locationId])).rows;
     const countWorksheets=(await database.query('SELECT id,title,status FROM warehouse_count_campaigns WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 30',[req.ctx.workspaceId])).rows,pendingCounts=req.user.role==='owner'?(await database.query("SELECT id,payload->'location'->>'name' location_name FROM physical_count_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at DESC LIMIT 30",[req.ctx.workspaceId])).rows:[];
-    return res.page('warehouse/count-picker',{title:'Record a physical count',nav:'inventory',countWorksheets,pendingCounts,rows:rows.slice(0,50),hasMore:rows.length>50,q,category,locationId,locations:await require('../../domain/postgres-location-service').listHierarchy(database,req.ctx.workspaceId,{includeStock:false})});
+    const ruleSettings=await require('../../autopilot/count-rules').settings(database,req.ctx);
+    const countRule=req.user.role==='owner'?ruleSettings:{enabled:false,automaticSubmission:ruleSettings.enabled&&ruleSettings.rule?.automatic};
+    return res.page('warehouse/count-picker',{title:'Record a physical count',nav:'inventory',countRule,submissionKey:newId('count'),countWorksheets,pendingCounts,rows:rows.slice(0,50),hasMore:rows.length>50,q,category,locationId,locations:await require('../../domain/postgres-location-service').listHierarchy(database,req.ctx.workspaceId,{includeStock:false})});
+  }));
+  router.post('/warehouse/counts/rule',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/count-rules').configure(database,req.ctx,req.body);
+    res.redirect(303,'/warehouse/counts/new');
+  }));
+  router.post('/warehouse/counts/reviews/:id/recount',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
+    await require('../../operations/postgres-count-reviews').recount(database,req.ctx,req.params.id,req.body.quantities);
+    res.redirect(303,'/warehouse/counts/reviews/'+req.params.id);
   }));
   const campaigns=require('../../operations/postgres-count-campaigns');
+  const tasks=require('../../operations/agent-count-tasks');
+  router.post('/warehouse/count-assignments',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.assign(database,req.ctx,req.body);res.redirect(303,'/autopilot/reviews/staff-count-progress');
+  }));
+  router.post('/warehouse/count-schedules',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.schedule(database,req.ctx,req.body);res.redirect(303,'/autopilot/reviews/staff-count-lists');
+  }));
+  router.post('/warehouse/counts/campaigns/:id/staff-quantities',require('../middleware').requireOwner,asyncRoute(async(req,res)=>{
+    await tasks.importObserved(database,req.ctx,req.params.id,req.body.revision);res.redirect(303,'/warehouse/counts/campaigns/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/warehouse/counts/campaigns',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{const created=await campaigns.create(database,req.ctx,req.body);return res.redirect(303,'/warehouse/counts/campaigns/'+created.id);}));
-  router.get('/warehouse/counts/campaigns/:id',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>res.page('warehouse/count-campaign',{title:'Warehouse count worksheet',nav:'inventory',...await campaigns.page(database,req.ctx,req.params.id,req.query)})));
+  router.get('/warehouse/counts/campaigns/:id',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
+    const data=await campaigns.page(database,req.ctx,req.params.id,req.query);
+    let observed=false;
+    if(req.user.role==='owner'&&data.campaign.status==='DRAFT'&&(await database.query('SELECT 1 FROM stockchief_runtime.agent_count_tasks WHERE workspace_id=$1 AND campaign_id=$2 AND observed_at IS NOT NULL',[req.ctx.workspaceId,req.params.id])).rowCount){
+      const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId);
+      observed=policy.usesAgentTerms(state)&&policy.permits(state.plan,177,'draft');
+    }
+    res.page('warehouse/count-campaign',{title:'Warehouse count worksheet',nav:'inventory',...data,observed});
+  }));
   router.post('/warehouse/counts/campaigns/:id/save',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{const result=await campaigns.save(database,req.ctx,req.params.id,req.body);if(req.is('application/json'))return res.json(result);return res.redirect(303,'/warehouse/counts/campaigns/'+req.params.id);}));
   router.get('/warehouse/counts/campaigns/:id/export',requirePermission(permissions.ADJUST,'record counts'),asyncRoute(async(req,res)=>{
    await campaigns.page(database,req.ctx,req.params.id);res.type('text/csv').attachment('stock-count-worksheet.csv');const csv=value=>{let text=String(value??'');if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};

@@ -61,7 +61,8 @@ async function available(database,ctx){
     if(!permissions.can(actor,permission))continue;
     if(contract.ownerOnly&&actor.role!=='owner')continue;
     const job=agent.actionJob(contract.name,'draft');
-    if(job&&agent.usesAgentTerms(agentState)&&!agent.permits(agentState.plan,job,'draft'))continue;
+    const tier=agent.actionPlan(agentState,contract.name);
+    if(job&&tier!==undefined&&!agent.permits(tier,job,'draft'))continue;
     permitted.push({contract,discovery});
   }
   // Reuse the central service's fresh multi-capability snapshot for this one

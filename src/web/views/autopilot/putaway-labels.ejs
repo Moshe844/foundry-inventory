@@ -1,0 +1,12 @@
+<section class="card"><h2>Prepare received goods for put-away</h2>
+<p>Choose the exact received product and its destination bin. StockChief prints the product and location codes your staff can scan.</p>
+<% if(form.blocked){ %><p role="status"><%= form.blocked %></p><% } %>
+<% if(form.receipts.length){ %>
+<form method="post" action="/autopilot/putaway/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Received product <select name="receiptLine" required><% for(const r of form.receipts){ %><option value="<%= r.id %>"><%= r.po_number %> · <%= r.code %> · <%= r.quantity %> units at <%= r.location %></option><% } %></select></label>
+<label>Destination bin <select name="destination" required><option value="">Choose a bin at the same site</option><% for(const d of form.destinations){ %><option value="<%= d.id %>"><%= d.display_path %><%= d.barcode?'':' — add a scan code first' %></option><% } %></select></label>
+<button class="btn" <%= form.blocked?'disabled':'' %>>Prepare instructions and labels</button></form>
+<% }else{ %><p>No unprepared receipts on this page.</p><% } %>
+<p><a href="/locations">Set location scan codes</a> · <a href="/autopilot/job-modes">Choose when StockChief handles this job</a></p>
+</section>
+<% if(form.rules.length){ %><section class="card"><h2>Your taught destinations</h2><% for(const r of form.rules){ %><p><strong><%= r.code %></strong>: <%= r.from_name %> → <%= r.to_name %>, up to <%= r.maximum_quantity %> units per receipt.</p><% if(r.problem){ %><p role="status"><%= r.problem %> StockChief will check again after 15 minutes.</p><% } %><form method="post" action="/autopilot/putaway/<%= r.example_id %>/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>"><button class="btn" name="remove" value="1">Stop this destination rule</button></form><% } %></section><% } %>

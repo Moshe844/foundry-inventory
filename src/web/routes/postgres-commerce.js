@@ -12,7 +12,7 @@ const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
-const {ValidationError,NotFoundError}=require('../../domain/errors');
+const {ValidationError,NotFoundError,AuthorizationError}=require('../../domain/errors');
 
 function key(req,kind){return trimOrNull(req.body.idempotencyKey)||`${kind}:${newId('form')}`;}
 async function submitOrder(database,ctx,input,nextStep){
@@ -437,24 +437,32 @@ function createPostgresCommerceRouter(database,options={}){
         AND provider_type IN ('gmail','microsoft365') AND status='connected' ORDER BY display_name`,[req.ctx.workspaceId]),
     ]);
     const policy=policyRows.rows[0]||{};
+    const agentPolicy=require('../../commercial/agent-plan'),account=await agentPolicy.accountState(database,req.ctx.workspaceId);
+    const manualShippingNotices=agentPolicy.usesAgentTerms(account)&&!agentPolicy.permits(account.plan,60,'automatic');
     return res.page('sales/fulfilment',{title:'Fulfilment',nav:'sales',queue:{open:openRows.rows,ready:readyRows.rows},
       waitingNotices:noticeRows.rows.map((row)=>({shipmentId:row.shipment_id,customerName:row.customer_name,
         recipient:row.recipient,orderNumber:row.order_number,shipmentNumber:row.shipment_number,status:row.status,errorMessage:row.error_message})),
-      noticePolicy:{shippingNotice:policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
+      manualShippingNotices,noticePolicy:{shippingNotice:manualShippingNotices&&policy.shipping_notice==='send'?'prepare':policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
         deliveredNotice:policy.delivered_notice||'prepare',exceptionNotice:policy.exception_notice||'prepare',
         connectorId:policy.connector_id||'',businessName:policy.business_name||'',signature:policy.signature||''},
       mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN)});
   }));
   router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
     const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
+    const agentPolicy=require('../../commercial/agent-plan');
+    const account=await agentPolicy.accountState(database,req.ctx.workspaceId),automatic=req.body.shippingNotice==='send'&&agentPolicy.usesAgentTerms(account);
+    if(automatic)agentPolicy.requireJob(account.plan,60,'automatic');
+    if(automatic&&req.user.role!=='owner')throw new AuthorizationError('Only the inventory owner can authorize automatic customer shipping notices.');
+    const mailbox=automatic?await require('../../shipping/agent-shipping-notices').mailbox(database,req.ctx.workspaceId,req.body.connectorId):null;
+    if(automatic&&!mailbox)throw new ValidationError('Choose a connected mailbox with email sending permission to send shipping notices automatically.');
     await database.query(`INSERT INTO customer_communication_policy(workspace_id,shipping_notice,out_for_delivery_notice,
-      delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
+      delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at,shipping_authorized_by,shipping_mailbox_account)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
       out_for_delivery_notice=excluded.out_for_delivery_notice,delivered_notice=excluded.delivered_notice,
       exception_notice=excluded.exception_notice,connector_id=excluded.connector_id,business_name=excluded.business_name,
-      signature=excluded.signature,updated_at=excluded.updated_at`,[req.ctx.workspaceId,pick(req.body.shippingNotice),
+      signature=excluded.signature,updated_at=excluded.updated_at,shipping_authorized_by=excluded.shipping_authorized_by,shipping_mailbox_account=excluded.shipping_mailbox_account`,[req.ctx.workspaceId,pick(req.body.shippingNotice),
       pick(req.body.outForDeliveryNotice),pick(req.body.deliveredNotice),pick(req.body.exceptionNotice),
-      trimOrNull(req.body.connectorId),trimOrNull(req.body.businessName),trimOrNull(req.body.signature),at]);
+      trimOrNull(req.body.connectorId),trimOrNull(req.body.businessName),trimOrNull(req.body.signature),at,automatic?req.ctx.actorId:null,mailbox?.provider_account_id||null]);
     req.flash('success','Customer shipment-message policy saved.');return res.redirect(303,'/fulfilment#customer-notices');
   }));
 
@@ -679,10 +687,11 @@ function createPostgresCommerceRouter(database,options={}){
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
+    const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
-      permissions:can,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      permissions:can,dualApproval,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));
@@ -709,6 +718,8 @@ function createPostgresCommerceRouter(database,options={}){
     if(!page.order.isEditable)throw new ValidationError('Only a draft purchase order can be repriced.');
     const prices=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
     await database.transaction(async(client)=>{
+      const order=(await client.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[req.ctx.workspaceId,req.params.id])).rows[0];
+      if(!order||!['DRAFT','AWAITING_APPROVAL'].includes(order.status))throw new ValidationError('Only a draft purchase order can be repriced.');
       for(const line of page.order.lines){
         if(!Object.prototype.hasOwnProperty.call(prices,line.id))continue;
         const unitCost=Number(prices[line.id]);
@@ -803,6 +814,11 @@ function createPostgresCommerceRouter(database,options={}){
     await workflows.approvePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'po-approve')});
     req.flash('success','Purchase order approved. It has not been sent yet.');
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
+  }));
+  router.post('/purchasing/orders/:id/sign',requirePermission(permissions.APPROVE_PO,'sign purchase orders'),asyncRoute(async(req,res)=>{
+    const result=await require('../../purchasing/dual-approval').sign(database,req.ctx,req.params.id,req.body.digest);
+    req.flash('success',result.status==='APPROVED'?'Two people have signed. The purchase order is approved.':'Your signature is recorded. A second authorized person must review this order.');
+    res.redirect(303,'/purchasing/orders/'+encodeURIComponent(req.params.id));
   }));
 
   router.post('/purchasing/orders/:id/place',requirePermission(permissions.APPROVE_PO,'place purchase orders'),asyncRoute(async(req,res)=>{
@@ -909,7 +925,13 @@ function createPostgresCommerceRouter(database,options={}){
     let form={};if(req.query.revise){const q=await quotations.get(database,req.ctx.workspaceId,req.query.revise),p=q.input;form={...p,skuId:p.lines.map(l=>l.skuId),quantity:p.lines.map(l=>l.quantity),unitPrice:p.lines.map(l=>l.unitPriceMinor==null?'':require('../../domain/currency').fromMinor(l.unitPriceMinor,p.currency)),priceOverride:p.lines.map(l=>l.priceOverride?'1':'0'),customerShippingAddress:p.shipToAddress,tax:require('../../domain/currency').fromMinor(p.taxMinor,p.currency),discount:require('../../domain/currency').fromMinor(p.discountMinor,p.currency),couponCodes:(p.codes||[]).join(', '),orderDate:entryToday(req),supersedesId:q.id};}return renderEntry(req,res,{quotation:true,form});
   }));
   router.post('/quotes',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),q=await quotations.create(database,req.ctx,{...input,validUntil:req.body.validUntil,requestKey:req.body.idempotencyKey,supersedesId:req.body.supersedesId||null});return res.redirect(303,'/quotes/'+q.id);}catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{quotation:true,form:req.body,formError:error.message,status:400});}}));
-  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quote',{title:'Quotation',nav:'sales',quotation:await quotations.get(database,req.ctx.workspaceId,req.params.id),today:entryToday(req)})));
+  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quote',{title:'Quotation',nav:'sales',quotation:await quotations.get(database,req.ctx.workspaceId,req.params.id),today:entryToday(req),canEmailQuotation:req.user?.role==='owner'})));
+  const quotationMail=require('../../sales/quotation-mail');
+  router.get('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>res.page('sales/quote-email',{title:'Email saved quotation',nav:'sales',...await quotationMail.page(database,req.ctx,req.params.id,req.query.connectorId)})));
+  router.post('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>{
+    try{const sent=await quotationMail.send(database,req.ctx,req.params.id,req.body);req.flash('success',sent.replayed?'This quotation email is already recorded. Check its delivery below.':'Quotation email queued. Delivery is confirmed only after your mailbox accepts it.');return res.redirect(303,'/quotes/'+req.params.id+'/email');}
+    catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).page('sales/quote-email',{title:'Review quotation email',nav:'sales',...await quotationMail.page(database,req.ctx,req.params.id,req.body.connectorId),problem:error.message});}
+  }));
   router.post('/quotes/:id/decision',requirePermission(permissions.OPERATE,'decide quotations'),asyncRoute(async(req,res)=>{if(!['accept','decline'].includes(req.body.decision))throw new ValidationError('Choose accept or decline.');const result=await quotations.decide(database,req.ctx,req.params.id,{accept:req.body.decision==='accept',expectedHash:req.body.expectedHash,today:entryToday(req)});req.flash('success',result.salesOrderId?'Quotation accepted as a draft order. Review and reserve its stock when ready.':'Quotation declined.');return res.redirect(303,result.salesOrderId?'/orders/'+result.salesOrderId:'/quotes/'+req.params.id);}));
   router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
     let form={customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'};
@@ -1049,12 +1071,24 @@ function createPostgresCommerceRouter(database,options={}){
       businessName:workspace.rows[0]?.name||'StockChief'});
   }));
 
+  router.get('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
+    const review=await require('../../sales/agent-ship-from').preview(database,req.ctx,req.params.id);
+    return res.page('sales/ship-from',{...review,nav:'sales',title:'Choose a shipping warehouse',backTo:{label:review.order.order_number,href:'/orders/'+req.params.id}});
+  }));
+  router.post('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-ship-from').approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Shipping warehouse saved for this order.');
+    return res.redirect(303,'/orders/'+req.params.id);
+  }));
   router.get(['/orders/:id','/sales/orders/:id'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const [page,returnRows,locationRows]=await Promise.all([
       salesOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listCustomerReturns(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
     ]);
+    const plans=require('../../commercial/agent-plan'),agentState=await plans.accountState(database,req.ctx.workspaceId);
+    const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&require('../../sales/agent-ship-from').eligible(page.order)
+      ?{available:plans.permits(agentState.plan,121,'draft')}:null;
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
@@ -1074,6 +1108,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
+      shipFromReview,agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,

@@ -1,0 +1,7 @@
+<section class="card"><h2>Review a waiting order</h2>
+<% if(result.arrivedStockForm.blocked){ %><p class="notice"><%= result.arrivedStockForm.blocked %></p><% } %>
+<form method="post" action="/autopilot/arrived-stock/prepare" class="form-stack">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Order number <input name="orderNumber" required maxlength="150"></label>
+<button class="btn" <%= result.arrivedStockForm.blocked?'disabled':'' %>>Prepare for approval</button></form>
+<p><a href="/autopilot/job-modes">Choose when StockChief reserves arrived stock</a></p></section>

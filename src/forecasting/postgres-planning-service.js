@@ -153,16 +153,29 @@ async function refreshRecommendations(database,workspaceId,options={}){
   let afterSkuId=options.afterSkuId||null;
   for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250,cycleId:options.cycleId||null});
    await ensureRecommendations(database,workspaceId,rows);
+   const selected=[...new Set(rows.map(r=>r.sku_id))];
+   await require('./location-reorder-rules').runPage(database,workspaceId,selected);
+   await require('./agent-safety-stock').queuePage(database,workspaceId,selected);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;
   }
 }
 
 async function decide(database, ctx, id, decision) {
+  if(!['accept','decline'].includes(decision))throw new ValidationError('Choose whether to accept or decline this recommendation.');
   return database.transaction(async client => {
     const row = (await client.query(`SELECT * FROM planning_recommendations WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
       [ctx.workspaceId,id])).rows[0];
     if (!row) throw new NotFoundError('That planning recommendation is not in this inventory.');
+    const agent=require('../commercial/agent-plan'),account=await agent.accountState(client,ctx.workspaceId);
+    if(agent.usesAgentTerms(account)&&decision==='accept'){
+      const job=row.kind==='safety_stock'?150:object(row.evidence).locationId?120:21;
+      agent.requireJob(account.plan,job,'draft');
+      const member=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+      const permissions=require('../actions/permissions');permissions.assertCan(member,permissions.MANAGE_REPLENISHMENT,'change reorder thresholds');
+      const restriction=await require('../autopilot/job-modes').restriction(client,ctx.workspaceId,job,false);
+      if(restriction)throw new ValidationError(restriction);
+    }
     if (row.status !== 'OPEN') return { ...row,replayed:true };
     const at = nowIso();
     if (decision === 'decline') {
@@ -181,6 +194,9 @@ async function decide(database, ctx, id, decision) {
     const current = (await client.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2
       AND location_id IS NOT DISTINCT FROM $3 FOR UPDATE`, [ctx.workspaceId,row.sku_id,locationId])).rows[0];
     const fields = { reorder_point:'reorder_point',target_stock:'target_stock',safety_stock:'safety_stock' };
+    const saved=current?.[fields[row.kind]]??null;
+    if(agent.usesAgentTerms(account)&&number(saved)!==number(row.current_value))
+      throw new ValidationError('The replenishment setting has changed since this recommendation. Review the current thresholds.');
     const next = { reorder_point:current?.reorder_point ?? null,target_stock:current?.target_stock ?? null,
       safety_stock:current?.safety_stock ?? null,[fields[row.kind]]:value };
     const policyId = current?.id || newId('rpol');

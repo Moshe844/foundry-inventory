@@ -88,11 +88,13 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(options.agentRequested){
     const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
     if(policy.usesAgentTerms(state)){
-      agentJob=policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
+      const requestedJob=new Map([['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100]]).get(payload.standingAuthority?.kind);
+      agentJob=requestedJob!==undefined&&requestedJob===options.agentJob?requestedJob:policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
       policy.requireJob(state.plan,agentJob,'draft');
     }
   }
   const prepared={...payload};
+  if(typeof prepared.subject==='string'&&[...prepared.subject].some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127))throw new ValidationError('Use a single-line email subject without control characters.');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(prepared.recipientEmail||'')))
     throw new ValidationError('Review the exact recipient email address before sending.');
   if(prepared.addContactKind){
@@ -141,6 +143,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(prepared.purchaseOrderId){
     const order=prepared.recipientKind==='supplier'&&(await client.query('SELECT id,status FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3',[ctx.workspaceId,prepared.purchaseOrderId,prepared.recipientId])).rows[0];
     if(!order)throw new ValidationError('The supplier message must refer to this supplier’s purchase order.');
+    await require('../purchasing/dual-approval').guardOrderMessage(client,ctx.workspaceId,order.id);
     if(!inserted.rowCount && (message.purchase_order_id!==order.id || message.supplier_id!==prepared.recipientId))
       throw new ValidationError('This send reference already belongs to a different message.');
     if(inserted.rowCount){
@@ -201,6 +204,13 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
       if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(client,workspaceId,agentJob,'draft');
+      if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -213,6 +223,14 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
+        if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
+        if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
         if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;
@@ -225,14 +243,16 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         const at=nowIso();await client.query(`UPDATE ${table} SET status='SENT',external_message_id=$3,
           external_thread_id=$4,error_message=NULL,sent_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
         [workspaceId,input.communicationId,result.externalMessageId||null,result.externalThreadId||null,at]);
+        if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
       }});
     return {message:await get(database,workspaceId,kind,input.communicationId),replayed:false};
   }catch(error){
     const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,apply:async(client)=>{
-      const at=nowIso();await client.query(`UPDATE ${table} SET status='FAILED',error_message=$3,updated_at=$4
+      const review=(!providerCalled&&input.standingAuthority?.kind==='shipment_notice'&&error.code==='shipment_needs_approval');
+      const at=nowIso();await client.query(`UPDATE ${table} SET status=$5,error_message=$3,updated_at=$4
         WHERE workspace_id=$1 AND id=$2 AND status IN ('QUEUED','SENDING')`,[workspaceId,input.communicationId,
-        String(ambiguous?'The mailbox provider outcome is uncertain. StockChief did not send this message again.':error.message).slice(0,500),at]);
+        String(ambiguous?'The mailbox provider outcome is uncertain. StockChief did not send this message again.':error.message).slice(0,500),at,review?'PREPARED':'FAILED']);
       if(ambiguous)await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,
         fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
         VALUES($1,$2,$3,$4,'EMAIL_SEND_AMBIGUOUS',$5,'Email delivery could not be verified',$6,$7,'OPEN',$8,$8)

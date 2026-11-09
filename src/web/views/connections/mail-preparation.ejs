@@ -2,6 +2,7 @@
   <div class="card-head"><h3>Let StockChief handle</h3></div>
   <div class="card-body grid">
     <p><strong data-mail-preparation-state><%= mailPreparation.label %></strong></p>
+    <% if(mailPreparation.agentLocked){ %><p>Preparing replies from your records requires Growth. <a href="/billing">Upgrade</a></p><% } %>
     <p>For new emails from known customers and suppliers, StockChief reads the message and relevant records, then prepares a reply. Review, edit, send or discard it in Mail. Preparation uses your plan’s AI credits.</p>
     <% if(currentUser.role==='owner'&&connection){ %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">

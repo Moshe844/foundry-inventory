@@ -1,7 +1,89 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
-<% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label>Change in sales (%) <input type="number" name="change" step="0.01" min="-100" max="1000" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
+<% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
+<% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>
+<% if(result.putawayForm){ %><%- include('putaway-labels',{form:result.putawayForm,csrfToken}) %><% } %>
+<% if(result.landedCostForm){ %><p><a class="btn" href="/autopilot/landed-costs/new">Prepare a stock-cost allocation</a></p><% } %>
+<% if(result.arrivedStockForm){ %><%- include('arrived-stock',{result,csrfToken}) %><% } %>
+<% if(result.stockReadyForm){ %><%- include('stock-ready-updates',{result,csrfToken}) %><% } %>
+<% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>
+<% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
+<% if(result.binDistanceForm){ %><details><summary>Record a bin's walking distance to packing</summary>
+  <form method="post" action="/autopilot/reviews/warehouse-slotting/distances"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Bin name <input required name="bin"></label><label>Distance in metres <input required name="metres" type="number" min="0" step="0.01"></label>
+    <button class="btn">Save distance</button></form></details><% } %>
+<% if(result.negotiationForm){ const n=result.negotiationForm; %><form method="post" action="/autopilot/negotiation-draft">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="supplier" value="<%= n.supplier %>">
+  <input type="hidden" name="evidence" value="<%= n.evidence||'' %>"><input type="hidden" name="revision" value="<%= n.revision %>">
+  <% if(n.evidence){ %><button class="btn">Save email draft</button><% } %>
+  <% if(n.revision){ %><button class="btn" formaction="/autopilot/negotiation-rule" name="remove" value="1">Stop recurring drafts</button>
+  <% }else if(n.evidence&&result.mode==='trained'){ %><button class="btn" formaction="/autopilot/negotiation-rule">Prepare new drafts when delivery evidence changes</button>
+  <% }else if(result.mode==='draft'){ %><a href="/billing">Recurring negotiation drafts require Custom</a><% } %>
+</form><% } %>
+<% if(result.vacation){ const {rule,people,today}=result.vacation; %>
+<form method="post" action="/autopilot/vacation-deputy">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+  <label>Deputy <select required name="deputyId"><option value="">Choose a team member</option><% for(const p of people){ %><option value="<%= p.id %>" <%= p.id===rule.deputy_id?'selected':'' %>><%= p.name %></option><% } %></select></label>
+  <label>First day <input type="date" required name="start" value="<%= rule.starts_on||today %>"></label>
+  <label>Last day <input type="date" required name="end" value="<%= rule.ends_on||today %>"></label>
+  <% if(people.length){ %><button class="btn">Save vacation coverage</button><% }else{ %><p>A deputy needs permission to approve purchases or transfers across this inventory. <a href="/settings?section=team#team-authority">Review team access</a></p><% } %>
+  <% if(rule.deputy_id){ %><button class="btn" name="remove" value="1" formnovalidate>End coverage</button><% } %>
+</form><% } %>
+<% if(result.countAssignments){ const config=result.countAssignments; %><form method="post" action="/warehouse/count-assignments">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= config.requestKey %>">
+<label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>" <%= config.selectedLocationId===loc.id?'selected':'' %>><%= loc.name %></option><% } %></select></label>
+<label>Person who counts <select name="counterId" required><% for(const p of config.people){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
+<button class="btn">Assign one count</button>
+<details><summary>Repeat this assignment</summary><p>StockChief assigns the next list when routine work is enabled and the previous worksheet has closed.</p>
+<label>First count <input type="date" name="firstDay" value="<%= config.today %>"></label>
+<label>Days between counts <input type="number" name="days" min="1" max="366" value="7"></label><button class="btn" formaction="/warehouse/count-schedules">Save schedule</button></details></form>
+<% for(const schedule of config.schedules){ %><form method="post" action="/warehouse/count-schedules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= schedule.id %>">
+<p><%= schedule.name %> · <%= schedule.counter %> · every <%= schedule.interval_days %> days · next <%= schedule.due %></p>
+<% if(schedule.last_issue){ %><p><%= schedule.last_issue %></p><% } %><button class="btn" name="remove" value="1">Stop scheduled count</button></form><% } } %>
+<% if(result.purchaseThreshold){ const rule=result.purchaseThreshold; %><form method="post" action="/autopilot/purchase-approval-threshold">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+<label>Currency <input required name="currency" minlength="3" maxlength="3" placeholder="USD" value="<%= rule.currency||'' %>"></label>
+<label>Purchase amount above which two people must sign <input name="amount" inputmode="decimal" value="<%= rule.amount %>"></label>
+<label>Hours before passing an unanswered request to the next eligible reviewer <input type="number" min="1" max="720" name="escalationHours" value="<%= rule.escalation_hours %>" required></label>
+<p>Leave the amount empty to turn the rule off.</p><button class="btn">Save threshold</button></form><% } %>
+<% if(result.watchSettings){ const w=result.watchSettings; %><form method="post" action="/autopilot/alert-settings/<%= w.job %>">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= w.revision %>">
+<% if(w.job===170){ %><label>Alert below this gross margin (%) <input name="marginPct" type="number" min="0" max="100" step=".01" value="<%= w.margin_pct??'' %>"></label>
+<% }else{ %><label>Alert on adjustments of at least this many units <input type="number" min=".000001" step=".000001" name="adjustmentUnits" value="<%= w.adjustment_units??'' %>"></label>
+<label>Watch from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
+<label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label><% } %>
+<button class="btn">Save alert settings</button></form><% } %>
+<% if(result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Brand watch instruction <input name="instruction" required maxlength="320" placeholder="Tell me if any Nike item drops under 20"></label>
+<button class="btn">Save watch</button></form>
+<% for(const w of result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<span><%= w.brand_name %> · <%= w.inclusive?'At or below':'Below' %> <%= w.threshold %> units</span>
+<button name="remove" value="<%= w.brand_name %>" class="btn">Remove watch</button></form><% } } %>
+<% if(result.download){ %><p><a class="btn" href="<%= result.download %>"><%= result.downloadLabel %></a></p><% } %>
+<% if(result.specForm){ %><form method="post" action="/autopilot/reviews/supplier-specifications/prepare">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Approved supplier file <input required name="sourceImport" value="<%= filter %>"></label>
+<label>File page <input type="number" name="sourcePage" min="1" value="<%= result.page||1 %>" required></label>
+<label>Limit to one SKU (optional) <input name="sku"></label><button class="btn">Review missing fields</button></form><% } %>
+<% if(result.purchaseGrouping){ %><form method="post" action="/autopilot/reviews/<%= result.purchaseGrouping %>/regroup"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label><%= result.purchaseGrouping==='combine-draft-orders'?'Draft PO numbers, separated by commas':'Draft PO number' %> <input required name="sourceOrders"></label>
+<% if(result.purchaseGrouping==='split-draft-orders'){ %><label>Split by <select name="splitStrategy"><option value="warehouse">Receiving warehouse</option><option value="budget">Value per order</option><option value="delivery-date">Delivery date</option></select></label>
+<label>For a value split, maximum per order <input name="budgetAmount" inputmode="decimal"></label>
+<label>For a date split, enter one line number and date per row <textarea name="lineDates" placeholder="1 2027-02-14"></textarea></label><% } %>
+<button class="btn">Review replacement orders</button></form><% } %>
+<% if(result.overdueRule!==undefined){ %>
+<% if(result.mode==='alone'||result.overdueRule){ %>
+<form method="post" action="/autopilot/reviews/overdue-customer-orders/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p>When automation is active, this rule holds new reservations and fulfillment for customers with overdue invoices.</p>
+<button name="mode" value="<%= result.overdueRule?'off':'on' %>" class="btn"><%= result.overdueRule?'Turn off overdue-order holds':'Enable overdue-order holds' %></button></form>
+<% } else { %><p>Automatic holds require Pro. <a href="/billing">Upgrade</a></p><% } %>
+<% } %>
+<% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label><%= result.changeLabel||'Change in sales (%)' %> <input type="number" name="change" step="0.01" min="<%= result.minChange??-100 %>" max="<%= result.maxChange??1000 %>" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
 <% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>f!=='link'); %><div class="card"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
-<% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>">Open</a></td><% } %></tr><% }); %>
-</tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p>No matching records.</p><% } %>
+<% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %><% if(result.reviewPrices&&f==='Suggested selling price'){ %><form method="post" action="/autopilot/reviews/margin-prices/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= r.SKU %>"><button class="btn">Prepare price change</button></form><% } %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>">Open</a></td><% } %></tr><% }); %>
+</tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
+<% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
+<% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
+<% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
+<% if(result.bankMatchForm){ %><%- include('bank-payment-matches',{result,csrfToken}) %><% } %>
+<% if(result.reminderForm){ %><%- include('invoice-reminders',{result,csrfToken}) %><% } %>

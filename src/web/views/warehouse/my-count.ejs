@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My count · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
+<header class="page-head"><div><h1><%= assigned.title %></h1><p><%= progress.done %> of <%= progress.total %> positions counted.</p></div></header>
+<% if(assigned.observed_at){ %><p>Your count has been sent to the owner for review.</p>
+<% }else if(assigned.status!=='DRAFT'){ %><p>This count worksheet is closed.</p>
+<% }else{ for(const line of rows){ %><form class="card card-body" method="post" action="/warehouse/my-counts/<%= assigned.campaign_id %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= line.sku_id %>"><input type="hidden" name="locationId" value="<%= line.location_id %>">
+  <h2><%= line.product %></h2><p><%= line.code %> · <%= line.location %></p>
+  <label>Physical quantity <input name="quantity" inputmode="decimal" required autocomplete="off"></label><button class="btn">Save count</button>
+</form><% }} %>
+<p><a href="<%= restricted?'/warehouse/stock':'/needs-you' %>"><%= restricted?'Back to warehouse stock':'Back to Needs you' %></a></p>
+</main></body></html>

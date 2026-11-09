@@ -14,6 +14,34 @@
 
 <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what might run short or tell StockChief what you want to protect.' }) %>
 
+<% if(manageRules){ const positions=rows.filter(r=>r.location_id && r.tracking_mode==='quantity' && !r.planning_suppressed); %>
+<details class="owner-manual section" id="location-rules"><summary>Automatic reorder limits by location</summary>
+<p>Choose a product and location, then set the most units StockChief may target. With routine work enabled, StockChief updates the reorder point and target from local sales and lead time.</p>
+<% if(positions.length){ %><form method="post" action="/planning/location-reorder-rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Product and location <select name="position"><% for(const r of positions){ %><option value="<%= JSON.stringify([r.sku_id,r.location_id]) %>"><%= r.code %> · <%= r.location_name %></option><% } %></select></label>
+  <label>Maximum target in units <input name="ceiling" type="number" min="1" max="2147483647" required></label>
+  <button class="rm-btn">Save reorder rule</button>
+</form><% } %>
+<% for(const rule of rules){ const r=rows.find(p=>p.sku_id===rule.sku_id&&p.location_id===rule.location_id); if(r){ %><form method="post" action="/planning/location-reorder-rules">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= rule.sku_id %>"><input type="hidden" name="locationId" value="<%= rule.location_id %>">
+  <%= r.code %> · <%= r.location_name %> · up to <%= rule.ceiling %> units <button class="rm-btn rm-btn--ghost" name="remove" value="1">Remove rule</button>
+</form><% }} %></details>
+<% }else if(planLocksReorder&&canAdmin){ %><p>Automatic reorder limits by location <span class="badge">Growth</span> <a href="/billing">Upgrade</a></p><% } %>
+<% if(safetyPreview){ const positions=rows.filter(r=>r.location_id&&!r.planning_suppressed); const sites=new Map(positions.map(r=>[r.location_id,r.location_name])); %>
+<details class="owner-manual section" id="safety-stock"><summary>Set safety stock from a service level</summary>
+<% if(positions.length){ %><form method="get" action="/planning/safety-stock">
+  <label>Product and location <select name="position"><% for(const r of positions){ %><option value="<%= JSON.stringify([r.sku_id,r.location_id]) %>"><%= r.code %> · <%= r.location_name %></option><% } %></select></label>
+  <label>Lead-time periods to cover (%) <input type="number" min="1" max="100" name="serviceLevel" required></label><button class="rm-btn">Review safety stock</button>
+</form><% } %>
+<% if(safetyRoutine && sites.size){ %><form method="post" action="/planning/safety-stock/class"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Warehouse <select name="locationId"><% for(const [id,name] of sites){ %><option value="<%= id %>"><%= name %></option><% } %></select></label>
+  <label>Product class <select name="class"><option>A</option><option>B</option><option>C</option></select></label>
+  <label>Lead-time periods to cover (%) <input type="number" min="1" max="100" name="serviceLevel" required></label>
+  <button class="rm-btn">Set automatic safety stock for this class</button>
+</form><% }else if(canAdmin && !safetyRoutine){ %><p>Automatic safety stock by class <span class="badge">Pro</span> <a href="/billing">Upgrade</a></p><% } %>
+<% for(const r of safetyRules){ %><form method="post" action="/planning/safety-stock/class"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= r.location_id %>"><input type="hidden" name="class" value="<%= r.class %>">
+  <%= r.name %> · class <%= r.class %> · <%= r.service_level %>% <button name="remove" value="1">Remove class rule</button></form><% } %>
+</details><% } %>
 <% if (recommendations.length) { %>
   <section class="owner-planning section" id="recommendations" aria-labelledby="planning-decisions-title">
     <div class="owner-outcomes__head"><h2 id="planning-decisions-title">Needs your decision</h2><span><%= recommendations.length %></span></div>
@@ -21,7 +49,7 @@
     <% recommendations.forEach(row => { %>
       <article class="owner-planning__decision">
         <div><span class="badge"><%= row.confidence || 'learning' %> confidence</span><h3><%= row.headline %></h3><p><%= row.why %></p><small>Current: <%= row.currentValue === null ? 'not set' : row.currentValue %> · proposed: <%= row.recommendedValue %></small></div>
-        <% if (canOperate) { %><div class="owner-planning__actions"><form method="post" action="/planning/recommendations/<%= row.id %>/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Use <%= row.recommendedValue %></button></form><form method="post" action="/planning/recommendations/<%= row.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Keep current policy</button></form></div><% } %>
+        <% if (canOperate && mayAccept(row)) { %><div class="owner-planning__actions"><form method="post" action="/planning/recommendations/<%= row.id %>/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Use <%= row.recommendedValue %></button></form><form method="post" action="/planning/recommendations/<%= row.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Keep current policy</button></form></div><% } else if(planLocksReorder && canAdmin){ %><span class="badge">Growth</span> <a href="/billing">Upgrade</a><% } %>
       </article>
     <% }) %>
   </section>

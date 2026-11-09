@@ -1,0 +1,17 @@
+<% const q=quotation; %>
+<p><a href="/quotes/<%= q.id %>">← Quotation <%= q.quote_number %></a></p>
+<h1>Email this quotation</h1>
+<p>Send the saved products, prices and delivery terms to <%= q.customer_name %>. Review and approve each quotation email.</p>
+<% if(message){ %>
+<section class="card"><h2>Quotation email delivery</h2><p><%= message.status %><%= message.error_message?' · '+message.error_message:'' %></p><a href="/messages/customer/<%= message.id %>">Track this quotation email</a>
+<% if(message.status==='SENT'){ %><p>Your connected mailbox confirmed sending this email. This does not confirm that the customer read it.</p><% if(canFollowUp){ %><a href="/autopilot/quote-followups/<%= q.id %>">Review this quotation’s follow-up</a><% }else{ %><p><span class="badge">Growth</span> Quotation follow-ups <a href="/billing">Upgrade</a></p><% } %><% }else{ %><p>This quotation will not be emailed again automatically. Check its delivery before taking further action.</p><% } %></section>
+<% }else{ %>
+<% if(problem){ %><p class="notice"><%= problem %></p><% } %>
+<% if(!mailboxes.length){ %><p><a href="/connections">Connect a sending mailbox</a> to send this quotation.</p><% }else{ %>
+<form method="get" class="form-stack"><label class="rm-field"><span>Sending mailbox</span><select name="connectorId" required><option value="">Choose a mailbox</option><% mailboxes.forEach(box=>{ %><option value="<%= box.id %>" <%= prepared?.connectorId===box.id?'selected':'' %>><%= box.display_name %></option><% }) %></select></label><button class="btn">Preview quotation email</button></form>
+<% } %>
+<% if(prepared){ %>
+<section class="card"><h2>Review the exact email</h2><p>To: <strong><%= prepared.recipient %></strong></p><p>Subject: <%= prepared.subject %></p><div style="white-space:pre-wrap;overflow-wrap:anywhere"><%= prepared.body %></div>
+<form method="post" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= prepared.connectorId %>"><input type="hidden" name="expectedFingerprint" value="<%= prepared.sourceFingerprint %>">
+<label><input type="checkbox" name="confirmed" value="yes" required> I confirm this recipient and the exact saved quotation email.</label><button class="btn">Send this quotation email</button></form></section>
+<% } %><% } %>

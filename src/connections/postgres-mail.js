@@ -70,18 +70,20 @@ async function capture(database,connection,message){
     ) sent LIMIT 1`,[connection.workspace_id,connection.id,sender,threadId])).rows[0]:null;
     if(matches.length!==1&&!sentThread){
       const id=newId('emailaside');const at=nowIso();
+      const category=await require('./agent-mail-triage').forCapture(client,connection.workspace_id,{...message,sender,bodyText:message.bodyText||message.body},null);
       const inserted=await client.query(`INSERT INTO connection_email_set_aside
-        (id,workspace_id,connector_id,external_message_id,sender,subject,received_at,reason,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        (id,workspace_id,connector_id,external_message_id,sender,subject,received_at,reason,created_at,agent_category)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
       [id,connection.workspace_id,connection.id,externalId,sender,trimOrNull(message.subject),
-        message.receivedAt||at,matches.length?'Sender matches more than one business contact.':'Sender is not a customer or supplier.',at]);
+        message.receivedAt||at,matches.length?'Sender matches more than one business contact.':'Sender is not a customer or supplier.',at,category]);
       if(inserted.rows.length)return {accepted:false,setAside:true,replayed:false,id};
       const existing=(await client.query(`SELECT id FROM connection_email_set_aside WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:false,setAside:true,replayed:true,id:existing.id};
     }
     const match=matches.length===1?matches[0]:{id:null,name:sender,kind:'business_reply'};
+    const category=await require('./agent-mail-triage').forCapture(client,connection.workspace_id,{...message,sender,bodyText:message.bodyText||message.body},match.kind);
     const id=newId('emailmsg');const at=nowIso();
     const triage=replyTriage.judge({sender,subject:message.subject,
       bodyText:message.bodyText||message.body,attachmentCount:(message.attachments||[]).length,
@@ -89,13 +91,13 @@ async function capture(database,connection,message){
     const inserted=await client.query(`INSERT INTO connection_email_messages
       (id,workspace_id,connector_id,external_message_id,sender,recipients,subject,body_text,received_at,
        supplier_id,trust_status,classification,external_thread_id,internet_message_id,content_hash,
-       processing_status,reply_state,reply_reason,reply_state_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17)
+       processing_status,reply_state,reply_reason,reply_state_at,created_at,agent_category)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17,$18)
       ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
     [id,connection.workspace_id,connection.id,externalId,sender,JSON.stringify(message.recipients||[]),
       trimOrNull(message.subject),trimOrNull(message.bodyText||message.body),message.receivedAt||at,
       match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
-      contentHash(message),triage.state,triage.reason,at]);
+      contentHash(message),triage.state,triage.reason,at,category]);
     if(!inserted.rows.length){
       const existing=(await client.query(`SELECT id,sender FROM connection_email_messages WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3 FOR UPDATE`,[connection.workspace_id,connection.id,externalId])).rows[0];
@@ -111,6 +113,10 @@ async function capture(database,connection,message){
       return {accepted:true,replayed:true,messageId:existing.id,attachmentsBackfilled};
     }
     await saveAttachments(client,connection.workspace_id,id,attachments,at);
+    if(category==='order'&&match.kind==='customer'&&!attachments.length){
+      const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
+      await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-order',idempotencyKey:'customer-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
+    }
     if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
       await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
         reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
@@ -141,7 +147,7 @@ async function capture(database,connection,message){
     if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview&&
       (typeof connection.config==='string'?JSON.parse(connection.config||'{}'):connection.config||{}).replyPreparationEnabled===true){
       const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};
-      if((await commercialUsage.capabilityState(client,scope,'communications.ai_drafts')).enabled){
+      if((await commercialUsage.capabilityState(client,scope,'communications.ai_drafts')).enabled&&await require('./agent-mail-triage').draftAccess(client,connection.workspace_id)){
         const actor=(await client.query(`SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2
           AND role='owner' ORDER BY id LIMIT 1`,[connection.workspace_id,owner.owner_account_id])).rows[0];
         if(actor){const scoped={query:(sql,values)=>client.query(sql,values),transaction:(work)=>work(client)};

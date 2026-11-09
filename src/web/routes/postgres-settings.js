@@ -64,18 +64,6 @@ const sections=[
     {href:'/support',label:'Support'}]},
 ];
 
-const guideTopics=[
-  {title:'Set up inventory',path:'Choose the setup path that matches where your records live, then approve the products, variants and locations StockChief found.',tell:'“We are starting from scratch” or attach your existing file.',href:'/onboarding?add=1',action:'Choose a source'},
-  {title:'Record a sale',path:'Tell StockChief what sold, how many, and where. Check the preview, then approve it.',tell:'“We sold 1 item at Main Warehouse.”',href:'/orders/new',action:'Record a sale'},
-  {title:'Receive stock',path:'Tell StockChief what arrived and where. If it belongs to a PO, name the PO number.',tell:'“We received 10 units at Main Warehouse.”',href:'/purchasing/receive',action:'Receive stock'},
-  {title:'Move stock',path:'Name the item, quantity, source and destination. StockChief verifies that totals stay unchanged.',tell:'“Move 5 units from Main Warehouse to Overflow.”',href:'/transfers/new',action:'Move stock'},
-  {title:'Fix a count',path:'Report the physical count. If it disagrees with the ledger, StockChief opens one investigation and does not silently change stock.',tell:'“I counted 12 units at Main Warehouse.”',href:'/warehouse/counts/new',action:'Report a count'},
-  {title:'Set low-stock and reorder rules',path:'Open planning to review evidence-based reorder points, targets and supplier choices.',tell:'“Set a reorder point for this product.”',href:'/planning',action:'Review planning'},
-  {title:'Set up suppliers and purchase orders',path:'Add the supplier, then record price, pack size, minimum and lead time before StockChief prepares a PO.',tell:'“Help me add a supplier.”',href:'/suppliers',action:'Set up purchasing'},
-  {title:'Receive a purchase order',path:'Open the placed purchase order, count what arrived, and record only what physically arrived.',tell:'“The purchase order arrived.”',href:'/purchasing/orders',action:'View purchase orders'},
-  {title:'Control automatic work',path:'Choose Ask me first or explicitly enable bounded routine transfers and purchasing.',tell:'“Automatically transfer up to 5 units at a time.”',href:'/autopilot',action:'Choose automatic work'},
-  {title:'Find what needs attention',path:'Needs you is the inbox for real decisions and physical facts.',tell:'“What needs my attention?”',href:'/needs-you',action:'Open Needs you'},
-];
 
 async function summary(database,workspaceId){const result=await database.query(`SELECT
   (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
@@ -243,10 +231,10 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       WHERE workspace_id=$1 AND provider_type='reference_webhook' AND status<>'disconnected' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId])).rows[0];
     if(existing)await connections.disconnect(database,req.ctx.workspaceId,existing.id);req.flash('success','The live feed is disconnected and its token was revoked.');return res.redirect(303,'/settings?section=advanced#live-event-feed');
   }));
-  router.get('/guide',requireAuth,asyncRoute(async(req,res)=>{const counts=await summary(database,req.ctx.workspaceId);
+  router.get('/guide',requireAuth,asyncRoute(async(req,res)=>{const [counts,guide]=await Promise.all([summary(database,req.ctx.workspaceId),require('../../assistant/staff-guide').read(database,req.ctx,req.query.q)]);
     const next=counts.products?{title:'Keep the operation current',recommendation:'Use Ask StockChief for ordinary work and Needs you for genuine exceptions.',href:'/ask',action:'Ask StockChief'}:
       {title:'Bring in the first inventory records',recommendation:'Choose the source that already contains your products and quantities.',href:'/onboarding?add=1',action:'Choose a source'};
-    return res.page('guide',{title:'How to use StockChief',nav:'guide',guidance:{checklistActive:false,steps:[],next},topics:guideTopics});
+    return res.page('guide',{title:'How to use StockChief',nav:'guide',guidance:{checklistActive:false,steps:[],next},topics:guide.topics,guideQuery:guide.query});
   }));
   router.get('/support',requireAuth,asyncRoute(async(req,res)=>{const service=require('../../operations/postgres-support-conversations'),requests=await require('../../operations/postgres-support').list(database,req.account.id),access=await service.access(database,{accountId:req.account.id,workspaceId:req.ctx.workspaceId});res.page('support/chat',{title:'Help and support',nav:null,supportAccess:access,supportSourcePath:String(req.query.from||'').split('?')[0],supportRequests:requests,ticket:null,staff:false,messageKey:newId('supportreply'),supportRequestKey:newId('supportform'),presence:await service.online(database)});}));
   router.get('/support/request',requireAuth,asyncRoute(async(req,res)=>res.page('support',{

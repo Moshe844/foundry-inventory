@@ -19,7 +19,7 @@ function invalid(message){throw new ValidationError(message);}
 function text(value,length=120){const result=String(value??'').trim();
   if(result.length>length)invalid('A report value is too long.');return result;}
 function quote(name){return `"${name}"`;}
-function allowedSources(actor,dimension){return Object.entries(registry.datasets)
+function allowedSources(actor,dimension){return Object.keys(registry.datasets).map(key=>[key,registry.get(key,actor)])
   .filter(([,dataset])=>dataset.fields[dimension]&&permissions.can(actor,dataset.permission))
   .map(([key,dataset])=>({key,label:dataset.label,fields:dataset.fields,
     metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{},

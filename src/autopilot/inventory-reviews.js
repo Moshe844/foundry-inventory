@@ -8,7 +8,7 @@ const reports = [
     FROM movements m JOIN skus s ON s.id=m.sku_id JOIN items i ON i.id=m.item_id JOIN locations l ON l.id=m.location_id
     JOIN users u ON u.id=m.actor_user_id WHERE m.workspace_id=$1 AND ($2='' OR lower(s.code)=lower($2))
     ORDER BY m.occurred_at::timestamptz DESC,m.seq DESC`},
-  {id:4,key:'count-priorities',label:'Plan a cycle count',summary:'Count negative positions first, then shelves with the most adjustments in 90 days, then the highest recorded carrying value. Unknown values sort last.',sql:`
+  {id:4,key:'count-priorities',label:'Plan a cycle count',usesDate:true,summary:'Count negative positions first, then shelves with frequent adjustments, monthly A products, monthly B products and the highest recorded stock value.',sql:`
     WITH differences AS (SELECT sku_id,location_id,count(*) AS n FROM movements WHERE workspace_id=$1 AND operation='adjust'
       AND occurred_at::timestamptz>=now()-interval '90 days' GROUP BY sku_id,location_id)
     SELECT l.name AS "Shelf",s.code AS "SKU",i.name AS "Product",b.on_hand AS "Recorded units",coalesce(d.n,0) AS "Recent adjustments",
@@ -16,8 +16,9 @@ const reports = [
     FROM balances b JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=b.location_id
     LEFT JOIN accounting_inventory_cost_balances v ON v.workspace_id=b.workspace_id AND v.sku_id=b.sku_id AND v.location_id=b.location_id
     LEFT JOIN differences d ON d.sku_id=b.sku_id AND d.location_id=b.location_id
+    LEFT JOIN stockchief_runtime.product_class_values abc ON abc.workspace_id=b.workspace_id AND abc.item_id=i.id AND abc.month_start=date_trunc('month',$3::date)::date
     WHERE b.workspace_id=$1 AND ($2='' OR lower(s.code)=lower($2)) AND b.on_hand<>0
-    ORDER BY (b.on_hand<0) DESC,coalesce(d.n,0) DESC,v.total_cost_minor DESC NULLS LAST,l.id,s.id`},
+    ORDER BY (b.on_hand<0) DESC,coalesce(d.n,0) DESC,CASE abc.class WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,v.total_cost_minor DESC NULLS LAST,l.id,s.id`},
   {id:10,key:'repeat-loss',label:'Find repeated stock losses',summary:'Repeated negative adjustments for the same item and warehouse in the same eight-hour local time band over 90 days. Review the original movements.',sql:`
     WITH loss AS (SELECT m.*,floor(extract(hour FROM (m.occurred_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC')))/8)::int*8 AS start_hour
       FROM movements m JOIN workspaces w ON w.id=m.workspace_id JOIN accounts a ON a.id=w.owner_account_id

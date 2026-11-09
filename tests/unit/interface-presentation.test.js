@@ -1,5 +1,18 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{compact,expand}=require('../../scripts/environment-agent-demo/interface-presentation');
+test('repeated descriptions remain lossless when shared by different field contracts',()=>{
+ const description='Resolve the exact record in the current inventory and recheck the current authority before acting on any result.';
+ const value={operations:Array.from({length:30},(_,i)=>({name:'read.varied_'+i,description,fields:{['field_'+i]:{type:'string',description,maxLength:100+i}}}))};
+ const packed=compact(value);assert.deepEqual(expand(packed),value);assert.deepEqual(compact(packed),packed);
+ assert(Buffer.byteLength(JSON.stringify(packed))<Buffer.byteLength(JSON.stringify(value))-2500);
+});
+test('complete initial operation descriptions use lossless rows with stable names and authority',()=>{
+ const operations=Array.from({length:50},(_,i)=>({name:'read.current_'+i,kind:'read',description:'Read the current business surface '+i,fieldsBySignature:true,detailsByName:true}));
+ const value={operations,indexComplete:true,operationIndex:{read:operations.map(op=>op.name)}};
+ const packed=compact(value);assert.deepEqual(packed._stockchiefOperationRows,['name','description','additionalFields']);
+ assert.deepEqual(expand(packed),value);assert.deepEqual(compact(packed),packed);
+ const broken=structuredClone(packed);broken.operations[0][2]={name:'substituted'};assert.throws(()=>expand(broken),/INVALID_INTERFACE_OPERATION_ROWS/);
+});
 test('signature names share delivered operation positions with exact authority and ordering',()=>{
  const operations=Array.from({length:60},(_,i)=>({name:'read.unfamiliar_signature_record_'+i,kind:'read'})),value={operations,readSignatures:[{names:operations.map(o=>o.name),fields:{},authority:{mode:'none'}}],navigationSignatures:[{names:['navigate.undelivered'],required:['reference']}]};
  const wire=compact(value);assert.equal(wire._stockchiefSignatureIndexEncoding,'operation_numbers');assert.deepEqual(expand(wire),value);assert.deepEqual(compact(wire),wire);

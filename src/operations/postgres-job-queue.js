@@ -116,12 +116,10 @@ async function claim(database, options = {}) {
          jobs.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND active.kind IN('assistant.run-codex-goal','assistant.run-codex-read')) AND active.status='RUNNING'))
       AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
-      -- A large planning cycle continuously enqueues priority-39 continuations.
-      -- Both maintenance kinds share one lane, so priority alone can starve
-      -- reconciliation forever. Give maintenance batches equal scheduling
-      -- priority and serve their oldest outstanding work first.
-      ORDER BY CASE WHEN kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id
-      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
+      -- A maintenance-only worker has one slot. Its older eligible jobs must
+      -- run even when planning and reconciliation continually enqueue pages.
+      ORDER BY CASE WHEN $4::boolean OR kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id
+      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS, options.maintenanceOnly === true]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
     if(['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read','import.analyse-source','import.execute-approved','import.revise-preview'].includes(selected.kind)){
@@ -227,7 +225,8 @@ async function processOne(database, handlers, options = {}) {
   const requested=Array.isArray(options.kinds)?new Set(options.kinds.map(kind=>String(kind||'').trim()).filter(Boolean)):null;
   const kinds = Object.keys(handlers || {}).filter((kind) => typeof handlers[kind] === 'function' &&
     (!requested || requested.has(kind)));
-  const job = await claim(database, { ...options, kinds });
+  const maintenanceOnly = kinds.length > 0 && kinds.every(kind => handlers[kind].workerLane === 'maintenance');
+  const job = await claim(database, { ...options, kinds, maintenanceOnly });
   if (!job) return null;
   const handler = handlers?.[job.kind];
   if (typeof handler !== 'function') {
@@ -274,7 +273,7 @@ async function processOne(database, handlers, options = {}) {
 }
 
 async function reconcileVerifiedEffectWithin(client,workspaceId,effectId){
- const now=Date.now(),result=await client.query("UPDATE stockchief_runtime.jobs job SET status='COMPLETED',result=$3::jsonb,last_error=NULL,completed_at=$4,updated_at=$4 FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.id=$2 AND effect.status='SUCCEEDED' AND job.workspace_id=effect.workspace_id AND job.kind='provider.effect' AND job.payload->>'effectId'=effect.id AND job.status='DEAD' RETURNING job.id",[workspaceId,effectId,JSON.stringify({verified:true,effectId,readOnlyRecovery:true}),new Date(now).toISOString()]);
+ const now=Date.now(),result=await client.query("UPDATE stockchief_runtime.jobs job SET status='COMPLETED',result=$3::jsonb,last_error=NULL,completed_at=$4,updated_at=$4 FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.id=$2 AND effect.status='SUCCEEDED' AND job.workspace_id=effect.workspace_id AND job.kind=ANY($5::text[]) AND job.payload->>'effectId'=effect.id AND job.status='DEAD' RETURNING job.id",[workspaceId,effectId,JSON.stringify({verified:true,effectId,readOnlyRecovery:true}),new Date(now).toISOString(),['provider.effect',...require('./agent-mail-protocol').kinds]]);
  for(const row of result.rows)await event(client,row.id,'VERIFICATION_RECOVERED',{effectId,readOnlyRecovery:true},now);
  return result.rows.length;
 }

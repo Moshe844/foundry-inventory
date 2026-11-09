@@ -5,12 +5,13 @@ const {ValidationError}=require('../domain/errors');
 function combine(groups){
  if(!groups.length)return {providerShipmentIds:[],rates:[]};
  const key=r=>JSON.stringify([r.carrier,r.service,r.currency,r.carrierAccount||null]);
- let rates=new Map((groups[0].rates||[]).map(r=>[key(r),{...r,rateIds:r.rateIds||[r.rateId]}]));
+ let rates=new Map((groups[0].rates||[]).map(r=>[key(r),{...r,rateIds:[...(r.rateIds||[r.rateId])],packageAmountsMinor:[...(r.packageAmountsMinor||[r.amountMinor])]}]));
  for(const group of groups.slice(1)){
   const matches=new Map((group.rates||[]).map(r=>[key(r),r]));
   for(const [k,r] of rates){const match=matches.get(k);if(!match){rates.delete(k);continue;}
    r.amountMinor+=match.amountMinor;if(!Number.isSafeInteger(r.amountMinor))throw new ValidationError('The combined carrier price exceeds the supported amount.');
    r.rateIds.push(...(match.rateIds||[match.rateId]));
+   r.packageAmountsMinor.push(...(match.packageAmountsMinor||[match.amountMinor]));
    r.deliveryDays=r.deliveryDays==null||match.deliveryDays==null?null:Math.max(r.deliveryDays,match.deliveryDays);
    r.deliveryDate=r.deliveryDate&&match.deliveryDate?[r.deliveryDate,match.deliveryDate].sort().at(-1):null;
    r.guaranteed=Boolean(r.guaranteed&&match.guaranteed);

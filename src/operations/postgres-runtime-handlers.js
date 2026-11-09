@@ -76,6 +76,7 @@ async function mailReplyDraft(job,database,options={}){
     WHERE message.workspace_id=$1 AND message.id=$2`,[job.workspaceId,messageId])).rows[0];
   const settings=typeof enabled?.config==='string'?JSON.parse(enabled.config||'{}'):enabled?.config||{};
   if(settings.replyPreparationEnabled!==true)return {skipped:'automatic_preparation_off',draftUnchanged:true};
+  if(!await require('../connections/agent-mail-triage').draftAccess(database,job.workspaceId))return {skipped:'draft_capability_unavailable',draftUnchanged:true};
   const row=(await database.query(`SELECT reply_state,reply_sent_at,draft_source FROM connection_email_messages
     WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,messageId])).rows[0];
   if(!row)return {skipped:'message_missing'};
@@ -391,6 +392,7 @@ async function runtimeSweep(job,client,options={}){
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
   await require('../connections/postgres-shipbob-sandbox').schedule(client);
+  await require('../connections/agent-partner-stock-reads').schedule(client);
   await require('../connections/postgres-orderful-test').schedule(client);
   const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
   const scheduledGoals=await require('../assistant/postgres-goal-resume').sweep(scopedDatabase(client));
@@ -416,6 +418,20 @@ async function autopilotEvaluate(job,client){
   const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
   const cycle=await require('../purchasing/postgres-replenishment-cycle').begin(client,job.workspaceId,cycleId,{continuation:Boolean(job.payload.cycleId),requestedByUser:job.payload.requestedByUser===true});
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
+  if(!job.payload.afterSkuId){
+    await require('../autopilot/circuit-breaker').refresh(client,job.workspaceId);
+    await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
+    await require('../sales/recurring-orders').schedule(client,job.workspaceId);
+    await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+    const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
+    await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
+    if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
+    if(require('../commercial/agent-plan').usesAgentTerms(account)&&account.plan){
+      const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.automation-opportunities',idempotencyKey:'automation:'+month,payload:{},priority:65,maxAttempts:3});
+    }
+  }
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
   if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
@@ -518,6 +534,9 @@ async function systemEmail(job,database,options={}){
   if(receipt.payload_sha256!==digest)throw Object.assign(new Error('The durable email payload changed; delivery needs review.'),
     {code:'email_payload_changed',retryable:false});
   if(receipt.provider_id){await recordAttempt(receipt.accepted_attempt);return accepted({provider:'resend',externalId:receipt.provider_id,replayed:true});}
+  if(job.payload.messageType==='purchase_approval'&&!await require('../autopilot/approval-email').stillWanted(database,job,message.to)){
+    return {skipped:'This owner no longer needs this approval email.'};
+  }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
       VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)
@@ -643,11 +662,24 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     try{return await require('../connections/postgres-shipbob-sandbox').runJob(database,job,options.shipbobFetch);}
     catch(error){if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
+  'shipbob.sandbox-stock':external(async(job,database)=>{
+    try{return await require('../connections/agent-partner-stock-reads').run(database,job,options.shipbobFetch);}
+    catch(error){if(error.retryable||[400,402,403,404].includes(error.status))await require('../connections/agent-partner-stock-reads').noteIssue(database,job,error);if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
+  }),
   'agent.playbook':external(async(job,database)=>{
     try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key);}
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
-  'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
+  'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
+  'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
+  'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
+  'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'mail.attachment-extract':external(async(job,database)=>{
+    const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
+    const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
+    return order.skipped?result:{...result,order};
+  }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
@@ -669,10 +701,15 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
     providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
+  ...Object.fromEntries(require('./agent-mail-protocol').kinds.map(kind=>[kind,external(async(job,database)=>{require('./agent-mail-protocol').assertJob(await providerEffects.get(database,job.workspaceId,job.payload?.effectId),job.kind);return providerEffect(job,database,options,providers);})])),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
+  'agent.api_review':(job,client)=>require('../connections/agent-review-api').execute(job,client),
+  'agent.supplier-negotiation':(job,client)=>require('../purchasing/negotiation-drafts').processJob(client,job),
+  'agent.reorder-signal':(job,client)=>autonomy.handleReorderSignal(client,job),
+  'agent.shipment-notice':(job,client)=>require('../shipping/agent-shipping-notices').processJob(client,job),
   'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'maintenance'})};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,

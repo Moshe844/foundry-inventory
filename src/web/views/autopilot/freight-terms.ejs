@@ -1,0 +1,8 @@
+<h1>Freight terms for <%= supplier.name %></h1>
+<form method="post">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= supplier.currency %>">
+<label>Order value for free shipping in <%= supplier.currency %> <input name="threshold" inputmode="decimal" value="<%= supplier.threshold %>" required></label>
+<label>Shipping charge below that amount in <%= supplier.currency %> <input name="freight" inputmode="decimal" value="<%= supplier.freight %>" required></label>
+<button name="mode" value="save" class="btn">Save freight terms</button>
+<% if(supplier.threshold){ %><button name="mode" value="clear" formnovalidate class="btn">Clear freight terms</button><% } %>
+</form><a href="/autopilot/reviews/supplier-minimums">Back to supplier minimums</a>

@@ -29,7 +29,13 @@ async function locations(database,workspaceId){
 function createPostgresImportsRouter(database,{provider=null}={}){
   const router=express.Router();
   router.use('/imports',requireAuth);
+  router.use('/imports',(req,_res,next)=>{
+    if(['GET','HEAD'].includes(req.method)&&!require('../../actions/financial-visibility').costs(req.user))
+      return next(new (require('../../domain/errors').AuthorizationError)('Purchase permissions are required to view source files and their costs.'));
+    return next();
+  });
   async function renderStart(req,res){return res.page('imports/start',{
+    migrationAllowed:(await require('../../onboarding/postgres-cutover').planAccess(database,req.ctx)).allowed,
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
@@ -114,13 +120,17 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    const [runJob,importProgress,trackingQuestion,previewRevision]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
-      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id)]);
-    const approvalReview=require('../../imports/approval-review').review(plan,{trackingQuestion,previewRevision,duplicatePlans,
+    const [runJob,importProgress,trackingQuestion,previewRevision,receivingReceipt]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
+      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id),
+      database.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='purchase_order.receive' AND idempotency_key=$2 AND status='COMPLETED'",[req.ctx.workspaceId,'receiving-document:'+plan.sourceHash]).then(r=>r.rows[0]?.result||null)]);
+    const approvalReview=require('../../imports/approval-review').review(plan,{trackingQuestion,previewRevision,duplicatePlans,receivingReceipt,
       missingLocationRows:missingLocation.rows.length>0,missingAccountingSetup:missingAccounting.rows.length>0,
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
+    if(receivingReceipt)return res.page('imports/receiving-source',{title:'Recorded delivery document',nav:'purchasing',plan,rows,page,pageSize:PAGE_SIZE,receivingReceipt,
+      backTo:{href:'/purchasing/orders/'+receivingReceipt.purchaseOrderId,label:'Purchase order'}});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
+      columnAccess:plan.transformations.columnTemplate?await require('../../imports/agent-column-mapping').access(database,req.ctx):null,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
       missingLocationCount:savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)?savedSummary.missingLocationRows:null,
@@ -129,6 +139,11 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
+  router.post('/imports/:id/previous-mapping',asyncRoute(async(req,res)=>{
+    await require('../../imports/agent-column-mapping').apply(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The earlier column mapping was submitted for this preview. Review the updated rows before importing.');
+    return res.redirect(303,'/imports/'+req.params.id);
+  }));
   router.post('/imports/:id/reanalyse',asyncRoute(async(req,res)=>{
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL'||req.body.integrityHash!==plan.integrityHash)

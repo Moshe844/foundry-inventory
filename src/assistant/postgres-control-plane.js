@@ -122,8 +122,9 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   const agent=require('../commercial/agent-plan'), job=agent.actionJob(contract.name,'draft');
   if(job){
     const state=await agent.accountState(database,ctx.workspaceId);
-    if(agent.usesAgentTerms(state) && !agent.permits(state.plan,job,'draft')){
-      try{agent.requireJob(state.plan,job,'draft');}
+    const tier=agent.actionPlan(state,contract.name);
+    if(tier!==undefined && !agent.permits(tier,job,'draft')){
+      try{agent.requireJob(tier,job,'draft');}
       catch(error){return {result:{status:'CLARIFY',answer:error.message,handoff:{href:'/billing',label:'Review plans'},rows:[],columns:[],reason:'entitlement'},args:step.args,provenance:{}};}
     }
   }

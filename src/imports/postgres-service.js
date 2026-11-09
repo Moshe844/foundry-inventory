@@ -437,6 +437,14 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
   return get(database,ctx.workspaceId,plan.id);
 }
 
+async function assertImportRowCapacity(database,workspaceId,rowCount){
+  const entitlements=require('../commercial/entitlements');
+  const capacityScope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
+  const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
+  if(rowCapacity.hardLimit!==null&&rowCount>rowCapacity.hardLimit)
+    throw new entitlements.EntitlementError(`This import has ${rowCount.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
+}
+
 async function analyse(database, ctx, input) {
   if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
   await assertOperator(database,ctx);
@@ -457,11 +465,7 @@ async function analyse(database, ctx, input) {
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
-  const entitlements=require('../commercial/entitlements');
-  const capacityScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
-  const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
-  if(rowCapacity.hardLimit!==null&&sheet.rows.length>rowCapacity.hardLimit)
-    throw new entitlements.EntitlementError(`This import has ${sheet.rows.length.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
+  await assertImportRowCapacity(database,ctx.workspaceId,sheet.rows.length);
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
     sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping,lifecycle:input});
@@ -491,11 +495,21 @@ async function analyse(database, ctx, input) {
     }
   }
   if(workbook)sheet=workbook.sheet;
+  const columnMapping=require('./agent-column-mapping');
+  const tabularKind=parsedWorkbook.format==='xlsx'?'xlsx':parsedWorkbook.format==='delimited'&&/\.(csv|tsv)$/i.test(input.filename||'')?'csv':null;
+  const layout=buffer&&!workbook&&!input.mappings&&!prior&&parsedWorkbook.sheets.length===1&&tabularKind
+    ?{filename:input.filename,kind:tabularKind,columns:sheet.columns,sheetIndex,sheetName:sheet.name,sourceHash}:null;
+  let template=layout?await columnMapping.match(database,ctx.workspaceId,layout):null;
+  if(template){
+    const policies=require('../commercial/agent-plan'),state=await policies.accountState(database,ctx.workspaceId);
+    if(!policies.usesAgentTerms(state)||!policies.permits(state.plan,133,'draft'))template=null;
+  }
+  const reuse=Boolean(template&&await columnMapping.automatic(database,ctx.workspaceId));
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,locationComponents:Boolean(workbook.contract?.stock?.locations?.length),
     aiUsed:workbook.aiUsed??!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:analysisNotice?false:input.allowModel,
-      mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
+      mappings:input.mappings || (reuse?template.mappings:json(prior?.field_mappings,null)),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || (reuse?template.detectedType:prior?.detected_type),
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(!analysisNotice&&proposal.aiError)analysisNotice={code:'interpretation_unavailable',message:proposal.aiError};
   // A model reading a whole workbook can leave out a column whose heading
@@ -541,6 +555,7 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{...(analysisNotice?{analysisNotice}:{}),...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
+      ...(template?{columnTemplate:{source:template.source,mappings:template.mappings,automatic:reuse}}:{}),
       ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
@@ -559,6 +574,11 @@ async function analyse(database, ctx, input) {
   if(trackingSummary&&!streaming){trackingSummary.add(validated.rows);plan.transformations.trackingSummary=trackingSummary.finish(plan);}
   plan.integrityHash=integrityFor(plan,validated.rows);
   await database.transaction(async(client)=>{
+    if(reuse){
+      const current=await columnMapping.match(client,ctx.workspaceId,layout);
+      if(!await columnMapping.automatic(client,ctx.workspaceId)||current?.source!==template.source)
+        throw new ValidationError('The approved mapping or the authority to apply it changed while reading this file. Read the original file again.');
+    }
     // Keep paged validation on bounded index plans even before fresh catalogue statistics settle.
     await bulkPlanning(client);
     await client.query(`INSERT INTO import_plans(id,workspace_id,created_by_user_id,source_name,source_kind,source_hash,
@@ -695,6 +715,11 @@ async function revise(database,ctx,id,input={},options={}){
     if(!saved)throw new NotFoundError('That import could not be found.');
     if((saved.apply_checkpoint?.cataloguePrepared||saved.apply_checkpoint?.catalogueStarted))throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
     const plan=hydratePlan(saved);
+    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
+    if(input.columnSource){
+      const verified=await require('./agent-column-mapping').verify(client,ctx,plan,{source:input.columnSource,integrityHash:input.expectedHash});
+      if(stable(input.fieldMappings)!==stable(verified.mappings))throw new ValidationError('The proposed fields differ from the approved source.');
+    }
     if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
       throw new ValidationError('Only an unapproved preview can be corrected.');
@@ -884,6 +909,7 @@ async function approve(database, ctx, id, expectedHash) {
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
     const plan=hydratePlan(result.rows[0]);
+    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
     if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
     if(!plan.transformations.dataset&&supplierDataset.classify(plan.sourceColumns))
@@ -965,6 +991,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status='SUCCEEDED' AND (p.records_invalid=0 OR p.id=$3) ORDER BY e.finished_at DESC LIMIT 1`,
   [ctx.workspaceId,plan.sourceHash,id])).rows[0];
   if(previous)return {duplicate:true,execution:previous,planId:previous.import_id};
+  await require('./agent-catalog-intake').check(database,ctx,plan);
   const storage=require('../commercial/storage-capacity');await database.transaction(c=>storage.reserve(c,ctx.workspaceId,'import:'+id,storage.importBytes(plan)),{isolation:'READ COMMITTED'});
   let executionId=newId('impexec');
   if(options.retryExecutionId)await requireRolledBackExecution(database,ctx,plan,options.retryExecutionId);
@@ -984,6 +1011,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
   }
   let result,executionAttempt=0;
   try {
+    await assertImportRowCapacity(database,ctx.workspaceId,plan.recordsDetected);
     if(plan.transformations.dataset!=='suppliers')result=await require('./postgres-apply').run(database,ctx,plan,executionId,options,{assertOperator,assertSourceClaim,bulkPlanning,productKey,variantKey});
     else result=await database.transaction(async(client)=>{
       executionAttempt++;
@@ -1030,7 +1058,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     await database.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN $5 THEN 'paused' ELSE 'rolled_back' END,error_message=$2,finished_at=$3,
       result=COALESCE($4,result) WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso(),
       error.details?.checks?JSON.stringify({failedChecks:error.details.checks}):null,Boolean(cp.cataloguePrepared||cp.catalogueStarted)]);
-    await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status<>'CANCELLED' AND approval_status='APPROVED'`,[ctx.workspaceId,id]);
+    await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status NOT IN ('CANCELLED','READY') AND approval_status='APPROVED'`,[ctx.workspaceId,id]);
     throw error;
   }
   // Business writes have committed. Keep all advisory work outside the rollback

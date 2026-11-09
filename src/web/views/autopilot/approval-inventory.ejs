@@ -1,0 +1,7 @@
+<h1>Review purchases in <%= workspace.name %></h1>
+<form action="/inventories/switch" method="post">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="workspaceId" value="<%= workspaceId %>">
+  <input type="hidden" name="next" value="<%= destination %>">
+  <button class="btn btn--primary" type="submit">Open this inventory</button>
+</form>

@@ -7,7 +7,19 @@ const activities = new Map([
   ['supplier-response','File a supplier confirmation or document'],
   ['staff-request','Create a purchase order from an approved staff request'],
   ['invoice-match','Enter and match a supplier invoice from an agent proposal'],
-  ['accounting-export','Export and verify an agent-queued accounting journal']
+  ['customer-receipt','Match a recorded customer bank receipt to its invoice'],
+  ['customer-reminder','Prepare and send a customer invoice payment reminder'],
+  ['arrived-stock','Reserve arrived stock for a waiting customer order'],
+  ['stock-ready','Send a customer an update when waiting stock is reserved'],
+  ['invoice-dispute','Prepare and send a sourced supplier invoice dispute'],
+  ['customer-statement','Prepare and send a requested customer account statement'],
+  ['quote-followup','Prepare and send a follow-up on a customer quotation'],
+  ['accounting-export','Export and verify an agent-queued accounting journal'],
+  ['count-adjustment','Post a stock count difference within the owner’s limit'],
+  ['repeat-sale','Prepare a repeat customer order at current prices'],
+  ['margin-price','Calculate and record an individually approved price change'],
+  ['combine-purchases','Combine compatible purchase order drafts'],
+  ['split-purchase','Split a purchase order into separate drafts']
 ]);
 
 async function access(db, ctx) {
@@ -50,9 +62,61 @@ async function report(db,ctx,window='week') {
       ON b.workspace_id=a.workspace_id AND b.id=a.result->>'billId'
       WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='purchase_order.record_supplier_invoice'
         AND a.result->>'status' IN ('OPEN','DISPUTED') GROUP BY b.id UNION ALL
+    SELECT 'customer-receipt',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN accounting_bank_transactions t ON t.workspace_id=a.workspace_id AND t.id=a.result->>'bankTransactionId' AND t.status IN ('MATCHED','RECONCILED')
+      JOIN accounting_payments p ON p.workspace_id=t.workspace_id AND p.id=t.matched_payment_id AND p.id=a.result->>'paymentId'
+        AND p.source_key='agent-bank-receipt:'||t.id AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED'
+      JOIN accounting_payment_allocations l ON l.workspace_id=p.workspace_id AND l.payment_id=p.id AND l.customer_invoice_id=a.payload->>'recordId' AND l.amount_minor=t.amount_minor
+      JOIN accounting_journal_entries j ON j.workspace_id=p.workspace_id AND j.id=p.journal_entry_id AND j.status='POSTED'
+      WHERE a.workspace_id=$1 AND a.action_type='customer_payment.match_bank_line' AND a.status='EXECUTED' AND a.result->>'replayed' IS DISTINCT FROM 'true'
+        AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED')
+      GROUP BY t.id UNION ALL
+    SELECT 'customer-reminder',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      WHERE m.workspace_id=$1 AND m.customer_invoice_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='invoice_reminder' GROUP BY m.id UNION ALL
+    SELECT 'arrived-stock',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN stockchief_runtime.business_operations op ON op.workspace_id=a.workspace_id AND op.idempotency_key=a.idempotency_key AND op.kind='sales_order.confirm' AND op.status='COMPLETED'
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='sales_order.reserve_arrived' AND a.result->>'replayed' IS DISTINCT FROM 'true'
+        AND jsonb_array_length(a.result->'allocations')>0 AND op.result->'allocations'=a.result->'allocations'
+        AND op.result->>'salesOrderId'=a.payload->>'recordId' GROUP BY op.id UNION ALL
+    SELECT 'stock-ready',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      WHERE m.workspace_id=$1 AND m.stock_ready_order_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='stock_ready_notice' GROUP BY m.id UNION ALL
+    SELECT 'invoice-dispute',min(m.sent_at::timestamptz) FROM supplier_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      WHERE m.workspace_id=$1 AND m.invoice_dispute_bill_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='invoice_dispute' GROUP BY m.id UNION ALL
+    SELECT 'customer-statement',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      JOIN stockchief_runtime.assistant_action_proposals a ON a.workspace_id=m.workspace_id AND a.result->>'communicationId'=m.id AND a.action_type='customer.statement' AND a.status='EXECUTED'
+      WHERE m.workspace_id=$1 AND m.customer_id=a.payload->>'recordId' AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='customer_statement' AND e.payload->'standingAuthority'->>'sourceFingerprint'=a.payload->>'sourceFingerprint' GROUP BY m.id UNION ALL
+    SELECT 'quote-followup',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      JOIN sales_quotations q ON q.workspace_id=m.workspace_id AND q.id=e.payload->'standingAuthority'->>'recordId'
+      WHERE m.workspace_id=$1 AND m.customer_id=q.customer_id AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='quote_followup' AND e.payload->'standingAuthority'->>'quoteHash'=q.pricing_hash
+      GROUP BY m.id UNION ALL
     SELECT 'accounting-export',min(e.completed_at) FROM stockchief_runtime.provider_effects e
       WHERE e.workspace_id=$1 AND e.kind='accounting.journal.export' AND e.status='SUCCEEDED'
-        AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id
+        AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id UNION ALL
+    SELECT 'count-adjustment',r.approved_at FROM physical_count_reviews r
+      WHERE r.workspace_id=$1 AND r.status='COMPLETED' AND r.agent_decision->>'action'='post'
+        AND (r.result->>'changed')::int>0 UNION ALL
+    SELECT 'repeat-sale',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN sales_orders o ON o.workspace_id=a.workspace_id AND o.id=a.result->>'salesOrderId'
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='sales_order.repeat' GROUP BY o.id UNION ALL
+    SELECT 'margin-price',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN sku_prices p ON p.workspace_id=a.workspace_id AND p.id=a.result->>'id'
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='catalog.restore_margin' GROUP BY p.id UNION ALL
+    SELECT CASE a.action_type WHEN 'purchase_order.combine_drafts' THEN 'combine-purchases' ELSE 'split-purchase' END,a.executed_at
+      FROM stockchief_runtime.assistant_action_proposals a
+      WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type IN ('purchase_order.combine_drafts','purchase_order.split_draft')
+        AND jsonb_array_length(a.result->'drafts')>0 AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(a.result->'drafts') d(id)
+          WHERE NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.workspace_id=a.workspace_id AND p.id=d.id))
   )
   SELECT activity,count(*)::integer AS n FROM events
   WHERE occurred>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND occurred<=CURRENT_TIMESTAMP GROUP BY activity`,[ctx.workspaceId,days])).rows;

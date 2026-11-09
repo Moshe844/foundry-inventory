@@ -37,6 +37,8 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   const ask=require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review');
   const inChat=await ask.prepare(null,db,ctx,'What should I pay this week?',{agentJob:'payment-run'});
   assert.match(inChat.rows[0]['Review amount'],/1\.96/);assert.equal(inChat.sources[0].href,'/autopilot/reviews/payment-run');
+  const source=inChat.sources.find(s=>s.kind==='record'&&s.href==='/money/bills/'+bill.billId);
+  assert.ok(source);await browser.get(source.href).expect(200);
   assert.equal(forecast.rows[0]['Supplier bills'],'$2.00');
   assert.equal(forecast.rows[4]['Unbilled PO goods'],'$2.00');
   assert.equal((await reviews.run(db,ctx,'stock-by-location',{filter:code})).rows[0].Units,'4');
@@ -58,12 +60,24 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
     for(const d of reviews.definitions){
-      const call=()=>reviews.run(db,ctx,d.key,{filter:d.requiresFilter?'some-exact-filter':''});
-      if(policy.permits(tier,d.id,'suggest')) assert.ok(Array.isArray((await call()).rows),tier+' '+d.key);
+      const filter=d.key==='supplier-negotiation'?'fixture-supplier':d.requiresFilter?'some-exact-filter':'';
+      const call=()=>reviews.run(db,ctx,d.key,{filter});
+      if(policy.permits(tier,d.id,'suggest')){
+        const result=await call();
+        assert.equal(result.mode,policy.allowance(tier,d.id),tier+' '+d.key);
+        assert.ok(Array.isArray(result.rows),tier+' '+d.key);
+        if(result.mode==='suggest'){
+          assert.ok(result.rows.length<=1,tier+' '+d.key);
+          for(const row of result.rows)assert.deepEqual(Object.keys(row),['Suggestion'],tier+' '+d.key);
+        }
+      }
       else await assert.rejects(call(),e=>e.code==='entitlement_required',tier+' '+d.key);
+      if(!policy.permits(tier,d.id,'automatic'))await assert.rejects(reviews.run(db,ctx,d.key,{scheduled:true}),e=>e.code==='entitlement_required',tier+' '+d.key);
     }
   }
   await plan('starter');
+  const advice=await ask.prepare(null,db,ctx,'Which supplier should I review?',{agentJob:'supplier-options'});
+  assert.match(advice.coverage,/up to one suggestion/);assert.equal(advice.sources.length,1);
   assert.equal((await reviews.run(db,ctx,'supplier-options')).rows[0].Suggestion.includes('Fixture parts'),true);
   await assert.rejects(reviews.run(db,ctx,'supplier-options',{scheduled:true}),e=>e.code==='entitlement_required');
   await browser.get('/autopilot/reviews/compare-quotes').expect(402);

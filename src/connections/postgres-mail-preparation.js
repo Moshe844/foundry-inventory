@@ -16,6 +16,7 @@ async function actor(db,ctx,owner=false){
 }
 async function authorize(db,ctx,source){
   await actor(db,ctx);
+  await require('./agent-mail-triage').draftAccess(db,ctx.workspaceId,{required:true});
   const message=(await db.query(`SELECT m.*,c.config,c.status AS connection_status,c.paused_at
     FROM connection_email_messages m JOIN workspace_connectors c ON c.workspace_id=m.workspace_id AND c.id=m.connector_id
     WHERE m.workspace_id=$1 AND m.id=$2`,[ctx.workspaceId,source.messageId])).rows[0];
@@ -33,6 +34,7 @@ async function configure(db,ctx,id,enabled){
     const row=(await client.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
     if(!row||!['gmail','microsoft365'].includes(row.provider_type))throw new NotFoundError('That business mailbox was not found.');
     if(enabled){
+      await require('./agent-mail-triage').draftAccess(client,ctx.workspaceId,{required:true});
       await entitlements.assertCapability(client,await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),CAPABILITY);
       if(row.status!=='connected'||row.paused_at)throw new ValidationError('Sign in and resume this mailbox before automatic preparation.');
     }
@@ -101,7 +103,8 @@ async function discard(db,ctx,id){
 }
 async function state(db,ctx,id,{providerConfigured=false}={}){
  const connection=await require('./postgres-service').get(db,ctx.workspaceId,id);
- const capable=(await entitlements.capabilityState(db,await entitlements.ownerScopeForWorkspace(db,ctx.workspaceId),CAPABILITY)).enabled;
+ const agentDrafts=await require('./agent-mail-triage').draftAccess(db,ctx.workspaceId);
+ const capable=agentDrafts&&(await entitlements.capabilityState(db,await entitlements.ownerScopeForWorkspace(db,ctx.workspaceId),CAPABILITY)).enabled;
  const configured=providerConfigured||require('../config').ai.configured||require('../assistant/postgres-codex-pilot').configured(ctx);
  const connected=connection.status==='connected'&&!connection.paused_at;
  const enabled=connection.config.replyPreparationEnabled===true;
@@ -118,7 +121,7 @@ async function state(db,ctx,id,{providerConfigured=false}={}){
    label:m.reply_sent_at?'Sent and verified':m.reply_state==='HANDLED'?'Handled; email and draft retained':m.draft_source==='owner'?'Your edited reply':m.draft_source==='model'?'Reply ready':
      ['READY','RUNNING'].includes(m.goal_status)||['PENDING','RETRY','RUNNING'].includes(m.job_status)?'Preparing reply':
      m.result?.skipped==='automatic_preparation_off'?'Stopped; preparation is off':'Needs review'}));
- return {enabled,available:capable&&configured,connected,
+ return {enabled,available:capable&&configured,connected,agentLocked:!agentDrafts,
    label:!capable?'Not included in this plan':!configured?'Reply preparation is unavailable':connection.paused_at?'Mailbox checks are paused':!connected?'Mailbox sign-in needed':
      enabled?'Automatic preparation is on':'Automatic preparation is off',entries};
 }

@@ -3,6 +3,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { allowance, permits, requireJob } = require('../../src/commercial/agent-plan');
+test('the pricing chart tracks the row-by-row verification record and executable permissions',()=>{
+  const fs=require('node:fs'),path=require('node:path'),progress=require('../../src/commercial/agent-plan-progress.json');
+  const ledger=fs.readFileSync(path.join(__dirname,'../../docs/agent-plan-v3-verification.md'),'utf8');
+  const rows=ledger.split(/\r?\n/).filter(line=>/^\| \d+ \|/.test(line));
+  assert.equal(rows.length,214);
+  const tested=rows.filter(line=>!line.includes('| Policy only |')).map(line=>Number(/^\| (\d+)/.exec(line)[1]));
+  assert.deepEqual(progress.workflowTests,tested,'Update chart verification when recording a newly tested workflow');
+  assert(progress.complete.every(id=>tested.includes(id)));
+  const chart=require('../../src/commercial/agent-plan-comparison').comparison();assert.equal(chart.length,214);
+  for(const row of chart)for(const cell of row.plans)assert.equal(cell.mode,allowance(cell.tier,row.id));
+});
 
 // Vector legend in the printed row order, pages 2–9. Keeping expectations
 // independent of the runtime JSON catches a single changed plan cell.
@@ -17,7 +28,7 @@ for (const [plan, column] of Object.entries(columns)) {
   test(plan + ' matches all 214 agent jobs and their maximum authority', () => {
     assert.equal(column.length, 214);
     for (const [i, symbol] of [...column].entries()) {
-      const id=i+1, effective=plan==='starter'&&id===35?'D':plan==='growth'&&id===213?'T':symbol, label=`${plan} job ${id}`, facts={ edi:true };
+      const id=i+1, effective=plan==='starter'&&[35,60].includes(id)?'D':plan==='growth'&&id===213?'T':symbol, label=`${plan} job ${id}`, facts={ edi:true };
       assert.equal(allowance(plan,id), modes[effective],label);
       assert.equal(permits(plan,id,'suggest',facts),effective!=='-',label);
       assert.equal(permits(plan,id,'draft',facts),'ADT'.includes(effective),label);

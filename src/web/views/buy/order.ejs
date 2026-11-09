@@ -7,6 +7,7 @@
    * mark as sent) open in side panels from the step that needs them.
    */
   var V = view;
+  var dual = typeof dualApproval==='undefined'?null:dualApproval;
   var cur = order.currency || 'USD';
   var m = function (minor) { return helpers.money(minor, cur); };
   var each = function (value) { return value == null ? '—' : helpers.money(Math.round(Number(value) * 10 ** helpers.currencyExponent(cur)), cur); };
@@ -14,6 +15,7 @@
   var missingCost = order.lines.filter(function (line) { return line.unitCost === null || line.unitCost === undefined; });
   var nextButton = function (cls) {
     if (!V.next) return '';
+    if (dual && ['approve','place'].includes(V.next.kind)) return '';
     if (V.next.href) return '<a class="ox-btn ox-btn--primary ' + (cls || '') + '" href="' + V.next.href + '">' + V.next.label + '</a>';
     // Approve posts from a form of its own, wherever the button sits.
     if (V.next.kind === 'approve') return '<form class="ox-inline-form" method="post" action="/purchasing/orders/' + order.id + '/approve" data-busy><input type="hidden" name="_csrf" value="' + csrfToken + '"><input type="hidden" name="integrityHash" value="' + order.integrityHash + '"><button class="ox-btn ox-btn--primary ' + (cls || '') + '" type="submit">' + V.next.label + '</button></form>';
@@ -34,7 +36,13 @@
       <%- nextButton() %>
     </div>
   </header>
+  <%- include('../partials/filed-documents-link',{documentTargetKind:'purchase_order',documentTargetId:order.id}) %>
   <%- include('_tabs', { active: '/purchasing/orders' }) %>
+  <% if(dual){ %><section class="ox-note"><h2>Two-person approval</h2>
+    <% if(dual.locked){ %><p>Your saved purchase threshold still applies. Pro or Custom is required to collect signatures.</p><a href="/billing">View plans</a>
+    <% }else{ %><p>Two authorized people must review this <%= dual.total %> order. <%= dual.people.length?'Signed by '+dual.people.join(', ')+'.':'No signatures yet.' %></p>
+    <% if(!dual.signed){ %><form method="post" action="/purchasing/orders/<%= order.id %>/sign"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="digest" value="<%= dual.digest %>"><button class="ox-btn ox-btn--primary">Sign this purchase order</button></form><% } %>
+    <% } %></section><% } %>
 
 
   <% if (V.cancelled) { %>

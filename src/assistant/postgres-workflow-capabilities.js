@@ -29,6 +29,8 @@ const {nowIso,newId}=require('../lib/util');
 // freezes the exact requested effect for approval. The canonical service
 // validates and executes it again inside the approval transaction.
 const RECORDS=Object.freeze({
+  landed_cost_document:{table:'landed_cost_documents',number:'document_number',label:'received-goods cost allocation'},
+  sales_quotation:{table:'sales_quotations',number:'quote_number',label:'customer quotation'},
   custody_agreement:{table:'custody_agreements',number:'agreement_number',label:'rental or consignment agreement'},
   manufacturing_work_order:{table:'manufacturing_work_orders',number:'order_number',label:'production work order'},
   manufacturing_bom:{table:'manufacturing_boms',number:'id',label:'BOM revision'},
@@ -669,7 +671,7 @@ function warehouseScan(_database,_ctx,row,args){
 function bankImport(_database,_ctx,row,args){
   if(!Number(row.active))throw new ValidationError('This financial account is inactive.');
   const transactionDate=dateOnly(args.transactionDate,'Bank transaction date');
-  const amountMinor=moneyMinor(args.amount,'Bank transaction amount');
+  const amountMinor=require('../domain/currency').toMinor(args.amount,row.currency,{label:'Bank transaction amount',signed:true});
   if(!amountMinor)throw new ValidationError('Bank transaction amount cannot be zero.');
   const description=String(args.description||'').trim();
   if(!description||description.length>500)throw new ValidationError('Give the exact bank transaction description.');
@@ -681,7 +683,7 @@ function bankImport(_database,_ctx,row,args){
 function bankReconcile(_database,_ctx,row,args){
   if(!Number(row.active))throw new ValidationError('This financial account is inactive.');
   const statementEndDate=dateOnly(args.statementEndDate,'Statement ending date');
-  moneyMinor(args.statementEndingBalance,'Statement ending balance');
+  require('../domain/currency').toMinor(args.statementEndingBalance,row.currency,{label:'Statement ending balance',signed:true});
   const complete=String(args.enabled||'').toLowerCase();
   if(!['true','false'].includes(complete))throw new ValidationError(
     'Say whether to complete the reconciliation now or save it for review.');
@@ -704,6 +706,34 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  require('../accounting/agent-customer-payment-matches').spec,
+  require('../accounting/agent-invoice-reminders').spec,
+  require('../accounting/agent-customer-statements').spec,
+  require('../sales/agent-quote-followups').spec,
+  require('../sales/agent-arrived-stock').spec,
+  require('../sales/agent-stock-ready').spec,
+  require('../warehouse/agent-putaway').spec,
+  require('../accounting/postgres-landed-costs').spec,
+  require('../purchasing/agent-invoice-disputes').spec,
+  require('../documents/agent-product-facts').spec,
+  ...require('../documents/agent-filing').specs,
+  require('../purchasing/agent-receiving-documents').spec,
+  require('../pricing/agent-supplier-prices').spec,
+  require('../sales/recurring-orders').spec,
+  ...require('../imports/agent-catalog-intake').specs,
+  require('../purchasing/agent-kit-parts').spec,
+  ...require('../sales/agent-quotes').specs,
+  require('../purchasing/agent-regroup-orders').spec(24),require('../purchasing/agent-regroup-orders').spec(25),
+  {name:'catalog.fill_supplier_specs',description:'Fill missing barcodes, unit weights and dimensions from the exact approved supplier file. Skip unknown units, duplicate barcodes or conflicting evidence. Optionally restrict to a named SKU.',
+    fields:['sourceImport','sourcePage','sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
+    build:require('../domain/agent-supplier-specs').build,execute:require('../domain/agent-supplier-specs').execute,verify:require('../domain/agent-supplier-specs').verify},
+  {name:'catalog.restore_margin',description:'Prepare the exact new selling price for a named SKU after its purchase cost increases, preserving the previous margin percentage. A person must approve every price change.',
+    fields:['sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
+    build:require('../pricing/agent-margin-prices').build,execute:require('../pricing/agent-margin-prices').execute,verify:require('../pricing/agent-margin-prices').verify},
+  {name:'sales_order.repeat',description:'Repeat a named customer’s last confirmed order or the order from last calendar month as a new draft at current prices. Use repeatPeriod previous-month for “same as last month”. If several orders match that month, ask for the source order number.',
+    record:'customer',fields:['recordReference','repeatPeriod','sourceOrderNumber'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
+    resultingRecords:['sales_order'],resultRecordKind:'sales_order',resultReference:'salesOrderId',resultDisplayReference:'orderNumber',
+    build:require('./repeat-customer-order').prepare,execute:require('./repeat-customer-order').execute,verify:require('./repeat-customer-order').verify},
   ...require('./postgres-record-aliases').specs,
   {name:'customer_return.credit_receipt',description:'Prepare an owner-approved credit note for goods already received on a legacy refund return. Preserve physical receipts, original journals and cash. Review exact original receipt dates, discount, tax, invoice balance and any deferred-cost release. Never duplicates an existing credit or refund.',record:'customer_return',fields:['recordReference'],permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,capability:'returns.core',resultingRecords:['accounting_return_receipt_credits','accounting_customer_invoices','accounting_journal_entries'],
    build:async(db,ctx,row)=>{const review=await require('../operations/postgres-legacy-return-credits').preview(db,ctx,row.id);return prepareResult({recordId:row.id,review},'Credit '+pricing.formatMinor(review.totalMinor,review.currency)+' for received '+review.returnNumber+' including '+pricing.formatMinor(review.taxMinor,review.currency)+' tax, on its recorded receipt dates: '+[...new Set(review.batches.map(b=>b.postingDate))].join(', ')+'. Recognize '+pricing.formatMinor(review.pendingCostMinor,review.currency)+' of returned cost. Reduce unpaid invoice amounts and record paid portions as owed refunds. No cash or stock moves.');},
@@ -745,6 +775,7 @@ const SPECS=Object.freeze([
         throw new ValidationError('This order line needs a verified per-unit price before changing it.');
       const priceOverride=changedPrice||line.pricing_snapshot?.priceOverride===true;
       const promotions=require('../pricing/postgres-promotions'),revised=await promotions.revisionQuote(database,ctx,row.id,{skuId:line.sku_id,quantity,unitPriceMinor,priceOverride});
+      await require('../sales/agent-customer-pricing').checkOrder(database,ctx,{customerId:row.customer_id},revised.quote);
       if(revised.quote.violations.length)throw new ValidationError('The revised order exceeds a pricing safeguard. Review pricing before changing it.');
       const effectiveUnitPriceMinor=revised.quote.lines.find(l=>l.skuId===line.sku_id).unitPriceMinor;
       return prepareResult({recordId:row.id,skuId:line.sku_id,quantity,unitPriceMinor:effectiveUnitPriceMinor,priceOverride,pricingQuoteHash:promotions.quoteHash(revised.quote),
@@ -756,7 +787,7 @@ const SPECS=Object.freeze([
         `The complete revised draft totals ${pricing.formatMinor(revised.quote.totalMinor,row.currency)}, including ${pricing.formatMinor(revised.quote.discountMinor,row.currency)} discount and ${pricing.formatMinor(revised.quote.taxMinor,row.currency)} tax. `+
         'The order remains a draft; no stock is reserved, invoice is posted, or message is sent.');
     },
-    execute:(client,ctx,p)=>workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p),
+    execute:async(client,ctx,p)=>{await require('../sales/agent-customer-pricing').checkRevision(client,ctx,p);return workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p);},
     verify:async(client,ctx,result,p)=>Boolean(result.status==='DRAFT'&&result.quantity===p.quantity&&
       (await client.query(`SELECT 1 FROM sales_orders o JOIN sales_order_lines l
         ON l.sales_order_id=o.id AND l.workspace_id=o.workspace_id
@@ -1018,7 +1049,11 @@ const SPECS=Object.freeze([
       'tax','issueDate','dueDate','invoiceDocument'],permission:permissions.MANAGE_ACCOUNTING,
     capability:'accounting.core',build:purchaseOrderSupplierInvoice,
     execute:async(client,ctx,p)=>{
-      if(p.expectedMatchFingerprint)return workflows.recordSupplierInvoice(sameClient(client),ctx,p);
+      if(p.expectedMatchFingerprint){
+        await require('../purchasing/agent-invoice-source').recheck(client,ctx,p,ctx.agentInvoiceScope==='automatic');
+        return workflows.recordSupplierInvoice(sameClient(client),ctx,p);
+      }
+      if(ctx.agentInvoiceScope==='automatic')throw new ValidationError('Prepare the complete original supplier invoice before automatic matching.');
       const current=(await client.query(`SELECT pol.quantity_received_units,pol.unit_cost,
         COALESCE((SELECT SUM(bl.quantity) FROM accounting_supplier_bill_lines bl
           JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id
@@ -1454,18 +1489,22 @@ const SPECS=Object.freeze([
     verify:async(client,ctx,r,p)=>Boolean(r.supplierCreditId&&r.amountMinor===p.amountMinor&&
       (await client.query(`SELECT 1 FROM accounting_supplier_credits WHERE workspace_id=$1 AND id=$2
         AND amount_minor=$3`,[ctx.workspaceId,r.supplierCreditId,p.amountMinor])).rows.length)},
+  {name:'warehouse.release_orders',agentJob:56,description:'Release the next one to 20 fully reserved shipping orders at the exact anchor order’s warehouse, sorted by owner priority, due date and creation order. Read the ready-order review first. Quantity is the maximum order count. People must scan and physically hand off goods.',record:'sales_order',fields:['recordReference','quantity','strategy'],permission:permissions.MANAGE_FULFILLMENT_WAVES,ownerOnly:true,capability:'warehouse.advanced',
+    resultReference:'waveId',resultDisplayReference:'waveNumber',resultRecordKind:'fulfillment_wave',resultingRecords:['fulfillment_wave'],build:(db,ctx,row,args)=>require('../warehouse/agent-pick-release').build(db,ctx,row,args),execute:(db,ctx,p)=>require('../warehouse/agent-pick-release').execute(db,ctx,p),verify:(db,ctx,r,p)=>require('../warehouse/agent-pick-release').verify(db,ctx,r,p)},
   {name:'warehouse.wave.create',description:'Release one exact confirmed, allocated order as a warehouse picking wave. Strategy WAVE (one order, default), BATCH or CLUSTER. Stock remains on hand until actual shipping handoff.',
+    resultReference:'waveId',resultDisplayReference:'waveNumber',resultRecordKind:'fulfillment_wave',resultingRecords:['fulfillment_wave'],
     record:'sales_order',fields:['recordReference','strategy'],permission:permissions.MANAGE_FULFILLMENT_WAVES,
-    capability:'warehouse.advanced',build:(_database,_ctx,row,args)=>{
+    capability:'warehouse.advanced',build:async(_database,_ctx,row,args)=>{
       requireState(row,['CONFIRMED','PARTIALLY_FULFILLED'],'This order');
       const requestedStrategy=String(args.strategy||'WAVE').toUpperCase();
       // Model phrasing for the single-order default is not the canonical
       // warehouse enum. Keep the warehouse engine's three actual strategies.
       const strategy=requestedStrategy==='PICK_BY_ORDER'?'WAVE':requestedStrategy;
       if(!['WAVE','BATCH','CLUSTER'].includes(strategy))throw new ValidationError('Choose a wave, batch, or cluster picking strategy.');
-      return prepareResult({orderIds:[row.id],strategy,title:`${strategy} pick for ${row.order_number}`},
+      const training=await require('../warehouse/agent-pick-release').single(_database,_ctx,row.id,strategy);
+      return prepareResult({orderIds:[row.id],orderNumber:row.order_number,strategy,title:`${strategy} pick for ${row.order_number}`,...training},
         `Release ${row.order_number} to a ${strategy.toLowerCase()} pick. No stock leaves yet.`);},
-    execute:(client,ctx,p)=>waves.create(sameClient(client),ctx,p),
+    execute:(client,ctx,p)=>require('../warehouse/agent-pick-release').executeSingle(client,ctx,p),
     verify:async(client,ctx,r)=>Boolean(r.waveId&&r.status==='PICKING'&&
       await state(client,ctx,'fulfillment_waves',r.waveId,['PICKING']))},
   {name:'warehouse.wave.scan',description:'Verify a physically scanned location, SKU and optional lot or serial on an open fulfillment wave. The canonical scan engine rejects mismatches and duplicates.',
@@ -1599,6 +1638,7 @@ const SPECS=Object.freeze([
   {name:'pricing.rule.configure',description:'Prepare a new price list, promotion, coupon, bundle, volume tier or margin/discount safeguard, or revise its exact current version. Discover current business products and customer records first. One owner approval covers the complete frozen policy; deterministic pricing, effective dates and historical snapshots apply to subsequent transactions.',
     fields:['pricingDefinition','pricingRuleId','expectedRevision'],permission:permissions.ADMIN,ownerOnly:true,capability:'sales_orders.core',
     build:async(database,ctx,_row,args)=>{let definition;try{definition=JSON.parse(args.pricingDefinition);}catch{throw new ValidationError('Provide a structured pricing rule matching its discovered contract.');}
+      await require('../sales/agent-customer-pricing').checkDefinition(database,ctx,definition);
       return require('../pricing/postgres-promotions').configuration(database,ctx,definition,{ruleId:args.pricingRuleId||null,expectedRevision:args.expectedRevision||0});},
     execute:(client,ctx,p)=>require('../pricing/postgres-promotions').activateInTransaction(client,ctx,p),
     verify:async(client,ctx,r,p)=>{const row=(await client.query('SELECT definition FROM stockchief_runtime.pricing_rule_versions WHERE workspace_id=$1 AND id=$2 AND rule_id=$3 AND revision=$4',[ctx.workspaceId,r.versionId,p.ruleId,p.expectedRevision+1])).rows[0];return Boolean(row&&require('../pricing/postgres-promotions').hash(row.definition)===require('../pricing/postgres-promotions').hash(p.definition));}},
@@ -1618,6 +1658,7 @@ if(byName.size!==SPECS.length)throw new TypeError('Duplicate workflow capability
 
 async function prepare(database,ctx,message,name,args,createProposal){
   const spec=byName.get(name);if(!spec)throw new TypeError(`Unknown workflow capability ${name}`);
+  if(spec.agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,spec.agentJob,'draft');
   if(spec.ownerOnly&&(await actor(database,ctx)).role!=='owner')throw new ValidationError(
     'Only this inventory’s owner can approve this change.');
   if(spec.capability)await entitlements.assertCapability(database,

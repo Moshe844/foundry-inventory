@@ -11,7 +11,7 @@ test('the combined release preserves historical authority, gates new terms and m
  await assert.rejects(autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED'),/shadow/);
  await db.query("UPDATE accounts SET created_at=(now()-interval '15 days')::text WHERE id=$1",[owner.accountId]);
  await assert.rejects(autonomy.configureRoutine(db,ctx,{role:'owner'},{purchaseEnabled:true,supplierIds:['fixture-supplier'],maximumValue:10000,weeklyValue:20000}),/1000 per order/);
- const expected=['agent_playbooks','agent_playbook_runs','agent_time_samples','purchase_requests','lot_recall_events','lot_certificate_requirements','lot_certificates','shipbob_sandbox_orders','shipbob_sandbox_stock','shipbob_sandbox_rules','orderful_orders','orderful_changes','orderful_outbound','orderful_rules','orderful_inbox'];
+ const expected=['agent_playbooks','agent_playbook_runs','agent_time_samples','purchase_requests','lot_recall_events','lot_certificate_requirements','lot_certificates','shipbob_sandbox_orders','shipbob_sandbox_stock','shipbob_sandbox_rules','agent_partner_stock_settings','agent_pick_release_checks','agent_putaway_instructions','agent_putaway_rules','orderful_orders','orderful_changes','orderful_outbound','orderful_rules','orderful_inbox'];
  for(const name of expected){const relation='stockchief_runtime.'+name;
   assert.equal((await db.query('SELECT count(*)::int n FROM commercial_storage_tables WHERE relation=$1::regclass',[relation])).rows[0].n,1,relation);
   assert.equal((await db.query('SELECT count(*)::int n FROM commercial_storage_usage WHERE workspace_id=$1 AND relation=$2::regclass',[ctx.workspaceId,relation])).rows[0].n,1);

@@ -283,6 +283,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
       WHERE purchase_order_id=$1 AND workspace_id=$2 AND unit_cost IS NULL`, [purchaseOrderId, ctx.workspaceId]);
     if (Number(missing.rows[0].count)) throw new ValidationError('Every purchase-order line needs an approved cost.');
     await require('./postgres-team-access').assertPurchaseApproval(client,ctx,order);
+    await require('../purchasing/dual-approval').assertApproved(client,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='APPROVED',approved_by_user_id=$3,
       approved_at=COALESCE(approved_at,$4),updated_at=$4 WHERE id=$1 AND workspace_id=$2`,
@@ -304,6 +305,7 @@ async function placePurchaseOrder(database, rawContext, purchaseOrderId, input) 
     const order = await requireRow(client, `SELECT * FROM purchase_orders
       WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, [purchaseOrderId, ctx.workspaceId], 'That purchase order was not found.');
     if (!['APPROVED', 'ORDERED'].includes(order.status)) throw new ValidationError('Approve the purchase order before placing it.');
+    if(order.status==='APPROVED')await require('../purchasing/dual-approval').assertApproved(client,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='ORDERED',ordered_at=COALESCE(ordered_at,$3),updated_at=$3
       WHERE id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId, at]);
@@ -718,6 +720,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const order = await requireRow(client, `SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
       [salesOrderId, ctx.workspaceId], 'That sales order was not found.');
     if (!['DRAFT', 'CONFIRMED', 'BACKORDERED'].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const lines = await client.query(`SELECT * FROM sales_order_lines
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const kitComponents=(await client.query('SELECT c.component_sku_id,c.sales_order_line_id FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE c.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows,kitLines=new Set(kitComponents.map(c=>c.sales_order_line_id));
@@ -727,6 +730,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
         AND ($3::text IS NULL OR b.location_id=$3)
       ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,
     [ctx.workspaceId, skuIds, order.fulfillment_location_id]);
+    await require('../sales/agent-ship-from').chooseAtConfirmation(client,ctx,order);
     const allocations = [];
     let short = false;
     for (const line of lines.rows) {
@@ -790,6 +794,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     if (!['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'].includes(order.status)) {
       throw new ValidationError('Confirm and allocate the sales order before fulfilling it.');
     }
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
     const trackedLines=await require('./postgres-tracked-sales').expand(client,ctx,salesOrderId,input.lines,at);

@@ -64,7 +64,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, matching and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:[],capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{agentOffer:true}),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
+    title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),agentComparison:require('../../commercial/agent-plan-comparison').comparison(),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:[],capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{agentOffer:true}),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),planSelection:req.session.commercialSelection||null,
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',

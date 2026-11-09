@@ -15,14 +15,17 @@ async function factsFor(database,workspaceId,message){
  const suppliers=(await database.query("SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' AND (id=$2 OR lower(email)=lower($3)) ORDER BY id LIMIT 2",[workspaceId,message.supplier_id||'',sender])).rows;
  // Ambiguous contacts never let one customer's or supplier's private records
  // become evidence for another contact's reply.
+ if(customers.length+suppliers.length!==1)return [];
  if(customers.length===1){const customer=customers[0];facts.push('The sender is customer '+customer.name+'.');
-  const orders=(await database.query('SELECT id,order_number,status,needed_by,currency FROM sales_orders WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,customer.id])).rows;
+  const history=await require('../commercial/agent-history').access(database,workspaceId);
+  const orders=(await database.query(`SELECT id,order_number,status,needed_by,currency FROM sales_orders WHERE workspace_id=$1 AND customer_id=$2
+    AND ($3::text IS NULL OR order_date >= $3) ORDER BY created_at DESC,id DESC LIMIT 5`,[workspaceId,customer.id,history.salesFrom])).rows;
   for(const order of orders){facts.push('Customer order '+order.order_number+' has status '+order.status+(order.needed_by?' and recorded needed-by date '+order.needed_by:'')+'.');
    const lines=(await database.query(`SELECT l.sku_id,s.code,i.name,l.quantity_ordered,l.quantity_fulfilled,l.unit_price_minor
     FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
     JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
     WHERE l.workspace_id=$1 AND l.sales_order_id=$2 ORDER BY l.id LIMIT 50`,[workspaceId,order.id])).rows;
-   for(const line of lines)facts.push('Order '+order.order_number+', '+line.name+' ('+line.code+'): '+line.quantity_ordered+' ordered, '+line.quantity_fulfilled+' fulfilled; recorded unit selling price '+order.currency+' '+(Number(line.unit_price_minor)/100).toFixed(2)+'.');
+   for(const line of lines)facts.push('Order '+order.order_number+', '+line.name+' ('+line.code+'): '+line.quantity_ordered+' ordered, '+line.quantity_fulfilled+' fulfilled; recorded unit selling price '+order.currency+' '+require('../domain/currency').fromMinor(line.unit_price_minor,order.currency)+'.');
    if(lines.length){const positions=(await database.query('SELECT s.id AS sku_id,l.id AS location_id,l.name AS location_name FROM skus s CROSS JOIN locations l WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND l.workspace_id=$1 AND l.is_active=1 AND l.custody_agreement_id IS NULL ORDER BY s.id,l.id',[workspaceId,lines.map(l=>l.sku_id)])).rows;
     const availability=require('../domain/postgres-stock-availability'),stock=await availability.readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id})));
     for(const position of positions){const current=stock.get(availability.key(position.sku_id,position.location_id));if(current){const line=lines.find(l=>l.sku_id===position.sku_id);facts.push('Current stock for '+line.code+' at '+position.location_name+': '+current.onHand+' physically on hand, '+current.available+' available after existing commitments. Availability is not a delivery promise.');}}
@@ -30,7 +33,7 @@ async function factsFor(database,workspaceId,message){
    const shipments=(await database.query("SELECT shipment_number,status,carrier,tracking_number,shipped_at,delivered_at FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'CANCELLED' ORDER BY created_at DESC,id DESC LIMIT 10",[workspaceId,order.id])).rows;
    for(const shipment of shipments)facts.push('Order '+order.order_number+' shipment record: '+JSON.stringify(shipment)+'.');
    const invoices=(await database.query('SELECT invoice_number,total_minor,balance_minor,currency,due_date FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY created_at DESC,id DESC LIMIT 10',[workspaceId,order.id])).rows;
-   for(const invoice of invoices)facts.push('Order '+order.order_number+' invoice '+invoice.invoice_number+': '+invoice.currency+' '+(Number(invoice.total_minor)/100).toFixed(2)+' total, '+invoice.currency+' '+(Number(invoice.balance_minor)/100).toFixed(2)+' outstanding'+(invoice.due_date?', due '+invoice.due_date:'')+'.');
+   for(const invoice of invoices)facts.push('Order '+order.order_number+' invoice '+invoice.invoice_number+': '+invoice.currency+' '+require('../domain/currency').fromMinor(invoice.total_minor,invoice.currency)+' total, '+invoice.currency+' '+require('../domain/currency').fromMinor(invoice.balance_minor,invoice.currency)+' outstanding'+(invoice.due_date?', due '+invoice.due_date:'')+'.');
   }
  }
  if(suppliers.length===1){const supplier=suppliers[0];facts.push('The sender is supplier '+supplier.name+'.');
@@ -59,6 +62,7 @@ function draftDigest(message){return require('node:crypto').createHash('sha256')
 
 async function savePrepared(database,ctx,id,draft,{expectedDraftDigest=null}={}){
  const save=async client=>{
+  await require('./agent-mail-triage').draftAccess(client,ctx.workspaceId,{required:true});
   const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
   permissions.assertCan(actor,permissions.OPERATE,'prepare business replies');
   await entitlement.assertCapability(client,await entitlement.ownerScopeForWorkspace(client,ctx.workspaceId),'communications.ai_drafts');
@@ -77,6 +81,7 @@ async function savePrepared(database,ctx,id,draft,{expectedDraftDigest=null}={})
 }
 
 async function prepare(database,ctx,id,options={}){
+  await require('./agent-mail-triage').draftAccess(database,ctx.workspaceId,{required:true});
   const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
     [ctx.workspaceId,ctx.actorId])).rows[0];
   if(!actor)throw new ValidationError('The acting user does not belong to this inventory.');

@@ -53,7 +53,8 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
     AND (global_policy.preferred_supplier_id IS NULL OR lead.supplier_id=global_policy.preferred_supplier_id)
     ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1),global_policy.lead_time_days,$7)) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
   (SELECT value FROM operational_preferences preference WHERE preference.workspace_id=$1 AND preference.key='target_days_of_stock') AS saved_cover_days,
-  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead,$7) AS lead_time_days,cost.amount_minor AS cost_minor
+  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead,$7) AS lead_time_days,
+  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead) IS NULL AS lead_time_assumed,cost.amount_minor AS cost_minor
  FROM positions pos CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=pos.sku_id LIMIT 1)s
  CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id LIMIT 1)i
  JOIN active_locations l ON l.id=pos.location_id LEFT JOIN stockchief_runtime.replenishment_source_versions source_version ON source_version.workspace_id=s.workspace_id AND source_version.sku_id=s.id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id

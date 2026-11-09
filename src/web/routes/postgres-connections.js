@@ -82,6 +82,7 @@ function createPostgresConnectionsRouter(database,options={}){
       postgresMode:true,inventorySetup,connections:connectionRows.filter(c=>require('../presentation/connections').availableForCustomer(registry.get(c.provider_type)?.metadata?.()||{},connectionRuntime)&&(!inventorySetup||providerCatalog.some(p=>p.type===c.provider_type))),
       providerCatalog,
       apiToken,apiClients:clients,
+      agentApiAvailable:await require('../../connections/agent-review-api').available(database,req.ctx.workspaceId),
       // Preserve existing merchant account details, but do not advertise new
       // self-service Connect or StockChief-funded guided shipping at launch.
       paymentAccount:inventorySetup?null:{...payment,source:'connect',
