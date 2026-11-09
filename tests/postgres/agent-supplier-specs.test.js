@@ -5,6 +5,30 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 const imports=require('../../src/imports/postgres-service'),assistant=require('../../src/assistant/postgres-service');
 const facts=require('../../src/domain/postgres-catalog-facts');
 
+test('recurring import files reuse owner-approved columns at the permitted level without importing any rows',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
+  await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '20 days')::text WHERE id=$1",[f.owner.accountId]);
+  const modes=require('../../src/autopilot/job-modes');
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const source=(code,options={})=>imports.analyse(db,ctx,{filename:'Warehouse master.csv',
+    buffer:Buffer.from('Product,SKU,Vendor A17\nItem '+code+','+code+',Metal finish'),allowModel:false,...options});
+  const template=await source('MAP-REF',{mappings:{name:0,code:1,description:2}});
+  await imports.approve(db,ctx,template.id,template.integrityHash);assert.ok((await imports.execute(db,ctx,template.id)).verified);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);const p=await source('MAP-'+tier),path='/imports/'+p.id;
+    assert.equal(p.transformations.columnTemplate.source,template.id);assert.equal(p.approvalStatus,'AWAITING_APPROVAL');
+    const page=await browser.get(path).expect(200);assert.match(page.text,/Column mapping from an earlier file/);
+    if(tier==='starter'){
+      assert.equal(p.fieldMappings.description,undefined);assert.match(page.text,/Use the earlier column mapping/);
+      await browser.post(path+'/previous-mapping').type('form').send({_csrf:f.csrf(page.text),source:template.id,integrityHash:p.integrityHash}).expect(303);
+      const current=await imports.get(db,ctx.workspaceId,p.id);assert.equal(current.fieldMappings.description,2);assert.equal(current.approvalStatus,'AWAITING_APPROVAL');
+    }else{assert.equal(p.fieldMappings.description,2);assert.ok(p.transformations.columnTemplate.automatic);}
+  }
+  await modes.save(db,ctx,133,{mode:'ask',revision:0});assert.equal((await source('ASK-FIRST')).fieldMappings.description,undefined);
+  const unrelated=await source('UNRELATED',{filename:'Another vendor.csv'});assert.equal(unrelated.transformations.columnTemplate,undefined);
+  assert.equal((await db.query("SELECT count(*)::int n FROM skus WHERE workspace_id=$1 AND code LIKE 'MAP-%'",[ctx.workspaceId])).rows[0].n,1);
+});
+
 test('supplier specs fill only evidenced missing fields, govern bulk approval, and survive retries',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
   await subscribe('enterprise');

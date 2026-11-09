@@ -486,11 +486,21 @@ async function analyse(database, ctx, input) {
     }
   }
   if(workbook)sheet=workbook.sheet;
+  const columnMapping=require('./agent-column-mapping');
+  const tabularKind=parsedWorkbook.format==='xlsx'?'xlsx':parsedWorkbook.format==='delimited'&&/\.(csv|tsv)$/i.test(input.filename||'')?'csv':null;
+  const layout=buffer&&!workbook&&!input.mappings&&!prior&&parsedWorkbook.sheets.length===1&&tabularKind
+    ?{filename:input.filename,kind:tabularKind,columns:sheet.columns,sheetIndex,sheetName:sheet.name,sourceHash}:null;
+  let template=layout?await columnMapping.match(database,ctx.workspaceId,layout):null;
+  if(template){
+    const policies=require('../commercial/agent-plan'),state=await policies.accountState(database,ctx.workspaceId);
+    if(!policies.usesAgentTerms(state)||!policies.permits(state.plan,133,'draft'))template=null;
+  }
+  const reuse=Boolean(template&&await columnMapping.automatic(database,ctx.workspaceId));
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
     aiUsed:workbook.aiUsed??!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:analysisNotice?false:input.allowModel,
-      mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
+      mappings:input.mappings || (reuse?template.mappings:json(prior?.field_mappings,null)),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || (reuse?template.detectedType:prior?.detected_type),
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(!analysisNotice&&proposal.aiError)analysisNotice={code:'interpretation_unavailable',message:proposal.aiError};
   // A model reading a whole workbook can leave out a column whose heading
@@ -536,6 +546,7 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{...(analysisNotice?{analysisNotice}:{}),...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
+      ...(template?{columnTemplate:{source:template.source,mappings:template.mappings,automatic:reuse}}:{}),
       ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
@@ -554,6 +565,11 @@ async function analyse(database, ctx, input) {
   if(trackingSummary&&!streaming){trackingSummary.add(validated.rows);plan.transformations.trackingSummary=trackingSummary.finish(plan);}
   plan.integrityHash=integrityFor(plan,validated.rows);
   await database.transaction(async(client)=>{
+    if(reuse){
+      const current=await columnMapping.match(client,ctx.workspaceId,layout);
+      if(!await columnMapping.automatic(client,ctx.workspaceId)||current?.source!==template.source)
+        throw new ValidationError('The approved mapping or the authority to apply it changed while reading this file. Read the original file again.');
+    }
     // Keep paged validation on bounded index plans even before fresh catalogue statistics settle.
     await bulkPlanning(client);
     await client.query(`INSERT INTO import_plans(id,workspace_id,created_by_user_id,source_name,source_kind,source_hash,
@@ -690,6 +706,10 @@ async function revise(database,ctx,id,input={},options={}){
     if(!saved)throw new NotFoundError('That import could not be found.');
     if((saved.apply_checkpoint?.cataloguePrepared||saved.apply_checkpoint?.catalogueStarted))throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
     const plan=hydratePlan(saved);
+    if(input.columnSource){
+      const verified=await require('./agent-column-mapping').verify(client,ctx,plan,{source:input.columnSource,integrityHash:input.expectedHash});
+      if(stable(input.fieldMappings)!==stable(verified.mappings))throw new ValidationError('The proposed fields differ from the approved source.');
+    }
     if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
       throw new ValidationError('Only an unapproved preview can be corrected.');

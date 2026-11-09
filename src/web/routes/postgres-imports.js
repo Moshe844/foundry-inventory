@@ -121,6 +121,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
+      columnAccess:plan.transformations.columnTemplate?await require('../../imports/agent-column-mapping').access(database,req.ctx):null,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
       missingLocationCount:savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)?savedSummary.missingLocationRows:null,
@@ -129,6 +130,11 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
+  router.post('/imports/:id/previous-mapping',asyncRoute(async(req,res)=>{
+    await require('../../imports/agent-column-mapping').apply(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The earlier column mapping was submitted for this preview. Review the updated rows before importing.');
+    return res.redirect(303,'/imports/'+req.params.id);
+  }));
   router.post('/imports/:id/reanalyse',asyncRoute(async(req,res)=>{
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL'||req.body.integrityHash!==plan.integrityHash)

@@ -158,7 +158,7 @@ Owners can set an individual job to Watch only or Ask me first for small count p
 | 130 | Builds sizes and colors (variants) from a spreadsheet. | Excluded | Draft | Alone | Alone | Policy only |
 | 131 | Suggests categories and tags for new products. | Excluded | Alone | Alone | Alone | Growth, Pro and Custom suggest a category when two classified products of the same recorded brand agree. SKU and item filters link back to the product. Disagreement yields no category. Tags use recorded brand, material or imported tags. Starter was denied. |
 | 132 | Retires discontinued items and points staff to the replacement. | Excluded | Excluded | Trained | Alone | Policy only |
-| 133 | Reads an import file and maps the columns. | Draft | Alone | Alone | Alone | Policy only |
+| 133 | Reads an import file and maps the columns. | Draft | Alone | Alone | Alone | An owner-approved CSV matched the name, worksheet and headers of four later files with new products. Starter reviewed the unfamiliar supplier column and applied its earlier mapping. Growth, Pro and Custom applied the mapping in the preview under automatic authority. Ask me first and an unrelated filename prevented automatic reuse. Mapping a new file created no products or stock. |
 | 134 | Keeps units straight: case vs each, kg vs lb. | Excluded | Alone | Alone | Alone | Policy only |
 | 135 | Reads supplier price lists and updates costs (asks if over 5%). | Excluded | Excluded | Trained | Alone | Policy only |
 | 136 | Reads spec sheets and safety sheets and saves the key facts. | Excluded | Draft | Alone | Alone | Policy only |

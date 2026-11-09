@@ -15,6 +15,20 @@
 <link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||"current" %>">
 <div class="ox ox-flow ox-review" data-ox-page>
 <%- include('_flow',{step:flowStep}) %>
+<% const template=(plan.transformations||{}).columnTemplate; if (locals.columnAccess?.allowed && template && plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL') { %>
+  <section class="card"><div class="card-body">
+    <h2>Column mapping from an earlier file</h2>
+    <p>The earlier file had the same name, sheet and headers. <a href="/imports/<%= template.source %>">Review the approved source</a>.</p>
+    <% if(Object.keys(template.mappings).length===Object.keys(plan.fieldMappings).length && Object.entries(template.mappings).every(([field,index])=>plan.fieldMappings[field]===index)){ %>
+      <p>This preview uses the same column mapping.</p>
+    <% }else if(columnAccess.block){ %><p><%= columnAccess.block %></p><% }else{ %><form method="post" action="/imports/<%= plan.id %>/previous-mapping">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="source" value="<%= template.source %>">
+      <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+      <button class="btn">Use the earlier column mapping</button>
+    </form><% } %>
+  </div></section>
+<% } %>
 <% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="ox-head">
   <div><h1 class="ox-title"><%= plan.sourceName %></h1>
