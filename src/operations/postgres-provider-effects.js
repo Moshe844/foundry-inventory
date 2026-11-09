@@ -21,6 +21,7 @@ async function get(database,workspaceId,id){const row=(await database.query(`SEL
 async function enqueueInTransaction(client,input){
   if(!input.workspaceId||!input.kind||!input.provider||!input.aggregateType||!input.aggregateId||!input.idempotencyKey)
     throw new TypeError('A provider effect needs tenant, kind, provider, aggregate and idempotency identity.');
+  require('./agent-mail-protocol').jobKind(input);
   const id=input.id||newId('peff');const inserted=await client.query(`INSERT INTO stockchief_runtime.provider_effects
     (id,workspace_id,kind,provider,aggregate_type,aggregate_id,payload,idempotency_key,requested_by_user_id)
     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING RETURNING *`,
@@ -28,7 +29,8 @@ async function enqueueInTransaction(client,input){
     input.idempotencyKey,input.requestedByUserId||null]);
   const row=inserted.rows[0]||(await client.query(`SELECT * FROM stockchief_runtime.provider_effects
     WHERE workspace_id=$1 AND kind=$2 AND idempotency_key=$3`,[input.workspaceId,input.kind,input.idempotencyKey])).rows[0];
-  const queued=await jobs.enqueue(scopedDatabase(client),{workspaceId:input.workspaceId,kind:'provider.effect',
+  const kind=require('./agent-mail-protocol').jobKind(row);
+  const queued=await jobs.enqueue(scopedDatabase(client),{workspaceId:input.workspaceId,kind,
     idempotencyKey:`provider-effect:${row.id}`,payload:{effectId:row.id},priority:input.priority??20,maxAttempts:input.maxAttempts??12});
   return {effect:hydrate(row),created:Boolean(inserted.rows.length),job:queued.job,jobCreated:queued.created};
 }

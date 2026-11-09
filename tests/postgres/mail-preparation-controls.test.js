@@ -36,7 +36,7 @@ test('ordinary paid owner controls automatic preparation, edits and sends exactl
   await page.goto(base+'/settings/connections/'+connectorId);
   assert.equal(await page.locator('[data-mail-preparation]').count(),1);
   if(process.env.STOCKCHIEF_CONTROL_ARTIFACT_DIR){const out=path.join(process.env.STOCKCHIEF_CONTROL_ARTIFACT_DIR,'mail-screenshots');fs.mkdirSync(out,{recursive:true});for(const width of [1440,390]){await page.setViewportSize({width,height:1000});await page.screenshot({path:path.join(out,'preparation-off-'+width+'.png'),fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);}}
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Let StockChief handle reply preparation',exact:true}).click()]);
+  await Promise.all([page.waitForNavigation(),page.getByRole('switch',{name:'Let StockChief handle replies for business@example.test',exact:true}).click()]);
   assert.match(await page.locator('[data-mail-preparation]').innerText(),/Automatic preparation is on/);
   const captured=await incoming('after-opt-in');
   const handlers=require('../../src/operations/postgres-runtime-handlers').create(providers,{aiProvider}),jobs=require('../../src/operations/postgres-job-queue');
@@ -59,7 +59,7 @@ test('ordinary paid owner controls automatic preparation, edits and sends exactl
   assert.equal(kept.reply_state,'HANDLED');assert.equal(kept.draft_body,'Current recorded availability is 7 units.');assert(kept.body_text);
   const pending=await incoming('cancel-pending-preparation');
   await page.goto(base+'/settings/connections/'+connectorId);
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Stop automatic preparation',exact:true}).click()]);
+  await Promise.all([page.waitForNavigation(),page.getByRole('switch',{name:'Let StockChief handle replies for business@example.test',exact:true}).click()]);
   const paused=await jobs.processOne(db,{'mail.reply-draft':handlers['mail.reply-draft']},{owner:'disabled-mail-fixture'});
   assert.equal(paused.result.skipped,'automatic_preparation_off');assert.equal(modelCalls,2);assert.equal(sends,1);
   assert.equal((await mail.get(db,ctx.workspaceId,pending.messageId)).draft_body,null);

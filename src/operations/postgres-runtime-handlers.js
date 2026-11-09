@@ -700,6 +700,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
     providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
+  ...Object.fromEntries(require('./agent-mail-protocol').kinds.map(kind=>[kind,external(async(job,database)=>{require('./agent-mail-protocol').assertJob(await providerEffects.get(database,job.workspaceId,job.payload?.effectId),job.kind);return providerEffect(job,database,options,providers);})])),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
