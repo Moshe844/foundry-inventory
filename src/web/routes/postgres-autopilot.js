@@ -190,6 +190,11 @@ function createPostgresAutopilotRouter(database){
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   const landedCosts=require('../../accounting/postgres-landed-costs');
+  const quoteFollowups=require('../../sales/agent-quote-followups');
+  router.get('/autopilot/quote-followups/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/quote-followup',{title:'Customer quote follow-up',nav:'autopilot'},()=>quoteFollowups.page(database,req.ctx,req.params.id),402)));
+  router.post('/autopilot/quote-followups/:id/received',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.record(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));
+  router.post('/autopilot/quote-followups/:id/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));
+  router.post('/autopilot/quote-followups/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await assistant.prepareAction(database,req.ctx,'Follow up on this customer quotation',{action:'sales_quote.followup',recordReference:req.params.id,mailbox:req.body.connectorId});if(!p.proposal?.id)throw new ValidationError(p.answer||'Record that the customer received this quote and choose the sending mailbox.');res.redirect(303,'/actions/'+p.proposal.id);}));
   router.get('/autopilot/landed-costs/new',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/landed-cost-new',{title:'Allocate freight, duty and fees',nav:'autopilot'},()=>landedCosts.sources(database,req.ctx,req.query),402)));
   router.post('/autopilot/landed-costs',requireAuth,owner,asyncRoute(async(req,res)=>{const made=await landedCosts.prepareForm(database,req.ctx,req.body);res.redirect(303,'/autopilot/landed-costs/'+made.id);}));
   router.get('/autopilot/landed-costs/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/landed-cost',{title:'Received-goods stock cost',nav:'autopilot'},()=>landedCosts.page(database,req.ctx,req.params.id),402)));

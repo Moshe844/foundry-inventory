@@ -3,7 +3,7 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['customer.statement',81],['landed_cost.apply',49],['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['sales_quote.followup',74],['customer.statement',81],['landed_cost.apply',49],['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
 }
@@ -16,6 +16,10 @@ async function history(db,ctx,action,bound,amount){
     FROM stockchief_runtime.assistant_action_proposals p WHERE workspace_id=$1 AND action_type=$2 AND status='EXECUTED'
       AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'
       AND result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule'
+      AND ($2<>'sales_quote.followup' OR (result->>'automatic' IS DISTINCT FROM 'true' AND EXISTS(
+        SELECT 1 FROM customer_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+        WHERE m.workspace_id=p.workspace_id AND m.id=p.result->>'communicationId' AND m.customer_id=p.payload->>'customerId' AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='quote_followup' AND e.payload->'standingAuthority'->>'automatic'='false' AND e.payload->'standingAuthority'->>'sourceFingerprint'=p.payload->>'sourceFingerprint')))
       AND ($2<>'customer.statement' OR (result->>'automatic' IS DISTINCT FROM 'true' AND EXISTS(
         SELECT 1 FROM customer_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
         WHERE m.workspace_id=p.workspace_id AND m.id=p.result->>'communicationId' AND m.customer_id=p.payload->>'recordId'
@@ -44,6 +48,7 @@ async function settings(db,ctx,id,maximum){
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
     canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow&&p.result?.replayed!==true&&p.result?.executionAuthority?.kind!=='standing_job_rule'&&
       (p.action_type!=='landed_cost.apply'||(p.result?.automatic!==true&&p.payload.needsLandedCostConfirmation===false))&&
+      (p.action_type!=='sales_quote.followup'||await require('../sales/agent-quote-followups').confirmedExample(db,ctx.workspaceId,p))&&
       (p.action_type!=='customer.statement'||await require('../accounting/agent-customer-statements').confirmedExample(db,ctx.workspaceId,p))&&
       (p.action_type!=='supplier_invoice.dispute'||await require('../purchasing/agent-invoice-disputes').confirmedExample(db,ctx.workspaceId,p))};
 }

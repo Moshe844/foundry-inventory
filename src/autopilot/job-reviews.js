@@ -6,6 +6,7 @@ const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
   require('../accounting/agent-customer-statements').definition,
+  require('../sales/agent-quote-followups').definition,
   require('../warehouse/agent-putaway').definition,
   require('../accounting/postgres-landed-costs').definition,
   require('../warehouse/agent-pick-release').definition,
