@@ -291,12 +291,15 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   if(state.paused)return {decision:'refused',reason:state.pausedReason||'StockChief is paused.',policy:null};
   if(state.suspended)return {decision:'refused',reason:state.suspendedReason||'Automatic work is suspended.',policy:null};
   const evidence=decisionEvidence(candidate);
-  if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy:null};
-  if(state.mode!==MODES.POLICY_AUTOMATED)return {decision:'needs_approval',reason:'This inventory is set to ask before consequential work.',policy:null};
+  if(state.mode!==MODES.POLICY_AUTOMATED)return {decision:'needs_approval',reason:evidence?.level==='low'?evidence.reason:'This inventory is set to ask before consequential work.',policy:null};
   const action=candidate.type==='transfer'?ACTIONS.TRANSFER:ACTIONS.PURCHASE;const policy=await activePolicy(database,workspaceId,action);
   const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
   if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
   if(!policy){const review=(await listPolicies(database,workspaceId)).some(p=>p.enabled&&p.scopeNeedsReview&&p.actions.includes(action));return {decision:'needs_approval',reason:review?'An earlier standing rule needs review because its product restriction was not retained. No automatic action is authorized.':'No approved standing authority covers this action.',policy:null};}
+  if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
+  if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
+  if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
+  if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy};
   const account=await agentPlan.accountState(database,workspaceId);
   if(agentPlan.usesAgentTerms(account) || !account.plan && (account.subscribed || require('../config').commercial.requirePaidWorkspace)){
     if(account.shadow || !agentPlan.permits(account.plan,candidate.type==='transfer'?119:20,'automatic'))
@@ -308,9 +311,6 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
       if(reason) return {decision:'needs_approval',reason,policy};
     }
   }
-  if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
-  if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
-  if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(candidate.type==='transfer'){
     if(policy.locationScope.length&&(!policy.locationScope.includes(candidate.sourceLocationId)||!policy.locationScope.includes(candidate.destinationLocationId)))
       return {decision:'needs_approval',reason:'The transfer uses a location outside the approved scope.',policy};

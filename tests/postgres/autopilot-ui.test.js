@@ -89,7 +89,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     await page.goto(`${base}/needs-you`);assert.match(await page.locator('main').innerText(),/Transfer Widget/);
     await page.getByRole('link',{name:'Review decision'}).click();
     assert.match(await page.locator('main').innerText(),/Move 10 units from North Warehouse to South Store/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve transfer',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/Await physical dispatch and destination receipt/);
     assert.equal((await database.query("SELECT execution_status FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot'",[ctx.workspaceId])).rows[0].execution_status,'EXECUTING','An approved transfer remains owned until destination receipt');
     const transferred=(await database.query(`SELECT location_id,on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2`,
