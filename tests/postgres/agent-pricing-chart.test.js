@@ -36,7 +36,12 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
     for(const row of await dialog.locator('[data-plan-job]').evaluateAll(es=>es.map(e=>({id:Number(e.dataset.planJob),mode:e.dataset.mode,label:e.querySelector('[data-job-label]').textContent})))){
       assert.equal(row.mode,policy.allowance(plan.id,row.id));assert.equal(row.label,jobs.find(j=>j.id===row.id).job);
     }
-    assert.equal(await dialog.locator('[data-plan-job][data-status=pending]:visible').count(),0,'Unfinished work cannot look available by default');
+    assert.equal(await dialog.locator('[data-plan-status]').inputValue(),'all');
+    assert.deepEqual(await dialog.locator('[data-plan-job]:visible').evaluateAll(es=>es.map(e=>Number(e.dataset.planJob))),allowed.map(j=>j.id),'Every permitted PDF duty is visible when opening '+plan.name);
+    assert.match(await dialog.locator('[data-plan-scope]').innerText(),new RegExp(allowed.length+' duties'));
+    for(const badge of await dialog.locator('[data-plan-job][data-status=pending]:visible .pricing-status').allTextContents())assert.equal(badge,'Planned · not available yet','Unfinished duties must never look ready');
+    await dialog.locator('[data-plan-status]').selectOption('working');
+    assert.equal(await dialog.locator('[data-plan-job][data-status=pending]:visible').count(),0,'The working filter excludes unfinished duties');
     await dialog.getByRole('button',{name:'No training needed',exact:true}).click();
     const expected=allowed.filter(j=>policy.allowance(plan.id,j.id)==='alone'&&progress.workflowTests.includes(j.id)).map(j=>j.id);
     assert.deepEqual(await dialog.locator('[data-plan-job]:visible').evaluateAll(es=>es.map(e=>Number(e.dataset.planJob))),expected);
