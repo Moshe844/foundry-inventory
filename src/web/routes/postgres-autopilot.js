@@ -17,6 +17,11 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.post('/autopilot/customer-payments/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Match the selected recorded bank credit to its issued invoice',{action:'customer_payment.match_bank_line',recordReference:req.body.invoiceNumber,bankTransaction:req.body.bankTransaction});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
     const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
     const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));

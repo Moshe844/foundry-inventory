@@ -3,7 +3,7 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
 }
@@ -14,7 +14,7 @@ function scope(partyId,currency,amountMinor,qualification,label){
 async function history(db,ctx,action,bound,amount){
   const {rows:[row]}=await db.query(`SELECT count(*) total,count(*) FILTER(WHERE (payload#>>'{training,amountMinor}')::numeric<=$5) covered
     FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND action_type=$2 AND status='EXECUTED'
-      AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4`,[ctx.workspaceId,action,bound.key,bound.currency,amount]);
+      AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'`,[ctx.workspaceId,action,bound.key,bound.currency,amount]);
   return {total:Number(row.total),covered:Number(row.covered)};
 }
 async function settings(db,ctx,id,maximum){
@@ -44,7 +44,7 @@ async function save(db,ctx,id,input){
     else{
       if(input.mode!=='save'||!data.canTeach)throw new ValidationError('Complete a reviewed example outside shadow mode before teaching this routine.');
       const amount=money.userToMinor(input.maximum,bound.currency);
-      if(amount<=0)throw new ValidationError('Set a positive maximum goods value.');
+      if(amount<=0)throw new ValidationError(action==='customer_payment.match_bank_line'?'Set a positive maximum receipt amount.':'Set a positive maximum goods value.');
       await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],revision===0?1:0);
       const values=[...args,bound.label,bound.currency,amount,ctx.actorId];
       changed=revision===0?await c.query(`INSERT INTO stockchief_runtime.agent_draft_rules(workspace_id,action_type,scope_key,scope_label,currency,maximum_minor,authorized_by)
@@ -53,7 +53,7 @@ async function save(db,ctx,id,input){
           WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND revision=$8`,[...values,revision]);
     }
     if(!changed.rowCount)throw new ValidationError('The routine changed. Reload before saving.');
-    await require('../operations/postgres-security-audit').record(c,ctx,{action:'Draft order routine changed',reference:id,after:{mode:input.mode,scope:bound.label,maximum:input.maximum,history:data.preview}});
+    await require('../operations/postgres-security-audit').record(c,ctx,{action:action==='customer_payment.match_bank_line'?'Customer receipt routine changed':'Draft order routine changed',reference:id,after:{mode:input.mode,scope:bound.label,maximum:input.maximum,history:data.preview}});
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function trained(db,workspaceId,name,payload,proposalId){

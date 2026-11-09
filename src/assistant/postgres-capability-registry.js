@@ -14,6 +14,7 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  bankTransaction:{type:'string',maxLength:160,description:'Exact recorded bank transaction ID discovered in the accounting evidence. It must be an incoming unmatched bank credit for the selected invoice, not a proposed or invented payment.'},
   filedDocument:{type:'string',maxLength:120,description:'Exact filed document ID from its business-record document list or saved document review. The source must belong to the selected record.'},
   documentFacts:{type:'string',maxLength:50000,description:'JSON list of source-backed product facts, each with field, value and exact quote copied from the filed source. Supported fields: manufacturer, model, composition, hazards, handling, storage, temperature, certifications, origin, revision. Literal values must occur inside their quotes; never infer missing values.'},
   fileAttachment:{type:'string',maxLength:240,description:'Exact saved attachment ID discovered from the business message/document evidence. The complete original file and readable text must be available.'},

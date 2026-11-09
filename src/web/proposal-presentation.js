@@ -25,6 +25,10 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='customer_payment.match_bank_line'){
+  const p=proposal.payload,money=require('../domain/currency');
+  return {summary:proposal.summary,impact:p.existing?'Reviews an existing bank match':'Records received money against an invoice',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(p.expectedBalanceMinor!=null?[{label:'Invoice balance before matching',value:money.format(p.expectedBalanceMinor,p.currency)},{label:'Invoice balance after matching',value:money.format(p.expectedBalanceMinor-p.amountMinor,p.currency)}]:[])]};
+ }
  if(proposal.action_type==='document.save_product_facts'){
   const p=proposal.payload,labels=require('../documents/agent-product-facts').labels;
   return {summary:proposal.summary,impact:'Saves sourced product facts',fields:[{label:'Product',value:p.productName},{label:'Source',value:p.filename},...p.facts.flatMap(f=>[{label:labels[f.field],value:f.value},{label:'Source quote',value:f.quote}])]};

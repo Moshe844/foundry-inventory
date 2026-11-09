@@ -2149,14 +2149,16 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
       [ctx.workspaceId,ctx.actorId])).rows[0];
     require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
     if(contract.ownerOnly&&actor.role!=='owner')throw new ValidationError(
-      'Only this inventory’s owner can approve that connection change.');
+      'Only this inventory’s owner can approve this change.');
     if(contract.commercialCapability)await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),contract.commercialCapability);
     for(const capability of contract.additionalCommercialCapabilities||[])await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capability);
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
     const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
-    const result=await contract.execute(client,postage?{...ctx,agentPostageScope:missionPlanId?'automatic':'individual'}:ctx,payload);
+    const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
+    const executionContext=postage?{...ctx,agentPostageScope:missionPlanId?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:missionPlanId?'automatic':'individual'}:ctx;
+    const result=await contract.execute(client,executionContext,payload);
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
         'proposal_result_unverified');

@@ -14,6 +14,8 @@ test('bank evidence and statement approvals use each currency precision and refu
   await addBank(bank,currency);
   const request={action:'accounting.bank_import',recordReference:name,transactionDate:'2026-01-02',amount:Number(amount),description:'Exact recorded statement line',externalId:'native-credit'};
   const p=await assistant.prepareAction(db,ctx,'Import the original bank amount',request);assert(p.proposal.summary.includes(money.format(expected,currency)));
+  const plans=require('../../src/assistant/postgres-capability-plans'),{registry}=require('../../src/assistant/postgres-capability-registry');
+  await plans.save(db,ctx,'Import this manual bank evidence and inspect accounting',randomUUID(),[{contract:registry.get('accounting.bank_import'),args:{},dependsOn:[]},{contract:registry.get('read.agent_review'),args:{agentJob:'financial-permissions'},dependsOn:[0]}],[{result:p},{result:{status:'CLARIFY'}}]);await assert.rejects(assistant.executeMission(db,ctx,p.proposal.id),/own confirmation/);
   const imported=await assistant.executeProposal(db,ctx,p.proposal.id);await assistant.executeProposal(db,ctx,p.proposal.id);
   assert.equal(Number(imported.result.transaction.amount_minor),expected);
   const direct={transactionDate:'2026-01-02',amount,description:'Direct source',externalId:'direct-credit'},one=await banking.importOne(db,ctx,bank,direct);assert.equal(Number(one.transaction.amount_minor),expected);assert((await banking.importOne(db,ctx,bank,direct)).replayed);
@@ -33,5 +35,10 @@ test('bank evidence and statement approvals use each currency precision and refu
    await assert.rejects(banking.reconcile(db,ctx,other,{statementEndDate:'2026-01-03',statementEndingBalance:'1.00'}),/different currencies/);
    assert.equal((await db.query('SELECT status FROM accounting_bank_transactions WHERE id=$1',[line.transaction.id])).rows[0].status,'UNMATCHED');
   }
+  const customer=randomUUID();await db.query("INSERT INTO customers(id,workspace_id,name,email,record_state,created_by_user_id,created_at,updated_at) VALUES($1,$2,'Currency receipt customer','receipt@example.test','ACTIVE',$3,now()::text,now()::text)",[customer,ctx.workspaceId,ctx.actorId]);
+  const issued=await require('../../src/accounting/postgres-manual-invoices').createCustomerInvoice(db,ctx,{customerId:customer,description:'Exact currency receipt',quantity:1,unitAmount:amount,issueDate:'2026-01-02',idempotencyKey:randomUUID()}),invoice=(await db.query('SELECT * FROM accounting_customer_invoices WHERE id=$1',[issued.id])).rows[0];
+  const incoming=(await banking.importOne(db,ctx,bank,{transactionDate:'2026-01-02',amount,description:invoice.invoice_number,externalId:'invoice-receipt'})).transaction;
+  const matching=await assistant.prepareAction(db,ctx,'Match an actual currency receipt',{action:'customer_payment.match_bank_line',recordReference:invoice.invoice_number,bankTransaction:incoming.id}),matched=await assistant.executeProposal(db,ctx,matching.proposal.id);assert.equal(matched.result.amountMinor,expected);assert.equal(matched.result.balanceMinor,0);
+  assert.equal((await db.query('SELECT currency FROM accounting_payments WHERE id=$1',[matched.result.paymentId])).rows[0].currency,currency);
  }
 });
