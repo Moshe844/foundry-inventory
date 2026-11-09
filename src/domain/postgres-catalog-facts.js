@@ -34,7 +34,7 @@ async function saveManyInTransaction(client,ctx,inputs){
 async function read(database,workspaceId,{skuIds=null,itemIds=null,catalog=false}={}){return(await database.query(`SELECT
  CASE WHEN f.attributes IS NULL THEN f.id ELSE f.id||':'||md5(field.key) END AS id,f.workspace_id,f.sku_id,f.location_id,field.key AS name,field.value,
  f.source_import_id,f.source_row,f.updated_at${catalog?',s.code,l.name AS location_name':''}
- FROM ${skuIds?`unnest($2::text[]) want(sku_id) CROSS JOIN LATERAL(SELECT * FROM catalog_source_facts WHERE workspace_id=$1 AND sku_id=want.sku_id AND attributes IS NOT NULL
+ FROM ${skuIds?`(SELECT DISTINCT unnest($2::text[]) AS sku_id) want CROSS JOIN LATERAL(SELECT * FROM catalog_source_facts WHERE workspace_id=$1 AND sku_id=want.sku_id AND attributes IS NOT NULL
    UNION ALL SELECT * FROM catalog_source_facts WHERE workspace_id=$1 AND sku_id=want.sku_id AND attributes IS NULL)`:'catalog_source_facts'} f JOIN skus s ON s.workspace_id=f.workspace_id AND s.id=f.sku_id
  LEFT JOIN locations l ON l.workspace_id=f.workspace_id AND l.id=f.location_id
  CROSS JOIN LATERAL jsonb_each_text(CASE WHEN f.attributes IS NULL THEN jsonb_build_object(f.name,f.value) ELSE f.attributes END) field

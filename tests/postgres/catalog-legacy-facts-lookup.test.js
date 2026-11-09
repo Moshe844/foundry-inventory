@@ -7,5 +7,7 @@ test('bounded imported detail lookups preserve legacy field IDs, null locations 
  await save([{name:'Flavor',value:'Vanilla'},{name:'Bag size',value:'1kg'}]);await save([{locationId:f.location.id,name:'Flavor',value:'Chocolate'}]);await save([{name:'Bag size',value:'250g'}]);
  const legacy=(await db.query("SELECT id,value FROM catalog_source_facts WHERE id='legacy-flavor'")).rows[0];assert.deepEqual(legacy,{id:'legacy-flavor',value:'Vanilla'});
  const rows=await facts.listForSkus(db,ctx.workspaceId,[skuId]);assert.equal(rows.filter(r=>r.name==='Flavor'&&r.location_id===null).length,1);assert.equal(rows.find(r=>r.name==='Bag size').value,'250g');assert.equal(rows.find(r=>r.name==='Flavor'&&r.location_id===f.location.id).value,'Chocolate');
+ assert.deepEqual(await facts.listForSkus(db,ctx.workspaceId,[skuId,skuId,'missing-sku']),rows,'Repeated selected variants must not duplicate imported details');
+ assert.deepEqual(await facts.listForSkus(db,'other-inventory',[skuId]),[],'A selected variant never exposes another inventory');
  await assert.rejects(save([{locationId:'not-this-inventory',name:'Flavor',value:'Forbidden'}]),/must belong to this inventory/);assert.equal((await db.query("SELECT value FROM catalog_source_facts WHERE id='legacy-flavor'")).rows[0].value,'Vanilla');
 });
