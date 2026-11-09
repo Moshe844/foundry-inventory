@@ -67,14 +67,20 @@ function createPostgresMailRouter(database,options={}){
     const canReviewOrder=customerOrderMail&&require('../../commercial/agent-plan').permits(plan.plan,52,'draft');
     const customerReturnMail=req.user?.role==='owner'&&message.classification==='customer'&&returnSubject;
     const canReviewReturn=customerReturnMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&require('../../commercial/agent-plan').permits(plan.plan,111,'draft');
+    const supplierDetailsMail=req.user?.role==='owner'&&message.classification==='supplier'&&require('../../purchasing/supplier-email-terms-source').isSubject(message.subject);
+    const canReviewSupplierDetails=supplierDetailsMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&require('../../commercial/agent-plan').permits(plan.plan,96,'draft');
     const canImproveDraft=agentDrafts&&(await entitlements.capabilityState(database,commercialScope(req),
       'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured||require('../../assistant/postgres-codex-pilot').configured(req.ctx))
       &&!['READY','RUNNING'].includes(message.preparation_goal_status)&&!['PENDING','RETRY','RUNNING'].includes(message.draft_job_status);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
-      canImproveDraft,agentDrafts,customerOrderMail,canReviewOrder,customerReturnMail,canReviewReturn,canWriteReply:permissions.can(req.user,permissions.OPERATE),
+      canImproveDraft,agentDrafts,customerOrderMail,canReviewOrder,customerReturnMail,canReviewReturn,supplierDetailsMail,canReviewSupplierDetails,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentState.attachments,attachmentReading:attachmentState,drawers:DRAWERS});
   }));
+  router.get('/mail/:id/supplier-details',requireOwner,asyncRoute(async(req,res)=>res.page('mail/supplier-details',{title:'Review supplier email updates',nav:'mail',...(await require('../../purchasing/agent-supplier-email-terms').page(database,req.ctx,req.params.id))})));
+  router.post('/mail/:id/supplier-details',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
+  router.post('/mail/:id/supplier-details-settings',requireOwner,asyncRoute(async(req,res)=>{const message=await mail.get(database,req.ctx.workspaceId,req.params.id);await require('../../purchasing/agent-supplier-email-terms').configure(database,req.ctx,message.supplier_id,{...req.body,skuIds:[].concat(req.body.skuIds||[]),fields:[].concat(req.body.fields||[])});res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
+  router.post('/mail/:id/supplier-details-rule',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
   router.get('/mail/:id/return',requireOwner,asyncRoute(async(req,res)=>res.page('mail/return-review',{title:'Review customer return email',nav:'mail',...(await require('../../sales/agent-customer-return-emails').page(database,req.ctx,req.params.id,req.query.locationId))})));
   router.post('/mail/:id/return',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-customer-return-emails').create(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/return');

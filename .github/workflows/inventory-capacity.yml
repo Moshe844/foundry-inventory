@@ -131,6 +131,9 @@ jobs:
       - name: Scanned bin corrections, plan ceilings and existing physical work after downgrade
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-bin-corrections.test.js tests/postgres/transfers-ui.test.js tests/postgres/warehouse-member-access.test.js
+      - name: Supplier email details, exact plan rules and source ordering
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/supplier-email-terms-source.test.js tests/postgres/agent-supplier-email-terms.test.js tests/postgres/agent-work-digest.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
