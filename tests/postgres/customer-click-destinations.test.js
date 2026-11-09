@@ -34,7 +34,7 @@ test('required customer click gate visits page routes and detail families, block
  page.on('dialog',d=>d.dismiss());
  // Direct URLs on an account without Agent terms must name the plan and offer billing.
  // Any navigation link to these URLs still hits the response check below.
- for(const [url,plan] of [['/planning/safety-stock','Growth'],['/reports/my-preferences','Custom']]){
+ for(const [url,plan] of [['/planning/safety-stock','Growth'],['/reports/my-preferences','Custom'],['/autopilot/landed-costs/new','Pro']]){
   assert(queue.includes(url),'Missing gated route '+url);
   const response=await page.goto(origin+url),locked=page.locator('[data-agent-plan-locked]');
   assert.equal(response.status(),402,url);

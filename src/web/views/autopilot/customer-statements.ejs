@@ -1,0 +1,7 @@
+<section class="card"><h2>Prepare a requested statement</h2><p>The preview shows the customer’s recorded account in one currency, including current-month activity, outstanding invoices and other account balances. StockChief does not send this page automatically.</p>
+<% if(result.customerStatementForm.blocked){ %><p><%= result.customerStatementForm.blocked %></p><% }else if(!result.customerStatementForm.mailboxes.length){ %><p>Connect a sending mailbox first. <a href="/connections">Open connections</a></p><% }else{ %>
+<form method="post" action="/autopilot/customer-statements/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Exact customer name or email</span><input name="customerReference" maxlength="150" required></label>
+<label class="rm-field"><span>Currency</span><small>Leave blank to use your accounting currency. Other currencies are separate.</small><input name="currency" aria-label="Currency" maxlength="3" placeholder="USD"></label>
+<label class="rm-field"><span>Sending mailbox</span><select name="connectorId" required><% result.customerStatementForm.mailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
+<button class="btn btn--primary">Preview account statement</button></form><% } %></section>

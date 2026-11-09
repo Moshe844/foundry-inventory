@@ -17,6 +17,10 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.post('/autopilot/customer-statements/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
   router.post('/autopilot/supplier-disputes/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Ask the supplier to review this invoice difference',{action:'supplier_invoice.dispute',recordReference:req.body.billNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact disputed supplier bill and sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
@@ -186,9 +190,9 @@ function createPostgresAutopilotRouter(database){
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   const landedCosts=require('../../accounting/postgres-landed-costs');
-  router.get('/autopilot/landed-costs/new',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/landed-cost-new',{title:'Allocate freight, duty and fees',nav:'autopilot',...await landedCosts.sources(database,req.ctx,req.query)})));
+  router.get('/autopilot/landed-costs/new',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/landed-cost-new',{title:'Allocate freight, duty and fees',nav:'autopilot'},()=>landedCosts.sources(database,req.ctx,req.query),402)));
   router.post('/autopilot/landed-costs',requireAuth,owner,asyncRoute(async(req,res)=>{const made=await landedCosts.prepareForm(database,req.ctx,req.body);res.redirect(303,'/autopilot/landed-costs/'+made.id);}));
-  router.get('/autopilot/landed-costs/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/landed-cost',{title:'Received-goods stock cost',nav:'autopilot',...await landedCosts.page(database,req.ctx,req.params.id)})));
+  router.get('/autopilot/landed-costs/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/landed-cost',{title:'Received-goods stock cost',nav:'autopilot'},()=>landedCosts.page(database,req.ctx,req.params.id),402)));
   router.post('/autopilot/landed-costs/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await assistant.prepareAction(database,req.ctx,'Apply this received-goods cost allocation',{action:'landed_cost.apply',recordReference:req.params.id});if(p.status!=='PREPARED')throw new ValidationError('Review the current allocation document first.');res.redirect(303,'/actions/'+p.proposal.id);}));
   router.post('/autopilot/landed-costs/:id/discard',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.voidDraft(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/landed-costs');}));
   router.post('/autopilot/landed-costs/:id/reverse',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.reverse(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/landed-costs/'+req.params.id);}));

@@ -708,6 +708,7 @@ async function accountMapping(database,ctx,row,args){
 const SPECS=Object.freeze([
   require('../accounting/agent-customer-payment-matches').spec,
   require('../accounting/agent-invoice-reminders').spec,
+  require('../accounting/agent-customer-statements').spec,
   require('../sales/agent-arrived-stock').spec,
   require('../sales/agent-stock-ready').spec,
   require('../warehouse/agent-putaway').spec,

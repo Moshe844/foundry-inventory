@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../accounting/agent-customer-statements').definition,
   require('../warehouse/agent-putaway').definition,
   require('../accounting/postgres-landed-costs').definition,
   require('../warehouse/agent-pick-release').definition,
@@ -155,6 +156,7 @@ async function run(db,ctx,key,options={}){
       ...(result.arrivedStockForm?{arrivedStockForm:result.arrivedStockForm}:{}),
       ...(result.stockReadyForm?{stockReadyForm:result.stockReadyForm}:{}),
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
+      ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
       ...inputs};
   }
   if(def.read){
