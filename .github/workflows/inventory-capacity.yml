@@ -181,6 +181,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-stock-coverage-totals.test.js tests/postgres/inventory-rollup-deltas.test.js tests/postgres/catalog-rollup-deltas.test.js tests/postgres/round16-return-availability.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/round16-profit-report-projection.test.js tests/postgres/round16-additive-report-projections.test.js tests/postgres/round16-low-stock-report.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
+      - name: Staging speed read parity and imported detail uniqueness
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/staging-speed-read-parity.test.js tests/postgres/catalog-legacy-facts-lookup.test.js tests/postgres/grouped-inbox.test.js 2>&1 | tee output/inventory-ci/staging-speed-reads.log
       - name: Complete report totals and bounded dashboard reads
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
