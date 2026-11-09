@@ -69,7 +69,7 @@ test('storage admission is isolated from writes, concurrent-safe and measured in
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND id LIKE 'storage-cursor-%'",[ctx.workspaceId])).rows[0].n,0);
  });
  await t.test('measurement scheduling and publication survive a later runtime sweep failure',async()=>{
-  const now=Date.now(),jobs=require('../../src/operations/postgres-job-queue');await db.query("UPDATE commercial_storage_usage SET measured_at=now()-interval '2 hours' WHERE workspace_id=$1",[ctx.workspaceId]);
+  const now=Date.now(),jobs=require('../../src/operations/postgres-job-queue');await db.query("UPDATE commercial_storage_usage SET measured_at=now()-interval '25 hours' WHERE workspace_id=$1",[ctx.workspaceId]);
   await require('../../src/operations/postgres-scheduler').scheduleOnce(db,{now});
   const failed=await jobs.processOne(db,{'system.runtime-sweep':async()=>{throw Error('Intentional later sweep failure');}},{owner:'storage-sweep-failure',now,leaseMs:60000});assert.equal(failed.status,'RETRY');
   const pending=(await db.query("SELECT id,status FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='commercial.storage-baseline' ORDER BY created_at DESC LIMIT 1",[ctx.workspaceId])).rows[0];assert.equal(pending.status,'PENDING');
