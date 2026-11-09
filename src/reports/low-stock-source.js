@@ -1,14 +1,17 @@
 'use strict';
 // Report exports need the full inventory. List-page badges need only the
 // visible items, before stock positions and totals are materialized.
-function source({scopeItems=false,skuIdsOnly=false}={}){
- if(typeof scopeItems!=='boolean'||typeof skuIdsOnly!=='boolean')throw new TypeError('Choose fixed item and identity scopes.');
+function source({scopeItems=false,skuIdsOnly=false,probeItems=false}={}){
+ if(typeof scopeItems!=='boolean'||typeof skuIdsOnly!=='boolean'||typeof probeItems!=='boolean'||probeItems&&!scopeItems)throw new TypeError('Choose fixed item and identity scopes; direct probes need an item scope.');
  const selected=scopeItems?'selected_skus AS MATERIALIZED(SELECT id FROM skus WHERE workspace_id=$1 AND item_id=ANY($2::text[])),':'';
  // A product's own SKUs probe their policies and stock by key. Right after an
  // import the planner still believes these tables are empty and joined each
  // SKU to a scan of every policy: ten seconds for one 2,100-variant product.
- const policySource=scopeItems?'selected_skus selected CROSS JOIN LATERAL(SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=selected.id OFFSET 0) p':'reorder_policies p';
- const stockSource=scopeItems?'selected_skus selected CROSS JOIN LATERAL(SELECT sku_id,location_id,on_hand,workspace_id FROM balances WHERE sku_id=selected.id OFFSET 0) b':'balances b';
+ // A general item scope may contain the entire catalogue. Keep its set-based
+ // scan; callers rendering one product explicitly choose the direct probes.
+ const policySource=probeItems?'selected_skus selected CROSS JOIN LATERAL(SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=selected.id OFFSET 0) p':'reorder_policies p'+(scopeItems?' JOIN selected_skus selected ON selected.id=p.sku_id':'');
+ const stockSource=probeItems?'selected_skus selected CROSS JOIN LATERAL(SELECT sku_id,location_id,on_hand,workspace_id FROM balances WHERE workspace_id=$1 AND sku_id=selected.id OFFSET 0) b':'balances b';
+ const stockScope=scopeItems&&!probeItems?'AND b.sku_id IN(SELECT id FROM selected_skus)':'';
  const totals=scopeItems?'SELECT sku_id,sum(on_hand) AS on_hand FROM stock_positions GROUP BY sku_id':`SELECT total.sku_id,total.quantity-coalesce(inactive.on_hand,0) AS on_hand
  FROM (${require('../projections/postgres-sku-stock').source()}) total
  LEFT JOIN(SELECT b.sku_id,sum(b.on_hand) AS on_hand FROM balances b
@@ -22,6 +25,7 @@ function source({scopeItems=false,skuIdsOnly=false}={}){
  stock_positions AS NOT MATERIALIZED(
  SELECT b.sku_id,b.location_id,b.on_hand FROM ${stockSource}
  WHERE b.workspace_id=$1 AND b.location_id=ANY(ARRAY(SELECT id FROM locations WHERE workspace_id=$1 AND is_active=1))
+ ${stockScope}
  AND EXISTS(SELECT 1 FROM eligible_policies WHERE location_id IS NULL)
  ),stock_totals AS MATERIALIZED(${totals}),
  local_stock AS MATERIALIZED(
