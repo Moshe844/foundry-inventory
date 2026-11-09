@@ -7,5 +7,5 @@
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= job.revision %>">
 <label><span class="sr-only">Authority for <%= job.label %></span>
 <select name="mode"><% for(const key of job.allowed){ %><option value="<%= key %>" <%= job.mode===key?'selected':'' %>><%= modes[key] %></option><% } %></select></label>
-<button class="btn">Save</button></form><% if(!job.allowed.includes(job.mode)){ %><p>Your current plan limits the previous setting.</p><% } %><% } %>
+<button class="btn">Save</button></form><% if(job.routineMinimum&&!job.allowed.includes('routine')){ %><p>Automatic work · <%= job.routineMinimum %> · <a href="/billing">Review upgrade</a></p><% } %><% if(!job.allowed.includes(job.mode)){ %><p>Your current plan limits the previous setting.</p><% } %><% } %>
 </td></tr><% } %></tbody></table></div><a href="/autopilot">Back to StockChief AI</a>

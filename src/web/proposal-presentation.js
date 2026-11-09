@@ -12,7 +12,7 @@ function impact(type){
  return 'Changes a business record';
 }
 function fields(payload){
- const result=[],hidden=new Set(['id','training','fingerprint','expectedState','input_hash','request_key','integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
+ const result=[],hidden=new Set(['id','training','fingerprint','expectedState','input_hash','request_key','integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId','sourceEvidence','executionAuthority','needsInvoiceConfirmation','invoiceRoutineHold']);
  function walk(value,path,depth){
   if(result.length>=120||depth>5||value===null||value===undefined||value==='')return;
   if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{value=JSON.parse(value);}catch{}}
@@ -25,6 +25,10 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='purchase_order.record_supplier_invoice'){
+  const p=proposal.payload,money=require('../domain/currency');
+  return {summary:proposal.summary,impact:p.expectedStatus==='DISPUTED'?'Records a disputed supplier document':'Records the supplier invoice owed',fields:[{label:'Supplier invoice',value:p.supplierInvoiceNumber},{label:'Invoice date',value:p.issueDate},{label:'Due date',value:p.dueDate||'Needs confirmation'},...(p.sourceEvidence?[{label:'Original document',value:p.sourceEvidence.filename}]:[]),...(p.lines||[]).map(l=>({label:l.description||'Invoice item',value:l.quantity+' units at '+money.format(l.unitCostMinor,p.currency)+' each'})),...(p.expectedTotalMinor!=null?[{label:'Invoice total',value:money.format(p.expectedTotalMinor,p.currency)}]:[]),...(p.invoiceRoutineHold?[{label:'Needs your review',value:p.invoiceRoutineHold}]:[])]};
+ }
  if(proposal.action_type==='customer_invoice.remind'){
   const p=proposal.payload,words='Hello '+p.customerName+',\n\nOur records show '+require('../domain/currency').format(p.balanceMinor,p.currency)+' outstanding on invoice '+p.invoiceNumber+', due '+p.dueDate+'. Please let us know if you have already paid or have a question about this invoice.\n\nThank you.';
   return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',value:words}]};

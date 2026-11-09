@@ -2,7 +2,7 @@
 
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
-const auditedJobs=new Set([5,6,13,14,20,21,24,25,43,52,53,59,60,67,73,75,77,94,102,103,119,120,121,122,127,129,130,133,135,136,137,142,150]);
+const auditedJobs=new Set([5,6,13,14,20,21,24,25,43,52,53,59,60,67,73,75,77,94,98,102,103,119,120,121,122,127,129,130,133,135,136,137,142,150]);
 const definitions=require('../commercial/agent-plan-v3.json').filter(r=>auditedJobs.has(r.id));
 const tiers=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
 const modes={inherit:'Use inventory setting',watch:'Watch only',ask:'Ask me first',routine:'Handle routine work'};
@@ -28,7 +28,8 @@ async function page(db,ctx){
   return definitions.map(d=>{
     const setting=rows.find(r=>Number(r.job_id)===d.id),allowed=choices(plan,d.id);
     return {id:d.id,label:d.job,allowed,mode:setting?.mode||'inherit',revision:setting?.revision||0,
-      minimum:tiers.find(([k])=>policy.permits(k,d.id,'suggest'))?.[1]};
+      minimum:tiers.find(([k])=>policy.permits(k,d.id,'suggest'))?.[1],
+      routineMinimum:d.id===77?null:tiers.find(([k])=>policy.permits(k,d.id,'automatic',{trained:true}))?.[1]};
   });
 }
 

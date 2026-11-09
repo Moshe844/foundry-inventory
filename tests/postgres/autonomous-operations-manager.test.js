@@ -30,7 +30,7 @@ function instructionChange(domain,values={}){return {domain,operation:'set',sku:
   guardReleaseCondition:'',notificationThreshold:-1,notificationMetric:'on_hand',
   notificationComparator:'at_or_below',capabilityName:'',...values};}
 
-test('real Chromium proves one-approval missions, verified memory, supplier follow-through and reconciliation stops',
+test('real Chromium preserves accepted legacy Pro missions, verified memory, supplier follow-through and reconciliation stops',
   {timeout:240000},async(context)=>{
     const delivered=[];let ambiguousRecipient=null;let supplierAssessment='ACCEPTED';
     const adapter={metadata(){return {type:'gmail',name:'Gmail',category:'email',authMode:'oauth',available:true};},
@@ -97,8 +97,9 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('mission-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await require('../helpers/postgres-model-fixture').fundAllWorkspaces(database);
-    // This walk uses features that only the current Pro plan includes.
-    await database.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='pro' ORDER BY version_number DESC LIMIT 1)");
+    // Protect the previously accepted contract. Agent v3 has separate tests for
+    // its 14-day shadow period and individual physical-step confirmations.
+    await database.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id='approved-2026-11-02:pro'");
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Autonomous Mission Business'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
@@ -155,6 +156,7 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill(
       'Add Resume Supply as a supplier at resume@mission-supply.example and email them this exact message: This is the approved mission follow-through.');
     await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.equal(await page.getByRole('link',{name:'Review prepared change'}).count(),1,await page.locator('main').innerText());
     await page.getByRole('link',{name:'Review prepared change'}).click();
     await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),
       page.getByRole('button',{name:'Approve all remaining changes'}).click()]).catch(async error=>{
@@ -312,11 +314,12 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mission-mail-worker'});
     work=(await database.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,work.id])).rows[0];
     order=(await database.query('SELECT * FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,order.id])).rows[0];
-    assert.equal(work.execution_status,'COMPLETED');assert.equal(work.verification_status,'VERIFIED');
+    assert.equal(work.execution_status,'EXECUTING');assert.equal(work.verification_status,'PENDING');
+    assert.equal(JSON.parse(work.outcome).phase,'AWAITING_SUPPLIER_CONFIRMATION','Mailbox acceptance must not pretend the supplier confirmed the order.');
     const supplierDeliveries=()=>delivered.filter((message)=>message.recipient==='orders@mission-supply.example').length;
     assert.equal(order.status,'ORDERED');assert.equal(supplierDeliveries(),priorSupplierDeliveries+1);
     const purchaseMetrics=await missionPlans.metricsSummary(database,ctx.workspaceId);
-    assert.deepEqual(purchaseMetrics.breakdown.autonomousPurchases,{outcomes:1,completed:1});
+    assert.deepEqual(purchaseMetrics.breakdown.autonomousPurchases,{outcomes:1,completed:0});
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mission-mail-replay-worker'});
     assert.equal(supplierDeliveries(),priorSupplierDeliveries+1,'provider-confirmed supplier delivery is never sent twice');
 
@@ -370,12 +373,16 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
 
     const reconcileHandler=runtimeHandlers.create(providers)['system.reconcile-business'];
     const processReconciliation=async(jobId,owner)=>{
-      for(let attempt=0;attempt<10;attempt++){
+      let root=null,runId=null;
+      // The publishing speed work checkpoints each invariant. Follow its real
+      // continuation jobs; completing the first batch is not a verified check.
+      for(let attempt=0;attempt<50;attempt++){
         const processed=await jobs.processOne(database,{'system.reconcile-business':reconcileHandler},{owner});
         if(!processed)break;
-        if(processed.id===jobId)return processed;
+        if(processed.id===jobId){root=processed;runId=processed.result?.id;}
+        if(root&&processed.result?.id===runId&&!processed.result.partial)return {...root,result:processed.result};
       }
-      return jobs.get(database,jobId,ctx.workspaceId);
+      return root||jobs.get(database,jobId,ctx.workspaceId);
     };
     const scheduled=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'system.reconcile-business',
       idempotencyKey:`certification:reconcile:${newId('run')}`});

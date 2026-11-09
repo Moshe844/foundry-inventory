@@ -62,7 +62,7 @@ async function review(db,ctx,{page=1,filter=''}){
  return {rows,more:completed.rows.length>100||pending.rows.length>100,summary:'Match recorded incoming bank credits to their issued invoices. Preparing a match posts nothing. First customers, uncertain references and owner limits require individual confirmation; stock and outgoing money stay unchanged.',bankMatchForm:{blocked,entries:pending.rows.slice(0,100).map(r=>({...r,amount:money.format(r.amount_minor,r.currency)}))}};
 }
 async function requireRoutineAuthority(db,ctx){
- const saved=(await db.query(`SELECT m.updated_by FROM stockchief_runtime.agent_job_modes m
+ const saved=(await db.query(`SELECT m.updated_by,m.revision FROM stockchief_runtime.agent_job_modes m
   JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.updated_by AND u.role='owner'
   JOIN accounts a ON a.id=u.account_id JOIN workspace_autopilot w ON w.workspace_id=m.workspace_id
   WHERE m.workspace_id=$1 AND m.job_id=103 AND m.mode='routine' AND u.id=$2
@@ -70,6 +70,7 @@ async function requireRoutineAuthority(db,ctx){
   FOR SHARE OF m,u,w`,[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!saved||!(await require('../autopilot/postgres-service').getState(db,ctx.workspaceId)).canAutomate)
   throw new ValidationError('The owner must enable this receipt routine and automatic work before it can run.');
+ return {kind:'standing_job_rule',job:103,ownerId:ctx.actorId,modeRevision:Number(saved.revision)};
 }
 async function run(db,workspaceId,{limit=20}={}){
  const outcome={matched:0,waiting:0,skipped:0};
@@ -115,6 +116,7 @@ async function run(db,workspaceId,{limit=20}={}){
   },{isolation:'SERIALIZABLE',retrySafe:true});
   outcome[status]++;
  }
+ if(outcome.matched)await require('../assistant/postgres-goal-resume').refreshWorkspace(db,workspaceId);
  return outcome;
 }
 module.exports={snapshot,execute,run,requireRoutineAuthority,definition:{id:103,key:'customer-payment-matches',label:'Match customer bank receipts',filterLabel:'Invoice number or customer',readPage:review},spec:{name:action,record:'customer_invoice',fields:['recordReference','bankTransaction'],permission:require('../actions/permissions').RECORD_PAYMENTS,ownerOnly:true,capability:'accounting.core',resultingRecords:['accounting_payments','accounting_payment_allocations','accounting_bank_transactions','accounting_journal_entries'],description:'Match a recorded positive bank credit to an existing issued customer invoice. Use exact same-currency bank evidence on the books cash account, never an invented payment. First customers and unclear remittance references need individual confirmation. Growth requires a taught customer/bank/currency receipt limit; Pro/Custom can run clear matches in approved authority. Refuse overpayments, deposits, already-used credits and different currencies. No external charge, payment or refund.',build,execute,verify}};

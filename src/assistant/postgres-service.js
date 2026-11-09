@@ -2112,7 +2112,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2122,11 +2122,16 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
+    let routineAuthority=null;
     if(receiptRoutine){
       if(contract.name!=='customer_payment.match_bank_line')throw new ValidationError('Receipt authority cannot run another kind of action.');
-      await require('../accounting/agent-customer-payment-matches').requireRoutineAuthority(client,ctx);
+      routineAuthority=await require('../accounting/agent-customer-payment-matches').requireRoutineAuthority(client,ctx);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine;
+    if(invoiceRoutine){
+      if(contract.name!=='purchase_order.record_supplier_invoice')throw new ValidationError('Supplier invoice authority cannot run another kind of action.');
+      routineAuthority=await require('../purchasing/agent-invoice-routine').requireRoutineAuthority(client,ctx);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2135,7 +2140,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
       agentPolicy.requireJob(tier,job,operation,{trained});
     }
-    if(automatic && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
+    if(automatic && agentAccount.plan && agentPolicy.usesAgentTerms(agentAccount) && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(contract.name==='sales_order.create')await require('../sales/agent-customer-pricing').checkOrder(client,ctx,proposal.payload);
     if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
@@ -2162,8 +2167,9 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
     const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
     const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
-    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:ctx;
-    const result=await contract.execute(client,executionContext,payload);
+    const invoiceMatch=contract.name==='purchase_order.record_supplier_invoice'&&agentPolicy.usesAgentTerms(agentAccount);
+    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:ctx;
+    const executed=await contract.execute(client,executionContext,payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
         'proposal_result_unverified');
@@ -2193,7 +2199,19 @@ async function executeProposal(database,ctx,id,options={}) {
 // Internal worker entry point: authority comes from the owner's saved job mode,
 // never from an HTTP option or a model-supplied context field.
 async function executeReceiptRoutine(database,ctx,id){
-  return executeProposalCore(database,ctx,id,{receiptRoutine:true});
+  const committed=await executeProposalCore(database,ctx,id,{receiptRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function executeInvoiceRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{invoiceRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function continueRoutineProposal(database,ctx,committed){
+  // Settle only the frozen plan's canonical dependencies. This never creates a
+  // human approval or grants a paid model call to the routine worker.
+  const provider={name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw new ValidationError('This routine has no authority for another model call.');}};
+  try{return {...committed,continued:await continueApprovedPlans(database,ctx,committed.id,{provider})};}
+  catch(error){return {...committed,continuationError:error.message};}
 }
 
 async function executeMission(database,ctx,proposalId,options={}){
@@ -2256,5 +2274,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

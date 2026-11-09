@@ -1041,7 +1041,11 @@ const SPECS=Object.freeze([
       'tax','issueDate','dueDate','invoiceDocument'],permission:permissions.MANAGE_ACCOUNTING,
     capability:'accounting.core',build:purchaseOrderSupplierInvoice,
     execute:async(client,ctx,p)=>{
-      if(p.expectedMatchFingerprint)return workflows.recordSupplierInvoice(sameClient(client),ctx,p);
+      if(p.expectedMatchFingerprint){
+        await require('../purchasing/agent-invoice-source').recheck(client,ctx,p,ctx.agentInvoiceScope==='automatic');
+        return workflows.recordSupplierInvoice(sameClient(client),ctx,p);
+      }
+      if(ctx.agentInvoiceScope==='automatic')throw new ValidationError('Prepare the complete original supplier invoice before automatic matching.');
       const current=(await client.query(`SELECT pol.quantity_received_units,pol.unit_cost,
         COALESCE((SELECT SUM(bl.quantity) FROM accounting_supplier_bill_lines bl
           JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id
