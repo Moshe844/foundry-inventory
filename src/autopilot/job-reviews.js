@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../purchasing/agent-supplier-benefits').reviewDefinition,
   require('../purchasing/agent-supplier-email-terms').definition,
   require('../warehouse/agent-bin-corrections').definition,
   require('../sales/agent-customer-return-emails').definition,
@@ -121,6 +122,7 @@ const suggestions={
 };
 
 function firstSuggestion(def,rows){
+  if(def.id===97)return rows.slice(0,1).map(row=>({Suggestion:row.Suggestion}));
   const describe=suggestions[def.id];
   if(!describe)return [];
   return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));
@@ -146,7 +148,7 @@ async function run(db,ctx,key,options={}){
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
-    if(mode==='suggest')return {label:def.label,summary:result.summary,
+    if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
