@@ -41,7 +41,8 @@ test('clearance and aging use held stock and actual receipt dates, without chang
   async function seed(code,trackingMode,qty,date,extra={}){
     const item=await catalog.createItem(db,ctx,{name:code,baseCode:code,trackingMode,purchaseCost:'2'});
     const sku=item.skuIds[0];
-    await receipt.receive(db,ctx,{skuId:sku,locationId:location.id,quantity:qty,occurredAt:date+'T12:00:00Z',idempotencyKey:randomUUID(),...extra});
+    const occurredAt=date===today?new Date().toISOString():date+'T12:00:00Z';
+    await receipt.receive(db,ctx,{skuId:sku,locationId:location.id,quantity:qty,occurredAt,idempotencyKey:randomUUID(),...extra});
     return sku;
   }
   const sku=await seed('CLEAR-OLD','quantity',10,old);

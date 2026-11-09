@@ -293,7 +293,11 @@ function createPostgresAutopilotRouter(database){
   }));
   router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');let approvalBlock=null;const action=item.recommendedAction;
     // Say what is in the way before the person presses Approve, not after.
-    if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type!=='transfer'&&action.supplierId){const ready=await autonomy.supplierDeliveryReadiness(database,req.ctx.workspaceId,action.supplierId);
+    if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type==='purchase'&&action.supplierId&&(action.unitCost==null||action.value==null)){
+      approvalBlock={reason:'Record the supplier’s unit price before sending this purchase order.',href:'/suppliers/'+encodeURIComponent(action.supplierId),label:'Review supplier prices'};
+    }else if(item.execution_status==='WAITING_FOR_APPROVAL'&&item.evidenceQuality?.level==='low'){
+      approvalBlock={reason:item.evidenceQuality.reason,href:'/autopilot',label:'Review inventory and purchasing'};
+    }else if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type!=='transfer'&&action.supplierId){const ready=await autonomy.supplierDeliveryReadiness(database,req.ctx.workspaceId,action.supplierId);
       if(!ready.ready)approvalBlock=/email address/.test(ready.reason||'')?{reason:(action.supplierName||'This supplier')+' has no order email address yet, so the order can’t be sent.',href:'/suppliers/'+encodeURIComponent(action.supplierId)+'?edit=1',label:'Add the supplier’s email'}:{reason:ready.reason,href:'/settings/connections',label:'Fix the connection'};}
     return res.page('autopilot/postgres-work',{
     title:'Review StockChief’s decision',nav:'autopilot',backTo:{href:'/needs-you',label:'Needs you'},

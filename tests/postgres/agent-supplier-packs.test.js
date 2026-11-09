@@ -26,7 +26,8 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   const remaining=()=>db.query("SELECT count(*)::int n FROM purchase_orders WHERE workspace_id=$1 AND source='foundry_recommendation'",[ctx.workspaceId]);
   assert.equal((await remaining()).rows[0].n,0);
   for(const tier of ['starter','growth','pro','enterprise']){
-    await subscribe(tier);assert.match((await browser.get('/autopilot/work/'+id).expect(200)).text,/Send to supplier/);
+    await subscribe(tier);const detail=await browser.get('/autopilot/work/'+id).expect(200);
+    assert.match(detail.text,/Send to supplier/);assert.match(detail.text,/Confidence: high/);
   }
   const signal=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.reorder-signal'",[ctx.workspaceId])).rows[0].payload;
   assert.equal((await db.transaction(c=>runtime['agent.reorder-signal']({workspaceId:ctx.workspaceId,payload:signal},c))).prepared,0);
@@ -41,6 +42,15 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   assert.equal((await remaining()).rows[0].n,1);
   const stored=(await db.query("SELECT w.outcome::jsonb outcome,l.quantity_units FROM work_items w JOIN purchase_order_lines l ON l.purchase_order_id=w.purchase_order_id WHERE w.workspace_id=$1 AND w.id=$2",[ctx.workspaceId,id])).rows[0];
   assert.equal(Number(stored.quantity_units),14);assert.ok(stored.outcome.effectId);
+  const unknown=(await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Unpriced replacement',baseCode:'NO-COST',trackingMode:'quantity'})).skuIds[0];
+  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId,skuId:unknown,unitsPerPurchaseUnit:1,orderMultiple:1,minimumOrderQuantity:1});
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,5,10,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,unknown,locationId]);
+  const missing=(await autonomy.plan(db,ctx.workspaceId,{onlySkuIds:[unknown]})).created[0];
+  assert.equal(missing.confidence,'low');
+  const check=await browser.get('/autopilot/work/'+missing.id).expect(200);
+  assert.match(check.text,/Confidence: low/);assert.match(check.text,/Review supplier prices/);assert.doesNotMatch(check.text,/>Send to supplier</);
+  await assert.rejects(autonomy.approve(db,ctx,{role:'owner'},missing.id),/unit cost/);
 });
 
 test('partner patterns and supplier negotiation drafts use dated evidence and current authority',{timeout:240000},async t=>{
