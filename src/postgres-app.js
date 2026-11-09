@@ -139,7 +139,12 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
         (SELECT COUNT(*) FROM stockchief_postgres_migrations) AS migrations,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status='DEAD') AS dead_jobs,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
-          AND available_at<floor(extract(epoch FROM now()-interval '5 minutes')*1000)) AS stale_jobs`));
+          AND available_at<floor(extract(epoch FROM now()-interval '5 minutes')*1000)
+          AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w
+            WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
+            AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a
+              WHERE a.id=w.owner_account_id AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access
+                WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL)))))) AS stale_jobs`));
       const state=result.rows[0];
       const commercialTelemetry=require('./commercial/resource-metrics').status();
       const ready=Number(state.stale_jobs)===0&&commercialTelemetry.persistenceFailures===0;
