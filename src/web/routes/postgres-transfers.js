@@ -77,8 +77,9 @@ function createPostgresTransfersRouter(database) {
   router.get('/transfers/:id', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
     const transfer = await transfers.get(database, req.ctx.workspaceId, req.params.id);
+    const binCorrection=(await database.query("SELECT id,status FROM stockchief_runtime.agent_bin_corrections WHERE workspace_id=$1 AND transfer_id=$2 AND status IN ('OPEN','SCANNED')",[req.ctx.workspaceId,transfer.id])).rows[0]||null;
     return res.page('transfers/detail', { title: transfer.transfer_number, nav: 'transfers', room: true,
-      transfer, receiptToken: newId('receipt'), dispatchToken: newId('dispatch'), ...access(req.user) });
+      transfer,binCorrection, receiptToken: newId('receipt'), dispatchToken: newId('dispatch'), ...access(req.user) });
   }));
   router.post('/transfers/:id/approve', asyncRoute(async (req, res) => {
     const transfer = await transfers.approve(database, req.ctx, req.params.id, req.body);

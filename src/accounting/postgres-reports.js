@@ -34,11 +34,19 @@ async function accountTotals(database,workspaceId,{from=null,to,types=null}){
   const values=[workspaceId,to];let fromClause='';
   if(from){values.push(from);fromClause=` AND e.posting_date >= $${values.length}`;}
   const typeClause=types?(values.push(types),` AND account_type=ANY($${values.length}::text[])`):'';
+  // Small ledgers need one covering workspace range instead of account probes
+  // through a narrower foreign-key index. Large ledgers retain their faster
+  // existing join path; probing at most 129 line entries stays bounded.
+  const compactLedger=!from&&Number((await database.query(`SELECT count(*) AS n FROM (
+    SELECT 1 FROM accounting_journal_lines WHERE workspace_id=$1 LIMIT 129) bounded`,[workspaceId])).rows[0].n)<=128;
+  // OFFSET 0 preserves the streaming boundary without materializing the ledger.
+  const lineSource=!compactLedger?'accounting_journal_lines':`(SELECT workspace_id,account_id,entry_id,debit_minor,credit_minor
+    FROM accounting_journal_lines WHERE workspace_id=$1 OFFSET 0)`;
   return (await database.query(`WITH scoped_accounts AS MATERIALIZED (
       SELECT * FROM accounting_accounts WHERE workspace_id=$1${typeClause}
     ), totals AS (
       SELECT l.account_id,SUM(l.debit_minor) AS debit_minor,SUM(l.credit_minor) AS credit_minor
-      FROM scoped_accounts scoped JOIN accounting_journal_lines l
+      FROM scoped_accounts scoped JOIN ${lineSource} l
         ON l.workspace_id=scoped.workspace_id AND l.account_id=scoped.id
       JOIN accounting_journal_entries e
         ON e.workspace_id=l.workspace_id AND e.id=l.entry_id
