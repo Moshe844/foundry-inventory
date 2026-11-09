@@ -730,6 +730,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
         AND ($3::text IS NULL OR b.location_id=$3)
       ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,
     [ctx.workspaceId, skuIds, order.fulfillment_location_id]);
+    await require('../sales/agent-ship-from').chooseAtConfirmation(client,ctx,order);
     const allocations = [];
     let short = false;
     for (const line of lines.rows) {

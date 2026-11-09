@@ -1,0 +1,14 @@
+<h1>Choose a shipping warehouse</h1>
+<p>Order <%= order.order_number %></p>
+<% if(location){ %>
+  <h2><%= location.name %></h2>
+  <p>This location has enough available stock for every line. When several locations can fill the whole order, StockChief uses your warehouse pick sequence.</p>
+  <% if(block){ %><p><%= block %></p><% }else{ %>
+  <form method="post" action="/orders/<%= order.id %>/ship-from">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="version" value="<%= order.version %>">
+    <input type="hidden" name="locationId" value="<%= location.id %>">
+    <button class="btn btn--primary">Use this warehouse</button>
+  </form><% } %>
+<% }else{ %><p>No single available warehouse can fill this order. Review the order and its stock commitments.</p><% } %>
+<p><a href="/orders/<%= order.id %>">Return to order</a></p>

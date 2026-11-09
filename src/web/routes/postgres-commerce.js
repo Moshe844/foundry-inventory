@@ -1057,12 +1057,24 @@ function createPostgresCommerceRouter(database,options={}){
       businessName:workspace.rows[0]?.name||'StockChief'});
   }));
 
+  router.get('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
+    const review=await require('../../sales/agent-ship-from').preview(database,req.ctx,req.params.id);
+    return res.page('sales/ship-from',{...review,nav:'sales',title:'Choose a shipping warehouse',backTo:{label:review.order.order_number,href:'/orders/'+req.params.id}});
+  }));
+  router.post('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-ship-from').approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Shipping warehouse saved for this order.');
+    return res.redirect(303,'/orders/'+req.params.id);
+  }));
   router.get(['/orders/:id','/sales/orders/:id'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const [page,returnRows,locationRows]=await Promise.all([
       salesOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listCustomerReturns(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
     ]);
+    const plans=require('../../commercial/agent-plan'),agentState=await plans.accountState(database,req.ctx.workspaceId);
+    const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&require('../../sales/agent-ship-from').eligible(page.order)
+      ?{available:plans.permits(agentState.plan,121,'draft')}:null;
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
@@ -1082,7 +1094,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      agentOrderChecks:req.user.role==='owner'&&require('../../commercial/agent-plan').usesAgentTerms(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId)),
+      shipFromReview,agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,

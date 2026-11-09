@@ -6,6 +6,43 @@ const assistant=require('../../src/assistant/postgres-service');
 const prices=require('../../src/pricing/postgres-service');
 const {addDays}=require('../../src/accounting/customer-money');
 
+test('whole-order warehouse selection checks all four plans, current stock and the owner mode',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:100}),{db,ctx,browser,subscribe,workflows}=f;
+  const sku=f.item.skuIds[0],stock=require('../../src/domain/postgres-inventory-engine');
+  const modes=require('../../src/autopilot/job-modes'),autonomy=require('../../src/autopilot/postgres-service');
+  await subscribe('pro');
+  await db.query("UPDATE accounts SET created_at=(now()-interval '19 days')::text WHERE id=$1",[f.owner.accountId]);
+  await autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const second=(await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'West shipping',kind:'warehouse'})).id;
+  const other=(await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Second line',baseCode:'W-SECOND',trackingMode:'quantity'})).skuIds[0];
+  const receive=(id,where,quantity)=>stock.receive(db,ctx,{skuId:id,locationId:where,quantity,idempotencyKey:randomUUID()});
+  await receive(sku,second,30);await receive(other,second,20);
+  const order=(extra={})=>workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'SHIP',idempotencyKey:randomUUID(),
+    lines:[{skuId:sku,quantity:2,unitPriceMinor:500},{skuId:other,quantity:1,unitPriceMinor:300}],...extra});
+  const id=(await order()).salesOrderId,path='/orders/'+id,review=path+'/ship-from';
+  await subscribe('starter');const page=await browser.get(path).expect(200);assert.match(page.text,/Shipping warehouse suggestions · Growth/);
+  await browser.get(review).expect(402);
+  await browser.post(review).set('Accept','application/json').type('form').send({_csrf:f.csrf(page.text),locationId:second,version:1}).expect(402);
+  await subscribe('growth');const preview=await browser.get(review).expect(200);assert.match(preview.text,/West shipping/);
+  const select=()=>browser.post(review).set('Accept','application/json').type('form').send({_csrf:f.csrf(preview.text),locationId:second,version:1});
+  await stock.issue(db,ctx,{skuId:other,locationId:second,quantity:20,reasonCode:'sold',idempotencyKey:randomUUID()});
+  await select().expect(400);await receive(other,second,20);await select().expect(303);
+  const confirm=o=>workflows.confirmSalesOrder(db,ctx,o,{idempotencyKey:randomUUID()});
+  const stored=async o=>(await db.query('SELECT fulfillment_location_id FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,o])).rows[0].fulfillment_location_id;
+  const first=await confirm(id);assert.deepEqual([...new Set(first.allocations.map(a=>a.locationId))],[second]);
+  await assert.rejects(modes.save(db,ctx,121,{mode:'routine',revision:0}),/plan/);
+  await subscribe('pro');await modes.save(db,ctx,121,{mode:'routine',revision:0});
+  for(const tier of ['growth','pro','enterprise']){
+    const next=(await order()).salesOrderId;await subscribe(tier);const done=await confirm(next);
+    if(tier==='growth'){assert.equal(await stored(next),null);assert.equal(new Set(done.allocations.map(a=>a.locationId)).size,2);}
+    else{assert.equal(await stored(next),second);assert.ok(done.allocations.every(a=>a.locationId===second));}
+  }
+  await modes.save(db,ctx,121,{mode:'ask',revision:1});
+  const held=(await order()).salesOrderId;await confirm(held);assert.equal(await stored(held),null);
+  const explicit=(await order({fulfillmentLocationId:f.location.id})).salesOrderId;
+  await confirm(explicit);assert.equal(await stored(explicit),f.location.id);
+});
+
 test('customer orders from email and PDF are priced, reviewed or run under current plan authority and deduplicated',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20});
   const {db,ctx,browser,subscribe,csrf}=f,sku=f.item.skuIds[0];

@@ -60,7 +60,8 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
     for(const d of reviews.definitions){
-      const call=()=>reviews.run(db,ctx,d.key,{filter:d.requiresFilter?'some-exact-filter':''});
+      const filter=d.key==='supplier-negotiation'?'fixture-supplier':d.requiresFilter?'some-exact-filter':'';
+      const call=()=>reviews.run(db,ctx,d.key,{filter});
       if(policy.permits(tier,d.id,'suggest')){
         const result=await call();
         assert.equal(result.mode,policy.allowance(tier,d.id),tier+' '+d.key);
