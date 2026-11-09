@@ -42,6 +42,11 @@ function createPostgresAutopilotRouter(database){
     await require('../../pricing/channel-price-review').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/channel-prices');
   }));
+  router.post('/autopilot/undo/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const day=String(req.body.day||'');if(day)require('../../lib/business-time').dayBoundary(day,'UTC');
+    await require('../../autopilot/agent-work-digest').undo(database,req.ctx,req.params.id);
+    res.redirect(303,'/autopilot/reviews/daily-work'+(day?'?'+new URLSearchParams({filter:day}):''));
+  }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
   router.post('/actions/:id/draft-rule',requireAuth,owner,asyncRoute(async(req,res)=>{

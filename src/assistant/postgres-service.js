@@ -2125,7 +2125,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
       agentPolicy.requireJob(tier,job,operation,{trained});
     }
-    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
+    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload))
       throw new ValidationError('Individually approve the first order for this customer or delivery address.');

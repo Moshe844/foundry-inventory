@@ -76,3 +76,4 @@
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
 <% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
+<% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>

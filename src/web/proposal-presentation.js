@@ -12,7 +12,7 @@ function impact(type){
  return 'Changes a business record';
 }
 function fields(payload){
- const result=[],hidden=new Set(['training','integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
+ const result=[],hidden=new Set(['id','training','fingerprint','expectedState','input_hash','request_key','integrityHash','expectedHash','idempotencyKey','snapshotHash','contextHash','approvalHash','expectedSnapshot','skuId','locationId','expectedVersion','version','actorId','workspaceId','accountId']);
  function walk(value,path,depth){
   if(result.length>=120||depth>5||value===null||value===undefined||value==='')return;
   if(typeof value==='string'&&/^[\[{]/.test(value.trim())){try{value=JSON.parse(value);}catch{}}
@@ -25,6 +25,12 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='catalog.supplier_price_list'){
+  const p=proposal.payload;
+  return {summary:proposal.summary,impact:'Updates purchase costs for future work',fields:[{label:'Supplier file',value:p.source.name},
+   ...p.changes.map(c=>({label:c.code+' · '+c.name,value:(c.before?require('../domain/currency').format(c.before.amountMinor,c.before.currency):'No saved cost')+
+    ' → '+require('../domain/currency').format(c.amountMinor,c.currency)+(c.overReviewThreshold?' · Separate approval required':' · Within 5%')}))]};
+ }
  if(proposal.action_type==='catalog.fill_supplier_specs'){
   const labels=require('../domain/agent-supplier-specs').labels;
   return {summary:proposal.summary,impact:'Fills missing product details',fields:(proposal.payload?.changes||[]).map(r=>({label:r.code+' · '+labels[r.field],value:String(r.value)}))};

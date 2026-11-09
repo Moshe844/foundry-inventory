@@ -705,6 +705,7 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  require('../pricing/agent-supplier-prices').spec,
   require('../sales/recurring-orders').spec,
   ...require('../imports/agent-catalog-intake').specs,
   require('../purchasing/agent-kit-parts').spec,

@@ -420,7 +420,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           const outsidePlan=job && tier!==undefined && !policy.permits(tier,job,'automatic',{trained});
           const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
           const stopped=await policy.stopped(database,ctx.workspaceId,account,contract.name,true);
-          if(account.plan && (stopped || policy.needsPerson(contract.name) || outsidePlan || newCustomerOrAddress)){
+          const confirmationPayload=contract.name==='catalog.supplier_price_list'?(outcome.result.proposal.payload||
+            (await database.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,stored.proposalId])).rows[0]?.payload):undefined;
+          if(account.plan && (stopped || policy.needsPerson(contract.name,confirmationPayload) || outsidePlan || newCustomerOrAddress)){
             stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
             await update(database,claimed,token,steps,'WAITING_USER');
             break;
