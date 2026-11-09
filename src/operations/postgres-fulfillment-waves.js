@@ -39,7 +39,7 @@ async function get(database,workspaceId,id,options={}){
       FROM fulfillment_wave_lines line JOIN skus sku ON sku.id=line.sku_id
       JOIN items item ON item.id=sku.item_id JOIN locations location ON location.id=line.location_id
       JOIN sales_shipments shipment ON shipment.id=line.shipment_id
-      WHERE line.workspace_id=$1 AND line.wave_id=$2
+      WHERE line.workspace_id=$1 AND line.wave_id=$2 AND shipment.status<>'CANCELLED'
         AND ($3::text IS NULL OR (location.pick_sequence,location.name,item.name,sku.position,line.id)>(
           SELECT at_location.pick_sequence,at_location.name,at_item.name,at_sku.position,at_line.id
           FROM fulfillment_wave_lines at_line JOIN skus at_sku ON at_sku.id=at_line.sku_id
@@ -48,8 +48,9 @@ async function get(database,workspaceId,id,options={}){
       ORDER BY location.pick_sequence,location.name,item.name,sku.position,line.id LIMIT $4`,[workspaceId,id,options.afterLineId||null,limit+1]),
     database.query(`SELECT * FROM fulfillment_wave_scans WHERE workspace_id=$1 AND wave_id=$2
       ORDER BY seq DESC LIMIT 100`,[workspaceId,id]),
-    database.query(`SELECT COALESCE(SUM(planned_quantity),0) AS planned,COALESCE(SUM(picked_quantity),0) AS picked,
-      COUNT(*) AS line_count FROM fulfillment_wave_lines WHERE workspace_id=$1 AND wave_id=$2`,[workspaceId,id]),
+    database.query(`SELECT COALESCE(SUM(line.planned_quantity),0) AS planned,COALESCE(SUM(line.picked_quantity),0) AS picked,
+      COUNT(*) AS line_count FROM fulfillment_wave_lines line JOIN sales_shipments shipment ON shipment.workspace_id=line.workspace_id AND shipment.id=line.shipment_id
+      WHERE line.workspace_id=$1 AND line.wave_id=$2 AND shipment.status<>'CANCELLED'`,[workspaceId,id]),
   ]);
   const shipmentPage=page(shipments.rows,limit,'shipment_id'),linePage=page(lines.rows,limit);
   const hydrated={...wave,shipments:shipmentPage,lines:linePage.map((row)=>({...row,
@@ -79,10 +80,8 @@ async function readyOrders(database,workspaceId,options={}){
       AND EXISTS(SELECT 1 FROM sales_order_lines line JOIN sales_order_allocations allocation
         ON allocation.sales_order_line_id=line.id AND allocation.workspace_id=line.workspace_id
         WHERE line.workspace_id=orders.workspace_id AND line.sales_order_id=orders.id AND allocation.quantity>0)
-      AND NOT EXISTS(SELECT 1 FROM fulfillment_wave_shipments wave_shipment
-        JOIN fulfillment_waves wave ON wave.id=wave_shipment.wave_id
-        WHERE wave_shipment.workspace_id=orders.workspace_id AND wave_shipment.sales_order_id=orders.id
-          AND wave.status NOT IN ('COMPLETED','CANCELLED'))
+      AND NOT EXISTS(SELECT 1 FROM sales_shipments shipment WHERE shipment.workspace_id=orders.workspace_id AND shipment.sales_order_id=orders.id AND shipment.status IN ('PICKING','PACKED'))
+      AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders delegated WHERE delegated.workspace_id=orders.workspace_id AND delegated.sales_order_id=orders.id)
     ORDER BY orders.needed_by NULLS LAST,orders.order_number,orders.id LIMIT $3)
     SELECT orders.id,orders.order_number,orders.needed_by,customer.name AS customer_name,
       (SELECT COALESCE(SUM(allocation.quantity),0)::bigint FROM sales_order_lines line
@@ -129,11 +128,9 @@ async function create(database,ctx,input){
       [ctx.workspaceId,orderId])).rows[0];
       if(!order)throw new NotFoundError('One selected customer order could not be found.');
       if(!['CONFIRMED','PARTIALLY_FULFILLED'].includes(order.status))throw new ValidationError(`${order.order_number} is not ready to pick.`);
-      const active=await client.query(`SELECT 1 FROM fulfillment_wave_shipments wave_shipment
-        JOIN fulfillment_waves wave ON wave.id=wave_shipment.wave_id
-        WHERE wave_shipment.workspace_id=$1 AND wave_shipment.sales_order_id=$2
-          AND wave.status NOT IN ('COMPLETED','CANCELLED') LIMIT 1`,[ctx.workspaceId,orderId]);
-      if(active.rows.length)throw new ValidationError(`${order.order_number} is already in an active fulfillment wave.`);
+      const active=await client.query(`SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1`,[ctx.workspaceId,orderId]);
+      if(active.rows.length)throw new ValidationError(`${order.order_number} already has an unshipped box. Open or cancel that box before releasing another pick.`);
+      if((await client.query('SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('Review this order in ShipBob before releasing local picking. Its provider outcome must be resolved first.');
       const allocations=(await client.query(`SELECT allocation.sales_order_line_id,allocation.location_id,
           allocation.quantity,line.sku_id
         FROM sales_order_allocations allocation JOIN sales_order_lines line ON line.id=allocation.sales_order_line_id
@@ -215,8 +212,9 @@ async function scan(database,ctx,id,input){
       const line=(await client.query(`SELECT line.*,item.name AS item_name,item.tracking_mode,location.name AS location_name
         FROM fulfillment_wave_lines line JOIN skus sku ON sku.id=line.sku_id JOIN items item ON item.id=sku.item_id
         JOIN locations location ON location.id=line.location_id
+        JOIN sales_shipments shipment ON shipment.workspace_id=line.workspace_id AND shipment.id=line.shipment_id AND shipment.status='PICKING'
         WHERE line.workspace_id=$1 AND line.wave_id=$2 AND line.location_id=$3 AND line.sku_id=$4
-          AND line.picked_quantity<line.planned_quantity ORDER BY line.id LIMIT 1 FOR UPDATE OF line`,
+          AND line.picked_quantity<line.planned_quantity ORDER BY line.id LIMIT 1 FOR UPDATE OF line,shipment`,
       [ctx.workspaceId,id,locationId,skuId])).rows[0];
       if(!line)throw new ValidationError('That product and location are not open work in this wave. Nothing was picked.');
       const remaining=Number(line.planned_quantity)-Number(line.picked_quantity);
@@ -302,6 +300,9 @@ async function packShipment(database,ctx,id,shipmentId,input={}){
     const wave=(await client.query(`SELECT * FROM fulfillment_waves WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
       [ctx.workspaceId,id])).rows[0];
     if(!wave)throw new NotFoundError('That fulfillment wave could not be found.');
+    if(!['PICKING','BLOCKED','PACKED'].includes(wave.status))throw new ValidationError('That picking wave is closed. Review the current unshipped carton.');
+    const shipment=(await client.query('SELECT status FROM sales_shipments WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,shipmentId])).rows[0];
+    if(!shipment||!['PICKING','PACKED'].includes(shipment.status))throw new ValidationError('Only an active, unshipped carton can be packed. Cancelled or shipped cartons cannot be reopened.');
     const lines=(await client.query(`SELECT * FROM fulfillment_wave_lines WHERE workspace_id=$1
       AND wave_id=$2 AND shipment_id=$3 FOR UPDATE`,[ctx.workspaceId,id,shipmentId])).rows;
     if(!lines.length)throw new NotFoundError('That shipment is not in this wave.');
@@ -317,7 +318,7 @@ async function packShipment(database,ctx,id,shipmentId,input={}){
     await client.query(`UPDATE fulfillment_wave_shipments SET status='PACKED',container_id=$4
       WHERE workspace_id=$1 AND wave_id=$2 AND shipment_id=$3`,[ctx.workspaceId,id,shipmentId,containerId]);
     const remaining=Number((await client.query(`SELECT COUNT(*) AS count FROM fulfillment_wave_shipments
-      WHERE workspace_id=$1 AND wave_id=$2 AND status<>'PACKED'`,[ctx.workspaceId,id])).rows[0].count);
+      WHERE workspace_id=$1 AND wave_id=$2 AND status NOT IN ('PACKED','CANCELLED')`,[ctx.workspaceId,id])).rows[0].count);
     if(!remaining)await client.query(`UPDATE fulfillment_waves SET status='PACKED' WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,id]);
     return {waveId:id,shipmentId,status:'PACKED'};

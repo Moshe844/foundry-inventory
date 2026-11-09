@@ -940,7 +940,7 @@
   </section>
 <% } %>
 
-<% if (isOpen) { %>
+<% if (isOpen && locals.canCancelParcel!==false) { %>
   <section class="section">
     <details class="disclosure">
       <summary>Cancel this box</summary>
@@ -949,7 +949,7 @@
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <label class="field">
             <span class="field-label">Why <span class="t-muted">(optional)</span></span>
-            <input class="input" type="text" name="reason" placeholder="Customer pushed the date">
+            <input class="input" type="text" name="reason" maxlength="1000" placeholder="Customer pushed the date">
           </label>
           <button class="btn btn--ghost" type="submit">Cancel <%= s.shipment_number %></button>
           <p class="hint">

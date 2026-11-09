@@ -24,7 +24,7 @@ async function headers(db,ctx,{locationId=null,currency=null,singleId=null,count
      OR l.quantity_ordered<>(SELECT coalesce(sum(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id AND a.location_id=o.fulfillment_location_id)
      OR EXISTS(SELECT 1 FROM sales_order_kit_components k WHERE k.workspace_id=l.workspace_id AND k.sales_order_line_id=l.id)))
    AND NOT EXISTS(SELECT 1 FROM sales_shipments shipment WHERE shipment.workspace_id=o.workspace_id AND shipment.sales_order_id=o.id AND shipment.status<>'CANCELLED')
-   AND NOT EXISTS(SELECT 1 FROM fulfillment_wave_shipments x JOIN fulfillment_waves w ON w.workspace_id=x.workspace_id AND w.id=x.wave_id WHERE x.workspace_id=o.workspace_id AND x.sales_order_id=o.id AND w.status NOT IN ('CANCELLED','COMPLETED'))
+   AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders delegated WHERE delegated.workspace_id=o.workspace_id AND delegated.sales_order_id=o.id)
    AND ($7='' OR lower(location.name)=lower($7) OR lower(o.order_number)=lower($7))
    AND NOT(o.fulfillment_location_id=ANY($8::text[]))
    AND (NOT $9::boolean OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_pick_release_checks checked WHERE checked.workspace_id=o.workspace_id AND checked.location_id=o.fulfillment_location_id AND checked.retry_after>now()))

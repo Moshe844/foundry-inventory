@@ -239,7 +239,7 @@ function createPostgresShippingRouter(database,options={}){
       return res.page('shipping/return-parcel',{title:saved.shipment_number,nav:'fulfilment',room:true,shipment:saved,state,packagePresets,purchaseKey:newId('return-postage')});}
     const page=await shipmentPage(database,req.ctx.workspaceId,req.params.id);
     return res.page('sales/shipment',{title:page.shipment.shipment_number,nav:'fulfilment',room:true,
-      backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true});
+      backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true,canCancelParcel:permissions.can(req.user,permissions.FULFILL_SALES)});
   }));
   router.get('/fulfilment/:id/label/status',asyncRoute(async(req,res)=>{
     await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
@@ -393,14 +393,8 @@ function createPostgresShippingRouter(database,options={}){
     req.flash('success','Delivery recorded. Duplicate confirmation will not create a second event.');
     return res.redirect(303,`/fulfilment/${req.params.id}#tracking`);
   }));
-  router.post('/fulfilment/:id/cancel',asyncRoute(async(req,res)=>{
-    await database.transaction(async client=>{
-    shipping.assertParcelEditable(await shipping.requireShipment(client,req.ctx.workspaceId,req.params.id,true));
-    const changed=await client.query(`UPDATE sales_shipments SET status='CANCELLED',notes=COALESCE($3,notes),updated_at=$4
-      WHERE workspace_id=$1 AND id=$2 AND status IN ('PICKING','PACKED')`,[req.ctx.workspaceId,req.params.id,
-      trimOrNull(req.body.reason),nowIso()]);
-    if(!changed.rowCount)throw new ValidationError('A shipment that already left cannot be cancelled.');
-    });
+  router.post('/fulfilment/:id/cancel',requirePermission(permissions.FULFILL_SALES,'cancel an unshipped box'),asyncRoute(async(req,res)=>{
+    await shipping.cancel(database,req.ctx,req.params.id,{reason:req.body.reason});
     req.flash('success','Shipment cancelled. Its committed stock is still on the customer order and can be picked again.');
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));

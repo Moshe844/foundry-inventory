@@ -60,6 +60,7 @@ async function draft(db,ctx,orderId){
   const order=(await db.query(`SELECT o.*,c.name FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
     WHERE o.workspace_id=$1 AND o.id=$2`,[ctx.workspaceId,orderId])).rows[0];
   if(!order)throw new NotFoundError('The sales order was not found in this inventory.');
+  if((await db.query("SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1",[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('This order already has an unshipped StockChief box. Resolve it before sending the order to ShipBob.');
   if(order.status!=='CONFIRMED'||order.delivery_method!=='SHIP'||Number(order.customer_decision_required)!==0||Number(order.delivery_decision_required)!==0)
     throw new ValidationError('Choose a confirmed, unfulfilled delivery order with a verified customer and destination.');
   const address=require('../shipping/address').parse(order.ship_to_address);
@@ -85,6 +86,7 @@ async function save(db,ctx,orderId,hash,order){
 }
 async function send(db,ctx,orderId,expectedHash,transport,generation=null){
   const {con,review}=await db.transaction(async c=>{
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['fulfillment-wave:'+ctx.workspaceId]);
     if(generation)await validateRule(c,ctx,orderId,generation);
     const review=await draft(c,ctx,orderId),con=await connection(c,ctx);
     if(review.hash!==expectedHash)throw new ValidationError('This order changed. Review its destination and lines again.');

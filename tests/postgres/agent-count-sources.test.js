@@ -19,7 +19,7 @@ test('count sheets and real label images post reviewed differences only on eligi
  const plans=require('../../src/assistant/postgres-capability-plans'),{registry}=require('../../src/assistant/postgres-capability-registry');
  await plans.save(db,ctx,'Apply this sheet and review the result',randomUUID(),[
   {contract:registry.get(request.action),args:{},dependsOn:[]},{contract:registry.get('read.agent_review'),args:{agentJob:'count-sources'},dependsOn:[0]}
- ],[{result:p},{result:{status:'CLARIFY'}}]);await assert.rejects(assistant.executeMission(db,ctx,p.proposal.id),e=>e.code==='entitlement_required');
+ ],[{result:p},{result:{status:'CLARIFY'}}]);await assert.rejects(assistant.executeMission(db,ctx,p.proposal.id),/own confirmation/);
  await subscribe('enterprise');await assert.rejects(assistant.executeMission(db,ctx,p.proposal.id),/own confirmation/);await subscribe('pro');
  const modes=require('../../src/autopilot/job-modes');await modes.save(db,ctx,5,{mode:'watch',revision:0});
  await assert.rejects(assistant.executeProposal(db,ctx,p.proposal.id),/Watch only/);await modes.save(db,ctx,5,{mode:'inherit',revision:1});
