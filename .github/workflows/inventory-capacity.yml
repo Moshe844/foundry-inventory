@@ -125,6 +125,9 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/flash-after-redirect.test.js tests/postgres/invitation-accept-browser.test.js tests/postgres/onboarding-file-formats.test.js tests/postgres/imports-ui.test.js 2>&1 | tee output/inventory-ci/onboarding-import-browser.log
+      - name: Agent supplier forecasts and original customer return emails
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/supplier-forecast-source.test.js tests/unit/customer-return-email-source.test.js tests/postgres/agent-supplier-forecast-source.test.js tests/postgres/agent-supplier-forecasts.test.js tests/postgres/agent-supplier-forecast-ui.test.js tests/postgres/customer-return-email-source.test.js tests/postgres/agent-customer-return-emails.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
