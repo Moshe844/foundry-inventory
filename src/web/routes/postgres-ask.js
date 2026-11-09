@@ -14,7 +14,7 @@ const commercialControl=require('../../commercial/control-service');
 const {registry:capabilities}=require('../../assistant/postgres-capability-registry');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
-const {ValidationError}=require('../../domain/errors');
+const {ValidationError,AuthorizationError}=require('../../domain/errors');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
 
@@ -639,6 +639,8 @@ function createPostgresAskRouter(database,options={}){
   router.post('/operating-instructions/:id/revise',asyncRoute((req,res)=>revisePrepared(req,res,'rule')));
   router.get('/actions/:id',asyncRoute(async(req,res)=>{
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
+    const workflow=require('../../assistant/postgres-workflow-capabilities').SPECS.find(s=>s.name===proposal.action_type);
+    if(workflow?.ownerOnly&&req.user?.role!=='owner')throw new AuthorizationError('Only the inventory owner can view this prepared change.');
     const mission=await require('../../assistant/postgres-capability-plans').missionForProposal(
       database,req.ctx.workspaceId,req.ctx.actorId,proposal.id);
     const resuming=(await database.query(`SELECT 1 FROM stockchief_runtime.assistant_capability_plans
@@ -655,7 +657,8 @@ function createPostgresAskRouter(database,options={}){
         &&d.decision.scope.id===mission.id&&d.decision.scope.sha256===mission.plan_hash):null;
     const trainingService=require('../../autopilot/draft-authority');
     const draftTraining=req.user?.role==='owner'&&trainingService.jobs.has(proposal.action_type)?await trainingService.settings(database,req.ctx,proposal.id,req.query.draftMaximum):null;
-    return res.page('attention/postgres-proposal',{draftTraining,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    const approvalAccess=await require('../../commercial/agent-proposal-access').review(database,req.ctx,proposal,{mission:Boolean(mission)});
+    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});

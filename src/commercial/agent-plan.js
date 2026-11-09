@@ -141,7 +141,7 @@ const actionJobs=new Map([
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
   ['inventory.transfer',118],['transfer.approve',118],['shipping.label',59],['shipping.batch_purchase',59],
-  ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],
+  ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);
 function actionJob(name,operation,payload) {
@@ -158,7 +158,7 @@ function actionJob(name,operation,payload) {
   return actionJobs.get(name);
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
-const newAgentActions=new Set(['sales_order.notify_stock_ready','sales_order.reserve_arrived','customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
+const newAgentActions=new Set(['supplier_invoice.dispute','sales_order.notify_stock_ready','sales_order.reserve_arrived','customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
@@ -176,7 +176,7 @@ const humanSteps=new Set([
   'customer_return.inspect','manufacturing.start','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
-function needsPerson(capability,payload,state){return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
+function needsPerson(capability,payload,state){return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='supplier_invoice.dispute'&&payload?.needsDisputeConfirmation!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';

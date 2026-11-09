@@ -25,6 +25,9 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='supplier_invoice.dispute'){
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Queues a supplier invoice review request',fields:[{label:'Supplier invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Original document',value:p.sourceEvidence.filename},{label:'Message',value:require('../purchasing/agent-invoice-disputes').compose(p).body},...(p.needsDisputeConfirmation?[{label:'Needs your review',value:'Check the original document and invoice differences individually before sending.'}]:[])]};
+ }
  if(proposal.action_type==='sales_order.notify_stock_ready'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one stock-ready customer update',fields:[{label:'Order',value:p.orderNumber},{label:'To',value:p.recipient},{label:'Message',value:require('../sales/agent-stock-ready').compose(p).body}]};
  }

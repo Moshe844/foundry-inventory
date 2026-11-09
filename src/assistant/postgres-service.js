@@ -2173,7 +2173,8 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
     const invoiceMatch=contract.name==='purchase_order.record_supplier_invoice'&&agentPolicy.usesAgentTerms(agentAccount);
     const arrivedStock=contract.name==='sales_order.reserve_arrived'&&agentPolicy.usesAgentTerms(agentAccount);
-    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:ctx;
+    const invoiceDispute=contract.name==='supplier_invoice.dispute'&&agentPolicy.usesAgentTerms(agentAccount);
+    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:invoiceDispute?{...ctx,agentInvoiceDisputeScope:automatic?'automatic':'individual'}:ctx;
     const executed=await contract.execute(client,executionContext,payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',

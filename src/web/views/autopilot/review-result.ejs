@@ -1,6 +1,7 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
 <% if(result.arrivedStockForm){ %><%- include('arrived-stock',{result,csrfToken}) %><% } %>
 <% if(result.stockReadyForm){ %><%- include('stock-ready-updates',{result,csrfToken}) %><% } %>
+<% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>
 <% if(result.binDistanceForm){ %><details><summary>Record a bin's walking distance to packing</summary>
   <form method="post" action="/autopilot/reviews/warehouse-slotting/distances"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label>Bin name <input required name="bin"></label><label>Distance in metres <input required name="metres" type="number" min="0" step="0.01"></label>

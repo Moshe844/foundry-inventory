@@ -709,6 +709,7 @@ const SPECS=Object.freeze([
   require('../accounting/agent-invoice-reminders').spec,
   require('../sales/agent-arrived-stock').spec,
   require('../sales/agent-stock-ready').spec,
+  require('../purchasing/agent-invoice-disputes').spec,
   require('../documents/agent-product-facts').spec,
   ...require('../documents/agent-filing').specs,
   require('../purchasing/agent-receiving-documents').spec,
@@ -1648,6 +1649,7 @@ if(byName.size!==SPECS.length)throw new TypeError('Duplicate workflow capability
 
 async function prepare(database,ctx,message,name,args,createProposal){
   const spec=byName.get(name);if(!spec)throw new TypeError(`Unknown workflow capability ${name}`);
+  if(spec.agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,spec.agentJob,'draft');
   if(spec.ownerOnly&&(await actor(database,ctx)).role!=='owner')throw new ValidationError(
     'Only this inventory’s owner can approve this change.');
   if(spec.capability)await entitlements.assertCapability(database,

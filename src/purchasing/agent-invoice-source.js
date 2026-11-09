@@ -26,7 +26,7 @@ function parse(text){
 }
 async function source(db,ctx,p){
  if(!p.sourceMessageId||!p.sourceAttachmentHash)throw new ValidationError('This invoice needs its readable original supplier attachment before automatic posting.');
- const row=(await db.query(`SELECT a.*,m.supplier_id,m.trust_status,m.connector_id,c.provider_account_id,c.status,c.paused_at FROM connection_email_attachments a
+ const row=(await db.query(`SELECT a.*,m.supplier_id,m.sender,m.trust_status,m.connector_id,c.provider_account_id,c.status,c.paused_at FROM connection_email_attachments a
   JOIN connection_email_messages m ON m.workspace_id=a.workspace_id AND m.id=a.message_id JOIN workspace_connectors c ON c.workspace_id=m.workspace_id AND c.id=m.connector_id
   WHERE a.workspace_id=$1 AND a.message_id=$2 AND a.content_hash=$3 ORDER BY a.id LIMIT 1`,[ctx.workspaceId,p.sourceMessageId,p.sourceAttachmentHash])).rows[0];
  if(!row)throw new ValidationError('The original supplier attachment is unavailable.');
@@ -61,4 +61,4 @@ async function recheck(db,ctx,p,automatic){
  if(p.sourceEvidence){const {evidence}=await source(db,ctx,p);if(!same(evidence,p.sourceEvidence))throw new ValidationError('The supplier invoice source changed. Review it again.');}
  if(automatic){if(p.needsInvoiceConfirmation!==false)throw new ValidationError('This invoice needs individual confirmation.');await qualify(db,ctx,p);}
 }
-module.exports={parse,capture,recheck,qualify};
+module.exports={parse,capture,recheck,qualify,readOriginal:source};

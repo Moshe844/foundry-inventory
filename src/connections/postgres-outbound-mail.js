@@ -88,12 +88,13 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(options.agentRequested){
     const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
     if(policy.usesAgentTerms(state)){
-      const requestedJob=new Map([['invoice_reminder',102],['stock_ready_notice',50]]).get(payload.standingAuthority?.kind);
+      const requestedJob=new Map([['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100]]).get(payload.standingAuthority?.kind);
       agentJob=requestedJob!==undefined&&requestedJob===options.agentJob?requestedJob:policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
       policy.requireJob(state.plan,agentJob,'draft');
     }
   }
   const prepared={...payload};
+  if(typeof prepared.subject==='string'&&[...prepared.subject].some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127))throw new ValidationError('Use a single-line email subject without control characters.');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(prepared.recipientEmail||'')))
     throw new ValidationError('Review the exact recipient email address before sending.');
   if(prepared.addContactKind){
@@ -206,6 +207,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -220,6 +222,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
         if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
