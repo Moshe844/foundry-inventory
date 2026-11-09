@@ -44,7 +44,7 @@
       </details>
       <% } %>
       <% if (locals.archiveAction) { %>
-        <p class="ox-drawer__danger"><button class="ox-linkbtn ox-rose" type="submit" form="ox-archive-form"><%= sd.isActive === false ? 'Restore supplier' : 'Archive supplier' %></button></p>
+        <p class="ox-drawer__danger"><button class="ox-linkbtn ox-rose" type="submit" form="ox-archive-form"><%= sd.isActive === false ? 'Restore supplier' : 'Archive supplier' %></button><% if (sd.isActive !== false) { %> · <a class="ox-linkbtn ox-rose" href="/delete/supplier/<%= encodeURIComponent(sd.id) %>">Delete supplier</a><% } %></p>
       <% } %>
     </div>
     <div class="ox-drawer__f"><button class="ox-btn ox-btn--ghost" type="button" data-modal-close>Cancel</button><button class="ox-btn ox-btn--primary" type="submit">Save supplier</button></div>

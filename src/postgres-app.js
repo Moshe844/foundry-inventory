@@ -207,6 +207,7 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.use(createPostgresSettingsRouter(database,{provider:aiProvider}));
   app.use(createPostgresOnboardingRouter(database));
   app.use(createPostgresLocationsRouter(database));
+  app.use(require('./web/routes/postgres-removal').createPostgresRemovalRouter(database));
   app.use(createPostgresInventoryRouter(database));
   app.use(createPostgresPricingRouter(database));
     app.use(require('./web/routes/postgres-promotions').createPostgresPromotionsRouter(database));
