@@ -34,8 +34,9 @@ CREATE TABLE stockchief_runtime.agent_container_projects (
  UNIQUE(workspace_id,request_key)
 );
 CREATE INDEX agent_container_project_owner ON stockchief_runtime.agent_container_projects(authorized_by);
-CREATE INDEX agent_container_project_workspace ON stockchief_runtime.agent_container_projects(workspace_id,created_at,id);
+CREATE INDEX agent_container_project_workspace ON stockchief_runtime.agent_container_projects(workspace_id,created_at DESC,id);
 CREATE INDEX agent_container_project_due ON stockchief_runtime.agent_container_projects(workspace_id,last_checked_at,id) WHERE enabled;
+CREATE INDEX agent_container_project_issues ON stockchief_runtime.agent_container_projects(workspace_id,last_checked_at,id) WHERE enabled AND last_issue IS NOT NULL;
 CREATE TABLE stockchief_runtime.agent_container_runs (
  id text PRIMARY KEY,
  workspace_id text NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -53,6 +54,7 @@ CREATE TABLE stockchief_runtime.agent_container_runs (
  UNIQUE(project_id,source_fingerprint)
 );
 CREATE INDEX agent_container_run_workspace ON stockchief_runtime.agent_container_runs(workspace_id,created_at,id);
+CREATE INDEX agent_container_run_project_history ON stockchief_runtime.agent_container_runs(workspace_id,project_id,created_at DESC,id DESC);
 CREATE INDEX agent_container_run_owner ON stockchief_runtime.agent_container_runs(created_by);
 CREATE INDEX agent_container_run_reviewer ON stockchief_runtime.agent_container_runs(reviewed_by);
 CREATE INDEX agent_container_run_completed ON stockchief_runtime.agent_container_runs(workspace_id,completed_at,id) WHERE completed_at IS NOT NULL;
