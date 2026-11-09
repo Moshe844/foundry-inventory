@@ -13,6 +13,7 @@ const activities = new Map([
   ['stock-ready','Send a customer an update when waiting stock is reserved'],
   ['invoice-dispute','Prepare and send a sourced supplier invoice dispute'],
   ['customer-statement','Prepare and send a requested customer account statement'],
+  ['quote-followup','Prepare and send a follow-up on a customer quotation'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -92,6 +93,12 @@ async function report(db,ctx,window='week') {
       JOIN stockchief_runtime.assistant_action_proposals a ON a.workspace_id=m.workspace_id AND a.result->>'communicationId'=m.id AND a.action_type='customer.statement' AND a.status='EXECUTED'
       WHERE m.workspace_id=$1 AND m.customer_id=a.payload->>'recordId' AND m.status='SENT' AND m.external_message_id IS NOT NULL
         AND e.payload->'standingAuthority'->>'kind'='customer_statement' AND e.payload->'standingAuthority'->>'sourceFingerprint'=a.payload->>'sourceFingerprint' GROUP BY m.id UNION ALL
+    SELECT 'quote-followup',min(m.sent_at::timestamptz) FROM customer_communications m
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      JOIN sales_quotations q ON q.workspace_id=m.workspace_id AND q.id=e.payload->'standingAuthority'->>'recordId'
+      WHERE m.workspace_id=$1 AND m.customer_id=q.customer_id AND m.status='SENT' AND m.external_message_id IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='quote_followup' AND e.payload->'standingAuthority'->>'quoteHash'=q.pricing_hash
+      GROUP BY m.id UNION ALL
     SELECT 'accounting-export',min(e.completed_at) FROM stockchief_runtime.provider_effects e
       WHERE e.workspace_id=$1 AND e.kind='accounting.journal.export' AND e.status='SUCCEEDED'
         AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id UNION ALL

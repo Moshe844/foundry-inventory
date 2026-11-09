@@ -36,3 +36,9 @@ INSERT INTO commercial_storage_tables(relation,bytes_expression)
  VALUES('stockchief_runtime.agent_quote_followups'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))');
 INSERT INTO commercial_storage_usage(workspace_id,relation,baseline_complete)
  SELECT id,'stockchief_runtime.agent_quote_followups'::regclass,true FROM workspaces;
+
+ALTER TABLE stockchief_runtime.agent_time_samples DROP CONSTRAINT agent_time_samples_activity_check;
+ALTER TABLE stockchief_runtime.agent_time_samples ADD CHECK (activity IN (
+ 'repeat-order','supplier-response','staff-request','invoice-match','accounting-export',
+ 'count-adjustment','repeat-sale','margin-price','combine-purchases','split-purchase',
+ 'customer-receipt','customer-reminder','arrived-stock','stock-ready','invoice-dispute','customer-statement','quote-followup'));

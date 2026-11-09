@@ -73,7 +73,7 @@ async function save(db,ctx,id,input){
           WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND revision=$8`,[...values,revision]);
     }
     if(!changed.rowCount)throw new ValidationError('The routine changed. Reload before saving.');
-    await require('../operations/postgres-security-audit').record(c,ctx,{action:action==='customer.statement'?'Customer statement routine changed':action==='customer_payment.match_bank_line'?'Customer receipt routine changed':'Draft order routine changed',reference:id,after:{mode:input.mode,scope:bound.label,maximum:input.maximum,history:data.preview}});
+    await require('../operations/postgres-security-audit').record(c,ctx,{action:action==='sales_quote.followup'?'Quotation follow-up routine changed':action==='customer.statement'?'Customer statement routine changed':action==='customer_payment.match_bank_line'?'Customer receipt routine changed':'Draft order routine changed',reference:id,after:{mode:input.mode,scope:bound.label,maximum:input.maximum,history:data.preview}});
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function trained(db,workspaceId,name,payload,proposalId){

@@ -23,5 +23,75 @@ test('quote follow-ups require actual recorded customer receipt, exact plan acce
  await f.subscribe('growth');const prepared=await f.prepare(q),preview=await f.browser.get('/actions/'+prepared.proposal.id).expect(200);assert.match(preview.text,/\$12.00/);assert.match(preview.text,/Synthetic customer received/);assert(!preview.text.includes('<dt>Source fingerprint</dt>'));
  const queued=await f.assistant.executeProposal(db,ctx,prepared.proposal.id);assert.equal(queued.result.status,'QUEUED');assert.equal(f.sent.length,0);await f.deliver(queued);await f.deliver(queued);assert.equal(f.sent.length,1);assert.match(f.sent[0].body,new RegExp(q.quote_number));assert.match(f.sent[0].body,/\$12.00/);
  const replay=await f.assistant.executeProposal(db,ctx,(await f.prepare(q)).proposal.id);assert.equal(replay.result.replayed,true);assert.equal(replay.result.effectId,queued.result.effectId);await f.browser.get('/messages/customer/'+replay.result.communicationId).expect(200);
- assert.equal(await f.balance(),before);assert.equal((await db.query("SELECT count(*)::integer n FROM sales_orders WHERE workspace_id=$1 AND idempotency_key LIKE 'quotation:%'",[ctx.workspaceId])).rows[0].n,0);assert.equal((await db.query('SELECT count(*)::integer n FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal((await f.quotes.get(db,ctx.workspaceId,q.id)).status,'OPEN');
+ assert.equal(await f.balance(),before);assert.equal((await db.query("SELECT count(*)::integer n FROM sales_orders WHERE workspace_id=$1",[ctx.workspaceId])).rows[0].n,0);assert.equal((await db.query('SELECT count(*)::integer n FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal((await f.quotes.get(db,ctx.workspaceId,q.id)).status,'OPEN');
+});
+
+test('Growth learns only a mailbox-confirmed individual send and schedules only the taught customer and amount',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f,training=require('../../src/autopilot/draft-authority'),first=await f.quote();await f.confirm(first);
+ const p=(await f.prepare(first)).proposal,queued=await f.assistant.executeProposal(db,ctx,p.id);assert.equal((await training.settings(db,ctx,p.id)).canTeach,false);await assert.rejects(training.save(db,ctx,p.id,{mode:'save',revision:0,maximum:'25.00'}),/Complete a reviewed example/);
+ await f.deliver(queued);assert.equal((await training.settings(db,ctx,p.id)).canTeach,true);await training.save(db,ctx,p.id,{mode:'save',revision:0,maximum:'25.00'});assert.equal((await training.settings(db,ctx,p.id,'25.00')).preview.total,1);
+ const next=await f.quote(2);await f.confirm(next);await f.followups.configure(db,ctx,next.id,{revision:1,days:1,connectorId:f.connector});assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:0,held:0});
+ const high=await f.quote(3);await f.confirm(high);for(const tier of ['growth','pro','enterprise']){await f.subscribe(tier);await assert.rejects(f.followups.configure(db,ctx,high.id,{revision:1,days:1,connectorId:f.connector}),/taught|entitlement|trained/i);}
+ await f.subscribe('growth');t.mock.timers.enable({apis:['Date'],now:Date.now()+2*86400000});assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:1,held:0});assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:0,held:0});
+ const effect=(await db.query("SELECT id FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND payload->'standingAuthority'->>'recordId'=$2",[ctx.workspaceId,next.id])).rows[0];assert(effect);await f.outbound.executeSendEffect(db,ctx.workspaceId,effect.id,{provider:f.provider});await f.outbound.executeSendEffect(db,ctx.workspaceId,effect.id,{provider:f.provider});assert.equal(f.sent.length,2);assert.equal((await training.settings(db,ctx,p.id,'25.00')).preview.total,1,'the automatic send does not become an individual teaching example');
+});
+
+test('Pro and Custom scheduled follow-ups respect due dates, pause, job modes and immediate downgrade',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f,autopilot=require('../../src/autopilot/postgres-service'),modes=require('../../src/autopilot/job-modes');await f.subscribe('pro');const first=await f.quote();await f.confirm(first);await f.followups.configure(db,ctx,first.id,{revision:1,days:2,connectorId:f.connector});
+ await f.subscribe('enterprise');const second=await f.quote();await f.confirm(second);await f.followups.configure(db,ctx,second.id,{revision:1,days:2,connectorId:f.connector});await assert.rejects(f.followups.configure(db,ctx,second.id,{revision:1,days:1,connectorId:f.connector}),/changed/);
+ t.mock.timers.enable({apis:['Date'],now:Date.now()+3*86400000});await autopilot.pause(db,ctx,{role:'owner'},'Owner test pause');assert.equal((await f.followups.run(db,ctx.workspaceId)).queued,0);await autopilot.resume(db,ctx,{role:'owner'});
+ await modes.save(db,ctx,74,{mode:'watch',revision:0});assert.equal((await f.followups.run(db,ctx.workspaceId)).queued,0);await modes.save(db,ctx,74,{mode:'ask',revision:1});assert.equal((await f.followups.run(db,ctx.workspaceId)).queued,0);await modes.save(db,ctx,74,{mode:'inherit',revision:2});
+ await f.subscribe('starter');assert.equal((await f.followups.run(db,ctx.workspaceId)).queued,0);await f.followups.configure(db,ctx,second.id,{revision:2,remove:'1'});await f.subscribe('pro');assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:1,held:0});
+ const effect=(await db.query("SELECT id FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND payload->'standingAuthority'->>'kind'='quote_followup'",[ctx.workspaceId])).rows[0];await f.subscribe('starter');await assert.rejects(f.outbound.executeSendEffect(db,ctx.workspaceId,effect.id,{provider:f.provider}),e=>e.code==='entitlement_required');assert.equal(f.sent.length,0);
+});
+
+test('quotes that are accepted, declined, superseded, expired or repriced cannot be chased',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f;
+ for(const accept of [true,false]){const q=await f.quote();await f.confirm(q);await f.quotes.decide(db,ctx,q.id,{accept,expectedHash:q.pricing_hash});await assert.rejects(f.prepare(q),/open, unexpired/);}
+ const old=await f.quote();await f.confirm(old);await f.quotes.create(db,ctx,{...old.input,validUntil:old.valid_until,supersedesId:old.id,requestKey:randomUUID()});await assert.rejects(f.prepare(old),/newer quotation/);
+ const priced=await f.quote();await f.confirm(priced);await f.price(1500);await assert.rejects(f.prepare(priced),/prices or customer terms/);await f.price(1200);
+ const expired=await f.quote();await f.confirm(expired);t.mock.timers.enable({apis:['Date'],now:Date.now()+16*86400000});await assert.rejects(f.prepare(expired),/open, unexpired/);assert.equal(f.sent.length,0);
+});
+
+test('provider preflight rechecks quote terms, recipient, confirmation, mailbox and current owner',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f;
+ const queue=async()=>{const q=await f.quote();await f.confirm(q);return {q,p:await f.assistant.executeProposal(db,ctx,(await f.prepare(q)).proposal.id)};};
+ let v=await queue();await assert.rejects(f.outbound.executeSendEffect(db,ctx.workspaceId,v.p.result.effectId,{provider:f.provider,beforeSend:()=>f.price(1300)}),/prices|changed/);await f.price(1200);
+ v=await queue();await db.query("UPDATE customers SET email='changed@example.test' WHERE workspace_id=$1 AND id='fixture-customer'",[ctx.workspaceId]);await assert.rejects(f.deliver(v.p),/current email|changed/);await db.query("UPDATE customers SET email='receiver@example.test' WHERE workspace_id=$1 AND id='fixture-customer'",[ctx.workspaceId]);
+ v=await queue();await f.confirm(v.q,{revision:1,evidence:'Corrected actual receipt reference'});await assert.rejects(f.deliver(v.p),/changed/);
+ v=await queue();await db.query('UPDATE workspace_connectors SET paused_at=now() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.connector]);await assert.rejects(f.deliver(v.p),/mailbox|paused|connection/i);await db.query('UPDATE workspace_connectors SET paused_at=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.connector]);
+ v=await queue();await db.query("UPDATE users SET role='clerk' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(f.deliver(v.p),/owner/);assert.equal(f.sent.length,0);
+});
+
+test('a changed or unauthorized due quote does not starve other scheduled follow-ups',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f;await f.subscribe('pro');const a=await f.quote(),b=await f.quote();for(const q of [a,b]){await f.confirm(q);await f.followups.configure(db,ctx,q.id,{revision:1,days:1,connectorId:f.connector});}
+ await f.quotes.decide(db,ctx,a.id,{accept:false,expectedHash:a.pricing_hash});t.mock.timers.enable({apis:['Date'],now:Date.now()+2*86400000});assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:1,held:1});assert.deepEqual(await f.followups.run(db,ctx.workspaceId),{queued:0,held:0});
+ assert.match((await f.followups.page(db,ctx,a.id)).record.problem,/open, unexpired/);const rows=(await db.query("SELECT payload FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND payload->'standingAuthority'->>'kind'='quote_followup'",[ctx.workspaceId])).rows;assert.equal(rows.length,1);assert.equal(rows[0].payload.standingAuthority.recordId,b.id);
+});
+
+test('the phone flow records actual receipt, previews, approves, teaches and schedules a follow-up',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f,q=await f.quote();
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));}),browser=await require('playwright').chromium.launch();
+ f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
+ const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true}),origin='http://127.0.0.1:'+server.address().port;
+ await page.goto(origin+'/login');await page.getByLabel('Work email').fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+ await page.goto(origin+'/autopilot/quote-followups/'+q.id);await page.getByLabel('How they received it').selectOption('in_person');await page.getByLabel('Your delivery reference').fill('Synthetic customer collected the exact printed quote');await page.getByLabel('I confirm that this customer received').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm customer received this quote',exact:true}).click()]);
+ await Promise.all([page.waitForURL(/\/actions\//),page.getByRole('button',{name:'Preview follow-up',exact:true}).click()]);assert.match(await page.locator('body').innerText(),/\$12.00/);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);const id=new URL(page.url()).pathname.split('/').pop(),p=await f.assistant.getProposal(db,ctx.workspaceId,id);await f.deliver(p);await page.reload();assert.match(await page.locator('body').innerText(),/Teach quotation follow-ups/);
+ await page.locator('input[name=draftMaximum]').fill('25.00');await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Test on past sent follow-ups',exact:true}).click()]);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save quote follow-up rule',exact:true}).click()]);
+ const next=await f.quote();await f.confirm(next);await page.goto(origin+'/autopilot/quote-followups/'+next.id);await page.getByLabel('Days after the customer received the quote').fill('2');await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Schedule one follow-up',exact:true}).click()]);assert.match(await page.locator('body').innerText(),/Scheduled for/);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ const path=require('node:path'),folder=path.join(process.cwd(),'output','agent-plan-review');require('node:fs').mkdirSync(folder,{recursive:true});await page.screenshot({path:path.join(folder,'quote-followup-phone.png'),fullPage:true});
+ await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Stop this scheduled follow-up',exact:true}).click()]);assert.equal((await f.followups.page(db,ctx,next.id)).record.schedule_enabled,0);
+});
+
+test('confirmed quote follow-up savings count once, while ambiguous mail is held and cannot teach a routine',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f,roi=require('../../src/autopilot/time-saved'),read=async()=>(await roi.report(db,ctx)).rows.find(r=>r.key==='quote-followup');const q=await f.quote();await f.confirm(q);const p=await f.assistant.executeProposal(db,ctx,(await f.prepare(q)).proposal.id);
+ assert.equal((await read()).count,0);await f.deliver(p);assert.equal((await read()).count,1);assert.equal((await read()).minutes,null);await roi.sample(db,ctx,{activity:'quote-followup',manualMinutes:'5',reviewMinutes:'1',requestKey:randomUUID()});assert.equal((await read()).minutes,4);await f.deliver(await f.assistant.executeProposal(db,ctx,(await f.prepare(q)).proposal.id));assert.equal((await read()).count,1);
+ const other=await f.quote();await f.confirm(other);const ambiguous=await f.assistant.executeProposal(db,ctx,(await f.prepare(other)).proposal.id);let calls=0;const lost={send:async()=>{calls++;throw Error('Mailbox acceptance response lost');}};await assert.rejects(f.outbound.executeSendEffect(db,ctx.workspaceId,ambiguous.result.effectId,{provider:lost}),e=>e.code==='email_send_ambiguous');await f.outbound.executeSendEffect(db,ctx.workspaceId,ambiguous.result.effectId,{provider:lost}).catch(()=>{});assert.equal(calls,1);assert.equal((await read()).count,1);assert.equal((await require('../../src/autopilot/draft-authority').settings(db,ctx,ambiguous.id)).canTeach,false);
+});
+
+test('the actual evaluation worker queues due quote mail once and leaves delivery to the provider worker',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f;await f.subscribe('pro');const q=await f.quote();await f.confirm(q);await f.followups.configure(db,ctx,q.id,{revision:1,days:1,connectorId:f.connector});t.mock.timers.enable({apis:['Date'],now:Date.now()+2*86400000});
+ const job={id:randomUUID(),workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId}},run=()=>db.transaction(c=>require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate(job,c),{isolation:'SERIALIZABLE',retrySafe:true});const r=await run();assert.equal(r.quoteFollowups.queued,1);assert.equal(f.sent.length,0);
+ await run();const effects=(await db.query("SELECT id FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND payload->'standingAuthority'->>'kind'='quote_followup'",[ctx.workspaceId])).rows;assert.equal(effects.length,1);await f.outbound.executeSendEffect(db,ctx.workspaceId,effects[0].id,{provider:f.provider});assert.equal(f.sent.length,1);
 });
