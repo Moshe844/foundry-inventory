@@ -31,6 +31,10 @@ async function refresh(db,workspaceId){
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   const priceChecks=policy.permits(account.plan,87,'automatic')&&(await db.query("SELECT 1 FROM connection_commerce_positions WHERE workspace_id=$1 AND field='price' AND mode<>'off' LIMIT 1",[workspaceId])).rowCount>0;
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
+    (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
+     WHERE o.workspace_id=$1 AND o.status='CONFIRMED'
+      AND EXISTS(SELECT 1 FROM sales_order_events e WHERE e.workspace_id=o.workspace_id AND e.sales_order_id=o.id AND e.event_type='confirmed' AND e.detail::jsonb->>'status'='BACKORDERED')
+      AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=o.workspace_id AND m.stock_ready_order_id=o.id AND m.status IN ('QUEUED','SENT'))`:'')+
     (policy.permits(account.plan,204,'automatic')?` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
      FROM workspace_daily_digests d WHERE d.workspace_id=$1 AND d.summary::jsonb->>'format'='agent-brief' AND (d.summary::jsonb->>'actions')::int>0
       AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
@@ -65,7 +69,10 @@ async function inbox(db,workspaceId,actorId=null){
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
-  return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),'automatic',{trained:Number(r.job_id)===67})).map(r=>{
+  return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67})).map(r=>{
+    if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
+      happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
+      recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
     const watch=require('./activity-watches').spec[r.job_id];
     if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
       why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};

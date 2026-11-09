@@ -25,6 +25,9 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='sales_order.notify_stock_ready'){
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one stock-ready customer update',fields:[{label:'Order',value:p.orderNumber},{label:'To',value:p.recipient},{label:'Message',value:require('../sales/agent-stock-ready').compose(p).body}]};
+ }
  if(proposal.action_type==='sales_order.reserve_arrived'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.quantity+' units'}))]};
  }

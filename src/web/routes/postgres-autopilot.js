@@ -17,6 +17,14 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.post('/autopilot/stock-ready/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Prepare a stock-ready update for this waiting customer',{action:'sales_order.notify_stock_ready',recordReference:req.body.orderNumber,mailbox:req.body.connectorId});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose an exact previously backordered order that is now fully reserved.');
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/stock-ready/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-stock-ready').configure(database,req.ctx,req.body);res.redirect(303,'/autopilot/reviews/stock-ready-updates');
+  }));
   router.post('/autopilot/arrived-stock/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Reserve arrived stock for the selected confirmed backorder',{action:'sales_order.reserve_arrived',recordReference:req.body.orderNumber});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current backorder before preparing its reservation.');

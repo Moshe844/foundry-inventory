@@ -1,0 +1,16 @@
+<% const f=result.stockReadyForm; %>
+<section class="card"><h2>Review one customer update</h2>
+<% if(f.blocked){ %><p class="notice"><%= f.blocked %></p><% } %>
+<% if(!f.mailboxes.length){ %><p><a href="/settings/connections">Connect a sending mailbox</a> to prepare customer updates.</p><% }else{ %>
+<form method="post" action="/autopilot/stock-ready/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Order number <input name="orderNumber" required maxlength="150"></label>
+<label>Send from <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>"><%= m.display_name %></option><% } %></select></label>
+<button class="btn" <%= f.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %></section>
+<section class="card"><h2>Automatic updates <span class="badge">Pro</span></h2>
+<p>Send one update when a waiting order has all its stock reserved. Only orders that become ready after you enable this setting are included. You can review older orders above.</p>
+<% if(f.rule?.enabled){ %><p>Automatic updates are enabled. Each send still checks the current plan, owner settings, recipient and reserved stock.</p><% }else{ %><p>Automatic updates are off.</p><% } %>
+<% if(f.automatic&&f.mailboxes.length){ %><form method="post" action="/autopilot/stock-ready/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= f.rule?.revision||0 %>">
+<label>Sending mailbox <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>" <%= m.id===f.rule?.connector_id?'selected':'' %>><%= m.display_name %></option><% } %></select></label>
+<button class="btn" <%= f.blocked?'disabled':'' %>>Enable for future ready orders</button></form><% }else if(!f.automatic){ %><p><a href="/billing" class="btn">Upgrade to Pro</a></p><% } %>
+<% if(f.rule?.enabled){ %><form method="post" action="/autopilot/stock-ready/settings"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= f.rule.revision %>"><button class="btn" name="stop" value="1">Stop automatic updates</button></form><% } %>
+<p><a href="/autopilot/job-modes">Review job authority</a></p></section>
