@@ -7,6 +7,7 @@ const activities = new Map([
   ['supplier-response','File a supplier confirmation or document'],
   ['staff-request','Create a purchase order from an approved staff request'],
   ['invoice-match','Enter and match a supplier invoice from an agent proposal'],
+  ['customer-receipt','Match a recorded customer bank receipt to its invoice'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -55,6 +56,15 @@ async function report(db,ctx,window='week') {
       ON b.workspace_id=a.workspace_id AND b.id=a.result->>'billId'
       WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='purchase_order.record_supplier_invoice'
         AND a.result->>'status' IN ('OPEN','DISPUTED') GROUP BY b.id UNION ALL
+    SELECT 'customer-receipt',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
+      JOIN accounting_bank_transactions t ON t.workspace_id=a.workspace_id AND t.id=a.result->>'bankTransactionId' AND t.status IN ('MATCHED','RECONCILED')
+      JOIN accounting_payments p ON p.workspace_id=t.workspace_id AND p.id=t.matched_payment_id AND p.id=a.result->>'paymentId'
+        AND p.source_key='agent-bank-receipt:'||t.id AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED'
+      JOIN accounting_payment_allocations l ON l.workspace_id=p.workspace_id AND l.payment_id=p.id AND l.customer_invoice_id=a.payload->>'recordId' AND l.amount_minor=t.amount_minor
+      JOIN accounting_journal_entries j ON j.workspace_id=p.workspace_id AND j.id=p.journal_entry_id AND j.status='POSTED'
+      WHERE a.workspace_id=$1 AND a.action_type='customer_payment.match_bank_line' AND a.status='EXECUTED' AND a.result->>'replayed' IS DISTINCT FROM 'true'
+        AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED')
+      GROUP BY t.id UNION ALL
     SELECT 'accounting-export',min(e.completed_at) FROM stockchief_runtime.provider_effects e
       WHERE e.workspace_id=$1 AND e.kind='accounting.journal.export' AND e.status='SUCCEEDED'
         AND e.payload->>'agentExport'='true' AND e.provider_reference->>'externalId' IS NOT NULL GROUP BY e.aggregate_id UNION ALL

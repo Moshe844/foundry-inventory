@@ -2112,7 +2112,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2122,15 +2122,20 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
-    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,Boolean(missionPlanId),proposal.payload);
+    if(receiptRoutine){
+      if(contract.name!=='customer_payment.match_bank_line')throw new ValidationError('Receipt authority cannot run another kind of action.');
+      await require('../accounting/agent-customer-payment-matches').requireRoutineAuthority(client,ctx);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine;
+    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
-    const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
+    const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
     const tier=agentPolicy.actionPlan(agentAccount,contract.name);
     if(job && tier!==undefined){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
       agentPolicy.requireJob(tier,job,operation,{trained});
     }
-    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
+    if(automatic && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(contract.name==='sales_order.create')await require('../sales/agent-customer-pricing').checkOrder(client,ctx,proposal.payload);
     if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
@@ -2157,7 +2162,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
     const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
     const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
-    const executionContext=postage?{...ctx,agentPostageScope:missionPlanId?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:missionPlanId?'automatic':'individual'}:ctx;
+    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:ctx;
     const result=await contract.execute(client,executionContext,payload);
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
@@ -2183,6 +2188,12 @@ async function executeProposal(database,ctx,id,options={}) {
     }));
     return {...committed,continuationError:error.message};
   }
+}
+
+// Internal worker entry point: authority comes from the owner's saved job mode,
+// never from an HTTP option or a model-supplied context field.
+async function executeReceiptRoutine(database,ctx,id){
+  return executeProposalCore(database,ctx,id,{receiptRoutine:true});
 }
 
 async function executeMission(database,ctx,proposalId,options={}){
@@ -2245,5 +2256,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};
