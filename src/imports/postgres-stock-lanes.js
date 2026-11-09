@@ -3,18 +3,30 @@ const {createHash}=require('node:crypto'),{ValidationError}=require('../domain/e
 const ledger=require('../accounting/postgres-ledger'),rowStore=require('./postgres-row-store'),identities=require('./postgres-execution-identities'),enforcement=require('../commercial/enforcement');
 const SIZE=2000,number=value=>exact.safeNumber(value,{signed:true}),add=(a,b)=>number(exact.add(a,b));
 const invalid=()=>new ValidationError('Saved import batches need reconciliation. Their recorded stock remains safe.');
+// An explicit "add" import, or one with no mode chosen whose every SKU is new:
+// every position then starts empty, so no row is a count and adding is exact.
+// An explicit "set" import keeps its own smaller batches and the serial path.
+async function additive(client,ctx,plan){
+ const mode=plan.transformations.importMode;
+ if(mode==='add')return true;
+ if(mode!==undefined&&mode!==null)return false;
+ return !(await client.query('SELECT EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NOT NULL) touches',[ctx.workspaceId,plan.id])).rows[0].touches;
+}
 function workers(){const value=Number(process.env.FOUNDRY_IMPORT_STOCK_WORKERS||0);return Number.isInteger(value)&&value>=1&&value<=4?value:0;}
 async function prepare(client,ctx,plan,saved){
  if(saved.stockLaneVersion===1)return saved;
- if(!workers()||Number(saved.savedRows)||saved.version!==3||saved.executionOrder!=='item'||plan.recordsValid<5000||plan.transformations.importMode!=='add')return saved;
+ if(!workers()||Number(saved.savedRows)||saved.version!==3||saved.executionOrder!=='item'||plan.recordsValid<5000||!await additive(client,ctx,plan))return saved;
  const eligibility=(await client.query(`SELECT count(*)::int rows,bool_and(parallel_stock AND execution_lane IS NOT NULL) eligible,count(DISTINCT currency)::int currencies
   FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2`,[ctx.workspaceId,plan.id])).rows[0];
  if(eligibility.rows!==plan.recordsValid||!eligibility.eligible||eligibility.currencies!==1)return saved;
  // Freeze execution only for existing ordinary stock. Recheck live metadata;
  // the protected catalogue lease prevents it changing beneath these lanes.
+ // A SKU this import created is checked through its own catalogue binding.
  const unsafe=(await client.query(`SELECT EXISTS(SELECT 1 FROM
-  (SELECT DISTINCT existing_sku_id FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2)e
-  LEFT JOIN skus s ON s.id=e.existing_sku_id AND s.workspace_id=$1
+  (SELECT DISTINCT coalesce(i.existing_sku_id,b.sku_id) sku_id FROM import_execution_identities i
+   LEFT JOIN import_catalogue_bindings b ON i.existing_sku_id IS NULL AND b.workspace_id=i.workspace_id AND b.import_id=i.import_id AND b.product_key=i.product_key AND b.variant_key=i.variant_key
+   WHERE i.workspace_id=$1 AND i.import_id=$2)e
+  LEFT JOIN skus s ON s.id=e.sku_id AND s.workspace_id=$1
   LEFT JOIN items i ON i.id=s.item_id AND i.workspace_id=$1
   WHERE s.id IS NULL OR s.is_active<>1 OR i.is_active<>1 OR i.tracking_mode<>'quantity' OR i.secondary_unit_label IS NOT NULL) unsafe`,[ctx.workspaceId,plan.id])).rows[0].unsafe;
  if(unsafe)return saved;
@@ -95,4 +107,4 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
  await Promise.all(jobs);await delivery;if(failure)throw failure;
  return (await database.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0].apply_checkpoint;
 }
-module.exports={prepare,progress,execute,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};
+module.exports={prepare,progress,execute,additive,enabled:()=>workers()>0,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};

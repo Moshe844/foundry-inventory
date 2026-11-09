@@ -7,10 +7,20 @@ for the job heartbeat and other worker lanes. The coordinator serves the first
 lane, and concurrency is capped to leave one pool slot free. Customer input cannot
 set concurrency. Existing partial serial imports retain their original order.
 
-Eligibility requires at least 5,000 additive rows for existing ordinary quantity
-SKUs, positive whole quantities and positive costs, one currency, and no price,
-catalogue, barcode, supplier, reorder, category, serial, lot or measured-stock
-changes. Other imports use the existing verified engine. A durable lane import
+Eligibility requires at least 5,000 additive rows of ordinary quantity SKUs,
+positive whole quantities and positive costs, one currency, and no catalogue,
+supplier, reorder, category, serial, lot or measured-stock changes. Rows for
+existing SKUs must not change prices or barcodes. Rows for SKUs the import
+creates may carry a selling price and barcode: both are saved while the
+catalogue is prepared, so stock batches never write them. A source with no
+import mode chosen counts as additive when no row matches an existing SKU,
+because every position then starts empty; with lanes disabled such a source
+keeps its original serial order. A row without stock (catalogue cost only) keeps
+the whole import serial, since every lane batch must post its reserved journal
+number. Other imports use the existing verified engine.
+
+Every catalogue writer takes the catalogue lock without waiting (variant change
+approval included), so none can queue behind a running lane import. A durable lane import
 resumes its original partitions with one session if this setting is disabled.
 
 Each item belongs to one partition. Indexed item/SKU/source-row cursors preserve

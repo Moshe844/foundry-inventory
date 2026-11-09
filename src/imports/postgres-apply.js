@@ -6,8 +6,8 @@ const {createHash}=require('node:crypto');
 const stockLanes=require('./postgres-stock-lanes');
 const addExact=(a,b)=>exact.safeNumber(exact.add(a,b),{signed:true});
 async function run(database,ctx,plan,executionId,inputOptions,deps){
- const id=plan.id,options=inputOptions,batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null;const attemptStartedAt=Date.now();
- const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-attemptStartedAt,attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows}),...(Number.isSafeInteger(checkpoint?.skusPlanned)?{preparedTotal:checkpoint.skusPlanned}:{})});
+ const id=plan.id,options=inputOptions,batchSize=plan.recordsValid>=5000&&plan.transformations.importMode!=='set'?2000:500;let checkpoint,attemptStartRows=null,savingStartedAt=null;const attemptStartedAt=Date.now();
+ const emit=(stage,preparedRows)=>inputOptions.onProgress?.({stage,processedRows:Number(checkpoint?.savedRows||0),totalRows:plan.recordsValid,attempt:1,durable:true,elapsedMs:Date.now()-(stage==='processing'&&savingStartedAt!==null?savingStartedAt:attemptStartedAt),attemptStartRows:attemptStartRows??Number(checkpoint?.savedRows||0),...(preparedRows===undefined?{}:{preparedRows}),...(Number.isSafeInteger(checkpoint?.skusPlanned)?{preparedTotal:checkpoint.skusPlanned}:{})});
  async function phase(operation,onRetry){let attempts=0;return database.transaction(async client=>{
   if(attempts++>0)onRetry?.();
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
@@ -51,7 +51,10 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   // Pin the order before saving any stock. Earlier partially prepared plans
   // retain their source order; a resumed plan never changes its page cursor.
   let executionOrder=saved.executionOrder||'source';
-  if(!saved.executionOrder&&!saved.catalogueStarted&&plan.recordsValid>=5000&&plan.transformations.importMode==='add'&&plan.fieldMappings.quantity!==undefined){
+  // A new catalogue with no mode chosen is additive too; it takes product order
+  // only when parallel stock lanes are enabled, so the serial path is unchanged.
+  if(!saved.executionOrder&&!saved.catalogueStarted&&plan.recordsValid>=5000&&plan.fieldMappings.quantity!==undefined
+   &&(plan.transformations.importMode==='add'||stockLanes.enabled()&&await stockLanes.additive(client,ctx,plan))){
    // A category shared by several variants must keep its source-file winner.
    // Conflicting parent updates and older unclassified caches stay in source
    // order; ordinary stock and consistent categories can group each product's
@@ -64,7 +67,10 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   return save(client,{...saved,version:3,batchReceiptVersion:1,executionOrder,defaultReordersCovered:true,catalogueStarted:true,initialPricesPrepared:true,locations,postingDate:saved.postingDate||await businessTime.today(client,ctx.workspaceId),...created,savedRows:0,units:0});
  });await emit('preparing',checkpoint.skusCreated);
  }while(!checkpoint.cataloguePrepared);
- attemptStartRows=Number(checkpoint.savedRows||0);
+ // The saving time-left estimate divides rows saved this attempt by the time
+ // spent saving them. Timed from the attempt start, the preparing step made
+ // the first estimates many times too long ("8 minutes" for 20 seconds).
+ attemptStartRows=Number(checkpoint.savedRows||0);savingStartedAt=Date.now();
  await emit('preparing',plan.recordsValid);
  if(!checkpoint.stockLaneVersion&&database.shareLock&&database.withSharedSession)checkpoint=await phase(async(client,saved)=>{
   const prepared=await stockLanes.prepare(client,ctx,plan,saved);return prepared===saved?saved:save(client,prepared);

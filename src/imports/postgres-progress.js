@@ -21,7 +21,11 @@ function present(row){
  const iso=value=>value?new Date(value).toISOString():null;
  let detail=row.job_result;if(typeof detail==='string'){try{detail=JSON.parse(detail);}catch{detail=null;}}
  const p=revising?row.preview_result?.previewProgress:detail?.importProgress,known=Boolean(p&&(revising?p.stage==='checking':['preparing','processing','verifying'].includes(p.stage))&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(revising?row.records_detected:row.records_valid));
- const stage=verified?'complete':revising?'preview':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
+ // Before the worker's first progress write, the saved checkpoint says which
+ // step is running: a product import prepares its catalogue before saving
+ // stock. Supplier files have no catalogue step.
+ const savedStep=row.dataset==='suppliers'||row.apply_checkpoint?.cataloguePrepared===true&&row.apply_checkpoint?.hash===row.integrity_hash?'processing':'preparing';
+ const stage=verified?'complete':revising?'preview':known&&state==='RUNNING'?p.stage:state==='RUNNING'?savedStep:state.toLowerCase();
  // Job history retains the previous error while an automatic retry runs. Only
  // stopped attempts need review; a healthy retry must not ask users to resume it.
  const stopped=['PAUSED','NEEDS_REVIEW'].includes(state);
