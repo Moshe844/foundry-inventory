@@ -1,0 +1,1 @@
+ALTER TABLE workspace_autopilot ADD COLUMN anomaly_acknowledged_at timestamptz;

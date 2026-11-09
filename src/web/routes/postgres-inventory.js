@@ -117,6 +117,8 @@ function createPostgresInventoryRouter(database) {
   router.post('/inventory/kit-reviews/:reviewId/approve',requireOwner,kitAccess,asyncRoute(async(req,res)=>{const review=await require('../../domain/postgres-kit-reviews').approve(database,req.ctx,req.params.reviewId,req.body.integrityHash);req.flash('success','The reviewed kit recipe was saved.');return res.redirect(303,'/inventory/'+review.payload.itemId);}));
   router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
+    const canViewCosts=require('../../actions/financial-visibility').costs(req.user),canViewMargins=permissions.can(req.user,permissions.VIEW_ACCOUNTING);
+    if(req.query.tab==='suppliers'&&!canViewCosts)throw new (require('../../domain/errors').AuthorizationError)('Purchase permissions are required to view supplier costs.');
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page,
       variantQuery:req.query.vq,variantOptions:req.query.opt,variantLow:req.query.low==='1',
       trackingQuery:req.query.trackingQuery,afterLotId:req.query.afterLotId,afterSerialId:req.query.afterSerialId});
@@ -152,6 +154,10 @@ function createPostgresInventoryRouter(database) {
           .map((row)=>({supplierName:row.supplier_name}))};});
     const productView=await require('../../domain/postgres-product-overview').overview(database,req.ctx,detail.item.id,req.query);
     productView.money=await require('../../domain/postgres-product-money').summary(database,req.ctx.workspaceId,detail.item.id);
+    if(!canViewCosts){
+      for(const sku of detail.skus){delete sku.purchaseCost;delete sku.stockCost;}
+      productView.money=null;
+    }
     const variantStates=req.user.role==='owner'?await require('../../domain/postgres-variant-changes').rows(database,req.ctx,detail.item.id,detail.skus.map(s=>s.id)):[];
     const variantSuppliers=req.user.role==='owner'?(await database.query("SELECT id,name,currency FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name,id LIMIT 1000",[req.ctx.workspaceId])).rows:[];
     const stockPlaces=req.user.role==='owner'?await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId):[],variantStockLocations=req.query.stockLocationId?stockPlaces.filter(l=>l.id===req.query.stockLocationId):stockPlaces.slice(0,10);
@@ -161,9 +167,9 @@ function createPostgresInventoryRouter(database) {
     const finding=req.query.finding?(await database.query("SELECT id,title,concise_summary,recommendation FROM attention_items WHERE workspace_id=$1 AND id=$2 AND item_id=$3 AND status='OPEN'",[req.ctx.workspaceId,String(req.query.finding).slice(0,160),req.params.id])).rows[0]||null:null;
     const lowSkuIds=detail.skus.length>1?(await require('../../reports/postgres-low-stock-badges').forSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id))).map(r=>r.sku_id):[];
     return res.page('inventory/item',{finding,productView,lowSkuIds,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
-      purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
+      purchasingLines,commitments:[],outlook:[],canViewCosts,canViewMargins,canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
-      importedDetails,importedGroups:require('../presentation/imported-details').group(importedDetails,detail.skus),detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
+      importedDetails:canViewCosts?importedDetails:[],importedGroups:require('../presentation/imported-details').group(canViewCosts?importedDetails:[],detail.skus),detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
       stockOpKeys:Object.fromEntries(['receive','issue','transfer','adjust'].map(kind=>[kind,newId('stockform')])),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:kitCounts.some(k=>k.kit_sku_id===sku.id),components:[]}])),kitAvailability});
   }));

@@ -31,13 +31,14 @@ function route(scope,handler){
   return async(req,res)=>{
     let held;const database=req.app.locals.database,resource=require('../../commercial/api-resources');
     try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
-      if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
+      if(scope==='audit:read')await require('../../commercial/agent-history').requireApi(database,auth);
+      if(scope.endsWith(':write')||(scope==='agent:run'&&req.method==='POST'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
       await entitlements.assertCapability(req.app.locals.database,auth,'api.public');
       held=await resource.begin(database,auth,require('../../lib/util').newId('api-resource'));
       const response={statusCode:200,status(code){this.statusCode=code;return this;},json(body){this.body=body;return this;}};
-      if(scope.endsWith(':read'))await require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
+      if(scope.endsWith(':read')||(scope==='agent:run'&&req.method==='GET'))await require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
         {capability:'api.public',key:require('../../lib/util').newId('api-read'),provider:'stockchief_api',
-          operation:'inventory_read',unit:'request'},()=>handler(auth,req,response));
+          operation:scope==='agent:run'?'agent_job_status':scope==='audit:read'?'audit_read':'inventory_read',unit:'request'},()=>handler(auth,req,response));
       else await handler(auth,req,response);
       await resource.settle(database,held,response.statusCode>=200&&response.statusCode<300);
       return res.status(response.statusCode).json(response.body);}
@@ -84,6 +85,19 @@ function createPostgresPublicApi(database){
     });
     return res.status(execution.replayed?200:201).json(execution);
   }));
+  router.get('/audit',route('audit:read',async(auth,req,res)=>{
+    await require('../../commercial/agent-history').requireApi(database,auth);
+    const result=await require('../../operations/postgres-audit').page(database,auth.workspaceId,req.query,100);
+    const data=result.rows.map(row=>({at:row.at,who:row.who,action:row.action,product:row.product,variant:row.variant,sku:row.sku,
+      location:row.location,reference:row.reference,before:row.before,after:row.after}));
+    return res.json({data,nextCursor:result.hasMore?result.next:null});
+  }));
+  const agent=require('../../connections/agent-review-api');
+  router.post('/agent/jobs',route('agent:run',async(auth,req,res)=>{
+    const job=await agent.start(database,auth,req.body,req.get('idempotency-key'));
+    return res.status(job.replayed?200:202).json(job);
+  }));
+  router.get('/agent/jobs/:id',route('agent:run',async(auth,req,res)=>res.json(await agent.status(database,auth,req.params.id))));
   return router;
 }
 

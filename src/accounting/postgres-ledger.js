@@ -165,6 +165,15 @@ async function postManyInTransaction(client,ctx,inputs,options={}){
   }
   if(reversedSources.length&&(await client.query(`SELECT 1 FROM manufacturing_added_costs a JOIN accounting_journal_lines l ON l.workspace_id=a.workspace_id AND l.id=a.source_journal_line_id WHERE a.workspace_id=$1 AND l.entry_id=ANY($2::text[]) AND a.reversed_by_event_id IS NULL LIMIT 1`,[ctx.workspaceId,reversedSources])).rows.length)
     throw new ValidationError('This expense supports production inventory value. Reverse its manufacturing capitalization before reversing the source expense.');
+  if(reversedSources.length){
+    const owned=(await client.query("SELECT id,source_type FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='landed_cost_document'",[ctx.workspaceId,reversedSources])).rows;
+    for(const input of inputs.filter(i=>i.reversalOfEntryId)){const entry=owned.find(e=>e.id===input.reversalOfEntryId);if(entry&&(entry.source_type!=='landed_cost_document'||!require('./landed-cost-ownership').allowsReversal(input)))throw new ValidationError('Reverse received-goods costs through their allocation so stock value and accounting remain reconciled.');}
+    if((await client.query(`SELECT 1 FROM landed_cost_charges c JOIN landed_cost_documents d ON d.workspace_id=c.workspace_id AND d.id=c.document_id
+      JOIN accounting_supplier_bill_lines bl ON bl.workspace_id=c.workspace_id AND bl.id=c.source_bill_line_id
+      JOIN accounting_supplier_bills b ON b.workspace_id=bl.workspace_id AND b.id=bl.bill_id
+      LEFT JOIN accounting_journal_lines l ON l.workspace_id=c.workspace_id AND l.id=c.source_journal_line_id
+      WHERE c.workspace_id=$1 AND d.status='APPLIED' AND (l.entry_id=ANY($2::text[]) OR (c.source_journal_line_id IS NULL AND b.journal_entry_id=ANY($2::text[]))) LIMIT 1`,[ctx.workspaceId,reversedSources])).rowCount)throw new ValidationError('This expense supports received-goods stock value. Reverse its cost allocation before reversing the source expense.');
+  }
   if(!reservation)await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
   const sourceKeys=[...new Set(prepared.map(row=>row.sourceKey))],prior=(await client.query('SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=ANY($2::text[])',[ctx.workspaceId,sourceKeys])).rows;
   const entries=new Map(prior.map(entry=>[entry.source_key,entry])),fresh=new Map();

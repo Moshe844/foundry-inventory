@@ -83,6 +83,7 @@ async function businessActivity(database,workspaceId){
 }
 
 async function activityPage(database,workspaceId,query,includeSecurity=false,pageSize=50){const page=positivePage(query.page);
+  const history=await require('../../commercial/agent-history').access(database,workspaceId);
   const filters={operation:trimOrNull(query.operation)||'',itemId:trimOrNull(query.item)||'',
     locationId:trimOrNull(query.location)||'',actorId:trimOrNull(query.user)||'',
     dateFrom:trimOrNull(query.from)||'',dateTo:trimOrNull(query.to)||''};const search=trimOrNull(query.q)||'';
@@ -90,6 +91,7 @@ async function activityPage(database,workspaceId,query,includeSecurity=false,pag
   if(filters.operation)add('m.operation=?',filters.operation);if(filters.itemId)add('m.item_id=?',filters.itemId);
   if(filters.locationId)add('m.location_id=?',filters.locationId);if(filters.actorId)add('m.actor_user_id=?',filters.actorId);
   const clock=require('../../lib/business-time'),timeZone=(await clock.forWorkspace(database,workspaceId)).timeZone;
+  if(history.activityAfter)add('m.occurred_at::timestamptz>=?::timestamptz',history.activityAfter);
   if(filters.dateFrom)add('m.occurred_at::timestamptz>=?::timestamptz',clock.dayBoundary(filters.dateFrom,timeZone));
   if(filters.dateTo)add('m.occurred_at::timestamptz<?::timestamptz',clock.dayBoundary(filters.dateTo,timeZone,{nextDay:true}));
   if(search){values.push(`%${search}%`);const index=values.length;clauses.push(`(i.name ILIKE $${index} OR s.code ILIKE $${index}
@@ -119,6 +121,7 @@ async function activityPage(database,workspaceId,query,includeSecurity=false,pag
   if(includeSecurity&&!filters.operation&&!filters.itemId&&!filters.locationId){const security=(await database.query(`SELECT e.*,u.name AS actor_name FROM security_event_history e LEFT JOIN users u ON u.workspace_id=e.workspace_id AND u.id=e.actor_id WHERE e.workspace_id=$1 AND ($2::text='' OR e.actor_id=$2) AND ($3::text='' OR e.action ILIKE '%'||$3||'%' OR coalesce(e.reference,'') ILIKE '%'||$3||'%') AND ($4::timestamptz IS NULL OR e.created_at>=$4) AND ($5::timestamptz IS NULL OR e.created_at<$5) ORDER BY e.created_at DESC,e.id DESC LIMIT 100`,[workspaceId,filters.actorId,search,filters.dateFrom?clock.dayBoundary(filters.dateFrom,timeZone):null,filters.dateTo?clock.dayBoundary(filters.dateTo,timeZone,{nextDay:true}):null])).rows;for(const row of security)otherEvents.push({stream:'security',at:new Date(row.created_at).toISOString(),title:row.action,detail:row.reference||'',who:row.actor_name||'Account member',href:'/audit?q='+encodeURIComponent(row.reference||row.action)});}
   const needle=search.toLowerCase();
   const events=[...inventoryEvents,...otherEvents].filter((event)=>(stream==='all'||event.stream===stream)
+    &&(!history.activityAfter||Date.parse(event.at)>=Date.parse(history.activityAfter))
     &&(!needle||`${event.title} ${event.detail} ${event.who}`.toLowerCase().includes(needle))
     &&(!filters.dateFrom||String(event.at).slice(0,10)>=filters.dateFrom)
     &&(!filters.dateTo||String(event.at).slice(0,10)<=filters.dateTo))
@@ -128,7 +131,7 @@ async function activityPage(database,workspaceId,query,includeSecurity=false,pag
     database.query(`SELECT id,name FROM users WHERE workspace_id=$1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT id,name FROM items WHERE workspace_id=$1 ORDER BY is_active DESC,name,id LIMIT 200`,[workspaceId])]);
   const total=Number(count.count),beyondThisPage=Math.max(0,total-timeline.length),eventTotal=events.length+(['all','inventory'].includes(stream)?beyondThisPage:0);
-  return {page,pageSize,hasMore,total,eventTotal,filters,groups,locations:locations.rows,users:users.rows,
+  return {history,page,pageSize,hasMore,total,eventTotal,filters,groups,locations:locations.rows,users:users.rows,
     items:items.rows,stream,query:search,streams,
     streamLabels:{all:'All activity',inventory:'Inventory',sales:'Sales orders',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',security:'Access and settings',system:'System'},
     log:{events:events.slice((page-1)*pageSize,page*pageSize),counts:{},quietChecks:0}};}
@@ -195,13 +198,15 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
-    const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
-      req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
+    const [items,failures,briefDate,managerView]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
+      req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):null,
+      req.user.role==='owner'?require('../../autopilot/daily-briefs').latest(database,req.ctx):null,
+      require('../../reports/manager-presentation').personal(database,req.ctx)]);
     res.locals.attentionCount=items.length;
     items.coverageErrors=[];
     return res.page('manager/needs-you-overview',
       {title:'Needs you',nav:'attention',room:true,suppressBack:true,
-        inbox:items,failures,desk:require('../needs-you-presentation').present(items,req.query),at:zeroBasedIndex(req.query.at)});
+        inbox:items,failures,briefDate,managerView,showAllDecisions:req.path==='/needs-you/all',desk:require('../needs-you-presentation').present(items,{sort:managerView?.inbox_sort,...req.query},managerView?.inbox_sort),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     const size=require('../presentation/pagination').pageSize(req),found=await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner',size);

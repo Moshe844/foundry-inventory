@@ -6,6 +6,7 @@
 function planRequirements(plan){
  const m=plan.fieldMappings||{},t=plan.transformations||{},out=[];
  const add=(code,title,detail,href,action,error)=>out.push({code,title,detail,href,action,error});
+ if(t.agentJob===43){add('receiving-document','Delivery recorded against a purchase order','Open the purchase order to review the received units and source document.','/purchasing/orders/'+t.receivingOrderId,'View purchase order','This delivery is recorded through its purchase receipt.');return out;}
  if(plan.isExpired)add('expired','Read this file again','This saved preview is more than 24 hours old. Prepare a fresh preview before approval.','/imports/start','Read the file again','This preview is more than 24 hours old. Read the source again before importing.');
  if(!t.workbook&&t.sheetCount>1&&t.worksheetScope?.confirmed!==true)add('worksheets','Review the worksheet scope','Confirm which worksheets belong in this import.','#worksheet-scope','Review worksheets','Review every worksheet before approval. Read the complete workbook again, or explicitly confirm the displayed worksheet scope; other worksheets will not be imported.');
  if((plan.sourceKind==='image'||t.visualSource===true)&&t.imageReadingConfirmed!==true)add('image','Check the image reading','Compare the extracted codes, quantities and prices with the original, then save your review.','#image-reading','Review image reading','Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
@@ -20,7 +21,7 @@ function planRequirements(plan){
 }
 
 function review(plan,evidence={}){
- const t=plan.transformations||{},requirements=planRequirements(plan),extra=[];
+ const t=plan.transformations||{},requirements=planRequirements(evidence.receivingReceipt?{...plan,transformations:{...t,agentJob:43,receivingOrderId:evidence.receivingReceipt.purchaseOrderId}}:plan),extra=[];
  const add=(code,title,detail,href,action)=>extra.push({code,title,detail,href,action});
  if(evidence.previewRevision?.active)add('updating','Wait for the saved preview update','StockChief is recalculating your choices. You can leave and return; review the finished result before approval.','#preview-update','See preview progress');
  if(evidence.duplicatePlans?.length)add('duplicate','This file was already imported','The same completed source cannot be applied twice.','/imports/'+evidence.duplicatePlans[0].id,'See the completed import');

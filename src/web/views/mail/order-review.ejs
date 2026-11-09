@@ -1,0 +1,13 @@
+<a href="/mail/<%= messageId %>">Back to email</a>
+<h1>Review customer order</h1>
+<p><%= review.customer.name %> · <%= review.input.deliveryMethod==='PICKUP'?'Customer pickup':review.customer.shipping_address %></p>
+<% if(review.input.reference){ %><p>Customer purchase order <strong><%= review.input.reference %></strong></p><% } %>
+<table><thead><tr><th>Item</th><th>Quantity</th><th>Unit price</th></tr></thead><tbody>
+<% for(const line of review.quote.lines){ const item=review.skus.find(s=>s.id===line.skuId); %>
+<tr><td><%= item.name %> (<%= item.code %>)</td><td><%= line.quantity %></td><td><%= money(line.unitPriceMinor,review.input.currency) %></td></tr>
+<% } %></tbody></table>
+<p>Total with discounts and tax <strong><%= money(review.quote.totalMinor,review.input.currency) %></strong></p>
+<form method="post" action="/mail/<%= messageId %>/order">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="digest" value="<%= review.digest %>">
+  <button class="btn btn--primary">Create draft order</button>
+</form>

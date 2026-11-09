@@ -2,3 +2,4 @@
 <% for(const o of offers){ %><tr><td><% if(o.mode!=='excluded'){ %><a href="/autopilot/reviews/<%= o.key %>"><%= o.label %></a><% }else{ %><%= o.label %><% } %></td><td>
 <% if(o.mode==='excluded'){ %><%= o.minimum %> &middot; <a href="/billing">Review plans</a><% }else{ %><%= ({alone:'Included',trained:'Requires a trained rule for automation',draft:'Draft for review',suggest:'Suggestion'})[o.mode] %><% } %>
 </td></tr><% } %></tbody></table></div>
+<% if(['alone','trained','draft'].includes(offers.find(o=>o.key==='purchase-budget')?.mode)){ %><p><a href="/purchasing/budgets">Set monthly purchase budgets</a></p><% } %>

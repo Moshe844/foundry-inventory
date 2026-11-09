@@ -31,6 +31,6 @@ test('recorded banking evidence separates statement states and permissions while
  const restrictedCollections=await gateway.collections();
  assert(restrictedCollections['navigate.record.product']);
  for(const kind of ['customer_return','supplier_return','journal_entry','connection'])assert(!restrictedCollections['navigate.record.'+kind],kind+' must not leak through initial navigation metadata');
- await assert.rejects(banking.inspect(db,ctx),{code:'forbidden'});const denied=await assistant.lookup(db,ctx,{view:'accounting'});assert.equal(denied.bankReconciliation.available,false);assert.equal(denied.bankReconciliation.accounts,undefined);
+ await assert.rejects(banking.inspect(db,ctx),{code:'forbidden'});await assert.rejects(assistant.lookup(db,ctx,{view:'accounting'}),{code:'forbidden'});
  await assert.rejects(banking.inspect(db,{...ctx,actorId:foreign.actorId}),{code:'forbidden'});
 });

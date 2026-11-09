@@ -5,5 +5,5 @@ async function begin(db,workspaceId,key,recipients=1){if(!workspaceId)return nul
 async function complete(db,held){if(held)await entitlements.commitUsage(db,held.scope,held.input);}
 async function completeRecorded(db,workspaceId,key){if(!workspaceId)return;const scope=await entitlements.ownerScopeForWorkspace(db,workspaceId),exists=(await db.query("SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='emails_sent' AND idempotency_key=$3 AND status IN ('RESERVED','COMMITTED')",[scope.accountId,workspaceId,key])).rows.length;if(exists)await complete(db,{scope,input:{meter:'emails_sent',idempotencyKey:key}});}
 async function failed(db,held,error){if(held&&require('../operations/postgres-provider-effects').definiteFailure(error))await entitlements.reverseUsage(db,held.scope,{...held.input,reason:'The provider definitely rejected this message.'});}
-const systemMessageTypes=new Set(['scheduled_report','customer_invoice','email_alert_test','needs_you_alert','operational_alert']);
+const systemMessageTypes=new Set(['scheduled_report','customer_invoice','email_alert_test','needs_you_alert','operational_alert','purchase_approval']);
 module.exports={applies,begin,complete,completeRecorded,failed,systemMessageTypes};

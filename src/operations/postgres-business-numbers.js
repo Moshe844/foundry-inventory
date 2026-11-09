@@ -1,5 +1,5 @@
 'use strict';
-const prefixes={purchase_orders:['PO'],sales_orders:['SO'],accounting_supplier_bills:['BILL'],accounting_customer_invoices:['INV'],accounting_payments:['PAY','RCPT'],sales_shipments:['SHP']};
+const prefixes={landed_cost_documents:['LC'],purchase_orders:['PO'],sales_orders:['SO'],accounting_supplier_bills:['BILL'],accounting_customer_invoices:['INV'],accounting_payments:['PAY','RCPT'],sales_shipments:['SHP']};
 async function next(client,workspaceId,kind,prefix){
  if(!prefixes[kind]?.includes(prefix))throw new Error('Unsupported business number kind.');
  // Keep the existing shipping/workflow lock names during rolling deployment.

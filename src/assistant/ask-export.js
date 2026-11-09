@@ -40,14 +40,24 @@ async function send(res,format,result){
  res.set('Cache-Control','private, no-store');
  return res.send(output);
 }
-async function interaction(database,ctx,id,columnLabel){
- const row=(await database.query('SELECT message,evidence,intent FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3',[ctx.workspaceId,ctx.actorId,id])).rows[0];
+function written(answer){
+ if(typeof answer!=='string'||!answer.trim())throw new NotFoundError('This answer has no saved text to download.');
+ // Split long responses so one spreadsheet cell or PDF table row cannot truncate the answer.
+ const lines=answer.split(/\r?\n/).flatMap(line=>line.match(/[\s\S]{1,240}/gu)||['']);
+ return {...shape({title:'StockChief answer',columns:['answer'],labels:{answer:'Answer'},rows:lines.map(line=>[line])}),sourceLabel:'Saved StockChief answer'};
+}
+async function interaction(database,ctx,id,columnLabel,fullAnswer=false){
+ const row=(await database.query('SELECT message,answer,evidence,intent FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3',[ctx.workspaceId,ctx.actorId,id])).rows[0];
  if(!row)throw new NotFoundError('That answer is not in your saved work.');
  const rows=row.evidence||[],presentation=row.intent?.presentation||{},columns=(presentation.columns?.length?presentation.columns:Object.keys(rows[0]||{})).filter(column=>column!=='href');
+ if(fullAnswer||!rows.length)return written(row.answer);
  return shape({title:row.message,columns,labels:Object.fromEntries(columns.map(column=>[column,presentation.columnLabels?.[column]||columnLabel(column)||column])),rows:rows.map(item=>Object.fromEntries(columns.map(column=>[column,item[column]===null||item[column]===undefined?'':item[column]])))});
 }
-function goal(found,index){
- const table=tables(found?.answer)[Number(index)||0];
+function goal(found,index,fullAnswer=false){
+ if(fullAnswer)return written(found?.answer);
+ const available=tables(found?.answer);
+ if(!available.length&&index===undefined)return written(found?.answer);
+ const table=available[Number(index)||0];
  if(!table)throw new NotFoundError('That answer has no table to download.');
  return fromTable(table,found.original_request);
 }

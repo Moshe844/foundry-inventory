@@ -60,13 +60,26 @@ function createPostgresMailRouter(database,options={}){
     const draft=message.draft_subject&&message.draft_body?{subject:message.draft_subject,body:message.draft_body,
       source:message.draft_source==='owner'?'person':message.draft_source,rejected:message.draft_rejected_because,
       sentAt:message.reply_sent_at}:null;
-    const canImproveDraft=(await entitlements.capabilityState(database,commercialScope(req),
+    const agentDrafts=await require('../../connections/agent-mail-triage').draftAccess(database,req.ctx.workspaceId);
+    const plan=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId);
+    const customerOrderMail=require('../../commercial/agent-plan').usesAgentTerms(plan)&&message.classification==='customer'&&permissions.can(req.user,permissions.OPERATE);
+    const canReviewOrder=customerOrderMail&&require('../../commercial/agent-plan').permits(plan.plan,52,'draft');
+    const canImproveDraft=agentDrafts&&(await entitlements.capabilityState(database,commercialScope(req),
       'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured||require('../../assistant/postgres-codex-pilot').configured(req.ctx))
       &&!['READY','RUNNING'].includes(message.preparation_goal_status)&&!['PENDING','RETRY','RUNNING'].includes(message.draft_job_status);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
-      canImproveDraft,canWriteReply:permissions.can(req.user,permissions.OPERATE),
+      canImproveDraft,agentDrafts,customerOrderMail,canReviewOrder,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentState.attachments,attachmentReading:attachmentState,drawers:DRAWERS});
+  }));
+  router.get('/mail/:id/order',requirePermission(permissions.OPERATE,'prepare a customer order'),asyncRoute(async(req,res)=>{
+    const review=await require('../../sales/postgres-email-order').review(database,req.ctx,req.params.id);
+    if(review.existing)return res.redirect(303,'/orders/'+encodeURIComponent(review.existing.id));
+    return res.page('mail/order-review',{title:'Review customer order',nav:'mail',review,messageId:req.params.id,money:require('../../pricing/postgres-service').formatMinor});
+  }));
+  router.post('/mail/:id/order',requirePermission(permissions.OPERATE,'prepare a customer order'),asyncRoute(async(req,res)=>{
+    const order=await require('../../sales/postgres-email-order').create(database,req.ctx,req.params.id,req.body.digest);
+    return res.redirect(303,'/orders/'+encodeURIComponent(order.salesOrderId));
   }));
   router.get('/mail/:id/attachments/status',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');return res.json(await require('../../connections/postgres-attachments').readingStatus(database,req.ctx.workspaceId,req.params.id));

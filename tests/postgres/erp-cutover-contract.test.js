@@ -32,6 +32,8 @@ test('PostgreSQL ERP source pages seal only complete, ordered, tenant-bound sour
  const catalog=require('../../src/domain/postgres-catalog-service');await assert.rejects(catalog.createItem(db,ctx,{name:'Concurrent owner write',trackingMode:'quantity'}),e=>e.code==='cutover_in_progress');
  const otherCtx={workspaceId:b.workspaceId,actorId:b.userId};await catalog.createItem(db,otherCtx,{name:'Other inventory still works',trackingMode:'quantity'});
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) SELECT 'qa-starter',$1,'starter',id,'ACTIVE','MONTHLY','TEST' FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE' LIMIT 1",[b.accountId]);
- await assert.rejects(cutover.create(db,otherCtx,{...create,snapshotHash:'b'.repeat(64),manifest:manifest({product:1,history_fact:25000})}),e=>e.code==='entitlement_required'&&/25000/.test(e.message));
+ await assert.rejects(cutover.create(db,otherCtx,{...create,snapshotHash:'b'.repeat(64),manifest:manifest({product:1,history_fact:25000})}),e=>e.code==='entitlement_required'&&/Growth/.test(e.message));
+ await db.query("UPDATE account_subscriptions SET plan_id='growth',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE' LIMIT 1) WHERE account_id=$1",[b.accountId]);
+ await assert.rejects(cutover.create(db,otherCtx,{...create,snapshotHash:'b'.repeat(64),manifest:manifest({product:1,history_fact:500000})}),e=>e.code==='entitlement_required'&&/500000/.test(e.message));
 
 });

@@ -15,7 +15,9 @@ function schemaFor(catalogue=registry){
         continuesPending:{type:'boolean'},
       }}},
     clarifyingQuestion:{type:'string',maxLength:300},
-    closestAlternative:{type:'string',enum:['',...catalogue.list().filter((entry)=>entry.discovery).map((entry)=>entry.name)]},
+    // parseSteps independently accepts only a registered discoverable name.
+    // Repeating the complete name index here wastes the same paid context.
+    closestAlternative:{type:'string',maxLength:200},
   }};
 }
 
@@ -175,15 +177,20 @@ function planningCatalogue(catalogue=registry,{compact=false}={}){
   };
 }
 
-function systemFor(catalogue=registry,{compact=false}={}){
+function systemFor(catalogue=registry,{compact=false,maximumBytes=24000}={}){
+  maximumBytes=Math.min(24000,Math.floor(maximumBytes));
+  if(!Number.isSafeInteger(maximumBytes)||maximumBytes<1)throw new RangeError('Invalid planner context allowance.');
   const contracts=planningCatalogue(catalogue,{compact}),encode=()=>`${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(contracts)}`;
-  let prompt=encode();if(!compact&&prompt.length>=24000)return systemFor(catalogue,{compact:true});
+  let prompt=encode();if(!compact&&Buffer.byteLength(prompt)>=maximumBytes)return systemFor(catalogue,{compact:true,maximumBytes});
   // Feature growth must not raise a spending guard or silently omit an action.
   // Keep exact names, input lists and authority boundaries; progressively
   // compress only supplementary descriptions if the compact index outgrows it.
-  while(prompt.length>=24000){let changed=false;
-    for(const kind of ['mutations','reads','policies'])for(const entry of contracts[kind]){if(entry.d.length>0){entry.d=entry.d.slice(0,Math.max(0,entry.d.length-4));changed=true;}if(entry.domains)for(const domain of Object.keys(entry.domains)){const value=entry.domains[domain];if(value.length){entry.domains[domain]=value.slice(0,Math.max(0,value.length-4));changed=true;}}}
-    if(!changed)throw new Error('The complete operation index exceeds the planner context allowance. Use governed contract discovery; no model call was made.');
+  while(Buffer.byteLength(prompt)>=maximumBytes){let changed=false;
+    for(const kind of ['mutations','reads','policies','navigation'])for(const entry of contracts[kind]){
+      if(typeof entry.d==='string'){if(entry.d.length)entry.d=entry.d.slice(0,Math.max(0,entry.d.length-4));else delete entry.d;changed=true;}
+      if(entry.domains)for(const domain of Object.keys(entry.domains)){const value=entry.domains[domain];if(value.length){entry.domains[domain]=value.slice(0,Math.max(0,value.length-4));changed=true;}}
+    }
+    if(!changed)throw Object.assign(new Error('The complete operation index exceeds the planner context allowance. Use governed contract discovery; no model call was made.'),{code:'planner_index_budget'});
     prompt=encode();
   }
   return prompt;
@@ -434,10 +441,17 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     // Preserve the complete current goal and every registered contract. First
     // reduce the output reservation; only then shorten optional history prose.
     let request=base;
-    for(const variant of [base,{...base,system:systemFor(catalogue,{compact:true})},{...base,system:systemFor(catalogue,{compact:true}),prompt:JSON.stringify(smaller)}]){
+    for(const prompt of [base.prompt,JSON.stringify(smaller)]){
       for(const maxOutputTokens of [3000,2000,1500,1000]){
-        request={...variant,maxOutputTokens};
-        if(Buffer.byteLength(request.prompt)<=await provider.promptByteAllowance(request))return request;
+        request={...base,prompt,maxOutputTokens};
+        // The guard's allowance with an empty system is the budget for BOTH
+        // text fields. Keep the full operation index and current goal; trim
+        // only supplemental contract descriptions to that real price bound.
+        const textBytes=await provider.promptByteAllowance({...request,system:''}),systemBytes=Math.min(24000,Math.floor(textBytes-Buffer.byteLength(prompt)));
+        if(systemBytes<1)continue;
+        try{request.system=systemFor(catalogue,{compact:true,maximumBytes:systemBytes});}
+        catch(error){if(error.code==='planner_index_budget')continue;throw error;}
+        if(Buffer.byteLength(request.system)+Buffer.byteLength(prompt)<=textBytes)return request;
       }
     }
     return request; // The unchanged commercial guard refuses an impossible bound.

@@ -16,3 +16,24 @@ test('planning continuations cannot starve older reconciliation; ordinary queue 
  assert.equal((await q.claim(db,{owner:'ordinary-priority',kinds:['fixture.ordinary']})).id,high.job.id);
  assert.equal((await q.get(db,low.job.id,null)).status,'PENDING');
 });
+
+test('the maintenance worker serves overdue import work ahead of newer planning continuations', {timeout:120000}, async t => {
+  const {db,ctx}=await require('../helpers/postgres-shipping-fixture').fixture(t);
+  const queue=require('../../src/operations/postgres-job-queue');
+  const registered=require('../../src/operations/postgres-runtime-handlers').create();
+  const handlers=Object.fromEntries(Object.entries(registered)
+    .filter(([,handler])=>handler.workerLane==='maintenance')
+    .map(([kind,handler])=>[kind,Object.assign(async()=>({verified:true}),{workerLane:handler.workerLane})]));
+  const work=[['import.refresh-statistics',90],['import.initialize-reorders',60],['system.reconcile-business',79],['autopilot.evaluate',39]];
+  const now=Date.now();
+  for(const [index,[kind,priority]] of work.entries()){
+    assert(handlers[kind],kind+' belongs to the maintenance worker');
+    await queue.enqueue(db,{workspaceId:ctx.workspaceId,kind,idempotencyKey:'published-fairness-'+index,priority,now:now-600000+index*1000});
+  }
+  for(const [expected] of work){
+    const finished=await queue.processOne(db,handlers,{owner:'maintenance-worker'});
+    assert.equal(finished.kind,expected);
+    assert.equal(finished.status,'COMPLETED');
+    assert.equal(finished.attemptCount,1);
+  }
+});

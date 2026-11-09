@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staff guide · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
+<a href="/warehouse/stock">Back to warehouse stock</a><h1>Staff guide</h1>
+<form action="/guide" method="get"><label for="guide-question">How do I…?</label>
+  <input id="guide-question" type="search" name="q" value="<%= query %>" maxlength="200"><button class="btn">Find instructions</button>
+</form>
+<% if(query&&!topics.length){ %><p role="status">No matching instructions for your role. <a href="/guide">Browse the guide</a>.</p><% } %>
+<% for(const t of topics){ %><section><h2><%= t.title %></h2><p><%= t.path %></p><a href="<%= t.href %>"><%= t.action %></a></section><% } %>
+</main></body></html>

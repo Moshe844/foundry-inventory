@@ -4,6 +4,7 @@ const permissions=require('../actions/permissions');
 
 /** Canonical, workspace-scoped record destinations. No model-provided URL. */
 const RECORDS=Object.freeze({
+  landed_cost_document:{description:'A received-goods freight, duty or fee allocation and its stock-value posting.',permission:permissions.VIEW_ACCOUNTING,collection:{href:'/autopilot/reviews/landed-costs',label:'Received-goods costs'},sql:'SELECT id,document_number AS title FROM landed_cost_documents WHERE workspace_id=$1',href:row=>'/autopilot/landed-costs/'+encodeURIComponent(row.id)},
   custody_agreement:{description:'A rental or consignment agreement with custody, inspection, ownership and billing history.',permission:permissions.VIEW,collection:{href:'/custody',label:'Rentals and consignment'},sql:'SELECT id,agreement_number AS title FROM custody_agreements WHERE workspace_id=$1',href:row=>'/custody/'+encodeURIComponent(row.id)},
   manufacturing_work_order:{description:'A production work order with its material consumption, output, scrap and work-in-progress value.',permission:permissions.VIEW,collection:{href:'/manufacturing',label:'Manufacturing'},
     sql:'SELECT id,order_number AS title FROM manufacturing_work_orders WHERE workspace_id=$1',href:row=>'/manufacturing/work-orders/'+encodeURIComponent(row.id)},

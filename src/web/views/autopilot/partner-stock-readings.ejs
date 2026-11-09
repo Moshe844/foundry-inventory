@@ -1,0 +1,7 @@
+<section class="card"><h2>Hourly partner stock readings</h2>
+<p>Refresh the exact product mappings you have already saved in the ShipBob sandbox. This updates saved readings only. It does not move stock, change ownership, or submit orders. The recorded time shows when each reading was requested.</p>
+<% if(setting.lastIssue){ %><p>A reading needs attention: <%= setting.lastIssue %> Resolve the issue and save the setting again to request a new check.</p><% } %>
+<% if(setting.enabled){ %><p>Hourly readings are enabled. <a href="/autopilot/shipbob">Review saved product mappings</a></p><form method="post" action="/autopilot/partner-stock-readings"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting.revision %>"><button class="btn" name="stop" value="1">Stop hourly readings</button><button class="btn">Save and check again</button></form>
+<% }else if(setting.connected){ %><form method="post" action="/autopilot/partner-stock-readings"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting.revision %>"><button class="btn">Enable hourly readings</button></form>
+<% }else{ %><p><a href="/autopilot/shipbob">Connect the ShipBob sandbox</a>, then save each exact product mapping before enabling hourly readings.</p><% } %>
+</section>

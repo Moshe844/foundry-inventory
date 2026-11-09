@@ -31,6 +31,8 @@ async function prepare(database,ctx,salesOrderId,input={}){
   const key=String(input.idempotencyKey||'').trim();
   if(!key)throw new ValidationError('A durable idempotency key is required.');
   return database.transaction(async(client)=>{
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['fulfillment-wave:'+ctx.workspaceId]);
+    if((await client.query('SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rowCount)throw new ValidationError('Review this order in ShipBob before preparing a local box. Its provider outcome must be resolved first.');
     const operation=await client.query(`INSERT INTO stockchief_runtime.business_operations
       (id,workspace_id,kind,idempotency_key) VALUES($1,$2,'shipping.prepare',$3)
       ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING RETURNING id`,[newId('pgop'),ctx.workspaceId,key]);
@@ -44,6 +46,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
       [ctx.workspaceId,salesOrderId])).rows[0];
     if(!order)throw new NotFoundError('That sales order was not found.');
     if(order.delivery_method!=='SHIP')throw new ValidationError('Only orders marked for shipping need a carrier parcel.');
+    await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const destination=input.shipToAddress||order.ship_to_address;
     if(!addresses.parse(destination).complete)throw new ValidationError(addresses.why(addresses.parse(destination)));
     const actor=await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId]);
@@ -102,6 +105,27 @@ function assertParcelEditable(shipment){
   if(['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))
     throw new ValidationError('Resolve or void the saved label before changing or cancelling this parcel.');
   if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel has a label managed in an external shipping account. Resolve that label before changing the parcel.');
+}
+
+async function cancel(database,ctx,shipmentId,input={}){
+  return database.transaction(async client=>{
+    const permissions=require('../actions/permissions'),user=(await client.query(`SELECT u.role,u.permissions FROM users u
+      LEFT JOIN platform_account_access x ON x.account_id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2 AND x.disabled_at IS NULL FOR SHARE OF u`,[ctx.workspaceId,ctx.actorId])).rows[0];
+    permissions.assertCan(user,permissions.FULFILL_SALES,'cancel an unshipped box');
+    await client.query(`SELECT w.id FROM fulfillment_waves w WHERE w.workspace_id=$1 AND EXISTS(SELECT 1 FROM fulfillment_wave_shipments x WHERE x.workspace_id=w.workspace_id AND x.wave_id=w.id AND x.shipment_id=$2) ORDER BY w.id FOR UPDATE OF w`,[ctx.workspaceId,shipmentId]);
+    const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+    if(shipment.status==='CANCELLED')return {shipmentId,salesOrderId:shipment.sales_order_id,replayed:true};
+    assertParcelEditable(shipment);
+    const reason=String(input.reason||'').trim();if(reason.length>1000)throw new ValidationError('Keep the cancellation reason within 1,000 characters.');const at=nowIso();
+    await client.query("UPDATE sales_shipments SET status='CANCELLED',notes=coalesce($3,notes),updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,reason||null,at]);
+    await client.query('UPDATE sales_orders SET version=version+1,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,shipment.sales_order_id,at]);
+    await client.query("UPDATE fulfillment_wave_shipments SET status='CANCELLED' WHERE workspace_id=$1 AND shipment_id=$2",[ctx.workspaceId,shipmentId]);
+    await client.query(`UPDATE fulfillment_waves w SET status=CASE WHEN EXISTS(SELECT 1 FROM fulfillment_wave_shipments x JOIN sales_shipments s ON s.workspace_id=x.workspace_id AND s.id=x.shipment_id WHERE x.workspace_id=w.workspace_id AND x.wave_id=w.id AND s.status IN ('SHIPPED','DELIVERED')) THEN 'COMPLETED' ELSE 'CANCELLED' END,completed_at=coalesce(w.completed_at,$3)
+      WHERE w.workspace_id=$1 AND EXISTS(SELECT 1 FROM fulfillment_wave_shipments x WHERE x.workspace_id=w.workspace_id AND x.wave_id=w.id AND x.shipment_id=$2)
+        AND NOT EXISTS(SELECT 1 FROM fulfillment_wave_shipments x JOIN sales_shipments s ON s.workspace_id=x.workspace_id AND s.id=x.shipment_id WHERE x.workspace_id=w.workspace_id AND x.wave_id=w.id AND s.status NOT IN ('SHIPPED','DELIVERED','CANCELLED'))`,[ctx.workspaceId,shipmentId,at]);
+    await require('../operations/postgres-security-audit').record(client,ctx,{action:'Cancelled an unshipped box',reference:shipment.shipment_number,before:{status:shipment.status},after:{status:'CANCELLED',reason}});
+    return {shipmentId,salesOrderId:shipment.sales_order_id,replayed:false};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function setPackages(database,ctx,shipmentId,boxes,options={}){
@@ -228,12 +252,12 @@ async function quote(database,ctx,shipmentId,options={}){
       await client.query(`INSERT INTO shipment_rates
         (id,workspace_id,shipment_id,provider,provider_rate_id,carrier,service,amount_minor,currency,
          delivery_days,delivery_date,delivery_guaranteed,quoted_at,created_at,connector_id,account_fingerprint,
-         parcel_fingerprint,provider_shipment_ids)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17::jsonb)
+         parcel_fingerprint,provider_shipment_ids,package_amounts_minor)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
         ON CONFLICT(shipment_id,connector_id,provider_rate_id) DO NOTHING`,[newId('rate'),ctx.workspaceId,shipmentId,
         account.provider,(rate.rateIds||[rate.rateId]).join(','),rate.carrier,rate.service,rate.amountMinor,
         rate.currency||'USD',rate.deliveryDays??null,rate.deliveryDate||null,rate.guaranteed?1:0,now,
-        account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[])]);
+        account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[]),JSON.stringify(rate.packageAmountsMinor||null)]);
     }
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return state(database,ctx.workspaceId,shipmentId);
@@ -261,6 +285,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
     if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
+    if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,shipment.sales_order_id);
     if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel already has an external label. StockChief will not buy a second label. Manage the existing label in its shipping account.');
     if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('A label purchase or void is pending or needs review for this shipment.');
     if((await client.query(`SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2
@@ -274,9 +299,12 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     if(!require('./service-eligibility').allowed(rate,shipment.shipping_options||{}))throw new ValidationError('This postal service requires confirmed content eligibility. Review label preferences and request fresh rates before buying.');
     if(Date.now()-new Date(rate.quoted_at).getTime()>30*60_000)throw new ValidationError('This carrier quote expired. Refresh rates before purchasing a label.');
     const account=rate.connector_id?await accounts.forWorkspace(client,ctx.workspaceId,{connectorId:rate.connector_id,provider:rate.provider}):null;
+    const postage=require('./agent-postage'),approvedView=await state(client,ctx.workspaceId,shipmentId);
     if(!account||accountFingerprint(account)!==rate.account_fingerprint||
-      quoteFingerprint(await state(client,ctx.workspaceId,shipmentId))!==rate.parcel_fingerprint)
+      quoteFingerprint(approvedView)!==rate.parcel_fingerprint)
       throw new ValidationError('The parcel or shipping account changed. Request fresh rates before purchasing.');
+    if(!approvedView.to.complete||!approvedView.from.complete)throw new ValidationError('Complete the delivery and dispatch addresses before buying a label.');
+    await postage.assertPurchase(client,ctx.workspaceId,ctx.agentPostageScope,rate);
     await require('./postgres-purchase-policy').assertWithin(client,ctx,rate);
     const id=newId('shiptxn');const now=nowIso();
     await client.query(`INSERT INTO shipping_label_transactions
@@ -287,6 +315,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'shipping.label.purchase',
       provider:rate.provider,aggregateType:'shipment',aggregateId:shipmentId,idempotencyKey:key,
       requestedByUserId:ctx.actorId,payload:{transactionId:id,shipmentId,rateId:rate.id,actorId:ctx.actorId,
+        agentPostageScope:ctx.agentPostageScope||'manual',addressFingerprint:postage.addressFingerprint(approvedView),
         providerRateId:rate.provider_rate_id,currency:rate.currency,connectorId:rate.connector_id,isReturn:Boolean(shipment.customer_return_id),
         accountFingerprint:rate.account_fingerprint,providerShipmentIds:rate.provider_shipment_ids,packageCount:(await packagesFor(client,ctx.workspaceId,shipmentId)).length,options:require('./parcel-contract').options(shipment.shipping_options||{})},
       priority:10,maxAttempts:12});
@@ -393,6 +422,15 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought,checkpointedReference=null;
   try{
+    const postage=require('./agent-postage');
+    const scope=input.agentPostageScope??await postage.previousScope(database,workspaceId,effect);
+    if(scope==='automatic')await database.transaction(c=>require('../autopilot/circuit-breaker').refresh(c,workspaceId),{isolation:'SERIALIZABLE',retrySafe:true});
+    if(scope!=='manual')await postage.assertPurchase(database,workspaceId,scope,rate);
+    await database.transaction(client=>require('./postgres-purchase-policy').assertWithin(client,ctx,rate,input.transactionId),{isolation:'SERIALIZABLE',retrySafe:true});
+    const freshView=await state(database,workspaceId,input.shipmentId);
+    if(!freshView.to.complete||!freshView.from.complete||input.addressFingerprint&&postage.addressFingerprint(freshView)!==input.addressFingerprint)
+      throw new ValidationError('The delivery or dispatch address changed or is incomplete. Review the address and request fresh rates.');
+    if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(database,workspaceId,shipment.sales_order_id);
     await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,
       provider:rate.provider,operation:'label_purchase',unit:'label'},()=>provider.buy(held.ctx,
@@ -723,7 +761,7 @@ async function observeExternalLabel(database,ctx,shipmentId,input){
    status:'PRE_TRANSIT',detail:'ShipStation supplied a label and tracking. Physical handoff has not been inferred.'});
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-module.exports={prepare,markPacked,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,observeExternalLabel,
+module.exports={prepare,markPacked,cancel,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,observeExternalLabel,
   executeLabelPurchaseEffect,verifyLabelPurchaseEffect,recoverKnownLabelVerifications,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
-  prepare:'shipping.workflow',markPacked:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',observeExternalLabel:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});
+  prepare:'shipping.workflow',markPacked:'shipping.workflow',cancel:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',observeExternalLabel:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});

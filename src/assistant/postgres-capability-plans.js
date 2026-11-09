@@ -87,7 +87,8 @@ async function metricsSummary(database,workspaceId){const row=(await database.qu
   // proposal already owned by a capability plan must not be counted twice.
   const standalone=(await database.query(`SELECT
       COUNT(*)::int AS outcomes,
-      COUNT(*) FILTER (WHERE action.status='EXECUTED')::int AS completed
+      COUNT(*) FILTER (WHERE action.status='EXECUTED')::int AS completed,
+      COUNT(*) FILTER (WHERE action.status='EXECUTED' AND action.result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule')::int AS human_approvals
     FROM stockchief_runtime.assistant_action_proposals action
     WHERE action.workspace_id=$1
       AND EXISTS (SELECT 1 FROM stockchief_runtime.assistant_interactions interaction
@@ -118,7 +119,7 @@ async function metricsSummary(database,workspaceId){const row=(await database.qu
   // Asking a clarification or showing a Needs You item is not a human action.
   // Only owner messages and committed approvals contribute to the numerator.
   const specifications=Number(row.outcome_specifications)+Number(standalone.outcomes)+Number(rules.outcomes);
-  const approvals=Number(row.approvals)+Number(standalone.completed)+Number(rules.completed);
+  const approvals=Number(row.approvals)+Number(standalone.human_approvals)+Number(rules.completed);
   const replies=Number(clarificationReplies.replies);
   const human=specifications+approvals+replies;
   return {...row,missions,completed,outcome_specifications:specifications,approvals,
@@ -342,7 +343,7 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         const ancestors=ancestorIndexes(steps,next);
         const dependencyArgs=Object.assign({},...ancestors.map((index)=>steps[index]?.args||{}));
         const produced=ancestors.map((index)=>steps[index]).filter((parent)=>
-          parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);
+          contract.kind==='mutation'&&contract.recordKind&&parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);
         // The identifier returned by an approved creation is authoritative.
         // A planner-supplied guess for the not-yet-existing record cannot override it.
         const mutationArgs=produced.length===1
@@ -414,9 +415,14 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         if(stored.state==='WAITING'&&claimed.authorization_mode==='MISSION'
           &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
           const account=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
-          const policy=require('../commercial/agent-plan'),job=policy.actionJob(contract.name,'automatic');
-          const outsidePlan=job && policy.usesAgentTerms(account) && !policy.permits(account.plan,job,'automatic');
-          if(account.plan && ((account.shadow && contract.name!=='report.template.create') || policy.needsPerson(contract.name) || outsidePlan)){
+          const confirmationPayload=outcome.result.proposal.payload||(await database.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,stored.proposalId])).rows[0]?.payload;
+          const policy=require('../commercial/agent-plan'),job=policy.actionJob(contract.name,'automatic',confirmationPayload);
+          const trained=job&&policy.allowance(account.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(database,ctx.workspaceId,contract.name,confirmationPayload,stored.proposalId);
+          const tier=policy.actionPlan(account,contract.name);
+          const outsidePlan=job && tier!==undefined && !policy.permits(tier,job,'automatic',{trained});
+          const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,confirmationPayload,stored.proposalId,account);
+          const stopped=await policy.stopped(database,ctx.workspaceId,account,contract.name,true,confirmationPayload);
+          if(account.plan && policy.usesAgentTerms(account) && (stopped || policy.needsPerson(contract.name,confirmationPayload,account) || outsidePlan || newCustomerOrAddress)){
             stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
             await update(database,claimed,token,steps,'WAITING_USER');
             break;

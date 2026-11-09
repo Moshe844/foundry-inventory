@@ -1,0 +1,10 @@
+<% const f=result.invoiceDisputeForm; %>
+<section class="card"><h2>Review a supplier message</h2>
+<% if(f.blocked){ %><p class="notice"><%= f.blocked %></p><% } %>
+<% if(!f.mailboxes.length){ %><p><a href="/settings/connections">Connect a sending mailbox</a> to prepare supplier messages.</p><% }else{ %>
+<form method="post" action="/autopilot/supplier-disputes/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Bill reference <input name="billNumber" required maxlength="150"></label>
+<label>Send from <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>"><%= m.display_name %></option><% } %></select></label>
+<button class="btn" <%= f.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %>
+<p>Once you approve a fully matched original and the mailbox confirms sending, you can teach a supplier, product and invoice-value limit from that completed message.</p>
+<p><a href="/autopilot/job-modes">Review job authority</a></p></section>

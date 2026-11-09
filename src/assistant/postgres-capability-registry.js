@@ -14,7 +14,17 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  bankTransaction:{type:'string',maxLength:160,description:'Exact recorded bank transaction ID discovered in the accounting evidence. It must be an incoming unmatched bank credit for the selected invoice, not a proposed or invented payment.'},
+  filedDocument:{type:'string',maxLength:120,description:'Exact filed document ID from its business-record document list or saved document review. The source must belong to the selected record.'},
+  documentFacts:{type:'string',maxLength:50000,description:'JSON list of source-backed product facts, each with field, value and exact quote copied from the filed source. Supported fields: manufacturer, model, composition, hazards, handling, storage, temperature, certifications, origin, revision. Literal values must occur inside their quotes; never infer missing values.'},
+  fileAttachment:{type:'string',maxLength:240,description:'Exact saved attachment ID discovered from the business message/document evidence. The complete original file and readable text must be available.'},
+  documentKind:{type:'string',enum:['other','packing_slip','bill_of_lading','customs','specification','safety_sheet','contract'],description:'Document type established from the actual source. Bills of lading and customs papers are filed on their exact PO.'},
+  standingOrder:{type:'string',maxLength:16000,description:'Recurring customer order JSON using discovered customerId, confirmed sourceOrderNumber, cadence daily/weekly/monthly, firstDate YYYY-MM-DD, maximum decimal value, optional schedule id, and current revision or 0 for new.'},
+  unitQuantity:{type:'string',maxLength:40,description:'Exact decimal quantity to convert.'},
+  fromUnit:{type:'string',maxLength:60,description:'Source unit or the saved supplier purchase unit, such as case, kg or lb.'},
+  quoteValidUntil:{type:'string',maxLength:10,description:'Customer quotation expiry date, YYYY-MM-DD.'},
   demandChangePercent:{type:'number',minimum:-100,maximum:1000,description:'The sales change percentage specified by the user for a demand scenario.'},
+  markdownPercent:{type:'number',minimum:0,maximum:100,description:'The proposed markdown specified by the owner for a clearance plan.'},
   agentJob:{type:'string',enum:agentReviews.definitions.map(d=>d.key),description:'Choose the requested inventory-agent review by its registered job name.'},
   supplierDocument:{type:'string',maxLength:32000,description:'Exact supplier evidence JSON: documentType order_acknowledgement/shipment_notice/backorder_notice/quotation/price_update/capacity_notice/substitution_offer/dispute, sourceMessageId, optional sourceAttachmentHash, evidenceQuote copied from the new supplier text or readable attachment, optional documentReference, expectedArrivalDate YYYY-MM-DD, currency, exceptionDetail, lines[{purchaseOrderLineId or supplierSku or sku,quantity,quantityBasis stock/purchase,unitCostMinor if supplied}]. Quantities and costs retain the document unit basis; the canonical matcher uses the PO pack snapshot. No physical receipt, bill, payment or send is inferred.'},
   correctionKinds:{type:'string',maxLength:100,description:'JSON array of requested historical corrections: calendar and/or pending_return_cost. Read accounting correction evidence first. Only proven automatic dates and unresolved legacy refund-cost recognition can be corrected; original journals and stock remain intact.'},
@@ -42,6 +52,13 @@ const FIELDS=Object.freeze({
   baseCode:{type:'string',description:'Exact new product SKU or base code explicitly supplied by the owner.'},
   sku:{type:'string',entity:'sku',description:'Product, variant, or SKU identity.'},
   skuScope:{type:'string',description:'Subset of SKUs explicitly referred to: active or currently_stocked.'},
+  sourceOrders:{type:'string',description:'Exact draft purchase order numbers, separated by commas.'},
+  sourceImport:{type:'string',maxLength:300,description:'The exact name or import ID of the source file. Each operation checks its required preview or approval state.'},
+  receivingBasis:{type:'string',enum:['stock','purchase'],description:'Whether delivered source quantities are base stock units or the purchase packs frozen on the selected PO.'},
+  sourcePage:{type:'integer',minimum:1,maximum:1000000,description:'The selected page of up to 100 SKUs in the approved supplier file, starting at one.'},
+  splitStrategy:{type:'string',enum:['warehouse','budget','delivery-date'],description:'How to group the split draft purchase orders.'},
+  budgetAmount:{type:'string',description:'Maximum value of goods per new purchase order in the source currency.'},
+  lineDates:{type:'string',description:'JSON array of original line numbers and delivery dates, for example [{"line":1,"date":"2027-02-14"}].'},
   location:{type:'string',entity:'location',description:'One inventory location.'},
   locationName:{type:'string',description:'Display name of the new inventory location. Supply only its name, without the operation instructions.'},
   fromLocation:{type:'string',entity:'location',description:'Source inventory location.'},
@@ -89,6 +106,8 @@ const FIELDS=Object.freeze({
   shipToAddress:{type:'string',description:'Customer delivery address.'},
   orderDate:{type:'string',description:'Customer order business date in YYYY-MM-DD format, only when explicitly stated.'},
   neededBy:{type:'string',description:'Requested date in YYYY-MM-DD format.'},
+  repeatPeriod:{type:'string',enum:['latest','previous-month'],description:'Use previous-month for the previous calendar month and latest for the most recent confirmed order.'},
+  sourceOrderNumber:{type:'string',description:'Exact historical customer order number explicitly selected for a repeat order.'},
   allocationPriority:{type:'integer',description:'Customer-order stock allocation priority, a whole number from 0 to 1000.'},
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},
   poNumber:{type:'string',description:'Exact identifier for a new draft purchase order when explicitly supplied; otherwise omit for canonical numbering.'},
@@ -283,6 +302,7 @@ for(const spec of require('./postgres-workflow-capabilities').SPECS)action(spec.
   spec.fields,spec.permission,spec.name,{required:[...(spec.record?['recordReference']:[]),...(spec.name==='customer_return.request'
     ?['quantity','reason','location']:[])],commercialCapability:spec.capability,
     additionalCommercialCapabilities:spec.additionalCapabilities||[],
+    ...(spec.completionGate?{completionGate:spec.completionGate}:{}),
     resultingRecords:spec.resultingRecords||(spec.record?[spec.record]:[]),recordKind:spec.record||null,
     resultReference:spec.resultReference,resultDisplayReference:spec.resultDisplayReference,resultRecordKind:spec.resultRecordKind,
     singleEffectPerTarget:Boolean(spec.singleEffectPerTarget),
@@ -322,7 +342,7 @@ const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_or
   transfers:'transfer',customer_returns:'customer_return'};
 const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs','messages','prices']);
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
-  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[]),...(view==='prices'?['priceScope']:[])],'read',permissions.VIEW,'none',
+  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[]),...(view==='prices'?['priceScope']:[])],'read',require('../actions/financial-visibility').readPermissions[view]||permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
     timeframe:args.timeframe||'all_time',...(PAGED_READS.has(view)?{offset:args.offset??0}:{}),...(view==='prices'?{priceScope:args.priceScope||'current'}:{})},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
@@ -334,15 +354,35 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
       ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:{})},
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 add('read.custody','Read the latest 100 rental and consignment agreement headers. Pass an exact recordReference to read that agreement and 50 product lines, following extent.nextOffset with offset. Read booking capacity, expected-return dependencies and bounded recurring billing terms and invoices on the exact agreement. Due dates never prove a physical return.',['recordReference','offset'],'read',permissions.VIEW,'none',(_service,db,ctx,_text,args)=>require('../custody/ask-contracts').read(db,ctx,args),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'custody',recordKind:'custody_agreement',answerMode:'evidence',commercialCapability:'inventory.core'});
-add('read.agent_review','Run a plan-checked operational review using recorded workspace data. Available reviews include '+agentReviews.definitions.map(d=>d.key).join(', ')+'. Use search for an exact SKU, lot, serial or other accepted filter.',
-  ['agentJob','search','demandChangePercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
-    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change:args.demandChangePercent});
+add('read.unit_conversion','Convert an exact product quantity from a measured unit or a saved supplier pack into its stocking unit. Report any stock precision conflict.',
+  ['sku','unitQuantity','fromUnit','supplier'],'read',permissions.VIEW,'none',
+  (_service,db,ctx,_text,args)=>require('../domain/agent-unit-conversion').read(db,ctx,args),async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),
+  {required:['sku','unitQuantity','fromUnit'],answerMode:'evidence'});
+add('read.staff_guide','Answer how-to questions about using StockChief. Return instructions and destinations available to this employee on the current inventory plan. Pass the user’s question as search.',
+  ['search'],'read',permissions.VIEW,'none',async(_service,db,ctx,text,args)=>{
+    const guide=await require('./staff-guide').read(db,ctx,args.search||text,{requireAgent:true});
+    return {rows:guide.topics.map(t=>({task:t.title,instructions:t.path,destination:t.href})),
+      sources:[{kind:'page',href:'/guide?q='+encodeURIComponent(guide.query),label:'Staff guide'}],coverage:guide.topics.length?'Matching staff instructions':'No matching staff instructions for this role'};
+  },async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),{answerMode:'evidence'});
+add('read.agent_review','Run an operational review using recorded inventory, purchasing, sales or finance data. Discover this contract by name for the accepted agentJob keys. Use search for a SKU, lot, serial or other review filter. The owner’s plan controls access.',
+  ['agentJob','search','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
+    const change=args.agentJob==='clearance-plan'?args.markdownPercent:args.demandChangePercent;
+    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change});
     const query=new URLSearchParams();
     if(args.search)query.set('filter',args.search);
-    if(args.demandChangePercent!=null)query.set('change',String(args.demandChangePercent));
+    if(change!=null)query.set('change',String(change));
     const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(query.size?'?'+query:'');
-    return {rows:result.rows,summary:result.summary,coverage:result.more?'Open the review for the remaining results.':'All matching results for this review.',
-      sources:[{kind:'page',href,label:result.label}]};
+    const sources=[{kind:'page',href,label:result.label}],visited=new Set([href]);
+    for(const row of result.rows){
+      if(sources.length===13)break;
+      if(typeof row.link!=='string'||!/^\/(?!\/)/.test(row.link)||/[\\\r\n]/.test(row.link)||visited.has(row.link))continue;
+      const record=row.Order||row.Bill||row.Invoice||row.Transfer||row.SKU||row.Product||row.Customer||row.Supplier||row.Activity||row.Month;
+      if(!record)continue;
+      sources.push({kind:'record',href:row.link,label:String(record)});visited.add(row.link);
+    }
+    const coverage=result.mode==='suggest'?'This plan shows up to one suggestion from the matching records.':
+      result.more?'Open the review for the remaining results.':'All matching results for this review.';
+    return {rows:result.rows,summary:result.summary,coverage,sources};
   },async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{required:['agentJob'],ownerOnly:true,view:'agent_review',answerMode:'evidence'});
 add('read.report_schedules','List your private saved reports, definitions, local schedules, next send, last sent, pause state and exact IDs. Coverage is the latest 100 active templates in this inventory.',[],'read',permissions.VIEW,'none',(_service,db,ctx)=>require('../reports/ask-schedules').read(db,ctx),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'report_schedules',answerMode:'evidence'});
 add('read.report_catalogue','Discover permitted report datasets and their exact calculation schemas. Search by dataset name or description; follow nextOffset for more. No second AI model is invoked.',['search','offset'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{const actor=await require('../reports/ask-schedules').actor(db,ctx),term=String(args.search||'').toLowerCase().replaceAll('_',' '),offset=Math.max(0,Number(args.offset)||0),available=governedReports.list(actor).filter(r=>!term||(r.key.replaceAll('_',' ')+' '+r.label).toLowerCase().includes(term));return {rows:available.slice(offset,offset+6).map(r=>({dataset:r.key,label:r.label,...require('../reports/postgres-service').queryContract(r.key,actor)})),extent:{offset,total:available.length,nextOffset:offset+6<available.length?offset+6:null},syntax:require('../reports/postgres-service').querySyntax,timeZone:(await require('../lib/business-time').forWorkspace(db,ctx.workspaceId)).timeZone,sources:[{kind:'page',href:'/reports',label:'Reports'}]};},async(_s,_d,_c,r)=>Array.isArray(r?.rows),{answerMode:'evidence'});
@@ -358,7 +398,7 @@ for(const [name,description,search] of [
   (service,db,ctx,text)=>service.lookup(db,ctx,{view:'accounting',search},{question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'accounting'});
 
-add('read.custom_report',`Compose governed PostgreSQL reports with fields, filters, grouping, charts, and safe formulas across approved dataset joins. Datasets: ${Object.keys(governedReports.datasets).join(', ')}. Weighted metrics: ${[...new Set(Object.values(governedReports.datasets).flatMap((dataset)=>Object.values(dataset.metrics||{}).map((metric)=>metric.label)))].join(', ')}. Groups drill down to source records; detail rows link to canonical records. Use for report generation, comparison and customization, never unregistered metrics.`,
+add('read.custom_report','Compose governed PostgreSQL reports from registered datasets and approved joins, with fields, filters, grouping, charts, safe formulas and weighted metrics. Discover dataset names, fields and metrics through environment_interfaces. Groups drill down to source records; detail rows link to canonical records. Use for report generation, comparison and customization, never unregistered metrics.',
   [],'read',permissions.VIEW,'none',
   (_service,db,ctx,text,_args,options)=>require('../reports/postgres-ask').prepare(db,ctx,text,
     {provider:options.answerProvider,priorReport:options.priorReport}),

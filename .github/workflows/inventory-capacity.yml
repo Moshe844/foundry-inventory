@@ -171,6 +171,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/customer-source-concurrency.test.js tests/postgres/manufacturing-tracking.test.js tests/postgres/manufacturing-stock-safety.test.js tests/postgres/manufacturing-cost-authority.test.js tests/postgres/manufacturing-capacity.test.js tests/postgres/completion-custody-safety.test.js tests/postgres/rental-billing-safety.test.js tests/postgres/reservation-concurrency.test.js tests/postgres/multiwarehouse-allocation.test.js 2>&1 | tee output/inventory-ci/complex-inventory.log
+      - name: Guarded record removal and current obligations
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/record-removal.test.js tests/postgres/record-removal-agent-ownership.test.js 2>&1 | tee output/inventory-ci/record-removal.log
       - name: Historical stock costs and availability protection
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |

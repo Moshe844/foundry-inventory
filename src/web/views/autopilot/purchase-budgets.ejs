@@ -1,0 +1,19 @@
+<h1>Monthly purchase budgets</h1>
+<form method="get"><label>Month <input type="month" name="month" value="<%= month %>" required></label><button class="btn">View month</button></form>
+<p><a href="/autopilot/reviews/purchase-budget?filter=<%= month %>">Compare with billed purchases</a></p>
+<% for(const budget of budgets){ %>
+<form method="post" action="/purchasing/budgets">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>">
+ <input type="hidden" name="revision" value="<%= budget.revision %>"><input type="hidden" name="category" value="<%= budget.category %>">
+ <input type="hidden" name="currency" value="<%= budget.currency %>">
+ <label><%= budget.category||'Uncategorized' %> budget in <%= budget.currency %> <input name="amount" inputmode="decimal" value="<%= budget.amount %>" required></label>
+ <button class="btn">Update budget</button>
+</form><% } %>
+<h2>Add a budget</h2>
+<form method="post" action="/purchasing/budgets">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>">
+ <label>Catalog category (leave blank for uncategorized purchases) <input name="category" maxlength="160"></label>
+ <label>Currency <input name="currency" value="<%= currency %>" maxlength="3" required></label>
+ <label>Budget amount <input name="amount" inputmode="decimal" required></label>
+ <button class="btn">Add budget</button>
+</form>

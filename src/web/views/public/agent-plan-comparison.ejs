@@ -1,0 +1,24 @@
+<section class="agent-plan-comparison" aria-labelledby="agent-plan-heading" id="compare-agent-plans">
+  <div class="agent-plan-comparison__intro">
+    <h2 id="agent-plan-heading">Compare every agent duty</h2>
+    <p>Each cell shows the most control that plan allows. Your approval rules, permissions and spending limits apply every time.</p>
+    <p class="agent-plan-comparison__status">Implementation and verification are in progress. Partly verified duties have tested workflows and further checks to finish. Provider connections also need qualification with the connected account.</p>
+  </div>
+  <ul class="agent-plan-legend" aria-label="Levels of control">
+    <li><strong>Suggests</strong> · Gives you a recommendation.</li>
+    <li><strong>You approve</strong> · Prepares the work for your approval.</li>
+    <li><strong>After training</strong> · Uses a rule you have taught and approved.</li>
+    <li><strong>Within your rules</strong> · Handles authorized work inside your limits.</li>
+  </ul>
+  <p class="agent-plan-comparison__safety">The first 14 days are a watching period. Physical receipts, stock counts, payments, refunds and price changes still require the confirmations shown in the workflow. Starter requires a separate approval for each shipment tracking email.</p>
+  <div class="agent-plan-table" tabindex="0" role="region" aria-label="Agent duties by plan. Scroll horizontally on small screens.">
+    <table>
+      <caption class="sr-only">Agent duties and permitted control for Starter, Growth, Pro and Custom</caption>
+      <thead><tr><th scope="col">Agent duty</th><% for(const plan of compared){ %><th scope="col" data-agent-tier="<%= plan.id %>"><span><%= plan.name %></span><small><%= plan.sales_only||plan.monthly_amount_minor==null?'Agreed pricing':'$'+format(Number(plan.monthly_amount_minor)/100)+'/month' %></small></th><% } %></tr></thead>
+      <tbody><% for(const job of agentComparison){ %><tr data-agent-job="<%= job.id %>">
+        <th scope="row"><span><%= job.label %></span><small data-agent-verification><%= job.verification %></small></th>
+        <% for(const plan of compared){const cell=job.plans.find(p=>p.tier===plan.id); %><td data-agent-tier="<%= plan.id %>" data-agent-mode="<%= cell.mode %>"><span class="agent-mode agent-mode--<%= cell.mode %>"><%= cell.label %></span></td><% } %>
+      </tr><% } %></tbody>
+    </table>
+  </div>
+</section>

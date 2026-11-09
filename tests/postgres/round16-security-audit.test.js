@@ -1,10 +1,8 @@
 'use strict';process.env.NODE_ENV='test';
-const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
+const test=require('node:test'),assert=require('node:assert/strict');
 const csrf=html=>{const value=/name="_csrf" value="([^"]+)"/.exec(html)?.[1];assert(value);return value;};
 test('access and preference changes have immutable, searchable audit records without credentials',{timeout:180000},async t=>{
- const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
- const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'security-audit-test'});f.cleanup(()=>app.locals.sessionStore.close());
- const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(login.text),email:f.email,password:f.password}).expect(302);
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser:agent}=f;
  async function post(path,form){const page=await agent.get('/settings');return agent.post(path).type('form').send({_csrf:csrf(page.text),...form}).expect(303);}
  await post('/settings/workspace',{name:'Audited inventory'});
  await post('/settings/people',{name:'Audited person',email:'audit-person@example.test',role:'staff'});
@@ -22,11 +20,12 @@ test('access and preference changes have immutable, searchable audit records wit
  const renamed=events.find(e=>e.action==='Inventory renamed');assert.equal(renamed.before_state.Name,'Shipping operation fixture');assert.equal(renamed.after_state.Name,'Audited inventory');
  const audit=await agent.get('/audit?q=token');assert.equal(audit.status,200);assert.match(audit.text,/API token created/);assert.match(audit.text,/API token revoked/);assert.doesNotMatch(audit.text,/Team invitation replaced/);
  const activity=await agent.get('/activity?q=token&user='+encodeURIComponent(ctx.actorId));assert.equal(activity.status,200);assert.match(activity.text,/API token created/);assert.match(activity.text,/API token revoked/);
+ await f.subscribe('pro');
  const exported=await agent.get('/audit/export?q=invit');assert.equal(exported.status,200);assert.match(exported.text,/Team invitation cancelled/);assert(!exported.text.includes(client.token));
  await assert.rejects(db.query('UPDATE security_event_history SET action=$2 WHERE id=$1',[renamed.id,'Erased']),/cannot be rewritten/i);
  const other=await require('../../src/domain/postgres-auth-service').createWorkspace(db,f.owner.accountId,{name:'Other audit inventory'});assert.equal((await require('../../src/operations/postgres-audit').page(db,other.workspaceId,{q:'token'})).rows.length,0);
  // Authenticator enrollment is deliberately available even on Starter.
- await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status) SELECT 'audit-starter',$1,'starter',id,'ACTIVE' FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE'",[f.owner.accountId]);
+ await f.subscribe('starter');
  assert.equal((await agent.get('/settings/security')).status,200);
  const setup=await agent.post('/settings/security/setup').type('form').send({_csrf:csrf((await agent.get('/settings/security')).text),currentPassword:f.password});assert.equal(setup.status,200);assert.match(setup.text,/data-authenticator-secret/);
 });

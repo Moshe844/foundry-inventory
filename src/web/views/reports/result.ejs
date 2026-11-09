@@ -7,7 +7,9 @@
 <div class="report-page__head"><div><a class="back-link" href="<%= returnLink?.href||'/reports' %>"><%= returnLink?.label||'Reports' %></a><h1><%= result.config.title %></h1>
   <p><%= result.rows.length %><%= result.hasMore?' or more':'' %> shown<%= result.offset?` · starting at row ${result.offset+1}`:'' %> ·
     Checked <%= new Intl.DateTimeFormat('en-US',{timeZone:reportBusinessTimeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(result.asOf)) %></p></div>
-  <div class="report-page__actions"><a class="btn" href="<%= result.config.dataset==='composed'
+  <div class="report-page__actions">
+    <% if(saved&&locals.managerView&&managerView.download_format!=='default'){ %><a class="btn" href="/reports/saved/<%= saved.id %>/export.<%= managerView.download_format %>">Download <%= ({pdf:'PDF',xlsx:'Excel',csv:'CSV'})[managerView.download_format] %></a><% } %>
+    <a class="btn" href="<%= result.config.dataset==='composed'
     ?saved?'/reports/compose?saved='+encodeURIComponent(saved.id):'/reports/compose?draft=1'
     :saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a>
     <details class="report-download"><summary class="btn">Download</summary><div><% if(saved){ %><% for(const [format,label] of [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']]){ %><a class="report-download__link" href="/reports/saved/<%= saved.id %>/export.<%= format %>"><%= label %></a><% } %><% }else{ %><form method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="definition" value="<%= unsavedDefinition %>"><% for(const [format,label] of [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']]){ %><button type="submit" formaction="/reports/export.<%= format %>"><%= label %></button><% } %></form><% } %></div></details>

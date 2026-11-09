@@ -1,0 +1,28 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
+const {chromium}=require('playwright');
+test('the expanded pricing chart renders every permitted plan level on desktop and phone',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db}=f;
+  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'expanded-plan-chart'});
+  const server=await new Promise(resolve=>{const value=app.listen(0,'127.0.0.1',()=>resolve(value));}),browser=await chromium.launch();
+  f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
+  const page=await browser.newPage({viewport:{width:1440,height:1100}}),origin='http://127.0.0.1:'+server.address().port;
+  const response=await page.goto(origin+'/pricing');assert.equal(response.status(),200);
+  const chart=page.locator('#compare-agent-plans');assert.equal(await chart.locator('details').count(),0);
+  assert.equal(await chart.locator('tbody tr').count(),214);assert.equal(await chart.locator('tbody td').count(),856);
+  const policy=require('../../src/commercial/agent-plan');
+  const actual=await chart.locator('tbody tr').evaluateAll(rows=>rows.map(r=>({id:Number(r.dataset.agentJob),cells:[...r.querySelectorAll('td')].map(td=>({tier:td.dataset.agentTier,mode:td.dataset.agentMode}))})));
+  for(const row of actual)for(const cell of row.cells)assert.equal(cell.mode,policy.allowance(cell.tier,row.id),row.id+' '+cell.tier);
+  assert.match(await chart.locator('thead').innerText(),/\$199\/month/);assert.match(await chart.locator('thead').innerText(),/\$499\/month/);assert.match(await chart.locator('thead').innerText(),/\$999\/month/);
+  assert.match(await chart.locator('[data-agent-job="35"] [data-agent-tier="starter"]').innerText(),/You approve/);
+  assert.match(await chart.locator('[data-agent-job="60"] [data-agent-tier="starter"]').innerText(),/You approve/);
+  assert.match(await chart.locator('[data-agent-job="213"] [data-agent-tier="growth"]').innerText(),/After training/);
+  const folder=path.join(process.cwd(),'output','agent-plan-review');fs.mkdirSync(folder,{recursive:true});
+  await chart.getByRole('heading').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(folder,'pricing-desktop.png')});
+  await page.setViewportSize({width:390,height:844});await chart.getByRole('heading').scrollIntoViewIfNeeded();
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Only the comparison region may scroll horizontally');
+  const table=chart.locator('[role="region"]');await table.evaluate(e=>e.scrollLeft=e.scrollWidth);assert(await table.evaluate(e=>e.scrollLeft>0));
+  await page.screenshot({path:path.join(folder,'pricing-phone.png')});
+  await page.goto(origin+'/pricing?interval=annual');assert.equal(await chart.locator('tbody tr').count(),214);
+});

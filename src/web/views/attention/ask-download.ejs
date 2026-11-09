@@ -1,1 +1,3 @@
-<details class="ask-download" data-ask-download><summary><%- helpers.icon('download',{size:14}) %> Download</summary><div class="ask-download__menu"><a href="<%= base %>.pdf" download>PDF</a><a href="<%= base %>.xlsx" download>Excel</a><a href="<%= base %>.csv" download>CSV</a></div></details>
+<details class="ask-download" data-ask-download><summary><%- helpers.icon('download',{size:14}) %> <%= locals.fullAnswer?'Download answer':'Download' %></summary><div class="ask-download__menu">
+<% for(const [extension,label] of [['pdf','PDF'],['xlsx','Excel'],['csv','CSV']]){ %><a href="<%= base %>.<%= extension %><%= locals.fullAnswer?'?content=answer':'' %>" download><%= label %></a><% } %>
+</div></details>

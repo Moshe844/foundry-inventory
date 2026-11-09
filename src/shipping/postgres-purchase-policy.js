@@ -7,7 +7,7 @@ async function save(database,ctx,input){const value={currency:money.code(input.c
  await client.query('INSERT INTO shipping_purchase_limit_changes(id,workspace_id,actor_user_id,before_value,after_value,created_at) VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6)',[newId('postagelimit'),ctx.workspaceId,ctx.actorId,JSON.stringify(before),JSON.stringify(value),at]);return value;
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function assertWithin(client,ctx,rate){
+async function assertWithin(client,ctx,rate,currentTransactionId=null){
  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['postage-budget:'+ctx.workspaceId]);const policy=await get(client,ctx.workspaceId);if(!policy)return;
  const amount=money.integer(rate.amount_minor);if(policy.currency!==rate.currency)throw new ValidationError('This quote uses a different currency from the postage limits. The owner must review that currency before buying.');
  if(policy.per_label_minor!=null&&amount>Number(policy.per_label_minor))throw new ValidationError('This parcel exceeds the business’s per-parcel postage limit. Choose another service or ask the owner to review the limit.');
@@ -15,7 +15,8 @@ async function assertWithin(client,ctx,rate){
   const rows=(await client.query(`SELECT transaction.status,transaction.currency,coalesce(transaction.amount_minor,transaction.approved_amount_minor,rate.amount_minor) AS reserved
    FROM shipping_label_transactions transaction LEFT JOIN stockchief_runtime.provider_effects effect ON effect.workspace_id=transaction.workspace_id AND effect.payload->>'transactionId'=transaction.id AND effect.kind='shipping.label.purchase'
    LEFT JOIN shipment_rates rate ON rate.workspace_id=transaction.workspace_id AND rate.id=effect.payload->>'rateId'
-   WHERE transaction.workspace_id=$1 AND transaction.operation='PURCHASE' AND transaction.status IN ('PENDING','REVIEW','SUCCEEDED') AND transaction.requested_at>=$2`,[ctx.workspaceId,new Date(Date.now()-24*60*60_000).toISOString()])).rows;
+   WHERE transaction.workspace_id=$1 AND transaction.operation='PURCHASE' AND transaction.status IN ('PENDING','REVIEW','SUCCEEDED') AND transaction.requested_at>=$2
+   AND transaction.id IS DISTINCT FROM $3`,[ctx.workspaceId,new Date(Date.now()-24*60*60_000).toISOString(),currentTransactionId])).rows;
   if(rows.some(row=>row.currency!==policy.currency||row.reserved==null))throw new ValidationError('Existing postage charges need review before the 24-hour spending limit can be verified. No additional label was queued.');
   const committed=money.sum(rows.map(row=>money.integer(row.reserved)));if(money.sum([committed,amount])>Number(policy.rolling_day_minor))throw new ValidationError('This purchase exceeds the business’s rolling 24-hour postage limit. Pending and uncertain purchases remain reserved until verified.');
  }

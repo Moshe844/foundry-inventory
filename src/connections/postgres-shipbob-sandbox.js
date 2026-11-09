@@ -60,6 +60,7 @@ async function draft(db,ctx,orderId){
   const order=(await db.query(`SELECT o.*,c.name FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
     WHERE o.workspace_id=$1 AND o.id=$2`,[ctx.workspaceId,orderId])).rows[0];
   if(!order)throw new NotFoundError('The sales order was not found in this inventory.');
+  if((await db.query("SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1",[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('This order already has an unshipped StockChief box. Resolve it before sending the order to ShipBob.');
   if(order.status!=='CONFIRMED'||order.delivery_method!=='SHIP'||Number(order.customer_decision_required)!==0||Number(order.delivery_decision_required)!==0)
     throw new ValidationError('Choose a confirmed, unfulfilled delivery order with a verified customer and destination.');
   const address=require('../shipping/address').parse(order.ship_to_address);
@@ -85,6 +86,7 @@ async function save(db,ctx,orderId,hash,order){
 }
 async function send(db,ctx,orderId,expectedHash,transport,generation=null){
   const {con,review}=await db.transaction(async c=>{
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['fulfillment-wave:'+ctx.workspaceId]);
     if(generation)await validateRule(c,ctx,orderId,generation);
     const review=await draft(c,ctx,orderId),con=await connection(c,ctx);
     if(review.hash!==expectedHash)throw new ValidationError('This order changed. Review its destination and lines again.');
@@ -96,7 +98,8 @@ async function send(db,ctx,orderId,expectedHash,transport,generation=null){
   },{isolation:'SERIALIZABLE',retrySafe:true});
   if(generation)await validateRule(db,ctx,orderId,generation);
   else await access(db,ctx);
-  const response=await (await remote(db,ctx,con,transport)).send(review.payload);
+  const response=await (await remote(db,ctx,con,transport)).send(review.payload,
+    ()=>require('../sales/agent-order-checks').assertCanRelease(db,ctx.workspaceId,orderId));
   await save(db,ctx,orderId,review.hash,response);
 }
 async function refresh(db,ctx,orderId,transport){
@@ -107,15 +110,22 @@ async function refresh(db,ctx,orderId,transport){
   const order=await (await remote(db,ctx,con,transport)).order(row.provider_order_id,orderId);
   await save(db,ctx,orderId,row.request_hash,order);
 }
-async function stock(db,ctx,input,transport){
+async function stock(db,ctx,input,transport,authorizeRefresh){
   await access(db,ctx);const con=await connection(db,ctx);
   const skus=(await db.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND lower(code)=lower($2) AND is_active=1',[ctx.workspaceId,String(input.sku||'').trim()])).rows;
   if(skus.length!==1)throw new ValidationError('Enter one exact active SKU.');
-  const value=await (await remote(db,ctx,con,transport)).stock(input.inventoryId,skus[0].code);
-  await db.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_stock(workspace_id,sku_id,inventory_id,connector_id,on_hand,fulfillable)
-    VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,sku_id) DO UPDATE SET inventory_id=excluded.inventory_id,
-    connector_id=excluded.connector_id,on_hand=excluded.on_hand,fulfillable=excluded.fulfillable,observed_at=now()`,
-  [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity]);
+  if(authorizeRefresh)await authorizeRefresh(db);
+  const requestedAt=new Date().toISOString(),value=await (await remote(db,ctx,con,transport)).stock(input.inventoryId,skus[0].code);
+  await db.transaction(async c=>{
+   await access(c,ctx);const current=await connection(c,ctx);
+   if(current.id!==con.id||current.channelId!==con.channelId)throw new ValidationError('The stock connection changed while reading. Request a fresh reading.');
+   if(authorizeRefresh)await authorizeRefresh(c);
+   await c.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_stock(workspace_id,sku_id,inventory_id,connector_id,on_hand,fulfillable,observed_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,sku_id) DO UPDATE SET inventory_id=excluded.inventory_id,
+    connector_id=excluded.connector_id,on_hand=excluded.on_hand,fulfillable=excluded.fulfillable,observed_at=excluded.observed_at
+    WHERE shipbob_sandbox_stock.observed_at<=excluded.observed_at`,
+   [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity,requestedAt]);
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function configureRule(db,ctx,input){
   return db.transaction(async c=>{

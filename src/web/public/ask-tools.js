@@ -62,24 +62,30 @@
 (function () {
   var enhance = function () {
     document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]').forEach(function (goal) {
-      goal.querySelectorAll('[data-goal-answer] .rm-agent__table').forEach(function (table, index) {
-        if (table.previousElementSibling && table.previousElementSibling.matches('.ask-download')) return;
+      var answer = goal.querySelector('[data-goal-answer]');
+      if (!answer || !answer.textContent.trim()) return;
+      function addDownload(target, query, label) {
+        if (target.previousElementSibling && target.previousElementSibling.matches('.ask-download')) return;
         var menu = document.createElement('details');
-        menu.className = 'ask-download ask-download--inline';
+        menu.className = query==='?content=answer'?'ask-download':'ask-download ask-download--inline';
         var summary = document.createElement('summary');
-        summary.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7.5 11 12 15.5 16.5 11"/><path d="M5 20h14"/></svg> Download';
+        summary.textContent = label;
         var list = document.createElement('div');
         list.className = 'ask-download__menu';
         [['PDF', 'pdf'], ['Excel', 'xlsx'], ['CSV', 'csv']].forEach(function (entry) {
           var link = document.createElement('a');
           link.textContent = entry[0];
           link.setAttribute('download', '');
-          link.href = '/ask/goals/' + encodeURIComponent(goal.getAttribute('data-adaptive-goal')) + '/export.' + entry[1] + '?table=' + index;
+          link.href = '/ask/goals/' + encodeURIComponent(goal.getAttribute('data-adaptive-goal')) + '/export.' + entry[1] + query;
           list.appendChild(link);
         });
         menu.appendChild(summary);
         menu.appendChild(list);
-        table.parentNode.insertBefore(menu, table);
+        target.parentNode.insertBefore(menu, target);
+      }
+      addDownload(answer, '?content=answer', 'Download answer');
+      answer.querySelectorAll('.rm-agent__table').forEach(function (table, index) {
+        addDownload(table, '?table=' + index, 'Download');
       });
     });
   };

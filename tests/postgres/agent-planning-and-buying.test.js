@@ -5,6 +5,75 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const commerce=require('../../src/operations/postgres-commerce');
 
+test('fresh warehouse move lists rank picks and stay within the measured warehouse and current plan',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
+  await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '18 days')::text WHERE id=$1",[f.owner.accountId]);
+  const loc=require('../../src/domain/postgres-location-service'),inventory=require('../../src/domain/postgres-inventory-engine');
+  const route='/autopilot/reviews/warehouse-slotting',review=()=>reviews.run(db,ctx,'warehouse-slotting');
+  const create=(name,parent)=>loc.createLocation(db,ctx,{name,kind:parent?'bin':'warehouse',parentLocationId:parent});
+  const west=await create('West site'),far=await create('Back bin',f.location.id),near=await create('Packing bin',f.location.id),other=await create('West packing bin',west.id);
+  const page=await browser.get(route).expect(200);const distance=(bin,metres)=>browser.post(route+'/distances').type('form').send({_csrf:f.csrf(page.text),bin,metres});
+  for(const [bin,metres] of [[far.name,40],[near.name,3],[other.name,1]])await distance(bin,metres).expect(303);
+  const sku=f.item.skuIds[0];
+  await inventory.receive(db,ctx,{skuId:sku,locationId:far.id,quantity:15,idempotencyKey:randomUUID()});
+  for(const quantity of [2,1,3])await inventory.issue(db,ctx,{skuId:sku,locationId:far.id,quantity,reasonCode:'sale',reference:randomUUID(),idempotencyKey:randomUUID()});
+  for(const tier of ['starter','growth']){await subscribe(tier);await browser.get(route).expect(402);await assert.rejects(review(),e=>e.code==='entitlement_required');}
+  await subscribe('pro');let row=(await review()).rows[0];
+  assert.deepEqual([row.From,row.To,row['Available units'],row['Order picks in 90 days'],row['Metres closer to packing']],['Back bin','Packing bin',9,3,37]);
+  const books=require('../../src/autopilot/playbooks');
+  const input={name:'Weekly warehouse moves',steps:['warehouse-slotting','stock-by-location'],cadence:'weekly'};
+  await assert.rejects(books.create(db,ctx,input),e=>e.code==='entitlement_required');
+  await subscribe('enterprise');await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const book=await books.create(db,ctx,input);const results=await books.run(db,ctx,book,randomUUID());assert.equal(results[0].rows[0].To,near.name);
+  await subscribe('pro');await assert.rejects(books.run(db,ctx,book,randomUUID()),e=>e.code==='entitlement_required');
+  await inventory.receive(db,ctx,{skuId:sku,locationId:near.id,quantity:1,idempotencyKey:randomUUID()});
+  assert.deepEqual((await review()).rows,[]);
+  assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE sku_id=$1 AND location_id=$2',[sku,far.id])).rows[0].on_hand),9);
+});
+
+test('local sales tune location thresholds only within current plan and owner authority',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:360}),{db,ctx,subscribe,browser,csrf}=f;
+  const skuId=f.item.skuIds[0],locationId=f.location.id;
+  const rules=require('../../src/forecasting/location-reorder-rules'),plans=require('../../src/forecasting/postgres-planning-service');
+  const modes=require('../../src/autopilot/job-modes'),authority=require('../../src/autopilot/postgres-service'),inv=require('../../src/domain/postgres-inventory-engine');
+  const run=()=>plans.refreshRecommendations(db,ctx.workspaceId,{limitSkus:250});
+  const values=async id=>(await db.query('SELECT reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND reorder_point IS NOT NULL',[ctx.workspaceId,skuId,id])).rows.map(r=>[Number(r.reorder_point),Number(r.target_stock)]);
+  const issue=(where,qty,reason)=>inv.issue(db,ctx,{skuId,locationId:where,quantity:qty,reasonCode:reason,idempotencyKey:randomUUID()});
+  const second=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'North site',kind:'warehouse'});
+  for(const site of [locationId,second.id])await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,lead_time_days,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,14,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,skuId,site]);
+  await inv.transfer(db,ctx,{skuId,sourceLocationId:locationId,destinationLocationId:second.id,quantity:80,idempotencyKey:randomUUID()});
+  await issue(locationId,45,'sold');await issue(locationId,45,'sold');await issue(locationId,50,'damaged');
+  await issue(second.id,15,'sold');await issue(second.id,15,'sold');
+  await subscribe('starter');const locked=await browser.get('/autopilot/reviews/reorder-settings').expect(200);assert.match(locked.text,/120 units sold in 90 days/);assert.doesNotMatch(locked.text,/name="ceiling"/);
+  await assert.rejects(rules.configure(db,ctx,{skuId,locationId,ceiling:30}),/Growth/);
+  await subscribe('growth');const setup=await browser.get('/planning').expect(200);
+  await browser.post('/planning/location-reorder-rules').type('form').send({_csrf:csrf(setup.text),position:JSON.stringify([skuId,locationId]),ceiling:29}).expect(303);
+  await run();assert.deepEqual(await values(locationId),[]);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
+  await authority.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await run();assert.deepEqual(await values(locationId),[],'The proposed 30-unit target exceeds the trained ceiling');
+  await rules.configure(db,ctx,{skuId,locationId,ceiling:30});await run();await run();
+  assert.deepEqual(await values(locationId),[[21,30]]);assert.deepEqual(await values(second.id),[]);
+  assert.equal((await db.query("SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action='Updated location reorder thresholds'",[ctx.workspaceId])).rows[0].n,1);
+  await modes.save(db,ctx,120,{mode:'routine',revision:0});await run();assert.deepEqual(await values(second.id),[],'Growth needs a trained location even when routine work is selected');
+  await subscribe('pro');await run();assert.deepEqual(await values(second.id),[[8,11]]);
+  await issue(second.id,15,'sold');await subscribe('starter');await rules.runPage(db,ctx.workspaceId,[skuId]);assert.deepEqual(await values(second.id),[[8,11]]);
+  await subscribe('enterprise');await modes.save(db,ctx,120,{mode:'ask',revision:1});await run();assert.deepEqual(await values(second.id),[[8,11]]);
+  await modes.save(db,ctx,120,{mode:'routine',revision:2});await run();assert.deepEqual(await values(second.id),[[11,15]]);
+  await rules.configure(db,ctx,{skuId,locationId,remove:'1'});
+  await subscribe('growth');
+  await db.query(`INSERT INTO stockchief_runtime.agent_brand_watches(workspace_id,brand_key,brand_name,threshold,inclusive,updated_by)
+    SELECT $1,'brand-'||i,'Brand '||i,12,true,$2 FROM generate_series(1,49) i`,[ctx.workspaceId,ctx.actorId]);
+  const competing=await Promise.allSettled([locationId,second.id].map(id=>rules.configure(db,ctx,{skuId,locationId:id,ceiling:20})));
+  assert.equal(competing.filter(r=>r.status==='fulfilled').length,1);
+  assert.match(competing.find(r=>r.status==='rejected').reason.message,/50 active rules/);
+  const winner=competing[0].status==='fulfilled'?locationId:second.id,other=winner===locationId?second.id:locationId;
+  await rules.configure(db,ctx,{skuId,locationId:winner,ceiling:21});
+  await rules.configure(db,ctx,{skuId,locationId:winner,remove:'1'});
+  await rules.configure(db,ctx,{skuId,locationId:other,ceiling:20});
+});
+
 test('sales scenarios, partial supplier deliveries and competing quotations use stored inventory records and the current plan', {timeout:240000},async t=>{
   const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:12}),{db,ctx,workflows}=f;
   const sku=f.item.skuIds[0],code=(await db.query('SELECT code FROM skus WHERE id=$1',[sku])).rows[0].code;
@@ -62,10 +131,25 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   }
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at)
     VALUES($1,$2,$3,$4,20,30,0,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
+  await db.query("UPDATE sales_orders SET needed_by=$3 WHERE workspace_id=$1 AND id IN (SELECT sales_order_id FROM sales_shipments WHERE id=ANY($2))",[ctx.workspaceId,parcels,ago(today,-1)]);
+  await f.shipping.applyTracking(db,ctx,parcels[0],{status:'DELIVERED',externalEventId:'service-level-first',occurredAt:ago(today,-1)+'T12:00:00Z'});
+  for(const [id,prediction,comparable] of [['closed',10,1],['stockout',90,0]]){
+    await db.query(`INSERT INTO demand_forecasts(id,workspace_id,sku_id,as_of,horizon_days,horizon_end,horizon_units,confidence,model_version,created_at)
+      VALUES($1,$2,$3,$4,7,$5,$6,'moderate','fixture',$4)`,[id,ctx.workspaceId,sku,ago(today,-9),ago(today,-2),prediction]);
+    await db.query(`INSERT INTO forecast_outcomes(id,workspace_id,forecast_id,sku_id,scored_at,predicted_units,actual_units,error_units,absolute_error,comparable,created_at)
+      VALUES($1,$2,$1,$3,$4,$5,8,$6,$6,$7,$4)`,[id,ctx.workspaceId,sku,ago(today,-1)+'T12:00:00Z',prediction,prediction-8,comparable]);
+  }
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
     const row=(await review('reorder-explanation')).rows.find(r=>r.Warehouse==='Dispatch');
     assert.equal(row.Available,5);assert.equal(row.Incoming,7);assert.equal(row['Units to order'],18);
+    if(tier==='starter')await browser.get('/autopilot/reviews/service-levels').expect(402);
+    else{
+      const service=await review('service-levels',{filter:'',scheduled:true}),customer=service.rows.find(r=>r['Party type']==='Customer'),vendor=service.rows.find(r=>r.Name==='Alternative');
+      assert.match(service.summary,/1 comparable SKU forecast,.*2\.00 units/);
+      assert.equal(customer['Due orders'],2);assert.equal(Number(customer['Fill rate %']),100);assert.equal(Number(customer['OTIF %']),50);
+      assert.equal(Number(vendor['Fill rate %']),25);assert.equal(Number(vendor['OTIF %']),0);
+    }
     if(tier==='starter'){
       await browser.get('/autopilot/reviews/demand-scenario').query({change:20}).expect(402);
       assert.doesNotMatch((await browser.get('/autopilot/reviews').expect(200)).text,/href="\/autopilot\/reviews\/demand-scenario"/);
@@ -98,8 +182,37 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   }
   await ledger.post(db,ctx,{postingDate:prior,sourceKey:'historical-stock',description:'Historical purchase for report',lines:[
     {accountKey:'INVENTORY_ASSET',debitMinor:3000},{accountKey:'CASH',creditMinor:3000}]});
+  const counts=require('../../src/operations/postgres-count-reviews');
+  const physical=Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND location_id=$2 AND sku_id=$3',[ctx.workspaceId,f.location.id,sku])).rows[0].on_hand);
+  const count=await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Year close count',lines:[{skuId:sku,quantity:physical}]});
+  await counts.approve(db,ctx,count.id,(await counts.get(db,ctx,count.id)).integrity_hash);
+  await db.query("UPDATE physical_count_reviews SET approved_at=($2::date+time '12:00') AT TIME ZONE 'UTC' WHERE id=$1",[count.id,end]);
+  await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Pending count',lines:[{skuId:sku,quantity:physical}]});
+  const download=(job)=>browser.get('/autopilot/reviews/'+job+'/download').query({filter:end.slice(0,7)});
+  const binary=(req)=>req.buffer(true).parse((res,done)=>{const chunks=[];res.on('data',v=>chunks.push(v));res.on('end',()=>done(null,Buffer.concat(chunks)));});
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
+    if(tier!=='enterprise'){
+      await download('board-pack').expect(402);
+      await browser.get('/autopilot/reviews/board-pack').expect(402);
+    }else{
+      const preview=await browser.get('/autopilot/reviews/board-pack').query({filter:end.slice(0,7)}).expect(200);
+      assert.match(preview.text,/Download board pack with charts/);
+      const pdf=await binary(download('board-pack')).expect(200).expect('Content-Type',/application\/pdf/);
+      const pdfjs=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=pdfjs.getDocument({data:new Uint8Array(pdf.body)}),document=await loading.promise;
+      const first=await document.getPage(1),text=(await first.getTextContent()).items.map(i=>i.str).join(' ');
+      for(const figure of ['$22.00','$9.00','$13.00'])assert.ok(text.includes(figure),figure);
+      assert.ok((await first.getOperatorList()).fnArray.includes(pdfjs.OPS.constructPath),'PDF contains chart geometry');
+      assert.equal(document.numPages,1);await loading.destroy();
+    }
+    if(tier==='starter')await download('year-end-stocktake').expect(402);
+    else{
+      const pack=await binary(download('year-end-stocktake')).expect(200);
+      const xlsx=require('xlsx'),workbook=xlsx.read(pack.body,{type:'buffer'});
+      assert.equal(xlsx.utils.sheet_to_json(workbook.Sheets['Closing valuation']).find(r=>r.SKU==='Unassigned ledger entries')['Closing value'],15);
+      const lines=xlsx.utils.sheet_to_json(workbook.Sheets['Approved count lines']);
+      assert.equal(lines.length,1);assert.equal(lines[0].SKU,code);assert.equal(lines[0].Reference,'Year close count');assert.equal(lines[0].Counted,physical);
+    }
     if(tier==='starter'){
       for(const key of ['month-end-stock','margin-change'])await assert.rejects(review(key,{filter:end.slice(0,7)}),e=>e.code==='entitlement_required');continue;
     }
@@ -111,4 +224,21 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     await browser.get(change.link).expect(200);
   }
   await assert.rejects(review('month-end-stock',{filter:today.slice(0,7)}),/completed calendar month/);
+  const priorQuarter=(await require('../../src/purchasing/agent-supplier-pack').report(db,ctx,{today,filter:''})).span;
+  await db.query("UPDATE purchase_orders SET ordered_at=$2 WHERE workspace_id=$1 AND status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')",[ctx.workspaceId,priorQuarter.end+'T10:00:00Z']);
+  const forSupplier=()=>review('quarterly-supplier-pack',{filter:'Alternative'});
+  assert.equal(Number((await forSupplier()).rows[0]['Received by close']),0,'later receipts stay in their actual quarter');
+  await db.query("UPDATE purchase_order_receipts r SET received_at=$3 FROM purchase_orders p WHERE r.workspace_id=$1 AND p.workspace_id=r.workspace_id AND p.id=r.purchase_order_id AND p.supplier_id=$2",[ctx.workspaceId,supplier.id,priorQuarter.end+'T11:00:00Z']);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await plan(tier);
+    const downloadPack=()=>browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id});
+    if(tier==='starter'||tier==='growth'){await downloadPack().expect(402);continue;}
+    const line=(await forSupplier()).rows[0];assert.equal(Number(line.Ordered),4);assert.equal(Number(line['Received by close']),1);
+    const packed=await binary(downloadPack()).expect(200);
+    const library=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=library.getDocument({data:new Uint8Array(packed.body)});
+    const doc=await loading.promise,content=(await (await doc.getPage(1)).getTextContent()).items.map(i=>i.str).join(' ');
+    assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
+    assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
+    await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').expect(400);
+  }
 });

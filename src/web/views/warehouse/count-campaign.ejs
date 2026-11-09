@@ -1,5 +1,9 @@
 <header class="rm-head"><h1><%= campaign.title %></h1><p>Quantity stock across the selected warehouse, zone or category. Lot, serial and catch-weight stock require identity or weight checks on their product pages and are excluded from this worksheet.</p></header>
 <p><a href="/warehouse/counts/new">Back to stock counts</a></p>
+<% if(locals.observed && totals.uncounted){ %><form method="post" action="/warehouse/counts/campaigns/<%= campaign.id %>/staff-quantities">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= campaign.revision %>">
+  <p>Your counter has finished. Copy their quantities into the empty worksheet positions to review the differences.</p><button class="rm-btn">Use staff counts</button>
+</form><% } %>
 <p><a href="/warehouse/counts/campaigns/<%= campaign.id %>/export">Download the complete count worksheet (CSV)</a></p>
 <% if(campaign.status==='DRAFT'){ %><form method="post" action="/warehouse/counts/campaigns/<%= campaign.id %>/save" data-count-upload data-revision="<%= campaign.revision %>" data-csrf="<%= csrfToken %>"><label>Upload counted quantities from the worksheet<input type="file" accept=".csv,text/csv" required></label><p>Enter the Counted quantity column. Keep stock position references unchanged. Blank quantities remain uncounted. Uploads save in batches and never move stock until an owner approves the variances.</p><button class="rm-btn">Save counts from CSV</button><p role="status" aria-live="polite"></p></form><script src="/count-worksheet.js" defer></script><% } %>
 <p>Total reviewed stock value change: <%= helpers.money(Number(totals.cost_delta_minor),currency) %></p>

@@ -18,9 +18,9 @@ async function evaluateInTransaction(database,{workspaceId=null}={}){
   let alerted=0,rearmed=0;
   for(const rule of result.rows){
     const measured=(await database.query(`SELECT
-      (SELECT COALESCE(SUM(on_hand),0)::bigint FROM balances
+      (SELECT COALESCE(SUM(on_hand),0) FROM balances
         WHERE workspace_id=$1 AND sku_id=$2 AND ($3::text IS NULL OR location_id=$3)) AS on_hand,
-      (SELECT COALESCE(SUM(quantity),0)::bigint FROM (
+      (SELECT COALESCE(SUM(quantity),0) FROM (
         SELECT a.quantity FROM sales_order_allocations a
           JOIN sales_order_lines line ON line.id=a.sales_order_line_id AND line.workspace_id=a.workspace_id
           JOIN sales_orders orders ON orders.id=line.sales_order_id AND orders.workspace_id=line.workspace_id
@@ -42,7 +42,7 @@ async function evaluateInTransaction(database,{workspaceId=null}={}){
     const metric=rule.metric||'on_hand',comparator=rule.comparator||'at_or_below';
     if(!['on_hand','available_to_fulfill'].includes(metric)||!['below','at_or_below'].includes(comparator))
       throw new Error(`Unsupported approved stock-alert measure for rule ${rule.id}`);
-    const observed=metric==='available_to_fulfill'?Math.max(0,onHand-committed):onHand;
+    const observed=metric==='available_to_fulfill'?Math.max(0,Number(require('../domain/exact-quantity').subtract(measured.on_hand,measured.committed))):onHand;
     const label=metric==='available_to_fulfill'?'available to fulfill':'on hand';
     const threshold=Number(rule.threshold),triggered=comparator==='below'?observed<threshold:observed<=threshold;
     const comparison=comparator==='below'?'below':'at or below';

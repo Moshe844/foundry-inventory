@@ -4,4 +4,6 @@ test('native startup evicts optional dataset detail before catalogue growth can 
  const clock=require('../../src/lib/business-time').context('America/New_York'),packet=gateway.initialContractsSnapshot(catalogue,{role:'owner'},{clock}),compact=presentation.compact(packet);assert(Buffer.byteLength(JSON.stringify(compact))<=28000);assert.deepEqual(presentation.expand(compact),packet);assert.deepEqual(packet.clock,clock);
  assert.deepEqual(Object.values(packet.operationIndex).flat().sort(),[...entries,...extra].map(e=>e.name).sort());assert.equal(packet.indexComplete,true);assert.equal(packet.readArgumentsComplete,true);assert.equal(packet.readDescriptionsComplete,true);
  assert.deepEqual(packet.operations.filter(e=>e.kind==='read').map(e=>e.name).sort(),entries.filter(e=>e.kind==='read').map(e=>e.name).sort());
+ const named=gateway.interfaceSnapshot(catalogue,{role:'owner'},{names:['read.agent_review']});
+ assert.deepEqual(named.operations[0].fields.agentJob.jsonSchema.enum,require('../../src/autopilot/job-reviews').definitions.map(d=>d.key));
 });

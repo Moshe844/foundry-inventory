@@ -1,0 +1,53 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('scheduled customer orders recheck price limits and plans and replay once',{timeout:240000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,subscribe,workflows}=f;
+ await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+ await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+ const sku=f.item.skuIds[0],prices=require('../../src/pricing/postgres-service');
+ const price=n=>db.transaction(c=>prices.setPricesInTransaction(c,ctx,[{skuId:sku,amountMinor:n,currency:'USD'}]));await price(500);
+ const original=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:2,unitPriceMinor:500}]});
+ await workflows.confirmSalesOrder(db,ctx,original.salesOrderId,{idempotencyKey:randomUUID()});
+ const number=(await db.query('SELECT order_number FROM sales_orders WHERE id=$1',[original.salesOrderId])).rows[0].order_number;
+ const standing=require('../../src/sales/recurring-orders'),today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+ const input={customerId:'fixture-customer',sourceOrderNumber:number,cadence:'monthly',firstDate:today,maximum:'12',revision:0};
+ await subscribe('starter');await assert.rejects(standing.configure(db,ctx,input),e=>e.code==='entitlement_required');
+ await subscribe('growth');const page=await f.browser.get('/autopilot/reviews/recurring-customer-orders').expect(200);assert.match(page.text,/Approve recurring order/);
+ const token=/name="id" value="([^"]+)"/.exec(page.text)[1],post={...input,id:token,sourceOrderId:original.salesOrderId,_csrf:f.csrf(page.text)};
+ await f.browser.post('/autopilot/recurring-orders').type('form').send(post).expect(303);
+ await f.browser.post('/autopilot/recurring-orders').set('Accept','application/json').type('form').send(post).expect(400);
+ const saved={id:token};
+ await db.transaction(c=>standing.schedule(c,ctx.workspaceId));
+ const job=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='sales.recurring-order'",[ctx.workspaceId])).rows[0];
+ const handler=require('../../src/operations/postgres-runtime-handlers').create()['sales.recurring-order'],run=()=>db.transaction(c=>handler({workspaceId:ctx.workspaceId,payload:job.payload},c));
+ await price(700);assert((await run()).held);
+ assert((await require('../../src/autopilot/operational-notices').inbox(db,ctx.workspaceId,ctx.actorId)).some(r=>r.sourceId==='agent-notice-67'));
+ assert.equal((await db.query('SELECT count(*)::int n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
+ await price(550);await standing.configure(db,ctx,{...input,id:saved.id,revision:1});
+ const fresh={...job.payload,revision:2};const done=await db.transaction(c=>handler({workspaceId:ctx.workspaceId,payload:fresh},c));assert(done.salesOrderId);
+ assert((await db.transaction(c=>handler({workspaceId:ctx.workspaceId,payload:fresh},c))).held);
+ assert.equal((await db.query('SELECT count(*)::int n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,2);
+ const second=await standing.configure(db,ctx,{...input,cadence:'weekly'});await subscribe('starter');
+ assert((await db.transaction(c=>handler({workspaceId:ctx.workspaceId,payload:{id:second.id,revision:1,date:today}},c))).held);
+ assert.equal(await f.balance(),20);
+ for(const [tier,cadence] of [['pro','weekly'],['enterprise','daily']]){
+  await subscribe(tier);await f.browser.get('/autopilot/reviews/recurring-customer-orders').expect(200);
+  const schedule=await standing.configure(db,ctx,{...input,cadence});
+  const placed=await db.transaction(c=>handler({workspaceId:ctx.workspaceId,payload:{id:schedule.id,revision:1,date:today}},c));assert(placed.salesOrderId);
+ }
+ assert.equal((await db.query('SELECT count(*)::int n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,4);
+ await subscribe('growth');
+ const active=Number((await db.query('SELECT count(*) n FROM stockchief_runtime.recurring_customer_orders WHERE workspace_id=$1 AND NOT paused',[ctx.workspaceId])).rows[0].n);
+ await db.query(`INSERT INTO stockchief_runtime.agent_draft_rules(workspace_id,action_type,scope_key,scope_label,currency,maximum_minor,authorized_by)
+  SELECT $1,'sales_order.repeat','quota-'||n,'Quota fixture '||n,'USD',1000,$2 FROM generate_series(1,$3::int) n`,[ctx.workspaceId,ctx.actorId,50-active]);
+ const another=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:1,unitPriceMinor:550}]});
+ await workflows.confirmSalesOrder(db,ctx,another.salesOrderId,{idempotencyKey:randomUUID()});
+ const source=(await db.query('SELECT order_number FROM sales_orders WHERE id=$1',[another.salesOrderId])).rows[0].order_number;
+ await assert.rejects(standing.configure(db,ctx,{...input,sourceOrderNumber:source}),/50 active rules/);
+ const revision=(await db.query('SELECT revision FROM stockchief_runtime.recurring_customer_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,saved.id])).rows[0].revision;
+ await standing.pause(db,ctx,saved.id,revision);
+ await standing.configure(db,ctx,{...input,sourceOrderNumber:source});
+ await assert.rejects(standing.configure(db,ctx,{...input,id:saved.id,revision:revision+1}),/50 active rules/);
+ assert.equal(standing.nextDate('2027-01-31','monthly',31),'2027-02-28');assert.equal(standing.nextDate('2027-02-28','monthly',31),'2027-03-31');
+});

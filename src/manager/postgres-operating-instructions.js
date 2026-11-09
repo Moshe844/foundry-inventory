@@ -447,7 +447,7 @@ function target(change){if(change.domain==='replenishment')return `replenishment
   if(change.domain==='capability_authority')return `authority:capability:${change.capabilityName}`;
   if(change.domain==='stock_protection')return `guard:${change.skuId}:${change.locationId||'*'}`;return null;}
 
-async function checkRuleLimit(client,ctx,changes) {
+async function checkRuleLimit(client,ctx,changes,additional=0) {
   const state=await require('../commercial/agent-plan').accountState(client,ctx.workspaceId);
   const limit={starter:5,growth:50,pro:500}[state.plan];
   if(!limit) return;
@@ -468,7 +468,20 @@ async function checkRuleLimit(client,ctx,changes) {
   for(const row of history.rows) for(const change of parse(row.resolved_changes,[])) apply(row.workspace_id,change);
   const before=keys.size;
   for(const change of changes) apply(ctx.workspaceId,change);
-  if(keys.size>limit && keys.size>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
+  const configured=await client.query(`WITH owned AS MATERIALIZED (SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
+    SELECT (SELECT count(*) FROM stockchief_runtime.agent_draft_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_invoice_reminder_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_brand_watches WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_count_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_count_schedules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_putaway_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.recurring_customer_orders WHERE workspace_id IN(SELECT id FROM owned) AND NOT paused)
+      +(SELECT count(*) FROM stockchief_runtime.channel_map_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.location_reorder_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.supplier_negotiation_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_overdue_order_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.class_service_levels WHERE workspace_id IN(SELECT id FROM owned)) AS n`,[state.accountId]);
+  if(keys.size+Number(configured.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 
 async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);
@@ -514,5 +527,5 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
   await database.query(`UPDATE operating_instruction_proposals SET status='SUPERSEDED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
-module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm};
+module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm,checkRuleLimit};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions',prepareReorderForm:'ask.prepare_actions'});

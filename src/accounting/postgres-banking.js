@@ -4,13 +4,7 @@ const crypto=require('node:crypto');
 const {newId,nowIso,requireText,trimOrNull}=require('../lib/util');
 const {ValidationError,NotFoundError}=require('../domain/errors');
 
-function money(value,label){
-  const text=String(value??'').trim();
-  if(!/^-?\d+(?:\.\d{1,2})?$/.test(text))throw new ValidationError(`${label} must be a money amount.`);
-  const amount=Math.round(Number(text)*100);
-  if(!Number.isSafeInteger(amount))throw new ValidationError(`${label} is too large.`);
-  return amount;
-}
+function money(value,label,currency){return require('../domain/currency').toMinor(value,currency,{label,signed:true});}
 
 function date(value,label){
   const text=String(value||'').trim();
@@ -29,14 +23,12 @@ async function requireBank(client,workspaceId,bankId){
 
 async function importOne(database,ctx,bankId,input){
   const transactionDate=date(input.transactionDate,'Transaction date');
-  const amountMinor=money(input.amount,'Bank amount');
-  if(!amountMinor)throw new ValidationError('Bank amount cannot be zero.');
   const description=requireText(input.description,'Description',{max:500});
   const externalId=trimOrNull(input.externalId);
-  const contentHash=crypto.createHash('sha256').update(JSON.stringify({bankId,transactionDate,amountMinor,
-    description,externalId})).digest('hex');
   return database.transaction(async(client)=>{
-    await requireBank(client,ctx.workspaceId,bankId);
+    const bank=await requireBank(client,ctx.workspaceId,bankId),amountMinor=money(input.amount,'Bank amount',bank.currency);
+    if(!amountMinor)throw new ValidationError('Bank amount cannot be zero.');
+    const contentHash=crypto.createHash('sha256').update(JSON.stringify({bankId,transactionDate,amountMinor,description,externalId})).digest('hex');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`bank:${ctx.workspaceId}:${bankId}`]);
     const prior=(await client.query(`SELECT * FROM accounting_bank_transactions WHERE workspace_id=$1
       AND bank_account_id=$2 AND (content_hash=$3 OR ($4::text IS NOT NULL AND external_id=$4))`,
@@ -74,16 +66,17 @@ async function match(database,ctx,transactionId,target){
     if(kind==='payment'){
       const payment=(await client.query(`SELECT * FROM accounting_payments
         WHERE workspace_id=$1 AND id=$2 AND status='POSTED'`,[ctx.workspaceId,targetId])).rows[0];
-      if(!payment||payment.cash_account_id!==bank.ledger_account_id)
+      if(!payment||payment.cash_account_id!==bank.ledger_account_id||payment.currency!==bank.currency)
         throw new ValidationError('Choose a posted payment that used this financial account.');
       expected=payment.direction==='CUSTOMER_RECEIPT'?Number(payment.amount_minor):-Number(payment.amount_minor);
       journalId=payment.journal_entry_id;paymentId=payment.id;
     }else{
-      const result=(await client.query(`SELECT e.id,COALESCE(SUM(l.debit_minor-l.credit_minor),0)::bigint AS amount
+      const result=(await client.query(`SELECT e.id,min(l.currency) AS currency,count(DISTINCT l.currency)::int AS currency_count,COALESCE(SUM(l.debit_minor-l.credit_minor),0)::bigint AS amount
         FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id
         WHERE e.workspace_id=$1 AND e.id=$2 AND e.status='POSTED' AND l.account_id=$3 GROUP BY e.id`,
       [ctx.workspaceId,targetId,bank.ledger_account_id])).rows[0];
       if(!result)throw new ValidationError('That posted entry did not change this account.');
+      if(result.currency_count!==1||result.currency!==bank.currency)throw new ValidationError('The bank and posted entry use different currencies. Review an explicit currency conversion before matching.');
       expected=bank.account_kind==='CREDIT_CARD'?-Number(result.amount):Number(result.amount);
       journalId=result.id;
     }
@@ -97,9 +90,11 @@ async function match(database,ctx,transactionId,target){
 
 async function reconcile(database,ctx,bankId,input){
   const endDate=date(input.statementEndDate,'Statement end date');
-  const statementMinor=money(input.statementEndingBalance,'Statement ending balance');
   return database.transaction(async(client)=>{
     const bank=await requireBank(client,ctx.workspaceId,bankId);
+    const statementMinor=money(input.statementEndingBalance,'Statement ending balance',bank.currency);
+    const books=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+    if(books?.base_currency!==bank.currency)throw new ValidationError('The bank and inventory books use different currencies. Review an explicit currency conversion before reconciling.');
     const prior=(await client.query(`SELECT * FROM accounting_reconciliations
       WHERE workspace_id=$1 AND bank_account_id=$2 AND statement_end_date=$3 FOR UPDATE`,
     [ctx.workspaceId,bankId,endDate])).rows[0];

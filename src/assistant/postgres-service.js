@@ -152,6 +152,11 @@ function salesPeriod(timeframe,now=new Date()){
 
 async function salesActivity(database,ctx,timeframe){
   const period=salesPeriod(timeframe);
+  const history=await require('../commercial/agent-history').access(database,ctx.workspaceId);
+  if(history.salesFrom&&period.from<history.salesFrom){
+    period.from=history.salesFrom;
+    period.label='since '+period.from;
+  }
   const counts=(await database.query(`SELECT COUNT(DISTINCT so.id) AS orders,
     COALESCE(SUM(sol.quantity_fulfilled),0) AS fulfilled_units
     FROM sales_orders so LEFT JOIN sales_order_lines sol ON sol.sales_order_id=so.id
@@ -175,6 +180,11 @@ async function salesActivity(database,ctx,timeframe){
 }
 
 async function lookup(database,ctx,request,options={}) {
+  const permissions=require('../actions/permissions'),required=require('../actions/financial-visibility').readPermissions[request.view];
+  if(required){
+    const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+    permissions.assertCan(actor,required,'read this financial information');
+  }
   const result=await lookupRecords(database,ctx,request,options);
   const kind=require('./postgres-capability-registry').registry.get('read.'+request.view)?.recordKind;
   const collection=kind&&require('../web/postgres-record-destinations').RECORDS[kind]?.collection;
@@ -870,6 +880,7 @@ async function lookupRecords(database,ctx,request,options={}) {
         complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length}};
   }
   if(request.view==='sales_orders'){
+    const history=await require('../commercial/agent-history').access(database,ctx.workspaceId);
     const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
@@ -928,9 +939,9 @@ async function lookupRecords(database,ctx,request,options={}) {
           ORDER BY batch.created_at,batch.id) AS details
         FROM (SELECT shipment.*,COUNT(*) OVER() AS total_matches FROM sales_shipments shipment
           WHERE workspace_id=so.workspace_id AND sales_order_id=so.id ORDER BY created_at,id LIMIT 20) batch) shipments ON true
-      WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
+      WHERE so.workspace_id=$1 AND ($3::text IS NULL OR so.order_date >= $3) AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
         OR so.status ILIKE '%'||$2||'%' OR COALESCE(so.reference,'') ILIKE '%'||$2||'%') ORDER BY so.created_at DESC,so.id LIMIT 100`,
-    [ctx.workspaceId,search]);
+    [ctx.workspaceId,search,history.salesFrom]);
     const rows=result.rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,reference:row.reference,
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
@@ -1773,7 +1784,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
   const agent=require('../commercial/agent-plan'), job=agent.actionJob(actionType,'draft',payload);
   if(job){
     const state=await agent.accountState(database,ctx.workspaceId);
-    if(agent.usesAgentTerms(state))agent.requireJob(state.plan,job,'draft');
+    const plan=agent.actionPlan(state,actionType);
+    if(plan!==undefined)agent.requireJob(plan,job,'draft');
   }
   if(actionType==='customer_invoice.create'){
     const quote=await require('../pricing/postgres-invoice-pricing').quote(database,ctx,payload);
@@ -1787,11 +1799,16 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
     if(ctx.planStepKey){const existing=(await database.query('SELECT id,action_type,payload,summary,status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[ctx.workspaceId,ctx.actorId,ctx.planStepKey])).rows[0];
       if(existing){if(existing.action_type!==actionType||existing.payload.requestedPricingHash!==requestedPricingHash)throw new InvariantError('The prepared order scope changed during resumption. Review the current request.','proposal_scope_changed');return {status:'PREPARED',answer:existing.status==='PENDING'?'The exact order proposal is still waiting for your approval.':'This order proposal already has a recorded decision; its canonical status is preserved.',proposal:{id:existing.id,summary:existing.summary,actionType}};}}
     const quote=await promotions.prepareQuote(database,ctx,original);
+    await require('../sales/agent-customer-pricing').checkOrder(database,ctx,original,quote);
     if(quote.violations.length)throw new ValidationError('This order needs a pricing review before approval: '+[...new Set(quote.violations.map(v=>v.kind.replaceAll('_',' ')))].join(', ')+'. Nothing was changed.');
     payload={...payload,requestedPricingHash,pricingInputLines:original.lines,pricingInputDiscountMinor:original.discountMinor||0,pricingQuoteHash:promotions.quoteHash(quote),
       discountMinor:quote.discountMinor,taxMinor:quote.taxMinor,lines:quote.lines.map((line,index)=>({...original.lines[index],unitPriceMinor:line.unitPriceMinor}))};
     const products=(await database.query('SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])',[ctx.workspaceId,quote.lines.map(l=>l.skuId)])).rows;
     const party=(await database.query('SELECT name FROM customers WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.customerId])).rows[0],location=payload.fulfillmentLocationId?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.fulfillmentLocationId])).rows[0]:null;
+    const agentOrder=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
+    if(require('../commercial/agent-plan').usesAgentTerms(agentOrder)&&quote.totalMinor>0)payload.training=require('../autopilot/draft-authority').scope(payload.customerId,quote.currency,quote.totalMinor,
+      {delivery:payload.deliveryMethod,address:payload.shipToAddress||null,location:payload.fulfillmentLocationId||null,skus:[...new Set(quote.lines.map(l=>l.skuId))].sort()},
+      'Customer order drafts for '+party.name+' using these products and delivery details. The limit is the complete order total. New customer or delivery details need individual confirmation.');
     summary=`Prepare one draft order for ${party.name}:\n`+quote.lines.map(line=>{const p=products.find(p=>p.id===line.skuId);return `${line.quantity} × ${p.name} (${p.code}) at ${pricing.formatMinor(line.unitPriceMinor,quote.currency)} each; line discount ${pricing.formatMinor(line.discountMinor,quote.currency)}.`;}).join('\n')+`\n${payload.deliveryMethod==='PICKUP'?'Pickup':'Delivery'}${location?' from '+location.name:''}${payload.shipToAddress?' to '+payload.shipToAddress:''}. Reference ${payload.reference||'not supplied'}. Exact total ${pricing.formatMinor(quote.totalMinor,quote.currency)}; discounts ${pricing.formatMinor(quote.discountMinor,quote.currency)}, tax ${pricing.formatMinor(quote.taxMinor,quote.currency)}. Draft only: no stock reservation, fulfillment, invoice, payment or email.`+(quote.unusedCodes.length?' Unused codes: '+quote.unusedCodes.join(', ')+'.':'');
   }
   const id=newId('pgprop');
@@ -2095,7 +2112,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2105,11 +2122,41 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
     const agentPolicy=require('../commercial/agent-plan'),agentAccount=await agentPolicy.accountState(client,ctx.workspaceId);
-    if(agentAccount.plan && agentAccount.shadow && contract.name!=='report.template.create') throw new ValidationError('StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.');
-    const operation=missionPlanId?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
-    if(job && agentPolicy.usesAgentTerms(agentAccount))agentPolicy.requireJob(agentAccount.plan,job,operation);
-    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name))
+    let routineAuthority=null;
+    if(receiptRoutine){
+      if(contract.name!=='customer_payment.match_bank_line')throw new ValidationError('Receipt authority cannot run another kind of action.');
+      routineAuthority=await require('../accounting/agent-customer-payment-matches').requireRoutineAuthority(client,ctx);
+    }
+    if(invoiceRoutine){
+      if(contract.name!=='purchase_order.record_supplier_invoice')throw new ValidationError('Supplier invoice authority cannot run another kind of action.');
+      routineAuthority=await require('../purchasing/agent-invoice-routine').requireRoutineAuthority(client,ctx);
+    }
+    if(arrivedStockRoutine){
+      if(contract.name!=='sales_order.reserve_arrived')throw new ValidationError('Arrived stock authority cannot run another kind of action.');
+      routineAuthority=await require('../sales/agent-arrived-stock').requireRoutineAuthority(client,ctx);
+    }
+    if(pickReleaseRoutine){
+      if(contract.name!=='warehouse.release_orders')throw new ValidationError('Pick release authority cannot run another kind of action.');
+      routineAuthority=await require('../warehouse/agent-pick-release').requireRoutineAuthority(client,ctx);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine;
+    const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
+    if(stopped)throw new ValidationError(stopped);
+    const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
+    const tier=agentPolicy.actionPlan(agentAccount,contract.name);
+    if(automatic&&job&&tier!==undefined&&agentAccount.plan&&agentAccount.plan!=='starter'&&agentPolicy.usesAgentTerms(agentAccount)&&agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount)){
+      agentPolicy.requireJob(tier,job,'draft');
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
+    }
+    if(job && tier!==undefined){
+      const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
+      agentPolicy.requireJob(tier,job,operation,{trained});
+    }
+    if(automatic && agentAccount.plan && agentPolicy.usesAgentTerms(agentAccount) && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
+      throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
+    if(contract.name==='sales_order.create')await require('../sales/agent-customer-pricing').checkOrder(client,ctx,proposal.payload);
+    if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
+      throw new ValidationError('Individually approve this customer order or teach an eligible routine for these delivery details.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
         WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
       if(!plan||plan.actor_user_id!==ctx.actorId||plan.authorization_mode!=='MISSION'
@@ -2124,13 +2171,19 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
       [ctx.workspaceId,ctx.actorId])).rows[0];
     require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
     if(contract.ownerOnly&&actor.role!=='owner')throw new ValidationError(
-      'Only this inventory’s owner can approve that connection change.');
+      'Only this inventory’s owner can approve this change.');
     if(contract.commercialCapability)await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),contract.commercialCapability);
     for(const capability of contract.additionalCommercialCapabilities||[])await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capability);
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
-    const result=await contract.execute(client,ctx,payload);
+    const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
+    const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
+    const invoiceMatch=contract.name==='purchase_order.record_supplier_invoice'&&agentPolicy.usesAgentTerms(agentAccount);
+    const arrivedStock=contract.name==='sales_order.reserve_arrived'&&agentPolicy.usesAgentTerms(agentAccount);
+    const invoiceDispute=contract.name==='supplier_invoice.dispute'&&agentPolicy.usesAgentTerms(agentAccount);
+    const executionContext=contract.name==='sales_quote.followup'?{...ctx,agentQuoteFollowupScope:automatic?'automatic':'individual'}:contract.name==='customer.statement'?{...ctx,agentCustomerStatementScope:automatic?'automatic':'individual'}:contract.name==='landed_cost.apply'?{...ctx,agentLandedCostScope:automatic?'automatic':'individual'}:contract.name==='warehouse.prepare_putaway'?{...ctx,agentPutawayScope:automatic?'automatic':'individual'}:postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:invoiceDispute?{...ctx,agentInvoiceDisputeScope:automatic?'automatic':'individual'}:['warehouse.wave.create','warehouse.release_orders'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount)?{...ctx,agentWarehouseReleaseScope:automatic?'automatic':'individual'}:ctx;
+    const executed=await contract.execute(client,executionContext,payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
         'proposal_result_unverified');
@@ -2155,6 +2208,32 @@ async function executeProposal(database,ctx,id,options={}) {
     }));
     return {...committed,continuationError:error.message};
   }
+}
+
+// Internal worker entry point: authority comes from the owner's saved job mode,
+// never from an HTTP option or a model-supplied context field.
+async function executeReceiptRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{receiptRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function executeInvoiceRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{invoiceRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function executeArrivedStockRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{arrivedStockRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function executePickReleaseRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{pickReleaseRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function continueRoutineProposal(database,ctx,committed){
+  // Settle only the frozen plan's canonical dependencies. This never creates a
+  // human approval or grants a paid model call to the routine worker.
+  const provider={name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw new ValidationError('This routine has no authority for another model call.');}};
+  try{return {...committed,continued:await continueApprovedPlans(database,ctx,committed.id,{provider})};}
+  catch(error){return {...committed,continuationError:error.message};}
 }
 
 async function executeMission(database,ctx,proposalId,options={}){
@@ -2217,5 +2296,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

@@ -27,7 +27,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
  // New Agent v3 monthly add-ons have their own payment/renewal suite. Keep
  // the small synthetic allowance under the historical contract's semantics.
  const walletVersion=await costs.snapshotPlanVersion(db,'starter');
- await db.query(`UPDATE commercial_plan_versions v SET configuration=old.configuration,
+ await db.query(`UPDATE commercial_plan_versions v SET configuration=old.configuration,entitlements=old.entitlements,
   meters=(SELECT jsonb_agg(m) FROM jsonb_array_elements(v.meters)m WHERE m->>'meter' NOT IN('agent_documents','agent_edi'))
   FROM commercial_plan_versions old WHERE old.id='approved-2026-11-02:starter' AND v.id=$1`,[walletVersion.id]);
  await db.query('UPDATE account_subscriptions SET plan_version_id=$2 WHERE account_id=$1',[business.accountId,walletVersion.id]);

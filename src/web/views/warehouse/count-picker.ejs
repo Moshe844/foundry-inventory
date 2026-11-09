@@ -1,14 +1,35 @@
-<header class="page-head"><div><h1>Record a physical count</h1><p>Enter only quantities you physically counted. Blank quantities are left alone. Review all differences before an owner approves them.</p></div></header>
+<header class="page-head"><div><h1>Record a physical count</h1><p>Enter the quantities you physically counted. Leave uncounted positions blank.</p></div></header>
+<% if(locals.countRule){ const rule=countRule.rule; %>
+<details class="card card-body"><summary>Count difference rules</summary>
+<% if(countRule.enabled){ %>
+<form method="post" action="/warehouse/counts/rule">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+ <label>When a count changes stock value
+  <select name="mode">
+   <option value="off" <%= !rule?'selected':'' %>>Ask for approval every time</option>
+   <option value="recount" <%= rule&&!rule.automatic?'selected':'' %>>Ask for a recount above my limit</option>
+   <option value="automatic" <%= rule?.automatic?'selected':'' %>>Post small differences and request a recount above my limit</option>
+  </select>
+ </label>
+ <label>Limit per submitted count in your inventory currency
+  <input name="limit" inputmode="decimal" value="<%= rule?helpers.money(Number(rule.limit_minor),rule.currency):'' %>">
+ </label>
+ <p>Increases and decreases both count toward the limit. Automatic posting requires Handle routine work in StockChief AI.</p>
+ <button class="btn">Save count rule</button>
+</form>
+<% }else{ %><p>Automatic count differences and recount rules require Pro. <a href="/billing">Review plans</a></p><% } %>
+</details><% } %>
 <% for(const review of locals.pendingCounts||[]){ %><p><a href="/warehouse/counts/reviews/<%= review.id %>">Review submitted count — <%= review.location_name %></a></p><% } %>
 <% for(const sheet of locals.countWorksheets||[]){ %><p><a href="/warehouse/counts/campaigns/<%= sheet.id %>"><%= sheet.title %></a> · <%= ({DRAFT:'Counting',APPLYING:'Applying approved variances',REVIEW_REQUIRED:'Review required',COMPLETED:'Completed'})[sheet.status] %></p><% } %>
 <details class="card card-body"><summary>Count a warehouse, zone or category</summary><p>Create a saved worksheet for quantity stock. Lot, serial and catch-weight stock need identity or weight checks on their product pages. One owner approval covers all worksheet variances; live stock operations can continue.</p><form method="post" action="/warehouse/counts/campaigns"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Count name<input name="title" required maxlength="160" value="Warehouse physical count"></label><label>Warehouse, zone or bin<select name="locationId" required><% for(const l of locations.filter(l=>Number(l.is_active))){ %><option value="<%= l.id %>"><%= l.name %></option><% } %></select></label><label>Category (blank includes all quantity stock)<input name="category" value="<%= category %>"></label><button class="btn">Create count worksheet</button></form></details>
 <form method="get" action="/warehouse/counts/new"><label class="field"><span>Find a product or SKU</span><input class="input" type="search" name="q" value="<%= q %>"></label><label class="field"><span>Category</span><input name="category" value="<%= category %>"></label><label class="field"><span>Location</span><select name="locationId"><option value="">Choose a location</option><% for(const location of locations.filter(l=>Number(l.is_active))){ %><option value="<%= location.id %>" <%= locationId===location.id?'selected':'' %>><%= location.name %></option><% } %></select></label><button class="btn" type="submit">Search</button></form>
 <%- include('../components/plan-lock',{capability:'inventory.counts',label:'Physical counts'}) %>
 <form method="post" action="/warehouse/counts/reviews" data-count-entry><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(locals.submissionKey){ %><input type="hidden" name="submissionKey" value="<%= submissionKey %>"><% } %>
 <label class="field"><span>Counted location</span><select name="locationId" required><option value="">Choose a location</option><% for(const location of locations.filter(l=>Number(l.is_active))){ %><option value="<%= location.id %>" <%= locationId===location.id?'selected':'' %>><%= location.name %></option><% } %></select></label><label class="field"><span>Reference (optional)</span><input name="reference" maxlength="160"></label>
 <%- include('../inventory/quantity-grid-picker',{gridKind:'count'}) %>
 <section class="card"><div class="card-body" data-count-lines><% for(const [index,row] of rows.entries()){ %><p><a href="/inventory/<%= encodeURIComponent(row.id) %>#modal-adjust"><%= row.name %><%= row.variant_label?' — '+row.variant_label:'' %> · <%= row.code %></a>
 <% if(row.tracking_mode==='quantity'&&!row.secondary_unit_label){ %><label>Counted quantity<input type="hidden" name="lines[<%= index %>][skuId]" value="<%= row.sku_id %>"><input type="number" name="lines[<%= index %>][quantity]" data-count-sku="<%= row.sku_id %>" min="0" step="<%= row.quantity_increment||'any' %>" aria-label="Counted quantity for <%= row.name %><%= row.variant_label?' — '+row.variant_label:'' %>"></label><% if(locationId){ %><small><%= row.on_hand %> currently recorded here.</small><% } %><label>Unit cost for additional stock (optional)<input name="lines[<%= index %>][unitCost]" inputmode="decimal" placeholder="Use saved purchase cost"></label>
 <% }else{ %><small>Open this product to identify its exact lots, serials or weight.</small><% } %></p><% } %><% if(!rows.length){ %><p>No products match this search. Clear the filters or choose a product in the grid.</p><% } %></div></section>
 <% if(hasMore){ %><p>Showing the first 50 variants. Refine the search or add more products using the grid.</p><% } %>
-<% if(locals.planGates?.['inventory.counts']?.enabled!==false){ %><button class="btn btn--primary" type="submit">Review count variances</button><% } %></form><script src="/variant-count-entry.js" defer></script>
+<% if(locals.planGates?.['inventory.counts']?.enabled!==false){ %><button class="btn btn--primary" type="submit"><%= locals.countRule?.automaticSubmission||(locals.countRule?.enabled&&countRule.rule?.automatic)?'Submit physical count':'Review count variances' %></button><% } %></form><script src="/variant-count-entry.js" defer></script>
