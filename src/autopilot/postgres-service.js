@@ -355,7 +355,7 @@ async function persistPlannedWork(database,workspaceId,entries){
    SELECT $1,id,0 FROM unnest($2::text[]) id ORDER BY id ON CONFLICT DO NOTHING`,[workspaceId,ids]);
    const versions=(await client.query('SELECT sku_id,version::text FROM stockchief_runtime.replenishment_source_versions WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id FOR SHARE',[workspaceId,ids])).rows;
    const current=batch.filter(row=>versions.find(v=>v.sku_id===row.recommended_action.skuId)?.version===row.recommended_action.sourceVersion);stale+=batch.length-current.length;
-   return client.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
+   const result=await client.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
    AS d(id text,event_id text,category text,source_evidence jsonb,affected_entities jsonb,recommended_action jsonb,
     priority integer,urgency text,confidence text,policy_id text,policy_evaluation jsonb,approval_requirement text,execution_status text,idempotency_key text,event_detail jsonb)),
    saved AS (INSERT INTO work_items(id,workspace_id,category,source,source_evidence,affected_entities,recommended_action,
@@ -364,7 +364,9 @@ async function persistPlannedWork(database,workspaceId,entries){
     ON CONFLICT DO NOTHING RETURNING *),
    events AS (INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,created_at)
     SELECT d.event_id,$1,saved.id,'planned',d.event_detail,$3 FROM saved JOIN supplied d ON d.id=saved.id RETURNING id)
-   SELECT saved.* FROM saved CROSS JOIN (SELECT count(*) FROM events) audit`,[workspaceId,JSON.stringify(current),nowIso()]);};
+   SELECT saved.* FROM saved CROSS JOIN (SELECT count(*) FROM events) audit`,[workspaceId,JSON.stringify(current),nowIso()]);
+   await require('./approval-email').enqueue(scopedDatabase(client),workspaceId,result.rows);
+   return result;};
   const result=typeof database.transaction==='function'?await database.transaction(save,{isolation:'SERIALIZABLE',retrySafe:true}):await save(database);
   const byId=new Map(result.rows.map(row=>[row.id,row]));for(const entry of batch)if(byId.has(entry.id))created.push(workFrom(byId.get(entry.id)));
  }return {created,stale};

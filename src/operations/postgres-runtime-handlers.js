@@ -531,6 +531,9 @@ async function systemEmail(job,database,options={}){
   if(receipt.payload_sha256!==digest)throw Object.assign(new Error('The durable email payload changed; delivery needs review.'),
     {code:'email_payload_changed',retryable:false});
   if(receipt.provider_id){await recordAttempt(receipt.accepted_attempt);return accepted({provider:'resend',externalId:receipt.provider_id,replayed:true});}
+  if(job.payload.messageType==='purchase_approval'&&!await require('../autopilot/approval-email').stillWanted(database,job,message.to)){
+    return {skipped:'This owner no longer needs this approval email.'};
+  }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
       VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)

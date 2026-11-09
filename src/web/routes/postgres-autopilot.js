@@ -296,6 +296,15 @@ function createPostgresAutopilotRouter(database){
     req.flash('success','Business review queued. You can leave this page; completed batches are saved automatically.');
     return res.redirect(303,req.body.returnToHome==='1'?'/':'/autopilot');
   }));
+  router.get('/autopilot/approval-email/:workspaceId/:workId',require('../middleware').requireAccount,asyncRoute(async(req,res)=>{
+    const {workspaceId,workId}=req.params;
+    const workspace=res.locals.workspaces.find(w=>w.workspaceId===workspaceId&&w.isOwner&&w.role==='owner');
+    if(!workspace)throw new (require('../../domain/errors').NotFoundError)();
+    await policy.requireWorkspaceJob(database,workspaceId,175,'draft');
+    const destination=workId==='inbox'?'/needs-you':'/autopilot/work/'+encodeURIComponent(workId);
+    if(req.ctx?.workspaceId===workspaceId)return res.redirect(destination);
+    return res.page('autopilot/approval-inventory',{title:'Open purchase approvals',workspace,workspaceId,destination});
+  }));
   router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');let approvalBlock=null;const action=item.recommendedAction;
     // Say what is in the way before the person presses Approve, not after.
     if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type==='purchase'&&action.supplierId&&(action.unitCost==null||action.value==null)){

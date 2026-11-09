@@ -10,6 +10,10 @@ const reviews=require('../../src/autopilot/job-reviews');
 test('a stock issue or sales reservation queues a ready PO before the next catalog check',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12}),{db,ctx,subscribe,browser,workflows}=f;
   const sku=f.item.skuIds[0],supplierId='fixture-supplier',locationId=f.location.id;
+  const priorEmail=process.env.RESEND_API_KEY,priorFrom=process.env.FOUNDRY_FROM_EMAIL;
+  process.env.RESEND_API_KEY='fixture-only';process.env.FOUNDRY_FROM_EMAIL='test@example.test';
+  t.after(()=>{if(priorEmail===undefined)delete process.env.RESEND_API_KEY;else process.env.RESEND_API_KEY=priorEmail;
+    if(priorFrom===undefined)delete process.env.FOUNDRY_FROM_EMAIL;else process.env.FOUNDRY_FROM_EMAIL=priorFrom;});
   await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
   await db.query("UPDATE suppliers SET email='reorders@example.test' WHERE id=$1",[supplierId]);
   await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId,skuId:sku,lastUnitCost:2,unitsPerPurchaseUnit:1,orderMultiple:1,minimumOrderQuantity:1,isPreferred:true});
@@ -18,10 +22,18 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,source,created_at,updated_at)
     VALUES($1,$2,$3,$4,8,20,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,locationId]);
   const runtime=require('../../src/operations/postgres-runtime-handlers').create(),queue=require('../../src/operations/postgres-job-queue');
-  const process=()=>queue.processOne(db,runtime,{owner:'threshold-test',kinds:['agent.reorder-signal']});
+  const signalWorker=()=>queue.processOne(db,runtime,{owner:'threshold-test',kinds:['agent.reorder-signal']});
+  const settings=await browser.get('/settings?section=notifications').expect(200);
+  const alerts=(enabled,recipients='')=>browser.post('/settings/email-alerts').type('form')
+    .send({_csrf:f.csrf(settings.text),enabled:enabled?'1':'0',minimumSeverity:'important',recipients}).expect(303);
+  await alerts(true);
+  const messages=[];
+  const mailHandlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async message=>{
+    messages.push(message);return {provider:'test',externalId:'mail-'+messages.length};}});
+  const deliver=()=>queue.processOne(db,mailHandlers,{owner:'approval-email-test',kinds:['system.email-send']});
   const pending=()=>db.query("SELECT id FROM work_items WHERE workspace_id=$1 AND execution_status='WAITING_FOR_APPROVAL' AND recommended_action::jsonb->>'skuId'=$2",[ctx.workspaceId,sku]);
   const issue=()=>require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId:sku,locationId,quantity:4,reasonCode:'sold',idempotencyKey:randomUUID()});
-  await issue();await subscribe('starter');assert.equal((await process()).status,'COMPLETED');
+  await issue();await subscribe('starter');assert.equal((await signalWorker()).status,'COMPLETED');
   let id=(await pending()).rows[0].id;
   const remaining=()=>db.query("SELECT count(*)::int n FROM purchase_orders WHERE workspace_id=$1 AND source='foundry_recommendation'",[ctx.workspaceId]);
   assert.equal((await remaining()).rows[0].n,0);
@@ -34,11 +46,42 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   // A reservation changes available stock from eight to six even though the shelf still holds eight.
   const order=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:locationId,
     idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:2,unitPriceMinor:500}]});
-  await workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});assert.equal((await process()).status,'COMPLETED');
+  await workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});assert.equal((await signalWorker()).status,'COMPLETED');
   const fresh=(await pending()).rows[0].id;assert.notEqual(fresh,id);id=fresh;
+  const obsolete=await deliver();assert.equal(obsolete.status,'COMPLETED');assert(obsolete.result.skipped);assert.equal(messages.length,0);
+  const notice=await deliver();assert.equal(notice.status,'COMPLETED');assert.equal(messages.length,1);assert.equal(messages[0].to,f.email);
+  const emailPath=new URL(messages[0].text.match(/https:\/\/\S+$/)[0]).pathname;
+  assert.equal(emailPath,'/autopilot/approval-email/'+ctx.workspaceId+'/'+id);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);await browser.get(emailPath).expect(302).expect('Location','/autopilot/work/'+id);
+    await browser.get('/autopilot/work/'+id).set('User-Agent','Mobile link preview').expect(200);
+  }
+  assert.equal((await remaining()).rows[0].n,0);
+  assert.equal((await require('../../src/operations/postgres-runtime-handlers').systemEmail(notice,db,{emailSender:()=>assert.fail('duplicate email')})).replayed,true);
+  const guard=require('../../src/autopilot/approval-email').stillWanted;
+  await alerts(true,'elsewhere@example.test');assert.equal(await guard(db,notice,f.email),false);
+  await alerts(false);assert.equal(await guard(db,notice,f.email),false);
+  await alerts(true);
+  const alternate=await require('../../src/domain/postgres-auth-service').createWorkspace(db,f.owner.accountId,{name:'Alternate inventory'});
+  await browser.post('/inventories/switch').type('form').send({_csrf:f.csrf(settings.text),workspaceId:alternate.workspaceId}).expect(303);
+  const picker=await browser.get(emailPath).expect(200);assert.match(picker.text,/Open this inventory/);
+  await browser.get(emailPath.replace(ctx.workspaceId,randomUUID())).expect(404);
+  await browser.post('/inventories/switch').type('form').send({_csrf:f.csrf(picker.text),workspaceId:ctx.workspaceId,next:'/autopilot/work/'+id}).expect(303);
   await subscribe('starter');const page=await browser.get('/autopilot/work/'+id).expect(200);
   const send=()=>browser.post('/autopilot/work/'+id+'/approve').type('form').send({_csrf:f.csrf(page.text)});
-  await send().expect(303);await send().expect(303);
+  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
+  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+  f.cleanup(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();});
+  const chrome=await require('playwright').chromium.launch();f.cleanup(()=>chrome.close());
+  const mobile=await chrome.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+  await mobile.goto('http://127.0.0.1:'+server.address().port+emailPath);
+  await mobile.locator('[name=email]').fill(f.email);await mobile.locator('[name=password]').fill(f.password);
+  await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Sign in',exact:true}).click()]);
+  assert.equal(await mobile.getByRole('button',{name:'Send to supplier'}).isVisible(),true);
+  assert.equal((await remaining()).rows[0].n,0);
+  await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Send to supplier'}).click()]);
+  await send().expect(303);
+  assert.equal(await guard(db,notice,f.email),false);
   assert.equal((await remaining()).rows[0].n,1);
   const stored=(await db.query("SELECT w.outcome::jsonb outcome,l.quantity_units FROM work_items w JOIN purchase_order_lines l ON l.purchase_order_id=w.purchase_order_id WHERE w.workspace_id=$1 AND w.id=$2",[ctx.workspaceId,id])).rows[0];
   assert.equal(Number(stored.quantity_units),14);assert.ok(stored.outcome.effectId);
