@@ -12,7 +12,8 @@ function allowance(plan, id) {
   // The owner chose page 11 for these two conflicts. A Starter supplier
   // link accompanies a human-approved PO. Growth playbooks run only steps
   // the owner has taught, within their individual plan permissions.
-  if (plan === 'starter' && id === 35) return 'draft';
+  // The owner also requires one approval per Starter shipment notice.
+  if (plan === 'starter' && (id === 35 || id === 60)) return 'draft';
   if (plan === 'growth' && id === 213) return 'trained';
   return plans.includes(plan) ? jobs.get(id)?.[plan] || 'excluded' : 'excluded';
 }

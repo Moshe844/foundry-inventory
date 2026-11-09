@@ -187,6 +187,8 @@
             </span>
           </label>
           <label class="choice">
+            <% if(locals.manualShippingNotices){ %><span class="choice-body"><strong>Automatic tracking emails · Growth</strong>
+              <span>Starter prepares each shipment email for your approval.</span> <a href="/billing">Upgrade</a></span><% }else{ %>
             <input type="radio" name="shippingNotice" value="send"
               <%= noticePolicy.shippingNotice === 'send' ? 'checked' : '' %>>
             <span class="choice-body">
@@ -195,7 +197,7 @@
                 Sent as soon as the physical carrier handoff is confirmed. Needs a connected mailbox, and
                 nothing goes out while StockChief is paused.
               </span>
-            </span>
+            </span><% } %>
           </label>
           <label class="choice">
             <input type="radio" name="shippingNotice" value="off"

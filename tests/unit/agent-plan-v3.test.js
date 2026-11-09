@@ -17,7 +17,7 @@ for (const [plan, column] of Object.entries(columns)) {
   test(plan + ' matches all 214 agent jobs and their maximum authority', () => {
     assert.equal(column.length, 214);
     for (const [i, symbol] of [...column].entries()) {
-      const id=i+1, effective=plan==='starter'&&id===35?'D':plan==='growth'&&id===213?'T':symbol, label=`${plan} job ${id}`, facts={ edi:true };
+      const id=i+1, effective=plan==='starter'&&[35,60].includes(id)?'D':plan==='growth'&&id===213?'T':symbol, label=`${plan} job ${id}`, facts={ edi:true };
       assert.equal(allowance(plan,id), modes[effective],label);
       assert.equal(permits(plan,id,'suggest',facts),effective!=='-',label);
       assert.equal(permits(plan,id,'draft',facts),'ADT'.includes(effective),label);

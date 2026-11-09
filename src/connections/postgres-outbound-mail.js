@@ -234,9 +234,10 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
   }catch(error){
     const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,apply:async(client)=>{
-      const at=nowIso();await client.query(`UPDATE ${table} SET status='FAILED',error_message=$3,updated_at=$4
+      const review=(!providerCalled&&input.standingAuthority?.kind==='shipment_notice'&&error.code==='shipment_needs_approval');
+      const at=nowIso();await client.query(`UPDATE ${table} SET status=$5,error_message=$3,updated_at=$4
         WHERE workspace_id=$1 AND id=$2 AND status IN ('QUEUED','SENDING')`,[workspaceId,input.communicationId,
-        String(ambiguous?'The mailbox provider outcome is uncertain. StockChief did not send this message again.':error.message).slice(0,500),at]);
+        String(ambiguous?'The mailbox provider outcome is uncertain. StockChief did not send this message again.':error.message).slice(0,500),at,review?'PREPARED':'FAILED']);
       if(ambiguous)await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,
         fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
         VALUES($1,$2,$3,$4,'EMAIL_SEND_AMBIGUOUS',$5,'Email delivery could not be verified',$6,$7,'OPEN',$8,$8)

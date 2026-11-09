@@ -437,10 +437,12 @@ function createPostgresCommerceRouter(database,options={}){
         AND provider_type IN ('gmail','microsoft365') AND status='connected' ORDER BY display_name`,[req.ctx.workspaceId]),
     ]);
     const policy=policyRows.rows[0]||{};
+    const agentPolicy=require('../../commercial/agent-plan'),account=await agentPolicy.accountState(database,req.ctx.workspaceId);
+    const manualShippingNotices=agentPolicy.usesAgentTerms(account)&&!agentPolicy.permits(account.plan,60,'automatic');
     return res.page('sales/fulfilment',{title:'Fulfilment',nav:'sales',queue:{open:openRows.rows,ready:readyRows.rows},
       waitingNotices:noticeRows.rows.map((row)=>({shipmentId:row.shipment_id,customerName:row.customer_name,
         recipient:row.recipient,orderNumber:row.order_number,shipmentNumber:row.shipment_number,status:row.status,errorMessage:row.error_message})),
-      noticePolicy:{shippingNotice:policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
+      manualShippingNotices,noticePolicy:{shippingNotice:manualShippingNotices&&policy.shipping_notice==='send'?'prepare':policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
         deliveredNotice:policy.delivered_notice||'prepare',exceptionNotice:policy.exception_notice||'prepare',
         connectorId:policy.connector_id||'',businessName:policy.business_name||'',signature:policy.signature||''},
       mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN)});
@@ -448,7 +450,8 @@ function createPostgresCommerceRouter(database,options={}){
   router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
     const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
     const agentPolicy=require('../../commercial/agent-plan');
-    const automatic=req.body.shippingNotice==='send'&&agentPolicy.usesAgentTerms(await agentPolicy.accountState(database,req.ctx.workspaceId));
+    const account=await agentPolicy.accountState(database,req.ctx.workspaceId),automatic=req.body.shippingNotice==='send'&&agentPolicy.usesAgentTerms(account);
+    if(automatic)agentPolicy.requireJob(account.plan,60,'automatic');
     if(automatic&&req.user.role!=='owner')throw new AuthorizationError('Only the inventory owner can authorize automatic customer shipping notices.');
     const mailbox=automatic?await require('../../shipping/agent-shipping-notices').mailbox(database,req.ctx.workspaceId,req.body.connectorId):null;
     if(automatic&&!mailbox)throw new ValidationError('Choose a connected mailbox with email sending permission to send shipping notices automatically.');

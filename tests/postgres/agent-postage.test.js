@@ -15,9 +15,9 @@ test('physical carrier handoff prepares one tracking notice and checks current a
   const mail=require('../../src/connections/postgres-outbound-mail'),sent=[];
   const provider={send:async({message})=>{sent.push(message);return {externalMessageId:'accept-'+message.id};}};
   await subscribe('starter');const page=await browser.get('/fulfilment').expect(200);
-  const settings=mode=>browser.post('/fulfilment/settings/notices').type('form').send({_csrf:f.csrf(page.text),shippingNotice:mode,connectorId:connector}).expect(303);
+  const settings=(mode,status=303)=>browser.post('/fulfilment/settings/notices').set('Accept','application/json').type('form').send({_csrf:f.csrf(page.text),shippingNotice:mode,connectorId:connector}).expect(status);
   const notice=async id=>(await db.query(`SELECT n.*,e.id effect FROM customer_communications n LEFT JOIN stockchief_runtime.provider_effects e
-    ON e.workspace_id=n.workspace_id AND e.kind='mail.outbound.send' AND e.aggregate_id=n.id WHERE n.workspace_id=$1 AND n.shipment_id=$2`,[ctx.workspaceId,id])).rows[0];
+    ON e.workspace_id=n.workspace_id AND e.kind='mail.outbound.send' AND e.aggregate_id=n.id WHERE n.workspace_id=$1 AND n.shipment_id=$2 ORDER BY e.created_at DESC NULLS LAST,e.id DESC`,[ctx.workspaceId,id])).rows[0];
   async function physical(){
     const {shipmentId:id}=await f.parcel();await shipping.markPacked(db,ctx,id);
     const jobs=()=>db.query("SELECT * FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.shipment-notice' AND payload->>'shipmentId'=$2",[ctx.workspaceId,id]);
@@ -28,23 +28,37 @@ test('physical carrier handoff prepares one tracking notice and checks current a
     await run();assert.ok((await run()).replayed);
     return {id,note:await notice(id)};
   }
-  await settings('send');
-  for(const tier of ['starter','growth','pro','enterprise']){
+  async function tap(id){
+    const note=await notice(id),url='/fulfilment/'+id,review=await browser.get(url).expect(200);
+    assert.match(review.text,/Send to receiver@example.test/);
+    await browser.post(url+'/notice').type('form').send({_csrf:f.csrf(review.text),version:note.updated_at,messageId:note.id,
+      subject:note.subject,body:note.body,connectorId:connector,action:'send'}).expect(303);
+    const approved=await notice(id);assert.equal((await mail.executeSendEffect(db,ctx.workspaceId,approved.effect,{provider})).message.status,'SENT');
+  }
+  assert.match(page.text,/Automatic tracking emails · Growth/);assert.doesNotMatch(page.text,/name="shippingNotice" value="send"/);
+  await settings('send',402);await settings('prepare');
+  const starter=await physical();assert.equal(starter.note.status,'PREPARED');assert.equal(starter.note.effect,null);
+  await tap(starter.id);assert.equal(sent.length,1);
+  await subscribe('growth');const auto=require('../../src/autopilot/postgres-service');
+  await auto.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');await settings('send');
+  for(const tier of ['growth','pro','enterprise']){
     await subscribe(tier);const {note}=await physical();assert.equal(note.status,'QUEUED');
     const result=await mail.executeSendEffect(db,ctx.workspaceId,note.effect,{provider});assert.equal(result.message.status,'SENT');
     await mail.executeSendEffect(db,ctx.workspaceId,note.effect,{provider});
     assert.equal(sent.at(-1).recipient,'receiver@example.test');assert.match(sent.at(-1).body,/1Z999AA10123456784/);
   }
   assert.equal(sent.length,4);
+  await subscribe('pro');const pending=await physical();await subscribe('starter');
+  await assert.rejects(mail.executeSendEffect(db,ctx.workspaceId,pending.note.effect,{provider}),/Approve this tracking email/);
+  assert.equal((await notice(pending.id)).status,'PREPARED');assert.equal(sent.length,4);
+  await tap(pending.id);assert.equal(sent.length,5);
+  const nextStarter=await physical();assert.equal(nextStarter.note.status,'PREPARED');assert.equal(nextStarter.note.effect,null);
+  await subscribe('pro');
   const revoked=await physical();await settings('off');
   await assert.rejects(mail.executeSendEffect(db,ctx.workspaceId,revoked.note.effect,{provider}),/setting changed/);
-  assert.equal(sent.length,4);
+  assert.equal(sent.length,5);
   await settings('prepare');const hold=await physical();assert.equal(hold.note.status,'PREPARED');assert.equal(hold.note.effect,null);
-  const url='/fulfilment/'+hold.id,review=await browser.get(url).expect(200);
-  await browser.post(url+'/notice').type('form').send({_csrf:f.csrf(review.text),version:hold.note.updated_at,messageId:hold.note.id,
-    subject:hold.note.subject,body:'Your parcel tracking is 1Z999AA10123456784',connectorId:connector,action:'send'}).expect(303);
-  const approved=await notice(hold.id);
-  assert.equal((await mail.executeSendEffect(db,ctx.workspaceId,approved.effect,{provider})).message.status,'SENT');assert.equal(sent.length,5);
+  await tap(hold.id);assert.equal(sent.length,6);
 });
 test('unusual automatic spending or volume pauses the inventory until an owner reviews it',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
