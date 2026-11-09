@@ -51,7 +51,7 @@ async function load(db,ctx,id){await owner(db,ctx);const row=(await db.query('SE
 async function forRecord(db,ctx,kind,id,after=''){
  await owner(db,ctx);const record=await target(db,ctx,kind,id);let cursor=null;
  if(after){if(typeof after!=='string'||after.length>120)throw new ValidationError('Choose a valid document page.');cursor=(await db.query('SELECT created_at::text AS created_at FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND target_kind=$2 AND target_id=$3 AND id=$4',[ctx.workspaceId,kind,id,after])).rows[0];if(!cursor)throw new ValidationError('Reopen the document list before continuing.');}
- const rows=(await db.query(`SELECT id,filename,document_kind,created_at FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND target_kind=$2 AND target_id=$3 AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5)) ORDER BY created_at DESC,id DESC LIMIT 51`,[ctx.workspaceId,kind,id,cursor?.created_at||null,after])).rows;
+ const rows=(await db.query(`SELECT id,filename,document_kind,created_at,jsonb_array_length(product_facts) AS fact_count FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND target_kind=$2 AND target_id=$3 AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5)) ORDER BY created_at DESC,id DESC LIMIT 51`,[ctx.workspaceId,kind,id,cursor?.created_at||null,after])).rows;
  return {reference:record[targets[kind].reference],targetHref:targets[kind].path+id,rows:rows.slice(0,50),next:rows.length>50?rows[49].id:null};
 }
 async function review(db,ctx,{page=1,filter=''},onlyShipping=false){

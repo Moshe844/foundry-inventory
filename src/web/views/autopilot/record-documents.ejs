@@ -1,5 +1,5 @@
 <section class="card card-body section"><h2>Documents for <%= documents.reference %></h2>
  <% if(!documents.rows.length){ %><p>No documents have been filed on this record.</p><% } %>
- <% for(const document of documents.rows){ %><p style="overflow-wrap:anywhere"><a href="/autopilot/documents/<%= document.id %>"><%= document.filename %></a> · <%= document.document_kind.replace(/_/g,' ') %></p><% } %>
+ <% for(const document of documents.rows){ %><p style="overflow-wrap:anywhere"><a href="/autopilot/documents/<%= document.id %>"><%= document.filename %></a> · <%= document.document_kind.replace(/_/g,' ') %><% if(document.fact_count){ %> · <a href="/autopilot/documents/<%= document.id %>#product-facts"><%= document.fact_count %> saved product facts</a><% } %></p><% } %>
  <% if(documents.next){ %><p><a class="btn" href="/autopilot/documents?<%= documentQuery %>&amp;after=<%= documents.next %>">Next documents</a></p><% } %>
 </section>
