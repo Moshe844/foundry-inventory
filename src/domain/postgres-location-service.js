@@ -26,11 +26,13 @@ async function requireLocation(client,workspaceId,id,label='location'){
 }
 
 // Whole units add up. Something measured (kilograms, metres) is never added to them.
-const STOCK_BY_UNIT=`,COALESCE((SELECT SUM(b.on_hand) FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-      WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND i.quantity_precision=0),0) AS whole_units,
-      (SELECT jsonb_agg(jsonb_build_object('unit',measured.unit,'quantity',measured.quantity) ORDER BY measured.unit) FROM (SELECT coalesce(i.unit_label,'measured') AS unit,SUM(b.on_hand) AS quantity
-        FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-        WHERE b.workspace_id=tree.workspace_id AND b.location_id=tree.id AND i.quantity_precision>0 AND b.on_hand<>0 GROUP BY coalesce(i.unit_label,'measured')) measured) AS measured_stock`;
+// Per-product location totals (a maintained rollup) give the same sums as
+// joining every stock position to its product, without reading every position.
+const STOCK_BY_UNIT=`,COALESCE((SELECT SUM(r.on_hand) FROM item_location_balances r JOIN items i ON i.workspace_id=r.workspace_id AND i.id=r.item_id
+      WHERE r.workspace_id=tree.workspace_id AND r.location_id=tree.id AND i.quantity_precision=0),0) AS whole_units,
+      (SELECT jsonb_agg(jsonb_build_object('unit',measured.unit,'quantity',measured.quantity) ORDER BY measured.unit) FROM (SELECT coalesce(i.unit_label,'measured') AS unit,SUM(r.on_hand) AS quantity
+        FROM item_location_balances r JOIN items i ON i.workspace_id=r.workspace_id AND i.id=r.item_id
+        WHERE r.workspace_id=tree.workspace_id AND r.location_id=tree.id AND i.quantity_precision>0 AND r.on_hand<>0 GROUP BY coalesce(i.unit_label,'measured')) measured) AS measured_stock`;
 async function listHierarchy(database,workspaceId,{includeInactive=false,includeStock=true,stockByUnit=false}={}){
   const stockColumns=includeStock?`,COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=tree.workspace_id
       AND b.location_id=tree.id),0) AS on_hand,COALESCE((SELECT COUNT(DISTINCT b.sku_id) FROM balances b

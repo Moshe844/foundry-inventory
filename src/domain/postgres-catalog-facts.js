@@ -28,14 +28,21 @@ async function saveManyInTransaction(client,ctx,inputs){
   if(saved.rowCount!==documents.length)throw new ValidationError('Imported product details did not reconcile.');
  }
 }
+// Only the scope in use reaches SQL. Both variant-led indexes are partial (with
+// and without attributes), so a variant lookup asks each half by its own index;
+// a single unqualified condition read every business's facts instead.
 async function read(database,workspaceId,{skuIds=null,itemIds=null,catalog=false}={}){return(await database.query(`SELECT
  CASE WHEN f.attributes IS NULL THEN f.id ELSE f.id||':'||md5(field.key) END AS id,f.workspace_id,f.sku_id,f.location_id,field.key AS name,field.value,
  f.source_import_id,f.source_row,f.updated_at${catalog?',s.code,l.name AS location_name':''}
- FROM catalog_source_facts f JOIN skus s ON s.workspace_id=f.workspace_id AND s.id=f.sku_id
+ FROM ${skuIds?`(SELECT * FROM catalog_source_facts WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND attributes IS NOT NULL
+   UNION ALL SELECT * FROM catalog_source_facts WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND attributes IS NULL)`:'catalog_source_facts'} f JOIN skus s ON s.workspace_id=f.workspace_id AND s.id=f.sku_id
  LEFT JOIN locations l ON l.workspace_id=f.workspace_id AND l.id=f.location_id
  CROSS JOIN LATERAL jsonb_each_text(CASE WHEN f.attributes IS NULL THEN jsonb_build_object(f.name,f.value) ELSE f.attributes END) field
- WHERE f.workspace_id=$1 AND ($2::text[] IS NULL OR f.sku_id=ANY($2::text[])) AND ($3::text[] IS NULL OR s.item_id=ANY($3::text[]))
- ORDER BY s.code,l.name NULLS FIRST,field.key,f.id`,[workspaceId,skuIds,itemIds])).rows;}
+ WHERE f.workspace_id=$1${skuIds?' AND f.sku_id=ANY($2::text[])':''}${itemIds?` AND s.item_id=ANY($${skuIds?3:2}::text[])`:''}
+ ORDER BY s.code,l.name NULLS FIRST,field.key,f.id`,[workspaceId,...(skuIds?[skuIds]:[]),...(itemIds?[itemIds]:[])])).rows;}
+async function listForSkus(database,workspaceId,ids){return ids.length?read(database,workspaceId,{skuIds:ids,catalog:true}):[];}
+async function exportRows(database,workspaceId,{itemIds=null}={}){return read(database,workspaceId,{itemIds});}
+module.exports={saveManyInTransaction,listForSkus,exportRows};
 async function listForSkus(database,workspaceId,ids){return ids.length?read(database,workspaceId,{skuIds:ids,catalog:true}):[];}
 async function exportRows(database,workspaceId,{itemIds=null}={}){return read(database,workspaceId,{itemIds});}
 module.exports={saveManyInTransaction,listForSkus,exportRows};

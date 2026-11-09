@@ -271,10 +271,25 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     COALESCE((SELECT SUM(on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS on_hand,COALESCE((SELECT SUM(secondary_on_hand) FROM item_location_balances WHERE workspace_id=$1 AND item_id=$2),0) AS secondary_on_hand`, [workspaceId, itemId]);
   const skuCount = Number(totalResult.rows[0].sku_count || 0);
   const pageSize = 25;
-  const pageCount = Math.max(1, Math.ceil(skuCount / pageSize));
+  // Variant search and filters: any text in the code, name or barcode, any
+  // option value, and "low only". Every product with variants gets the same.
+  const variantQuery=String(input.variantQuery||'').trim().slice(0,120);
+  const optionFilter=input.variantOptions&&typeof input.variantOptions==='object'&&!Array.isArray(input.variantOptions)
+    ?Object.fromEntries(Object.entries(input.variantOptions).filter(([,value])=>typeof value==='string'&&value.trim()).slice(0,12).map(([name,value])=>[String(name).slice(0,120),value.trim().slice(0,120)])):{};
+  const lowIds=input.variantLow===true?(await database.query(`SELECT DISTINCT sku_id FROM (${require('../reports/low-stock-source').source({scopeItems:true,skuIdsOnly:true})}) low`,[workspaceId,[itemId]])).rows.map((row)=>row.sku_id):null;
+  const variantFiltered=Boolean(variantQuery||Object.keys(optionFilter).length||lowIds);
+  // Only the filters in use reach SQL; an unfiltered page reads its 25 variants by key.
+  const filterParts=[],filterValues=[];
+  const filterSql=(n)=>filterParts.map((part)=>part.replace(/\$(\d+)\$/g,(m,i)=>'$'+(n+Number(i)))).join(' ');
+  if(variantQuery){filterParts.push(`AND (code ILIKE $${filterValues.length}$ OR coalesce(variant_label,'') ILIKE $${filterValues.length}$ OR coalesce(barcode,'') ILIKE $${filterValues.length}$)`);filterValues.push('%'+variantQuery.replace(/[\\%_]/g,'\\$&')+'%');}
+  if(Object.keys(optionFilter).length){filterParts.push(`AND NOT EXISTS(SELECT 1 FROM jsonb_each_text($${filterValues.length}$::jsonb) f WHERE NOT EXISTS(SELECT 1 FROM sku_option_values v JOIN item_options o ON o.id=v.option_id
+        AND o.workspace_id=$1 AND o.item_id=$2 WHERE v.sku_id=skus.id AND o.name=f.key AND v.value=f.value))`);filterValues.push(JSON.stringify(optionFilter));}
+  if(lowIds){filterParts.push(`AND id=ANY($${filterValues.length}$::text[])`);filterValues.push(lowIds);}
+  const variantMatchCount=variantFiltered?Number((await database.query(`SELECT count(*) AS n FROM skus WHERE workspace_id=$1 AND item_id=$2 ${filterSql(3)}`,[workspaceId,itemId,...filterValues])).rows[0].n):skuCount;
+  const pageCount = Math.max(1, Math.ceil(variantMatchCount / pageSize));
   const page = Math.min(pageCount, Math.max(1, Number.parseInt(input.page, 10) || 1));
   const skuResult = await database.query(`WITH selected_skus AS MATERIALIZED (
-      SELECT * FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position,id LIMIT $3 OFFSET $4
+      SELECT * FROM skus WHERE workspace_id=$1 AND item_id=$2 ${filterSql(5)} ORDER BY position,id LIMIT $3 OFFSET $4
     ), committed AS (
       SELECT a.sku_id,COALESCE(SUM(a.quantity),0) AS quantity FROM sales_stock_commitments a
       WHERE a.workspace_id=$1 AND a.sku_id IN (SELECT id FROM selected_skus) GROUP BY a.sku_id
@@ -290,7 +305,7 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     FROM selected_skus s LEFT JOIN stock ON stock.sku_id=s.id LEFT JOIN committed ON committed.sku_id=s.id
     LEFT JOIN purchase_incoming ON purchase_incoming.sku_id=s.id
     ORDER BY s.position,s.id`,
-  [workspaceId, itemId, pageSize, (page - 1) * pageSize]);
+  [workspaceId, itemId, pageSize, (page - 1) * pageSize, ...filterValues]);
   const skuIds = skuResult.rows.map((row) => row.id);
   const variantValues=skuIds.length?(await database.query('SELECT v.sku_id,o.name,v.value FROM sku_option_values v JOIN item_options o ON o.id=v.option_id WHERE o.workspace_id=$1 AND o.item_id=$2 AND v.sku_id=ANY($3::text[])',[workspaceId,itemId,skuIds])).rows:[];
   let positions = [];
@@ -365,11 +380,11 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       WHERE unit.workspace_id=$1 AND sku.item_id=$2
         AND ($3='' OR lower(unit.serial)=lower($3)) AND ($4::text IS NULL OR unit.id>$4)
       ORDER BY unit.id LIMIT $5`,[workspaceId,itemId,trackingQuery,input.afterSerialId||null,trackingLimit+1]),
-    database.query(`SELECT location.id,location.name,COALESCE(SUM(balance.on_hand),0) AS total
-      FROM balances balance JOIN skus sku ON sku.id=balance.sku_id
-      JOIN locations location ON location.id=balance.location_id
-      WHERE balance.workspace_id=$1 AND sku.item_id=$2 GROUP BY location.id,location.name
-      HAVING COALESCE(SUM(balance.on_hand),0)<>0 ORDER BY location.name`,[workspaceId,itemId]),
+    // The per-product location rollup already holds these sums; adding up every
+    // variant's balance read all of a large product's stock positions.
+    database.query(`SELECT location.id,location.name,rollup.on_hand AS total
+      FROM item_location_balances rollup JOIN locations location ON location.id=rollup.location_id AND location.workspace_id=rollup.workspace_id
+      WHERE rollup.workspace_id=$1 AND rollup.item_id=$2 AND rollup.on_hand<>0 ORDER BY location.name`,[workspaceId,itemId]),
   ]);
   const lotsById=new Map();for(const row of lotResult.rows){let lot=lotsById.get(row.id);if(!lot){lot={id:row.id,
       sku_id:row.sku_id,code:row.code,received_at:row.received_at,expires_at:row.expires_at,
@@ -392,7 +407,8 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       nextLotId:lotsById.size>trackingLimit?[...lotsById.keys()][trackingLimit-1]:null,
       nextSerialId:unitResult.rows.length>trackingLimit?unitResult.rows[trackingLimit-1].id:null},
     locationTotals:locationTotalResult.rows.map((row)=>({...row,total:Number(row.total)})),
-    variantTotal: skuCount, variantPage: page, variantPageSize: pageSize,variantPageCount: pageCount };
+    variantTotal: skuCount, variantPage: page, variantPageSize: pageSize,variantPageCount: pageCount,
+    variantFiltered, variantMatchCount, variantFilters:{query:variantQuery,options:optionFilter,low:Boolean(lowIds)} };
 }
 
 async function updateItem(database,ctx,itemId,input){

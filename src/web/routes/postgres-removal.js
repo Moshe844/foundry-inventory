@@ -16,7 +16,7 @@ function createPostgresRemovalRouter(database){
   let done;
   try{done=await removal.remove(database,req.ctx,req.user,req.params.kind,req.params.id,{expectedHash:String(req.body.reviewHash||'')});}
   catch(error){if(!error.status||error.status>=500||error.status===403||error.status===404)throw error;return show(req,res,error.message);}
-  if(done.outcome==='running')return res.redirect(303,'/delete/import/'+encodeURIComponent(req.params.id));
+  if(done.outcome==='running')return res.redirect(303,'/delete/'+req.params.kind+'/'+encodeURIComponent(req.params.id));
   const name=done.name;
   req.flash('success',done.outcome==='erased'?`${name} was deleted.`:done.outcome==='removed'?`${name} was deleted.`
    :`${name} was deleted from your lists. Its past records stay in your history${done.removed?.positions?', and its remaining stock was written off':''}.`);

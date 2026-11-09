@@ -96,9 +96,11 @@ async function activityPage(database,workspaceId,query,includeSecurity=false,pag
   if(filters.dateTo)add('m.occurred_at::timestamptz<?::timestamptz',clock.dayBoundary(filters.dateTo,timeZone,{nextDay:true}));
   if(search){values.push(`%${search}%`);const index=values.length;clauses.push(`(i.name ILIKE $${index} OR s.code ILIKE $${index}
     OR COALESCE(m.reference,'') ILIKE $${index} OR COALESCE(m.notes,'') ILIKE $${index} OR l.name ILIKE $${index})`);}
-  const where=clauses.join(' AND ');const count=(await database.query(`SELECT COUNT(*) AS count FROM movements m
-    JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
-    JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id WHERE ${where}`,values)).rows[0];
+  // Paging needs to know there is more, not the exact size of a large history:
+  // count at most 10,001 rows, and join names only when searching by them.
+  const where=clauses.join(' AND ');const count=(await database.query(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM movements m
+    ${search?`JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
+    JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id`:''} WHERE ${where} LIMIT 10001) capped`,values)).rows[0];
   const movementFilters=[...values];const movementSelect=`SELECT m.*,i.name AS item_name,
     s.code,s.variant_label,l.name AS location_name,u.name AS actor_name FROM movements m
     JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
