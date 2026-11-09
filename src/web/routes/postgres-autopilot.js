@@ -185,6 +185,10 @@ function createPostgresAutopilotRouter(database){
     try{await edi.access(database,req.ctx);}catch(error){if(error.code!=='entitlement_required')throw error;ediEnabled=false;}
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
+  router.post('/autopilot/partner-stock-readings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/third-party-stock');
+  }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});

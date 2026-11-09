@@ -108,15 +108,22 @@ async function refresh(db,ctx,orderId,transport){
   const order=await (await remote(db,ctx,con,transport)).order(row.provider_order_id,orderId);
   await save(db,ctx,orderId,row.request_hash,order);
 }
-async function stock(db,ctx,input,transport){
+async function stock(db,ctx,input,transport,authorizeRefresh){
   await access(db,ctx);const con=await connection(db,ctx);
   const skus=(await db.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND lower(code)=lower($2) AND is_active=1',[ctx.workspaceId,String(input.sku||'').trim()])).rows;
   if(skus.length!==1)throw new ValidationError('Enter one exact active SKU.');
-  const value=await (await remote(db,ctx,con,transport)).stock(input.inventoryId,skus[0].code);
-  await db.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_stock(workspace_id,sku_id,inventory_id,connector_id,on_hand,fulfillable)
-    VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,sku_id) DO UPDATE SET inventory_id=excluded.inventory_id,
-    connector_id=excluded.connector_id,on_hand=excluded.on_hand,fulfillable=excluded.fulfillable,observed_at=now()`,
-  [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity]);
+  if(authorizeRefresh)await authorizeRefresh(db);
+  const requestedAt=new Date().toISOString(),value=await (await remote(db,ctx,con,transport)).stock(input.inventoryId,skus[0].code);
+  await db.transaction(async c=>{
+   await access(c,ctx);const current=await connection(c,ctx);
+   if(current.id!==con.id||current.channelId!==con.channelId)throw new ValidationError('The stock connection changed while reading. Request a fresh reading.');
+   if(authorizeRefresh)await authorizeRefresh(c);
+   await c.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_stock(workspace_id,sku_id,inventory_id,connector_id,on_hand,fulfillable,observed_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,sku_id) DO UPDATE SET inventory_id=excluded.inventory_id,
+    connector_id=excluded.connector_id,on_hand=excluded.on_hand,fulfillable=excluded.fulfillable,observed_at=excluded.observed_at
+    WHERE shipbob_sandbox_stock.observed_at<=excluded.observed_at`,
+   [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity,requestedAt]);
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function configureRule(db,ctx,input){
   return db.transaction(async c=>{

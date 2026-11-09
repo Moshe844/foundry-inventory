@@ -392,6 +392,7 @@ async function runtimeSweep(job,client,options={}){
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
   await require('../connections/postgres-shipbob-sandbox').schedule(client);
+  await require('../connections/agent-partner-stock-reads').schedule(client);
   await require('../connections/postgres-orderful-test').schedule(client);
   const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
   const scheduledGoals=await require('../assistant/postgres-goal-resume').sweep(scopedDatabase(client));
@@ -658,6 +659,10 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'shipbob.sandbox-order':external(async(job,database)=>{
     try{return await require('../connections/postgres-shipbob-sandbox').runJob(database,job,options.shipbobFetch);}
     catch(error){if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
+  }),
+  'shipbob.sandbox-stock':external(async(job,database)=>{
+    try{return await require('../connections/agent-partner-stock-reads').run(database,job,options.shipbobFetch);}
+    catch(error){if(error.retryable||[400,402,403,404].includes(error.status))await require('../connections/agent-partner-stock-reads').noteIssue(database,job,error);if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'agent.playbook':external(async(job,database)=>{
     try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key);}

@@ -139,6 +139,7 @@ async function run(db,ctx,key,options={}){
     if(mode==='suggest')return {label:def.label,summary:result.summary,
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...(result.mapForm?{mapForm:result.mapForm}:{}),

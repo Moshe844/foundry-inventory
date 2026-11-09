@@ -15,7 +15,7 @@ function client({apiKey,channelId},fetchImpl=fetch){
     try{
       response=await fetchImpl(base+path,{headers,method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{}),
         signal:AbortSignal.timeout(12000),redirect:'error'});
-    }catch{const error=new ValidationError('ShipBob sandbox did not respond. Retry this order using the same reference.');error.retryable=true;throw error;}
+    }catch{const error=new ValidationError(path.startsWith('inventory-level/')?'ShipBob sandbox did not respond. The saved stock reading is unchanged.':'ShipBob sandbox did not respond. Retry this order using the same reference.');error.retryable=true;throw error;}
     if(!response.ok){
       const error=new ValidationError('ShipBob sandbox returned HTTP '+response.status+'. Check the connected channel and request.');
       error.providerStatus=response.status;error.retryable=response.status===429||response.status>=500;throw error;
