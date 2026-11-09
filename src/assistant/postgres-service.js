@@ -2112,7 +2112,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2135,7 +2135,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       if(contract.name!=='sales_order.reserve_arrived')throw new ValidationError('Arrived stock authority cannot run another kind of action.');
       routineAuthority=await require('../sales/agent-arrived-stock').requireRoutineAuthority(client,ctx);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine;
+    if(pickReleaseRoutine){
+      if(contract.name!=='warehouse.release_orders')throw new ValidationError('Pick release authority cannot run another kind of action.');
+      routineAuthority=await require('../warehouse/agent-pick-release').requireRoutineAuthority(client,ctx);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2220,6 +2224,10 @@ async function executeArrivedStockRoutine(database,ctx,id){
   const committed=await executeProposalCore(database,ctx,id,{arrivedStockRoutine:true});
   return continueRoutineProposal(database,ctx,committed);
 }
+async function executePickReleaseRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{pickReleaseRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
 async function continueRoutineProposal(database,ctx,committed){
   // Settle only the frozen plan's canonical dependencies. This never creates a
   // human approval or grants a paid model call to the routine worker.
@@ -2288,5 +2296,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

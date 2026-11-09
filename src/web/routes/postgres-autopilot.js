@@ -185,6 +185,9 @@ function createPostgresAutopilotRouter(database){
     try{await edi.access(database,req.ctx);}catch(error){if(error.code!=='entitlement_required')throw error;ediEnabled=false;}
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
+  router.post('/autopilot/pick-release/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../warehouse/agent-pick-release').recheck(database,req.ctx);res.redirect(303,'/autopilot/reviews/pick-release');
+  }));
   router.post('/autopilot/pick-release/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Release the next ready orders at this warehouse',{action:'warehouse.release_orders',recordReference:req.body.order,quantity:req.body.quantity,strategy:req.body.strategy});
     if(prepared.status!=='PREPARED')throw new (require('../../domain/errors').ValidationError)(prepared.message||'Choose the first ready order at this warehouse.');
