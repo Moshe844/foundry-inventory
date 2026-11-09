@@ -7,6 +7,42 @@ const autonomy=require('../../src/autopilot/postgres-service');
 const terms=require('../../src/purchasing/agent-order-quantities');
 const reviews=require('../../src/autopilot/job-reviews');
 
+test('a stock issue or sales reservation queues a ready PO before the next catalog check',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12}),{db,ctx,subscribe,browser,workflows}=f;
+  const sku=f.item.skuIds[0],supplierId='fixture-supplier',locationId=f.location.id;
+  await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
+  await db.query("UPDATE suppliers SET email='reorders@example.test' WHERE id=$1",[supplierId]);
+  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId,skuId:sku,lastUnitCost:2,unitsPerPurchaseUnit:1,orderMultiple:1,minimumOrderQuantity:1,isPreferred:true});
+  await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,created_at,updated_at)
+    VALUES($1,$2,$1,'Reorder mailbox','gmail','[]','{}','connected','[]',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId]);
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,8,20,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,locationId]);
+  const runtime=require('../../src/operations/postgres-runtime-handlers').create(),queue=require('../../src/operations/postgres-job-queue');
+  const process=()=>queue.processOne(db,runtime,{owner:'threshold-test',kinds:['agent.reorder-signal']});
+  const pending=()=>db.query("SELECT id FROM work_items WHERE workspace_id=$1 AND execution_status='WAITING_FOR_APPROVAL' AND recommended_action::jsonb->>'skuId'=$2",[ctx.workspaceId,sku]);
+  const issue=()=>require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId:sku,locationId,quantity:4,reasonCode:'sold',idempotencyKey:randomUUID()});
+  await issue();await subscribe('starter');assert.equal((await process()).status,'COMPLETED');
+  let id=(await pending()).rows[0].id;
+  const remaining=()=>db.query("SELECT count(*)::int n FROM purchase_orders WHERE workspace_id=$1 AND source='foundry_recommendation'",[ctx.workspaceId]);
+  assert.equal((await remaining()).rows[0].n,0);
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);assert.match((await browser.get('/autopilot/work/'+id).expect(200)).text,/Send to supplier/);
+  }
+  const signal=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.reorder-signal'",[ctx.workspaceId])).rows[0].payload;
+  assert.equal((await db.transaction(c=>runtime['agent.reorder-signal']({workspaceId:ctx.workspaceId,payload:signal},c))).prepared,0);
+  // A reservation changes available stock from eight to six even though the shelf still holds eight.
+  const order=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:locationId,
+    idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:2,unitPriceMinor:500}]});
+  await workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});assert.equal((await process()).status,'COMPLETED');
+  const fresh=(await pending()).rows[0].id;assert.notEqual(fresh,id);id=fresh;
+  await subscribe('starter');const page=await browser.get('/autopilot/work/'+id).expect(200);
+  const send=()=>browser.post('/autopilot/work/'+id+'/approve').type('form').send({_csrf:f.csrf(page.text)});
+  await send().expect(303);await send().expect(303);
+  assert.equal((await remaining()).rows[0].n,1);
+  const stored=(await db.query("SELECT w.outcome::jsonb outcome,l.quantity_units FROM work_items w JOIN purchase_order_lines l ON l.purchase_order_id=w.purchase_order_id WHERE w.workspace_id=$1 AND w.id=$2",[ctx.workspaceId,id])).rows[0];
+  assert.equal(Number(stored.quantity_units),14);assert.ok(stored.outcome.effectId);
+});
+
 test('partner patterns and supplier negotiation drafts use dated evidence and current authority',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:50}),{db,ctx,subscribe,browser,workflows}=f;
   const vendor='fixture-supplier',sku=f.item.skuIds[0],today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);

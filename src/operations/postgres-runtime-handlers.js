@@ -693,6 +693,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
   'agent.api_review':(job,client)=>require('../connections/agent-review-api').execute(job,client),
   'agent.supplier-negotiation':(job,client)=>require('../purchasing/negotiation-drafts').processJob(client,job),
+  'agent.reorder-signal':(job,client)=>autonomy.handleReorderSignal(client,job),
   'autopilot.evaluate':Object.assign(autopilotEvaluate,{workerLane:'maintenance'})};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,

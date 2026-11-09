@@ -244,7 +244,7 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(transferEnabled||purchaseEnabled)await client.query(`UPDATE workspace_autopilot SET mode='POLICY_AUTOMATED',updated_at=$2
       WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);return {transferId,purchaseId};},{isolation:'SERIALIZABLE'});}
 
-async function planningRows(database,workspaceId,options={}){return require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{...options,eligibleOnly:true});}
+async function planningRows(database,workspaceId,options={}){return require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{...options,eligibleOnly:!options.onlySkuIds});}
 function position(row){return {...row,...require('../purchasing/replenishment-decision').derive(row)};}
 
 async function planningSuppliers(database,workspaceId,skuIds){
@@ -350,11 +350,11 @@ async function persistPlannedWork(database,workspaceId,entries){
  }return {created,stale};
 }
 
-async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null,cycleId=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');
+async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null,cycleId=null,onlySkuIds=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');
   await ensure(database,workspaceId);
   const state=await getState(database,workspaceId);
-  if(!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
-  planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId})).map(position);
+  if(!onlySkuIds&&!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
+  planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId,onlySkuIds})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
@@ -382,7 +382,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           ...(supplier.topUp?[{fact:'supplier_top_up',value:supplier.topUp}]:[])]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
-  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
+  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial&&!onlySkuIds){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
     [workspaceId,nowIso(),new Date(Date.now()+(refreshRequested?5:15)*60000).toISOString(),planningRevision,new Date(Date.now()+5*60000).toISOString()]);
     if(cycleId)await database.query('UPDATE stockchief_runtime.replenishment_planning_runs SET completed_at=CURRENT_TIMESTAMP WHERE workspace_id=$1 AND cycle_id=$2',[workspaceId,cycleId]);}
   return {state,created,considered,partial,refreshRequested,planningRevision,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
@@ -404,6 +404,25 @@ async function revalidate(database,workspaceId,action){
  if(supplier?.restriction)throw new ValidationError(supplier.restriction);
  if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency)
   throw new ValidationError('Supplier terms, price or the required quantity changed after this decision. Review a fresh recommendation.');
+}
+
+async function handleReorderSignal(client,job){
+  const skuIds=job.payload?.skus;
+  if(!Array.isArray(skuIds)||skuIds.length>50||!skuIds.every(s=>typeof s==='string'))throw new ValidationError('Invalid reorder signal.');
+  const workspaceId=job.workspaceId,account=await agentPlan.accountState(client,workspaceId);
+  if(!agentPlan.usesAgentTerms(account)||!agentPlan.permits(account.plan,33,'draft'))return {skipped:'Plan changed'};
+  const db=scopedDatabase(client),state=await getState(db,workspaceId);
+  if(state.paused||state.suspended)return {skipped:'Automatic work is paused'};
+  const owner=(await client.query("SELECT id FROM users WHERE workspace_id=$1 AND role='owner' ORDER BY id LIMIT 1",[workspaceId])).rows[0];
+  if(!owner)return {skipped:'Owner unavailable'};
+  const planned=await plan(db,workspaceId,{onlySkuIds:skuIds});
+  // Scheduled checks and immediate signals share an idempotency key and
+  // recheck the same purchase authority before committing an order.
+  let executed=0;
+  for(const item of planned.created.filter(w=>w.approval_requirement==='NONE')){
+    await execute(db,{workspaceId,actorId:owner.id},item.id);executed++;
+  }
+  return {prepared:planned.created.length,executed};
 }
 
 async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped=scopedDatabase(client);
@@ -598,7 +617,7 @@ async function lowestStockDraft(database,workspaceId){
  if(supplier.restriction)return {...base,question:supplier.restriction};
  const today=await require('../lib/business-time').today(database,workspaceId),date=new Date(today+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Number(supplier.effective_lead));return {...base,sku:selected.code,supplier:supplier.supplier_name,location:place.name,quantity:supplier.quantity,unitCost:supplier.unitCost,currency:supplier.currency,expectedDate:date.toISOString().slice(0,10)};
 }
-module.exports={supplierDeliveryReadiness,lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,workHistory,plan,run,
+module.exports={supplierDeliveryReadiness,lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,workHistory,plan,run,handleReorderSignal,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
   supplierDeliveryReadiness,reconcileSupplierFollowThrough};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{plan:'planning.basic',run:'planning.basic'});
