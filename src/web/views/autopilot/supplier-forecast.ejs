@@ -1,0 +1,38 @@
+<h1><%= saved?'Review supplier stock forecast':'Supplier stock forecasts' %></h1>
+<p>Share only the products you choose with one supplier. Recorded stock and estimated demand are separate. This does not place an order or change stock.</p>
+<% if(shadow){ %><p class="notice">StockChief is in the first 14-day watch period. You can prepare a preview; agent sending waits until that period ends.</p><% } %>
+<% if(locked){ %><section class="card"><h2><span class="badge">Growth</span> Supplier forecasts</h2><p>Upgrade to Growth to prepare and individually approve supplier forecasts, or Pro to authorize weekly sharing.</p><a class="btn" href="/billing">Upgrade</a></section>
+<% }else if(saved){const p=saved.snapshot; %>
+<section class="card"><h2><%= p.supplierName %></h2><p>To: <strong><%= p.recipient %></strong></p><p>Prepared <%= p.preparedAt %> · <%= p.timeZone %></p>
+<p>Owned stock on hand at active sites. Supplier-owned stock is excluded. Reservations and commitments are not subtracted. These numbers are a snapshot at the preparation time.</p>
+<div class="table-scroll"><table><thead><tr><th>Product</th><th>Recorded stock</th><th>Next 12 weeks: estimated demand</th></tr></thead><tbody>
+<% for(const row of p.rows){ %><tr><td><%= row.name %><small style="display:block"><%= row.sku %></small></td><td><%= row.onHand %> <%= row.unit %><%= row.needsReview?' · Review negative stock':'' %></td><td><%= row.total===null?'Unknown — more order history needed':row.total+' '+row.unit %></td></tr><% } %>
+</tbody></table></div>
+<p>Estimates use average confirmed order demand in complete seven-day periods, with at least eight complete periods and two order dates. They do not predict promotions, seasonality or recent changes.</p>
+<details><summary>Read the exact email and weekly estimates</summary><p>Subject: <%= words.subject %></p><div style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6"><%= words.body %></div></details>
+<% if(message){ %><p><strong><%= ({QUEUED:'Waiting to send',SENDING:'Sending',SENT:'Mailbox confirmed sending',FAILED:'Needs delivery review',PREPARED:'Ready for review'})[message.status]||'Review delivery' %></strong></p><% if(message.error_message){ %><p><%= message.error_message %></p><% } %><p><a href="/messages/supplier/<%= message.id %>">Review email delivery</a></p>
+<% }else{ %><form method="post" action="/autopilot/supplier-forecasts/<%= saved.id %>/send" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= saved.source_fingerprint %>">
+<label><input type="checkbox" name="confirmed" value="yes" required> I confirm this supplier, recipient and the exact selected products in this email.</label>
+<% if(p.rows.some(row=>row.needsReview)){ %><label><input type="checkbox" name="negativeConfirmed" value="yes" required> I reviewed the negative stock positions and confirm sharing this recorded snapshot.</label><% } %>
+<button class="btn" <%= shadow?'disabled':'' %>>Send this forecast</button></form><% } %>
+</section>
+<section class="card"><h2>Weekly sharing</h2>
+<% if(!canSchedule){ %><p><span class="badge">Pro</span> Weekly supplier forecast sending needs Pro or Custom. On Growth, approve each email individually. <a class="btn" href="/billing">Upgrade</a></p>
+<% }else{const rule=rules.find(rule=>rule.supplier_id===p.supplierId); %><p>Authorize only this supplier, mailbox and these products. StockChief prepares a fresh snapshot each week. Changed recipients, products, units or mailbox accounts stop the send for review. At most one forecast is sent per supplier per calendar week.</p>
+<form method="post" action="/autopilot/supplier-forecasts/<%= saved.id %>/schedule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= saved.source_fingerprint %>"><input type="hidden" name="revision" value="<%= rule?.revision||0 %>">
+<label class="rm-field"><span>First weekly sending date</span><input type="date" name="firstSendOn" min="<%= today %>" value="<%= today %>" required></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> I authorize weekly sharing with this exact supplier, mailbox and selected products.</label><button class="btn" <%= shadow||p.rows.some(row=>row.needsReview)?'disabled':'' %>>Authorize weekly sharing</button></form><% } %></section>
+<p><a href="/autopilot/supplier-forecasts">Prepare another forecast</a></p>
+<% }else{ %>
+<section class="card"><h2>Prepare a preview</h2>
+<form method="get" class="form-stack"><label class="rm-field"><span>Find a supplier</span><input name="q" value="<%= q %>"></label><button class="btn">Search suppliers</button></form>
+<% if(moreSuppliers){ %><p>Showing 50 matching suppliers. Refine the search to find yours.</p><% } %>
+<% if(!mailboxes.length){ %><p><a href="/connections">Connect a Gmail or Microsoft 365 sending mailbox</a> before preparing a shareable forecast.</p><% } %>
+<form method="post" action="/autopilot/supplier-forecasts/preview" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>">
+<div class="rm-field"><label for="forecast-supplier">Supplier</label><select id="forecast-supplier" name="supplierId" required><option value="">Choose a supplier</option><% for(const supplier of suppliers){ %><option value="<%= supplier.id %>"><%= supplier.name %> · <%= supplier.email||'Add an email first' %></option><% } %></select></div>
+<div class="rm-field"><label for="forecast-mailbox">Sending mailbox</label><select id="forecast-mailbox" name="connectorId" required><option value="">Choose a mailbox</option><% for(const box of mailboxes){ %><option value="<%= box.id %>"><%= box.display_name %></option><% } %></select></div>
+<label class="rm-field"><span>Exact SKU codes, one per line</span><textarea name="codes" rows="6" required placeholder="Enter up to 250 codes"></textarea></label><button class="btn" <%= !mailboxes.length?'disabled':'' %>>Preview supplier forecast</button></form></section>
+<% } %>
+<% if(rules.length){ %><section class="card"><h2>Weekly sharing rules</h2><p>Showing the latest <%= rules.length %> rules. Stopping a rule also blocks its queued automatic emails before provider delivery.</p>
+<% for(const rule of rules){ %><div class="card-body"><h3><%= rule.name %></h3><p><%= rule.enabled?'Next sending date: '+rule.next_due_on:'Stopped' %></p><% if(rule.problem){ %><p><%= rule.problem %></p><% } %><% if(rule.enabled){ %><form method="post" action="/autopilot/supplier-forecast-rules/<%= rule.id %>/stop"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><button class="btn">Stop weekly sharing with <%= rule.name %></button></form><% } %></div><% } %>
+</section><% } %>
