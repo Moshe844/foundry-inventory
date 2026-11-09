@@ -119,11 +119,14 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    const [runJob,importProgress,trackingQuestion,previewRevision]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
-      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id)]);
-    const approvalReview=require('../../imports/approval-review').review(plan,{trackingQuestion,previewRevision,duplicatePlans,
+    const [runJob,importProgress,trackingQuestion,previewRevision,receivingReceipt]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
+      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id),
+      database.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='purchase_order.receive' AND idempotency_key=$2 AND status='COMPLETED'",[req.ctx.workspaceId,'receiving-document:'+plan.sourceHash]).then(r=>r.rows[0]?.result||null)]);
+    const approvalReview=require('../../imports/approval-review').review(plan,{trackingQuestion,previewRevision,duplicatePlans,receivingReceipt,
       missingLocationRows:missingLocation.rows.length>0,missingAccountingSetup:missingAccounting.rows.length>0,
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
+    if(receivingReceipt)return res.page('imports/receiving-source',{title:'Recorded delivery document',nav:'purchasing',plan,rows,page,pageSize:PAGE_SIZE,receivingReceipt,
+      backTo:{href:'/purchasing/orders/'+receivingReceipt.purchaseOrderId,label:'Purchase order'}});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
       columnAccess:plan.transformations.columnTemplate?await require('../../imports/agent-column-mapping').access(database,req.ctx):null,

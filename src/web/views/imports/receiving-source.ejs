@@ -1,0 +1,12 @@
+<h1><%= plan.sourceName %></h1>
+<section class="card card-body"><h2>Delivery recorded against a purchase order</h2>
+ <p>This file is the source for the recorded receipt. Review the received stock, batches, serials and value on the purchase order.</p>
+ <p><a class="btn" href="/purchasing/orders/<%= receivingReceipt.purchaseOrderId %>">View purchase order and receipt</a></p>
+</section>
+<section class="card card-body section"><h2>Source rows · page <%= page %></h2><div class="table-wrap"><table><thead><tr><th>Row</th>
+ <% for(const column of plan.sourceColumns){ %><th><%= column.name %></th><% } %></tr></thead><tbody>
+ <% for(const row of rows){ %><tr><th><%= row.rowNumber %></th><% for(const column of plan.sourceColumns){ %><td><%= row.raw?.[column.index]??'' %></td><% } %></tr><% } %>
+</tbody></table></div>
+<% if(page>1){ %><a href="?page=<%= page-1 %>">Previous page</a><% } %>
+<% if(page*pageSize<plan.recordsDetected){ %><a href="?page=<%= page+1 %>">Next page</a><% } %>
+</section>

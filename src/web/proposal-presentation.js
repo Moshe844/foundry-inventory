@@ -25,6 +25,12 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='purchase_order.receive_from_document'){
+  const p=proposal.payload;
+  return {summary:proposal.summary,impact:p.existing?'Reviews an existing receipt':'Records physically received goods',fields:[{label:'Purchase order',value:p.orderNumber},{label:'Delivery document',value:p.sourceName},
+    ...(p.receiving||[]).flatMap(r=>[{label:r.code+' · '+r.name,value:r.quantity+' units at '+r.locationName+' · '+require('../domain/currency').format(r.unitCostMinor,p.currency)+' each'},
+      ...(r.lotCode?[{label:'Batch',value:r.lotCode+(r.expiresAt?' · expires '+r.expiresAt:'')}]:[]),...(r.serials.length?[{label:'Received serials',value:r.serials.join(', ')}]:[])])]};
+ }
  if(proposal.action_type==='catalog.supplier_price_list'){
   const p=proposal.payload;
   return {summary:proposal.summary,impact:'Updates purchase costs for future work',fields:[{label:'Supplier file',value:p.source.name},

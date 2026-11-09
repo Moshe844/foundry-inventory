@@ -715,6 +715,7 @@ async function revise(database,ctx,id,input={},options={}){
     if(!saved)throw new NotFoundError('That import could not be found.');
     if((saved.apply_checkpoint?.cataloguePrepared||saved.apply_checkpoint?.catalogueStarted))throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
     const plan=hydratePlan(saved);
+    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
     if(input.columnSource){
       const verified=await require('./agent-column-mapping').verify(client,ctx,plan,{source:input.columnSource,integrityHash:input.expectedHash});
       if(stable(input.fieldMappings)!==stable(verified.mappings))throw new ValidationError('The proposed fields differ from the approved source.');
@@ -908,6 +909,7 @@ async function approve(database, ctx, id, expectedHash) {
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
     const plan=hydratePlan(result.rows[0]);
+    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
     if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
     if(!plan.transformations.dataset&&supplierDataset.classify(plan.sourceColumns))

@@ -120,6 +120,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
+  ['purchase_order.receive_from_document',43],
   ['catalog.supplier_price_list',135],
   ['sales_order.recurring',67],
   ['import.supplier_catalog',127],['import.variants',130],
@@ -152,13 +153,14 @@ function actionJob(name,operation,payload) {
   return actionJobs.get(name);
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
-const newAgentActions=new Set(['catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
+const newAgentActions=new Set(['purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
   return newAgentActions.has(name)?null:undefined;
 }
 const humanSteps=new Set([
+  'purchase_order.receive_from_document',
   'sales_quote.accept',
   'catalog.restore_margin',
   'inventory.receive','purchase_order.receive','transfer.receive','customer_return.receive',

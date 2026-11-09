@@ -1,7 +1,13 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),policy=require('../commercial/agent-plan');
 const tasks=new Map([[127,'import.supplier_catalog'],[130,'import.variants']]);
+async function assertNotReceiving(db,ctx,plan){
+  if(plan.transformations.agentJob===43)throw new ValidationError('This delivery document is linked to a purchase receipt. Open the purchase order to review the recorded units.');
+  if((await db.query("SELECT 1 FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='purchase_order.receive' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,'receiving-document:'+plan.sourceHash])).rowCount)
+    throw new ValidationError('This source was already recorded as a purchase receipt. Importing it as stock would count the delivery twice.');
+}
 async function check(db,ctx,plan,job=plan.transformations.agentJob){
+  await assertNotReceiving(db,ctx,plan);
   if(job===undefined)return;
   if(!tasks.has(job))throw new ValidationError('Review this import’s agent task before running it.');
   const account=await policy.requireWorkspaceJob(db,ctx.workspaceId,job,'draft');
@@ -38,4 +44,4 @@ const specs=[...tasks].map(([job,name])=>({name,
   verify:async(db,ctx,result,p)=>Boolean(result.job?.id&&(await db.query(`SELECT 1 FROM stockchief_runtime.jobs
     WHERE workspace_id=$1 AND id=$2 AND kind='import.execute-approved' AND payload->>'planId'=$3`,[ctx.workspaceId,result.job.id,p.recordId])).rowCount)
 }));
-module.exports={check,specs};
+module.exports={check,specs,assertNotReceiving};
