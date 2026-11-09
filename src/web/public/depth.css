@@ -4,8 +4,9 @@
   --d-ink:#11152E; --d-text:#3B4260; --d-muted:#6A7188;
   --d-action:linear-gradient(180deg,#5A52EA 0%,#4338CA 100%);
   --d-urgent:#D92D20; --d-important:#DC6803; --d-normal:#3056D3;
-  --d-1:0 0 0 1px #E8EAF1,0 1px 2px rgba(17,21,46,.03);
-  --d-2:0 0 0 1px rgba(17,21,46,.05),0 2px 4px rgba(17,21,46,.07),0 12px 24px -10px rgba(17,21,46,.20);
+  /* Resting cards read as cards: a clear edge, a soft lift. Hover lifts further. */
+  --d-1:0 0 0 1px #DCE0EA,0 1px 2px rgba(17,21,46,.06),0 8px 18px -10px rgba(17,21,46,.18);
+  --d-2:0 0 0 1px rgba(17,21,46,.08),0 3px 6px rgba(17,21,46,.08),0 16px 30px -12px rgba(17,21,46,.28);
   --d-3:0 0 0 1px rgba(17,21,46,.06),0 4px 8px rgba(17,21,46,.08),0 24px 48px -16px rgba(17,21,46,.30);
   --d-ring:0 0 0 1px rgba(17,21,46,.10);
   --d-ease:cubic-bezier(.2,.8,.2,1);
@@ -14,7 +15,7 @@
 @keyframes d-open { from { opacity:0; transform:translateY(-4px); } }
 @keyframes d-pulse { 0% { box-shadow:0 0 0 0 rgba(255,255,255,.75); } 70%,100% { box-shadow:0 0 0 6px rgba(255,255,255,0); } }
 
-html:root body main.rm-canvas { background:linear-gradient(180deg,#EDEFF5 0,#F4F5F9 280px) #F4F5F9; }
+html:root body main.rm-canvas { background:linear-gradient(180deg,#E8EBF2 0,#EEF0F5 280px) #EEF0F5; }
 
 /* Top bar */
 html:root body .sc-toolbar { background:#fff; border:0; box-shadow:0 1px 0 rgba(17,21,46,.07),0 6px 16px -14px rgba(17,21,46,.4); }
@@ -368,7 +369,8 @@ html:root body .rm-canvas .sc-report-bars i { display:block; height:12px; backgr
 }
 
 @media (prefers-reduced-motion:reduce) {
-  html:root body *,html:root body *::before,html:root body *::after { animation:none !important; transition:none !important; }
+  /* No movement, but colour and shadow still answer the pointer. */
+  html:root body *,html:root body *::before,html:root body *::after { animation:none !important; transition-property:background-color,border-color,color,box-shadow !important; transition-duration:.15s !important; }
   html:root body :is(.sc-provider-card,.sc-money-card,.sc-report-card,.ox-kpi,a.card,.btn,.rm-btn,.ox-btn,.sc-metric,.hm-row,.ny-card,.level-count,.ask-starters button) { transform:none !important; }
 }
 
@@ -930,3 +932,7 @@ html:root body .ask-download > summary::before,html:root body .ask-download > su
  html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn) { grid-column:1/-1; flex-direction:row; flex-wrap:wrap; align-items:center !important; gap:8px 12px; }
  html:root body table.sc-mobile-table tbody td:has(a.btn,button.btn)::before { display:none; }
 }
+
+/* Remaining white surfaces get the shared card edge, and body text reads at 15px. */
+html:root body .rm-canvas :is(.raw-movement-ledger,.rm-transfer-board) { border:0; border-radius:12px; background:#fff; box-shadow:var(--d-1); }
+html:root body { font-size:15px; }

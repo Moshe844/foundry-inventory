@@ -44,7 +44,7 @@ test('Professional customer experience uses real plans, human messages and canon
     await visit(path);
     const defects=await page.evaluate(()=>{const visible=e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height;return [...document.querySelectorAll('body *')].filter(visible).filter(e=>{const s=getComputedStyle(e);return s.fontFamily!==getComputedStyle(document.body).fontFamily||Number(s.fontWeight)>(document.body.classList.contains('public-page')?700:600);}).slice(0,4).map(e=>e.tagName+'.'+e.className);});
     assert.deepEqual(defects,[],path+' typography');
-    assert.match(await page.evaluate(()=>getComputedStyle(document.body).fontFamily),/^-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text"/,path+' uses the shared interface font');
+    assert.match(await page.evaluate(()=>getComputedStyle(document.body).fontFamily),/^"?Inter"?, -apple-system/,path+' uses the shared interface font');assert.equal(await page.evaluate(async()=>{await document.fonts.ready;return [...document.fonts].some(f=>f.family.replace(/['"]/g,'')==='Inter'&&f.status==='loaded');}),true,path+' Inter loaded');
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),path+' overflow '+width);
     assert.doesNotMatch(await page.locator('main').innerText(),/\bMOshe\b|\b1 units\b|reportdelivery_[a-z0-9]+|support_[a-z0-9]+/);
    }
