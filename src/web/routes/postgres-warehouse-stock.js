@@ -48,12 +48,11 @@ function createRouter(db){
 function protection(db){const router=createRouter(db);return async(req,res,next)=>{
  try{
   const countPath=/^\/warehouse\/my-counts\/[A-Za-z0-9_-]+$/.test(req.path)&&['GET','POST'].includes(req.method);
-  if(countPath)return router(req,res,next);
+  if(countPath||req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
-  if(req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');
   return res.status(403).json({error:'warehouse_access_required',message:'Your access is limited to assigned warehouses. Use Warehouse stock or ask your inventory owner to update your access.'});
