@@ -64,6 +64,7 @@ async function save(db,ctx,id,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function trained(db,workspaceId,name,payload,proposalId){
+  if(name==='warehouse.prepare_putaway')return require('../warehouse/agent-putaway').trained(db,workspaceId,payload);
   if(!jobs.has(name))return false;
   if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
   const bound=payload?.training;

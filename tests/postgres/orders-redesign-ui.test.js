@@ -151,6 +151,13 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
 
     // 5b. Creating and paying are separate: "Collect payment now" opened the payment dialog on Cash.
     const pay=page.locator('#ox-pay');
+    const collectPayment=async()=>{
+      // Saving cash redirects to the same URL: waitForURL alone can resolve
+      // before the replacement document has attached its payment handlers.
+      await page.waitForFunction(()=>typeof document.querySelector('#ox-pay')?.oxShow==='function');
+      await page.getByRole('button',{name:'Collect payment'}).click();
+      assert.equal(await pay.evaluate(dialog=>dialog.open),true);
+    };
     assert.equal(await pay.evaluate((dialog)=>dialog.open),true);
     assert.match(await page.locator('[data-ox-paycard]').innerText(),/Payment\s+Unpaid\s+Order total\s+\$260\.00\s+Paid\s+\$0\.00\s+Balance due\s+\$260\.00/);
     // Cash: what was handed over, the change worked out, only what is owed recorded.
@@ -161,7 +168,7 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await Promise.all([page.waitForURL(new RegExp('/orders/'+createdId)),pay.getByRole('button',{name:'Record $100.00 cash'}).click()]);
     assert.match(await page.locator('[data-ox-paycard]').innerText(),/Partly paid[\s\S]*Paid\s+\$100\.00\s+Balance due\s+\$160\.00[\s\S]*\$100\.00\s+cash/);
     // Card without a gateway: one way to connect, which opens just the payment gateways.
-    await page.getByRole('button',{name:'Collect payment'}).click();
+    await collectPayment();
     await pay.getByRole('tab',{name:'Card'}).click();
     const gateway=pay.getByRole('link',{name:'Connect Sola or Stripe'});
     assert.equal(await gateway.getAttribute('href'),'/settings/connections?only=payments&return=/orders/'+createdId);
@@ -173,7 +180,7 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     assert.equal(await page.locator('#shipping, .sc-connected-section').count(),0);
     await Promise.all([page.waitForURL(new RegExp('/orders/'+createdId+'$')),page.getByRole('link',{name:'Back to the order'}).click()]);
     // Bank transfer: add the business's bank details once, give them to the customer, mark it received.
-    await page.getByRole('button',{name:'Collect payment'}).click();
+    await collectPayment();
     await pay.getByRole('tab',{name:'Bank transfer'}).click();
     const bankForm=pay.locator('.ox-bank-form');
     await bankForm.getByLabel('Account name').fill('Hendels Shoes LLC');await bankForm.getByLabel('Bank',{exact:true}).fill('Chase');
@@ -205,7 +212,7 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     assert.deepEqual(edited.map((row)=>[row.status,Number(row.quantity_ordered),Number(row.held)]),[['CONFIRMED',3,3]]);
     assert.match(await page.locator('[data-ox-paycard]').innerText(),/Order total\s+\$390\.00\s+Paid\s+\$160\.00\s+Balance due\s+\$230\.00/);
     // Overpaying is refused.
-    await page.getByRole('button',{name:'Collect payment'}).click();
+    await collectPayment();
     await pay.getByRole('tab',{name:'Cheque'}).click();
     await pay.getByLabel('Cheque amount').evaluate((input)=>{input.max='';input.value='900.00';});
     await pay.getByRole('button',{name:'Record cheque'}).click();

@@ -185,6 +185,14 @@ function createPostgresAutopilotRouter(database){
     try{await edi.access(database,req.ctx);}catch(error){if(error.code!=='entitlement_required')throw error;ediEnabled=false;}
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
+  router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);
+    res.redirect(303,'/warehouse/putaway/'+made.id);
+  }));
+  router.post('/autopilot/putaway/:id/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../warehouse/agent-putaway').teach(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/warehouse/putaway/'+req.params.id);
+  }));
   router.post('/autopilot/pick-release/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../warehouse/agent-pick-release').recheck(database,req.ctx);res.redirect(303,'/autopilot/reviews/pick-release');
   }));

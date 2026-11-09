@@ -22,6 +22,13 @@ function createRouter(db){
    AND ($4='' OR s.code ILIKE '%'||$4||'%' OR s.barcode=$4 OR i.name ILIKE '%'||$4||'%' OR s.variant_label ILIKE '%'||$4||'%') ORDER BY s.id LIMIT 101`,[req.ctx.workspaceId,locationId,after,q])).rows:[];
   res.locals.flash=req.session.flash||[];req.session.flash=[];
   res.locals.countTasks=permissions.can(req.user,permissions.COUNT_STOCK)?await tasks.inbox(db,req.ctx.workspaceId,req.ctx.actorId):[];
+  const putawayPolicy=require('../../commercial/agent-plan'),putawayState=await putawayPolicy.accountState(db,req.ctx.workspaceId);
+  res.locals.putawayInstructions=[];
+  if(locationId&&putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,47,'draft')){
+    const prepared=(await db.query(`SELECT p.id,p.source FROM stockchief_runtime.agent_putaway_instructions p
+      WHERE p.workspace_id=$1 AND p.source#>>'{from,id}'=$2 ORDER BY p.created_at DESC,p.id DESC LIMIT 20`,[req.ctx.workspaceId,locationId])).rows;
+    const permitted=new Set(locations.map(l=>l.id));res.locals.putawayInstructions=prepared.filter(p=>permitted.has(p.source.to.id));
+  }
   return res.render('warehouse/stock-access',{title:'Warehouse stock',locations,locationId,q,rows:rows.slice(0,100),next:rows.length>100?rows[99].id:null,operationKey:newId('warehouse-receipt'),canReceive:permissions.can(req.user,permissions.OPERATE),canCount:permissions.can(req.user,permissions.ADJUST),message:String(req.query.saved||'')==='1'?'Stock received with its purchase cost.':String(req.query.saved||'')==='count'?'Count saved for an owner to review.':null,restricted:roots!==null});
  }));
  router.post('/warehouse/stock/receive',requirePermission(permissions.OPERATE,'receive stock'),asyncRoute(async(req,res)=>{
@@ -42,6 +49,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(countPath)return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
+  if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
   if(req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');

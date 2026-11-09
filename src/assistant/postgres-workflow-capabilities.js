@@ -709,6 +709,7 @@ const SPECS=Object.freeze([
   require('../accounting/agent-invoice-reminders').spec,
   require('../sales/agent-arrived-stock').spec,
   require('../sales/agent-stock-ready').spec,
+  require('../warehouse/agent-putaway').spec,
   require('../purchasing/agent-invoice-disputes').spec,
   require('../documents/agent-product-facts').spec,
   ...require('../documents/agent-filing').specs,

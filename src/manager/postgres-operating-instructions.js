@@ -474,6 +474,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_brand_watches WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_count_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_count_schedules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_putaway_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.recurring_customer_orders WHERE workspace_id IN(SELECT id FROM owned) AND NOT paused)
       +(SELECT count(*) FROM stockchief_runtime.channel_map_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.location_reorder_rules WHERE workspace_id IN(SELECT id FROM owned))

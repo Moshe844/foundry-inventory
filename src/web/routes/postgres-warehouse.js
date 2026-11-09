@@ -10,6 +10,15 @@ function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
   router.get('/warehouse/batches',requirePermission(permissions.VIEW,'review batch stock'),asyncRoute(async(req,res)=>{const pagination=require('../presentation/pagination'),size=pagination.pageSize(req),found=await require('../../domain/postgres-batch-expiry').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('warehouse/batch-expiry',{title:'Batch expiry',nav:'inventory',...found,pager:pagination.pager(req,{page:found.page,size,total:found.total,shown:found.rows.length}),locations:await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId)});}));
+  router.get('/warehouse/putaway/:id',requirePermission(permissions.VIEW,'read put-away labels'),asyncRoute(async(req,res)=>{
+    const instruction=await require('../../warehouse/agent-putaway').instruction(database,req.ctx,req.params.id),barcode=require('../../warehouse/labels');
+    const labels=[{title:'Product',subtitle:instruction.source.product,barcode:instruction.source.barcode},
+      {title:'Receiving location',subtitle:instruction.source.from.name,barcode:instruction.source.from.barcode},
+      {title:'Destination bin',subtitle:instruction.source.to.name,barcode:instruction.source.to.barcode}].map(l=>({...l,svg:barcode.code128Svg(l.barcode)}));
+    const state=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId);
+    res.page('warehouse/putaway',{title:'Put-away instructions',nav:'warehouse',instruction,labels,canTeach:req.user.role==='owner'&&!instruction.automatic&&!state.shadow,
+      putawayBack:req.user.role==='owner'?'/autopilot/reviews/putaway-labels':'/warehouse/stock'});
+  }));
   router.get('/warehouse/labels/sku/:id',asyncRoute(async(req,res)=>{
     const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.id);
     const labels=require('../../warehouse/labels'),label={kind:'sku',id:sku.id,title:sku.display_name,

@@ -3,6 +3,7 @@
 <% if(message){ %><p role="status"><%= message %></p><% } %>
 <p><a href="/guide">Staff guide</a></p>
 <% for(const task of locals.countTasks||[]){ %><p><%= task.title %> · <a href="<%= task.href %>"><%= task.actionLabel %></a></p><% } %>
+<% if(locals.putawayInstructions?.length){ %><section><h2>Put-away instruction sheets</h2><p>StockChief checks the current quantities and codes when you open a saved sheet.</p><% for(const p of locals.putawayInstructions){ %><p><a href="/warehouse/putaway/<%= p.id %>"><%= p.source.quantity %> × <%= p.source.product %> → <%= p.source.to.name %></a></p><% } %></section><% } %>
 <% for(const notice of locals.flash||[]){ %><p role="status"><%= notice.message %></p><% } %>
 <form method="get" action="/warehouse/stock"><label>Location<select name="locationId"><% for(const l of locations){ %><option value="<%= l.id %>" <%= l.id===locationId?'selected':'' %>><%= l.name %></option><% } %></select></label><label>Product, variant, SKU or barcode<input name="q" value="<%= q %>"></label><button>Find stock</button></form>
 <% if(!locations.length){ %><p>No warehouses are assigned. Ask your inventory owner to choose your warehouses in Team settings.</p><% }else if(!rows.length){ %><p>No stock positions match this location and search.</p><% } %>
