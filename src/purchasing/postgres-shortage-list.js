@@ -15,12 +15,16 @@ function atOrBelow(db,workspaceId,q){return require('../lib/versioned-read-model
   ORDER BY s.id LIMIT 100`,[workspaceId,q])).rows,{domain:'business'});}
 async function read(db,workspaceId,{afterSkuId=null,q=''}={}){
  q=String(q||'').trim().slice(0,120);if(afterSkuId!==null&&(typeof afterSkuId!=='string'||afterSkuId.length>160))throw new ValidationError('Choose a valid purchasing page.');
- const selected=(await db.query(`SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
- WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2::text IS NULL OR s.id>$2)
- AND ($3='' OR i.name ILIKE '%'||$3||'%' OR s.code ILIKE '%'||$3||'%' OR s.variant_label ILIKE '%'||$3||'%')
+ // Walk the catalogue in SKU order and stop at the page: the fenced subquery keeps
+ // that order. Joined first, the planner expected two SKUs per product and
+ // tested and sorted every SKU (52,574 of them) to show 51.
+ const values=[workspaceId];if(afterSkuId!==null)values.push(afterSkuId);const after=afterSkuId!==null?' AND id>$2':'';
+ let search='';if(q){values.push(q);const n=values.length;search=` AND (i.name ILIKE '%'||$${n}||'%' OR s.code ILIKE '%'||$${n}||'%' OR s.variant_label ILIKE '%'||$${n}||'%')`;}
+ const selected=(await db.query(`SELECT s.id FROM (SELECT id,item_id,workspace_id,code,variant_label FROM skus WHERE workspace_id=$1 AND is_active=1${after} ORDER BY id OFFSET 0) s
+ WHERE EXISTS(SELECT 1 FROM items i WHERE i.id=s.item_id AND i.workspace_id=s.workspace_id AND i.is_active=1${search})
  AND (EXISTS(SELECT 1 FROM reorder_policies p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id)
  OR EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=s.workspace_id AND m.sku_id=s.id AND m.operation='issue' AND m.quantity_delta<0 AND m.occurred_at::timestamptz>=now()-interval '90 days' GROUP BY m.sku_id HAVING count(*)>=2))
- ORDER BY s.id LIMIT 51`,[workspaceId,afterSkuId,q])).rows,paged=selected.slice(0,50).map(r=>r.id);
+ ORDER BY s.id LIMIT 51`,values)).rows,paged=selected.slice(0,50).map(r=>r.id);
  // The first page leads with SKUs already at or below their reorder point, wherever they sit in a
  // large catalogue, so What to order is never empty just because the empty SKUs come later.
  const urgent=afterSkuId===null?await atOrBelow(db,workspaceId,q):[],ids=[...new Set([...urgent.map(r=>r.id),...paged])];
