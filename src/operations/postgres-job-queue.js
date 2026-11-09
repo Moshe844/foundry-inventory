@@ -221,6 +221,29 @@ async function listDead(database, workspaceId) {
   return result.rows.map(hydrate);
 }
 
+function renewWhileRunning(database, job, options) {
+  // External handlers do not hold a transaction lock. Cleanup and provider
+  // requests can legitimately outlive the initial claim, so renew only this
+  // attempt's live lease until its outcome has been recorded.
+  const leaseMs = lease(options), intervalMs = Math.max(100, Math.min(5000, Math.floor(leaseMs / 3)));
+  let stopped = false, timer, failure = null, pending = Promise.resolve();
+  const schedule = () => {
+    timer = setTimeout(() => {
+      pending = heartbeat(database, job.id, job.leaseToken, { ...options, leaseMs }).then(owned => {
+        if (!owned) failure = Object.assign(new Error('The PostgreSQL worker lost its execution lease.'), { code: 'lease_lost' });
+      }).catch(error => { failure = error; }).finally(() => {
+        if (!stopped && !failure) schedule();
+      });
+    }, intervalMs);
+    timer.unref();
+  };
+  schedule();
+  return {
+    async check() { await pending; if (failure) throw failure; },
+    async stop() { stopped = true; clearTimeout(timer); await pending; },
+  };
+}
+
 async function processOne(database, handlers, options = {}) {
   const requested=Array.isArray(options.kinds)?new Set(options.kinds.map(kind=>String(kind||'').trim()).filter(Boolean)):null;
   const kinds = Object.keys(handlers || {}).filter((kind) => typeof handlers[kind] === 'function' &&
@@ -234,11 +257,13 @@ async function processOne(database, handlers, options = {}) {
       { code: 'handler_missing' }), { ...options, retryable: false });
   }
   if (handler.externalEffect === true) {
+    const renewal = renewWhileRunning(database, job, options);
     try {
       const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(database,job.workspaceId):null;
       const outcome = await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
         id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:scope||{accountId:job.payload?.accountId}},()=>
         require('../commercial/context').run({database,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, database)));
+      await renewal.check();
       if (!await complete(database, job.id, job.leaseToken, outcome || {}, options)) {
         throw Object.assign(new Error('The PostgreSQL job expired before its provider result was recorded.'), {
           code: 'lease_lost', retryable: true,
@@ -250,7 +275,7 @@ async function processOne(database, handlers, options = {}) {
         ...options, retryable: error.retryable !== false,
         ...(Number.isFinite(error.retryAfterMs)&&error.retryAfterMs>0?{retryAfterMs:error.retryAfterMs}:{}),
       });
-    }
+    } finally { await renewal.stop(); }
   }
   try {
     await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
