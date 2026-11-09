@@ -1,4 +1,4 @@
-<label class="rm-field"><span>Maximum change from the current date, in days</span><input name="maximumShiftDays" type="number" min="0" max="365" value="<%= values?.maximumShiftDays??'' %>" required></label>
+<label class="rm-field"><span>Maximum change from the current delivery promise, in days</span><input name="maximumShiftDays" type="number" min="0" max="365" value="<%= values?.maximumShiftDays??'' %>" required></label>
 <label class="rm-field"><span>Maximum total change from the original promise, in days</span><input name="maximumTotalShiftDays" type="number" min="0" max="365" value="<%= values?.maximumTotalShiftDays??'' %>" required></label>
 <label class="rm-field"><span>Maximum days ahead of today</span><input name="maximumFutureDays" type="number" min="0" max="365" value="<%= values?.maximumFutureDays??'' %>" required></label>
 <label><input type="checkbox" name="allowFirstDate" value="yes" <%= values?.allowFirstDate?'checked':'' %>> Allow a supplier to fill an empty delivery date within these limits.</label>

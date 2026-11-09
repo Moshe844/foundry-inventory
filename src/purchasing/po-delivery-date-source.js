@@ -12,10 +12,11 @@ function scope(p){return {supplierId:p.supplierId,supplierEmail:p.supplierEmail,
 async function facts(db,ctx,id){
  await owner(db,ctx);await policy.requireWorkspaceJob(db,ctx.workspaceId,31,'draft');
  const r=(await db.query(`SELECT r.id,r.kind,r.expected_date::text AS proposed_date,r.fingerprint,r.created_at,r.created_at::text AS received_text,l.token_hash,l.recipient,l.expires_at,
-  po.id AS order_id,po.po_number,po.supplier_id,po.destination_location_id,po.currency,po.expected_date::text AS current_date,po.status,po.updated_at,
+  po.id AS order_id,po.po_number,po.supplier_id,po.destination_location_id,loc.name AS destination_name,po.currency,po.expected_date::text AS current_date,po.status,po.updated_at,
   to_jsonb(po)-'updated_at'-'expected_date' AS order_profile,${orderSnapshotSql} AS order_snapshot_hash,v.captured_expected_date,v.captured_order_profile_hash,s.name AS supplier_name,s.email AS supplier_email,s.status AS supplier_status
   FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l ON l.token_hash=r.token_hash AND l.workspace_id=r.workspace_id
   JOIN purchase_orders po ON po.workspace_id=l.workspace_id AND po.id=l.purchase_order_id JOIN suppliers s ON s.workspace_id=po.workspace_id AND s.id=po.supplier_id
+  JOIN locations loc ON loc.workspace_id=po.workspace_id AND loc.id=po.destination_location_id
   LEFT JOIN stockchief_runtime.agent_po_date_sources v ON v.workspace_id=r.workspace_id AND v.source_id=r.id
   WHERE r.workspace_id=$1 AND r.id=$2`,[ctx.workspaceId,id])).rows[0];
  if(!r)throw new NotFoundError('That supplier response is not in this inventory.');
@@ -26,7 +27,7 @@ async function facts(db,ctx,id){
   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.sku_id,l.id LIMIT 251`,[ctx.workspaceId,r.order_id])).rows;
  if(!rows.length||rows.length>250)throw new ValidationError('Review delivery dates for an order with one to 250 exact product lines at a time.');
  const p={sourceId:id,kind:r.kind,receivedAt:r.received_text,instructionHash:hash({token:r.token_hash,fingerprint:r.fingerprint,kind:r.kind,date:r.proposed_date,receivedAt:r.received_text}),capturedDate:r.captured_expected_date,capturedProfileHash:r.captured_order_profile_hash,currentProfileHash:r.order_snapshot_hash,
-  orderId:r.order_id,orderNumber:r.po_number,supplierId:r.supplier_id,supplierName:r.supplier_name,supplierEmail:r.supplier_email,destinationLocationId:r.destination_location_id,currency:r.currency,currentDate:r.current_date,proposedDate:r.proposed_date,status:r.status,updatedAt:r.updated_at,orderProfileHash:hash({order:r.order_profile,lines:rows}),products:rows};
+  orderId:r.order_id,orderNumber:r.po_number,supplierId:r.supplier_id,supplierName:r.supplier_name,supplierEmail:r.supplier_email,destinationLocationId:r.destination_location_id,destinationName:r.destination_name,currency:r.currency,currentDate:r.current_date,proposedDate:r.proposed_date,status:r.status,updatedAt:r.updated_at,orderProfileHash:hash({order:r.order_profile,lines:rows}),products:rows};
  p.scope=scope(p);p.sourceFingerprint=hash(p);return p;
 }
 function caps(input){

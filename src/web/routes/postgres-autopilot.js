@@ -18,7 +18,7 @@ function createPostgresAutopilotRouter(database){
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
   const poDates=require('../../purchasing/agent-po-delivery-dates');
-  router.get('/autopilot/po-delivery-dates/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/po-delivery-date',{title:'Review supplier delivery date',nav:'autopilot',backTo:{href:'/autopilot/reviews/po-delivery-dates',label:'Supplier delivery dates'}},()=>poDates.page(database,req.ctx,req.params.id))));
+  router.get('/autopilot/po-delivery-dates/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/po-delivery-date',{title:'Review supplier delivery date',nav:'autopilot',backTo:{href:'/autopilot/reviews/po-delivery-dates',label:'Supplier delivery dates'}},()=>poDates.page(database,req.ctx,req.params.id,{settingsPage:req.query.settingsPage||1}))));
   router.post('/autopilot/po-delivery-dates/:id',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
   router.post('/autopilot/po-delivery-dates/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
   router.post('/autopilot/po-delivery-dates/:id/teach',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
