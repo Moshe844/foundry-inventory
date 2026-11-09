@@ -4,6 +4,7 @@
    const expired=plan=>['AWAITING_APPROVAL','NEEDS_INPUT'].includes(plan.state)&&Date.parse(plan.createdAt)+DAY<now;
    const needsYou=recent.filter(plan=>['AWAITING_APPROVAL','NEEDS_INPUT','APPROVED','PAUSED','NEEDS_REVIEW'].includes(plan.state)&&!expired(plan));
    const working=recent.filter(plan=>plan.active);
+   const owner=locals.currentUser&&currentUser.role==='owner';
    const past=recent.filter(plan=>!needsYou.includes(plan)&&!working.includes(plan));
    const stopped=(locals.sourceUploads||[]).filter(upload=>!upload.active&&!upload.ready),reading=(locals.sourceUploads||[]).filter(upload=>upload.active);
    const when=plan=>plan.completedAt||plan.startedAt||plan.createdAt;
@@ -44,7 +45,7 @@
   <ul class="ox-imports__list"><% needsYou.forEach(function(plan){ %><li>
     <div><a class="ox-imports__name" href="<%= plan.href %>"><%= plan.sourceName %></a><span class="hint"><%= Number(plan.rows).toLocaleString('en-US') %> rows · <time data-import-time datetime="<%= plan.createdAt %>"><%= new Date(plan.createdAt).toISOString().slice(0,16).replace('T',' ') %></time></span></div>
     <span class="badge <%= ['PAUSED','NEEDS_REVIEW'].includes(plan.state)?'badge--danger':'' %>"><%= plan.label %></span>
-    <a class="btn btn--primary btn--sm" href="<%= plan.href %>"><%= action[plan.state] %></a></li><% }) %></ul>
+    <a class="btn btn--primary btn--sm" href="<%= plan.href %>"><%= action[plan.state] %></a><% if(owner){ %><a class="btn btn--ghost btn--sm rd-delete" href="/delete/import/<%= encodeURIComponent(plan.id) %>">Delete</a><% } %></li><% }) %></ul>
 </section><% } %>
 
 <% if(working.length||reading.length){ %>
@@ -62,11 +63,11 @@
 
 <% if(past.length){ %>
 <details class="card section ox-imports__group" <%= needsYou.length||working.length?'':'open' %>><summary class="card-head"><h2>File imports and results</h2><span class="badge"><%= past.length %></span></summary>
-  <div class="table-scroll"><table class="table table--tight"><thead><tr><th>File</th><th>Rows</th><th>Status</th><th>When</th></tr></thead><tbody>
+  <div class="table-scroll"><table class="table table--tight"><thead><tr><th>File</th><th>Rows</th><th>Status</th><th>When</th><% if(owner){ %><th><span class="visually-hidden">Actions</span></th><% } %></tr></thead><tbody>
   <% past.forEach(function (plan) { %><tr>
     <td><a href="<%= plan.href %>"><%= plan.sourceName %></a></td><td class="num"><%= Number(plan.rows).toLocaleString('en-US') %></td>
     <td><span class="badge <%= plan.verified?'badge--ok':'' %>"><%= expired(plan)?'Expired — read the file again to import':plan.label %></span></td>
-    <td class="muted"><time data-import-time datetime="<%= when(plan) %>"><%= new Date(when(plan)).toISOString().slice(0,16).replace('T',' ') %></time></td></tr><% }) %>
+    <td class="muted"><time data-import-time datetime="<%= when(plan) %>"><%= new Date(when(plan)).toISOString().slice(0,16).replace('T',' ') %></time></td><% if(owner){ %><td class="num"><a class="rd-delete" href="/delete/import/<%= encodeURIComponent(plan.id) %>">Delete</a></td><% } %></tr><% }) %>
   </tbody></table></div>
 </details><% } %>
 </div>

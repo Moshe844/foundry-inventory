@@ -171,6 +171,13 @@ function createPostgresProjectionsRouter(database){
     req.flash('success','Question dismissed. It stays in its conversation if you want to answer it later.');
     return res.redirect(303,String(req.body.returnTo||'')==='/'?'/':'/needs-you');
   }));
+  router.post('/needs-you/dismiss/:key',requireAuth,asyncRoute(async(req,res)=>{
+    const key=String(req.params.key||'');if(!/^[0-9a-f]{32}$/.test(key))throw new ValidationError('Choose the item you want to dismiss.');
+    await database.query(`INSERT INTO needs_you_dismissals(id,workspace_id,entry_id,dismissed_by_user_id,dismissed_at) VALUES($1,$2,$3,$4,$5)
+      ON CONFLICT(workspace_id,entry_id) DO UPDATE SET dismissed_by_user_id=EXCLUDED.dismissed_by_user_id,dismissed_at=EXCLUDED.dismissed_at`,[newId('nyd'),req.ctx.workspaceId,key,req.ctx.actorId,nowIso()]);
+    req.flash('success','Dismissed. It comes back if the situation changes.');
+    return res.redirect(303,String(req.body.returnTo||'')==='/'?'/':'/needs-you');
+  }));
   router.get('/needs-you/work',requireAuth,asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,req.query.kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
     const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});

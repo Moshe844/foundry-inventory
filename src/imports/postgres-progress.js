@@ -96,6 +96,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
    WHERE run.workspace_id=p.workspace_id AND run.import_id=p.id ORDER BY run.started_at DESC,run.id DESC LIMIT 1)e ON true
   LEFT JOIN import_verifications v ON v.workspace_id=p.workspace_id AND v.execution_id=e.id
   WHERE p.workspace_id=$1 AND ($2::text IS NULL OR p.id=$2)
+   AND ($2::text IS NOT NULL OR NOT EXISTS(SELECT 1 FROM record_removals x WHERE x.workspace_id=p.workspace_id AND x.kind='import' AND x.record_id=p.id AND x.status<>'FAILED'))
    AND ($3::boolean=false OR r.status IN ('PENDING','RETRY','RUNNING') OR j.status IN ('PENDING','RETRY','RUNNING') OR e.status='EXECUTING' OR p.status='READY' AND (p.apply_checkpoint->>'cataloguePrepared'='true' OR p.apply_checkpoint->>'catalogueStarted'='true'))
   ORDER BY p.created_at DESC,p.id DESC LIMIT $4`,[workspaceId,id,activeOnly,Math.min(50,Math.max(1,Number(limit)||10))])).rows;
  return rows.map(present);

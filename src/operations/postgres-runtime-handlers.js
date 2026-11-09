@@ -587,6 +587,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'erp.cutover.continue':external((job,database)=>require('../onboarding/postgres-cutover-runner').run(job,database),'bulk'),
   'warehouse.count.apply':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
+  'records.remove-import':external((job,database)=>require('../domain/postgres-record-removal').runImportRemoval(job,database),'bulk'),
   'qualification.staging-load':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'reading'),
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),

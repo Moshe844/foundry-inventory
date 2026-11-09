@@ -200,7 +200,12 @@ async function needsUncached(database,workspaceId,actorId=null){
     actionLabel:'Verify provider outcome',sourceId:row.id,createdAt:row.created_at,updatedAt:row.completed_at,at:row.completed_at});
   const zone=calendar.timeZone,{readableTimes}=require('../web/presentation/time-zones');
   for(const item of items)for(const field of ['title','happened','why','recommendation'])if(item[field])item[field]=readableTimes(item[field],zone);
-  return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+  // Any entry can be dismissed. Its key follows what it says and where it
+  // leads, so a changed situation (new count, new record) comes back.
+  const dismissed=new Set((await database.query('SELECT entry_id FROM needs_you_dismissals WHERE workspace_id=$1',[workspaceId])).rows.map(row=>row.entry_id));
+  for(const item of items){item.entryKey=require('node:crypto').createHash('sha256').update(JSON.stringify([item.kind,item.href||item.link||'',item.title||''])).digest('hex').slice(0,32);
+    if(!item.dismiss)item.dismiss={action:'/needs-you/dismiss/'+item.entryKey,label:'Dismiss'};}
+  return items.filter(item=>!dismissed.has(item.entryKey)).filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
 }
 
 async function brief(database,workspaceId,actorId=null,{includeLocationStock=true,includeAvailability=true}={}){

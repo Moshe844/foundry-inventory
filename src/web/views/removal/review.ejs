@@ -1,0 +1,45 @@
+<% const r=review,n=v=>Number(v||0).toLocaleString('en-US'),units=r.stock?n(r.stock.units):'0',value=r.stock?helpers.money(r.stock.valueMinor,currency):'',live=r.removal,blocked=r.blockers&&r.blockers.length; %>
+<section class="rm-head"><div><p class="rm-eyebrow"><%= r.noun.charAt(0).toUpperCase()+r.noun.slice(1) %></p><h1><%= live&&live.status==='COMPLETED'?r.name+' was deleted':'Delete '+r.name+'?' %></h1></div></section>
+<% if(error){ %><div class="notice notice--warn" role="alert"><%= error %></div><% } %>
+<section class="rm-panel rd-panel"><div class="rm-panel__body">
+<% if(live){ const p=live.progress||{},s=live.summary||{}; %>
+  <% if(live.status==='RUNNING'){ %>
+  <h2>Removing the products this import created</h2>
+  <p><strong><%= n(p.products) %> of <%= n(s.products) %></strong> products removed so far. You can leave this page; it keeps going.</p>
+  <progress class="rd-progress" max="<%= Math.max(1,Number(s.products||0)) %>" value="<%= Number(p.products||0) %>"></progress>
+  <script>setTimeout(function(){location.reload();},3000);</script>
+  <% } else { %>
+  <p><%= n(p.products) %> products and their <%= n(p.units) %> units (<%= helpers.money(Number(p.valueMinor||0),currency) %>) were removed. The opening balance they brought in was reversed.</p>
+  <% if((p.skipped||[]).length){ %><p class="notice notice--warn"><%= n(p.skipped.length) %> products were kept because open orders still need them.</p><% } %>
+  <p><a class="btn" href="/imports">Back to imports</a></p>
+  <% } %>
+<% } else { %>
+  <% if(blocked){ %><div class="notice notice--warn" role="alert"><% r.blockers.forEach(b=>{ %><p><%= b %></p><% }) %></div><% } %>
+  <% if(r.outcome==='erase'){ %>
+   <p><% if(r.kind==='import'){ %>This import never saved anything to your business<% } else { %>Nothing else refers to this <%= r.noun %><% } %>, so it will be deleted completely. This can't be undone.</p>
+  <% } else if(r.outcome==='archived'){ %>
+   <p>This <%= r.noun %> is already deleted from your lists. Its history is kept.</p>
+  <% } else if(r.outcome==='undo'){ %>
+   <ul class="rd-list">
+    <li>The <strong><%= n(r.products) %> products</strong> (<%= n(r.variants) %> variants) this import created are deleted from your lists.</li>
+    <% if(r.stock.positions){ %><li>Their <strong><%= units %> units</strong><% if(r.stock.valueMinor){ %>, worth <strong><%= value %></strong>,<% } %> leave your stock and the opening balance the import brought in is reversed.</li><% } %>
+    <% if(r.existingRows){ %><li><%= n(r.existingRows) %> rows changed products you already had. Those changes stay.</li><% } %>
+    <li>The import disappears from your import list. It runs in the background; large imports take a few minutes.</li>
+   </ul>
+  <% } else { %>
+   <p><%= r.name %> appears in <%= r.history.length<2?r.history.join(''):r.history.slice(0,-1).join(', ')+' and '+r.history.at(-1) %>. Those records stay exactly as they are, so it is archived rather than erased:</p>
+   <ul class="rd-list">
+    <li>It disappears from your lists, search and new <%= r.kind==='customer'?'orders':r.kind==='supplier'?'purchase orders':'orders and counts' %>.</li>
+    <% if(r.stock&&r.stock.positions){ %><li>Its remaining <strong><%= units %> units</strong><% if(r.stock.valueMinor){ %>, worth <strong><%= value %></strong>,<% } %> are written off as a stock correction.</li><% } %>
+    <li>Past orders, reports and history keep showing it. You can restore it from the archived list<%= r.stock&&r.stock.positions?'; written-off stock does not come back':'' %>.</li>
+   </ul>
+  <% } %>
+  <% if(r.outcome!=='archived'){ %>
+  <form method="post" action="/delete/<%= r.kind %>/<%= encodeURIComponent(r.id) %>" class="rd-actions">
+   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= r.hash %>">
+   <a class="btn btn--ghost" href="<%= r.href %>">Keep it</a>
+   <button class="btn btn--danger" type="submit" <%= blocked?'disabled':'' %>>Delete <%= r.noun %></button>
+  </form>
+  <% } else { %><p><a class="btn" href="<%= r.href %>">Back</a></p><% } %>
+<% } %>
+</div></section>
