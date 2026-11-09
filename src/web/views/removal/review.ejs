@@ -1,6 +1,7 @@
 <% const r=review,n=v=>Number(v||0).toLocaleString('en-US'),units=r.stock?n(r.stock.units):'0',value=r.stock?helpers.money(r.stock.valueMinor,currency):'',live=r.removal,blocked=r.blockers&&r.blockers.length; %>
 <section class="rm-head"><div><p class="rm-eyebrow"><%= r.noun.charAt(0).toUpperCase()+r.noun.slice(1) %></p><h1><%= live&&live.status==='COMPLETED'?r.name+' was deleted':live?'Deleting '+r.name:'Delete '+r.name+'?' %></h1></div></section>
 <% if(error){ %><div class="notice notice--warn" role="alert"><%= error %></div><% } %>
+<% if(r.lastFailure){ %><div class="notice notice--warn" role="alert">An earlier removal stopped and the remaining stock was kept. <%= r.lastFailure %> Review the current stock before trying again.</div><% } %>
 <section class="rm-panel rd-panel"><div class="rm-panel__body">
 <% if(live){ const p=live.progress||{},s=live.summary||{},isImport=r.kind==='import',done=isImport?Number(p.products||0):Number(p.positions||0),all=isImport?Number(s.products||0):Number(s.positions||0); %>
   <% if(live.status==='RUNNING'){ %>

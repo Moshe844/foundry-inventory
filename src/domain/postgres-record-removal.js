@@ -101,7 +101,7 @@ async function review(db,ctx,user,kind,id){
   }
  }else out.history=await historyOf(db,ctx.workspaceId,[{table:k.table,ids:[id]}]);
  out.outcome=out.history.length?(archived?'archived':'archive'):'erase';
- if(kind==='product'){const live=await liveRemoval(db,ctx,id,'product');if(live&&(live.status==='RUNNING'||archived))out.removal=live;}
+ if(kind==='product'){const live=await liveRemoval(db,ctx,id,'product');if(live?.status==='FAILED')out.lastFailure=live.error;else if(live&&(live.status==='RUNNING'||archived))out.removal=live;}
  out.hash=digest({kind,id,history:out.history,stock:out.stock&&{positions:out.stock.positions,units:out.stock.units,value:out.stock.valueMinor},outcome:out.outcome});
  return out;
 }
@@ -149,6 +149,7 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
  const k=assertAllowed(user,kind);
  if(kind==='import')return removeImport(db,ctx,user,id,{expectedHash});
  const current=await review(db,ctx,user,kind,id);
+ if(kind==='product'&&current.removal?.status==='RUNNING')return {...current,outcome:'running',removalId:current.removal.id};
  if(!expectedHash||expectedHash!==current.hash)throw new ValidationError(`This ${k.noun} changed after you opened the review. Check it again before deleting.`);
  if(current.blockers.length)throw new ValidationError(current.blockers[0]);
  if(current.outcome==='erase'){
@@ -161,13 +162,15 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
  if(kind==='product'&&current.stock.positions>settings.backgroundPositions){
   const removalId=newId('rmv');
   await db.transaction(async client=>{
+   await reviewedInTransaction(client,ctx,kind,id,expectedHash);
+   const previouslyInactiveSkuIds=(await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=$2 AND is_active=0 ORDER BY id',[ctx.workspaceId,id])).rows.map(r=>r.id);
    await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,progress,created_by_user_id,created_at) VALUES($1,$2,'product',$3,'RUNNING',$4,$5,$6,$7)`,
-    [removalId,ctx.workspaceId,id,{name:current.name,variants:current.variants,positions:current.stock.positions,units:current.stock.units,valueMinor:current.stock.valueMinor},{positions:0,units:'0',valueMinor:0},ctx.actorId,nowIso()]);
+    [removalId,ctx.workspaceId,id,{name:current.name,variants:current.variants,positions:current.stock.positions,units:current.stock.units,valueMinor:current.stock.valueMinor,variantStatesRecorded:true,previouslyInactiveSkuIds},{positions:0,units:'0',valueMinor:0},ctx.actorId,nowIso()]);
    await client.query('UPDATE items SET is_active=0,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,nowIso()]);
    await client.query('UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND item_id=$2 AND is_active<>0',[ctx.workspaceId,id]);
    await require('../operations/postgres-job-queue').enqueue({query:(statement,values=[])=>client.query(statement,values),transaction:operation=>operation(client)},
     {workspaceId:ctx.workspaceId,kind:'records.remove-product',idempotencyKey:'remove-product:'+removalId,payload:{removalId,itemId:id,actorId:ctx.actorId},maxAttempts:5});
-  });
+  },{isolation:'SERIALIZABLE'});
   return {...current,outcome:'running',removalId};
  }
  const removed=await db.transaction(async client=>{
@@ -189,7 +192,7 @@ async function createdItems(db,ctx,importId){
   WHERE r.workspace_id=$1 AND r.import_id=$2 AND r.status='IMPORTED' AND r.item_id IS NOT NULL AND r.parsed::jsonb->>'existingItemId' IS NULL AND i.is_active=1 ORDER BY r.item_id`,[ctx.workspaceId,importId])).rows.map(r=>r.item_id);
 }
 async function liveRemoval(db,ctx,recordId,kind='import'){
- return (await db.query(`SELECT * FROM record_removals WHERE workspace_id=$1 AND kind=$3 AND record_id=$2 AND status<>'FAILED' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,recordId,kind])).rows[0]||null;
+ return (await db.query(`SELECT * FROM record_removals WHERE workspace_id=$1 AND kind=$3 AND record_id=$2 AND ($3='product' OR status<>'FAILED') ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,recordId,kind])).rows[0]||null;
 }
 // Background write-off of one large deleted product (already archived).
 async function runProductRemoval(job,database){
@@ -200,23 +203,26 @@ async function runProductRemoval(job,database){
  try{
   for(let i=0;i<skuIds.length;i+=writeoff.CHUNK){const chunk=skuIds.slice(i,i+writeoff.CHUNK);
    await database.transaction(async client=>{
+    await currentActor(client,ctx,'product');const open=await openWork(client,ctx,chunk);if(open)throw new ValidationError(open);
     const removed=await writeoff.writeOffInTransaction(client,ctx,chunk,{reasonCode:'correction',notes:`Deleted product ${name}`,reference:name,debitAccountKey:'INVENTORY_ADJUSTMENTS',sourceType:'inventory_count',sourceRecordType:'adjustment',sourceRecordId:itemId,description:`Deleted product ${name}`});
     await client.query(`UPDATE record_removals SET progress=jsonb_build_object('positions',(progress->>'positions')::int+$3::int,'units',((progress->>'units')::numeric+$4::numeric)::text,'valueMinor',(progress->>'valueMinor')::bigint+$5::bigint)
      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,removed.positions,removed.units,removed.valueMinor]);
-   },{isolation:'READ COMMITTED'});
+   },{isolation:'SERIALIZABLE',retrySafe:true});
   }
   await database.query(`UPDATE attention_items SET status='RESOLVED',resolution_reason='The product was deleted.',resolved_at=$3 WHERE workspace_id=$1 AND status IN ('OPEN','ACKNOWLEDGED') AND item_id=$2`,[ctx.workspaceId,itemId,nowIso()]);
   await database.query(`UPDATE record_removals SET status='COMPLETED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,nowIso()]);
   return {completed:true};
  }catch(error){
-  if(error instanceof ValidationError||job.attemptCount>=job.maxAttempts){
+  if(error instanceof ValidationError||error instanceof AuthorizationError||job.attemptCount>=job.maxAttempts){
    // The product comes back with whatever stock is left, so nothing is hidden half-removed.
+   const known=removal.summary?.variantStatesRecorded===true&&Array.isArray(removal.summary.previouslyInactiveSkuIds)&&removal.summary.previouslyInactiveSkuIds.every(id=>typeof id==='string');
+   const message=String(error.message)+(known?'':' The older deletion record did not retain variant states. Review its archived variants before making them available again.');
    await database.transaction(async client=>{
-    await client.query(`UPDATE record_removals SET status='FAILED',error=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,String(error.message).slice(0,500),nowIso()]);
+    await client.query(`UPDATE record_removals SET status='FAILED',error=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,message.slice(0,500),nowIso()]);
     await client.query('UPDATE items SET is_active=1,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,itemId,nowIso()]);
-    await client.query('UPDATE skus SET is_active=1 WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,itemId]);
+    if(known)await client.query('UPDATE skus SET is_active=CASE WHEN id=ANY($3::text[]) THEN 0 ELSE 1 END WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,itemId,removal.summary.previouslyInactiveSkuIds]);
    });
-   return {failed:error.message};
+   return {failed:message};
   }
   throw error;
  }
