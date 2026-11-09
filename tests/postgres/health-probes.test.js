@@ -56,3 +56,28 @@ test('a slow health check stays shared even after its nominal cache window passe
   assert.ok(responses.every((response)=>response.status===200));
   assert.equal(queries,1);
 });
+
+test('readiness counts stalled runnable jobs while ignoring disabled and deleting inventories',{timeout:180000},async t=>{
+ process.env.NODE_ENV='test';
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ t.after(async()=>{await db.close();await cluster.stop();});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);
+ await db.query("INSERT INTO accounts(id,email,name,password_hash,created_at) VALUES('probe-owner','probe@example.test','Probe','fixture',now())");
+ await db.query("INSERT INTO workspaces(id,name,owner_account_id,created_at) VALUES('probe-active','Active','probe-owner',now()),('probe-deleting','Deleting','probe-owner',now())");
+ await db.query("UPDATE workspaces SET deletion_requested_at=now() WHERE id='probe-deleting'");
+ const jobs=require('../../src/operations/postgres-job-queue'),old=Date.now()-600000;
+ const active=(await jobs.enqueue(db,{workspaceId:'probe-active',kind:'fixture.probe',idempotencyKey:'active',now:old})).job;
+ await jobs.enqueue(db,{workspaceId:'probe-deleting',kind:'fixture.probe',idempotencyKey:'deleting',now:old});
+ const app=createPostgresApp({database:db,sessionStore:new session.MemoryStore(),env:'test',sessionSecret:'eligible-probe-test',probeCacheMs:{readiness:0}});
+ let response=await request(app).get('/readyz').expect(503);assert.equal(response.body.staleJobs,1);
+ await db.query("INSERT INTO platform_account_access(account_id,disabled_at,reason,changed_by) VALUES('probe-owner',now(),'Fixture suspension','probe-owner')");
+ response=await request(app).get('/readyz').expect(200);assert.equal(response.body.staleJobs,0);
+ assert.equal(await jobs.claim(db,{owner:'probe-worker',kinds:['fixture.probe']}),null,'The excluded jobs also cannot run');
+ await db.query("UPDATE platform_account_access SET disabled_at=NULL WHERE account_id='probe-owner'");
+ response=await request(app).get('/readyz').expect(503);assert.equal(response.body.staleJobs,1);
+ const claimed=await jobs.claim(db,{owner:'probe-worker',kinds:['fixture.probe']});assert.equal(claimed.id,active.id);
+ await jobs.complete(db,claimed.id,claimed.leaseToken,{});
+ response=await request(app).get('/readyz').expect(200);assert.equal(response.body.staleJobs,0);
+ await jobs.enqueue(db,{kind:'fixture.probe',idempotencyKey:'global',now:old});
+ response=await request(app).get('/readyz').expect(503);assert.equal(response.body.staleJobs,1,'A global stalled job still fails readiness');
+});
