@@ -1,0 +1,7 @@
+<label class="rm-field"><span>Planning group name</span><input name="title" maxlength="160" value="<%= input.title||'' %>" required></label>
+<label class="rm-field"><span>Purchase order numbers, one per line</span><textarea name="ordersText" rows="3" required><%= input.ordersText||'' %></textarea></label>
+<label class="rm-field"><span>Container type</span><select name="feet" required><option value="">Choose size</option><option value="20" <%= input.feet==='20'?'selected':'' %>>20 ft</option><option value="40" <%= input.feet==='40'?'selected':'' %>>40 ft</option></select></label>
+<label class="rm-field"><span>Number of containers</span><input name="containerCount" type="number" min="1" max="20" value="<%= input.containerCount||'' %>" required></label>
+<% for(const [key,label] of [['lengthMm','Usable inside length (mm)'],['widthMm','Usable inside width (mm)'],['heightMm','Usable inside height (mm)'],['payloadGrams','Confirmed cargo payload, including all packaging (grams)']]){ %>
+<label class="rm-field"><span><%= label %></span><input name="<%= key %>" type="number" min="1" step="1" value="<%= input[key]||'' %>" required></label><% } %>
+<p>Use the actual equipment measurements and cargo allowance supplied for this shipment. No container measurements or payload are assumed.</p>
