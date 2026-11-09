@@ -14,6 +14,7 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  standingOrder:{type:'string',maxLength:16000,description:'Recurring customer order JSON using discovered customerId, confirmed sourceOrderNumber, cadence daily/weekly/monthly, firstDate YYYY-MM-DD, maximum decimal value, optional schedule id, and current revision or 0 for new.'},
   unitQuantity:{type:'string',maxLength:40,description:'Exact decimal quantity to convert.'},
   fromUnit:{type:'string',maxLength:60,description:'Source unit or the saved supplier purchase unit, such as case, kg or lb.'},
   quoteValidUntil:{type:'string',maxLength:10,description:'Customer quotation expiry date, YYYY-MM-DD.'},

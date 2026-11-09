@@ -25,6 +25,19 @@ function createPostgresAutopilotRouter(database){
     await jobModes.save(database,req.ctx,req.params.id,req.body);
     res.redirect(303,'/autopilot/job-modes#job-'+Number(req.params.id));
   }));
+  router.post('/autopilot/recurring-orders',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const recurring=require('../../sales/recurring-orders');
+    if(req.body.pause==='1')await recurring.pause(database,req.ctx,req.body.id,req.body.revision);
+    else{
+      let source={};
+      if(req.body.sourceOrderId){
+        source=(await database.query('SELECT customer_id AS "customerId",order_number AS "sourceOrderNumber" FROM sales_orders WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.sourceOrderId])).rows[0];
+        if(!source)throw new (require('../../domain/errors').ValidationError)('Choose a confirmed customer order from this inventory.');
+      }
+      await recurring.configure(database,req.ctx,{...req.body,...source});
+    }
+    res.redirect(303,'/autopilot/reviews/recurring-customer-orders');
+  }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
   router.post('/actions/:id/draft-rule',requireAuth,owner,asyncRoute(async(req,res)=>{

@@ -1,0 +1,26 @@
+<section class="card card-body section" aria-label="Recurring order schedules">
+  <h2>Create a recurring order</h2>
+  <form method="post" action="/autopilot/recurring-orders">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="0">
+    <input type="hidden" name="id" value="<%= result.recurringForm.newId %>">
+    <label>Confirmed order to repeat <select name="sourceOrderId" required><option value="">Choose a customer order</option><% for(const order of result.recurringForm.orders){ %><option value="<%= order.id %>"><%= order.order_number %> · <%= order.name %></option><% } %></select></label>
+    <label>Repeat <select name="cadence"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="daily">Daily</option></select></label>
+    <label>First order date <input name="firstDate" type="date" required min="<%= result.recurringForm.today %>" value="<%= result.recurringForm.today %>"></label>
+    <label>Maximum total per order <input name="maximum" inputmode="decimal" required placeholder="In the source order’s currency"></label>
+    <p>Each occurrence creates a draft order at current prices. Routine work must be enabled. Changes to the source order, delivery details, plan or approved amount pause the schedule.</p>
+    <button class="btn">Approve recurring order</button>
+  </form>
+  <% for(const schedule of result.recurringForm.schedules){ %><section class="section">
+    <h3><%= schedule.template.sourceOrderNumber %> · <%= schedule.cadence %></h3>
+    <% if(schedule.problem){ %><p role="status"><%= schedule.problem %></p><% } %>
+    <form method="post" action="/autopilot/recurring-orders">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= schedule.id %>"><input type="hidden" name="revision" value="<%= schedule.revision %>">
+      <input type="hidden" name="customerId" value="<%= schedule.customer_id %>"><input type="hidden" name="sourceOrderNumber" value="<%= schedule.template.sourceOrderNumber %>">
+      <label>Repeat <select name="cadence"><% for(const cadence of ['daily','weekly','monthly']){ %><option <%= schedule.cadence===cadence?'selected':'' %>><%= cadence %></option><% } %></select></label>
+      <label>Next order <input name="firstDate" type="date" required min="<%= result.recurringForm.today %>" value="<%= schedule.due<result.recurringForm.today?result.recurringForm.today:schedule.due %>"></label>
+      <label>Maximum per order (<%= schedule.currency %>) <input name="maximum" inputmode="decimal" required value="<%= schedule.maximum %>"></label>
+      <button class="btn"><%= schedule.paused?'Review and resume':'Save schedule' %></button>
+      <% if(!schedule.paused){ %><button class="btn" name="pause" value="1" formnovalidate>Stop recurring orders</button><% } %>
+    </form>
+  </section><% } %>
+</section>

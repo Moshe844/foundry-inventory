@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../sales/recurring-orders').definition,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
   {id:13,key:'kit-capacity',label:'Buildable kits and missing parts',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-parts').review},
@@ -125,6 +126,7 @@ async function run(db,ctx,key,options={}){
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
+      ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...inputs};
   }
   if(def.read){

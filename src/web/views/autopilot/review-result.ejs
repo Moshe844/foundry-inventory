@@ -74,3 +74,4 @@
 </tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p>No matching records.</p><% } %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
+<% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>

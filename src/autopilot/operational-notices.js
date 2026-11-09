@@ -30,6 +30,8 @@ async function refresh(db,workspaceId){
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
+    ` UNION ALL SELECT 67,'Recurring order',r.id,'/autopilot/reviews/recurring-customer-orders',r.next_date
+      FROM stockchief_runtime.recurring_customer_orders r WHERE r.workspace_id=$1 AND r.paused AND r.problem IS NOT NULL`+
     ` UNION ALL SELECT 206,'Automation',s.month,'/autopilot/reviews/automation-opportunities',(s.month||'-01')::date
       FROM stockchief_runtime.agent_automation_opportunities s WHERE s.workspace_id=$1 AND s.month=left($3::text,7)
       AND EXISTS(SELECT 1 FROM jsonb_array_elements(s.rows) opportunity JOIN stockchief_runtime.assistant_action_proposals p
@@ -57,13 +59,16 @@ async function inbox(db,workspaceId,actorId=null){
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
-  return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),'automatic')).map(r=>{
+  return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),'automatic',{trained:Number(r.job_id)===67})).map(r=>{
     const watch=require('./activity-watches').spec[r.job_id];
     if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
       why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};
     if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
       happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
       recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};
+    if(Number(r.job_id)===67)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'A recurring customer order needs review',
+      happened:r.n+' recurring schedule'+(r.n===1?' is':'s are')+' paused.',why:'A current plan, price, customer or authority check requires a decision.',
+      recommendation:'Review the schedule and its current order details.',href:'/autopilot/reviews/recurring-customer-orders',actionLabel:'Review recurring orders',sourceId:'agent-notice-67'};
     if(Number(r.job_id)===206)return {kind:'inventory',grouped:true,importance:'Information',priority:40,title:'Review this month’s automation opportunities',
       happened:'Repeated owner approvals can become taught routines.',why:'The work stayed inside the same customer, supplier or product scope.',
       recommendation:'Review the examples and choose the limits for each rule.',href:'/autopilot/reviews/automation-opportunities',actionLabel:'Review routines',sourceId:'agent-notice-206'};
