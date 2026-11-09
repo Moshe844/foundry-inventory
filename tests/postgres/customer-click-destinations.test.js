@@ -39,7 +39,8 @@ test('required customer click gate visits page routes and detail families, block
   const response=await page.goto(origin+url),locked=page.locator('[data-agent-plan-locked]');
   assert.equal(response.status(),402,url);
   assert((await locked.innerText()).includes('the '+plan+' plan'),url);
-  assert.equal(await locked.getByRole('link',{name:'Review plans and terms'}).getAttribute('href'),'/billing');
+  const [billing]=await Promise.all([page.waitForNavigation(),locked.getByRole('link',{name:'Review plans and terms'}).click()]);
+  assert.equal(new URL(page.url()).pathname,'/settings/billing');assert.equal(billing.status(),200);
   seen.add(url);evidence.push({page:url,kind:'plan required',plan,status:402});
  }
  // Deep links can intentionally open a native modal (for example Add a location).

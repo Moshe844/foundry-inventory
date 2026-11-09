@@ -44,6 +44,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   if(imported)throw new ValidationError('This import has saved records without a matching execution checkpoint. Review its saved result.');
   // New SKUs are what preparing creates; progress is shown against them.
   if(!saved.catalogueStarted){const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capacity=await identities.counts(client,ctx,plan);saved.skusPlanned=capacity.skus;
+   await entitlements.assertMeterCapacity(client,scope,'products',capacity.products);
    await entitlements.assertMeterCapacity(client,scope,'active_skus',capacity.skus);}
   const locations=saved.locations||Object.fromEntries(await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]));
   const created=await prepareCatalogue.prepare(client,ctx,plan,options,deps,saved);

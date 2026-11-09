@@ -432,6 +432,14 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
   return get(database,ctx.workspaceId,plan.id);
 }
 
+async function assertImportRowCapacity(database,workspaceId,rowCount){
+  const entitlements=require('../commercial/entitlements');
+  const capacityScope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
+  const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
+  if(rowCapacity.hardLimit!==null&&rowCount>rowCapacity.hardLimit)
+    throw new entitlements.EntitlementError(`This import has ${rowCount.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
+}
+
 async function analyse(database, ctx, input) {
   if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
   await assertOperator(database,ctx);
@@ -452,11 +460,7 @@ async function analyse(database, ctx, input) {
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
-  const entitlements=require('../commercial/entitlements');
-  const capacityScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
-  const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
-  if(rowCapacity.hardLimit!==null&&sheet.rows.length>rowCapacity.hardLimit)
-    throw new entitlements.EntitlementError(`This import has ${sheet.rows.length.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
+  await assertImportRowCapacity(database,ctx.workspaceId,sheet.rows.length);
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
     sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping,lifecycle:input});
@@ -999,6 +1003,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
   }
   let result,executionAttempt=0;
   try {
+    await assertImportRowCapacity(database,ctx.workspaceId,plan.recordsDetected);
     if(plan.transformations.dataset!=='suppliers')result=await require('./postgres-apply').run(database,ctx,plan,executionId,options,{assertOperator,assertSourceClaim,bulkPlanning,productKey,variantKey});
     else result=await database.transaction(async(client)=>{
       executionAttempt++;
@@ -1045,7 +1050,7 @@ async function executeUnlocked(database, ctx, id, options={}) {
     await database.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN $5 THEN 'paused' ELSE 'rolled_back' END,error_message=$2,finished_at=$3,
       result=COALESCE($4,result) WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso(),
       error.details?.checks?JSON.stringify({failedChecks:error.details.checks}):null,Boolean(cp.cataloguePrepared||cp.catalogueStarted)]);
-    await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status<>'CANCELLED' AND approval_status='APPROVED'`,[ctx.workspaceId,id]);
+    await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status NOT IN ('CANCELLED','READY') AND approval_status='APPROVED'`,[ctx.workspaceId,id]);
     throw error;
   }
   // Business writes have committed. Keep all advisory work outside the rollback
