@@ -22,7 +22,7 @@
 </form><% } %>
 <% if(result.countAssignments){ const config=result.countAssignments; %><form method="post" action="/warehouse/count-assignments">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= config.requestKey %>">
-<label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>"><%= loc.name %></option><% } %></select></label>
+<label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>" <%= config.selectedLocationId===loc.id?'selected':'' %>><%= loc.name %></option><% } %></select></label>
 <label>Person who counts <select name="counterId" required><% for(const p of config.people){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
 <button class="btn">Assign one count</button>
 <details><summary>Repeat this assignment</summary><p>StockChief assigns the next list when routine work is enabled and the previous worksheet has closed.</p>
@@ -75,3 +75,4 @@
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
+<% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>

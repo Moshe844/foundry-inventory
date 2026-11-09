@@ -29,7 +29,10 @@ async function refresh(db,workspaceId){
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  const priceChecks=policy.permits(account.plan,87,'automatic')&&(await db.query("SELECT 1 FROM connection_commerce_positions WHERE workspace_id=$1 AND field='price' AND mode<>'off' LIMIT 1",[workspaceId])).rowCount>0;
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
+    (priceChecks?` UNION ALL SELECT 87,'Channel price',reference,link,$3::date FROM (`+require('../pricing/channel-price-review').observed+`) prices WHERE "Finding"<>'Matches recorded catalogue price'`:'')+
+    (policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+require('./repeated-corrections').sql+`) corrections`:'')+
     ` UNION ALL SELECT 67,'Recurring order',r.id,'/autopilot/reviews/recurring-customer-orders',r.next_date
       FROM stockchief_runtime.recurring_customer_orders r WHERE r.workspace_id=$1 AND r.paused AND r.problem IS NOT NULL`+
     ` UNION ALL SELECT 206,'Automation',s.month,'/autopilot/reviews/automation-opportunities',(s.month||'-01')::date
@@ -66,6 +69,12 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
       happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
       recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};
+    if(Number(r.job_id)===87)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Channel prices need review',
+      happened:r.n+' recorded channel price'+(r.n===1?' needs':'s need')+' review.',why:'A comparison found a price difference, MAP issue or older provider observation.',
+      recommendation:'Review the recorded prices and their check dates.',href:'/autopilot/reviews/channel-prices',actionLabel:'Review channel prices',sourceId:'agent-notice-87'};
+    if(Number(r.job_id)===209)return {kind:'inventory',grouped:true,importance:'Important',priority:65,title:'Repeated corrections suggest a count rule',
+      happened:r.n+' product and warehouse combination'+(r.n===1?' has':'s have')+' repeated corrections.',why:'At least three non-opening stock corrections were recorded in the last 30 days.',
+      recommendation:'Review a recurring blind count before teaching a new rule.',href:'/autopilot/reviews/repeated-corrections',actionLabel:'Review suggested rule',sourceId:'agent-notice-209'};
     if(Number(r.job_id)===67)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'A recurring customer order needs review',
       happened:r.n+' recurring schedule'+(r.n===1?' is':'s are')+' paused.',why:'A current plan, price, customer or authority check requires a decision.',
       recommendation:'Review the schedule and its current order details.',href:'/autopilot/reviews/recurring-customer-orders',actionLabel:'Review recurring orders',sourceId:'agent-notice-67'};

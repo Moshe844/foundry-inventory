@@ -38,6 +38,10 @@ function createPostgresAutopilotRouter(database){
     }
     res.redirect(303,'/autopilot/reviews/recurring-customer-orders');
   }));
+  router.post('/autopilot/map-terms',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../pricing/channel-price-review').save(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/channel-prices');
+  }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
   router.post('/actions/:id/draft-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
@@ -144,7 +148,7 @@ function createPostgresAutopilotRouter(database){
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
-      if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment')};
+      if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
         const rule=await require('../../purchasing/dual-approval').setting(database,req.ctx.workspaceId);

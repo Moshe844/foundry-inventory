@@ -5,6 +5,8 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../pricing/channel-price-review').definition,
+  require('./repeated-corrections').definition,
   require('../sales/recurring-orders').definition,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
@@ -127,6 +129,7 @@ async function run(db,ctx,key,options={}){
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
+      ...(result.mapForm?{mapForm:result.mapForm}:{}),
       ...inputs};
   }
   if(def.read){
