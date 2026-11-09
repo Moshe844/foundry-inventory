@@ -3,7 +3,7 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
 }
@@ -14,12 +14,13 @@ function scope(partyId,currency,amountMinor,qualification,label){
 async function history(db,ctx,action,bound,amount){
   const {rows:[row]}=await db.query(`SELECT count(*) total,count(*) FILTER(WHERE (payload#>>'{training,amountMinor}')::numeric<=$5) covered
     FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND action_type=$2 AND status='EXECUTED'
-      AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'`,[ctx.workspaceId,action,bound.key,bound.currency,amount]);
+      AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'
+      AND result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule'`,[ctx.workspaceId,action,bound.key,bound.currency,amount]);
   return {total:Number(row.total),covered:Number(row.covered)};
 }
 async function settings(db,ctx,id,maximum){
   const state=await require('./job-reviews').ownerState(db,ctx);
-  const {rows:[p]}=await db.query('SELECT action_type,payload,status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);
+  const {rows:[p]}=await db.query('SELECT action_type,payload,status,result FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);
   const bound=p?.payload?.training;
   if(!jobs.has(p?.action_type)||!bound?.key||!policy.usesAgentTerms(state))return null;
   const rule=(await db.query('SELECT * FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3',
@@ -30,7 +31,7 @@ async function settings(db,ctx,id,maximum){
   return {action:p.action_type,bound,eligible:allowed,exampleAmount:money.fromMinor(bound.amountMinor,bound.currency),
     preview:amount>0?{...(await history(db,ctx,p.action_type,bound,amount)),maximum:money.fromMinor(amount,bound.currency)}:null,
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
-    canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow};
+    canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow&&p.result?.executionAuthority?.kind!=='standing_job_rule'};
 }
 async function save(db,ctx,id,input){
   return db.transaction(async c=>{

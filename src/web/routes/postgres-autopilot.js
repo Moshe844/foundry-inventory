@@ -17,6 +17,11 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  router.post('/autopilot/arrived-stock/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Reserve arrived stock for the selected confirmed backorder',{action:'sales_order.reserve_arrived',recordReference:req.body.orderNumber});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current backorder before preparing its reservation.');
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
   router.post('/autopilot/invoice-reminders/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare the selected customer invoice reminder',{action:'customer_invoice.remind',recordReference:req.body.invoiceNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current invoice before preparing its reminder.');

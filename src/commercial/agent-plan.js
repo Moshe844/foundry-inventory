@@ -136,7 +136,7 @@ const actionJobs=new Map([
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
-  ['sales_order.reserve_all',12],['sales_order.repeat',53],['sales_order.allocation_priority',65],
+  ['sales_order.reserve_all',12],['sales_order.reserve_arrived',48],['sales_order.repeat',53],['sales_order.allocation_priority',65],
   ['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
@@ -158,7 +158,7 @@ function actionJob(name,operation,payload) {
   return actionJobs.get(name);
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
-const newAgentActions=new Set(['customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
+const newAgentActions=new Set(['sales_order.reserve_arrived','customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.

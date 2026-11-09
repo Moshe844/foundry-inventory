@@ -25,6 +25,9 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='sales_order.reserve_arrived'){
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.quantity+' units'}))]};
+ }
  if(proposal.action_type==='purchase_order.record_supplier_invoice'){
   const p=proposal.payload,money=require('../domain/currency');
   return {summary:proposal.summary,impact:p.expectedStatus==='DISPUTED'?'Records a disputed supplier document':'Records the supplier invoice owed',fields:[{label:'Supplier invoice',value:p.supplierInvoiceNumber},{label:'Invoice date',value:p.issueDate},{label:'Due date',value:p.dueDate||'Needs confirmation'},...(p.sourceEvidence?[{label:'Original document',value:p.sourceEvidence.filename}]:[]),...(p.lines||[]).map(l=>({label:l.description||'Invoice item',value:l.quantity+' units at '+money.format(l.unitCostMinor,p.currency)+' each'})),...(p.expectedTotalMinor!=null?[{label:'Invoice total',value:money.format(p.expectedTotalMinor,p.currency)}]:[]),...(p.invoiceRoutineHold?[{label:'Needs your review',value:p.invoiceRoutineHold}]:[])]};

@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../sales/agent-arrived-stock').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
   require('../documents/agent-product-facts').definition,
@@ -141,6 +142,7 @@ async function run(db,ctx,key,options={}){
       ...(result.undoForm?{undoForm:result.undoForm}:{}),
       ...(result.bankMatchForm?{bankMatchForm:result.bankMatchForm}:{}),
       ...(result.reminderForm?{reminderForm:result.reminderForm}:{}),
+      ...(result.arrivedStockForm?{arrivedStockForm:result.arrivedStockForm}:{}),
       ...inputs};
   }
   if(def.read){

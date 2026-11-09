@@ -2112,7 +2112,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2131,7 +2131,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       if(contract.name!=='purchase_order.record_supplier_invoice')throw new ValidationError('Supplier invoice authority cannot run another kind of action.');
       routineAuthority=await require('../purchasing/agent-invoice-routine').requireRoutineAuthority(client,ctx);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine;
+    if(arrivedStockRoutine){
+      if(contract.name!=='sales_order.reserve_arrived')throw new ValidationError('Arrived stock authority cannot run another kind of action.');
+      routineAuthority=await require('../sales/agent-arrived-stock').requireRoutineAuthority(client,ctx);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2168,7 +2172,8 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const postage=['shipping.label','shipping.batch_purchase'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount);
     const paymentMatch=contract.name==='customer_payment.match_bank_line'&&agentPolicy.usesAgentTerms(agentAccount);
     const invoiceMatch=contract.name==='purchase_order.record_supplier_invoice'&&agentPolicy.usesAgentTerms(agentAccount);
-    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:ctx;
+    const arrivedStock=contract.name==='sales_order.reserve_arrived'&&agentPolicy.usesAgentTerms(agentAccount);
+    const executionContext=postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:ctx;
     const executed=await contract.execute(client,executionContext,payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
@@ -2204,6 +2209,10 @@ async function executeReceiptRoutine(database,ctx,id){
 }
 async function executeInvoiceRoutine(database,ctx,id){
   const committed=await executeProposalCore(database,ctx,id,{invoiceRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+async function executeArrivedStockRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{arrivedStockRoutine:true});
   return continueRoutineProposal(database,ctx,committed);
 }
 async function continueRoutineProposal(database,ctx,committed){
@@ -2274,5 +2283,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};
