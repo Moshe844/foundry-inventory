@@ -1,24 +1,30 @@
-<section class="agent-plan-comparison" aria-labelledby="agent-plan-heading" id="compare-agent-plans">
-  <div class="agent-plan-comparison__intro">
-    <h2 id="agent-plan-heading">Compare every agent duty</h2>
-    <p>Each cell shows the most control that plan allows. Your approval rules, permissions and spending limits apply every time.</p>
-    <p class="agent-plan-comparison__status">Implementation and verification are in progress. Partly verified duties have tested workflows and further checks to finish. Provider connections also need qualification with the connected account.</p>
+<section class="pricing-comparison" aria-labelledby="agent-plan-heading" id="compare-agent-plans">
+  <header><p class="pub-kicker">Side by side</p><h2 id="agent-plan-heading">Compare the plans</h2><p>Plan limits are the ceiling. You choose which jobs StockChief may handle.</p></header>
+  <div class="pricing-summary-table" tabindex="0" role="region" aria-label="Plan limits. Scroll horizontally on small screens.">
+    <table><caption class="sr-only">Included capacity by plan</caption><thead><tr><th scope="col">Included</th><% for(const plan of compared){const price=interval==='annual'?plan.annual_amount_minor:plan.monthly_amount_minor; %><th scope="col"><%= plan.name %><small><%= plan.sales_only||price==null?'Agreed pricing':'$'+format(Number(price)/100)+(interval==='annual'?'/year':'/month') %></small></th><% } %></tr></thead>
+    <tbody><% for(const meter of ['products','active_skus','members','workspaces','locations','agent_documents','ai_work_credits']){const example=compared.flatMap(p=>p.allowances).find(a=>a.meter===meter);if(example){ %><tr><th scope="row"><%= allowanceLabel(example) %></th><% for(const plan of compared){const a=plan.allowances.find(a=>a.meter===meter); %><td><%= a?allowanceNumber(plan,a):'Agreed limit' %></td><% } %></tr><% }} %>
+    <tr><th scope="row">Repeat purchasing ceiling</th><td>You approve</td><td>$500 / order<br>$2,000 / week</td><td>$1,000 / order<br>$5,000 / week</td><td>Agreed limits</td></tr>
+    <tr><th scope="row">Without training</th><% for(const plan of compared){ %><td><a href="#plan-details-<%= plan.id %>" data-open-plan="<%= plan.id %>" data-open-mode="alone">View duties</a></td><% } %></tr>
+    <tr><th scope="row">Everything included</th><% for(const plan of compared){ %><td><a href="#plan-details-<%= plan.id %>" data-open-plan="<%= plan.id %>">View <%= plan.name %></a></td><% } %></tr></tbody></table>
   </div>
-  <ul class="agent-plan-legend" aria-label="Levels of control">
-    <li><strong>Suggests</strong> · Gives you a recommendation.</li>
-    <li><strong>You approve</strong> · Prepares the work for your approval.</li>
-    <li><strong>After training</strong> · Uses a rule you have taught and approved.</li>
-    <li><strong>Within your rules</strong> · Handles authorized work inside your limits.</li>
-  </ul>
-  <p class="agent-plan-comparison__safety">The first 14 days are a watching period. Physical receipts, stock counts, payments, refunds and price changes still require the confirmations shown in the workflow. Starter requires a separate approval for each shipment tracking email.</p>
-  <div class="agent-plan-table" tabindex="0" role="region" aria-label="Agent duties by plan. Scroll horizontally on small screens.">
-    <table>
-      <caption class="sr-only">Agent duties and permitted control for Starter, Growth, Pro and Custom</caption>
-      <thead><tr><th scope="col">Agent duty</th><% for(const plan of compared){ %><th scope="col" data-agent-tier="<%= plan.id %>"><span><%= plan.name %></span><small><%= plan.sales_only||plan.monthly_amount_minor==null?'Agreed pricing':'$'+format(Number(plan.monthly_amount_minor)/100)+'/month' %></small></th><% } %></tr></thead>
-      <tbody><% for(const job of agentComparison){ %><tr data-agent-job="<%= job.id %>">
-        <th scope="row"><span><%= job.label %></span><small data-agent-verification><%= job.verification %></small></th>
-        <% for(const plan of compared){const cell=job.plans.find(p=>p.tier===plan.id); %><td data-agent-tier="<%= plan.id %>" data-agent-mode="<%= cell.mode %>"><span class="agent-mode agent-mode--<%= cell.mode %>"><%= cell.label %></span></td><% } %>
-      </tr><% } %></tbody>
-    </table>
-  </div>
+  <details class="pricing-full-comparison" data-full-comparison>
+    <summary><span>Compare all 214 agent duties</span><small>19 areas · search by job · exact control per plan</small></summary>
+    <p>These levels show what each plan permits after the 14-day watch period, with your authorization. “No training needed” does not turn a job on automatically.</p>
+    <%- include('plan-mode-guide') %>
+    <p class="pricing-verification-note"><strong>Check the status beside each duty.</strong> Working workflow = verified end to end in its supported scope. Limited scope = a tested workflow with further PDF requirements or checks to finish. Planned = not available yet. Provider connections need qualification with your connected account.</p>
+    <label class="pricing-search">Find a duty<input type="search" data-comparison-search placeholder="Try purchase orders, tracking or reports"></label>
+    <p class="pricing-result-count" data-comparison-count aria-live="polite">214 duties across 19 areas</p>
+    <% for(const group of agentPlans.groups){ %><details class="pricing-duty-area" data-comparison-group>
+      <summary><%= group.label %><small><%= group.jobs.length %> duties</small></summary>
+      <div class="agent-plan-table" tabindex="0" role="region" aria-label="<%= group.label %> duties by plan. Scroll horizontally on small screens.">
+        <table><caption class="sr-only"><%= group.label %>: permitted control for each plan</caption>
+          <thead><tr><th scope="col">Agent duty</th><% for(const plan of compared){ %><th scope="col" data-agent-tier="<%= plan.id %>"><%= plan.name %></th><% } %></tr></thead>
+          <tbody><% for(const job of group.jobs){ %><tr data-agent-job="<%= job.id %>"><th scope="row"><span><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>" data-agent-verification><%= job.verification %></small></th>
+            <% for(const plan of compared){const cell=job.plans.find(p=>p.tier===plan.id); %><td data-agent-tier="<%= plan.id %>" data-agent-mode="<%= cell.mode %>"><span class="agent-mode agent-mode--<%= cell.mode %>"><%= cell.label %></span></td><% } %>
+          </tr><% } %></tbody>
+        </table>
+      </div>
+    </details><% } %>
+  </details>
+  <p class="pricing-human-rule">You stay in control: payments, refunds, price changes, physical receipts, write-offs, large count changes, new suppliers and authority increases still need the human approvals required by the workflow. Lower limits you set always win.</p>
 </section>

@@ -52,7 +52,13 @@ jobs:
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          # Some runners time out on www.postgresql.org; the same signing key
+          # is also published by PostgreSQL's official package repository.
+          if ! sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; then
+            sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc
+          fi
+          fingerprint="$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')"
+          test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
           printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-17
@@ -181,6 +187,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/round16-missing-issue-cost.test.js tests/postgres/round16-stock-overview.test.js tests/postgres/round16-stock-coverage-totals.test.js tests/postgres/inventory-rollup-deltas.test.js tests/postgres/catalog-rollup-deltas.test.js tests/postgres/round16-return-availability.test.js tests/postgres/round16-availability-summary.test.js tests/postgres/round16-daily-account-totals.test.js tests/postgres/round16-profit-report-projection.test.js tests/postgres/round16-additive-report-projections.test.js tests/postgres/round16-low-stock-report.test.js tests/postgres/rental-bookings.test.js tests/postgres/round16-request-read-cost.test.js tests/postgres/round16-versioned-reads.test.js tests/postgres/round16-business-read-capacity.test.js tests/postgres/health-probes.test.js tests/unit/edge-availability.test.js tests/unit/request-rate-limit.test.js tests/unit/status-page-browser.test.js 2>&1 | tee output/inventory-ci/costs-availability.log
+      - name: Staging speed read parity and imported detail uniqueness
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/staging-speed-read-parity.test.js tests/postgres/catalog-legacy-facts-lookup.test.js tests/postgres/grouped-inbox.test.js 2>&1 | tee output/inventory-ci/staging-speed-reads.log
       - name: Complete report totals and bounded dashboard reads
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'variants' }}
         run: |
