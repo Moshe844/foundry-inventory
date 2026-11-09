@@ -674,6 +674,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),

@@ -137,6 +137,9 @@ jobs:
       - name: Supplier benefit sources, exact plan limits and external claim history
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/supplier-benefit-forms.test.js tests/unit/supplier-rebate-calculation.test.js tests/postgres/agent-supplier-benefits.test.js tests/postgres/agent-supplier-benefits-boundaries.test.js tests/postgres/agent-supplier-benefits-ui.test.js tests/postgres/agent-supplier-benefits-removal.test.js
+      - name: Supplier PO delivery promises, trained limits and downgrade fences
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/po-delivery-date-source.test.js tests/postgres/agent-po-delivery-dates.test.js tests/postgres/agent-po-delivery-date-worker.test.js tests/postgres/agent-po-delivery-date-boundaries.test.js tests/postgres/agent-po-delivery-date-reporting.test.js tests/postgres/agent-po-delivery-date-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

@@ -123,6 +123,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['supplier.email_terms',96],
+  ['purchase_order.update_delivery_date',31],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],
   ['supplier.share_forecast',36],
