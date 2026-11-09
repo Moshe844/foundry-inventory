@@ -35,7 +35,7 @@
   function openPlan(dialog,mode,trigger){
     if(!dialog||typeof dialog.showModal!=='function')return false;
     dialog.querySelector('[data-plan-search]').value='';
-    dialog.querySelector('[data-plan-status]').value='working';
+    dialog.querySelector('[data-plan-status]').value=mode==='all'?'all':'working';
     for(const button of dialog.querySelectorAll('[data-filter-mode]'))button.setAttribute('aria-pressed',String(button.dataset.filterMode===mode));
     filterPlan(dialog);dialog.returnFocus=trigger;dialog.showModal();
     dialog.querySelector('.plan-dialog-body').scrollTop=0;
