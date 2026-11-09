@@ -162,6 +162,20 @@ async function createdItems(db,ctx,importId){
 async function liveRemoval(db,ctx,importId){
  return (await db.query(`SELECT * FROM record_removals WHERE workspace_id=$1 AND kind='import' AND record_id=$2 AND status<>'FAILED' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,importId])).rows[0]||null;
 }
+async function importOpeningProblem(db,ctx,importId,skuIds){
+ if(!skuIds.length)return null;
+ // Only the original, fully costed opening movements belong to this reversal.
+ // A closed later PO is no longer "open work", but its goods are still real.
+ const changed=(await db.query(`SELECT 1 WHERE EXISTS(
+  SELECT 1 FROM movements m
+  LEFT JOIN accounting_inventory_cost_movements c ON c.workspace_id=m.workspace_id AND c.inventory_movement_id=m.id
+  LEFT JOIN import_rows r ON r.workspace_id=c.workspace_id AND r.id=c.cost_source_record_id AND r.import_id=$2 AND r.status='IMPORTED'
+  WHERE m.workspace_id=$1 AND m.sku_id=ANY($3::text[]) AND
+   (c.id IS NULL OR c.cost_source_type<>'opening_inventory' OR r.id IS NULL OR NOT r.movement_ids::jsonb @> jsonb_build_array(m.id))
+ ) OR EXISTS(SELECT 1 FROM accounting_inventory_value_adjustments WHERE workspace_id=$1 AND sku_id=ANY($3::text[]))
+ OR EXISTS(SELECT 1 FROM accounting_inventory_openings WHERE workspace_id=$1 AND sku_id=ANY($3::text[]))`,[ctx.workspaceId,importId,skuIds])).rowCount;
+ return changed?'Later stock work or cost changes use products from this import. Review those products separately; only the original opening stock can be reversed automatically.':null;
+}
 async function reviewImport(db,ctx,id){
  const plan=await record(db,ctx,'import',id),removal=await liveRemoval(db,ctx,id);
  const out={kind:'import',id,noun:'import',name:plan.source_name||'Import',href:'/imports/'+id,list:'/imports',blockers:[],removal,history:[]};
@@ -176,6 +190,7 @@ async function reviewImport(db,ctx,id){
   out.outcome='undo';out.products=items.length;out.variants=skuIds.length;out.stock=await writeoff.summarize(db,ctx,skuIds);
   if(out.stock.problem)out.blockers.push(out.stock.problem);
   const open=await openWork(db,ctx,skuIds);if(open)out.blockers.push(open);
+  const changed=await importOpeningProblem(db,ctx,id,skuIds);if(changed)out.blockers.push(changed);
  }
  out.hash=digest({kind:'import',id,outcome:out.outcome,products:out.products,stock:out.stock&&{positions:out.stock.positions,units:out.stock.units,value:out.stock.valueMinor},existing:out.existingRows});
  return out;
@@ -186,20 +201,21 @@ async function removeImport(db,ctx,user,id,{expectedHash}){
  if(!expectedHash||expectedHash!==current.hash)throw new ValidationError('This import changed after you opened the review. Check it again before deleting.');
  if(current.blockers.length)throw new ValidationError(current.blockers[0]);
  if(current.outcome==='erase'){
-  try{await db.transaction(client=>client.query('DELETE FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]));return {...current,outcome:'erased'};}
+  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,'import',id,expectedHash);return client.query('DELETE FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
   catch(error){if(error.code!=='23503')throw error;}
-  await db.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,created_by_user_id,created_at,completed_at) VALUES($1,$2,'import',$3,'COMPLETED',$4,$5,$6,$6)`,
-   [newId('rmv'),ctx.workspaceId,id,{hidden:true},ctx.actorId,nowIso()]);
+  await db.transaction(async client=>{await reviewedInTransaction(client,ctx,'import',id,expectedHash);await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,created_by_user_id,created_at,completed_at) VALUES($1,$2,'import',$3,'COMPLETED',$4,$5,$6,$6)`,
+   [newId('rmv'),ctx.workspaceId,id,{hidden:true},ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE'});
   return {...current,outcome:'removed'};
  }
  const removalId=newId('rmv'),at=nowIso();
  await db.transaction(async client=>{
+  await reviewedInTransaction(client,ctx,'import',id,expectedHash);
   await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,progress,created_by_user_id,created_at) VALUES($1,$2,'import',$3,'RUNNING',$4,$5,$6,$7)`,
    [removalId,ctx.workspaceId,id,{products:current.products,variants:current.variants,units:current.stock.units,valueMinor:current.stock.valueMinor,existingRows:current.existingRows},{products:0,units:'0',valueMinor:0,skipped:[]},ctx.actorId,at]);
   // The job commits with its removal record or not at all.
   await require('../operations/postgres-job-queue').enqueue({query:(statement,values=[])=>client.query(statement,values),transaction:operation=>operation(client)},
    {workspaceId:ctx.workspaceId,kind:'records.remove-import',idempotencyKey:'remove-import:'+removalId,payload:{removalId,importId:id,actorId:ctx.actorId},maxAttempts:5});
- });
+ },{isolation:'SERIALIZABLE'});
  return {...current,outcome:'running',removalId};
 }
 
@@ -219,6 +235,7 @@ async function runImportRemoval(job,database){
   for(const itemIds of groups){
    await database.transaction(async client=>{
     const skuIds=(await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=ANY($2::text[])',[ctx.workspaceId,itemIds])).rows.map(r=>r.id);
+    const changed=await importOpeningProblem(client,ctx,importId,skuIds);if(changed)throw new ValidationError(changed);
     const open=await openWork(client,ctx,skuIds);let removed={positions:0,units:'0',valueMinor:0},done=itemIds,skipped=[];
     if(open){done=[];skipped=itemIds;}
     else removed=await archiveProductsInTransaction(client,ctx,itemIds,{debitAccountKey:'OPENING_BALANCE_EQUITY',reason,reference:plan.source_name,sourceType:'inventory_count',sourceRecordType:'adjustment',sourceRecordId:importId});

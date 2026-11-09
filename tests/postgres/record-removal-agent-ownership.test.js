@@ -65,3 +65,15 @@ test('an approved transfer keeps its reserved product active until the transfer 
  const transfer=await transfers.request(db,ctx,{fromLocationId:f.location.id,toLocationId:destination.id,lines:[{skuId:f.item.skuIds[0],quantity:1}],idempotencyKey:randomUUID()});await transfers.approve(db,ctx,transfer.id,{idempotencyKey:randomUUID()});
  const preview=await removal.review(db,ctx,{role:'owner'},'product',f.item.itemId),before=await f.balance();await assert.rejects(removal.remove(db,ctx,{role:'owner'},'product',f.item.itemId,{expectedHash:preview.hash}),/transfer/i);assert.equal(await f.balance(),before);
 });
+
+test('undoing an import cannot reverse a later fully received purchase as opening stock',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx}=f,imports=require('../../src/imports/postgres-service'),removal=require('../../src/domain/postgres-record-removal');
+ const plan=await imports.analyse(db,ctx,{text:'Product name,SKU,Location,Quantity,Unit cost\nImported later used,IMPORT-LATER,Dispatch,2,1.00',allowModel:false});assert.equal(plan.recordsInvalid,0);await imports.approve(db,ctx,plan.id,plan.integrityHash);assert((await imports.execute(db,ctx,plan.id)).verified);
+ const sku=(await db.query("SELECT id FROM skus WHERE workspace_id=$1 AND code='IMPORT-LATER'",[ctx.workspaceId])).rows[0].id;
+ const addReceipt=async()=>{const po=await f.workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,idempotencyKey:randomUUID(),lines:[{skuId:sku,quantityUnits:1,unitCost:2}]});await f.workflows.approvePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});await f.workflows.placePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});await f.workflows.receivePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID(),reference:'Actual later purchase',lines:[{lineId:po.lineIds[0],quantity:1,locationId:f.location.id}]});};
+ const reviewed=await removal.review(db,ctx,{role:'owner'},'import',plan.id);assert.equal(reviewed.blockers.length,0);await removal.remove(db,ctx,{role:'owner'},'import',plan.id,{expectedHash:reviewed.hash});
+ await addReceipt();const before=await f.balance(),job=(await db.query("SELECT * FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='records.remove-import'",[ctx.workspaceId])).rows[0];
+ await removal.runImportRemoval({workspaceId:ctx.workspaceId,payload:job.payload,attemptCount:1,maxAttempts:5},db);
+ assert.equal(await f.balance(),before,'a delayed undo must preserve later receipts');assert.equal(Number((await db.query('SELECT is_active FROM skus WHERE id=$1',[sku])).rows[0].is_active),1);
+ const now=await removal.review(db,ctx,{role:'owner'},'import',plan.id);assert(now.blockers.some(v=>/later|changed|opening/i.test(v)),'the owner is told to review later stock work separately');
+});
