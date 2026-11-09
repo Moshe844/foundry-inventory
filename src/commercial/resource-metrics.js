@@ -41,6 +41,12 @@ function middleware(database){return (req,res,next)=>{
  // itself make readiness fail when the measurement sink is unavailable.
  if(req.path==='/healthz'||req.path==='/readyz')return next();
  const state=create({runtimeKind:'web',operation:req.method});let saved=false;
+ // Timings only, never SQL: lets a browser see whether a slow page waits on
+ // the database (time and query count) or on rendering.
+ const writeHead=res.writeHead;
+ res.writeHead=function(...args){try{if(!this.headersSent){const total=Number((process.hrtime.bigint()-state.started)/1000000n),db=Math.round(state.databaseMicros/1000);
+  this.setHeader('Server-Timing',`db;dur=${db};desc="${state.queries} queries",app;dur=${Math.max(0,total-db)},total;dur=${total}`+(state.slowQueries.length?`,slowest;dur=${state.slowQueries[0].ms}`:''));}}catch{}
+  return writeHead.apply(this,args);};
  storage.run(state,()=>{
   const done=()=>{if(saved)return;saved=true;
    attribute(req.workspace?.owner_account_id?{accountId:req.workspace.owner_account_id,workspaceId:req.ctx?.workspaceId}:
