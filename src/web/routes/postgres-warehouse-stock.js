@@ -23,6 +23,8 @@ function createRouter(db){
   res.locals.flash=req.session.flash||[];req.session.flash=[];
   res.locals.countTasks=permissions.can(req.user,permissions.COUNT_STOCK)?await tasks.inbox(db,req.ctx.workspaceId,req.ctx.actorId):[];
   const putawayPolicy=require('../../commercial/agent-plan'),putawayState=await putawayPolicy.accountState(db,req.ctx.workspaceId);
+  res.locals.canCorrectBins=permissions.can(req.user,permissions.REQUEST_TRANSFER);
+  res.locals.binCorrectionAllowed=putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,11,'draft');
   res.locals.putawayInstructions=[];
   if(locationId&&putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,47,'draft')){
     const prepared=(await db.query(`SELECT p.id,p.source FROM stockchief_runtime.agent_putaway_instructions p
@@ -49,6 +51,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(countPath)return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
+  if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
   if(req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);

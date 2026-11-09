@@ -239,7 +239,7 @@ async function requestInTransaction(client, rawContext, input) {
         (workspace_id,transfer_line_id,serial_unit_id,state,created_at,updated_at)
         VALUES($1,$2,$3,'REQUESTED',$4,$4)`, [ctx.workspaceId, lineId, serialUnitId, at]);
     }
-    const suppliedPegs = Array.isArray(row.supplied.pegs) && row.supplied.pegs.length
+    const suppliedPegs = input.skipDefaultDemandPegs===true ? [] : Array.isArray(row.supplied.pegs) && row.supplied.pegs.length
       ? row.supplied.pegs
       : await demandPegs(client, ctx.workspaceId, row.sku.id, to.id, row.quantity);
     for (const peg of suppliedPegs) await addPeg(client, ctx.workspaceId, { id: lineId, skuId: row.sku.id }, peg);
@@ -257,6 +257,11 @@ async function sourceAvailable(client,workspaceId,skuId,locationId,options={}) {
   return require('../domain/postgres-stock-availability').read(client,workspaceId,skuId,locationId,options);
 }
 
+async function assertBinWorkflow(client,ctx,transferId){
+  const active=(await client.query(`SELECT b.id FROM stockchief_runtime.agent_bin_corrections b JOIN workspaces w ON w.id=b.workspace_id AND w.deletion_requested_at IS NULL WHERE b.workspace_id=$1 AND b.transfer_id=$2 AND b.status IN ('OPEN','SCANNED')`,[ctx.workspaceId,transferId])).rows[0];
+  if(active&&ctx.binCorrectionId!==active.id)throw new ValidationError('Use the original scanned bin correction to change this reserved stock.');
+}
+
 async function approveInTransaction(client, rawContext, transferId, input = {}) {
   const ctx = requireContext(rawContext);
   const key = eventKey(input, 'approve', transferId);
@@ -265,6 +270,7 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'REQUESTED') throw new ValidationError('Only a requested transfer can be approved.');
   const lockRows = [...transfer.lines].sort((a, b) => `${a.sku_id}:${a.lot_id || ''}`.localeCompare(`${b.sku_id}:${b.lot_id || ''}`));
   for (const line of lockRows) {
@@ -327,6 +333,7 @@ async function pickInTransaction(client, rawContext, transferId, input = {}) {
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'APPROVED') throw new ValidationError('Only an approved transfer can be picked.');
   const at = nowIso();
   await client.query(`UPDATE inventory_transfer_lines SET picked_quantity=approved_quantity,updated_at=$2
@@ -380,6 +387,7 @@ async function dispatchInTransaction(client, rawContext, transferId, input = {})
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'PICKED') throw new ValidationError('Only a picked transfer can be dispatched.');
   const event = await addEvent(client, ctx, transferId, 'SHIPPED', {}, key);
   for (const line of transfer.lines) {
@@ -432,6 +440,7 @@ async function markInTransitInTransaction(client, rawContext, transferId, input 
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'SHIPPED') throw new ValidationError('Only a shipped transfer can be marked in transit.');
   const at = nowIso();
   await client.query(`UPDATE inventory_transfers SET status='IN_TRANSIT',in_transit_at=$3,
@@ -499,6 +508,7 @@ async function receiveInTransaction(client, rawContext, transferId, input = {}) 
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (!RECEIVABLE.includes(transfer.status)) throw new ValidationError('This transfer is not waiting to be received.');
   const event = await addEvent(client, ctx, transferId, 'RECEIPT_RECORDED', { lines: input.lines }, key);
   for (const supplied of input.lines) {
@@ -593,6 +603,7 @@ async function cancelInTransaction(client, rawContext, transferId, input = {}) {
   const replay = await eventByKey(client, ctx.workspaceId, key);
   if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await assertBinWorkflow(client,ctx,transferId);
   if (!['REQUESTED', 'APPROVED', 'PICKED'].includes(transfer.status)) {
     throw new ValidationError('A dispatched transfer cannot be cancelled; record receipt, loss, or damage to settle its custody.');
   }

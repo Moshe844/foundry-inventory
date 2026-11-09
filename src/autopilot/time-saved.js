@@ -16,6 +16,7 @@ const activities = new Map([
   ['quote-followup','Prepare and send a follow-up on a customer quotation'],
   ['supplier-forecast','Prepare and share a supplier stock and demand forecast'],
   ['return-email','Prepare an RMA from an original customer return email'],
+  ['bin-correction','Post a physically confirmed stock bin correction'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -86,6 +87,14 @@ async function report(db,ctx,window='week') {
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
       WHERE m.workspace_id=$1 AND m.stock_ready_order_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
         AND e.payload->'standingAuthority'->>'kind'='stock_ready_notice' GROUP BY m.id UNION ALL
+    SELECT 'bin-correction',c.completed_at FROM stockchief_runtime.agent_bin_corrections c
+      JOIN movements o ON o.workspace_id=c.workspace_id AND o.id=c.out_movement_id AND o.operation='transfer' AND o.leg='out'
+      JOIN movements i ON i.workspace_id=c.workspace_id AND i.id=c.in_movement_id AND i.operation='transfer' AND i.leg='in' AND i.group_id=o.group_id AND i.sku_id=o.sku_id
+      JOIN accounting_inventory_cost_movements co ON co.workspace_id=c.workspace_id AND co.inventory_movement_id=o.id
+      JOIN accounting_inventory_cost_movements ci ON ci.workspace_id=c.workspace_id AND ci.inventory_movement_id=i.id
+      WHERE c.workspace_id=$1 AND c.status='COMPLETED' AND NOT c.manual_recovery AND c.scan_proof IS NOT NULL
+       AND o.quantity_delta=-(c.source->>'quantity')::numeric AND i.quantity_delta=(c.source->>'quantity')::numeric
+       AND co.quantity_delta=o.quantity_delta AND ci.quantity_delta=i.quantity_delta AND co.cost_delta_minor=-ci.cost_delta_minor UNION ALL
     SELECT 'return-email',r.created_at::timestamptz FROM stockchief_runtime.agent_return_email_sources s
       JOIN customer_returns r ON r.workspace_id=s.workspace_id AND r.id=s.customer_return_id
       WHERE s.workspace_id=$1 AND r.status<>'CANCELLED' AND s.source_fingerprint IS NOT NULL UNION ALL

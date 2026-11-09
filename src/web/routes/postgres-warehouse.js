@@ -3,12 +3,37 @@
 const express=require('express');
 const waves=require('../../operations/postgres-fulfillment-waves');
 const permissions=require('../../actions/permissions');
-const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
+const {requireAuth,requireOwner,requirePermission,asyncRoute}=require('../middleware');
 const {newId}=require('../../lib/util');
 
 function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
+  const corrections=require('../../warehouse/agent-bin-corrections');
+  router.get('/warehouse/bin-corrections',requirePermission(permissions.REQUEST_TRANSFER,'correct stock bins'),asyncRoute(async(req,res)=>{
+    res.page('warehouse/bin-correction',{title:'Correct a stock bin',nav:'warehouse',...await corrections.page(database,req.ctx,null,req.query)});
+  }));
+  router.post('/warehouse/bin-corrections',requirePermission(permissions.REQUEST_TRANSFER,'correct stock bins'),asyncRoute(async(req,res)=>{
+    const made=await corrections.open(database,req.ctx,req.body);res.redirect(303,'/warehouse/bin-corrections/'+made.id);
+  }));
+  router.post('/warehouse/bin-corrections/settings',requireOwner,asyncRoute(async(req,res)=>{
+    await corrections.configure(database,req.ctx,req.body);res.redirect(303,'/warehouse/bin-corrections');
+  }));
+  router.get('/warehouse/bin-corrections/:id',requirePermission(permissions.REQUEST_TRANSFER,'review stock bin corrections'),asyncRoute(async(req,res)=>{
+    res.page('warehouse/bin-correction',{title:'Review a stock bin correction',nav:'warehouse',...await corrections.page(database,req.ctx,req.params.id)});
+  }));
+  router.post('/warehouse/bin-corrections/:id/scan',requirePermission(permissions.OPERATE,'confirm a physical bin correction'),asyncRoute(async(req,res)=>{
+    await corrections.scan(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
+  }));
+  router.post('/warehouse/bin-corrections/:id/approve',requireOwner,asyncRoute(async(req,res)=>{
+    await corrections.approve(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
+  }));
+  router.post('/warehouse/bin-corrections/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{
+    await corrections.cancel(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
+  }));
+  router.post('/warehouse/bin-corrections/:id/rule',requireOwner,asyncRoute(async(req,res)=>{
+    await corrections.teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
+  }));
   router.get('/warehouse/batches',requirePermission(permissions.VIEW,'review batch stock'),asyncRoute(async(req,res)=>{const pagination=require('../presentation/pagination'),size=pagination.pageSize(req),found=await require('../../domain/postgres-batch-expiry').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('warehouse/batch-expiry',{title:'Batch expiry',nav:'inventory',...found,pager:pagination.pager(req,{page:found.page,size,total:found.total,shown:found.rows.length}),locations:await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId)});}));
   router.get('/warehouse/putaway/:id',requirePermission(permissions.VIEW,'read put-away labels'),asyncRoute(async(req,res)=>{
     const instruction=await require('../../warehouse/agent-putaway').instruction(database,req.ctx,req.params.id),barcode=require('../../warehouse/labels');
