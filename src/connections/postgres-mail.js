@@ -117,6 +117,13 @@ async function capture(database,connection,message){
       const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
       await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-order',idempotencyKey:'customer-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
     }
+    if(match.kind==='customer'&&!attachments.length&&require('../sales/customer-return-email-source').isReturnSubject(message.subject)){
+      const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
+      if(policy.usesAgentTerms(state)&&policy.permits(state.plan,111,'draft')){
+        const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
+        await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-return.v1',idempotencyKey:'customer-return-email:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
+      }
+    }
     if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
       await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
         reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
