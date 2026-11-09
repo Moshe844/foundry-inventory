@@ -1,0 +1,41 @@
+<%
+// One tidy list for any number of variants: search and filter by any option,
+// 25 per page, one row per variant with its stock, price and state.
+const f=locals.variantFilters||{query:'',options:{},low:false},names=options.map(o=>o.name),lowSet=new Set(locals.lowSkuIds||[]);
+const matched=locals.variantMatchCount??variantTotal,from=matched?(variantPage-1)*variantPageSize+1:0,to=Math.min(matched,variantPage*variantPageSize);
+const keep=(page)=>{const q=new URLSearchParams();if(f.query)q.set('vq',f.query);for(const [k,v] of Object.entries(f.options||{}))q.set('opt['+k+']',v);if(f.low)q.set('low','1');if(page>1)q.set('page',page);const s=q.toString();return base+(s?'?'+s:'')+'#variants';};
+const n=x=>Number(x||0).toLocaleString('en-US');
+%>
+<form class="vx-filter" method="get" action="<%= base %>#variants" role="search">
+  <label class="vx-search"><span class="visually-hidden">Search variants</span><input class="input" type="search" name="vq" value="<%= f.query %>" placeholder="Search SKU, barcode or option"></label>
+  <% for(const o of options){ const values=(o.values||[]).slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})); if(values.length<2)continue; %>
+  <label class="vx-option"><span class="visually-hidden"><%= o.name %></span><select class="select" name="opt[<%= o.name %>]"><option value=""><%= o.name %>: all</option><% for(const value of values){ %><option value="<%= value %>" <%= f.options?.[o.name]===value?'selected':'' %>><%= value %></option><% } %></select></label>
+  <% } %>
+  <label class="vx-low"><input type="checkbox" name="low" value="1" <%= f.low?'checked':'' %>> Low only</label>
+  <button class="btn btn--sm" type="submit">Show</button>
+  <% if(locals.variantFiltered){ %><a class="vx-clear" href="<%= base %>#variants">Clear</a><% } %>
+</form>
+<p class="vx-meta"><% if(matched){ %>Showing <strong><%= n(from) %>–<%= n(to) %></strong> of <%= n(matched) %><%= locals.variantFiltered?' matching · '+n(variantTotal)+' variants in all':'' %><% }else{ %>No variants match. <a href="<%= base %>#variants">Show all variants</a><% } %></p>
+<div class="vx-list">
+<% for(const sku of skus){
+  const values=names.map(name=>sku.optionValues?.[name]).filter(Boolean),title=values.length?values.join(' · '):(sku.variant_label||sku.code);
+  const state=!sku.is_active?{label:'Archived',tone:'muted'}:!(Number(sku.total)>0)?{label:'Out of stock',tone:'danger'}:lowSet.has(sku.id)?{label:'Low',tone:'warn'}:{label:'In stock',tone:'ok'}; %>
+  <article class="vx-row" id="sku-<%= sku.id %>">
+    <div class="vx-row__main">
+      <div class="vx-row__name"><strong><%= title %></strong><span class="mono"><%= sku.code %></span></div>
+      <dl class="vx-row__facts">
+        <div><dt>On hand</dt><dd><%= helpers.qty(sku.total) %></dd></div>
+        <div><dt>Available</dt><dd><%= helpers.qty(sku.available) %></dd></div>
+        <div><dt>Price</dt><dd><%= sku.sellingPrice?.isSet?sku.sellingPrice.formatted:'Not set' %></dd></div>
+      </dl>
+      <span class="badge badge--<%= state.tone %> vx-row__state"><%= state.label %></span>
+    </div>
+    <div class="vx-row__do">
+      <a href="/pricing/new?skuId=<%= sku.id %>">Change selling price</a>
+      <a href="/purchasing/why/<%= sku.id %>">Reorder settings</a>
+      <%- include('variant-maintenance',{sku}) %>
+    </div>
+  </article>
+<% } %>
+</div>
+<% if(variantPageCount>1){ %><nav class="vx-pager" aria-label="Variant pages"><% if(variantPage>1){ %><a class="btn btn--sm" href="<%= keep(variantPage-1) %>">Previous</a><% } %><span>Page <%= n(variantPage) %> of <%= n(variantPageCount) %></span><% if(variantPage<variantPageCount){ %><a class="btn btn--sm" href="<%= keep(variantPage+1) %>">Next</a><% } %></nav><% } %>

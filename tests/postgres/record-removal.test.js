@@ -36,6 +36,18 @@ test('deleting customers, suppliers, products and imports keeps stock, cost and 
  assert.equal(String(expense),String(product.stock.valueMinor),'the write-off is recorded as an inventory adjustment');
  assert.equal((await removal.review(db,ctx,owner,'product',item)).outcome,'archived');
 
+ // A large product leaves the lists at once and its stock is written off in the background.
+ const big=(await db.query("SELECT id FROM items WHERE workspace_id=$1 AND name='Gone product 2'",[ctx.workspaceId])).rows[0].id;
+ removal.settings.backgroundPositions=0;t.after(()=>{removal.settings.backgroundPositions=1000;});
+ const bigReview=await removal.review(db,ctx,owner,'product',big),bigStarted=await removal.remove(db,ctx,owner,'product',big,{expectedHash:bigReview.hash});
+ assert.equal(bigStarted.outcome,'running');assert.equal(Number((await db.query('SELECT is_active FROM items WHERE id=$1',[big])).rows[0].is_active),0,'gone from the lists immediately');
+ const bigJob=(await db.query("SELECT * FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='records.remove-product'",[ctx.workspaceId])).rows[0];
+ assert.deepEqual(await removal.runProductRemoval({workspaceId:ctx.workspaceId,payload:bigJob.payload,attemptCount:1,maxAttempts:5},db),{completed:true});
+ assert.equal((await db.query("SELECT count(*)::int n FROM balances b JOIN skus s ON s.id=b.sku_id WHERE s.item_id=$1 AND b.on_hand<>0",[big])).rows[0].n,0);
+ assert.equal((await removal.review(db,ctx,owner,'product',big)).removal.status,'COMPLETED');
+ const afterBig=await books(ctx);assert.equal(afterBig.asset,afterBig.costs);assert.equal(afterBig.drift,0);assert.equal(afterBig.unbalanced,0);
+ removal.settings.backgroundPositions=1000;
+
  // A product nobody used is erased.
  const fresh=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Never used',baseCode:'NEVER-1',trackingMode:'quantity'});
  const freshId=fresh.itemId,unused=await removal.review(db,ctx,owner,'product',freshId);assert.equal(unused.outcome,'erase');

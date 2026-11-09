@@ -118,6 +118,7 @@ function createPostgresInventoryRouter(database) {
   router.post('/inventory/:id/photo',requirePermission(permissions.OPERATE,'edit product photos'),require('../multipart').multipart({limit:5*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{await require('../../domain/postgres-product-overview').savePhoto(database,req.ctx,req.params.id,req.file);req.flash('success','Product photo saved.');return res.redirect(303,'/inventory/'+req.params.id);}));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page,
+      variantQuery:req.query.vq,variantOptions:req.query.opt,variantLow:req.query.low==='1',
       trackingQuery:req.query.trackingQuery,afterLotId:req.query.afterLotId,afterSerialId:req.query.afterSerialId});
     const importedDetails=await require('../../domain/postgres-catalog-facts').listForSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id));
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
@@ -158,7 +159,8 @@ function createPostgresInventoryRouter(database) {
     const kitCounts=(await database.query('SELECT kit_sku_id,count(*) n FROM kit_components WHERE workspace_id=$1 AND kit_sku_id=ANY($2::text[]) GROUP BY kit_sku_id',[req.ctx.workspaceId,detail.skus.map(s=>s.id)])).rows;
     const kitAvailability=kitCounts.length?Object.fromEntries(await require('../../domain/postgres-kit-availability').read(database,req.ctx.workspaceId,kitCounts.map(k=>k.kit_sku_id))):{};
     const finding=req.query.finding?(await database.query("SELECT id,title,concise_summary,recommendation FROM attention_items WHERE workspace_id=$1 AND id=$2 AND item_id=$3 AND status='OPEN'",[req.ctx.workspaceId,String(req.query.finding).slice(0,160),req.params.id])).rows[0]||null:null;
-    return res.page('inventory/item',{finding,productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    const lowSkuIds=detail.skus.length>1?(await require('../../reports/postgres-low-stock-badges').forSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id))).map(r=>r.sku_id):[];
+    return res.page('inventory/item',{finding,productView,lowSkuIds,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails,importedGroups:require('../presentation/imported-details').group(importedDetails,detail.skus),detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
