@@ -54,6 +54,13 @@ async function forRecord(db,ctx,kind,id,after=''){
  const rows=(await db.query(`SELECT id,filename,document_kind,created_at,jsonb_array_length(product_facts) AS fact_count FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND target_kind=$2 AND target_id=$3 AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5)) ORDER BY created_at DESC,id DESC LIMIT 51`,[ctx.workspaceId,kind,id,cursor?.created_at||null,after])).rows;
  return {reference:record[targets[kind].reference],targetHref:targets[kind].path+id,rows:rows.slice(0,50),next:rows.length>50?rows[49].id:null};
 }
+async function directory(db,ctx,after=''){
+ await owner(db,ctx);let cursor=null;
+ if(after){if(typeof after!=='string'||after.length>120)throw new ValidationError('Choose a valid document page.');cursor=(await db.query('SELECT created_at::text AS created_at FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,after])).rows[0];if(!cursor)throw new ValidationError('Reopen the document list before continuing.');}
+ const rows=(await db.query(`SELECT id,filename,document_kind,created_at,target_kind,target_id,target_reference,jsonb_array_length(product_facts) AS fact_count FROM stockchief_runtime.agent_filed_documents WHERE workspace_id=$1 AND ($2::timestamptz IS NULL OR created_at<=$2::timestamptz AND (created_at<$2::timestamptz OR id>$3)) ORDER BY created_at DESC,id LIMIT 51`,[ctx.workspaceId,cursor?.created_at||null,after])).rows;
+ for(const row of rows)row.targetHref=targets[row.target_kind].path+row.target_id;
+ return {reference:'this inventory',targetHref:'/inventory',rows:rows.slice(0,50),next:rows.length>50?rows[49].id:null};
+}
 async function review(db,ctx,{page=1,filter=''},onlyShipping=false){
  const history=await require('../commercial/agent-history').access(db,ctx.workspaceId);
  const rows=(await db.query(`SELECT filename AS "Document",replace(document_kind,'_',' ') AS "Type",target_reference AS "Filed on",created_at::date::text AS "Filed",'/autopilot/documents/'||id AS link FROM stockchief_runtime.agent_filed_documents
@@ -61,4 +68,4 @@ async function review(db,ctx,{page=1,filter=''},onlyShipping=false){
  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Original filed documents and readable source text. Filing evidence does not confirm physical stock, an invoice, payment or new commercial terms.'};
 }
 const specs=Object.keys(targets).map(kind=>({name:'document.file_to_'+kind,record:kind,fields:['recordReference','fileAttachment','documentKind'],permission:require('../actions/permissions').ADMIN,ownerOnly:true,capability:'inventory.core',resultingRecords:['agent_filed_documents'],description:'File an exact readable mailbox attachment on the named '+kind.replace('_',' ')+'. Preserve the original file and text independently of the mailbox. Unproven target matches require individual confirmation. Never infer a receipt, invoice, payment or accepted terms.',build:(db,ctx,row,args)=>build(db,ctx,row,args,kind),execute,verify}));
-module.exports={specs,job,load,forRecord,definitions:[{id:142,key:'filed-documents',label:'Documents filed on business records',filterLabel:'Order number or product name',readPage:review},{id:137,key:'shipping-documents',label:'Bills of lading and customs papers',filterLabel:'Purchase order number',readPage:(db,ctx,o)=>review(db,ctx,o,true)}]};
+module.exports={specs,job,load,forRecord,directory,definitions:[{id:142,key:'filed-documents',label:'Documents filed on business records',filterLabel:'Order number or product name',readPage:review},{id:137,key:'shipping-documents',label:'Bills of lading and customs papers',filterLabel:'Purchase order number',readPage:(db,ctx,o)=>review(db,ctx,o,true)}]};

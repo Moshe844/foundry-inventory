@@ -182,7 +182,10 @@ function systemFor(catalogue=registry,{compact=false}={}){
   // Keep exact names, input lists and authority boundaries; progressively
   // compress only supplementary descriptions if the compact index outgrows it.
   while(prompt.length>=24000){let changed=false;
-    for(const kind of ['mutations','reads','policies'])for(const entry of contracts[kind]){if(entry.d.length>0){entry.d=entry.d.slice(0,Math.max(0,entry.d.length-4));changed=true;}if(entry.domains)for(const domain of Object.keys(entry.domains)){const value=entry.domains[domain];if(value.length){entry.domains[domain]=value.slice(0,Math.max(0,value.length-4));changed=true;}}}
+    for(const kind of ['mutations','reads','policies','navigation'])for(const entry of contracts[kind]){
+      if(typeof entry.d==='string'){if(entry.d.length)entry.d=entry.d.slice(0,Math.max(0,entry.d.length-4));else delete entry.d;changed=true;}
+      if(entry.domains)for(const domain of Object.keys(entry.domains)){const value=entry.domains[domain];if(value.length){entry.domains[domain]=value.slice(0,Math.max(0,value.length-4));changed=true;}}
+    }
     if(!changed)throw new Error('The complete operation index exceeds the planner context allowance. Use governed contract discovery; no model call was made.');
     prompt=encode();
   }

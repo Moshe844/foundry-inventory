@@ -18,8 +18,9 @@ function createPostgresAutopilotRouter(database){
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const documents=await require('../../documents/agent-filing').forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after);
-    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,documentQuery:new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString(),backTo:{href:documents.targetHref,label:documents.reference}});
+    const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
+    const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));
+    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
   }));
   router.get('/autopilot/documents/:id/download',requireAuth,owner,asyncRoute(async(req,res)=>{
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);

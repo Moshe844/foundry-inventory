@@ -4,6 +4,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 test('original documents file on the exact business record, retain plan limits and survive mailbox deletion',{timeout:240000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser,workflows}=f;
  await subscribe('growth');await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+ assert.match((await browser.get('/autopilot/documents').expect(200)).text,/No documents have been filed/);
  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
  await db.query("UPDATE suppliers SET email='files@example.test' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
  const now=new Date().toISOString(),connection=(await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -40,6 +41,7 @@ test('original documents file on the exact business record, retain plan limits a
  const recordList='/autopilot/documents?'+new URLSearchParams({kind:'purchase_order',record:po.id});
  assert.match((await browser.get('/purchasing/orders/'+po.id).expect(200)).text,/Filed documents/);
  assert.match((await browser.get(recordList).expect(200)).text,/Bill of lading.pdf/);
+ assert.match((await browser.get('/autopilot/documents').expect(200)).text,/Bill of lading.pdf/);
  await subscribe('starter');await browser.get('/autopilot/documents/'+id).expect(200);await browser.get(recordList).expect(200);await assert.rejects(assistant.prepareAction(db,ctx,'File an old source',args),e=>e.code==='entitlement_required');
  await subscribe('growth');const renamed=await captured('Renamed BOL.pdf',original),again=await assistant.prepareAction(db,ctx,'File renamed source',{...args,fileAttachment:renamed.id});
  assert.equal((await assistant.executeProposal(db,ctx,again.proposal.id)).result.documentId,id);
