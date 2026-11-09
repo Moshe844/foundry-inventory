@@ -19,7 +19,7 @@ async function facts(db,ctx,id,connectorId){
   WHERE l.workspace_id=$1 AND l.sales_order_id=$2 ORDER BY l.id`,[ctx.workspaceId,id,o.fulfillment_location_id])).rows;
  if(!lines.length||lines.length>100||lines.some(l=>l.tracking_mode!=='quantity'||Number(l.quantity_fulfilled)!==0||Number(l.allocated)!==Number(l.quantity_ordered))||(await db.query('SELECT 1 FROM sales_order_kit_components WHERE workspace_id=$1 AND sales_order_line_id=ANY($2::text[]) LIMIT 1',[ctx.workspaceId,lines.map(l=>l.id)])).rows.length)throw new ValidationError('Review partly shipped orders, kits, lot or serial stock and incomplete reservations individually.');
  const positions=await require('../domain/postgres-stock-availability').readMany(db,ctx.workspaceId,lines.map(l=>({skuId:l.sku_id,locationId:o.fulfillment_location_id})));
- if(lines.some(l=>{const p=positions.get(JSON.stringify([l.sku_id,o.fulfillment_location_id]));return !p||p.onHand<p.committed+p.reserved+p.rentalReserved;}))throw new ValidationError('Review changed stock, other commitments or quality holds before telling the customer stock is ready.');
+ if(lines.some(l=>{const p=positions.get(JSON.stringify([l.sku_id,o.fulfillment_location_id]));return !p||p.onHand<p.committed+p.reserved;}))throw new ValidationError('Review changed stock, other commitments or quality holds before telling the customer stock is ready.');
  const recipient=o.contact_email||o.customer_email;
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient||''))throw new ValidationError('Confirm a valid customer email for this order first.');
  const box=await require('../shipping/agent-shipping-notices').mailbox(db,ctx.workspaceId,connectorId);if(!box)throw new ValidationError('Choose a connected Gmail or Microsoft 365 sending mailbox.');
