@@ -68,10 +68,38 @@ async function purchaseCost(queryable,workspaceId,skuId){
   return {...supplier,amount_minor:amountMinor,isSet:true,formatted:formatMinor(amountMinor,supplier.currency),sourceLabel:supplier.supplier_name};
 }
 
+// A page of variants in four queries, not up to four per variant. Each query
+// keeps the single-variant rule above: the latest selling price; the latest
+// stated cost, else the preferred supplier's last cost, else the average
+// recorded stock cost. The returned values are identical to the per-SKU path.
 async function listForSkus(queryable,workspaceId,skuIds){
-  const result=new Map();
-  await Promise.all((skuIds||[]).map(async(skuId)=>result.set(skuId,{sellingPrice:await currentPrice(queryable,workspaceId,skuId),
-    purchaseCost:await purchaseCost(queryable,workspaceId,skuId)})));
+  const ids=[...new Set(skuIds||[])],result=new Map();if(!ids.length)return result;
+  const [prices,stated,suppliers,stock]=await Promise.all([
+    queryable.query(`SELECT DISTINCT ON(sp.sku_id) sp.*,u.name AS actor_name FROM sku_prices sp LEFT JOIN users u ON u.id=sp.created_by_user_id
+      WHERE sp.workspace_id=$1 AND sp.sku_id=ANY($2::text[]) ORDER BY sp.sku_id,sp.created_at DESC,sp.id DESC`,[workspaceId,ids]),
+    queryable.query(`SELECT DISTINCT ON(pc.sku_id) pc.*,sup.name AS supplier_name FROM sku_purchase_costs pc
+      LEFT JOIN supplier_items si ON si.id=pc.supplier_item_id AND si.workspace_id=pc.workspace_id LEFT JOIN suppliers sup ON sup.id=si.supplier_id AND sup.workspace_id=pc.workspace_id
+      WHERE pc.workspace_id=$1 AND pc.sku_id=ANY($2::text[]) ORDER BY pc.sku_id,pc.created_at DESC,pc.id DESC`,[workspaceId,ids]),
+    queryable.query(`SELECT DISTINCT ON(si.sku_id) si.sku_id AS lookup_sku_id,si.id AS supplier_item_id,si.last_unit_cost,si.last_cost_at,
+        supplier.currency,supplier.name AS supplier_name FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id
+      WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND si.last_unit_cost IS NOT NULL
+      ORDER BY si.sku_id,si.is_preferred DESC,si.last_cost_at DESC,si.updated_at DESC`,[workspaceId,ids]),
+    queryable.query(`SELECT c.sku_id,round(sum(c.total_cost_minor)::numeric/nullif(sum(CASE WHEN i.secondary_unit_label IS NOT NULL THEN c.secondary_quantity_units ELSE c.quantity_units END),0)) AS amount_minor,a.base_currency AS currency
+      FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+      WHERE c.workspace_id=$1 AND c.sku_id=ANY($2::text[]) AND c.quantity_units>0 AND (i.secondary_unit_label IS NULL OR c.secondary_quantity_units>0) GROUP BY c.sku_id,a.base_currency`,[workspaceId,ids])]);
+  const by=rows=>new Map(rows.map(row=>[row.sku_id??row.lookup_sku_id,row]));
+  const priceBy=by(prices.rows),statedBy=by(stated.rows),supplierBy=by(suppliers.rows),stockBy=by(stock.rows);
+  for(const skuId of ids){
+    const price=priceBy.get(skuId),own=statedBy.get(skuId),found=supplierBy.get(skuId),average=stockBy.get(skuId);
+    const sellingPrice=price?{...price,isSet:price.amount_minor!==null,amount_minor:price.amount_minor===null?null:Number(price.amount_minor),formatted:formatMinor(price.amount_minor,price.currency)}:
+      {id:null,workspace_id:workspaceId,sku_id:skuId,amount_minor:null,currency:'USD',isSet:false,formatted:'Not set'};
+    let cost=null;
+    if(own)cost={...own,amount_minor:Number(own.amount_minor),isSet:true,formatted:formatMinor(own.amount_minor,own.currency),sourceLabel:own.supplier_name||'Owner supplied'};
+    else if(found){const {lookup_sku_id:_sku,...supplier}=found,amountMinor=money.toMinor(supplier.last_unit_cost,supplier.currency);
+      cost={...supplier,amount_minor:amountMinor,isSet:true,formatted:formatMinor(amountMinor,supplier.currency),sourceLabel:supplier.supplier_name};}
+    else if(average)cost={amount_minor:Number(average.amount_minor),currency:average.currency,isSet:true,formatted:formatMinor(average.amount_minor,average.currency),sourceLabel:'Average recorded stock cost'};
+    result.set(skuId,{sellingPrice,purchaseCost:cost});
+  }
   return result;
 }
 

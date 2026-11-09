@@ -2,10 +2,12 @@
 const money=require('./currency');
 const currencyDigits=JSON.stringify(Object.fromEntries([...Intl.supportedValuesOf('currency'),'CLF','UYW'].map(code=>[code,money.exponent(code)])));
 function range(min,max,currency){return min===max?money.format(min,currency):money.format(min,currency)+'–'+money.format(max,currency);}
+// A supplier's last cost is a decimal price; round it to whole minor units like
+// every other cost here, or the page cannot format a value such as 210.0000.
 async function summary(db,workspaceId,itemId){
  const rows=(await db.query(`WITH quoted AS MATERIALIZED (
  SELECT s.id,p.amount_minor AS price,p.currency AS price_currency,
- coalesce(c.amount_minor,supplier.last_unit_cost*power(10,coalesce(($3::jsonb->>supplier.currency)::int,2)),stock.amount_minor) AS cost,
+ coalesce(c.amount_minor,round(supplier.last_unit_cost*power(10,coalesce(($3::jsonb->>supplier.currency)::int,2))),stock.amount_minor) AS cost,
  coalesce(c.currency,supplier.currency,stock.currency) AS cost_currency
  FROM skus s
  LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1)p ON true

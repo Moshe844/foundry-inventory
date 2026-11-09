@@ -10,8 +10,8 @@ test('a new catalogue saves stock in parallel lanes with exactly the single-sess
  const auth=require('../../src/domain/postgres-auth-service'),locations=require('../../src/domain/postgres-location-service'),imports=require('../../src/imports/postgres-service');
  const business=async name=>{const owner=await auth.createBusiness(db,{name:'Owner',businessName:name,email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
   await locations.createLocation(db,ctx,{name:'Main Warehouse',kind:'warehouse'});return ctx;};
- const rows=[];for(let p=0;p<301;p++)for(let v=0;v<20;v++)rows.push(['Lane product '+p,'NL-'+p+'-'+v,['Black','White'][v%2],String(v),1+(p+v)%9,(4+v%3)+'.25',(19+v%5)+'.00',v%4===0?'890'+String(p*100+v).padStart(9,'0'):''].join(','));
- const text=['Product name,SKU,Color,Size,Quantity,Unit cost,Price,Barcode',...rows].join('\n');
+ const rows=[];for(let p=0;p<301;p++)for(let v=0;v<20;v++)rows.push(['Lane product '+p,'NL-'+p+'-'+v,['Black','White'][v%2],String(v),1+(p+v)%9,(4+v%3)+'.25',(19+v%5)+'.00',v%4===0?'890'+String(p*100+v).padStart(9,'0'):'',['Furniture','Lighting','Tools'][p%3],2+v%6].join(','));
+ const text=['Product name,SKU,Color,Size,Quantity,Unit cost,Price,Barcode,Category,Reorder point',...rows].join('\n');
  const run=async(workers,ctx,source=text,input={})=>{process.env.FOUNDRY_IMPORT_STOCK_WORKERS=String(workers);
   const plan=await imports.analyse(db,ctx,{text:source,allowModel:false,...input});assert.equal(plan.recordsInvalid,0);await imports.approve(db,ctx,plan.id,plan.integrityHash);
   const result=await imports.execute(db,ctx,plan.id);assert(result.verified);
@@ -19,7 +19,9 @@ test('a new catalogue saves stock in parallel lanes with exactly the single-sess
  const fingerprint=async ctx=>({
   skus:(await db.query(`SELECT s.code,i.name,s.variant_label,coalesce(s.barcode,'') barcode,b.on_hand::text,c.quantity_units::text,c.total_cost_minor::text,
    (SELECT string_agg(amount_minor::text||currency,',') FROM sku_prices p WHERE p.sku_id=s.id) price,
-   (SELECT count(*)::int FROM movements m WHERE m.sku_id=s.id) movements
+   (SELECT count(*)::int FROM movements m WHERE m.sku_id=s.id) movements,
+   (SELECT string_agg(coalesce(l.name,'all')||'='||p.reorder_point::text,',' ORDER BY l.name) FROM reorder_policies p LEFT JOIN locations l ON l.id=p.location_id WHERE p.sku_id=s.id) reorder,
+   (SELECT category FROM catalogue_item_facts f WHERE f.item_id=s.item_id) category
    FROM skus s JOIN items i ON i.id=s.item_id LEFT JOIN balances b ON b.sku_id=s.id LEFT JOIN accounting_inventory_cost_balances c ON c.sku_id=s.id AND c.workspace_id=s.workspace_id
    WHERE s.workspace_id=$1 ORDER BY s.code`,[ctx.workspaceId])).rows,
   accounts:(await db.query(`SELECT a.code,sum(l.debit_minor)::text debit,sum(l.credit_minor)::text credit FROM accounting_journal_lines l JOIN accounting_accounts a ON a.id=l.account_id
@@ -34,6 +36,7 @@ test('a new catalogue saves stock in parallel lanes with exactly the single-sess
  const expected=await fingerprint(serialCtx),observed=await fingerprint(laneCtx);
  assert.equal(observed.skus.length,6020);assert.deepEqual(observed.skus,expected.skus);assert.deepEqual(observed.accounts,expected.accounts);
  assert(observed.skus.some(s=>s.barcode)&&observed.skus.every(s=>s.price),'prices and barcodes saved while preparing are kept');
+ assert(observed.skus.every(s=>s.reorder&&s.category),'reorder points and categories are saved by the lanes too');
  assert.equal((await db.query(`SELECT count(*)::int n FROM(SELECT entry_id FROM accounting_journal_lines WHERE workspace_id=$1 GROUP BY entry_id HAVING sum(debit_minor)<>sum(credit_minor))x`,[laneCtx.workspaceId])).rows[0].n,0);
 
  // A catalogue-only row (no stock) would leave a reserved journal number unused: single session.

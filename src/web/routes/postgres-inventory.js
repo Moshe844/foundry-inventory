@@ -167,7 +167,7 @@ function createPostgresInventoryRouter(database) {
     return res.page('inventory/item',{finding,productView,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canViewCosts,canViewMargins,canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
-      importedDetails:canViewCosts?importedDetails:[],detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
+      importedDetails:canViewCosts?importedDetails:[],importedGroups:require('../presentation/imported-details').group(canViewCosts?importedDetails:[],detail.skus),detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
       stockOpKeys:Object.fromEntries(['receive','issue','transfer','adjust'].map(kind=>[kind,newId('stockform')])),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:kitCounts.some(k=>k.kit_sku_id===sku.id),components:[]}])),kitAvailability});
   }));

@@ -287,14 +287,19 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       else parsed.reorder[field]=n;
     }
     if(parsed.reorder.targetStock!==undefined&&parsed.reorder.reorderPoint!==undefined&&parsed.reorder.targetStock<parsed.reorder.reorderPoint)problems.push(problem('invalid_reorder_setting','Target stock must be at least the reorder point.'));
+    // A workbook record whose stock is split from per-location columns states
+    // its reorder settings once for the whole SKU, against its total stock.
+    // Copying them to every location made each warehouse "low" on its own.
+    if(proposal.locationComponents&&Object.keys(parsed.reorder).length)parsed.reorderEverywhere=true;
+    const reorderLocation=parsed.reorderEverywhere?null:parsed.locationId;
     if(parsed.existingSkuId&&Object.keys(parsed.reorder).length){
-      const saved=context.reorderPolicies?.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]));
+      const saved=context.reorderPolicies?.get(JSON.stringify([parsed.existingSkuId,reorderLocation]));
       const point=parsed.reorder.reorderPoint??saved?.reorder_point,target=parsed.reorder.targetStock??saved?.target_stock;
       if(point!==undefined&&point!==null&&target!==undefined&&target!==null&&Number(target)<Number(point))problems.push(problem('invalid_reorder_setting','This source setting conflicts with the saved reorder point or target stock. Review both values before importing.'));
     }
     if(parsed.supplierName?.length>160)problems.push(problem('invalid_identity','Supplier names must be 160 characters or fewer.'));
     if(Object.entries(sourceFacts).some(([k,v])=>k.length>240||v.length>10000))problems.push(problem('oversize_source_fact','A product detail exceeds the supported field size. Its original value is preserved in this preview.'));
-    const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
+    const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.reorderEverywhere?null:parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
     for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
     blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
     if(input.importMode!=='add'&&parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
@@ -336,10 +341,10 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
 
 function unmappedNumericColumns(sheet,mappings){
   if(mappings.quantity!==undefined)return [];
-  const claimed=new Set(Object.values(mappings));
-  return sheet.columns.filter((column)=>!claimed.has(column.index)&&
-    (()=>{const profile=fields.profileColumn(sheet.rows,column.index);
-      return profile.filled>0&&profile.numericRate>=0.8;})()).map((column)=>column.name);
+  const claimed=new Set(Object.values(mappings)),open=sheet.columns.filter((column)=>!claimed.has(column.index));
+  // One pass over the rows for every open column, not one pass per column.
+  const profiles=fields.profileColumns(sheet.rows,open.map((column)=>column.index));
+  return open.filter((column,n)=>profiles[n].filled>0&&profiles[n].numericRate>=0.8).map((column)=>column.name);
 }
 
 function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNumeric=[]}={}) {
@@ -501,7 +506,7 @@ async function analyse(database, ctx, input) {
   }
   const reuse=Boolean(template&&await columnMapping.automatic(database,ctx.workspaceId));
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
-    axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
+    axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,locationComponents:Boolean(workbook.contract?.stock?.locations?.length),
     aiUsed:workbook.aiUsed??!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:analysisNotice?false:input.allowModel,
       mappings:input.mappings || (reuse?template.mappings:json(prior?.field_mappings,null)),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || (reuse?template.detectedType:prior?.detected_type),
@@ -852,7 +857,7 @@ async function revise(database,ctx,id,input={},options={}){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
       const sourceRows=current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}));
-      const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview};
+      const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,locationComponents:Boolean(plan.transformations.workbook?.contract?.stock?.locations?.length),trackingReview};
       const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,includePositions:revised.transformations.importMode!=='add',rowNumbers:sourceRows.map(r=>r.sourceRow),
         supplierNames:sourceRows.map(r=>textCell(r,fieldMappings.supplierName).toLowerCase()).filter(Boolean),
         codes:sourceRows.flatMap(r=>{const code=Object.hasOwn(codeOverrides,r.sourceRow)?codeOverrides[r.sourceRow]:textCell(r,fieldMappings.code);return code?[code,sourceIdentity.derived(code,sourceIdentity.options(r,fieldMappings,rowProposal))]:[];})});

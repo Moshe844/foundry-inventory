@@ -22,9 +22,10 @@ Map actual product/SKU, barcode, unit cost, selling price, units and evidenced c
 For stock matrices, total is physical on-hand; locations lists ALL component columns, including zeroes. Omit quantity/location fields: the host derives them from column headings and verifies their sum against total. Never add totals to components. For single quantity/location columns map those fields and leave locations empty; for catalog-only use null total and empty locations.
 Cover every sheet once with a brief specific reason. Historical orders/movements, liabilities, reservations, suppliers and campaigns require separate workflows. Host validators retain missing serial/lot evidence and reconciliation errors.`;
 
-function profile(workbook){return workbook.sheets.map((s,sheet)=>({sheet,name:s.name,rows:s.rows.length,columns:s.columns.map(c=>{
- const p=fields.profileColumn(s.rows,c.index);return {column:c.index,name:c.name,filled:p.filled,distinct:p.distinct,numericRate:p.numericRate,booleanRate:p.booleanRate,samples:p.samples.map(v=>v.slice(0,200))};
- }),preamble:s.preamble?.slice(0,3)}));}
+// Every column of a sheet is profiled in one pass over its rows.
+function profile(workbook){return workbook.sheets.map((s,sheet)=>{const profiles=fields.profileColumns(s.rows,s.columns.map(c=>c.index));return {sheet,name:s.name,rows:s.rows.length,columns:s.columns.map((c,n)=>{
+ const p=profiles[n];return {column:c.index,name:c.name,filled:p.filled,distinct:p.distinct,numericRate:p.numericRate,booleanRate:p.booleanRate,samples:p.samples.map(v=>v.slice(0,200))};
+ }),preamble:s.preamble?.slice(0,3)};});}
 function compactProfile(profiles,{sampleCharacters=200}={}){
  const clip=value=>typeof value==='string'&&value.length>sampleCharacters?value.slice(0,sampleCharacters)+'…':Array.isArray(value)?value.map(clip):value;
  const strings=[],ids=new Map();const intern=value=>{if(!ids.has(value)){ids.set(value,strings.length);strings.push(value);}return ids.get(value);};
