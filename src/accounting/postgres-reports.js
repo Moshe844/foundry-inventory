@@ -10,6 +10,27 @@ async function currency(database,workspaceId){
 }
 
 async function accountTotals(database,workspaceId,{from=null,to,types=null}){
+  // A bounded period sums only the chosen accounts' lines of the period's
+  // entries, straight from the covering (workspace, account, entry) index.
+  // Joining entries first read every line of each entry: an import's opening
+  // entry has thousands, so one month of totals read 3.3 million lines.
+  // A long period with very many entries keeps the general form below.
+  const periodEntries=from?Number((await database.query(`SELECT count(*) AS n FROM (SELECT 1 FROM accounting_journal_entries
+    WHERE workspace_id=$1 AND status='POSTED' AND posting_date <= $2 AND posting_date >= $3 LIMIT 20001) bounded`,[workspaceId,to,from])).rows[0].n):Infinity;
+  if(periodEntries<=20000){const typed=Boolean(types);return (await database.query(`WITH scoped_accounts AS MATERIALIZED (
+      SELECT * FROM accounting_accounts WHERE workspace_id=$1${typed?' AND account_type=ANY($4::text[])':''}
+    ), period AS MATERIALIZED (
+      SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED' AND posting_date <= $2 AND posting_date >= $3
+    ), totals AS (
+      SELECT l.account_id,SUM(l.debit_minor) AS debit_minor,SUM(l.credit_minor) AS credit_minor
+      FROM accounting_journal_lines l
+      WHERE l.workspace_id=$1 AND l.account_id=ANY(ARRAY(SELECT id FROM scoped_accounts)) AND l.entry_id=ANY(ARRAY(SELECT id FROM period))
+      GROUP BY l.account_id
+    ) SELECT a.id,a.code,a.name,a.account_type,a.subtype,a.normal_balance,
+      COALESCE(l.debit_minor,0) AS debit_minor,COALESCE(l.credit_minor,0) AS credit_minor
+    FROM scoped_accounts a LEFT JOIN totals l ON l.account_id=a.id
+    WHERE a.workspace_id=$1 AND (a.active=1 OR l.account_id IS NOT NULL)
+    ORDER BY a.code`,typed?[workspaceId,to,from,types]:[workspaceId,to,from])).rows;}
   const values=[workspaceId,to];let fromClause='';
   if(from){values.push(from);fromClause=` AND e.posting_date >= $${values.length}`;}
   const typeClause=types?(values.push(types),` AND account_type=ANY($${values.length}::text[])`):'';
