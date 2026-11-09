@@ -5,11 +5,14 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 // stock, cost and journal lines. A SKU this import creates qualifies the same
 // way: its selling price and barcode were saved while preparing the catalogue,
 // so stock batches never write them (applyChunk and barcodes.apply skip it).
+// Its reorder settings and category write only rows keyed by that SKU or its
+// product, and every product stays in one lane. Suppliers stay serial: two
+// lanes could otherwise create the same supplier by name.
 function ordinaryStock(row){const p=row.parsed,created=!p.existingSkuId&&!p.existingItemId;
  return Boolean((p.existingSkuId&&p.existingItemId||created)&&p.trackingMode==='quantity'
  &&Number.isSafeInteger(p.quantity)&&p.quantity>0&&Number.isSafeInteger(p.unitCostMinor)&&p.unitCostMinor>0
  &&(p.sellingPriceMinor===null||created)&&(!p.barcode||created)&&!p.supplierName&&!p.serial&&!p.lotCode&&!p.expiresAt&&!p.catalogueUpdate
- &&Object.keys(p.reorder||{}).length===0&&!p.sourceFacts?.Category);}
+ &&(created||Object.keys(p.reorder||{}).length===0&&!p.sourceFacts?.Category));}
 async function stage(client,ctx,plan,deps,onProgress){
  const existing=(await client.query('SELECT execution_identity_hash FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0];
  if(existing?.execution_identity_hash===plan.integrityHash)return;

@@ -379,8 +379,37 @@ function ensureIdentity(mappings, { columns, profilesByIndex }) {
  * One column per field and one field per column. Anything left unclaimed is
  * reported as unnamed, which is exactly the list worth asking a model about.
  */
+/**
+ * profileColumn for several columns in one pass over the rows. Large sources
+ * re-read a row from the file each time it is visited, so a pass per column
+ * read every row once per column. Results equal profileColumn's, in order.
+ */
+function profileColumns(rows, indexes) {
+  const states = indexes.map(() => ({ unique: new Set(), samples: [], filled: 0, numeric: 0, boolean: 0 }));
+  let count = 0;
+  for (const row of rows) {
+    count++;
+    for (let n = 0; n < indexes.length; n++) {
+      const value = String(row.cells[indexes[n]] ?? '').trim();
+      if (!value) continue;
+      const s = states[n];
+      s.filled++; if (NUMBERISH.test(value)) s.numeric++; if (/^(?:yes|no|true|false)$/i.test(value)) s.boolean++;
+      s.unique.add(value.toLowerCase()); if (s.samples.length < 4 && !s.samples.includes(value)) s.samples.push(value);
+    }
+  }
+  const total = rows.length ?? count;
+  return states.map((s) => ({
+    filled: s.filled,
+    fillRate: total ? s.filled / total : 0,
+    numericRate: s.filled ? s.numeric / s.filled : 0,
+    distinct: s.unique.size,
+    booleanRate: s.filled ? s.boolean / s.filled : 0,
+    samples: s.samples,
+  }));
+}
+
 function guessMappings(columns, rows) {
-  const profiles = columns.map((column) => profileColumn(rows, column.index));
+  const profiles = profileColumns(rows, columns.map((column) => column.index));
 
   const claims = [];
   columns.forEach((column, position) => {
@@ -492,7 +521,7 @@ module.exports = {
   isStockSummary,
   bestFieldScores,
   ignorableAs,
-  profileColumn,
+  profileColumn, profileColumns,
   guessMappings,
   detectType,
 };

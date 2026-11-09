@@ -129,7 +129,7 @@
                 : !(item.on_hand > 0) && item.onOrder > 0 && !item.atOrBelowReorderPoint ? { label: 'On the way', tone: 'muted' }
                 : !(item.on_hand > 0) && item.hasHistory === false && !item.atOrBelowReorderPoint ? { label: 'None yet', tone: 'muted' }
                 : !(item.on_hand > 0) ? { label: 'Out of stock', tone: 'danger' }
-                : item.atOrBelowReorderPoint ? { label: 'Low', tone: 'warn' }
+                : item.atOrBelowReorderPoint ? { label: item.has_variants && item.sku_count > 1 ? 'Some variants low' : 'Low', tone: 'warn' }
                 : groupKey === 'low' && item.on_hand > 0 ? { label: 'Running low', tone: 'warn' }
                 : groupKey === 'over' ? { label: 'Overstocked', tone: 'muted' }
                 : item.on_hand > 0 && item.available === 0 ? { label: 'All committed', tone: 'warn' }

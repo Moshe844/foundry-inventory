@@ -3603,3 +3603,13 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
 }
 
 .table-overflow-hint{font-size:.875rem;color:var(--text-muted,#526178);margin:.5rem 1rem}.table-overflow-hint[hidden]{display:none}
+
+/* Imported details: shared values once, each variant's own values folded away. */
+.pd-imported dl { display: grid; grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); gap: 4px 16px; margin: 8px 0; }
+.pd-imported dt { color: var(--muted); }
+.pd-imported dd { margin: 0; overflow-wrap: anywhere; }
+.pd-imported__lead { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.pd-imported details { border-top: 1px solid var(--line-soft); padding: 8px 0; }
+.pd-imported details:first-of-type { margin-top: 8px; }
+.pd-imported summary { cursor: pointer; }
+.pd-imported__source { margin: 0; font-size: 13px; }

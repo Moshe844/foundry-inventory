@@ -1,5 +1,7 @@
 'use strict';
 const exact=require('./exact-quantity'),{ValidationError}=require('./errors'),identity=require('./catalog-identity');
+// Loaded once: resolving it inside validate() cost a module lookup for every stock row saved.
+const {MAX_QUANTITY}=require('./physical-stock-input');
 function precision(value,label){const text=String(value);if(!/^[0-6]$/.test(text))throw new ValidationError(label+' must be from zero to six decimal places.');return Number(text);}
 function profile(input={},current={}){
  const primary=precision(input.quantityPrecision??current.quantity_precision??0,'Quantity precision');
@@ -19,7 +21,7 @@ function validate(item,value,{label='Quantity',positive=true,signed=false,total=
  if(digits===0&&!Number.isInteger(Number(value)))throw new ValidationError(label+' must be a whole number for this product.');
  const text=exact.canonical(value,{label,signed,scale:digits}),atoms=exact.atoms(text,digits,{label,signed,positive}),increment=exact.atoms(step,digits);
  if(atoms%increment!==0)throw new ValidationError(label+' must use increments of '+step+' '+(secondary?p.secondaryUnitLabel:p.unitLabel)+'.');
- const n=exact.safeNumber(text,{precision:digits,signed,positive,label});if(!total&&Math.abs(n)>require('./physical-stock-input').MAX_QUANTITY)throw new ValidationError(label+' exceeds the supported per-movement maximum.');return n;
+ const n=exact.safeNumber(text,{precision:digits,signed,positive,label});if(!total&&Math.abs(n)>MAX_QUANTITY)throw new ValidationError(label+' exceeds the supported per-movement maximum.');return n;
 }
 async function forSku(c,ctx,skuId){const row=(await c.query('SELECT i.* FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id WHERE s.workspace_id=$1 AND s.id=$2 FOR SHARE OF i',[ctx.workspaceId,skuId])).rows[0];if(!row)throw new ValidationError('That product is not in this inventory.');return row;}
 function secondary(item,value,{label='Actual weight',positive=true,signed=false,total=false}={}){const p=profile({},item);if(!p.secondaryUnitLabel){if(value!=null&&Number(value)!==0)throw new ValidationError('This product does not have a second stocking measure.');return null;}if(value===null||value===undefined||String(value).trim()==='')throw new ValidationError('Enter the actual '+p.secondaryUnitLabel+' for this catch-weight stock.');return validate(item,value,{label,positive,signed,total,secondary:true});}
