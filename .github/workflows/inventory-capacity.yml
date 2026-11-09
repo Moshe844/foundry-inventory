@@ -52,7 +52,13 @@ jobs:
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          # Some runners time out on www.postgresql.org; the same signing key
+          # is also published by PostgreSQL's official package repository.
+          if ! sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; then
+            sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc
+          fi
+          fingerprint="$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')"
+          test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
           printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-17
