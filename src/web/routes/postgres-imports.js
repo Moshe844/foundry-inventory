@@ -35,6 +35,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     return next();
   });
   async function renderStart(req,res){return res.page('imports/start',{
+    migrationAllowed:(await require('../../onboarding/postgres-cutover').planAccess(database,req.ctx)).allowed,
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,

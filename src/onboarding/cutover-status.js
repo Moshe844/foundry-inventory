@@ -1,0 +1,2 @@
+'use strict';
+module.exports=Object.freeze({STAGING:'Source is being uploaded',VALIDATING:'Checking the source',NEEDS_ATTENTION:'Source needs review',READY:'Ready for your approval',APPROVED:'Approved and queued',APPLYING:'Saving the opening position',RECONCILING:'Checking the saved balances',VERIFIED:'Verified — ready to start',CUTOVER_ACTIVE:'Complete — inventory is open',CANCELLED:'Cancelled'});

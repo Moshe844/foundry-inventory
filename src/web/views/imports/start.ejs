@@ -13,7 +13,7 @@
 <div class="ox ox-flow ox-review ox-imports" data-ox-page>
 <div class="ox-head">
   <div><h1 class="ox-title">File imports</h1><p class="ox-sub">Upload a product, stock or supplier file. Nothing changes until you check it and approve.</p></div>
-  <div class="ox-head__actions"><a class="ox-btn ox-btn--ghost" href="/erp-cutovers">Move a full ERP opening position</a></div>
+  <div class="ox-head__actions"><% if(locals.migrationAllowed===false){ %><span data-agent-migration-lock>Full ERP migration <span class="badge">Growth</span></span><a class="ox-btn ox-btn--ghost" href="/settings/billing">Upgrade</a><% }else{ %><a class="ox-btn ox-btn--ghost" href="/erp-cutovers">Move a full ERP opening position</a><% } %></div>
 </div>
 
 <% if (!canOperate) { %>
