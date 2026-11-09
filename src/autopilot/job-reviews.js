@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
   {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
   require('../connections/agent-mail-triage').definition,
@@ -101,6 +102,11 @@ async function run(db,ctx,key,options={}){
   if(!def) throw new NotFoundError();
   const state=await ownerState(db,ctx),tier=policy.usesAgentTerms(state)?state.plan:null;
   policy.requireJob(tier,def.id,options.scheduled?'automatic':'suggest',{trained:options.trained===true});
+  if(def.id===122&&options.scheduled){
+    const authority=await require('./postgres-service').getState(db,ctx.workspaceId);
+    const reason=await require('./job-modes').restriction(db,ctx.workspaceId,def.id,true);
+    if(!authority.canAutomate||reason)throw new ValidationError(reason||'Enable routine work before scheduling warehouse move lists.');
+  }
   const mode=policy.allowance(tier,def.id),filter=String(options.filter||'').trim();
   if(filter.length>150) throw new ValidationError('Use an item code, supplier, customer or record number up to 150 characters.');
   const page=mode==='suggest'?1:Number(options.page||1);

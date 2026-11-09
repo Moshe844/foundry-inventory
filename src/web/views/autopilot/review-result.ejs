@@ -1,4 +1,8 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.binDistanceForm){ %><details><summary>Record a bin's walking distance to packing</summary>
+  <form method="post" action="/autopilot/reviews/warehouse-slotting/distances"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Bin name <input required name="bin"></label><label>Distance in metres <input required name="metres" type="number" min="0" step="0.01"></label>
+    <button class="btn">Save distance</button></form></details><% } %>
 <% if(result.negotiationForm){ const n=result.negotiationForm; %><form method="post" action="/autopilot/negotiation-draft">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="supplier" value="<%= n.supplier %>">
   <input type="hidden" name="evidence" value="<%= n.evidence||'' %>"><input type="hidden" name="revision" value="<%= n.revision %>">

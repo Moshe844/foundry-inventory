@@ -5,6 +5,32 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const commerce=require('../../src/operations/postgres-commerce');
 
+test('fresh warehouse move lists rank picks and stay within the measured warehouse and current plan',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
+  await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '18 days')::text WHERE id=$1",[f.owner.accountId]);
+  const loc=require('../../src/domain/postgres-location-service'),inventory=require('../../src/domain/postgres-inventory-engine');
+  const route='/autopilot/reviews/warehouse-slotting',review=()=>reviews.run(db,ctx,'warehouse-slotting');
+  const create=(name,parent)=>loc.createLocation(db,ctx,{name,kind:parent?'bin':'warehouse',parentLocationId:parent});
+  const west=await create('West site'),far=await create('Back bin',f.location.id),near=await create('Packing bin',f.location.id),other=await create('West packing bin',west.id);
+  const page=await browser.get(route).expect(200);const distance=(bin,metres)=>browser.post(route+'/distances').type('form').send({_csrf:f.csrf(page.text),bin,metres});
+  for(const [bin,metres] of [[far.name,40],[near.name,3],[other.name,1]])await distance(bin,metres).expect(303);
+  const sku=f.item.skuIds[0];
+  await inventory.receive(db,ctx,{skuId:sku,locationId:far.id,quantity:15,idempotencyKey:randomUUID()});
+  for(const quantity of [2,1,3])await inventory.issue(db,ctx,{skuId:sku,locationId:far.id,quantity,reasonCode:'sale',reference:randomUUID(),idempotencyKey:randomUUID()});
+  for(const tier of ['starter','growth']){await subscribe(tier);await browser.get(route).expect(402);await assert.rejects(review(),e=>e.code==='entitlement_required');}
+  await subscribe('pro');let row=(await review()).rows[0];
+  assert.deepEqual([row.From,row.To,row['Available units'],row['Order picks in 90 days'],row['Metres closer to packing']],['Back bin','Packing bin',9,3,37]);
+  const books=require('../../src/autopilot/playbooks');
+  const input={name:'Weekly warehouse moves',steps:['warehouse-slotting','stock-by-location'],cadence:'weekly'};
+  await assert.rejects(books.create(db,ctx,input),e=>e.code==='entitlement_required');
+  await subscribe('enterprise');await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const book=await books.create(db,ctx,input);const results=await books.run(db,ctx,book,randomUUID());assert.equal(results[0].rows[0].To,near.name);
+  await subscribe('pro');await assert.rejects(books.run(db,ctx,book,randomUUID()),e=>e.code==='entitlement_required');
+  await inventory.receive(db,ctx,{skuId:sku,locationId:near.id,quantity:1,idempotencyKey:randomUUID()});
+  assert.deepEqual((await review()).rows,[]);
+  assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE sku_id=$1 AND location_id=$2',[sku,far.id])).rows[0].on_hand),9);
+});
+
 test('local sales tune location thresholds only within current plan and owner authority',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:360}),{db,ctx,subscribe,browser,csrf}=f;
   const skuId=f.item.skuIds[0],locationId=f.location.id;

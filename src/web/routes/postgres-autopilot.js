@@ -129,6 +129,7 @@ function createPostgresAutopilotRouter(database){
       }
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
       if(req.params.job==='supplier-specifications')result.specForm=true;
+      if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment')};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
@@ -159,6 +160,10 @@ function createPostgresAutopilotRouter(database){
   router.post('/autopilot/negotiation-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/negotiation-drafts').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/supplier-negotiation?'+new URLSearchParams({filter:req.body.supplier}));
+  }));
+  router.post('/autopilot/reviews/warehouse-slotting/distances',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../forecasting/warehouse-slotting').saveDistance(database,req.ctx,req.body);
+    req.flash('success','Walking distance saved.');res.redirect(303,'/autopilot/reviews/warehouse-slotting');
   }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
