@@ -55,6 +55,15 @@ function assertAllowed(user,kind){
  if(k.owner?user?.role!=='owner':!permissions.can(user,k.permission))throw new AuthorizationError(`Only ${k.owner?'an owner':'someone allowed to manage '+k.noun+'s'} can delete this ${k.noun}.`);
  return k;
 }
+async function currentActor(client,ctx,kind){
+ const user=(await client.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',[ctx.workspaceId,ctx.actorId])).rows[0];
+ assertAllowed(user,kind);return user;
+}
+async function reviewedInTransaction(client,ctx,kind,id,expectedHash){
+ const user=await currentActor(client,ctx,kind),fresh=await review(client,ctx,user,kind,id);
+ if(!expectedHash||fresh.hash!==expectedHash)throw new ValidationError(`This ${fresh.noun} changed after you opened the review. Check it again before deleting.`);
+ if(fresh.blockers.length)throw new ValidationError(fresh.blockers[0]);return fresh;
+}
 
 async function record(db,ctx,kind,id){
  const k=KINDS[kind],row=(await db.query(`SELECT * FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id])).rows[0];
@@ -90,11 +99,28 @@ async function openWork(db,ctx,skuIds){
  const purchase=(await db.query(`SELECT o.po_number FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
   WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status IN ${OPEN_PURCHASES} LIMIT 1`,[ctx.workspaceId,skuIds])).rows[0];
  if(purchase)return `Open purchase order ${purchase.po_number} is still expecting this product. Receive or cancel it first; nothing was removed.`;
+ const transfer=(await db.query(`SELECT t.transfer_number FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
+  WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND t.status IN ('APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
+   AND l.requested_quantity>l.received_quantity+l.lost_quantity+l.damaged_quantity+l.cancelled_quantity LIMIT 1`,[ctx.workspaceId,skuIds])).rows[0];
+ if(transfer)return `Open transfer ${transfer.transfer_number} still needs this product. Resolve the transfer first; nothing was removed.`;
+ const custody=(await db.query(`SELECT a.agreement_number FROM custody_lines l JOIN custody_agreements a ON a.workspace_id=l.workspace_id AND a.id=l.agreement_id
+  WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND a.status='OPEN' AND (l.external_quantity>0 OR l.inspection_quantity>0) LIMIT 1`,[ctx.workspaceId,skuIds])).rows[0];
+ if(custody)return `Rental or consignment agreement ${custody.agreement_number} still has outstanding goods. Resolve the agreement first; nothing was removed.`;
+ const booking=(await db.query(`SELECT a.agreement_number FROM custody_booking_lines l JOIN custody_bookings b ON b.workspace_id=l.workspace_id AND b.id=l.booking_id
+  JOIN custody_agreements a ON a.workspace_id=b.workspace_id AND a.id=b.agreement_id
+  WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND a.status='OPEN' AND b.status='CONFIRMED' AND b.ends_at+make_interval(mins=>b.buffer_minutes)>now() LIMIT 1`,[ctx.workspaceId,skuIds])).rows[0];
+ if(booking)return `Rental booking on ${booking.agreement_number} still needs this product. Resolve the booking first; nothing was removed.`;
+ const production=(await db.query(`SELECT w.order_number FROM manufacturing_work_orders w JOIN manufacturing_boms b ON b.workspace_id=w.workspace_id AND b.id=w.bom_id
+  WHERE w.workspace_id=$1 AND w.status IN ('DRAFT','IN_PROGRESS','RECOVERING') AND (b.output_sku_id=ANY($2::text[]) OR EXISTS(
+   SELECT 1 FROM jsonb_array_elements(b.definition->'components') component WHERE component->>'skuId'=ANY($2::text[]))) LIMIT 1`,[ctx.workspaceId,skuIds])).rows[0];
+ if(production)return `Production work order ${production.order_number} still needs this product. Resolve the work order first; nothing was removed.`;
  return null;
 }
 
 async function archiveProductsInTransaction(client,ctx,itemIds,{debitAccountKey,reason,reference,sourceType,sourceRecordType,sourceRecordId}){
+ await currentActor(client,ctx,'product');
  const skuIds=(await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=ANY($2::text[]) ORDER BY id',[ctx.workspaceId,itemIds])).rows.map(r=>r.id);
+ const open=await openWork(client,ctx,skuIds);if(open)throw new ValidationError(open);
  const removed=await writeoff.writeOffInTransaction(client,ctx,skuIds,{reasonCode:'correction',notes:reason,reference,debitAccountKey,sourceType,sourceRecordType,sourceRecordId,description:reason});
  const at=nowIso();
  await client.query('UPDATE items SET is_active=0,updated_at=$3 WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active<>0',[ctx.workspaceId,itemIds,at]);
@@ -111,11 +137,12 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
  if(!expectedHash||expectedHash!==current.hash)throw new ValidationError(`This ${k.noun} changed after you opened the review. Check it again before deleting.`);
  if(current.blockers.length)throw new ValidationError(current.blockers[0]);
  if(current.outcome==='erase'){
-  try{await db.transaction(client=>client.query(`DELETE FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]));return {...current,outcome:'erased'};}
+  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,kind,id,expectedHash);return client.query(`DELETE FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
   // A record referenced since the review, or through a deeper link, is kept and archived instead.
   catch(error){if(error.code!=='23503')throw error;}
  }
  const removed=await db.transaction(async client=>{
+  await reviewedInTransaction(client,ctx,kind,id,expectedHash);
   let stock=null;
   if(kind==='product')stock=await archiveProductsInTransaction(client,ctx,[id],{debitAccountKey:'INVENTORY_ADJUSTMENTS',reason:`Deleted product ${current.name}`,reference:current.name,sourceType:'inventory_count',sourceRecordType:'adjustment',sourceRecordId:id});
   else await client.query(`UPDATE ${k.table} SET ${k.archive},updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,nowIso()]);
@@ -198,12 +225,12 @@ async function runImportRemoval(job,database){
     await client.query(`UPDATE record_removals SET progress=jsonb_build_object('products',(progress->>'products')::int+$3::int,
       'units',((progress->>'units')::numeric+$4::numeric)::text,'valueMinor',(progress->>'valueMinor')::bigint+$5::bigint,'skipped',(progress->'skipped')||$6::jsonb)
      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,done.length,removed.units,removed.valueMinor,JSON.stringify(skipped.slice(0,50))]);
-   },{isolation:'READ COMMITTED'});
+   },{isolation:'SERIALIZABLE',retrySafe:true});
   }
   await database.query(`UPDATE record_removals SET status='COMPLETED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,nowIso()]);
   return {completed:true};
  }catch(error){
-  if(error instanceof ValidationError||job.attemptCount>=job.maxAttempts){
+  if(error instanceof ValidationError||error instanceof AuthorizationError||job.attemptCount>=job.maxAttempts){
    await database.query(`UPDATE record_removals SET status='FAILED',error=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,String(error.message).slice(0,500),nowIso()]);
    return {failed:error.message};
   }
