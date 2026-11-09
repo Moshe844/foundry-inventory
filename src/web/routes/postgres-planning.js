@@ -36,8 +36,15 @@ function createPostgresPlanningRouter(database) {
     return res.redirect(303,'/planning#location-rules');
   }));
   router.get('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'review safety stock'),asyncRoute(async(req,res)=>{
-    const result=await require('../../forecasting/agent-safety-stock').preview(database,req.ctx,selectedPosition(req.query));
-    return res.page('planning/safety-stock',{title:'Review safety stock',nav:'inventory',result});
+    const view={title:'Review safety stock',nav:'inventory'};
+    try{
+      const result=await require('../../forecasting/agent-safety-stock').preview(database,req.ctx,selectedPosition(req.query));
+      return res.page('planning/safety-stock',{...view,result});
+    }catch(error){
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      res.status(402);
+      return res.page('autopilot/locked',{...view,message:error.message});
+    }
   }));
   router.post('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'approve safety stock'),asyncRoute(async(req,res)=>{
     const result=await require('../../forecasting/agent-safety-stock').approve(database,req.ctx,req.body);

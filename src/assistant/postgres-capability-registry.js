@@ -349,7 +349,7 @@ add('read.staff_guide','Answer how-to questions about using StockChief. Return i
     return {rows:guide.topics.map(t=>({task:t.title,instructions:t.path,destination:t.href})),
       sources:[{kind:'page',href:'/guide?q='+encodeURIComponent(guide.query),label:'Staff guide'}],coverage:guide.topics.length?'Matching staff instructions':'No matching staff instructions for this role'};
   },async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),{answerMode:'evidence'});
-add('read.agent_review','Run a plan-checked operational review using recorded workspace data. Available reviews include '+agentReviews.definitions.map(d=>d.key).join(', ')+'. Use search for an exact SKU, lot, serial or other accepted filter.',
+add('read.agent_review','Run an operational review using recorded inventory, purchasing, sales or finance data. Discover this contract by name for the accepted agentJob keys. Use search for a SKU, lot, serial or other review filter. The owner’s plan controls access.',
   ['agentJob','search','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
     const change=args.agentJob==='clearance-plan'?args.markdownPercent:args.demandChangePercent;
     const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change});

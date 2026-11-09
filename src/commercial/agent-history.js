@@ -4,8 +4,9 @@ const plan=require('./agent-plan');
 const {EntitlementError}=require('./entitlements');
 const {AuthorizationError}=require('../domain/errors');
 
-async function access(db,workspaceId){
+async function access(db,workspaceId,{allowMissing=false}={}){
   const state=await plan.accountState(db,workspaceId);
+  if(!state.accountId&&allowMissing)return null;
   const legacy=Boolean(state.plan)&&!plan.usesAgentTerms(state);
   const tier=legacy?'legacy':(state.plan||'starter');
   const shorter=tier==='starter'||tier==='growth';

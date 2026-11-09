@@ -8,13 +8,14 @@ const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
 const {randomUUID}=require('node:crypto');
 const {nativeFieldName}=require('./contracts');
 
-function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
+function describe(c,{includeFieldChoices=false}={}){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
   ...(['mutation','policy'].includes(c.kind)&&c.authority?.mode==='explicit_approval'
     ?{invocation:{stage:'prepare_review',reviewRecord:'governed_proposal',
       execution:'separate_authenticated_approval',
       meaning:'Invoking this contract prepares or revisits a proposal for review. The described business effects require separate approval and canonical execution; the proposal is not a posted business record.'}}:{}),
   fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',...(FIELDS[name]?.type==='string'?{maxLength:FIELDS[name].maxLength||2000}:{}),description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
-   ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
+   ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:
+     includeFieldChoices&&Array.isArray(FIELDS[name]?.enum)?{jsonSchema:{type:FIELDS[name].type,enum:FIELDS[name].enum}}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[],
   ...(c.recordKind&&require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection
     ?{collection:require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind].collection}:{})};}
@@ -48,7 +49,7 @@ function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
   required:(c.required||[]).map(name=>nativeFieldName(c,name)),detailsByName:true,unavailable:c.commercialUnavailable||[]}));
  const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
  const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
- const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
+ const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(c=>describe(c,{includeFieldChoices:true})):null;
  const namedDatasets=names.length?datasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
  return {operations:names.length?namedOperations:operationPage.page,
   total:names.length?namedOperations.length:all.length,nextOffset:names.length?null:operationPage.nextOffset,

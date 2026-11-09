@@ -32,8 +32,10 @@ async function runtimeFailures(database,workspaceId){
 
 function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
+    const actor=await membership(database,workspaceId,actorId);
+    if(actorId&&!actor)return [];
     const [items,notices,purchaseReviews,countTasks,deputyTasks]=await Promise.all([
-      require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId)),
+      require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
       actorId?require('../operations/agent-count-tasks').inbox(database,workspaceId,actorId):[],
@@ -122,8 +124,7 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
     require('../sales/postgres-deposit-refunds').due(database,workspaceId),
     require('../lib/business-time').forWorkspace(database,workspaceId),
   ]);});}
-async function needsUncached(database,workspaceId,actorId=null){
-  const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
+async function needsUncached(database,workspaceId,actorId,actor){
   const [inputs,nativeApprovals]=await Promise.all([
     needsInputs(database,workspaceId),
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
