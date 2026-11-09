@@ -206,6 +206,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(client,workspaceId,agentJob,'draft');
       if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(client,workspaceId,input.standingAuthority);
@@ -223,6 +224,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
         if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
@@ -241,6 +243,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         const at=nowIso();await client.query(`UPDATE ${table} SET status='SENT',external_message_id=$3,
           external_thread_id=$4,error_message=NULL,sent_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
         [workspaceId,input.communicationId,result.externalMessageId||null,result.externalThreadId||null,at]);
+        if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
       }});
     return {message:await get(database,workspaceId,kind,input.communicationId),replayed:false};
   }catch(error){
