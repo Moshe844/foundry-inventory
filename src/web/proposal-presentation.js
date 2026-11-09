@@ -25,6 +25,10 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type?.startsWith('document.file_to_')){
+  const p=proposal.payload;
+  return {summary:proposal.summary,impact:'Files an original business document',fields:[{label:'Document',value:p.filename},{label:'File on',value:p.targetReference},{label:'Type',value:p.documentKind.replace(/_/g,' ')},{label:'Record match',value:p.needsTargetConfirmation?'Confirm the selected record':'Identified in the source'}]};
+ }
  if(proposal.action_type==='purchase_order.receive_from_document'){
   const p=proposal.payload;
   return {summary:proposal.summary,impact:p.existing?'Reviews an existing receipt':'Records physically received goods',fields:[{label:'Purchase order',value:p.orderNumber},{label:'Delivery document',value:p.sourceName},

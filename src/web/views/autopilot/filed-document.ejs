@@ -1,0 +1,7 @@
+<section class="card card-body section">
+ <h2><%= document.filename %></h2>
+ <p>Filed on <a href="<%= document.targetHref %>"><%= document.target_reference %></a> · <%= document.document_kind.replace(/_/g,' ') %></p>
+ <p><a class="btn" href="/autopilot/documents/<%= document.id %>/download">Download original file</a></p>
+ <p>This document is saved as evidence. Filing it does not record stock, an invoice, payment or accepted terms.</p>
+ <h3>Readable source text</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"><%= document.extracted_text %></pre>
+</section>

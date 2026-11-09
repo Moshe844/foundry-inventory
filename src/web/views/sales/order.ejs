@@ -41,6 +41,7 @@
   var shipped = order.totals.fulfilled || 0;
 %>
 <% if (locals.postgresPlacement) { %><%- include('order-head-v2') %><% } %>
+<% if(locals.postgresPlacement){ %><%- include('../partials/filed-documents-link',{documentTargetKind:'sales_order',documentTargetId:order.id}) %><% } %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <% if(locals.agentOrderChecks){ %><nav aria-label="Order checks"><a href="/autopilot/reviews/order-credit-limits?filter=<%= encodeURIComponent(order.order_number) %>">Check customer credit</a> · <a href="/autopilot/reviews/order-price-exceptions?filter=<%= encodeURIComponent(order.order_number) %>">Check prices and discounts</a></nav><% } %>
 <% if(locals.shipFromReview){ %><p><% if(shipFromReview.available){ %><a href="/orders/<%= order.id %>/ship-from">Find a warehouse for the whole order</a><% }else{ %>Shipping warehouse suggestions · Growth <a href="/billing">Upgrade</a><% } %></p><% } %>

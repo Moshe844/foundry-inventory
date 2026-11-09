@@ -142,6 +142,7 @@ const actionJobs=new Map([
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);
 function actionJob(name,operation,payload) {
+  if(name?.startsWith('document.file_to_'))return require('../documents/agent-filing').job(payload?.documentKind);
   if(name==='pricing.rule.configure'&&payload?.definition?.enabled!==false&&payload?.definition?.scope?.customerIds?.length)return 76;
   if(name==='communication.send_email'&&payload){
     const phase=payload.followUpPhase||(/^supplier-follow-up:[^:]+:(supplier_confirmation_due|supplier_delivery_late):\d+$/.exec(payload.idempotencyKey||'')||[])[1];
@@ -154,7 +155,7 @@ function actionJob(name,operation,payload) {
   return actionJobs.get(name);
 }
 function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.plan==='enterprise';}
-const newAgentActions=new Set(['import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
+const newAgentActions=new Set(['document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
@@ -172,13 +173,17 @@ const humanSteps=new Set([
   'customer_return.inspect','manufacturing.start','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
-function needsPerson(capability,payload,state){return (state?.plan==='starter'&&usesAgentTerms(state))||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
+function needsPerson(capability,payload,state){return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
   const {rows:[config]}=await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId]);
   if(config?.mode==='OBSERVE')return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
   if(automatic&&(Number(config?.paused)||Number(config?.suspended)))return 'Automatic work is paused. Review the inventory’s automation settings.';
+  if(capability?.startsWith('document.file_to_')){
+    const filingMode=await require('../autopilot/job-modes').restriction(db,workspaceId,142,automatic);
+    if(filingMode)return filingMode;
+  }
   const job=actionJob(capability,automatic?'automatic':'draft',payload);
   return require('../autopilot/job-modes').restriction(db,workspaceId,job,automatic);
 }
