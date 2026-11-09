@@ -9,6 +9,8 @@
 const crypto=require('node:crypto'),{ValidationError,NotFoundError,AuthorizationError}=require('./errors');
 const {nowIso,newId}=require('../lib/util'),permissions=require('../actions/permissions'),writeoff=require('../accounting/postgres-stock-writeoff');
 
+// Products with more stock positions than this are written off in the background.
+const settings={backgroundPositions:1000};
 const OPEN_SALES="('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')",OPEN_PURCHASES="('APPROVED','ORDERED','PARTIALLY_RECEIVED')";
 const KINDS={
  customer:{table:'customers',noun:'customer',permission:permissions.OPERATE,archived:"record_state='ARCHIVED'",archive:"record_state='ARCHIVED'",href:id=>'/sales/customers/'+id,list:'/sales/customers'},
@@ -30,20 +32,32 @@ const protecting=new Map();
 // Foreign keys that refuse deletion (RESTRICT / NO ACTION) mark history.
 async function protectingReferences(db,table){
  if(protecting.has(table))return protecting.get(table);
- const rows=(await db.query(`SELECT c.conrelid::regclass::text AS tbl,a.attname AS col
+ // scoped: the table has workspace_id, so (workspace_id, column) indexes apply.
+ // indexed: a lookup by this column can use an index instead of reading the table.
+ const rows=(await db.query(`SELECT c.conrelid::regclass::text AS tbl,a.attname AS col,w.attnum IS NOT NULL AS scoped,
+   EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=c.conrelid AND (i.indkey[0]=k.child OR i.indkey[0]=w.attnum AND i.indkey[1]=k.child)) AS indexed
   FROM pg_constraint c CROSS JOIN LATERAL unnest(c.conkey,c.confkey) AS k(child,parent)
   JOIN pg_attribute p ON p.attrelid=c.confrelid AND p.attnum=k.parent AND p.attname='id'
   JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.child
+  LEFT JOIN pg_attribute w ON w.attrelid=c.conrelid AND w.attname='workspace_id' AND NOT w.attisdropped
   WHERE c.contype='f' AND c.confrelid=$1::regclass AND c.confdeltype IN ('r','a') ORDER BY 1,2`,[table])).rows;
  protecting.set(table,rows);return rows;
 }
-async function historyOf(db,table,ids,extra=[]){
- if(!ids.length)return [];
+// Everyday history (stock movements, then the records people recognise) is
+// checked first, and a few findings are enough both to decide and to explain.
+// Only a record with no history pays for checking every protecting table.
+// Unindexed links are read only when nothing else was found, to confirm that
+// the record can really be erased; a record with history never pays for them.
+const rank=ref=>{const base=ref.tbl.replace(/^.*\./,'');return base==='movements'?0:!ref.indexed?3:Object.hasOwn(LABELS,base)?1:2;};
+async function historyOf(db,workspaceId,sources,limit=3){
+ const checks=[];
+ for(const {table,ids,extra=[]} of sources)if(ids.length)for(const ref of [...extra,...await protectingReferences(db,table)])checks.push({...ref,ids});
+ checks.sort((a,b)=>rank(a)-rank(b));
  const found=new Set();
- for(const ref of [...await protectingReferences(db,table),...extra]){
-  if(found.has(label(ref.tbl)))continue;
+ for(const ref of checks){
+  if(found.size>=limit||found.size&&!ref.indexed)break;if(found.has(label(ref.tbl)))continue;
   const quoted=ref.tbl.split('.').map(part=>'"'+part.replace(/"/g,'""')+'"').join('.');
-  if((await db.query(`SELECT 1 FROM ${quoted} WHERE "${ref.col}"=ANY($1::text[]) LIMIT 1`,[ids])).rows.length)found.add(label(ref.tbl));
+  if((await db.query(`SELECT 1 FROM ${quoted} WHERE ${ref.scoped?'workspace_id=$2 AND ':''}"${ref.col}"=ANY($1::text[]) LIMIT 1`,ref.scoped?[ref.ids,workspaceId]:[ref.ids])).rows.length)found.add(label(ref.tbl));
  }
  return [...found];
 }
@@ -78,15 +92,16 @@ async function review(db,ctx,user,kind,id){
  const archived=(await db.query(`SELECT ${k.archived} AS archived FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id])).rows[0].archived;
  if(k.children){
   const childIds=(await db.query(`SELECT id FROM ${k.children.table} WHERE workspace_id=$1 AND ${k.children.column}=$2`,[ctx.workspaceId,id])).rows.map(r=>r.id);
-  out.history=[...new Set([...await historyOf(db,k.table,[id]),...await historyOf(db,k.children.table,childIds,[{tbl:'movements',col:'sku_id'}])])];
+  out.history=await historyOf(db,ctx.workspaceId,[{table:k.table,ids:[id]},{table:k.children.table,ids:childIds,extra:[{tbl:'movements',col:'sku_id',scoped:true,indexed:true}]}]);
   out.variants=childIds.length;
   if(k.stock){
    out.stock=await writeoff.summarize(db,ctx,childIds);
    if(out.stock.problem)out.blockers.push(out.stock.problem);
    const open=await openWork(db,ctx,childIds);if(open)out.blockers.push(open);
   }
- }else out.history=await historyOf(db,k.table,[id]);
+ }else out.history=await historyOf(db,ctx.workspaceId,[{table:k.table,ids:[id]}]);
  out.outcome=out.history.length?(archived?'archived':'archive'):'erase';
+ if(kind==='product'){const live=await liveRemoval(db,ctx,id,'product');if(live&&(live.status==='RUNNING'||archived))out.removal=live;}
  out.hash=digest({kind,id,history:out.history,stock:out.stock&&{positions:out.stock.positions,units:out.stock.units,value:out.stock.valueMinor},outcome:out.outcome});
  return out;
 }
@@ -141,6 +156,20 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
   // A record referenced since the review, or through a deeper link, is kept and archived instead.
   catch(error){if(error.code!=='23503')throw error;}
  }
+ // A large product leaves the lists at once; its stock is written off in the
+ // background, a chunk per transaction, with progress on the review page.
+ if(kind==='product'&&current.stock.positions>settings.backgroundPositions){
+  const removalId=newId('rmv');
+  await db.transaction(async client=>{
+   await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,progress,created_by_user_id,created_at) VALUES($1,$2,'product',$3,'RUNNING',$4,$5,$6,$7)`,
+    [removalId,ctx.workspaceId,id,{name:current.name,variants:current.variants,positions:current.stock.positions,units:current.stock.units,valueMinor:current.stock.valueMinor},{positions:0,units:'0',valueMinor:0},ctx.actorId,nowIso()]);
+   await client.query('UPDATE items SET is_active=0,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,nowIso()]);
+   await client.query('UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND item_id=$2 AND is_active<>0',[ctx.workspaceId,id]);
+   await require('../operations/postgres-job-queue').enqueue({query:(statement,values=[])=>client.query(statement,values),transaction:operation=>operation(client)},
+    {workspaceId:ctx.workspaceId,kind:'records.remove-product',idempotencyKey:'remove-product:'+removalId,payload:{removalId,itemId:id,actorId:ctx.actorId},maxAttempts:5});
+  });
+  return {...current,outcome:'running',removalId};
+ }
  const removed=await db.transaction(async client=>{
   await reviewedInTransaction(client,ctx,kind,id,expectedHash);
   let stock=null;
@@ -159,8 +188,38 @@ async function createdItems(db,ctx,importId){
  return (await db.query(`SELECT DISTINCT r.item_id FROM import_rows r JOIN items i ON i.workspace_id=r.workspace_id AND i.id=r.item_id
   WHERE r.workspace_id=$1 AND r.import_id=$2 AND r.status='IMPORTED' AND r.item_id IS NOT NULL AND r.parsed::jsonb->>'existingItemId' IS NULL AND i.is_active=1 ORDER BY r.item_id`,[ctx.workspaceId,importId])).rows.map(r=>r.item_id);
 }
-async function liveRemoval(db,ctx,importId){
- return (await db.query(`SELECT * FROM record_removals WHERE workspace_id=$1 AND kind='import' AND record_id=$2 AND status<>'FAILED' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,importId])).rows[0]||null;
+async function liveRemoval(db,ctx,recordId,kind='import'){
+ return (await db.query(`SELECT * FROM record_removals WHERE workspace_id=$1 AND kind=$3 AND record_id=$2 AND status<>'FAILED' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,recordId,kind])).rows[0]||null;
+}
+// Background write-off of one large deleted product (already archived).
+async function runProductRemoval(job,database){
+ const {removalId,itemId,actorId}=job.payload||{},ctx={workspaceId:job.workspaceId,actorId};
+ const removal=(await database.query('SELECT * FROM record_removals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,removalId])).rows[0];
+ if(!removal||removal.status!=='RUNNING')return {skipped:true};
+ const name=removal.summary?.name||itemId,skuIds=(await database.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY id',[ctx.workspaceId,itemId])).rows.map(r=>r.id);
+ try{
+  for(let i=0;i<skuIds.length;i+=writeoff.CHUNK){const chunk=skuIds.slice(i,i+writeoff.CHUNK);
+   await database.transaction(async client=>{
+    const removed=await writeoff.writeOffInTransaction(client,ctx,chunk,{reasonCode:'correction',notes:`Deleted product ${name}`,reference:name,debitAccountKey:'INVENTORY_ADJUSTMENTS',sourceType:'inventory_count',sourceRecordType:'adjustment',sourceRecordId:itemId,description:`Deleted product ${name}`});
+    await client.query(`UPDATE record_removals SET progress=jsonb_build_object('positions',(progress->>'positions')::int+$3::int,'units',((progress->>'units')::numeric+$4::numeric)::text,'valueMinor',(progress->>'valueMinor')::bigint+$5::bigint)
+     WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,removed.positions,removed.units,removed.valueMinor]);
+   },{isolation:'READ COMMITTED'});
+  }
+  await database.query(`UPDATE attention_items SET status='RESOLVED',resolution_reason='The product was deleted.',resolved_at=$3 WHERE workspace_id=$1 AND status IN ('OPEN','ACKNOWLEDGED') AND item_id=$2`,[ctx.workspaceId,itemId,nowIso()]);
+  await database.query(`UPDATE record_removals SET status='COMPLETED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,nowIso()]);
+  return {completed:true};
+ }catch(error){
+  if(error instanceof ValidationError||job.attemptCount>=job.maxAttempts){
+   // The product comes back with whatever stock is left, so nothing is hidden half-removed.
+   await database.transaction(async client=>{
+    await client.query(`UPDATE record_removals SET status='FAILED',error=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,removalId,String(error.message).slice(0,500),nowIso()]);
+    await client.query('UPDATE items SET is_active=1,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,itemId,nowIso()]);
+    await client.query('UPDATE skus SET is_active=1 WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,itemId]);
+   });
+   return {failed:error.message};
+  }
+  throw error;
+ }
 }
 async function importOpeningProblem(db,ctx,importId,skuIds){
  if(!skuIds.length)return null;
@@ -256,4 +315,4 @@ async function runImportRemoval(job,database){
 }
 async function importRemoval(db,ctx,importId){return liveRemoval(db,ctx,importId);}
 
-module.exports={KINDS,review,remove,runImportRemoval,importRemoval,protectingReferences,label};
+module.exports={KINDS,settings,review,remove,runImportRemoval,runProductRemoval,importRemoval,protectingReferences,label};

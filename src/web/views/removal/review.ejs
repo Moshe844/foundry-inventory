@@ -1,17 +1,17 @@
 <% const r=review,n=v=>Number(v||0).toLocaleString('en-US'),units=r.stock?n(r.stock.units):'0',value=r.stock?helpers.money(r.stock.valueMinor,currency):'',live=r.removal,blocked=r.blockers&&r.blockers.length; %>
-<section class="rm-head"><div><p class="rm-eyebrow"><%= r.noun.charAt(0).toUpperCase()+r.noun.slice(1) %></p><h1><%= live&&live.status==='COMPLETED'?r.name+' was deleted':'Delete '+r.name+'?' %></h1></div></section>
+<section class="rm-head"><div><p class="rm-eyebrow"><%= r.noun.charAt(0).toUpperCase()+r.noun.slice(1) %></p><h1><%= live&&live.status==='COMPLETED'?r.name+' was deleted':live?'Deleting '+r.name:'Delete '+r.name+'?' %></h1></div></section>
 <% if(error){ %><div class="notice notice--warn" role="alert"><%= error %></div><% } %>
 <section class="rm-panel rd-panel"><div class="rm-panel__body">
-<% if(live){ const p=live.progress||{},s=live.summary||{}; %>
+<% if(live){ const p=live.progress||{},s=live.summary||{},isImport=r.kind==='import',done=isImport?Number(p.products||0):Number(p.positions||0),all=isImport?Number(s.products||0):Number(s.positions||0); %>
   <% if(live.status==='RUNNING'){ %>
-  <h2>Removing the products this import created</h2>
-  <p><strong><%= n(p.products) %> of <%= n(s.products) %></strong> products removed so far. You can leave this page; it keeps going.</p>
-  <progress class="rd-progress" max="<%= Math.max(1,Number(s.products||0)) %>" value="<%= Number(p.products||0) %>"></progress>
+  <h2><%= isImport?'Removing the products this import created':'Removing the stock of '+r.name %></h2>
+  <p><strong><%= n(done) %> of <%= n(all) %></strong> <%= isImport?'products':'stock positions' %> done so far. <%= isImport?'':'The product is already gone from your lists. ' %>You can leave this page; it keeps going.</p>
+  <progress class="rd-progress" max="<%= Math.max(1,all) %>" value="<%= done %>"></progress>
   <script>setTimeout(function(){location.reload();},3000);</script>
   <% } else { %>
-  <p><%= n(p.products) %> products and their <%= n(p.units) %> units (<%= helpers.money(Number(p.valueMinor||0),currency) %>) were removed. The opening balance they brought in was reversed.</p>
+  <p><% if(isImport){ %><%= n(p.products) %> products and their <%= n(p.units) %> units (<%= helpers.money(Number(p.valueMinor||0),currency) %>) were removed. The opening balance they brought in was reversed.<% } else { %>Its <%= n(p.units) %> units (<%= helpers.money(Number(p.valueMinor||0),currency) %>) were written off as a stock correction.<% } %></p>
   <% if((p.skipped||[]).length){ %><p class="notice notice--warn"><%= n(p.skipped.length) %> products were kept because open orders still need them.</p><% } %>
-  <p><a class="btn" href="/imports">Back to imports</a></p>
+  <p><a class="btn" href="<%= r.list %>"><%= isImport?'Back to imports':'Back to Stock' %></a></p>
   <% } %>
 <% } else { %>
   <% if(blocked){ %><div class="notice notice--warn" role="alert"><% r.blockers.forEach(b=>{ %><p><%= b %></p><% }) %></div><% } %>
