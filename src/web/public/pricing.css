@@ -1,0 +1,109 @@
+/* Pricing-only layout. Plan permissions and checkout state remain server-owned. */
+.pro-pricing .pricing-intro{align-items:center;margin-bottom:26px}
+.pro-pricing .pricing-intro h1{font-size:clamp(30px,3.5vw,46px);max-width:700px;line-height:1.12}
+.pricing-compare-link{display:inline-block;font-size:14px;margin:4px 0}
+.pricing-start{display:flex;gap:18px;align-items:start;background:#eef2ff;border:1px solid #dce2fd;border-radius:12px;padding:18px 22px;margin-bottom:24px;font-size:13px;line-height:1.65;color:#344054}
+.pricing-start>strong{flex:0 0 205px;color:#312e81}
+.pro-pricing .plan-comparison{align-items:start}
+.pro-pricing .plan-card{padding:24px 20px;min-width:0}
+.pro-pricing .plan-promise{min-height:42px;margin-bottom:16px}
+.pro-pricing .plan-price{min-height:72px}
+.pro-pricing .plan-price strong{font-size:32px}
+.pro-pricing .plan-card__action{margin-bottom:20px}
+.pro-pricing .plan-card__action .pub-btn{display:flex;width:100%;box-sizing:border-box}
+.plan-default{border-top:1px solid #e4e7ec;padding-top:18px;min-height:194px}
+.plan-default h3{font-size:13px;margin:0 0 8px;color:#27614d}
+.plan-default p{font-size:13px;line-height:1.65;color:#475467;margin:0 0 12px}
+.plan-default a{font-size:12px;line-height:1.5;display:inline-block}
+.plan-quick-facts{display:grid;gap:11px;margin:18px 0;padding:16px 0;border-top:1px solid #e4e7ec;border-bottom:1px solid #e4e7ec}
+.plan-quick-facts>div{display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.5}
+.plan-quick-facts dt{color:#667085}.plan-quick-facts dd{margin:0;color:#101828;text-align:right}
+.plan-details-link{display:flex;justify-content:space-between;gap:8px;font-size:14px;line-height:1.5;padding:5px 0 15px}
+.plan-limits{border-top:1px solid #e4e7ec;padding-top:14px}
+.pro-pricing summary{cursor:pointer;line-height:1.55;color:#344054;font-size:14px}
+.pro-pricing summary:focus-visible{outline:2px solid #4f46e5;outline-offset:5px;border-radius:4px}
+.pro-pricing .plan-limits summary{font-size:12px}
+.pro-pricing .plan-limits .plan-allowances{margin:18px 0 0}
+.pro-pricing .plan-limits .plan-allowances li{font-size:12px}
+.pro-pricing .plan-limits p{font-size:12px;color:#667085;line-height:1.65}
+.pricing-comparison{margin:56px 0 40px;scroll-margin-top:100px}
+.pricing-comparison>header{margin-bottom:24px}
+.pricing-comparison h2{font-size:30px;margin:8px 0 12px}
+.pricing-comparison>header>p:not(.pub-kicker){font-size:14px;color:#667085;line-height:1.6}
+.pricing-summary-table{overflow-x:auto;background:#fff;border:1px solid #e4e7ec;border-radius:12px}
+.pricing-summary-table table{border-collapse:collapse;width:100%;min-width:760px;table-layout:fixed;font-size:13px}
+.pricing-summary-table th,.pricing-summary-table td{padding:16px 14px;border-bottom:1px solid #eaecf0;line-height:1.6;text-align:center}
+.pricing-summary-table th:first-child{width:26%;text-align:left;padding-left:22px}
+.pricing-summary-table thead th{background:#f2f4f7;font-size:15px}
+.pricing-summary-table thead small{display:block;font-size:12px;color:#667085;margin-top:5px}
+.pricing-summary-table tbody th{color:#475467}.pricing-summary-table tr:last-child>*{border-bottom:0}
+.pricing-full-comparison{margin-top:24px;background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:0 22px}
+.pricing-full-comparison>summary{padding:22px 0;font-size:16px}
+.pricing-full-comparison>summary>small{display:block;font-size:12px;color:#667085;margin:5px 0 0 17px}
+.pricing-full-comparison>p,.pricing-human-rule{font-size:13px;line-height:1.7;color:#667085}
+.pricing-mode-guide{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin:22px 0}
+.pricing-mode-guide dt{font-size:12px}.pricing-mode-guide dd{margin:7px 0 0;font-size:12px;line-height:1.6;color:#667085}
+.pricing-verification-note{font-size:12px;line-height:1.65;background:#f8f9fb;border:1px solid #eaecf0;border-radius:8px;padding:12px 14px;color:#667085}
+.pricing-search{display:grid;gap:7px;font-size:12px;color:#475467}
+.pricing-search input,.plan-dialog-controls select{width:100%;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:8px;padding:11px 12px;background:#fff;color:#101828;font-size:14px;min-height:42px}
+.pricing-result-count{font-size:12px;color:#667085;line-height:1.6;margin:16px 0}
+.pricing-duty-area{border-top:1px solid #e4e7ec;margin:0}
+.pricing-duty-area>summary{padding:18px 0}
+.pricing-duty-area>summary small{float:right;color:#667085;font-size:12px;margin-left:12px}
+.pricing-duty-area .agent-plan-table{margin:0 0 18px;border-radius:8px}
+.pricing-duty-area .agent-plan-table table{min-width:900px}
+.pricing-duty-area .agent-plan-table thead th{background:#f2f4f7;color:#344054;font-size:13px}
+.pricing-duty-area .agent-plan-table tbody th{font-size:13px}
+.pricing-duty-area .agent-plan-table tbody td{font-size:11px}
+.pricing-status{display:block!important;width:fit-content;font-size:11px!important;margin-top:6px!important;line-height:1.5}
+.pricing-status--pending{color:#856318!important}.pricing-status--partial{color:#667085!important}.pricing-status--complete{color:#27724d!important}
+.pricing-human-rule{margin:20px 0 0}
+.pricing-explainer{margin:28px 0;border-top:1px solid #e4e7ec;border-bottom:1px solid #e4e7ec;padding:18px 0}
+.pricing-explainer p{font-size:12px;line-height:1.75;color:#667085}
+.plan-dialog{position:fixed;inset:0;margin:auto;padding:0;border:1px solid #d0d5dd;border-radius:16px;width:min(940px,calc(100vw - 48px));max-width:940px;max-height:90dvh;box-sizing:border-box;background:#fff;color:#101828;overflow:clip}
+.plan-dialog[open]{display:flex;flex-direction:column}
+.plan-dialog::backdrop{background:rgba(16,24,40,.56)}
+body.plan-dialog-open{overflow:hidden}
+.plan-dialog-header{display:flex;align-items:center;justify-content:space-between;padding:22px 28px;border-bottom:1px solid #e4e7ec;flex:none;gap:20px}
+.plan-dialog-header .pub-kicker{font-size:11px;margin:0 0 6px}
+.plan-dialog-header h2{font-size:28px;margin:0}
+.plan-dialog-header form{margin:0}
+.plan-dialog-close{display:grid;place-items:center;width:40px;height:40px;border:1px solid #e4e7ec;border-radius:9px;font-size:27px;background:#fff;color:#475467;cursor:pointer;line-height:1}
+.plan-dialog-body{padding:24px 28px 32px;overflow-y:auto;overscroll-behavior:contain;min-height:0;scrollbar-gutter:stable}
+.plan-dialog-default{padding:18px 20px;border:1px solid #dce2fd;border-radius:10px;background:#f5f6ff;margin-bottom:20px}
+.plan-dialog-default h3{font-size:16px;margin:0 0 9px}
+.plan-dialog-default p{font-size:13px;line-height:1.7;color:#475467;margin:8px 0 0}
+.plan-dialog-tools,.plan-dialog-limits{border-bottom:1px solid #e4e7ec;padding:15px 0}
+.plan-dialog-tools summary small{display:block;font-size:12px;color:#667085;margin:5px 0 0 17px}
+.plan-dialog .plan-features{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 30px;padding-bottom:12px}
+.plan-dialog .plan-allowances{margin-top:18px}
+.plan-dialog-jobs-heading{font-size:20px;margin:30px 0 18px}
+.plan-dialog-controls{display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:14px;margin:20px 0 14px}
+.plan-dialog-controls>label{display:grid;gap:7px;font-size:12px;color:#475467}
+.plan-mode-filters{display:flex;flex-wrap:wrap;gap:7px}
+.plan-mode-filters button{border:1px solid #e4e7ec;background:#fff;color:#475467;border-radius:7px;padding:9px 11px;font-size:12px;cursor:pointer}
+.plan-mode-filters button[aria-pressed=true]{color:#4338ca;background:#eef2ff;border-color:#c7d2fe}
+.plan-job-groups h4{font-size:14px;margin:26px 0 8px}
+.plan-job-groups ul{list-style:none;padding:0;margin:0}
+.plan-job-groups li{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid #eaecf0;font-size:13px;line-height:1.6}
+.plan-job-groups li>div{flex:1;min-width:0}
+.plan-job-groups li>.agent-mode{flex:none;max-width:190px;text-align:center;font-size:11px}
+.plan-dialog [hidden],.pricing-comparison [hidden]{display:none!important}
+.plan-no-results{font-size:14px;line-height:1.65;padding:24px 0;color:#667085}
+html:root body.public-page .plan-card[data-plan="enterprise"] a:not(.pub-btn){color:#c7d2fe}
+html:root body.public-page .plan-card[data-plan="enterprise"] summary{color:#e0e7ff}
+@media(min-width:1051px){.pro-pricing .plan-default{min-height:207px}}
+@media(max-width:760px){
+ .pricing-start{display:block;padding:16px 18px}.pricing-start>strong{display:block;margin-bottom:7px}
+ .pro-pricing .plan-default{min-height:0}.pro-pricing .plan-price{min-height:0}.pro-pricing .plan-promise{min-height:0}
+ .pricing-comparison{margin-top:38px}.pricing-comparison h2{font-size:26px}
+ .pricing-summary-table th:first-child{position:sticky;left:0;background:#f8f9fb;z-index:1;width:170px;padding-left:12px}
+ .pricing-full-comparison{padding:0 14px}.pricing-full-comparison>summary{font-size:15px}
+ .pricing-mode-guide{grid-template-columns:1fr;gap:12px}.pricing-mode-guide dd{margin-top:5px}
+ .pricing-duty-area>summary{font-size:13px}.pricing-duty-area .agent-plan-table table{min-width:760px}
+ .plan-dialog{width:calc(100vw - 20px);max-height:94dvh;border-radius:12px}
+ .plan-dialog-header{padding:16px 18px}.plan-dialog-header h2{font-size:24px}
+ .plan-dialog-body{padding:18px 16px 26px}.plan-dialog-default{padding:14px}
+ .plan-dialog-controls{grid-template-columns:1fr}.plan-dialog .plan-features{grid-template-columns:1fr}
+ .plan-job-groups li{align-items:start;gap:12px}.plan-job-groups li>.agent-mode{max-width:115px;font-size:10px}
+}

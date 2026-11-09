@@ -1,0 +1,27 @@
+<% for(const plan of compared){const detail=agentPlans.plans[plan.id]; %>
+<dialog class="plan-dialog" id="plan-details-<%= plan.id %>" aria-labelledby="plan-dialog-title-<%= plan.id %>" data-plan-dialog="<%= plan.id %>">
+  <header class="plan-dialog-header"><div><p class="pub-kicker">Everything included</p><h2 id="plan-dialog-title-<%= plan.id %>"><%= plan.name %></h2></div><form method="dialog"><button class="plan-dialog-close" aria-label="Close <%= plan.name %> details">×</button></form></header>
+  <div class="plan-dialog-body">
+    <section class="plan-dialog-default"><h3>What it does without training</h3><p><%= detail.defaultDescription %></p><p><strong>Every new account starts in Watch only for 14 days.</strong> You then choose the mode per job. Required approvals, connected accounts and lower limits you set still apply.</p></section>
+    <details class="plan-dialog-tools"><summary>All included business tools <small>Owner-operated tools, alongside the agent duties below</small></summary><ul class="plan-features"><% for(const feature of plan.features){ %><li data-plan-feature="<%= feature.capability %>"><%= feature.text %></li><% } %></ul></details>
+    <details class="plan-dialog-limits"><summary>All limits &amp; allowances</summary><ul class="plan-allowances"><% for(const a of plan.allowances){ %><li><span><%= allowanceLabel(a) %></span><strong><%= allowanceNumber(plan,a) %></strong></li><% } %></ul></details>
+    <h3 class="plan-dialog-jobs-heading">Agent duties in <%= plan.name %></h3>
+    <%- include('plan-mode-guide') %>
+    <p class="pricing-verification-note">Limited scope means only the tested part of that duty works today. Planned duties are unfinished and are shown separately. The level is your plan’s permission ceiling, not a promise that a planned duty works.</p>
+    <div class="plan-dialog-controls">
+      <label class="pricing-search">Find a duty<input type="search" data-plan-search placeholder="Search <%= plan.name %> duties"></label>
+      <label>Show status<select data-plan-status><option value="working">Working + limited scope</option><option value="all">All, including planned</option><option value="pending">Planned only</option></select></label>
+    </div>
+    <div class="plan-mode-filters" role="group" aria-label="Filter duties by level">
+      <button type="button" data-filter-mode="all" aria-pressed="true">All levels</button>
+      <% for(const [mode,label] of [['alone','No training needed'],['trained','After training'],['draft','You approve'],['suggest','Advice']]){ %><button type="button" data-filter-mode="<%= mode %>" aria-pressed="false"><%= label %></button><% } %>
+    </div>
+    <p class="pricing-result-count" data-plan-count aria-live="polite"></p>
+    <div class="plan-job-groups"><% for(const group of detail.groups){ %><section data-plan-group><h4><%= group.label %></h4><ul>
+      <% for(const job of group.jobs){ %><li data-plan-job="<%= job.id %>" data-mode="<%= job.mode %>" data-status="<%= job.status %>"><div><span data-job-label><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>"><%= job.verification %></small></div><span class="agent-mode agent-mode--<%= job.mode %>"><%= job.modeLabel %></span></li><% } %>
+    </ul></section><% } %></div>
+    <p class="plan-no-results" data-plan-empty hidden>No duties match. Try another level, status or search.</p>
+  </div>
+</dialog>
+<% } %>
+<noscript><p class="pro-pricing-note">Expand “Compare all 214 agent duties” above to view every plan’s duties. Plan detail popups use JavaScript.</p></noscript>
