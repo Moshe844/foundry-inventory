@@ -418,11 +418,11 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           const trained=job&&policy.allowance(account.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
           const tier=policy.actionPlan(account,contract.name);
           const outsidePlan=job && tier!==undefined && !policy.permits(tier,job,'automatic',{trained});
-          const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId);
+          const newCustomerOrAddress=policy.usesAgentTerms(account)&&await policy.customerOrderNeedsPerson(database,ctx.workspaceId,contract.name,outcome.result.proposal.payload,stored.proposalId,account);
           const stopped=await policy.stopped(database,ctx.workspaceId,account,contract.name,true);
           const confirmationPayload=contract.name==='catalog.supplier_price_list'?(outcome.result.proposal.payload||
             (await database.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,stored.proposalId])).rows[0]?.payload):undefined;
-          if(account.plan && (stopped || policy.needsPerson(contract.name,confirmationPayload) || outsidePlan || newCustomerOrAddress)){
+          if(account.plan && (stopped || policy.needsPerson(contract.name,confirmationPayload,account) || outsidePlan || newCustomerOrAddress)){
             stored.state='WAITING_USER';stored.reason=account.shadow?'agent_shadow_mode':'individual_confirmation_required';
             await update(database,claimed,token,steps,'WAITING_USER');
             break;

@@ -3,7 +3,10 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+function eligible(plan,action){
+ return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
+}
 
 function scope(partyId,currency,amountMinor,qualification,label){
   return {key:hash([partyId,currency,qualification]),label,currency,amountMinor:money.integer(amountMinor)};
@@ -21,13 +24,13 @@ async function settings(db,ctx,id,maximum){
   if(!jobs.has(p?.action_type)||!bound?.key||!policy.usesAgentTerms(state))return null;
   const rule=(await db.query('SELECT * FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3',
     [ctx.workspaceId,p.action_type,bound.key])).rows[0];
-  const eligible=policy.permits(state.plan,jobs.get(p.action_type),'automatic',{trained:true});
-  if(!eligible&&!rule)return null;
+  const allowed=eligible(state.plan,p.action_type);
+  if(!allowed&&!rule)return null;
   const amount=maximum?money.userToMinor(maximum,bound.currency):null;
-  return {action:p.action_type,bound,eligible,exampleAmount:money.fromMinor(bound.amountMinor,bound.currency),
+  return {action:p.action_type,bound,eligible:allowed,exampleAmount:money.fromMinor(bound.amountMinor,bound.currency),
     preview:amount>0?{...(await history(db,ctx,p.action_type,bound,amount)),maximum:money.fromMinor(amount,bound.currency)}:null,
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
-    canTeach:eligible&&p.status==='EXECUTED'&&!state.shadow};
+    canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow};
 }
 async function save(db,ctx,id,input){
   return db.transaction(async c=>{
@@ -63,4 +66,4 @@ async function trained(db,workspaceId,name,payload,proposalId){
   return Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.agent_draft_rules r JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner'
     WHERE r.workspace_id=$1 AND r.action_type=$2 AND r.scope_key=$3 AND r.currency=$4 AND r.maximum_minor>=$5`,[workspaceId,name,bound.key,bound.currency,bound.amountMinor])).rowCount);
 }
-module.exports={scope,settings,save,trained,jobs};
+module.exports={scope,settings,save,trained,jobs,eligible};

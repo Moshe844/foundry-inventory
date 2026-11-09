@@ -1799,11 +1799,16 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
     if(ctx.planStepKey){const existing=(await database.query('SELECT id,action_type,payload,summary,status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[ctx.workspaceId,ctx.actorId,ctx.planStepKey])).rows[0];
       if(existing){if(existing.action_type!==actionType||existing.payload.requestedPricingHash!==requestedPricingHash)throw new InvariantError('The prepared order scope changed during resumption. Review the current request.','proposal_scope_changed');return {status:'PREPARED',answer:existing.status==='PENDING'?'The exact order proposal is still waiting for your approval.':'This order proposal already has a recorded decision; its canonical status is preserved.',proposal:{id:existing.id,summary:existing.summary,actionType}};}}
     const quote=await promotions.prepareQuote(database,ctx,original);
+    await require('../sales/agent-customer-pricing').checkOrder(database,ctx,original,quote);
     if(quote.violations.length)throw new ValidationError('This order needs a pricing review before approval: '+[...new Set(quote.violations.map(v=>v.kind.replaceAll('_',' ')))].join(', ')+'. Nothing was changed.');
     payload={...payload,requestedPricingHash,pricingInputLines:original.lines,pricingInputDiscountMinor:original.discountMinor||0,pricingQuoteHash:promotions.quoteHash(quote),
       discountMinor:quote.discountMinor,taxMinor:quote.taxMinor,lines:quote.lines.map((line,index)=>({...original.lines[index],unitPriceMinor:line.unitPriceMinor}))};
     const products=(await database.query('SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])',[ctx.workspaceId,quote.lines.map(l=>l.skuId)])).rows;
     const party=(await database.query('SELECT name FROM customers WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.customerId])).rows[0],location=payload.fulfillmentLocationId?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.fulfillmentLocationId])).rows[0]:null;
+    const agentOrder=await require('../commercial/agent-plan').accountState(database,ctx.workspaceId);
+    if(require('../commercial/agent-plan').usesAgentTerms(agentOrder)&&quote.totalMinor>0)payload.training=require('../autopilot/draft-authority').scope(payload.customerId,quote.currency,quote.totalMinor,
+      {delivery:payload.deliveryMethod,address:payload.shipToAddress||null,location:payload.fulfillmentLocationId||null,skus:[...new Set(quote.lines.map(l=>l.skuId))].sort()},
+      'Customer order drafts for '+party.name+' using these products and delivery details. The limit is the complete order total. New customer or delivery details need individual confirmation.');
     summary=`Prepare one draft order for ${party.name}:\n`+quote.lines.map(line=>{const p=products.find(p=>p.id===line.skuId);return `${line.quantity} × ${p.name} (${p.code}) at ${pricing.formatMinor(line.unitPriceMinor,quote.currency)} each; line discount ${pricing.formatMinor(line.discountMinor,quote.currency)}.`;}).join('\n')+`\n${payload.deliveryMethod==='PICKUP'?'Pickup':'Delivery'}${location?' from '+location.name:''}${payload.shipToAddress?' to '+payload.shipToAddress:''}. Reference ${payload.reference||'not supplied'}. Exact total ${pricing.formatMinor(quote.totalMinor,quote.currency)}; discounts ${pricing.formatMinor(quote.discountMinor,quote.currency)}, tax ${pricing.formatMinor(quote.taxMinor,quote.currency)}. Draft only: no stock reservation, fulfillment, invoice, payment or email.`+(quote.unusedCodes.length?' Unused codes: '+quote.unusedCodes.join(', ')+'.':'');
   }
   const id=newId('pgprop');
@@ -2125,10 +2130,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
       agentPolicy.requireJob(tier,job,operation,{trained});
     }
-    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload))
+    if(missionPlanId && agentAccount.plan && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
-    if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload))
-      throw new ValidationError('Individually approve the first order for this customer or delivery address.');
+    if(contract.name==='sales_order.create')await require('../sales/agent-customer-pricing').checkOrder(client,ctx,proposal.payload);
+    if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
+      throw new ValidationError('Individually approve this customer order or teach an eligible routine for these delivery details.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
         WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
       if(!plan||plan.actor_user_id!==ctx.actorId||plan.authorization_mode!=='MISSION'

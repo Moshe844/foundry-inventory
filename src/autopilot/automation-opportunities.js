@@ -17,7 +17,7 @@ async function candidates(db,ctx){
     ORDER BY examples DESC,id LIMIT 100`,[ctx.workspaceId,[...rules.jobs.keys()]]);
   const timings=(await db.query(`SELECT activity,count(*)::int samples,avg(review_minutes) AS minutes
     FROM stockchief_runtime.agent_time_samples WHERE workspace_id=$1 GROUP BY activity`,[ctx.workspaceId])).rows;
-  return rows.filter(r=>policy.permits(state.plan,rules.jobs.get(r.action_type),'automatic',{trained:true})).map(r=>{
+  return rows.filter(r=>rules.eligible(state.plan,r.action_type)).map(r=>{
     const timing=timings.find(t=>t.activity===activity[r.action_type]);
     return {Routine:r.training.label,'Reviewed examples':r.examples,'Current example value':money.format(r.training.amountMinor,r.training.currency),
       'Potential hours per month':timing?Math.round(r.examples*Number(timing.minutes)/60*100)/100:null,
@@ -52,7 +52,7 @@ async function learned(db,ctx){
     JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by WHERE r.workspace_id=$1 ORDER BY r.scope_label,r.action_type LIMIT 101`,[ctx.workspaceId])).rows;
   const state=await policy.accountState(db,ctx.workspaceId);
   return {rows:rows.slice(0,100).map(r=>({Routine:r.scope_label,Limit:money.format(r.maximum_minor,r.currency),
-    Status:r.role==='owner'&&policy.permits(state.plan,rules.jobs.get(r.action_type),'automatic',{trained:true})?'Approved rule saved':'Needs owner or plan review',
+    Status:r.role==='owner'&&rules.eligible(state.plan,r.action_type)?'Approved rule saved':'Needs owner or plan review',
     Revision:r.revision,link:'/autopilot/job-modes'})),more:rows.length>100,
     summary:'Completed approvals provide examples for an owner-taught rule. Each run checks the current plan, authority, scope and amount again.'};
 }

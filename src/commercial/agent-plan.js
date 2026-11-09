@@ -140,6 +140,7 @@ const actionJobs=new Map([
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);
 function actionJob(name,operation,payload) {
+  if(name==='pricing.rule.configure'&&payload?.definition?.enabled!==false&&payload?.definition?.scope?.customerIds?.length)return 76;
   if(name==='communication.send_email'&&payload){
     const phase=payload.followUpPhase||(/^supplier-follow-up:[^:]+:(supplier_confirmation_due|supplier_delivery_late):\d+$/.exec(payload.idempotencyKey||'')||[])[1];
     if(phase==='supplier_confirmation_due')return 29;
@@ -167,7 +168,7 @@ const humanSteps=new Set([
   'customer_return.inspect','manufacturing.start','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
-function needsPerson(capability,payload){return (capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
+function needsPerson(capability,payload,state){return (state?.plan==='starter'&&usesAgentTerms(state))||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
@@ -178,10 +179,15 @@ async function stopped(db,workspaceId,account,capability,automatic,payload){
   return require('../autopilot/job-modes').restriction(db,workspaceId,job,automatic);
 }
 
-async function customerOrderNeedsPerson(db,workspaceId,capability,payload,proposalId=null){
+async function customerOrderNeedsPerson(db,workspaceId,capability,payload,proposalId=null,state=null){
   if(!['sales_order.create','sales_order.repeat'].includes(capability))return false;
   if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',
     [workspaceId,proposalId,capability])).rows[0]?.payload;
+  state=state||await accountState(db,workspaceId);
+  // Owner-directed orders follow the page 11 authority ceiling. Document
+  // ingestion is the separate job 52 and retains its own stricter tier rules.
+  if(usesAgentTerms(state)&&capability==='sales_order.create'&&state.plan==='growth'&&
+    !await require('../autopilot/draft-authority').trained(db,workspaceId,capability,payload,proposalId))return true;
   const order=capability==='sales_order.repeat'?payload?.input:payload;
   if(!order?.customerId)return true;
   const pickup=order.deliveryMethod==='PICKUP';

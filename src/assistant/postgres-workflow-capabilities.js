@@ -762,6 +762,7 @@ const SPECS=Object.freeze([
         throw new ValidationError('This order line needs a verified per-unit price before changing it.');
       const priceOverride=changedPrice||line.pricing_snapshot?.priceOverride===true;
       const promotions=require('../pricing/postgres-promotions'),revised=await promotions.revisionQuote(database,ctx,row.id,{skuId:line.sku_id,quantity,unitPriceMinor,priceOverride});
+      await require('../sales/agent-customer-pricing').checkOrder(database,ctx,{customerId:row.customer_id},revised.quote);
       if(revised.quote.violations.length)throw new ValidationError('The revised order exceeds a pricing safeguard. Review pricing before changing it.');
       const effectiveUnitPriceMinor=revised.quote.lines.find(l=>l.skuId===line.sku_id).unitPriceMinor;
       return prepareResult({recordId:row.id,skuId:line.sku_id,quantity,unitPriceMinor:effectiveUnitPriceMinor,priceOverride,pricingQuoteHash:promotions.quoteHash(revised.quote),
@@ -773,7 +774,7 @@ const SPECS=Object.freeze([
         `The complete revised draft totals ${pricing.formatMinor(revised.quote.totalMinor,row.currency)}, including ${pricing.formatMinor(revised.quote.discountMinor,row.currency)} discount and ${pricing.formatMinor(revised.quote.taxMinor,row.currency)} tax. `+
         'The order remains a draft; no stock is reserved, invoice is posted, or message is sent.');
     },
-    execute:(client,ctx,p)=>workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p),
+    execute:async(client,ctx,p)=>{await require('../sales/agent-customer-pricing').checkRevision(client,ctx,p);return workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p);},
     verify:async(client,ctx,result,p)=>Boolean(result.status==='DRAFT'&&result.quantity===p.quantity&&
       (await client.query(`SELECT 1 FROM sales_orders o JOIN sales_order_lines l
         ON l.sales_order_id=o.id AND l.workspace_id=o.workspace_id
@@ -1616,6 +1617,7 @@ const SPECS=Object.freeze([
   {name:'pricing.rule.configure',description:'Prepare a new price list, promotion, coupon, bundle, volume tier or margin/discount safeguard, or revise its exact current version. Discover current business products and customer records first. One owner approval covers the complete frozen policy; deterministic pricing, effective dates and historical snapshots apply to subsequent transactions.',
     fields:['pricingDefinition','pricingRuleId','expectedRevision'],permission:permissions.ADMIN,ownerOnly:true,capability:'sales_orders.core',
     build:async(database,ctx,_row,args)=>{let definition;try{definition=JSON.parse(args.pricingDefinition);}catch{throw new ValidationError('Provide a structured pricing rule matching its discovered contract.');}
+      await require('../sales/agent-customer-pricing').checkDefinition(database,ctx,definition);
       return require('../pricing/postgres-promotions').configuration(database,ctx,definition,{ruleId:args.pricingRuleId||null,expectedRevision:args.expectedRevision||0});},
     execute:(client,ctx,p)=>require('../pricing/postgres-promotions').activateInTransaction(client,ctx,p),
     verify:async(client,ctx,r,p)=>{const row=(await client.query('SELECT definition FROM stockchief_runtime.pricing_rule_versions WHERE workspace_id=$1 AND id=$2 AND rule_id=$3 AND revision=$4',[ctx.workspaceId,r.versionId,p.ruleId,p.expectedRevision+1])).rows[0];return Boolean(row&&require('../pricing/postgres-promotions').hash(row.definition)===require('../pricing/postgres-promotions').hash(p.definition));}},
