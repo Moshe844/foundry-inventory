@@ -2,13 +2,11 @@
 <dialog class="plan-dialog" id="plan-details-<%= plan.id %>" aria-labelledby="plan-dialog-title-<%= plan.id %>" data-plan-dialog="<%= plan.id %>">
   <header class="plan-dialog-header"><div><p class="pub-kicker">Every duty and its status</p><h2 id="plan-dialog-title-<%= plan.id %>"><%= plan.name %></h2></div><form method="dialog"><button class="plan-dialog-close" aria-label="Close <%= plan.name %> details">×</button></form></header>
   <div class="plan-dialog-body">
-    <section class="plan-dialog-default"><h3>What it does without training</h3><p><%= detail.defaultDescription %></p><p><strong>Every new account starts in Watch only for 14 days.</strong> You then choose the mode per job. Required approvals, connected accounts and lower limits you set still apply.</p></section>
-    <details class="plan-dialog-tools"><summary>All included business tools <small>Owner-operated tools, alongside the agent duties below</small></summary><ul class="plan-features"><% for(const feature of plan.features){ %><li data-plan-feature="<%= feature.capability %>"><%= feature.text %></li><% } %></ul></details>
-    <details class="plan-dialog-limits"><summary>All limits &amp; allowances</summary><ul class="plan-allowances"><% for(const a of plan.allowances){ %><li><span><%= allowanceLabel(a) %></span><strong><%= allowanceNumber(plan,a) %></strong></li><% } %></ul></details>
+    <section class="plan-dialog-default"><h3>What it does without training</h3><p><%= detail.defaultDescription %></p><p><strong>Watch only for 14 days.</strong> You then authorize work per job. Required approvals, connected accounts and lower limits still apply.</p></section>
     <h3 class="plan-dialog-jobs-heading">Agent duties in <%= plan.name %></h3>
     <p class="pricing-verification-note" data-plan-scope><strong><%= detail.included %> duties in this plan’s full scope.</strong> <%= complete %> working workflows · <%= limited %> limited scope · <%= detail.pending %> planned and not available yet.</p>
-    <%- include('plan-mode-guide') %>
-    <p class="pricing-verification-note">Every duty is listed below, including unfinished work. Limited scope means only the tested part works today. Planned duties are not available yet. Each level is the plan’s permission ceiling; it does not mean unfinished work is ready.</p>
+    <p class="pricing-verification-note">Limited scope = only the tested part works. Planned = not available yet. Every duty is listed; its control level applies only when the workflow is available and authorized.</p>
+    <details class="plan-dialog-tools"><summary>What the control levels mean</summary><%- include('plan-mode-guide') %></details>
     <div class="plan-dialog-controls">
       <label class="pricing-search">Find a duty<input type="search" data-plan-search placeholder="Search <%= plan.name %> duties"></label>
       <label>Show status<select data-plan-status><option value="all">All duties and their status</option><option value="working">Working + limited scope</option><option value="pending">Planned · not available yet</option></select></label>
@@ -22,6 +20,8 @@
       <% for(const job of group.jobs){ %><li data-plan-job="<%= job.id %>" data-mode="<%= job.mode %>" data-status="<%= job.status %>"><div><span data-job-label><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>"><%= job.status==='pending'?'Planned · not available yet':job.verification %></small></div><span class="agent-mode agent-mode--<%= job.mode %>"><%= job.modeLabel %></span></li><% } %>
     </ul></section><% } %></div>
     <p class="plan-no-results" data-plan-empty hidden>No duties match. Try another level, status or search.</p>
+    <details class="plan-dialog-tools"><summary>All included business tools <small>Owner-operated tools, alongside the agent duties above</small></summary><ul class="plan-features"><% for(const feature of plan.features){ %><li data-plan-feature="<%= feature.capability %>"><%= feature.text %></li><% } %></ul></details>
+    <details class="plan-dialog-limits"><summary>All limits &amp; allowances</summary><ul class="plan-allowances"><% for(const a of plan.allowances){ %><li><span><%= allowanceLabel(a) %></span><strong><%= allowanceNumber(plan,a) %></strong></li><% } %></ul></details>
   </div>
 </dialog>
 <% } %>
