@@ -62,6 +62,13 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   await alerts(true,'elsewhere@example.test');assert.equal(await guard(db,notice,f.email),false);
   await alerts(false);assert.equal(await guard(db,notice,f.email),false);
   await alerts(true);
+  await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
+  assert.equal(await guard(db,notice,f.email),false);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
+  await db.query("UPDATE workspace_autopilot SET mode='OBSERVE' WHERE workspace_id=$1",[ctx.workspaceId]);
+  assert.equal(await guard(db,notice,f.email),false);
+  await db.query("UPDATE workspace_autopilot SET mode='SUPERVISED' WHERE workspace_id=$1",[ctx.workspaceId]);
+  assert.equal(await guard(db,notice,f.email),true);
   const alternate=await require('../../src/domain/postgres-auth-service').createWorkspace(db,f.owner.accountId,{name:'Alternate inventory'});
   await browser.post('/inventories/switch').type('form').send({_csrf:f.csrf(settings.text),workspaceId:alternate.workspaceId}).expect(303);
   const picker=await browser.get(emailPath).expect(200);assert.match(picker.text,/Open this inventory/);

@@ -12,7 +12,7 @@ async function recipient(database,workspaceId,ids){
     JOIN accounts a ON a.id=w.owner_account_id
     JOIN users u ON u.workspace_id=w.id AND u.account_id=a.id AND u.role='owner'
     JOIN notification_email_settings n ON n.workspace_id=w.id AND n.enabled=1
-    JOIN workspace_autopilot control ON control.workspace_id=w.id AND control.paused=0 AND control.suspended=0
+    JOIN workspace_autopilot control ON control.workspace_id=w.id AND control.paused=0 AND control.suspended=0 AND control.mode<>'OBSERVE'
     WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND a.email IS NOT NULL
     AND (jsonb_array_length(n.recipients::jsonb)=0 OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(n.recipients::jsonb) r(address) WHERE lower(r.address)=lower(a.email)))
     AND EXISTS(SELECT 1 FROM work_items i WHERE i.workspace_id=w.id AND i.id=ANY($2::text[])
@@ -21,7 +21,7 @@ async function recipient(database,workspaceId,ids){
       AND (n.minimum_severity<>'critical' OR i.urgency='immediate'))`,[workspaceId,ids])).rows[0];
   if(!row)return null;
   const state=await policy.accountState(database,workspaceId);
-  return policy.usesAgentTerms(state)&&policy.permits(state.plan,175,'draft')?row:null;
+  return !state.shadow&&policy.usesAgentTerms(state)&&policy.permits(state.plan,175,'draft')?row:null;
 }
 
 async function enqueue(database,workspaceId,created){
