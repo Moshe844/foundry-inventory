@@ -42,9 +42,9 @@ test('Professional customer experience uses real plans, human messages and canon
    await page.setViewportSize({width,height:1000});
    for(const path of ['/','/pricing','/settings/billing','/settings/connections','/support','/orders','/money','/reports','/inventory/'+f.item.itemId]){
     await visit(path);
-    const defects=await page.evaluate(()=>{const visible=e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height;return [...document.querySelectorAll('body *')].filter(visible).filter(e=>{const s=getComputedStyle(e);return !s.fontFamily.startsWith('Inter')||Number(s.fontWeight)>(document.body.classList.contains('public-page')?700:600);}).slice(0,4).map(e=>e.tagName+'.'+e.className);});
+    const defects=await page.evaluate(()=>{const visible=e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height;return [...document.querySelectorAll('body *')].filter(visible).filter(e=>{const s=getComputedStyle(e);return s.fontFamily!==getComputedStyle(document.body).fontFamily||Number(s.fontWeight)>(document.body.classList.contains('public-page')?700:600);}).slice(0,4).map(e=>e.tagName+'.'+e.className);});
     assert.deepEqual(defects,[],path+' typography');
-    assert.equal(await page.evaluate(()=>[...document.fonts].some(f=>f.family==='Inter'&&f.status==='loaded')),true);
+    assert.match(await page.evaluate(()=>getComputedStyle(document.body).fontFamily),/^-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text"/,path+' uses the shared interface font');
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),path+' overflow '+width);
     assert.doesNotMatch(await page.locator('main').innerText(),/\bMOshe\b|\b1 units\b|reportdelivery_[a-z0-9]+|support_[a-z0-9]+/);
    }
