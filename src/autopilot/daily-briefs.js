@@ -17,7 +17,8 @@ async function deliver(db,workspaceId,account){
     WHERE m.workspace_id=$1 AND m.occurred_at::timestamptz>=$2 AND m.occurred_at::timestamptz<$3
     GROUP BY m.actor_user_id,u.name,m.operation ORDER BY u.name,m.actor_user_id,m.operation`,bounds);
   const sources=(await db.query(`SELECT
-    (SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND status='EXECUTED' AND executed_at>=$2 AND executed_at<$3) AS actions,
+    ((SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND status='EXECUTED' AND executed_at>=$2 AND executed_at<$3)
+     +(SELECT count(*)::int FROM stockchief_runtime.agent_supplier_term_sources WHERE workspace_id=$1 AND changed_count>0 AND processed_at>=$2 AND processed_at<$3)) AS actions,
     (SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals p JOIN users u ON u.workspace_id=p.workspace_id AND u.id=p.actor_user_id AND u.role='owner'
       WHERE p.workspace_id=$1 AND p.status='PENDING') AS approvals,
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND NOT resolved) AS overdue,

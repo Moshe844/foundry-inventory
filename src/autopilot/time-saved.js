@@ -17,6 +17,7 @@ const activities = new Map([
   ['supplier-forecast','Prepare and share a supplier stock and demand forecast'],
   ['return-email','Prepare an RMA from an original customer return email'],
   ['bin-correction','Post a physically confirmed stock bin correction'],
+  ['supplier-details','Update known supplier details from an original email'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -95,6 +96,8 @@ async function report(db,ctx,window='week') {
       WHERE c.workspace_id=$1 AND c.status='COMPLETED' AND NOT c.manual_recovery AND c.scan_proof IS NOT NULL
        AND o.quantity_delta=-(c.source->>'quantity')::numeric AND i.quantity_delta=(c.source->>'quantity')::numeric
        AND co.quantity_delta=o.quantity_delta AND ci.quantity_delta=i.quantity_delta AND co.cost_delta_minor=-ci.cost_delta_minor UNION ALL
+    SELECT 'supplier-details',s.processed_at FROM stockchief_runtime.agent_supplier_term_sources s
+      WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed_count>0 AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'return-email',r.created_at::timestamptz FROM stockchief_runtime.agent_return_email_sources s
       JOIN customer_returns r ON r.workspace_id=s.workspace_id AND r.id=s.customer_return_id
       WHERE s.workspace_id=$1 AND r.status<>'CANCELLED' AND s.source_fingerprint IS NOT NULL UNION ALL

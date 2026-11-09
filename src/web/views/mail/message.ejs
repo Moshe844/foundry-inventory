@@ -151,6 +151,7 @@
 
 <% if(productionMail && customerOrderMail && !prepared.order){ %><p><% if(canReviewOrder){ %><a class="btn" href="/mail/<%= m.id %>/order">Review as a customer order</a><% }else{ %><span class="badge">Growth</span> Prepare customer orders from email <a class="btn" href="/billing">Upgrade</a><% } %></p><% } %>
   <% if(productionMail&&locals.customerReturnMail){ %><p><% if(canReviewReturn){ %><a class="btn" href="/mail/<%= m.id %>/return">Review as a customer return</a><% }else{ %><span class="badge">Growth</span> Create return requests from customer email <a class="btn" href="/billing">Upgrade</a><% } %></p><% } %>
+  <% if(productionMail&&locals.supplierDetailsMail){ %><p><% if(canReviewSupplierDetails){ %><a class="btn" href="/mail/<%= m.id %>/supplier-details">Review supplier detail updates</a><% }else{ %><span class="badge">Growth</span> Update supplier details from email <a class="btn" href="/settings/billing">Upgrade</a><% } %></p><% } %>
   <% if(productionMail){ %><p><a class="btn btn--ghost" href="/ask?from=<%= encodeURIComponent('/mail/'+m.id) %>">Review with Ask StockChief</a></p><% } %>
 <section class="section" id="reply">
   <div class="panel">
