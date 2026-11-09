@@ -2,6 +2,50 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const assistant=require('../../src/assistant/postgres-service');
+test('physical carrier handoff prepares one tracking notice and checks current authority at the mailbox',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12}),{db,ctx,browser,subscribe,shipping}=f;
+  await db.query("UPDATE accounts SET created_at=(now()-interval '20 days')::text WHERE id=$1",[f.owner.accountId]);
+  const connector=randomUUID();
+  await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
+    credential_ref,setup_status,authorized_by_user_id,provider_account_id,created_at,updated_at)
+    VALUES($1,$2,$1,'Dispatch mailbox','gmail','[]','{}','connected','["MAIL_SEND"]',$3,'CONNECTED',$4,'dispatch-mailbox',now(),now())`,
+    [connector,ctx.workspaceId,'connection_credentials:'+connector,ctx.actorId]);
+  await db.transaction(c=>require('../../src/connections/postgres-credential-store').put(c,ctx.workspaceId,connector,'provider',{accessToken:'test-token'}));
+  const runtime=require('../../src/operations/postgres-runtime-handlers').create();
+  const mail=require('../../src/connections/postgres-outbound-mail'),sent=[];
+  const provider={send:async({message})=>{sent.push(message);return {externalMessageId:'accept-'+message.id};}};
+  await subscribe('starter');const page=await browser.get('/fulfilment').expect(200);
+  const settings=mode=>browser.post('/fulfilment/settings/notices').type('form').send({_csrf:f.csrf(page.text),shippingNotice:mode,connectorId:connector}).expect(303);
+  const notice=async id=>(await db.query(`SELECT n.*,e.id effect FROM customer_communications n LEFT JOIN stockchief_runtime.provider_effects e
+    ON e.workspace_id=n.workspace_id AND e.kind='mail.outbound.send' AND e.aggregate_id=n.id WHERE n.workspace_id=$1 AND n.shipment_id=$2`,[ctx.workspaceId,id])).rows[0];
+  async function physical(){
+    const {shipmentId:id}=await f.parcel();await shipping.markPacked(db,ctx,id);
+    const jobs=()=>db.query("SELECT * FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.shipment-notice' AND payload->>'shipmentId'=$2",[ctx.workspaceId,id]);
+    assert.equal((await jobs()).rowCount,0);
+    await shipping.handoff(db,ctx,id,{handover:'CARRIER',carrier:'UPS',trackingNumber:'1Z999AA10123456784'});
+    const {rows:[job]}=await jobs();assert.ok(job);
+    const run=()=>db.transaction(c=>runtime['agent.shipment-notice']({workspaceId:ctx.workspaceId,payload:job.payload},c));
+    await run();assert.ok((await run()).replayed);
+    return {id,note:await notice(id)};
+  }
+  await settings('send');
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await subscribe(tier);const {note}=await physical();assert.equal(note.status,'QUEUED');
+    const result=await mail.executeSendEffect(db,ctx.workspaceId,note.effect,{provider});assert.equal(result.message.status,'SENT');
+    await mail.executeSendEffect(db,ctx.workspaceId,note.effect,{provider});
+    assert.equal(sent.at(-1).recipient,'receiver@example.test');assert.match(sent.at(-1).body,/1Z999AA10123456784/);
+  }
+  assert.equal(sent.length,4);
+  const revoked=await physical();await settings('off');
+  await assert.rejects(mail.executeSendEffect(db,ctx.workspaceId,revoked.note.effect,{provider}),/setting changed/);
+  assert.equal(sent.length,4);
+  await settings('prepare');const hold=await physical();assert.equal(hold.note.status,'PREPARED');assert.equal(hold.note.effect,null);
+  const url='/fulfilment/'+hold.id,review=await browser.get(url).expect(200);
+  await browser.post(url+'/notice').type('form').send({_csrf:f.csrf(review.text),version:hold.note.updated_at,messageId:hold.note.id,
+    subject:hold.note.subject,body:'Your parcel tracking is 1Z999AA10123456784',connectorId:connector,action:'send'}).expect(303);
+  const approved=await notice(hold.id);
+  assert.equal((await mail.executeSendEffect(db,ctx.workspaceId,approved.effect,{provider})).message.status,'SENT');assert.equal(sent.length,5);
+});
 test('unusual automatic spending or volume pauses the inventory until an owner reviews it',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
   await db.query("UPDATE accounts SET created_at=(now()-interval '60 days')::text WHERE id=$1",[f.owner.accountId]);

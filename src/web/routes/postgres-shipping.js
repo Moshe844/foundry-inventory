@@ -97,6 +97,11 @@ function createPostgresShippingRouter(database,options={}){
   router.post('/settings/shipping/shipstation-custom/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../shipping/shipstation-custom-store').disconnect(database,req.ctx,req.body.connectorId);req.flash('success','ShipStation Custom Store disconnected. Tracking history remains.');return res.redirect(303,'/settings/shipping');
   }));
+  router.post('/fulfilment/:id/notice',requireAuth,requirePermission(permissions.OPERATE,'review shipment notices'),asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-shipping-notices').edit(database,req.ctx,req.params.id,req.body);
+    req.flash('success',req.body.action==='send'?'The shipping notice is queued for delivery.':'Shipping notice updated.');
+    return res.redirect(303,'/fulfilment/'+req.params.id);
+  }));
   router.get('/fulfilment/batches/new',requireOwner,asyncRoute(async(req,res)=>{
     const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';
     return res.page('shipping/batch-new',{title:'Buy labels together',nav:'fulfilment',room:true,candidates:await require('../../shipping/postgres-batches').candidates(database,req.ctx.workspaceId),currency,requestKey:newId('batch-request')});

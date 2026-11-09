@@ -12,7 +12,7 @@ const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
-const {ValidationError,NotFoundError}=require('../../domain/errors');
+const {ValidationError,NotFoundError,AuthorizationError}=require('../../domain/errors');
 
 function key(req,kind){return trimOrNull(req.body.idempotencyKey)||`${kind}:${newId('form')}`;}
 async function submitOrder(database,ctx,input,nextStep){
@@ -447,14 +447,19 @@ function createPostgresCommerceRouter(database,options={}){
   }));
   router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
     const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
+    const agentPolicy=require('../../commercial/agent-plan');
+    const automatic=req.body.shippingNotice==='send'&&agentPolicy.usesAgentTerms(await agentPolicy.accountState(database,req.ctx.workspaceId));
+    if(automatic&&req.user.role!=='owner')throw new AuthorizationError('Only the inventory owner can authorize automatic customer shipping notices.');
+    const mailbox=automatic?await require('../../shipping/agent-shipping-notices').mailbox(database,req.ctx.workspaceId,req.body.connectorId):null;
+    if(automatic&&!mailbox)throw new ValidationError('Choose a connected mailbox with email sending permission to send shipping notices automatically.');
     await database.query(`INSERT INTO customer_communication_policy(workspace_id,shipping_notice,out_for_delivery_notice,
-      delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
+      delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at,shipping_authorized_by,shipping_mailbox_account)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
       out_for_delivery_notice=excluded.out_for_delivery_notice,delivered_notice=excluded.delivered_notice,
       exception_notice=excluded.exception_notice,connector_id=excluded.connector_id,business_name=excluded.business_name,
-      signature=excluded.signature,updated_at=excluded.updated_at`,[req.ctx.workspaceId,pick(req.body.shippingNotice),
+      signature=excluded.signature,updated_at=excluded.updated_at,shipping_authorized_by=excluded.shipping_authorized_by,shipping_mailbox_account=excluded.shipping_mailbox_account`,[req.ctx.workspaceId,pick(req.body.shippingNotice),
       pick(req.body.outForDeliveryNotice),pick(req.body.deliveredNotice),pick(req.body.exceptionNotice),
-      trimOrNull(req.body.connectorId),trimOrNull(req.body.businessName),trimOrNull(req.body.signature),at]);
+      trimOrNull(req.body.connectorId),trimOrNull(req.body.businessName),trimOrNull(req.body.signature),at,automatic?req.ctx.actorId:null,mailbox?.provider_account_id||null]);
     req.flash('success','Customer shipment-message policy saved.');return res.redirect(303,'/fulfilment#customer-notices');
   }));
 

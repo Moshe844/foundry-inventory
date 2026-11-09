@@ -835,7 +835,7 @@
         </div>
       <% } %>
 
-      <% if (gone || notice.status === 'CANCELLED') { %>
+      <% if (gone || notice.status === 'CANCELLED' || (locals.postgresPlacement && notice.status !== 'PREPARED')) { %>
         <div class="card-body">
           <p class="t-sm"><strong><%= notice.subject %></strong></p>
           <pre class="message-body"><%= notice.body %></pre>
@@ -844,6 +844,7 @@
         <form method="post" action="/fulfilment/<%= s.id %>/notice" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="messageId" value="<%= notice.id %>">
+          <input type="hidden" name="version" value="<%= notice.updated_at %>">
           <div class="card-body">
             <label class="field">
               <span class="field-label">Subject</span>

@@ -202,6 +202,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
       if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(client,workspaceId,agentJob,'draft');
+      if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -214,6 +215,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
+        if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
         if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
