@@ -19,6 +19,7 @@ const activities = new Map([
   ['bin-correction','Post a physically confirmed stock bin correction'],
   ['supplier-details','Update known supplier details from an original email'],
   ['po-delivery-date','Update a purchase order from an original supplier delivery promise'],
+  ['container-plan','Calculate a container load plan from confirmed carton facts'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -101,6 +102,8 @@ async function report(db,ctx,window='week') {
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed_count>0 AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'po-delivery-date',s.processed_at FROM stockchief_runtime.agent_po_date_sources s
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL UNION ALL
+    SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
+      WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
     SELECT 'return-email',r.created_at::timestamptz FROM stockchief_runtime.agent_return_email_sources s
       JOIN customer_returns r ON r.workspace_id=s.workspace_id AND r.id=s.customer_return_id
       WHERE s.workspace_id=$1 AND r.status<>'CANCELLED' AND s.source_fingerprint IS NOT NULL UNION ALL

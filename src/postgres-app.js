@@ -102,6 +102,9 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.use(createPostgresProviderWebhooks(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined)}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
+  // One bounded JSON field carries up to 500 checked packing profiles.
+  // Keep the larger form allowance specific to this owner-only workflow.
+  app.post('/autopilot/container-plans',express.urlencoded({extended:true,limit:'1mb'}),express.json({limit:'1mb'}));
   app.use(express.urlencoded({extended:true,limit:'256kb'}));
   app.use(express.json({limit:'256kb'}));
   app.use('/api/v1/feed',createPostgresFeedApi(database));

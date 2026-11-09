@@ -70,11 +70,18 @@ async function report(db,ctx,{filter='',page=1}={}){
   FROM stockchief_runtime.agent_po_date_sources s
   WHERE s.workspace_id=$1 AND s.changed AND s.instruction_hash IS NOT NULL AND s.processed_at>=$2::timestamptz AND s.processed_at<$3::timestamptz
    AND ($5::text IS NULL OR s.processed_at>=$5::timestamptz) ORDER BY s.processed_at,s.source_id LIMIT $7
- ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
+ ), container_plans AS (
+  SELECT 'container-plan' AS origin,p.id,'purchasing.plan_container' AS action_type,
+   'Calculated container load: '||p.title||' · '||(r.result->>'loaded')||' cartons fitted, '||(r.result->>'remaining')||' left outside' AS summary,
+   '{}'::jsonb AS result,r.completed_at AS executed_at,'{}'::jsonb AS payload,false AS undone
+  FROM stockchief_runtime.agent_container_runs r JOIN stockchief_runtime.agent_container_projects p ON p.workspace_id=r.workspace_id AND p.id=r.project_id
+  WHERE r.workspace_id=$1 AND r.completed_at>=$2::timestamptz AND r.completed_at<$3::timestamptz AND (r.result->>'cartons')::int>0
+   AND ($5::text IS NULL OR r.completed_at>=$5::timestamptz) ORDER BY r.completed_at,r.id LIMIT $7
+ ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
   [ctx.workspaceId,from,to,(page-1)*100,history.activityAfter,[...kinds.keys()],page*100+1])).rows;
  const more=proposals.length>100;if(more)proposals.pop();const current=await states(db,ctx,proposals),entries=[];
  const rows=proposals.map(p=>{const undo=undoable(p,current);if(undo.allowed)entries.push({id:p.id,summary:p.summary,what:undo.reason});
-  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
+  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='container-plan'?'/autopilot/container-plans/'+p.id:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
  return {rows,more,undoForm:{day,entries},summary:'Recorded agent work for '+day+' in '+timeZone+'. Undo is available for an unchanged draft or the most recent purchase-cost update. Stock movements, sent messages and posted money need their own reviewed correction.'};
 }
 async function undo(db,ctx,id){return db.transaction(async c=>{

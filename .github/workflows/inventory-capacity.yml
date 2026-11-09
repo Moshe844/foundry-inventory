@@ -140,6 +140,9 @@ jobs:
       - name: Supplier PO delivery promises, trained limits and downgrade fences
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/po-delivery-date-source.test.js tests/postgres/agent-po-delivery-dates.test.js tests/postgres/agent-po-delivery-date-worker.test.js tests/postgres/agent-po-delivery-date-boundaries.test.js tests/postgres/agent-po-delivery-date-reporting.test.js tests/postgres/agent-po-delivery-date-ui.test.js
+      - name: Container packing facts, trained plan scope and native account boundaries
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/container-packing.test.js tests/postgres/agent-container-plans.test.js tests/postgres/agent-container-plan-boundaries.test.js tests/postgres/agent-container-plans-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
