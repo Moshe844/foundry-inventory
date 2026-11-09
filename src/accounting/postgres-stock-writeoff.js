@@ -12,10 +12,11 @@ const CHUNK=1000;
 // Balances are probed by key (stats-proof right after a large import).
 const POSITIONS=`SELECT b.sku_id,b.location_id,b.on_hand::text AS on_hand,s.item_id,s.code,l.name AS location_name,
   coalesce(c.quantity_units,0)::text AS costed,coalesce(c.total_cost_minor,0)::text AS value,
-  CASE WHEN i.tracking_mode<>'quantity' THEN 'tracked by batch or serial number'
+  CASE WHEN l.custody_agreement_id IS NOT NULL THEN 'held under a rental or consignment agreement'
+   WHEN i.tracking_mode<>'quantity' THEN 'tracked by batch or serial number'
    WHEN i.secondary_unit_label IS NOT NULL OR coalesce(b.secondary_on_hand,0)<>0 THEN 'counted by weight'
    WHEN b.on_hand<0 THEN 'below zero'
-   WHEN coalesce(c.quantity_units,0)<>0 AND c.quantity_units<>b.on_hand OR coalesce(c.quantity_units,0)=0 AND coalesce(c.total_cost_minor,0)<>0 THEN 'only partly costed'
+   WHEN coalesce(c.quantity_units,0)<>b.on_hand THEN 'missing complete recorded stock cost'
   END AS problem
  FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  CROSS JOIN LATERAL(SELECT * FROM balances WHERE sku_id=s.id OFFSET 0) x
@@ -26,6 +27,8 @@ const POSITIONS=`SELECT b.sku_id,b.location_id,b.on_hand::text AS on_hand,s.item
 
 function chunks(ids,size=CHUNK){const out=[];for(let i=0;i<ids.length;i+=size)out.push(ids.slice(i,i+size));return out;}
 function problemText(rows){const first=rows[0],more=rows.length-1;
+ if(first.problem==='held under a rental or consignment agreement')return `${first.code} at ${first.location_name} is held under a rental or consignment agreement. Resolve ownership and outstanding goods through that agreement before deleting; nothing was removed.`;
+ if(first.problem==='missing complete recorded stock cost')return `${first.code} at ${first.location_name} has units missing recorded stock cost. Record their actual cost before deleting; nothing was removed.`;
  return `${first.code} at ${first.location_name} is ${first.problem}${more?` (and ${more.toLocaleString('en-US')} more ${more===1?'position':'positions'})`:''}. Adjust that stock on the product page first; nothing was removed.`;}
 
 // What emptying these variants would remove, without writing anything.
