@@ -1,0 +1,32 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto'),{fixture}=require('../helpers/agent-po-date-fixture');
+test('only changed supplier dates enter measured savings and daily work; overlapping scopes cannot widen authority',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f;await f.subscribe('enterprise');
+ const seed=await f.incoming(2),setting=await service.configure(db,ctx,seed,{...f.caps,confirmed:'yes',revision:0}),changed=await f.incoming(3);
+ assert.equal((await service.onArrival(db,ctx.workspaceId,changed)).changed,true);
+ assert.equal((await service.onArrival(db,ctx.workspaceId,changed)).replayed,true);await service.run(db,ctx.workspaceId);
+ assert((await service.saved(db,ctx.workspaceId,seed)).archived_at);
+ const roi=require('../../src/autopilot/time-saved'),row=async()=>(await roi.report(db,ctx)).rows.find(r=>r.key==='po-delivery-date');
+ assert.equal((await row()).count,1);assert.equal((await row()).minutes,null,'Actual events do not invent hours without timed manual and review samples');
+ await roi.sample(db,ctx,{activity:'po-delivery-date',manualMinutes:'12',reviewMinutes:'2',requestKey:randomUUID()});
+ assert.equal((await row()).minutes,10);assert.equal((await row()).samples,1);
+ const unchangedUrl=await db.transaction(c=>f.links.issue(c,ctx.workspaceId,f.po.purchaseOrderId,'delivery@example.test','https://stockchief.example.test')),unchangedToken=new URL(unchangedUrl).pathname.split('/').at(-1);
+ await f.links.submit(db,unchangedToken,'confirm',f.date(3));const unchanged=(await db.query("SELECT r.id FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l USING(token_hash) WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind='confirm'",[ctx.workspaceId,f.po.purchaseOrderId])).rows[0].id;
+ // A separate original confirmation with the same promise records no date change.
+ await f.approve(unchanged);assert.equal((await row()).count,1);
+ const history=await require('../../src/autopilot/agent-work-digest').report(db,ctx),entry=history.rows.find(r=>r.link==='/autopilot/po-delivery-dates/'+changed);
+ assert(entry);assert.match(entry.Action,/Updated delivery promise for .* to \d{4}-\d{2}-\d{2}/);assert.equal(history.undoForm.entries.length,0);
+ const yesterday=require('../../src/accounting/customer-money').addDays(f.today,-1);await db.query("UPDATE stockchief_runtime.agent_po_date_sources SET processed_at=($2||'T12:00:00Z')::timestamptz WHERE workspace_id=$1 AND processed_at IS NOT NULL",[ctx.workspaceId,yesterday]);
+ await require('../../src/autopilot/daily-briefs').deliver(db,ctx.workspaceId,await require('../../src/commercial/agent-plan').accountState(db,ctx.workspaceId));
+ assert.equal((await db.query('SELECT summary::jsonb FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[ctx.workspaceId,yesterday])).rows[0].summary.actions,1);
+ const b=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Second ordered product',baseCode:'SECOND-'+randomUUID().slice(0,8),trackingMode:'quantity'});
+ const order=await f.workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,expectedDate:f.date(1),idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantityUnits:1,unitCost:1},{skuId:b.skuIds[0],quantityUnits:1,unitCost:1}]});
+ await f.workflows.approvePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});await f.workflows.placePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});
+ const url=await db.transaction(c=>f.links.issue(c,ctx.workspaceId,order.purchaseOrderId,'delivery@example.test','https://stockchief.example.test'));await f.links.submit(db,new URL(url).pathname.split('/').at(-1),'date',f.date(2));
+ const broad=(await db.query('SELECT r.id FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l USING(token_hash) WHERE l.workspace_id=$1 AND l.purchase_order_id=$2',[ctx.workspaceId,order.purchaseOrderId])).rows[0].id;
+ await service.configure(db,ctx,broad,{maximumShiftDays:'30',maximumTotalShiftDays:'90',maximumFutureDays:'180',confirmed:'yes',revision:0});
+ const overlapping=await f.incoming(4),held=await service.onArrival(db,ctx.workspaceId,overlapping);assert.equal(held.held,true);assert.match(held.reason,/overlapping/);assert.equal((await f.order()).expected_date,f.date(3));
+ await service.configure(db,ctx,null,{settingId:setting.id,revision:1,stop:'yes'});
+ const fresh=await f.incoming(5);assert.equal((await service.onArrival(db,ctx.workspaceId,fresh)).changed,true);assert.equal((await f.order()).expected_date,f.date(5));
+});

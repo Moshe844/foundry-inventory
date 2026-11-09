@@ -54,6 +54,7 @@ async function submit(db,token,kind,value){
     }
     await client.query(`INSERT INTO purchase_order_events(id,workspace_id,purchase_order_id,event,detail,created_at)
       VALUES($1,$2,$3,$4,$5,$6)`,[newId('poevt'),order.workspace_id,order.id,'supplier_link_'+kind,JSON.stringify({submission:id,expectedDate:date}),nowIso()]);
+    if(!file&&date)await require('./agent-po-delivery-dates').enqueue(client,order.workspace_id,id);
     return {saved:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

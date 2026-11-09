@@ -17,6 +17,13 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const poDates=require('../../purchasing/agent-po-delivery-dates');
+  router.get('/autopilot/po-delivery-dates/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/po-delivery-date',{title:'Review supplier delivery date',nav:'autopilot',backTo:{href:'/autopilot/reviews/po-delivery-dates',label:'Supplier delivery dates'}},()=>poDates.page(database,req.ctx,req.params.id))));
+  router.post('/autopilot/po-delivery-dates/:id',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
+  router.post('/autopilot/po-delivery-dates/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
+  router.post('/autopilot/po-delivery-dates/:id/teach',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/po-delivery-dates/'+req.params.id);}));
+  router.post('/autopilot/po-delivery-date-settings/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.configure(database,req.ctx,null,{...req.body,settingId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/reviews/po-delivery-dates');}));
+  router.post('/autopilot/po-delivery-date-rules/remove',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.teach(database,req.ctx,null,{...req.body,remove:'yes'});res.redirect(303,'/autopilot/reviews/po-delivery-dates');}));
   const supplierBenefits=require('../../purchasing/agent-supplier-benefits');
   router.get('/autopilot/supplier-benefits',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-benefits',{title:'Supplier rebates and volume discounts',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierBenefits.page(database,req.ctx,{q:req.query.q,after:req.query.after}))));
   router.post('/autopilot/supplier-benefits/estimate',requireAuth,owner,asyncRoute(async(req,res)=>{
