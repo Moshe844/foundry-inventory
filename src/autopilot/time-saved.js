@@ -30,6 +30,7 @@ const activities = new Map([
   ['customer-reservation','Reserve one complete customer order from actual available stock'],
   ['customer-priority','Apply one checked customer stock priority'],
   ['channel-buffer','Publish and verify one buffered channel stock update'],
+  ['export-papers','Prepare and review one shipment export packet'],
   ['return-label','Prepare and send one purchased return label and its instructions'],
   ['partial-shipment','Prepare and complete one partial shipment (administration only)'],
   ['annual-stocktake','Coordinate and sign off one completed stocktake (administration only)'],
@@ -132,6 +133,7 @@ async function report(db,ctx,window='week') {
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
       WHERE m.workspace_id=$1 AND m.status='SENT' AND m.external_message_id IS NOT NULL AND e.payload->'standingAuthority'->>'kind'='return_label' GROUP BY m.id UNION ALL
     SELECT 'partial-shipment',${require('../warehouse/partial-shipment-evidence').completedAtSql('p')} FROM stockchief_runtime.assistant_action_proposals p WHERE p.workspace_id=$1 AND p.action_type='warehouse.release_partial_order' AND ${require('../warehouse/partial-shipment-evidence').completionSql('p')} UNION ALL
+    SELECT 'export-papers',min(p.reviewed_at) FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='REVIEWED' AND p.reviewed_pdf IS NOT NULL GROUP BY p.shipment_id UNION ALL
     SELECT 'annual-stocktake',p.signed_off_at FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='SIGNED_OFF' AND p.signed_off_at IS NOT NULL AND (p.signoff->>'positions')::int>0 AND p.signoff->>'positions'=p.signoff->>'applied' UNION ALL
     SELECT 'delivery-qc',h.created_at FROM stockchief_runtime.agent_quality_holds h WHERE h.workspace_id=$1 AND h.automatic UNION ALL
     SELECT 'promotion-purchase',p.purchase_created_at FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL

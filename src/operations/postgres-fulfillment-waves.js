@@ -123,7 +123,7 @@ async function create(database,ctx,input,options={}){
       VALUES($1,$2,$3,$4,'PICKING',$5,$6,$7)`,[waveId,ctx.workspaceId,number,strategy,
       trimOrNull(input.title)||`${strategy.charAt(0)+strategy.slice(1).toLowerCase()} pick #${number}`,ctx.actorId,at]);
     for(const orderId of orderIds){
-      const order=(await client.query(`SELECT orders.*,customer.name AS customer_name FROM sales_orders orders
+      const order=(await client.query(`SELECT orders.*,customer.name AS customer_name,customer.shipping_address AS customer_shipping_address,customer.shipping_address_fields AS customer_shipping_address_fields FROM sales_orders orders
         JOIN customers customer ON customer.id=orders.customer_id WHERE orders.workspace_id=$1 AND orders.id=$2 FOR UPDATE OF orders`,
       [ctx.workspaceId,orderId])).rows[0];
       if(!order)throw new NotFoundError('One selected customer order could not be found.');
@@ -140,9 +140,9 @@ async function create(database,ctx,input,options={}){
       const shipmentId=newId('shp');const shipmentNumber=await require('./postgres-business-numbers').next(client,ctx.workspaceId,'sales_shipments','SHP');
       await client.query(`INSERT INTO sales_shipments
         (id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,ship_to_address,
-         package_count,currency,created_by_user_id,created_at,updated_at)
-        VALUES($1,$2,$3,$4,'PICKING',$5,$6,1,$7,$8,$9,$9)`,[shipmentId,ctx.workspaceId,orderId,shipmentNumber,
-        order.fulfillment_location_id,order.ship_to_address,order.currency||'USD',ctx.actorId,at]);
+         package_count,currency,created_by_user_id,created_at,updated_at,ship_to_address_fields)
+        VALUES($1,$2,$3,$4,'PICKING',$5,$6,1,$7,$8,$9,$9,$10::jsonb)`,[shipmentId,ctx.workspaceId,orderId,shipmentNumber,
+        order.fulfillment_location_id,order.ship_to_address,order.currency||'USD',ctx.actorId,at,order.ship_to_address===order.customer_shipping_address&&order.customer_shipping_address_fields?JSON.stringify(order.customer_shipping_address_fields):null]);
       await client.query(`INSERT INTO fulfillment_wave_shipments
         (wave_id,workspace_id,sales_order_id,shipment_id,status) VALUES($1,$2,$3,$4,'PICKING')`,
       [waveId,ctx.workspaceId,orderId,shipmentId]);

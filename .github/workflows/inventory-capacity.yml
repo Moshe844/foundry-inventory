@@ -191,6 +191,9 @@ jobs:
       - name: Purchased return-label mail, confirmed teaching, plan changes and provider recovery
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-return-labels.test.js tests/postgres/agent-return-label-boundaries.test.js tests/postgres/agent-return-label-ui.test.js tests/postgres/agent-return-label-reporting.test.js tests/postgres/agent-return-label-parcel-boundary.test.js tests/postgres/agent-return-label-recovery.test.js tests/postgres/agent-return-label-mailbox-provider.test.js
+      - name: International address snapshots, real export PDFs, owner review and exact plan boundaries
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/confirmed-international-address.test.js tests/postgres/confirmed-international-shipment.test.js tests/postgres/agent-export-papers.test.js tests/postgres/agent-export-paper-boundaries.test.js tests/postgres/agent-export-paper-reporting.test.js tests/postgres/agent-export-paper-money.test.js tests/postgres/agent-export-papers-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
