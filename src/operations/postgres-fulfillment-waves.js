@@ -105,12 +105,12 @@ async function beginOperation(client,workspaceId,key){
   throw new InvariantError('That wave release is already running.','operation_in_progress');
 }
 
-async function create(database,ctx,input){
+async function create(database,ctx,input,options={}){
   const orderIds=[...new Set((Array.isArray(input.orderIds)?input.orderIds:[input.orderIds]).filter(Boolean))];
   if(!orderIds.length)throw new ValidationError('Choose at least one ready customer order.');
   if(orderIds.length>200)throw new ValidationError('Release up to 200 orders per wave. Release additional ready orders in another wave.');
   return database.transaction(async(client)=>{
-    await actor(client,ctx,'create fulfillment waves');
+    await actor(client,ctx,'create fulfillment waves');if(options.partialRelease){if(orderIds.length!==1||orderIds[0]!==options.partialRelease.recordId)throw new ValidationError('Choose the exact reviewed partial order.');await require('../warehouse/agent-partial-shipments').authorize(client,ctx,options.partialRelease,{automatic:options.partialRelease.automatic});}
     const operation=await beginOperation(client,ctx.workspaceId,input.idempotencyKey);
     if(operation.replayed)return {...operation.result,replayed:true};
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`fulfillment-wave:${ctx.workspaceId}`]);
@@ -127,7 +127,7 @@ async function create(database,ctx,input){
         JOIN customers customer ON customer.id=orders.customer_id WHERE orders.workspace_id=$1 AND orders.id=$2 FOR UPDATE OF orders`,
       [ctx.workspaceId,orderId])).rows[0];
       if(!order)throw new NotFoundError('One selected customer order could not be found.');
-      if(!['CONFIRMED','PARTIALLY_FULFILLED'].includes(order.status))throw new ValidationError(`${order.order_number} is not ready to pick.`);
+      if(!['CONFIRMED','PARTIALLY_FULFILLED',...(options.partialRelease?['BACKORDERED']:[])].includes(order.status))throw new ValidationError(`${order.order_number} is not ready to pick.`);
       const active=await client.query(`SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1`,[ctx.workspaceId,orderId]);
       if(active.rows.length)throw new ValidationError(`${order.order_number} already has an unshipped box. Open or cancel that box before releasing another pick.`);
       if((await client.query('SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('Review this order in ShipBob before releasing local picking. Its provider outcome must be resolved first.');

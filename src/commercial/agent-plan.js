@@ -128,6 +128,7 @@ const actionJobs=new Map([
   ['supplier.request_quotes',93],
   ['channel.set_stock_buffer',183],
   ['inventory.plan_annual_stocktake',16],
+  ['warehouse.release_partial_order',61],
   ['supplier.open_damage_claim',45],
   ['supplier.attach_damage_photos',46],
   ['purchasing.plan_supplier_shutdown',147],

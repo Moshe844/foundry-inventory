@@ -30,6 +30,7 @@ const activities = new Map([
   ['customer-reservation','Reserve one complete customer order from actual available stock'],
   ['customer-priority','Apply one checked customer stock priority'],
   ['channel-buffer','Publish and verify one buffered channel stock update'],
+  ['partial-shipment','Prepare and complete one partial shipment (administration only)'],
   ['annual-stocktake','Coordinate and sign off one completed stocktake (administration only)'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
@@ -126,6 +127,7 @@ async function report(db,ctx,window='week') {
     SELECT 'supplier-claim',m.sent_at::timestamptz FROM stockchief_runtime.agent_supplier_claims c JOIN supplier_communications m ON m.workspace_id=c.workspace_id AND m.id=c.communication_id WHERE c.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=c.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED') UNION ALL
     SELECT 'supplier-rfq',m.sent_at::timestamptz FROM stockchief_runtime.agent_rfq_deliveries d JOIN supplier_communications m ON m.workspace_id=d.workspace_id AND m.id=d.communication_id WHERE d.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=d.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED') UNION ALL
     SELECT 'channel-buffer',e.completed_at FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=$1 AND e.kind='commerce.position.publish' AND e.status='SUCCEEDED' AND e.payload->'channelBuffer'->>'id' IS NOT NULL AND e.result->>'verified'='true' UNION ALL
+    SELECT 'partial-shipment',${require('../warehouse/partial-shipment-evidence').completedAtSql('p')} FROM stockchief_runtime.assistant_action_proposals p WHERE p.workspace_id=$1 AND p.action_type='warehouse.release_partial_order' AND ${require('../warehouse/partial-shipment-evidence').completionSql('p')} UNION ALL
     SELECT 'annual-stocktake',p.signed_off_at FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='SIGNED_OFF' AND p.signed_off_at IS NOT NULL AND (p.signoff->>'positions')::int>0 AND p.signoff->>'positions'=p.signoff->>'applied' UNION ALL
     SELECT 'delivery-qc',h.created_at FROM stockchief_runtime.agent_quality_holds h WHERE h.workspace_id=$1 AND h.automatic UNION ALL
     SELECT 'promotion-purchase',p.purchase_created_at FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL

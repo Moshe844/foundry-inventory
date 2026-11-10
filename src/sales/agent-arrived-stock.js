@@ -6,7 +6,7 @@ async function inspect(db,ctx,id,{lock=false}={}){
   JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
   JOIN locations l ON l.workspace_id=o.workspace_id AND l.id=o.fulfillment_location_id
   WHERE o.workspace_id=$1 AND o.id=$2${lock?' FOR UPDATE OF o':''}`,[ctx.workspaceId,id])).rows[0];
- if(!order||order.status!=='BACKORDERED'||!order.confirmed_at||order.record_state!=='ACTIVE'||!order.is_active||order.custody_agreement_id)throw new ValidationError('Choose an already confirmed backorder with an active customer and dispatch location.');
+ if(!order||!['BACKORDERED','PARTIALLY_FULFILLED'].includes(order.status)||!order.confirmed_at||order.record_state!=='ACTIVE'||!order.is_active||order.custody_agreement_id)throw new ValidationError('Choose an already confirmed backorder with an active customer and dispatch location.');
  const lines=(await db.query(`SELECT l.id,l.sku_id,l.quantity_ordered::text,l.quantity_fulfilled::text,l.unit_price_minor::text,s.code,i.tracking_mode,
   coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)::text allocated
   FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
@@ -20,7 +20,7 @@ async function inspect(db,ctx,id,{lock=false}={}){
   const available=free.get(line.sku_id),quantity=Math.max(0,Math.min(needed,available));
   if(quantity){
    const earlier=(await db.query(`SELECT o.order_number FROM sales_orders o JOIN sales_order_lines l ON l.workspace_id=o.workspace_id AND l.sales_order_id=o.id
-    WHERE o.workspace_id=$1 AND o.status='BACKORDERED' AND o.confirmed_at IS NOT NULL AND l.sku_id=$2
+    WHERE o.workspace_id=$1 AND o.status IN('BACKORDERED','PARTIALLY_FULFILLED') AND o.confirmed_at IS NOT NULL AND l.sku_id=$2
      AND (o.fulfillment_location_id=$3 OR o.fulfillment_location_id IS NULL)
      AND (o.allocation_priority,coalesce(o.needed_by,'9999-12-31'),o.created_at,o.id)<($4,$5,$6,$7)
      AND l.quantity_ordered-l.quantity_fulfilled>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
@@ -49,7 +49,7 @@ async function execute(db,ctx,p){
   const rule=(await db.query('SELECT maximum_minor FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4',[ctx.workspaceId,action,p.training.key,p.training.currency])).rows[0];
   if(rule&&Number(rule.maximum_minor)<now.training.amountMinor)throw new ValidationError('This reservation exceeds the saved owner limit. Review it individually.');
  }
- const result=await require('../operations/postgres-business-workflows').confirmSalesOrderInTransaction(db,ctx,p.recordId,{idempotencyKey:p.idempotencyKey});
+ const result=await require('../operations/postgres-business-workflows').confirmSalesOrderInTransaction(db,ctx,p.recordId,{idempotencyKey:p.idempotencyKey,resumeRemaining:now.order.status==='PARTIALLY_FULFILLED'});
  const normalized=rows=>rows.map(r=>({lineId:r.lineId,locationId:r.locationId,quantity:r.quantity})).sort((a,b)=>a.lineId.localeCompare(b.lineId));
  const expected=p.quantities.map(q=>({lineId:q.lineId,locationId:now.order.fulfillment_location_id,quantity:q.quantity}));
  if(!require('node:util').isDeepStrictEqual(normalized(result.allocations),normalized(expected)))throw new ValidationError('The recorded reservation differs from the reviewed arrived stock. Nothing was committed.');
@@ -68,7 +68,7 @@ async function run(db,workspaceId){
   JOIN accounts a ON a.id=u.account_id WHERE m.workspace_id=$1 AND m.job_id=48 AND m.mode='routine' AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=a.id AND x.disabled_at IS NOT NULL)`,[workspaceId])).rows[0];
  const state=await policy.accountState(db,workspaceId);
  if(!grant||!policy.usesAgentTerms(state)||!policy.permits(state.plan,job,'automatic',{trained:true})||!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate)return result;
- const ctx={workspaceId,actorId:grant.updated_by},candidates=(await db.query(`SELECT o.id FROM sales_orders o LEFT JOIN stockchief_runtime.agent_arrived_stock_checks checked ON checked.workspace_id=o.workspace_id AND checked.sales_order_id=o.id WHERE o.workspace_id=$1 AND o.status='BACKORDERED' AND o.confirmed_at IS NOT NULL
+ const ctx={workspaceId,actorId:grant.updated_by},candidates=(await db.query(`SELECT o.id FROM sales_orders o LEFT JOIN stockchief_runtime.agent_arrived_stock_checks checked ON checked.workspace_id=o.workspace_id AND checked.sales_order_id=o.id WHERE o.workspace_id=$1 AND o.status IN('BACKORDERED','PARTIALLY_FULFILLED') AND o.confirmed_at IS NOT NULL
   AND EXISTS(SELECT 1 FROM sales_order_lines l JOIN balances b ON b.workspace_id=l.workspace_id AND b.sku_id=l.sku_id AND b.location_id=o.fulfillment_location_id
    WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND b.on_hand>0 AND l.quantity_ordered-l.quantity_fulfilled>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
    AND (checked.retry_after IS NULL OR checked.retry_after<=now() OR b.updated_at::timestamptz>checked.checked_at OR o.updated_at::timestamptz>checked.checked_at))
@@ -92,7 +92,7 @@ async function review(db,ctx,{page=1,filter=''}){
  const rows=(await db.query(`SELECT o.order_number "Order",c.name "Customer",l.name "Dispatch from",coalesce(checked.problem,'Waiting for available stock') "Last check",'/sales/orders/'||o.id link
   FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id LEFT JOIN locations l ON l.workspace_id=o.workspace_id AND l.id=o.fulfillment_location_id
   LEFT JOIN stockchief_runtime.agent_arrived_stock_checks checked ON checked.workspace_id=o.workspace_id AND checked.sales_order_id=o.id
-  WHERE o.workspace_id=$1 AND o.status='BACKORDERED' AND ($2='' OR lower(o.order_number)=lower($2) OR lower(c.name)=lower($2))
+  WHERE o.workspace_id=$1 AND o.status IN('BACKORDERED','PARTIALLY_FULFILLED') AND ($2='' OR lower(o.order_number)=lower($2) OR lower(c.name)=lower($2))
   ORDER BY o.allocation_priority,o.needed_by NULLS LAST,o.created_at,o.id LIMIT 101 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*100])).rows;
  const state=await policy.accountState(db,ctx.workspaceId),blocked=await policy.stopped(db,ctx.workspaceId,state,action,false);
  return {summary:'Sets aside available stock for already confirmed backorders in their recorded warehouse and priority. Growth needs a taught customer, product and value scope; Pro and Custom honor saved owner limits. Kits, lot and serial reservations need individual review. Physical picking and shipping stay separate.',rows:rows.slice(0,100),more:rows.length>100,arrivedStockForm:{blocked}};
@@ -101,7 +101,7 @@ const spec={name:action,description:'Reserve newly available stock for an alread
  record:'sales_order',fields:['recordReference'],permission:require('../actions/permissions').MANAGE_SALES,capability:'sales_orders.core',ownerOnly:true,build,execute,resultingRecords:['sales_order_allocations','sales_order_events'],
  verify:async(db,ctx,r,p)=>Boolean(r.salesOrderId===p.recordId&&r.allocations?.length&&(await db.query(`SELECT 1 FROM stockchief_runtime.business_operations op
   JOIN sales_order_events e ON e.workspace_id=op.workspace_id AND e.idempotency_key=op.idempotency_key||':event' AND e.event_type='confirmed'
-  JOIN sales_orders o ON o.workspace_id=e.workspace_id AND o.id=e.sales_order_id AND o.status IN ('CONFIRMED','BACKORDERED')
+  JOIN sales_orders o ON o.workspace_id=e.workspace_id AND o.id=e.sales_order_id AND o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
   WHERE op.workspace_id=$1 AND op.idempotency_key=$2 AND op.kind='sales_order.confirm' AND op.status='COMPLETED'
    AND o.id=$3 AND op.result->>'salesOrderId'=o.id AND op.result->'allocations'=$4::jsonb AND e.detail::jsonb->'allocations'=$4::jsonb`,[ctx.workspaceId,p.idempotencyKey,p.recordId,JSON.stringify(r.allocations)])).rows.length)};
 module.exports={spec,inspect,build,execute,run,requireRoutineAuthority,definition:{id:48,key:'arrived-stock',label:'Reserve arrived stock for waiting orders',filterLabel:'Order number or customer',readPage:review}};

@@ -1,9 +1,9 @@
 'use strict';
 const {ValidationError,AuthorizationError}=require('../domain/errors'),{hash}=require('../pricing/postgres-promotions'),exact=require('../domain/exact-quantity');
-async function facts(db,ctx,id){
+async function facts(db,ctx,id,{allowPartial=false}={}){
  const o=(await db.query(`SELECT o.*,c.name customer_name,c.record_state,c.email customer_email,c.phone customer_phone,loc.name location_name FROM sales_orders o
  JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id LEFT JOIN locations loc ON loc.workspace_id=o.workspace_id AND loc.id=o.fulfillment_location_id WHERE o.workspace_id=$1 AND o.id=$2`,[ctx.workspaceId,id])).rows[0];
- if(!o||!['DRAFT','CONFIRMED','BACKORDERED'].includes(o.status)||o.record_state!=='ACTIVE')throw new ValidationError('Choose an open order for an active customer.');
+ if(!o||!['DRAFT','CONFIRMED','BACKORDERED',...(allowPartial?['PARTIALLY_FULFILLED']:[])].includes(o.status)||o.record_state!=='ACTIVE')throw new ValidationError('Choose an open order for an active customer.');
  const lines=(await db.query(`SELECT l.id,l.sku_id,l.quantity_ordered::text,l.quantity_fulfilled::text,l.unit_price_minor::text,s.code,i.name,i.unit_label,s.is_active sku_active,i.is_active item_active,i.tracking_mode,i.quantity_precision,i.secondary_unit_label,
  coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)::text allocated,
  EXISTS(SELECT 1 FROM sales_order_kit_components k WHERE k.workspace_id=l.workspace_id AND k.sales_order_line_id=l.id) kit
@@ -46,7 +46,7 @@ async function automaticAuthority(db,ctx,p,action){
  const bound=training(f,action,p.priority,p.neededBy);if(!bound||hash(bound)!==hash(p.training))throw new ValidationError('Review a current customer, product, price, location, delivery and value scope.');
  if(action==='sales_order.reserve_all'){
   const earlier=(await db.query(`SELECT prior.order_number FROM sales_orders prior JOIN sales_order_lines l ON l.workspace_id=prior.workspace_id AND l.sales_order_id=prior.id
-   WHERE prior.workspace_id=$1 AND prior.id<>$2 AND prior.status IN('BACKORDERED','CONFIRMED') AND prior.confirmed_at IS NOT NULL
+   WHERE prior.workspace_id=$1 AND prior.id<>$2 AND prior.status IN('BACKORDERED','CONFIRMED','PARTIALLY_FULFILLED') AND prior.confirmed_at IS NOT NULL
     AND (prior.fulfillment_location_id=$3 OR prior.fulfillment_location_id IS NULL) AND l.sku_id=ANY($4::text[])
     AND l.quantity_ordered-l.quantity_fulfilled>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
     AND (prior.allocation_priority,coalesce(prior.needed_by,'9999-12-31'),prior.created_at,prior.id)<($5,$6,$7,$2)
