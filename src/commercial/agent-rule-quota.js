@@ -6,7 +6,7 @@ const sources=[
  ['agent_draft_rules'],['agent_invoice_reminder_rules'],['agent_supplier_forecast_rules','enabled'],['agent_return_email_rules'],
  ['agent_supplier_term_settings','enabled'],['agent_supplier_term_rules'],['agent_po_date_settings','enabled'],['agent_po_date_rules'],
  ['agent_container_projects','enabled'],['agent_container_rules'],['agent_team_procedure_sets','enabled'],['agent_product_retirement_settings','enabled'],
- ['agent_supplier_shutdowns','enabled'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],['agent_putaway_rules'],
+ ['agent_supplier_shutdowns','enabled'],['agent_promotion_stock','enabled'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],['agent_putaway_rules'],
  ['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels']
 ];
 const limits={starter:5,growth:50,pro:500};

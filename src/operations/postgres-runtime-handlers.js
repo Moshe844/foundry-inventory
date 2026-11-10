@@ -676,6 +676,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
   'purchasing.container-plan.v1':external((job,database)=>require('../purchasing/agent-container-plans').onProject(database,job.workspaceId,job.payload.projectId)),
+  'purchasing.promotion-stock-plan.v1':external((job,database)=>require('../purchasing/agent-promotion-stock').onProject(database,job.workspaceId,job.payload.promotionId)),
   'purchasing.shutdown-plan.v1':external((job,database)=>require('../purchasing/agent-supplier-shutdowns').onProject(database,job.workspaceId,job.payload.shutdownId)),
   'catalog.retire-products.v1':external((job,database)=>require('../catalog/agent-product-retirements').onNotice(database,job.workspaceId,job.payload.noticeId)),
   'team.procedure-draft.v1':external((job,database)=>require('../autopilot/team-procedures').onProcedure(database,job.workspaceId,job.payload.procedureId)),
