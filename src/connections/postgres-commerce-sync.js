@@ -44,9 +44,10 @@ async function mapped(db,p){
    AND loc.external_id=$5 AND loc.foundry_record_id=$6`,[p.workspace_id,p.connector_id,p.external_id,p.sku_id,p.external_location_id,p.location_id])).rows.length);
 }
 const readInput=(p,credentials)=>({credentials,externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,field:p.field});
-async function providerRead(db,c,p,adapter,key){
+async function providerRead(db,c,p,adapter,key,beforeRead){
  return require('../commercial/operations').run(db,p.workspace_id,{capability:'connections.commerce',key,provider:c.provider_type,operation:'commerce_position_read'},async()=>{
   const credentials=await require('./postgres-provider-service').loadProviderCredentials(db,c,adapter);
+  if(beforeRead)await beforeRead();
   return adapter.readSyncPosition(readInput(p,credentials));
  });
 }
@@ -248,9 +249,11 @@ async function verifyDelivery(db,workspaceId,effectId,options={}){
   if(!p)throw new ValidationError('The retained synchronization record needs review.');
   const c=await connection(db,{workspaceId,actorId:p.authorized_by_user_id},p.connector_id),adapter=(options.providers||providers).get(c.provider_type);
   if(p.provider_account_id!==c.provider_account_id)throw new ValidationError('The connected provider account changed. Verify this delivery in the original provider account.');
-  const observed=await providerRead(db,c,p,adapter,'commerce-verification:'+e.id+':'+newId('read'));
+  const observed=await providerRead(db,c,p,adapter,'commerce-verification:'+e.id+':'+newId('read'),
+   options.guard?()=>options.guard(db,e):undefined);
   if(!same(observed.value,e.payload.value))throw new ValidationError('The retained delivery is not confirmed by the provider. No write was repeated.');
-  return effects.succeed(db,workspaceId,e.id,e.claimToken,{providerReference:e.providerReference,result:{externalId:p.external_id,value:observed.value,verified:true,recoveredByReadback:true},apply:async tx=>{
+  return await effects.succeed(db,workspaceId,e.id,e.claimToken,{providerReference:e.providerReference,result:{externalId:p.external_id,value:observed.value,verified:true,recoveredByReadback:true},apply:async tx=>{
+   if(options.guard)await options.guard(tx,e,{lock:true});
    await require('../commercial/operations').completeRetained(tx,workspaceId,{operation:'commerce_position_publish',key:'commerce-write:'+e.id},{recoveredByReadback:true});
    if(p.revision===e.payload.revision&&current.pending_effect_id===e.id){await advance(tx,p,e.payload.value,observed.value);await tx.query('UPDATE connection_commerce_positions SET pending_effect_id=NULL WHERE workspace_id=$1 AND id=$2 AND pending_effect_id=$3',[workspaceId,p.id,e.id]);}
    await audit(tx,p,'connection.commerce_sync.verified',{effectId:e.id,value:observed.value,writeRepeated:false});}});

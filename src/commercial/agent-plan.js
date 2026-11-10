@@ -132,6 +132,7 @@ const actionJobs=new Map([
   ['website.answer_stock',84],
   ['customer_order.from_page',83],
   ['customer_order.from_preorder',68],
+  ['channel_sync.recover',182],
   ['customer_return.plan_disposition',113],
   ['shipping.prepare_export_papers',70],
   ['customer_return.send_label',112],
