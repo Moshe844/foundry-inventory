@@ -7,6 +7,7 @@
 <% if(result.arrivedStockForm){ %><%- include('arrived-stock',{result,csrfToken}) %><% } %>
 <% if(result.stockReadyForm){ %><%- include('stock-ready-updates',{result,csrfToken}) %><% } %>
 <% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>
+<% if(result.returnLabelForm){ %><%- include('return-labels',{result,csrfToken}) %><% } %>
 <% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
 <% if(result.binDistanceForm){ %><details><summary>Record a bin's walking distance to packing</summary>
   <form method="post" action="/autopilot/reviews/warehouse-slotting/distances"><input type="hidden" name="_csrf" value="<%= csrfToken %>">

@@ -1,0 +1,7 @@
+<section class="card"><div class="card-body"><h2>Send a purchased return label</h2>
+<p>Authorize the return and buy its carrier label first. StockChief prepares the exact label link, products and return address. Physical receipt, inspection and any refund remain separate.</p>
+<% if(result.returnLabelForm.blocked){ %><p><%= result.returnLabelForm.blocked %></p><% }else if(!result.returnLabelForm.mailboxes.length){ %><p>Connect a sending mailbox first. <a href="/connections">Open connections</a></p><% }else{ %>
+<form method="post" action="/autopilot/return-labels/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Return number</span><input name="returnReference" required maxlength="150" placeholder="Exact authorized return number"></label>
+<label class="rm-field"><span>Sending mailbox</span><select name="connectorId" required><% result.returnLabelForm.mailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
+<button class="btn" type="submit">Prepare return instructions</button></form><% } %></div></section>
