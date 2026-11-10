@@ -20,8 +20,11 @@ test('reported fractional-stock quantities work in Money, reports, stock overvie
  const copied=(await db.query('SELECT physical_units::text,costed_units::text,missing_units::text,book_cost_minor::text FROM inventory_cost_coverage_totals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
  assert.deepEqual(copied,{physical_units:'383.75',costed_units:'360.5',missing_units:'23.25',book_cost_minor:'1611900'});
  const money=require('../../src/accounting/customer-money'),coverage=await money.inventoryCoverage(db,ctx.workspaceId);assert.equal(coverage.missingCostUnits,23.25);
- const summary=await require('../../src/assistant/postgres-inventory-summary').context(db,ctx.workspaceId,{role:'owner'});assert.equal(summary.onHand,383.75);assert.equal(summary.complete,true);
+ const summary=await require('../../src/assistant/postgres-inventory-summary').context(db,ctx.workspaceId,{role:'owner'});
+ assert.equal(summary.onHand,380);assert.deepEqual(summary.measured,[{unit:'kg',quantity:3.75}]);assert.equal(summary.complete,true);
  const assistant=require('../../src/assistant/postgres-service'),valuation=await assistant.lookup(db,ctx,{view:'inventory_valuation'});assert.equal(valuation.totals.physicalUnits,383.75);assert.equal(valuation.totals.costedUnits,360.5);assert.equal(valuation.totals.missingCostUnits,23.25);assert.equal(valuation.totals.inventoryBookCostMinor,1611900);
+ const counted=await assistant.lookup(db,ctx,{view:'inventory_summary'});
+ assert.match(counted.answer,/380 units on hand, plus 3\.75 kg/);
  const stock=await require('../../src/web/postgres-presenters').inventoryPosition(db,ctx.workspaceId);assert.equal(stock.stockValue.missingCostUnits,23.25);
  await t.test('Home aggregates ordinary stock once while retaining measured stock, empty SKUs and tenant scope',async()=>{
   await catalog.createItem(db,ctx,{name:'No stock yet',baseCode:'DECIMAL-EMPTY',trackingMode:'quantity'});
