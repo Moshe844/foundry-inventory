@@ -897,6 +897,9 @@ html:root body .ask-download > summary { display:inline-flex; align-items:center
 html:root body .ask-download > summary::-webkit-details-marker { display:none; }
 html:root body .ask-download > summary:hover,html:root body .ask-download[open] > summary { box-shadow:0 0 0 1px #4F46E5; }
 html:root body .ask-download__menu { position:absolute; top:calc(100% + 4px); right:0; z-index:5; display:grid; min-width:112px; padding:4px; border-radius:10px; background:#fff; box-shadow:var(--d-3); }
+/* An open download menu shows in full: the answer frame stops clipping it, and it opens upward when the scrolling chat ends below it (ask-tools.js). */
+html:root body .rm-said:has(.ask-download[open]) { overflow:visible; }
+html:root body .ask-download--up > .ask-download__menu { top:auto; bottom:calc(100% + 4px); }
 html:root body .ask-download__menu a { padding:7px 10px; border-radius:7px; font-size:13px; font-weight:500; color:var(--d-ink); text-decoration:none; }
 html:root body .ask-download__menu a:hover { background:#F1F2F7; color:#4F46E5; }
 
