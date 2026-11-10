@@ -23,18 +23,19 @@ async function basis(c,ctx,p){
  if(!customer||p.delivery_method==='SHIP'&&!customer.shipping_address)throw new ValidationError('Confirm this active customer and its existing delivery address before publishing an order page.');
  if(!(await c.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,p.location_id])).rowCount)throw new ValidationError('Choose an active internal fulfillment location.');
  const base=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency;if(base!==p.currency)throw new ValidationError('This page must use the current accounting currency. Review separately confirmed foreign-currency offers outside this workflow.');
- if(!Array.isArray(p.sku_ids)||!p.sku_ids.length||p.sku_ids.length>100||new Set(p.sku_ids).size!==p.sku_ids.length)throw new ValidationError('Choose one to 100 distinct whole-unit products for this customer.');
- const products=(await c.query(`SELECT s.id,s.code,i.name,pr.amount_minor::text,pr.currency,pr.id price_id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+ const precise=Boolean(p.preorder_enabled&&(p.precise_units||p.source_snapshot?.preorderPrecision===true));
+ if(!Array.isArray(p.sku_ids)||!p.sku_ids.length||p.sku_ids.length>100||new Set(p.sku_ids).size!==p.sku_ids.length)throw new ValidationError('Choose one to 100 distinct products for this customer.');
+ const products=(await c.query(`SELECT s.id,s.code,i.name,pr.amount_minor::text,pr.currency,pr.id price_id${precise?',i.unit_label,i.quantity_increment,i.quantity_precision,i.tracking_mode':''} FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  JOIN LATERAL(SELECT p.id,p.amount_minor,p.currency FROM sku_prices p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id ORDER BY p.created_at DESC,p.id DESC LIMIT 1)pr ON true
- WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1 AND i.tracking_mode='quantity' AND i.quantity_precision=0 AND i.secondary_unit_label IS NULL
+ WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1 AND i.secondary_unit_label IS NULL${precise?" AND i.tracking_mode IN ('quantity','lot','serial')":" AND i.tracking_mode='quantity' AND i.quantity_precision=0"}
  AND NOT EXISTS(SELECT 1 FROM kit_components k WHERE k.workspace_id=s.workspace_id AND k.kit_sku_id=s.id) ORDER BY s.id`,[ctx.workspaceId,p.sku_ids])).rows;
- if(products.length!==p.sku_ids.length||products.some(s=>s.currency!==p.currency||!Number.isSafeInteger(Number(s.amount_minor))||Number(s.amount_minor)<=0))throw new ValidationError('Every page product needs an active published selling price in this currency. Kits and tracked/measured goods need separate review.');
+ if(products.length!==p.sku_ids.length||products.some(s=>s.currency!==p.currency||!Number.isSafeInteger(Number(s.amount_minor))||Number(s.amount_minor)<=0))throw new ValidationError('Every offered product needs a current selling price and supported stock units. Kits and catch-weight goods need separate review.');
  if(!p.tax_rate_id&&p.tax_treatment!=='NON_TAXABLE_CONFIRMED')throw new ValidationError('Choose the confirmed sales tax rate, or explicitly confirm the non-taxable treatment.');
- const input={orderDate:await require('../lib/business-time').today(c,ctx.workspaceId),customerId:customer.id,currency:p.currency,deliveryMethod:p.delivery_method,fulfillmentLocationId:p.location_id,taxRateId:p.tax_rate_id||undefined,lines:products.map(s=>({skuId:s.id,quantity:1}))};
+ const input={orderDate:await require('../lib/business-time').today(c,ctx.workspaceId),customerId:customer.id,currency:p.currency,deliveryMethod:p.delivery_method,fulfillmentLocationId:p.location_id,taxRateId:p.tax_rate_id||undefined,lines:products.map(s=>({skuId:s.id,quantity:precise?Number(s.quantity_increment):1}))};
  const quote=await prices.prepareQuote(c,ctx,input);if(quote.violations.length)throw new ValidationError('Resolve the current selling-price safeguards before publishing this page.');
  const preorderSources=p.preorder_enabled?p.preorder_sources||await preorders.offered(c,ctx.workspaceId,p.id):null;
  if(preorderSources){await policy.requireWorkspaceJob(c,ctx.workspaceId,68,'draft');if(preorderSources.length!==p.sku_ids.length)throw new ValidationError('This preorder needs a placed source for each offered product.');}
- const snapshot={customer,products,locationId:p.location_id,deliveryMethod:p.delivery_method,taxTreatment:p.tax_treatment,taxRateId:p.tax_rate_id||null,currency:p.currency,quoteHash:termsHash(quote),...(preorderSources?{preorderSources}:{})};return {snapshot,hash:prices.hash(snapshot),products,customer,input,quote,preorderSources};
+ const snapshot={customer,products,locationId:p.location_id,deliveryMethod:p.delivery_method,taxTreatment:p.tax_treatment,taxRateId:p.tax_rate_id||null,currency:p.currency,quoteHash:termsHash(quote),...(preorderSources?{preorderSources}:{}),...(precise?{preorderPrecision:true}:{})};return {snapshot,hash:prices.hash(snapshot),products,customer,input,quote,preorderSources};
 }
 async function publish(db,ctx,input){return tx(db,async c=>{
  await owner(c,ctx,true);const prior=input.id?await page(c,ctx,input.id,true):null;
@@ -48,6 +49,7 @@ async function publish(db,ctx,input){return tx(db,async c=>{
  if(preorder){
   await policy.requireWorkspaceJob(c,ctx.workspaceId,68,'draft');
   p.preorder_enabled=true;
+  p.precise_units=true;
   p.preorder_sources=preorderOrder?await preorders.selectOrder(c,ctx,p,preorderOrder):await preorders.offered(c,ctx.workspaceId,prior.id);
   await preorders.current(c,ctx,p,p.preorder_sources,{lock:true});
  }
@@ -72,8 +74,24 @@ async function publicContext(c,token,{lock=false}={}){
  const p=(await c.query('SELECT * FROM stockchief_runtime.agent_customer_order_pages WHERE token_hash=$1 AND enabled AND expires_at>clock_timestamp()'+(lock?' FOR UPDATE':''),[tokenHash(token)])).rows[0];if(!p)throw new NotFoundError('This customer order link is unavailable. Contact the business.');
  const ctx={workspaceId:p.workspace_id,actorId:p.authorized_by};await owner(c,ctx);await access(c,ctx,{lock:false,preorder:p.preorder_enabled});const f=await basis(c,ctx,p);if(f.hash!==p.source_hash)throw new ValidationError('The published order details need review by the business. Please contact them before sending a request.');return {p,ctx,f};
 }
-function requestLines(p,raw){if(!Array.isArray(raw)||!raw.length||raw.length>100)throw new ValidationError('Choose one to 100 listed products.');const lines=[],seen=new Set();for(const l of raw){if(!l||typeof l!=='object')throw new ValidationError('Choose listed products and whole quantities.');if(String(l.quantity||'').trim()===''||Number(l.quantity)===0)continue;const skuId=String(l.skuId);if(!p.sku_ids.includes(skuId)||seen.has(skuId))throw new ValidationError('Choose each offered product once.');seen.add(skuId);lines.push({skuId,quantity:integer(l.quantity,'Requested quantity',p.maximum_units)});}if(!lines.length)throw new ValidationError('Choose a positive quantity for at least one offered product.');return lines.sort((a,b)=>a.skuId.localeCompare(b.skuId));}
-async function quoteRequest(c,token,input,{preview=true}={}){const {p,ctx,f}=await publicContext(c,token),reference=plain(input.reference,'your purchase order or request reference',80),lines=requestLines(p,input.lines),orderInput={...f.input,lines,reference,shipToAddress:p.delivery_method==='SHIP'?f.customer.shipping_address:undefined},quote=await prices.prepareQuote(c,ctx,orderInput);if(quote.violations.length||quote.totalMinor<=0||quote.totalMinor>Number(p.maximum_minor))throw new ValidationError('This request needs the business to review its quantities, prices or total limit.');
+function requestLines(p,products,raw){
+ if(!Array.isArray(raw)||!raw.length||raw.length>100)throw new ValidationError('Choose one to 100 listed products.');
+ const lines=[],seen=new Set(),byId=new Map(products.map(product=>[product.id,product]));
+ for(const line of raw){
+  if(!line||typeof line!=='object')throw new ValidationError('Choose listed products and enter their quantities.');
+  if(String(line.quantity||'').trim()===''||Number(line.quantity)===0)continue;
+  const skuId=String(line.skuId),product=byId.get(skuId);
+  if(!product||seen.has(skuId))throw new ValidationError('Choose each offered product once.');
+  const quantity=product.quantity_increment===undefined?integer(line.quantity,'Requested quantity',p.maximum_units):
+   require('../domain/stock-quantity').validate(product,line.quantity,{label:'Quantity for '+product.code});
+  if(quantity>p.maximum_units)throw new ValidationError('The quantity exceeds the confirmed limit for '+product.code+'.');
+  seen.add(skuId);
+  lines.push({skuId,quantity});
+ }
+ if(!lines.length)throw new ValidationError('Choose a positive quantity for at least one offered product.');
+ return lines.sort((a,b)=>a.skuId.localeCompare(b.skuId));
+}
+async function quoteRequest(c,token,input,{preview=true}={}){const {p,ctx,f}=await publicContext(c,token),reference=plain(input.reference,'your purchase order or request reference',80),lines=requestLines(p,f.products,input.lines),orderInput={...f.input,lines,reference,shipToAddress:p.delivery_method==='SHIP'?f.customer.shipping_address:undefined},quote=await prices.prepareQuote(c,ctx,orderInput);if(quote.violations.length||quote.totalMinor<=0||quote.totalMinor>Number(p.maximum_minor))throw new ValidationError('This request needs the business to review its quantities, prices or total limit.');
  const incoming=f.preorderSources&&preview?await preorders.requireCapacity(c,ctx,p,f.preorderSources,lines):null;
  const preorderArrival=incoming?incoming.map(row=>row.expected_date).sort().at(-1):null;
  const source={pageId:p.id,pageRevision:p.revision,sourceHash:p.source_hash,input:orderInput,quoteHash:termsHash(quote),...(f.preorderSources?{preorder:true}:{})},snapshot={...source,quote,nativeQuoteHash:prices.quoteHash(quote),products:f.products.filter(s=>lines.some(l=>l.skuId===s.id))};return {p,ctx,f,snapshot,preorderArrival,requestHash:prices.hash({...source,pageRevision:undefined,input:{...orderInput,reference:reference.toLowerCase()}}),reference};}
