@@ -217,11 +217,11 @@ function createPostgresAskRouter(database,options={}){
   // The saved table from an answer, in the format asked for.
   router.get('/ask/answers/:id/export.:format',asyncRoute(async(req,res)=>{
     const exporter=require('../../assistant/ask-export');
-    return exporter.send(res,req.params.format,await exporter.interaction(database,req.ctx,req.params.id,require('../view-helpers').columnLabel,req.query.content==='answer'));
+    return exporter.send(res,req.params.format,await exporter.interaction(database,req.ctx,req.params.id,require('../view-helpers').columnLabel,req.query.content==='answer',req.params.format));
   }));
   router.get('/ask/goals/:id/export.:format',asyncRoute(async(req,res)=>{
     const exporter=require('../../assistant/ask-export');
-    return exporter.send(res,req.params.format,exporter.goal(await goalStore.get(database,req.ctx,req.params.id),req.query.table,req.query.content==='answer'));
+    return exporter.send(res,req.params.format,exporter.goal(await goalStore.get(database,req.ctx,req.params.id),req.query.table,req.query.content==='answer',req.params.format));
   }));
   router.post('/ask/goals/:id/next',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),saved=delivery.visible(goal);
@@ -479,7 +479,8 @@ function createPostgresAskRouter(database,options={}){
     const submission=req.session.askSubmission?.workspaceId===req.ctx.workspaceId?req.session.askSubmission:null;
     const recentRequests=await chats.list(database,req.ctx,{limit:40}),businessZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;
     const currentChat=recentRequests.find(chat=>chat.chat_id===req.session.postgresAskConversationId)||null;
-    return res.page('attention/ask',{recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
+    const downloadableAnswers=await require('../../assistant/ask-export').keepable(database,req.ctx,transcript.flatMap(turn=>(turn.goals||[]).map(goal=>goal.id)));
+    return res.page('attention/ask',{downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,

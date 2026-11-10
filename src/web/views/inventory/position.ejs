@@ -18,14 +18,14 @@
 %>
 
 
-<header class="sc-business-head"><div><h1><%= typeof title!=='undefined'?title:'Stock overview' %></h1><p><%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %> · <%= totals.skus || 0 %> <%= typeof postgresNative!=='undefined'&&postgresNative?'SKU':'product' %><%= totals.skus === 1 ? '' : 's' %> tracked</p></div><% if (!position.tooLarge && position.groups.length) { %><div class="sc-row-actions"><a class="btn" href="/actions">Record stock activity</a><a class="btn" href="/inventory/table">Open the stock table</a><a class="btn btn--primary" href="/inventory/new">Add a product</a></div><% } %></header>
+<header class="sc-business-head"><div><h1><%= typeof title!=='undefined'?title:'Stock overview' %></h1><p><%= helpers.qty(totals.locations) %> location<%= totals.locations === 1 ? '' : 's' %> · <%= helpers.qty(totals.skus) %> <%= typeof postgresNative!=='undefined'&&postgresNative?'SKU':'product' %><%= totals.skus === 1 ? '' : 's' %> tracked</p></div><% if (!position.tooLarge && position.groups.length) { %><div class="sc-row-actions"><a class="btn" href="/actions">Record stock activity</a><a class="btn" href="/inventory/table">Open the stock table</a><a class="btn btn--primary" href="/inventory/new">Add a product</a></div><% } %></header>
 <% if (position.productNames && position.productNames.length) { %><p class="sr-only">Products in this inventory: <%= position.productNames.join(', ') %>.</p><% } %>
 
 <% if (position.tooLarge) { %>
 
   <section class="sc-business-card">
     <h2>This inventory is too big to summarise on sight.</h2>
-    <p>Reading every position to group them would make this the page you stop opening. <%= totals.skus %> products is past that line, so here is the table instead, which is what you would want at this size anyway.</p>
+    <p>Reading every position to group them would make this the page you stop opening. <%= helpers.qty(totals.products) %> products are past that line, so here is the table instead, which is what you would want at this size anyway.</p>
     <p><a class="btn btn--primary" href="/inventory/table">Open the stock table</a></p>
   </section>
 

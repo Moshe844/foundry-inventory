@@ -406,7 +406,7 @@
         <% if (saidText.length > 600) { %>
           <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
         <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
-        <%- include('answer-actions',{answerText:saidText,question:turn.message,interactionId:goal.id}) %>
+        <%- include('answer-actions',{answerText:saidText,question:turn.message,interactionId:goal.id,downloadable:(locals.downloadableAnswers||[]).includes(goal.id)}) %>
         <p class="rm-said__meta">
           <% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %>
           <% if (goal.resultHref) { %><a href="<%= goal.resultHref %>"><%= goal.resultLabel || 'Open' %> →</a><% } %>

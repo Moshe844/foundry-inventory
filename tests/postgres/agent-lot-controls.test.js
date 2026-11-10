@@ -39,8 +39,10 @@ test('trace fulfilled lots, recall remaining goods and audit certificates across
   assert.equal(trace.length,1);assert.equal(trace[0].Customer,'Receiver');assert.equal(Number(trace[0]['Units issued']),2);
   assert.equal(expiring.rows[0].Priority,trace[0].Order);
   assert.deepEqual((await reviews.run(db,ctx,'serial-history',{filter:'gr-007'})).rows.map(r=>r.Action),['receive','issue']);
-  assert.equal((await reviews.run(db,ctx,'stock-lookup',{filter:'GR-007'})).rows[0].Location,'Issued');
-  assert.equal((await reviews.run(db,ctx,'stock-lookup',{filter:lot.lot})).rows[0].Units,'3');
+  const serialStock=(await reviews.run(db,ctx,'stock-lookup',{filter:'GR-007'})).rows;
+  assert.deepEqual(serialStock.map(row=>[row.View,row.Location,row.Units]),[['Serial','Issued','0']]);
+  const lotStock=(await reviews.run(db,ctx,'stock-lookup',{filter:lot.lot})).rows;
+  assert.deepEqual(lotStock.map(row=>[row.View,row.Units]),[['Lot','3']]);
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
   f.cleanup(()=>app.locals.sessionStore.close());
   const browser=request.agent(app),csrf=r=>/name="_csrf" value="([^"]+)"/.exec(r.text)?.[1];

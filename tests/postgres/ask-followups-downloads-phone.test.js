@@ -47,9 +47,20 @@ test('every Ask table downloads as PDF, Excel and CSV, only for the person who a
  const written=await store.create(db,ctx,'Show products');await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=checkpoint||'{\"runtime\":\"codex-staging\"}'::jsonb WHERE id=$1",[written.id,'### Products\n\n| Product | Price |\n|---|---:|\n| **Shoe** | $10.00 |\n| Hat | $5.00 |']);
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});t.after(()=>app.locals.sessionStore.close());
  const agent=await signIn(app,f);
+ // A page hand-off is not a document: it gets no Download answer.
+ const handoff=await assistant.ask(db,ctx,'Take me to purchase orders',{requestKey:'export-handoff',conversationId:'chat_export_answer',usageKey:'export-handoff'});
+ assert.ok(handoff.interactionId&&String(handoff.answer).length<80,'a short hand-off answer: '+handoff.answer);
+ const withHandoff=await agent.get('/ask?chat=chat_export_answer');
+ assert.equal(withHandoff.text.includes('/ask/answers/'+handoff.interactionId+'/export'),false,'no download under "'+handoff.answer+'"');
+ assert.match(withHandoff.text,new RegExp('/ask/answers/'+answer.interactionId+'/export\\.xlsx\\?content=answer'),'an answer with records keeps Download answer');
  const page=await agent.get('/ask?chat=chat_export_answer');assert.match(page.text,new RegExp('/ask/answers/'+answer.interactionId+'/export\\.xlsx'));
  for(const [format,type] of [['csv',/text\/csv/],['xlsx',/spreadsheetml/],['pdf',/application\/pdf/]]){
   for(const url of ['/ask/answers/'+answer.interactionId+'/export.'+format,'/ask/goals/'+written.id+'/export.'+format]){const file=await agent.get(url).buffer(true).parse((res,done)=>{const parts=[];res.on('data',d=>parts.push(d));res.on('end',()=>done(null,Buffer.concat(parts)));});assert.equal(file.status,200,url);assert.match(file.headers['content-type'],type);assert.match(file.headers['content-disposition'],/attachment/);assert.ok(file.body.length>20,url);}
+ }
+ // Download answer as a spreadsheet: the answer's rows in their own columns, not its sentence in one cell.
+ for(const url of ['/ask/answers/'+answer.interactionId+'/export.csv?content=answer','/ask/goals/'+written.id+'/export.csv?content=answer']){
+  const whole=await agent.get(url),header=whole.text.replace(/^\W*?(?=")/,'').split('\r\n')[0];
+  assert.equal(whole.status,200,url);assert.ok(header.split('","').length>1&&!/^"Answer"/.test(header),url+': the answer downloads in columns: '+header);
  }
  const csv=await agent.get('/ask/goals/'+written.id+'/export.csv');assert.match(csv.text,/"Product","Price"/);assert.match(csv.text,/"Shoe","\$10\.00"/,'Formatting marks stay out of the file');
  assert.equal((await agent.get('/ask/answers/'+answer.interactionId+'/export.exe')).status>=400,true);
@@ -75,6 +86,15 @@ test('in the browser the Ask page cannot get stuck, and the top bar and customer
   await page.evaluate(()=>{for(const s of ['main#main','.rm-chat'])document.querySelector(s).scrollTop=400;document.scrollingElement.scrollTop=400;});await page.waitForTimeout(150);
   assert.equal(await moved(page),0,width+': a forced move goes straight back');
   assert.equal(await page.locator('.ask-download--inline').count(),1,'The written table has a Download button');
+  // Every format in a download menu can be seen and chosen, wherever its button sits in the chat.
+  for(const place of ['start','end']){
+   const shown=await page.evaluate(async place=>{document.querySelectorAll('.ask-download[open]').forEach(d=>{d.open=false;});
+    const menu=[...document.querySelectorAll('.ask-download')].find(d=>/answer/i.test(d.querySelector('summary').textContent))||document.querySelector('.ask-download');
+    menu.scrollIntoView({block:place});await new Promise(r=>setTimeout(r,120));menu.querySelector('summary').click();await new Promise(r=>setTimeout(r,200));
+    return [...menu.querySelectorAll('.ask-download__menu a')].map(a=>{const r=a.getBoundingClientRect();return a.textContent+':'+(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===a);});},place);
+   assert.deepEqual(shown,['PDF:true','Excel:true','CSV:true'],width+': every download format shows with its button at the '+place+' of the view');
+  }
+  await page.evaluate(()=>document.querySelectorAll('.ask-download[open]').forEach(d=>{d.open=false;}));
   assert.equal(await page.evaluate(()=>{const c=document.querySelector('[data-chat-scroll]');c.scrollTop=0;return c.scrollHeight>c.clientHeight;}),true,'The conversation itself still scrolls');
   for(const path of ['/','/orders','/money']){await page.goto(origin+path);const cut=await page.evaluate(()=>[...document.querySelectorAll('.sc-toolbar a,.sc-toolbar button')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left<-1);}).map(e=>e.textContent.trim()));assert.deepEqual(cut,[],width+' '+path+': nothing in the top bar is cut off');}
   await page.goto(origin+'/sales/customers?q=OBrien');
