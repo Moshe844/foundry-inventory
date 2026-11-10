@@ -19,7 +19,7 @@
       <div class="agent-plan-table" tabindex="0" role="region" aria-label="<%= group.label %> duties by plan. Scroll horizontally on small screens.">
         <table><caption class="sr-only"><%= group.label %>: permitted control for each plan</caption>
           <thead><tr><th scope="col">Agent duty</th><% for(const plan of compared){ %><th scope="col" data-agent-tier="<%= plan.id %>"><%= plan.name %></th><% } %></tr></thead>
-          <tbody><% for(const job of group.jobs){ %><tr data-agent-job="<%= job.id %>"><th scope="row"><span><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>" data-agent-verification><%= job.verification %></small></th>
+          <tbody><% for(const job of group.jobs){ %><tr data-agent-job="<%= job.id %>"><th scope="row"><span><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>" data-agent-verification><%= job.verification %></small><% if(job.currentScope){ %><p class="plan-current-scope" data-job-current-scope><strong>Available now:</strong> <%= job.currentScope %></p><% } %></th>
             <% for(const plan of compared){const cell=job.plans.find(p=>p.tier===plan.id); %><td data-agent-tier="<%= plan.id %>" data-agent-mode="<%= cell.mode %>"><span class="agent-mode agent-mode--<%= cell.mode %>"><%= cell.label %></span></td><% } %>
           </tr><% } %></tbody>
         </table>

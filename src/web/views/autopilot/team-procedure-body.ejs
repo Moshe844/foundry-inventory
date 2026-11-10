@@ -1,0 +1,1 @@
+<h2><%= doc.title %></h2><ol><% for(const step of doc.steps){ %><li><%= step %></li><% } %></ol><p><%= doc.outcome %></p><% for(const note of doc.notes){ %><p><%= note %></p><% } %><% if(doc.ownerNotes){ %><h3>Owner notes</h3><p style="white-space:pre-wrap"><%= doc.ownerNotes %></p><% } %>

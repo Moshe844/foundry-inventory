@@ -143,6 +143,9 @@ jobs:
       - name: Container packing facts, trained plan scope and native account boundaries
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/container-packing.test.js tests/postgres/agent-container-plans.test.js tests/postgres/agent-container-plan-boundaries.test.js tests/postgres/agent-container-plans-ui.test.js
+      - name: Recorded team procedures, separate staff approval and current plan scope
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/agent-current-scope.test.js tests/unit/team-procedure-source.test.js tests/postgres/agent-current-scope-ui.test.js tests/postgres/team-procedure-source.test.js tests/postgres/team-procedure-source-volume.test.js tests/postgres/agent-team-procedures.test.js tests/postgres/agent-team-procedure-boundaries.test.js tests/postgres/agent-team-procedures-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
