@@ -30,6 +30,7 @@
       <a class="ox-back" href="/purchasing/orders"><span aria-hidden="true">←</span> Purchase orders</a>
       <h1 class="ox-title"><%= order.poNumber %> <span class="ox-badge ox-badge--<%= V.badge.tone %> ox-title__badge"><%= V.badge.text %></span></h1>
       <p class="ox-sub"><%= V.subtitle %><% if (V.late) { %> · <span class="ox-amber">late</span><% } %></p>
+      <% if(order.reference){ %><p class="ox-sub" data-purchase-reference>Reference: <%= order.reference %><% if(order.sourceDetail&&order.sourceDetail.contractId){ %> · <a href="/autopilot/blanket-releases/<%= encodeURIComponent(order.sourceDetail.contractId) %>">Reviewed supplier agreement</a><% } %></p><% } %>
     </div>
     <div class="ox-head__actions">
       <a class="ox-btn ox-btn--ghost ox-hide-sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">Print</a>
