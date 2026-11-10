@@ -118,10 +118,18 @@ async function runFacts(db,ctx,input,forUpdate=false){
   const deliveryDate=date(input.deliveryDate);
   if(deliveryDate<await time.today(db,ctx.workspaceId))throw new ValidationError('Choose today or a future delivery date.');
   const location=await depot(db,ctx,input.depotId,forUpdate),vans=fleet(input.vans),stops=[];
+  await departure(db,ctx,deliveryDate,vans);
   for(const stop of submittedStops(input).sort((a,b)=>a.id.localeCompare(b.id))){
     stops.push({...stop,...await shipmentFacts(db,ctx,stop.id,location.id,forUpdate)});
   }
   return {deliveryDate,location,vans,stops};
+}
+
+async function departure(db,ctx,deliveryDate,vans){
+  const clock=await time.forWorkspace(db,ctx.workspaceId);
+  const local=time.parts(new Date(clock.instant),clock.timeZone);
+  if(deliveryDate===clock.calendarDate&&vans.some(van=>van.start<=local.hour*60+local.minute))
+    throw new ValidationError('Choose a future departure time for today’s run, or plan a later delivery date.');
 }
 
 async function routedMatrix(db,ctx,input){
@@ -147,6 +155,7 @@ async function rule(db,ctx,run){
 
 async function current(db,ctx,run){
   if(run.delivery_date<await time.today(db,ctx.workspaceId))throw new ValidationError('The delivery date has passed. Plan a new route.');
+  await departure(db,ctx,run.delivery_date,run.facts.vans);
   if(hash(depotKey(await depot(db,ctx,run.depot_id,true)))!==hash(depotKey(run.facts.depot)))
     throw new ValidationError('The depot changed. Plan a new route with the current address.');
   for(const stop of run.facts.stops){

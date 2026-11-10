@@ -8,7 +8,8 @@ const vans=require('../../src/shipping/agent-van-routes');
 test('owners route actual packed shipments on Pro and Custom with exact, plan-bound routine authority',{timeout:720000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12,timeZone:'America/New_York',through:'338-agent-inbound-freight.sql'});
   const {db,ctx,browser,csrf}=f;
-  const date=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const date=require('../../src/accounting/customer-money').addDays(today,1);
   const packed=await f.parcel();
   assert.deepEqual(await require('../../src/db/migrate-postgres').migratePostgres(db),['339-agent-van-routes.sql']);
   const pagePath=vans.path+'?'+new URLSearchParams({depot:f.location.id});
@@ -40,6 +41,7 @@ test('owners route actual packed shipments on Pro and Custom with exact, plan-bo
   }
   await f.subscribe('pro');
   await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await assert.rejects(vans.prepare(db,ctx,input(packed,{deliveryDate:today,vans:'Van 1 | Jordan | 1000 | 00:00 | 23:59'})),/future departure time/);
   const page=await browser.get(pagePath).expect(200);
   assert.match(page.text,/Plan delivery routes/);
   assert.match(page.text,new RegExp(packed.shipmentNumber));
