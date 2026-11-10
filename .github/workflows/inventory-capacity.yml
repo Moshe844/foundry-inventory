@@ -212,6 +212,9 @@ jobs:
       - name: Factual channel copy, individually reviewed Growth batches, native Pro routines, exported work and plan-safe bulk sources
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/channel-copy-format.test.js tests/postgres/agent-channel-copy.test.js tests/postgres/agent-channel-copy-boundaries.test.js tests/postgres/agent-channel-copy-schema.test.js tests/postgres/agent-channel-copy-volume.test.js tests/postgres/agent-channel-copy-ui.test.js
+      - name: Reviewed supplier contracts, real Pro teaching, native release drafts, linked drawdowns and exact plan limits
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-blanket-releases.test.js tests/postgres/agent-blanket-release-boundaries.test.js tests/postgres/agent-blanket-release-schema.test.js tests/postgres/agent-blanket-release-ui.test.js tests/postgres/agent-blanket-release-volume.test.js tests/postgres/agent-blanket-release-reporting.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

@@ -17,6 +17,17 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const blanket=require('../../purchasing/agent-blanket-releases');
+  const blanketPage=async(req,res,draft=null)=>res.page('autopilot/blanket-releases',{title:'Supplier contracts and release drafts',nav:'autopilot',suppressBack:true,cash:require('../../domain/currency'),screen:await blanket.screen(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),draft});
+  router.get('/autopilot/blanket-releases',requireAuth,owner,asyncRoute((req,res)=>blanketPage(req,res)));
+  router.post('/autopilot/blanket-releases/preview',requireAuth,owner,asyncRoute(async(req,res)=>blanketPage(req,res,await blanket.preview(database,req.ctx,req.body))));
+  router.post('/autopilot/blanket-releases',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await blanket.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/blanket-releases/'+p.id);}));
+  router.get('/autopilot/blanket-releases/:id',requireAuth,owner,asyncRoute((req,res)=>blanketPage(req,res)));
+  router.post('/autopilot/blanket-releases/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await blanket.configure(database,req.ctx,req.params.id,req.body);if(req.body.stop!=='yes')await blanket.schedule(database,req.ctx.workspaceId);res.redirect(303,'/autopilot/blanket-releases/'+req.params.id);}));
+  router.post('/autopilot/blanket-releases/:id/end',requireAuth,owner,asyncRoute(async(req,res)=>{await blanket.end(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/blanket-releases/'+req.params.id);}));
+  router.post('/autopilot/blanket-releases/releases/:releaseId/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{await blanket.manual(database,req.ctx,req.params.releaseId,req.body);const r=await blanket.release(database,req.ctx,req.params.releaseId);res.redirect(303,'/autopilot/blanket-releases/'+r.contract_id);}));
+  router.post('/autopilot/blanket-releases/releases/:releaseId/teach',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await blanket.teach(database,req.ctx,req.params.releaseId,req.body);res.redirect(303,'/autopilot/blanket-releases/'+p.id);}));
+  router.post('/autopilot/blanket-releases/releases/:releaseId/skip',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await blanket.skip(database,req.ctx,req.params.releaseId,req.body);await blanket.schedule(database,req.ctx.workspaceId);res.redirect(303,'/autopilot/blanket-releases/'+p.id);}));
   const channelCopy=require('../../catalog/agent-channel-copy');
   const copyPage=async(req,res,extra={})=>res.page('autopilot/channel-copy',{title:'Product copy for sales channels',nav:'autopilot',suppressBack:true,screen:await channelCopy.screen(database,req.ctx,{id:req.params.id||req.body?.id||null,page:req.query.page||1,versionId:req.query.versionId||null}),draft:null,...extra});
   router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
