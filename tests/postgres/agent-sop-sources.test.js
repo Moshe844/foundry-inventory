@@ -101,5 +101,13 @@ test('procedure originals prepare exact standing rules with current Pro and Cust
   const original=await sop.load(db,ctx,failed.id);
   assert.equal(original.state,'FAILED');assert.equal(original.credits_used,0);assert(original.content.equals(source()));
   assert.equal((await db.query("SELECT count(*)::int n FROM commercial_usage_events WHERE workspace_id=$1 AND status='COMMITTED'",[ctx.workspaceId])).rows[0].n,before);
+  badQuote=false;
+  const failedPage=await browser.get(root+'/'+failed.id).expect(200);
+  assert.match(failedPage.text,/Retry this original/);
+  await browser.post(root+'/'+failed.id+'/retry').type('form').send({_csrf:f.csrf(failedPage.text)}).expect(303);
+  assert.equal((await sop.retry(db,ctx,failed.id)).replayed,true);
+  const retried=await require('../../src/operations/postgres-job-queue').processOne(db,{[sop.kind]:handlers[sop.kind]},{owner:'sop-retry-worker'});
+  assert.equal(retried.status,'COMPLETED');
+  assert.equal((await sop.load(db,ctx,failed.id)).credits_used,100);
   assert.equal(await f.balance(),20);
 });

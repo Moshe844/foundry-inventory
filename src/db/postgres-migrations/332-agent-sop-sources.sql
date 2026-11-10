@@ -31,3 +31,10 @@ CREATE TABLE stockchief_runtime.agent_sop_proposals (
 CREATE INDEX agent_sop_recent ON stockchief_runtime.agent_sop_sources(workspace_id,created_at DESC,id DESC);
 
 ALTER TABLE operating_instruction_proposals ADD COLUMN sop_source jsonb;
+
+INSERT INTO commercial_storage_tables(relation,bytes_expression) VALUES
+ ('stockchief_runtime.agent_sop_sources'::regclass,'octet_length(t.content)+octet_length(convert_to((to_jsonb(t)-''content'')::text,''UTF8''))'),
+ ('stockchief_runtime.agent_sop_proposals'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))');
+INSERT INTO commercial_storage_usage(workspace_id,relation,baseline_complete)
+ SELECT id,r,true FROM workspaces CROSS JOIN unnest(ARRAY['stockchief_runtime.agent_sop_sources'::regclass,
+  'stockchief_runtime.agent_sop_proposals'::regclass])r;

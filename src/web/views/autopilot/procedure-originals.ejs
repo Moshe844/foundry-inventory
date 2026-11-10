@@ -34,6 +34,12 @@
     <% } %>
   </ol>
   <% } else { %><p role="status"><%= record.problem||(record.state==='FAILED'?'The reading stopped. Your original is saved.':'StockChief is preparing your reading. Refresh this page to check progress.') %></p><% } %>
+  <% if(record.state==='FAILED'){ %>
+    <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/retry" class="rm-form" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-button">Retry this original</button>
+    </form>
+  <% } %>
 </section>
 <% } %>
 <section class="rm-panel">
