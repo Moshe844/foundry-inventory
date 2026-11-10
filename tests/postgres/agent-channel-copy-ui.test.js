@@ -1,0 +1,23 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('phone owner previews and saves a Growth copy batch, downloads its real CSV, then uses Pro routine writing without training',{timeout:240000},async t=>{
+ const f=await require('../helpers/agent-channel-copy-fixture').fixture(t),{db,ctx,service:s}=f;
+ await f.subscribe('growth');
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(r=>{const x=app.listen(0,'127.0.0.1',()=>r(x));}),browser=await require('playwright').chromium.launch();
+ f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
+ const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true}),origin='http://127.0.0.1:'+server.address().port,errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(origin+'/login');await page.getByLabel('Work email',{exact:true}).fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+ await page.goto(origin+'/autopilot/channel-copy');await page.getByLabel('Saved copy name',{exact:true}).fill('Phone-reviewed copy');await page.getByLabel('Sales channel name',{exact:true}).fill('Our storefront');await page.getByLabel('Your maximum title length',{exact:true}).fill('80');await page.getByLabel('Description format',{exact:true}).selectOption('bullets');await page.getByLabel('Product SKU codes, one per line',{exact:true}).fill(f.sku);await page.getByRole('button',{name:'Preview channel copy',exact:true}).click();
+ await page.getByRole('heading',{name:'Review prepared copy',exact:true}).waitFor();assert.match(await page.locator('.copy-table').innerText(),/Parcel item/);await page.getByLabel(/I reviewed this exact scope/).check();await page.getByRole('button',{name:'Save reviewed copy batch',exact:true}).click();
+ await page.getByRole('heading',{name:'Saved private copy',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Enable routine private writing',exact:true}).count(),0);assert.match(await page.locator('main').innerText(),/Routine writing without training requires/);
+ const downloading=page.waitForEvent('download');await page.getByRole('link',{name:'Download prepared copy CSV',exact:true}).click();const download=await downloading,text=require('node:fs').readFileSync(await download.path(),'utf8');assert.match(text,/"Our storefront"/);assert.match(text,/• Parcel item/);
+ const p=(await s.screen(db,ctx)).rows[0];await f.subscribe('pro');await page.reload();await page.getByLabel(/I authorize daily private copy refresh/).check();await page.getByRole('button',{name:'Enable routine private writing',exact:true}).click();await page.getByRole('button',{name:'Queue a routine copy refresh',exact:true}).waitFor();
+ await f.rename('Fresh recorded phone product');await page.getByRole('button',{name:'Queue a routine copy refresh',exact:true}).click();
+ const handlers=require('../../src/operations/postgres-runtime-handlers').create();assert.equal((await require('../../src/operations/postgres-job-queue').processOne(db,{[s.kind]:handlers[s.kind]},{owner:'phone-copy-worker'})).status,'COMPLETED');
+ await page.reload();await page.getByText('Review all 1 product rows',{exact:true}).click();assert.match(await page.locator('.copy-table').innerText(),/Fresh recorded phone product/);
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ require('node:fs').mkdirSync('output',{recursive:true});await page.screenshot({path:'output/channel-copy-mobile.png',fullPage:true});
+ await f.subscribe('starter');await page.reload();assert.match(await page.locator('main').innerText(),/Growth, Pro or Custom required/);assert.equal(await page.getByRole('button',{name:'Preview channel copy',exact:true}).count(),0);await page.getByRole('button',{name:'Stop routine writing',exact:true}).click();assert.equal((await s.screen(db,ctx,{id:p.id})).selected.enabled,false);
+ assert.deepEqual(errors,[]);assert.equal(await f.balance(),20);
+});

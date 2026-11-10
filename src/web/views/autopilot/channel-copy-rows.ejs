@@ -1,0 +1,1 @@
+<div class="copy-table"><table><thead><tr><th>Product code</th><th>Title</th><th>Description or review needed</th></tr></thead><tbody><% copyRows.forEach(function(r){ %><tr><td><%= r.sku %></td><td><%= r.title||'Needs review' %></td><td><%= r.problem||r.description %></td></tr><% }) %></tbody></table></div>
