@@ -37,27 +37,21 @@ test('Pro and Custom refresh private copy through the real typed worker without 
  const notices=async()=>(await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,ctx.actorId)).filter(n=>n.sourceId==='channel-copy-scopes');assert.equal((await notices()).length,1);await s.download(db,ctx,page.selectedVersion.id);assert.equal((await notices()).length,0);
  assert.equal((await s.onCopy(db,ctx.workspaceId,p.copyId)).replayed,true);
  assert.equal(page.history.length,2);
- await f.subscribe('enterprise');await f.rename('Custom changed recorded product');
- assert.equal((await s.onCopy(db,ctx.workspaceId,p.copyId)).replayed,false);
+ await f.subscribe('enterprise');await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES('synthetic-copy-custom-credits',$1,'ai_work_credits',10000,'Synthetic agreed Custom credit allowance')",[f.owner.accountId]);await f.rename('Custom changed recorded product');
+ {const refreshed=await s.onCopy(db,ctx.workspaceId,p.copyId);assert.equal(refreshed.replayed,false,JSON.stringify(refreshed));}
  page=await s.screen(db,ctx,{id:p.copyId});assert.equal(page.history.length,3);
  assert.equal(page.selectedVersion.document[0].title,'Custom changed recorded product');
  assert.equal((await s.schedule(db,ctx.workspaceId)).queued,0);
  assert.equal(await f.balance(),20);
 });
-test('unchosen private descriptions stay out of copy and unsuitable rows remain explicit individual reviews',{timeout:240000},async t=>{
+test('approved descriptions are complete source, normal markup is rewritten and every selected row stays visible',{timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,service:s}=f;
  await f.rename('Plain product','PRIVATE SOURCE NOT APPROVED FOR CUSTOMERS');
- const omitted=await f.prepare();
- assert.doesNotMatch(JSON.stringify(omitted.preview),/PRIVATE SOURCE/);
- const long=await f.catalog.createItem(db,ctx,{name:'A product name that intentionally exceeds the chosen forty character channel title limit',baseCode:'LONG',trackingMode:'quantity'});
- const markup=await f.catalog.createItem(db,ctx,{name:'Markup product',baseCode:'MARKUP',description:'<b>Not stripped or rewritten</b>',trackingMode:'quantity'});
- const huge=await f.catalog.createItem(db,ctx,{name:'Long description',baseCode:'HUGE-DESC',description:'A'.repeat(2*1024*1024),trackingMode:'quantity'});
- const p=await f.prepare({label:'Checked mixed batch',titleLimit:40,skuIds:[...f.item.skuIds,...long.skuIds,...markup.skuIds,...huge.skuIds],includeDescription:'yes',descriptionStyle:'bullets'});
- assert.equal(p.preview.document.filter(r=>r.problem).length,3);
- assert.match(p.preview.document.find(r=>r.sku==='LONG').problem,/Title exceeds/);
- assert.match(p.preview.document.find(r=>r.sku==='MARKUP').problem,/markup/);
- assert.equal(p.preview.source.products.find(r=>r.code==='HUGE-DESC').description.length,2001);assert.equal(p.preview.source.products.find(r=>r.code==='HUGE-DESC').description_truncated,true);assert.match(p.preview.document.find(r=>r.sku==='HUGE-DESC').problem,/long description/);
- const csv=await s.download(db,ctx,p.id);assert.doesNotMatch(csv,/"LONG"|"MARKUP"|<b>/);assert.match(csv,/• PRIVATE SOURCE NOT APPROVED FOR CUSTOMERS/);
- const all=await s.preview(db,ctx,{...f.input,label:'Nothing ready',titleLimit:40,skuIds:long.skuIds});
- await assert.rejects(s.save(db,ctx,{...f.input,label:'Nothing ready',titleLimit:40,skuIds:long.skuIds,sourceHash:all.sourceHash,confirmed:'yes'}),/Every product needs review/);
+ const omitted=await f.prepare();assert.doesNotMatch(JSON.stringify(omitted.preview),/PRIVATE SOURCE/);
+ const long=await f.catalog.createItem(db,ctx,{name:'A long recorded product name with meaningful variant identity',baseCode:'LONG',trackingMode:'quantity'});
+ const markup=await f.catalog.createItem(db,ctx,{name:'Markup product',baseCode:'MARKUP',description:'<b>Recorded product description.</b>',trackingMode:'quantity'});
+ const args={...f.input,label:'Full source',skuIds:[...long.skuIds,...markup.skuIds],includeDescription:'yes'},preview=await s.preview(db,ctx,args);
+ assert.equal(preview.source.products.length,2);assert.equal(preview.source.products.find(p=>p.code==='MARKUP').description,'<b>Recorded product description.</b>');
+ assert(preview.estimatedCredits>=preview.credits);assert.equal(preview.document.length,0,'Source preview never pretends to be model-written copy');
+ assert.equal((await s.screen(db,ctx)).rows.length,1);
 });

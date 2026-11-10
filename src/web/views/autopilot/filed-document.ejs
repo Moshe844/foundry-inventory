@@ -3,6 +3,7 @@
  <p>Filed on <a href="<%= document.targetHref %>"><%= document.target_reference %></a> · <%= document.document_kind.replace(/_/g,' ') %></p>
  <p><a class="btn" href="/autopilot/documents/<%= document.id %>/download">Download original file</a></p>
  <p>This document is saved as evidence. Filing it does not record stock, an invoice, payment or accepted terms.</p>
+ <% if(document.target_kind==='item'&&['specification','safety_sheet'].includes(document.document_kind)){ %><p><a class="btn" href="/autopilot/product-facts?filedDocument=<%= document.id %>&amp;product=<%= encodeURIComponent(document.target_reference) %>">Read complete product facts from this original</a></p><% } %>
  <h3>Readable source text</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"><%= document.extracted_text %></pre>
  <% if((document.product_facts||[]).length){ %><h3 id="product-facts">Saved product facts</h3><dl><% for(const fact of document.product_facts){ %><dt><%= documentFactLabels[fact.field]||fact.field %></dt><dd style="overflow-wrap:anywhere"><%= fact.value %><blockquote><%= fact.quote %></blockquote></dd><% } %></dl><% } %>
 </section>

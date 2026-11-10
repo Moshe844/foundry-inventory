@@ -171,6 +171,7 @@ function create(options = {}) {
      * @param {{system: string, prompt: string, schema: object, schemaName: string, signal?: AbortSignal}} request
      */
     async complete(request) {
+      require('../image-input').inspect(request.prompt);
       // Production is PostgreSQL-only. A legacy/transitively imported model
       // path may not bypass the commercial reservation and dollar guard.
       if((process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL)&&request.commercial!==true)

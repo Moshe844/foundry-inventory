@@ -1,13 +1,7 @@
 'use strict';
 
 const reports = [
-  {id:2,key:'movement-history',label:'Explain stock changes',summary:'Each movement shows the quantity before and after, the recorded reason and the person who posted it.',sql:`
-    SELECT i.name AS "Product",s.code AS "SKU",l.name AS "Location",m.occurred_at AS "When",m.operation AS "Action",
-      m.balance_after-m.quantity_delta AS "Before",m.quantity_delta AS "Change",m.balance_after AS "After",
-      coalesce(nullif(m.reason_code,''),nullif(m.notes,''),m.operation) AS "Reason",m.reference AS "Reference",u.name AS "Recorded by"
-    FROM movements m JOIN skus s ON s.id=m.sku_id JOIN items i ON i.id=m.item_id JOIN locations l ON l.id=m.location_id
-    JOIN users u ON u.id=m.actor_user_id WHERE m.workspace_id=$1 AND ($2='' OR lower(s.code)=lower($2))
-    ORDER BY m.occurred_at::timestamptz DESC,m.seq DESC`},
+  {id:2,key:'movement-history',label:'Explain stock changes',readPage:require('./stock-reading').movements},
   {id:4,key:'count-priorities',label:'Plan a cycle count',usesDate:true,summary:'Count negative positions first, then shelves with frequent adjustments, monthly A products, monthly B products and the highest recorded stock value.',sql:`
     WITH differences AS (SELECT sku_id,location_id,count(*) AS n FROM movements WHERE workspace_id=$1 AND operation='adjust'
       AND occurred_at::timestamptz>=now()-interval '90 days' GROUP BY sku_id,location_id)

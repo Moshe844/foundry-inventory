@@ -142,7 +142,7 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   for(const tier of ['starter','growth','pro','enterprise']){
     await plan(tier);
     const row=(await review('reorder-explanation')).rows.find(r=>r.Warehouse==='Dispatch');
-    assert.equal(row.Available,5);assert.equal(row.Incoming,7);assert.equal(row['Units to order'],18);
+    assert.equal(row.Available,5);assert.equal(row.Incoming,7);assert.equal(row['Units to order'],null);assert.match(row.Reason,/overdue or undated/);
     if(tier==='starter')await browser.get('/autopilot/reviews/service-levels').expect(402);
     else{
       const service=await review('service-levels',{filter:'',scheduled:true}),customer=service.rows.find(r=>r['Party type']==='Customer'),vendor=service.rows.find(r=>r.Name==='Alternative');

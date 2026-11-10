@@ -19,6 +19,8 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='DRAFT'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS export_paper_summary,
+ CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
+ CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.changed_at)) FROM stockchief_runtime.agent_customer_invoice_work p WHERE p.workspace_id=$1 AND p.revision>p.completed_revision AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_invoice_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_order_cost_previews p WHERE p.workspace_id=$1 AND p.status='DRAFT'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS order_cost_summary,
@@ -33,10 +35,11 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
  FROM stockchief_runtime.agent_channel_copy_sets p LEFT JOIN LATERAL(
   SELECT v.document_hash,v.exported_at,v.automatic FROM stockchief_runtime.agent_channel_copy_versions v
   WHERE v.workspace_id=p.workspace_id AND v.copy_id=p.id ORDER BY v.created_at DESC,v.id DESC LIMIT 1
- ) latest ON true WHERE p.workspace_id=$1 AND p.enabled
- AND (p.last_issue IS NOT NULL OR latest.automatic AND latest.exported_at IS NULL AND NOT EXISTS(
+ ) latest ON true WHERE p.workspace_id=$1
+ AND (EXISTS(SELECT 1 FROM stockchief_runtime.agent_channel_copy_runs pending WHERE pending.workspace_id=p.workspace_id AND pending.copy_id=p.id AND pending.status='READY') OR p.last_issue IS NOT NULL OR p.enabled AND latest.automatic AND latest.exported_at IS NULL AND NOT EXISTS(
   SELECT 1 FROM stockchief_runtime.agent_channel_copy_versions done WHERE done.workspace_id=p.workspace_id AND done.document_hash=latest.document_hash AND done.exported_at IS NOT NULL))
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS channel_copy_summary,
+ CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.updated_at)) FROM stockchief_runtime.agent_product_source_readings p WHERE p.workspace_id=$1 AND p.acknowledged_at IS NULL AND (p.status IN('READY','FAILED') OR p.status='SAVED' AND p.held_count>0) AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS product_source_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'reference',min(p.reference),'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_blanket_contracts p WHERE p.workspace_id=$1
  AND (p.enabled AND p.last_issue IS NOT NULL OR EXISTS(SELECT 1 FROM stockchief_runtime.agent_blanket_releases r
@@ -65,7 +68,7 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
@@ -83,16 +86,17 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-quality-holds').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-rfqs').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-claims').inbox(database,workspaceId,actorId):[],
-      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary):[],
+      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary)):[],
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
       actor?.role==='owner'?require('../operations/agent-return-disposition').notices(actor.return_assessment_summary):[],
       actor?.role==='owner'?require('../sales/agent-customer-order-pages').notices(actor.customer_page_request_summary):[],
       actor?.role==='owner'?require('../catalog/agent-channel-copy').notices(actor.channel_copy_summary):[],
       actor?.role==='owner'?require('../purchasing/agent-blanket-releases').notices(actor.blanket_contract_summary):[],
+      actor?.role==='owner'?require('../documents/agent-product-source').notices(actor.product_source_summary):[],
     ]);
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
-    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent

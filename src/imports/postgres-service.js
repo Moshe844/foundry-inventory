@@ -131,6 +131,7 @@ async function workspaceContext(database, workspaceId,{sourceHash=null,codes=nul
     accountingCurrency:accounting.rows[0]?.base_currency||null };
 }
 
+function readingCells(row,overrides){const values=overrides?.[row.sourceRow];return values?{...row,originalCells:row.originalCells||row.cells,cells:row.cells.map((value,index)=>Object.hasOwn(values,index)?values[index]:value)}:row;}
 function validateRows(sheet, mappings, proposal, context, input = {}) {
   const rows=[];
   const unknownLocations=new Map();
@@ -142,7 +143,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   context.validationState.strongDocumentProducts=documentRows.strongProductCount;
   context.validationState.inDocumentTail=documentRows.inDocumentTail;
   const headerCurrencies=['unitCost','sellingPrice'].flatMap(field=>sourceMoney.codes(sheet.columns?.find(c=>c.index===mappings[field])?.name||''));
-  for (const [position,row] of sheet.rows.entries()) {
+  for (const [position,sourceRow] of sheet.rows.entries()) {
+    const row=readingCells(sourceRow,input.imageCellOverrides);
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
     const imageRowConfirmed=input.imageReadingConfirmed===true||Boolean(input.imageReviewedRows?.has(Number(row.sourceRow)));
     if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
@@ -157,11 +159,12 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
       ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
+    if(input.imageSource&&!input.handwritingDelivery&&existingMatches.length===1){const sourceUnit=trimOrNull(textCell(row,mappings.unitLabel)),stockUnit=existingMatches[0].unit_label,normalize=v=>String(v||'').trim().toLowerCase(),each=new Set(['unit','units','each','ea','piece','pieces','pc','pcs']);if(sourceUnit&&normalize(sourceUnit)!==normalize(stockUnit)&&!(each.has(normalize(sourceUnit))&&each.has(normalize(stockUnit))))problems.push(problem('invalid_unit_label','The source uses '+sourceUnit+' but this product is counted in '+stockUnit+'. Confirm the physical quantity in the product unit, or receive the supplier pack against its purchase order. StockChief will not guess a conversion.'));}
     let quantityRead=rowValues.readQuantity(quantitySource);
     // A source cannot invent a fractional stocking unit. A saved item's
     // precision and increment are the authority for its imported counts.
     if(existingMatches.length===1&&(quantityRead.ok&&quantityRead.value!==null||quantityRead.problem==='fractional_quantity')){
-      try{const cleaned=String(quantitySource).trim().replace(/[\s,](?=\d{3}\b)/g,'').replace(/^\+/,'');quantityRead={ok:true,value:stockQuantity.validate(existingMatches[0],cleaned,{positive:false})};}
+      try{const cleaned=String(quantitySource).trim().replace(/[\s,](?=\d{3}\b)/g,'').replace(/^\+/,'');quantityRead={ok:true,value:stockQuantity.validate(input.handwritingDelivery?{...existingMatches[0],quantity_precision:6,quantity_increment:'0.000001'}:existingMatches[0],cleaned,{positive:false})};}
       catch(error){quantityRead={ok:false,problem:'bad_quantity',message:error.message};}
     }
     let quantity=quantityRead.ok ? quantityRead.value : null;
@@ -323,7 +326,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(role)parsed.documentEvidence=role;
     if(aggregate)problems.push(problem('document_trailer','This is a document total, charge or note without a separate product identity; it is retained as document evidence and excluded from stock.'));
     for(let i=problems.length-1;i>=0;i--)if(problems.findIndex(p=>p.code===problems[i].code)<i)problems.splice(i,1);
-    rows.push({id:newAppendId('improw'),rowNumber:row.sourceRow,position,raw:row.cells,parsed,problems,
+    rows.push({id:newAppendId('improw'),rowNumber:row.sourceRow,position,raw:row.originalCells||row.cells,parsed,problems,
       status:alreadyImported?'SKIPPED':aggregate?'EXCLUDED':blocked?'INVALID':'VALID'});
   }
   return { rows,summary:{total:rows.length,valid:rows.filter((row)=>row.status==='VALID').length,
@@ -446,6 +449,13 @@ async function assertImportRowCapacity(database,workspaceId,rowCount){
 }
 
 async function analyse(database, ctx, input) {
+  const handwritten=['handwritten-count','handwritten-delivery'].includes(input.readingMode),bytes=input.buffer;
+  try{return await analyseInner(database,ctx,input);}catch(error){
+    if(handwritten&&Buffer.isBuffer(bytes))await require('./handwritten-table').refund(database,ctx,require('./handwritten-table').creditPrefix(input,digest(bytes)));
+    throw error;
+  }
+}
+async function analyseInner(database, ctx, input) {
   if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
   await assertOperator(database,ctx);
   const buffer=input.buffer || null;
@@ -454,14 +464,28 @@ async function analyse(database, ctx, input) {
   const bytes=buffer || Buffer.from(text,'utf8');
   await require('../commercial/storage-capacity').check(database,ctx.workspaceId,bytes.length);
   const sourceHash=digest(bytes);
+  const handwriting=input.readingMode==='handwritten-count'?'count':input.readingMode==='handwritten-delivery'?'delivery':null;
+  const authorizeHandwriting=()=>require('./handwritten-table').authorize(database,ctx);
+  if(handwriting){await authorizeHandwriting();await require('./handwritten-table').reserveDocument(database,ctx,require('./handwritten-table').creditPrefix(input,sourceHash));input={...input,imageSource:true,handwritingDelivery:handwriting==='delivery',importMode:handwriting==='count'?'set':'add'};}
   const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
   const isImage=Boolean(buffer)&&require('./image-table').isImage(buffer);
   await input.onProgress?.({stage:'reading'});
-  const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
+  const parsedWorkbook=handwriting?await require('./handwritten-table').parse(buffer,{purpose:handwriting,authorize:authorizeHandwriting,onProgress:input.onProgress,providerForPage:async page=>{
+    const config=require('../config');if(!input.provider&&!config.ai.configured)throw new ValidationError('Handwriting reading is not connected yet. Your original file is retained. Contact support or use a typed table.');
+    const provider=input.provider||require('../ai/provider').createProviderUnobserved(config.ai.provider,config.ai.tier('fast'));
+    const key=require('./handwritten-table').creditPrefix(input,sourceHash);
+    return require('../commercial/model').wrap(database,ctx,provider,'import_mapping',page===1?key:key+':page:'+page,page===1?{deferCustomerCommit:true}:{chargeCustomer:false,fundingKey:key,deferCustomerCommit:true});
+  }}):isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename,indexed:true}:{text,filename:input.filename,indexed:true});
   await input.onProgress?.({stage:'matching',worksheets:parsedWorkbook.sheets.length});
   if(parsedWorkbook.format==='image'||parsedWorkbook.visualSource)input={...input,imageSource:true};
+  if(handwriting)input={...input,mappings:parsedWorkbook.mappings,allowModel:false};
+  if(handwriting){const reader=require('./handwritten-table'),creditKey=reader.creditPrefix(input,sourceHash),prefix=ctx.workspaceId+':'+creditKey;
+    parsedWorkbook.handwriting.creditsUsed=Number((await database.query("SELECT coalesce(sum(units),0)::text n FROM commercial_usage_events WHERE workspace_id=$1 AND meter='ai_work_credits' AND status IN('RESERVED','COMMITTED') AND (idempotency_key=$2 OR left(idempotency_key,length($2)+1)=$2||':')",[ctx.workspaceId,prefix])).rows[0].n);
+    const originalBeforeCommit=input.beforeCommit;
+    input={...input,beforeCommit:async(client,plan)=>{await originalBeforeCommit?.(client,plan);await reader.commitCredits(client,ctx,creditKey);}};
+  }
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
@@ -557,6 +581,7 @@ async function analyse(database, ctx, input) {
     fieldMappings:proposal.mappings,transformations:{...(analysisNotice?{analysisNotice}:{}),...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
       ...(template?{columnTemplate:{source:template.source,mappings:template.mappings,automatic:reuse}}:{}),
       ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
+      ...(handwriting?{handwriting:parsedWorkbook.handwriting}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
         variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
@@ -574,6 +599,7 @@ async function analyse(database, ctx, input) {
   if(trackingSummary&&!streaming){trackingSummary.add(validated.rows);plan.transformations.trackingSummary=trackingSummary.finish(plan);}
   plan.integrityHash=integrityFor(plan,validated.rows);
   await database.transaction(async(client)=>{
+    if(handwriting)await require('./handwritten-table').authorize(client,ctx);
     if(reuse){
       const current=await columnMapping.match(client,ctx.workspaceId,layout);
       if(!await columnMapping.automatic(client,ctx.workspaceId)||current?.source!==template.source)
@@ -715,7 +741,7 @@ async function revise(database,ctx,id,input={},options={}){
     if(!saved)throw new NotFoundError('That import could not be found.');
     if((saved.apply_checkpoint?.cataloguePrepared||saved.apply_checkpoint?.catalogueStarted))throw new ValidationError('This approved import has started. Continue its saved progress; its recorded batches cannot be rewritten by changing the preview.');
     const plan=hydratePlan(saved);
-    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
+    await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan,{reviewOnly:true});
     if(input.columnSource){
       const verified=await require('./agent-column-mapping').verify(client,ctx,plan,{source:input.columnSource,integrityHash:input.expectedHash});
       if(stable(input.fieldMappings)!==stable(verified.mappings))throw new ValidationError('The proposed fields differ from the approved source.');
@@ -770,7 +796,14 @@ async function revise(database,ctx,id,input={},options={}){
       if(!/^\d+$/.test(number)||!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(k=>!['unitCost','sellingPrice'].includes(k)||fieldMappings[k]===undefined)||Object.values(values).some(v=>typeof v!=='string'||v.length>80)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid money correction.');
       moneyOverrides[number]={...(moneyOverrides[number]||{}),...values};
     }
-    const imageReviewedRows=new Set(mappingChanged?[]:plan.transformations.imageReviewedRows||[]);
+    const imageCellOverrides={...(plan.transformations.imageCellOverrides||{})},changedReadingRows=[];
+    if(input.imageCellOverrides!==undefined&&!visualSource(plan))throw new ValidationError('Image cell corrections belong to a saved image reading.');
+    const updates=Object.entries(input.imageCellOverrides||{});if(updates.length>500)throw new ValidationError('Review up to 500 source rows in one saved correction.');
+    if(updates.length){const actual=new Set((await client.query("SELECT row_number::text n FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=ANY($3::bigint[]) AND status<>'EXCLUDED'",[ctx.workspaceId,id,updates.map(([number])=>{if(!/^\d+$/.test(number))throw new ValidationError('Choose an actual source row.');return number;})])).rows.map(r=>r.n));
+      for(const [number,values] of updates){if(!actual.has(number)||!values||typeof values!=='object'||Array.isArray(values)||Object.entries(values).some(([index,value])=>!/^\d+$/.test(index)||!plan.sourceColumns.some(c=>c.index===Number(index))||typeof value!=='string'||value.length>2000))throw new ValidationError('Choose existing source cells and corrections up to 2,000 characters.');
+        const next={...(imageCellOverrides[number]||{}),...values};if(stable(next)!==stable(imageCellOverrides[number]||{}))changedReadingRows.push(Number(number));imageCellOverrides[number]=next;}
+    }
+    const imageReviewedRows=new Set(mappingChanged?[]:plan.transformations.imageReviewedRows||[]);for(const number of changedReadingRows)imageReviewedRows.delete(number);
     if(input.confirmImageReading===true&&input.reviewedRowNumbers!==undefined){
       if(!Array.isArray(input.reviewedRowNumbers)||!input.reviewedRowNumbers.length||input.reviewedRowNumbers.some(n=>!/^\d+$/.test(String(n))))
         throw new ValidationError('Review the image rows shown on this page before confirming.');
@@ -779,7 +812,7 @@ async function revise(database,ctx,id,input={},options={}){
       for(const row of actual)imageReviewedRows.add(Number(row.row_number));
     }
     const unreviewed=visualSource(plan)&&imageReviewedRows.size?(await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status<>'EXCLUDED' AND NOT(row_number=ANY($3::bigint[])) LIMIT 1`,[ctx.workspaceId,id,[...imageReviewedRows]])).rows.length>0:true;
-    const imageReadingConfirmed=visualSource(plan)&&(!mappingChanged&&plan.transformations.imageReadingConfirmed===true||input.confirmImageReading===true&&input.reviewedRowNumbers===undefined||!unreviewed);
+    const imageReadingConfirmed=visualSource(plan)&&(!mappingChanged&&!changedReadingRows.length&&plan.transformations.imageReadingConfirmed===true||input.confirmImageReading===true&&input.reviewedRowNumbers===undefined||!unreviewed);
     const documentRowRoles=mappingChanged?{}:{...(plan.transformations.documentRowRoles||{})};
     for(const [number,value] of Object.entries(input.documentRowRoles||{})){if(!/^\d+$/.test(number)||!['product','document'].includes(value)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose a source row and whether it is a product or document information.');documentRowRoles[number]=value;}
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
@@ -833,7 +866,7 @@ async function revise(database,ctx,id,input={},options={}){
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,documentRowRoles,
         ...(worksheetScope?{worksheetScope}:{}),
-        ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageReviewedRows:[...imageReviewedRows],imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
+        ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageCellOverrides,imageReviewedRows:[...imageReviewedRows],imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,
         allowPartialImport:input.allowPartialImport===undefined?Boolean(plan.transformations.allowPartialImport):input.allowPartialImport===true},
@@ -857,7 +890,7 @@ async function revise(database,ctx,id,input={},options={}){
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-      const sourceRows=current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}));
+      const sourceRows=current.map(row=>readingCells({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]},imageCellOverrides));
       const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,locationComponents:Boolean(plan.transformations.workbook?.contract?.stock?.locations?.length),trackingReview};
       const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,includePositions:revised.transformations.importMode!=='add',rowNumbers:sourceRows.map(r=>r.sourceRow),
         supplierNames:sourceRows.map(r=>textCell(r,fieldMappings.supplierName).toLowerCase()).filter(Boolean),
@@ -865,7 +898,7 @@ async function revise(database,ctx,id,input={},options={}){
       batchContext.validationState=context.validationState;
       const validated=validateRows({columns:plan.sourceColumns,rows:sourceRows},fieldMappings,
         rowProposal,plannedLocations.withProposals(batchContext,proposedLocations),
-          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,imageReviewedRows,confirmCatalogOnly,importMode:revised.transformations.importMode});
+          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,imageCellOverrides,documentRowRoles,handwritingDelivery:plan.transformations.handwriting?.purpose==='delivery',imageSource:visualSource(plan),imageReadingConfirmed,imageReviewedRows,confirmCatalogOnly,importMode:revised.transformations.importMode});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]=addExact(summary[key],validated.summary[key]);
@@ -909,6 +942,7 @@ async function approve(database, ctx, id, expectedHash) {
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
     const plan=hydratePlan(result.rows[0]);
+    if(plan.transformations.handwriting)await require('../commercial/agent-plan').requireWorkspaceJob(client,ctx.workspaceId,139,'draft');
     await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
     if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
@@ -986,6 +1020,7 @@ async function execute(database,ctx,id,options={}){
 async function executeUnlocked(database, ctx, id, options={}) {
   await assertOperator(database,ctx);
   const plan=await getForMutation(database,ctx.workspaceId,id);
+  if(plan.transformations.handwriting)await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,139,'draft');
   if(plan.approvalStatus!=='APPROVED')throw new ValidationError('Approve the preview before importing it.');
   const previous=(await database.query(`SELECT e.* FROM import_executions e JOIN import_plans p ON p.id=e.import_id
     WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status='SUCCEEDED' AND (p.records_invalid=0 OR p.id=$3) ORDER BY e.finished_at DESC LIMIT 1`,

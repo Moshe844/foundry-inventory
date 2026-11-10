@@ -73,9 +73,17 @@ async function recover(client, now) {
   const expired = await client.query(`SELECT * FROM stockchief_runtime.jobs
     WHERE status = 'RUNNING' AND lease_expires_at <= $1 FOR UPDATE SKIP LOCKED`, [now]);
   for (const row of expired.rows) {
-    if(row.kind==='import.analyse-source'){
+    if(['import.analyse-source','import.analyse-handwriting.v1'].includes(row.kind)){
       const receipt=(await client.query(`SELECT u.id,u.plan_id FROM import_source_uploads u JOIN import_plans p ON p.id=u.plan_id AND p.workspace_id=u.workspace_id AND p.source_hash=u.source_hash WHERE u.job_id=$1 AND u.workspace_id=$2 AND u.id=$3 AND u.actor_id=$4`,[row.id,row.workspace_id,row.payload?.uploadId,row.payload?.actorId])).rows[0];
       if(receipt){await client.query(`UPDATE stockchief_runtime.jobs SET status='COMPLETED',result=$2::jsonb,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,completed_at=$3,updated_at=$3 WHERE id=$1`,[row.id,JSON.stringify({uploadId:receipt.id,planId:receipt.plan_id,recovered:true}),new Date(now).toISOString()]);await event(client,row.id,'COMPLETION_RECOVERED',{planId:receipt.plan_id},now);continue;}
+    }
+    if(row.kind==='import.analyse-handwriting.v1'){
+      const source=(await client.query('SELECT input_options,source_hash FROM import_source_uploads WHERE job_id=$1 AND workspace_id=$2 AND plan_id IS NULL',[row.id,row.workspace_id])).rows[0];
+      if(source){const reader=require('../imports/handwritten-table'),readingAttempt=require('node:crypto').createHash('sha256').update(row.lease_token||row.id).digest('hex').slice(0,20);await reader.refund(client,{workspaceId:row.workspace_id,actorId:row.payload?.actorId},reader.creditPrefix({...source.input_options,readingAttempt},source.source_hash));}
+    }
+    if(row.kind==='import.read-contract.v1'){
+      const result=await require('../documents/agent-contract-reader').recover(client,hydrate(row));
+      if(result){await client.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',result=$2::jsonb,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,completed_at=$3,updated_at=$3 WHERE id=$1",[row.id,JSON.stringify(result),new Date(now).toISOString()]);await event(client,row.id,'COMPLETION_RECOVERED',result,now);continue;}
     }
     const dead = row.attempt_count >= row.max_attempts;
     await client.query(`UPDATE stockchief_runtime.jobs SET status = $2, available_at = $3,
@@ -122,7 +130,7 @@ async function claim(database, options = {}) {
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS, options.maintenanceOnly === true]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
-    if(['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read','import.analyse-source','import.execute-approved','import.revise-preview'].includes(selected.kind)){
+    if(selected.kind.startsWith('import.')||['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read'].includes(selected.kind)){
       const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[selected.workspace_id])).rows[0]?.owner_account_id;
       const lane=selected.kind.startsWith('import.')?'imports':'agents';
       if(owner){const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[`jobs-account:${owner}:${lane}`])).rows[0].acquired;

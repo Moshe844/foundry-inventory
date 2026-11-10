@@ -17,6 +17,48 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  function starterAgentPage(job,mode,title,render){
+    return asyncRoute(async(req,res)=>{
+      const state=await policy.accountState(database,req.ctx.workspaceId);
+      const planIncludes=policy.permits(state.plan,job,mode);
+      if(planIncludes&&policy.usesAgentTerms(state))return render(req,res);
+      return res.page('autopilot/agent-plan-locked',{title,nav:'autopilot',tier:'Starter',
+        reviewTerms:planIncludes&&!policy.usesAgentTerms(state),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+    });
+  }
+  const contractReader=require('../../documents/agent-contract-reader');
+  const contractsPage=starterAgentPage(143,'suggest','Contract prices, terms and dates',async(req,res)=>res.page('autopilot/contracts',{title:'Contract prices, terms and dates',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},contractLabels:contractReader.labels,screen:await contractReader.page(database,req.ctx,{id:req.params.id,page:req.query.page||1})}));
+  router.get('/autopilot/reviews/contract-readings',requireAuth,owner,(req,res)=>res.redirect(303,'/autopilot/contracts'));
+  router.get('/autopilot/contracts',requireAuth,owner,contractsPage);
+  router.post('/autopilot/contracts/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.configure(database,req.ctx,req.body);await contractReader.schedule(database,req.ctx.workspaceId);res.redirect(303,'/autopilot/contracts');}));
+  router.post('/autopilot/contracts',requireAuth,owner,asyncRoute(async(req,res)=>{if(req.files?.length!==1||req.files[0].field!=='contract')throw new ValidationError('Choose one complete contract file.');const r=await contractReader.enqueue(database,req.ctx,{buffer:req.files[0].buffer,filename:req.files[0].filename,requestKey:req.body.requestKey});res.redirect(303,'/autopilot/contracts/'+r.id);}));
+  router.get('/autopilot/contracts/:id/status',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await contractReader.load(database,req.ctx,req.params.id);res.set('Cache-Control','no-store').json({status:r.status,jobStatus:r.job_status,problem:r.problem});}));
+  router.get('/autopilot/contracts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await contractReader.load(database,req.ctx,req.params.id);res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"}).type('application/octet-stream').attachment(r.filename).send(r.content);}));
+  router.get('/autopilot/contracts/:id',requireAuth,owner,contractsPage);
+  router.post('/autopilot/contracts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/contracts/'+req.params.id);}));
+  const supplierInvoices=require('../../purchasing/agent-supplier-invoice-intake');
+  const supplierInvoicePage=starterAgentPage(98,'draft','Supplier invoices',async(req,res)=>res.page('autopilot/supplier-invoices',{title:'Supplier invoices: originals, matches and exceptions',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await supplierInvoices.page(database,req.ctx,{...req.query,id:req.params.id}),invoiceCurrency:require('../../domain/currency'),differenceLabel:require('../../purchasing/postgres-invoice-review').differenceLabel}));
+  router.get('/autopilot/supplier-invoices',requireAuth,owner,supplierInvoicePage);
+  router.post('/autopilot/supplier-invoices/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.configure(database,req.ctx,req.body);req.flash('success',req.body.stop==='yes'?'Mailbox invoice matching stopped. Originals are retained.':'Source mailboxes enabled. Clear matches still require the current plan and invoice job authority.');res.redirect(303,'/autopilot/supplier-invoices');}));
+  router.post('/autopilot/supplier-invoices/upload',requireAuth,owner,require('../multipart').multipart({limit:21*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{const files=(req.files||[]).filter(f=>f.field==='invoiceFile');if(files.length!==1)throw new ValidationError('Choose one complete supplier invoice original.');const orders=(await database.query("SELECT id FROM purchase_orders WHERE workspace_id=$1 AND (id=$2 OR lower(po_number)=lower($2)) ORDER BY id LIMIT 2",[req.ctx.workspaceId,String(req.body.purchaseOrderReference||'').trim()])).rows;if(orders.length!==1)throw new ValidationError('Choose the exact placed purchase order number.');await require('../../purchasing/supplier-invoice-uploads').enqueue(database,req.ctx,{buffer:files[0].buffer,filename:files[0].filename,purchaseOrderId:orders[0].id});req.flash('success','Original saved and queued for reading. Rechecks reuse its single document receipt.');res.redirect(303,'/autopilot/supplier-invoices');}));
+  router.post('/autopilot/supplier-invoice-uploads/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await require('../../purchasing/supplier-invoice-uploads').retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/supplier-invoices');}));
+  router.post('/autopilot/supplier-invoice-uploads/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await require('../../purchasing/supplier-invoice-uploads').cancel(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/supplier-invoices');}));
+  router.get('/autopilot/supplier-invoice-uploads/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.owner(database,req.ctx);const row=(await database.query('SELECT filename,content FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];if(!row)throw new ValidationError('That original is unavailable.');res.set({'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="'+row.filename.replace(/[^a-zA-Z0-9_.-]/g,'_')+'"','Cache-Control':'private, no-store'});res.send(row.content);}));
+  router.get('/autopilot/supplier-invoices/:id',requireAuth,owner,supplierInvoicePage);
+  for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
+  router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
+  const supplierCosts=require('../../purchasing/agent-supplier-comparison-terms');
+  router.get('/autopilot/supplier-costs',requireAuth,owner,starterAgentPage(22,'suggest','Supplier delivered cost evidence',async(req,res)=>res.page('autopilot/supplier-costs',{title:'Supplier delivered cost evidence',nav:'autopilot',cash:require('../../domain/currency'),screen:await supplierCosts.screen(database,req.ctx,{supplierItemId:req.query.offer,locationId:req.query.location,filter:req.query.filter,page:req.query.page||1})})));
+  router.post('/autopilot/supplier-costs/terms',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierCosts.save(database,req.ctx,req.body);req.flash('success',r.cleared?'Comparison evidence withdrawn.':'Checked delivery and tax evidence saved. No supplier, price, purchase or accounting record was changed.');res.redirect(303,'/autopilot/supplier-costs?offer='+encodeURIComponent(r.supplierItemId)+'&location='+encodeURIComponent(r.locationId));}));
+  router.post('/autopilot/supplier-costs/rates',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierCosts.saveRate(database,req.ctx,req.body);req.flash('success','Checked comparison exchange quote saved. No money was posted or exchanged.');res.redirect(303,'/autopilot/supplier-costs');}));
+  const customerInvoices=require('../../accounting/agent-customer-invoices');
+  router.get('/autopilot/customer-invoices',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/customer-invoices',{title:'Customer invoices after shipment',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await customerInvoices.page(database,req.ctx,req.query)})));
+  router.post('/autopilot/customer-invoices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this exact posted shipment invoice for printing',{action:'customer_invoice.prepare_document',recordReference:req.body.invoiceNumber});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact posted shipment invoice.');res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/autopilot/customer-invoices/settings',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await customerInvoices.configure(database,req.ctx,req.body);req.flash('success',r.stopped?'Customer invoice routine stopped.':'Customer invoice routine enabled. New confirmed dispatches queue private printable invoices.');res.redirect(303,'/autopilot/customer-invoices');}));
+  router.get('/autopilot/customer-invoices/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const d=await customerInvoices.document(database,req.ctx,req.params.id);res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.send(d.html);}));
   const blanket=require('../../purchasing/agent-blanket-releases');
   const blanketPage=async(req,res,draft=null)=>res.page('autopilot/blanket-releases',{title:'Supplier contracts and release drafts',nav:'autopilot',suppressBack:true,cash:require('../../domain/currency'),screen:await blanket.screen(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),draft});
   router.get('/autopilot/blanket-releases',requireAuth,owner,asyncRoute((req,res)=>blanketPage(req,res)));
@@ -33,6 +75,7 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/preview',requireAuth,owner,asyncRoute(async(req,res)=>copyPage(req,res,{draft:await channelCopy.preview(database,req.ctx,req.body)})));
   router.post('/autopilot/channel-copy',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
+  router.post('/autopilot/channel-copy/runs/:runId/approve',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.approve(database,req.ctx,req.params.runId,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
   router.get('/autopilot/channel-copy/versions/:versionId/copy.csv',requireAuth,owner,asyncRoute(async(req,res)=>{const csv=await channelCopy.download(database,req.ctx,req.params.versionId);res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="prepared-channel-copy.csv"'});res.send(csv);}));
   router.get('/autopilot/channel-copy/:id',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));
@@ -263,6 +306,15 @@ function createPostgresAutopilotRouter(database){
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);
     res.page('autopilot/filed-document',{title:'Filed document',nav:'autopilot',document,documentFactLabels:require('../../documents/agent-product-facts').labels,backTo:{href:document.targetHref,label:document.target_reference}});
   }));
+  const productSources=require('../../documents/agent-product-source');
+  router.get('/autopilot/product-facts',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/product-source',{title:'Product source readings',nav:'autopilot',screen:await productSources.screen(database,req.ctx,{itemId:req.query.itemId||null,page:req.query.page||1}),initial:{productReference:req.query.product||'',filedDocument:req.query.filedDocument||''}})));
+  router.post('/autopilot/product-facts',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});res.redirect(303,'/autopilot/product-facts/'+r.id);}));
+  router.get('/autopilot/product-facts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.load(database,req.ctx,req.params.id);res.set('Cache-Control','no-store').type('application/octet-stream').attachment(r.filename).send(r.content);}));
+  router.get('/autopilot/product-facts/:id/facts.csv',requireAuth,owner,asyncRoute(async(req,res)=>{res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="sourced-product-facts.csv"'}).send(await productSources.csv(database,req.ctx,req.params.id));}));
+  router.get('/autopilot/product-facts/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/product-source',{title:'Product source facts',nav:'autopilot',screen:await productSources.screen(database,req.ctx,{id:req.params.id}),initial:{}})));
+  router.post('/autopilot/product-facts/:id/approve',requireAuth,owner,asyncRoute(async(req,res)=>{await productSources.approve(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/product-facts/'+req.params.id);}));
+  router.post('/autopilot/product-facts/:id/acknowledge',requireAuth,owner,asyncRoute(async(req,res)=>{await productSources.acknowledge(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/product-facts/'+req.params.id);}));
+  router.post('/autopilot/product-facts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.load(database,req.ctx,req.params.id);const next=await productSources.enqueue(database,req.ctx,{itemId:r.item_id,buffer:r.content,filename:r.filename,fileAttachment:r.source_attachment_id,filedDocument:r.source_filed_id,documentKind:r.document_kind,targetConfirmed:r.target_confirmed,automatic:r.automatic,enrich:r.enrich});res.redirect(303,'/autopilot/product-facts/'+next.id);}));
   const jobModes=require('../../autopilot/job-modes');
   router.get('/autopilot/job-modes',requireAuth,owner,asyncRoute(async(req,res)=>{
     res.page('autopilot/job-modes',{title:'Authority by job',nav:'autopilot',jobs:await jobModes.page(database,req.ctx),modes:jobModes.modes});
@@ -489,6 +541,20 @@ function createPostgresAutopilotRouter(database){
   router.post('/autopilot/reviews/margin-prices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Review the selling price after the cost increase',
       {action:'catalog.restore_margin',sku:req.body.sku});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/reviews/stock-rotation/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review exact FIFO/FEFO reservations for this order',{action:'sales_order.reserve_rotation',recordReference:req.body.order,strategy:req.body.strategy,historicalFifoEvidence:req.body.historicalFifoEvidence});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/stock-rotation/:order/release',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../warehouse/agent-stock-rotation').release(database,req.ctx,req.params.order);res.redirect(303,'/orders/'+req.params.order);
+  }));
+  router.post('/autopilot/reviews/:job/purchasing-prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const actions={'reorder-drafts':'purchase_order.reorder_drafts','reorder-explanation':'purchase_order.reorder_drafts','supplier-options':'purchasing.select_supplier'};
+    if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a reorder or supplier review.');
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review current purchasing preparation',
+      {action:actions[req.params.job],skuCodes:req.body.skuCodes,location:req.body.location,strategy:req.body.strategy,quantity:req.body.quantity,secondaryQuantities:req.body.secondaryQuantities,comparisonBasis:req.body.comparisonBasis,comparisonCurrency:req.body.comparisonCurrency,goodsOnlyReason:req.body.goodsOnlyReason});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{

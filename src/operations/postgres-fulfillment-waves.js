@@ -250,6 +250,8 @@ async function scan(database,ctx,id,input){
         [ctx.workspaceId,line.location_id,lotId])).rows[0].quantity);
         if(already+quantity>available)throw new ValidationError('That lot does not contain enough stock for this scan. Nothing was picked.');
       }
+      const originalLine=(await client.query('SELECT sales_order_line_id FROM sales_shipment_lines WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,line.shipment_line_id])).rows[0];
+      await require('./postgres-stock-rotation').assertScan(client,ctx,{lineId:originalLine.sales_order_line_id,skuId:line.sku_id,locationId:line.location_id,lotId,serialUnitId,quantity});
       await client.query(`UPDATE fulfillment_wave_lines SET picked_quantity=picked_quantity+$2,
         status=CASE WHEN picked_quantity+$2=planned_quantity THEN 'PICKED' ELSE 'OPEN' END WHERE id=$1`,
       [line.id,quantity]);

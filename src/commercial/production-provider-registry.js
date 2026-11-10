@@ -3,6 +3,7 @@
 // worker. NOT_PG_ENABLED files are transitively loaded legacy code; the
 // PostgreSQL Anthropic/HTTP gates deny their unscoped execution before spend.
 const classification=Object.freeze({
+ 'documents/agent-contract-reader.js':'METERED',
  'actions/second-read.js':'NOT_PG_ENABLED',
  'ai/deadline.js':'NOT_PG_ENABLED',
  'ai/providers/anthropic.js':'METERED',
@@ -34,6 +35,7 @@ const classification=Object.freeze({
  'foundry/document-intake.js':'NOT_PG_ENABLED',
  'foundry/understanding-service.js':'NOT_PG_ENABLED',
  'imports/mapping-service.js':'METERED',
+ 'imports/handwritten-table.js':'METERED',
  // Relational workbook interpretation receives the same funded import provider.
  'imports/workbook-relations.js':'METERED',
  'lib/provider-http.js':'METERED',

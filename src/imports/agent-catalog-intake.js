@@ -1,8 +1,9 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),policy=require('../commercial/agent-plan');
 const tasks=new Map([[5,'import.count_sheet'],[127,'import.supplier_catalog'],[130,'import.variants']]);
-async function assertNotReceiving(db,ctx,plan){
+async function assertNotReceiving(db,ctx,plan,{reviewOnly=false}={}){
   if(plan.transformations.agentJob===43)throw new ValidationError('This delivery document is linked to a purchase receipt. Open the purchase order to review the recorded units.');
+  if(!reviewOnly&&plan.transformations.handwriting?.purpose==='delivery')throw new ValidationError('Receive this delivery against its purchase order using the receiving form. A general stock import would leave the purchase order outstanding and could count the goods twice.');
   if((await db.query("SELECT 1 FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='purchase_order.receive' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,'receiving-document:'+plan.sourceHash])).rowCount)
     throw new ValidationError('This source was already recorded as a purchase receipt. Importing it as stock would count the delivery twice.');
 }

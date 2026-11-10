@@ -3,9 +3,9 @@ const policy=require('../commercial/agent-plan'),{ValidationError}=require('../d
 async function requireRoutineAuthority(db,ctx){
  await policy.requireWorkspaceJob(db,ctx.workspaceId,98,'automatic');
  const grant=(await db.query(`SELECT m.revision FROM stockchief_runtime.agent_job_modes m JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.updated_by AND u.role='owner'
-  JOIN accounts a ON a.id=u.account_id JOIN workspace_autopilot w ON w.workspace_id=m.workspace_id
+  JOIN accounts a ON a.id=u.account_id JOIN workspaces owned ON owned.id=u.workspace_id AND owned.owner_account_id=u.account_id AND owned.deletion_requested_at IS NULL JOIN workspace_autopilot w ON w.workspace_id=m.workspace_id
   WHERE m.workspace_id=$1 AND m.job_id=98 AND m.mode='routine' AND u.id=$2
-   AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=a.id AND x.disabled_at IS NOT NULL) FOR SHARE OF m,u,w`,[ctx.workspaceId,ctx.actorId])).rows[0];
+   AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=a.id AND x.disabled_at IS NOT NULL) FOR SHARE OF m,u,w,a,owned`,[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!grant||!(await require('../autopilot/postgres-service').getState(db,ctx.workspaceId)).canAutomate)throw new ValidationError('The owner must enable the supplier invoice routine and automatic work before it can post.');
  return {kind:'standing_job_rule',job:98,ownerId:ctx.actorId,modeRevision:Number(grant.revision)};
 }

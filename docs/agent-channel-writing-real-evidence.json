@@ -1,0 +1,120 @@
+{
+  "at": "2026-11-10T15:45:34.443Z",
+  "synthetic": true,
+  "costs": [
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "operation": "model_input",
+      "tokens": 6281,
+      "amount_minor": 0.6281
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "operation": "model_output",
+      "tokens": 2340,
+      "amount_minor": 1.17
+    }
+  ],
+  "batches": [
+    {
+      "settings": {
+        "label": "Synthetic French marketplace",
+        "channelName": "Synthetic marketplace",
+        "channelStyle": "marketplace",
+        "language": "French",
+        "tone": "clear",
+        "descriptionStyle": "bullets"
+      },
+      "credits": 160,
+      "document": [
+        {
+          "sku": "SYN-APRON-NAVY",
+          "title": "Tablier de travail en coton Navy",
+          "channel": "Synthetic marketplace",
+          "problem": null,
+          "description": "• Tablier en coton tissé avec deux poches frontales\n• Lavage machine à 30°C\n• Pas de revêtement imperméabilisant\n• Navy"
+        },
+        {
+          "sku": "SYN-APRON-OLIVE",
+          "title": "Tablier de travail en coton Olive",
+          "channel": "Synthetic marketplace",
+          "problem": null,
+          "description": "• Tablier en coton tissé avec deux poches frontales\n• Lavage machine à 30°C\n• Pas de revêtement imperméabilisant\n• Olive"
+        },
+        {
+          "sku": "SYN-LINEN",
+          "title": "Tissu lin armure simple",
+          "channel": "Synthetic marketplace",
+          "problem": null,
+          "description": "• Tissu lin en armure simple\n• Largeur : 150 cm\n• Vendu au mètre"
+        },
+        {
+          "sku": "SYN-PENCIL",
+          "title": "Crayons à dessin en cèdre",
+          "channel": "Synthetic marketplace",
+          "problem": null,
+          "description": "• Boîte de 12 crayons en cèdre\n• Graphite HB\n• Non taillés"
+        },
+        {
+          "sku": "SYN-PRINTER",
+          "title": "Imprimante d'étiquettes de bureau",
+          "channel": "Synthetic marketplace",
+          "problem": null,
+          "description": "• Imprimante d'étiquettes USB pour rouleaux de 58 mm\n• Adaptateur secteur inclus\n• Les étiquettes ne sont pas incluses"
+        }
+      ]
+    },
+    {
+      "settings": {
+        "label": "Synthetic English store",
+        "channelName": "Synthetic direct store",
+        "channelStyle": "store",
+        "language": "English",
+        "tone": "warm",
+        "descriptionStyle": "paragraph"
+      },
+      "credits": 180,
+      "document": [
+        {
+          "sku": "SYN-APRON-NAVY",
+          "title": "Cotton workshop apron Navy",
+          "channel": "Synthetic direct store",
+          "problem": null,
+          "description": "Woven cotton apron in Navy with two front pockets. Machine wash at 30°C. No water-resistant coating."
+        },
+        {
+          "sku": "SYN-APRON-OLIVE",
+          "title": "Cotton workshop apron Olive",
+          "channel": "Synthetic direct store",
+          "problem": null,
+          "description": "Woven cotton apron in Olive with two front pockets. Machine wash at 30°C. No water-resistant coating."
+        },
+        {
+          "sku": "SYN-LINEN",
+          "title": "Linen fabric",
+          "channel": "Synthetic direct store",
+          "problem": null,
+          "description": "Plain-weave linen fabric, 150 cm wide. Sold by the metre."
+        },
+        {
+          "sku": "SYN-PENCIL",
+          "title": "Cedar drawing pencils",
+          "channel": "Synthetic direct store",
+          "problem": null,
+          "description": "A box of 12 cedar pencils with HB graphite. Unsharpened."
+        },
+        {
+          "sku": "SYN-PRINTER",
+          "title": "Desktop label printer",
+          "channel": "Synthetic direct store",
+          "problem": null,
+          "description": "USB desktop label printer for 58 mm rolls. Power adapter included. Labels are not included."
+        }
+      ]
+    }
+  ],
+  "provider_cost_usd": 0.017981,
+  "proof": "Disposable local PostgreSQL, actual configured fast provider through commercial/model.wrap, synthetic native quantity/variant/lot/serial/measured catalog, complete approved CSV downloads. No real channel publication."
+}

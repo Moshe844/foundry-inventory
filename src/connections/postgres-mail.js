@@ -113,6 +113,7 @@ async function capture(database,connection,message){
       return {accepted:true,replayed:true,messageId:existing.id,attachmentsBackfilled};
     }
     await saveAttachments(client,connection.workspace_id,id,attachments,at);
+    if(match.kind==='supplier'&&!attachments.length)await require('../purchasing/agent-supplier-invoice-intake').queueEmailBody(client,connection.workspace_id,id,message.bodyText||message.body);
     if(category==='order'&&match.kind==='customer'&&!attachments.length){
       const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
       await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-order',idempotencyKey:'customer-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});

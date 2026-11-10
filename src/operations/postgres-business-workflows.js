@@ -434,7 +434,7 @@ async function receivePurchaseOrder(database, rawContext, purchaseOrderId, input
 
 async function recordSupplierInvoice(database, rawContext, input, {preview=false,recheckId=null}={}) {
   const ctx = requireContext(rawContext);
-  if (!Array.isArray(input.lines) || !input.lines.length || input.lines.length>500) throw new ValidationError('A supplier invoice needs between one and 500 lines.');
+  if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A supplier invoice needs its complete product lines.');
   return transaction(database, async (client) => {
     await requirePermission(client, ctx, access.MANAGE_ACCOUNTING, 'record supplier invoices');
     const operation = preview?null:await beginOperation(client, ctx, recheckId?'supplier_invoice.recheck':'supplier_invoice.record', input.idempotencyKey);
@@ -454,9 +454,10 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     const invoiceNumber=trimOrNull(input.supplierInvoiceNumber);if(invoiceNumber&&invoiceNumber.length>80)throw new ValidationError('Use the exact supplier invoice number, up to 80 characters.');
     const currency=require('../pricing/postgres-service').normaliseCurrency(input.currency||purchaseOrder?.currency||supplier.currency||'USD');
     if(input.sourceMessageId){const message=await requireRow(client,'SELECT id,supplier_id FROM connection_email_messages WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,input.sourceMessageId],'That invoice email is not in this business.');if(message.supplier_id!==supplier.id)throw new ValidationError('The invoice email does not belong to this supplier.');
-      if(input.sourceAttachmentHash)await requireRow(client,'SELECT id FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 AND content_hash=$3 AND extraction_status=\'READABLE\'',[ctx.workspaceId,input.sourceMessageId,input.sourceAttachmentHash],'The invoice attachment must be completely readable and belong to the source email.');}
+      if(input.sourceAttachmentHash){const invoiceOriginal=await requireRow(client,'SELECT id,extracted_text FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 AND content_hash=$3 AND extraction_status=\'READABLE\'',[ctx.workspaceId,input.sourceMessageId,input.sourceAttachmentHash],'The invoice attachment must be completely readable and belong to the source email.');if(require('../purchasing/supplier-invoice-match').isCreditSource(invoiceOriginal.extracted_text))throw new ValidationError('A supplier credit note cannot become another invoice. Review and approve its separate credit application.');}}
     else if(input.sourceAttachmentHash)throw new ValidationError('An attachment needs its source email.');
-    const documentFingerprint=require('../pricing/postgres-promotions').hash({supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges:input.charges||[],taxMinor:input.taxMinor||0,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null});
+    if(input.sourceUploadId){const upload=(await client.query("SELECT purchase_order_id,status,extracted_text FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND id=$2 FOR SHARE",[ctx.workspaceId,input.sourceUploadId])).rows[0];if(!upload||upload.status!=='READABLE'||upload.purchase_order_id!==purchaseOrder?.id)throw new ValidationError('The original uploaded invoice must belong to this purchase order and be completely readable.');if(require('../purchasing/supplier-invoice-match').isCreditSource(upload.extracted_text))throw new ValidationError('A supplier credit note cannot become another invoice. Review and approve its separate credit application.');}
+    const documentFingerprint=require('../pricing/postgres-promotions').hash({supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges:input.charges||[],taxMinor:input.taxMinor||0,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null,...(input.sourceUploadId?{sourceUploadId:input.sourceUploadId}:{}),...(input.sourcePaymentTerms?{sourcePaymentTerms:input.sourcePaymentTerms}:{})});
     if(reviewed&&reviewed.document_fingerprint!==documentFingerprint)throw new ValidationError('The original invoice evidence changed. A recheck cannot rewrite the supplier document.');
     if(invoiceNumber){const prior=(await client.query("SELECT id,bill_number,status,match_status,total_minor,balance_minor,journal_entry_id,document_fingerprint FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2 AND lower(supplier_invoice_number)=lower($3) AND status<>'VOID'",[ctx.workspaceId,supplier.id,invoiceNumber])).rows[0];if(prior&&prior.id!==reviewed?.id){if(prior.document_fingerprint!==documentFingerprint)throw new ValidationError('That supplier invoice number already exists with different evidence. Review the recorded bill rather than creating a duplicate.');const result={billId:prior.id,billNumber:prior.bill_number,status:prior.status,matchStatus:prior.match_status,totalMinor:Number(prior.total_minor),balanceMinor:Number(prior.balance_minor),journalEntryId:prior.journal_entry_id};if(operation)await completeOperation(client,operation,result);return {...result,replayed:true};}}
     const prepared = [];
@@ -468,57 +469,36 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     const quantitiesThisDocument=new Map();
     const journalLines = [];
     const allSkus=(await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,input.lines.map(l=>l?.skuId).filter(Boolean)])).rows,allItems=(await client.query('SELECT id FROM items WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,input.lines.map(l=>l?.itemId).filter(Boolean)])).rows;
-    const purchaseLines=purchaseOrder?(await client.query(`SELECT * FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2 ${preview?'':'FOR UPDATE'}`,[ctx.workspaceId,purchaseOrder.id])).rows:[],byPoLine=new Map(purchaseLines.map(l=>[l.id,l]));
-    const billedLines=purchaseOrder?(await client.query(`SELECT bl.purchase_order_line_id,sum(bl.quantity) AS quantity FROM accounting_supplier_bill_lines bl JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id WHERE bl.workspace_id=$1 AND b.purchase_order_id=$2 AND b.status IN ('OPEN','PARTIALLY_PAID','PAID') GROUP BY bl.purchase_order_line_id`,[ctx.workspaceId,purchaseOrder.id])).rows:[],billedByLine=new Map(billedLines.map(l=>[l.purchase_order_line_id,Number(l.quantity)]));
-    for (const [index, line] of input.lines.entries()) {
+    const purchaseLines=purchaseOrder?(await client.query(`SELECT p.*,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,i.tracking_mode FROM purchase_order_lines p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE p.workspace_id=$1 AND p.purchase_order_id=$2 ${preview?'':'FOR UPDATE OF p'}`,[ctx.workspaceId,purchaseOrder.id])).rows:[],byPoLine=new Map(purchaseLines.map(l=>[l.id,l]));
+    const billedLines=purchaseOrder?(await client.query(`SELECT bl.purchase_order_line_id,sum(bl.quantity) AS quantity,sum(bl.secondary_quantity) AS secondary,sum(bl.line_total_minor) AS amount,sum(coalesce(bl.matched_receipt_minor,bl.line_total_minor)) AS receipt_amount,bool_or(bl.secondary_quantity IS NULL) AS missing_secondary,jsonb_agg(jsonb_build_object('tracking',bl.tracking_evidence,'quantity',bl.quantity,'secondary',bl.secondary_quantity)) AS tracked FROM accounting_supplier_bill_lines bl JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id WHERE bl.workspace_id=$1 AND b.purchase_order_id=$2 AND b.status IN ('OPEN','PARTIALLY_PAID','PAID') GROUP BY bl.purchase_order_line_id`,[ctx.workspaceId,purchaseOrder.id])).rows:[],billedByLine=new Map(billedLines.map(l=>[l.purchase_order_line_id,l]));
+    const matcher=require('../purchasing/supplier-invoice-match'),priceApproval=await matcher.approval(client,ctx.workspaceId,documentFingerprint),receipts=purchaseOrder?await matcher.receiptEvidence(client,ctx.workspaceId,purchaseOrder.id):new Map();
+    for (const [index,line] of input.lines.entries()) {
       if(!line||typeof line!=='object'||Array.isArray(line))throw new ValidationError('Each supplier invoice line needs valid document fields.');
-      const quantity = Number(line.quantity);
-      if (!Number.isFinite(quantity) || quantity <= 0 || !/^\d+(?:\.\d{1,6})?$/.test(String(quantity))) throw new ValidationError(`Supplier invoice line ${index + 1} quantity is invalid.`);
-      const unitCostMinor = nonNegativeMinor(line.unitCostMinor, `Supplier invoice line ${index + 1} cost`);
-      const lineTotalMinor = priceCalculator.ratio(unitCostMinor,Math.round(quantity*1000000),1000000);
-      if(!Number.isSafeInteger(lineTotalMinor)||!Number.isSafeInteger(subtotal+lineTotalMinor))throw new ValidationError('The invoice line total exceeds the supported accounting range.');
       if(line.skuId&&!allSkus.some(s=>s.id===line.skuId))throw new ValidationError('The invoice product is not in this business.');
       if(line.itemId&&!allItems.some(i=>i.id===line.itemId))throw new ValidationError('The invoice item is not in this business.');
-      let purchaseLine = null, billedUnits=0;
-      if (line.purchaseOrderLineId) {
-        purchaseLine=byPoLine.get(line.purchaseOrderLineId);if(!purchaseLine)throw new ValidationError(`Supplier invoice line ${index+1} does not match this purchase order.`);
-        if(line.skuId&&line.skuId!==purchaseLine.sku_id)throw new ValidationError('The invoice SKU does not match its purchase-order line.');
-        billedUnits=billedByLine.get(purchaseLine.id)||0;const documentQuantity=(quantitiesThisDocument.get(purchaseLine.id)||0)+quantity;quantitiesThisDocument.set(purchaseLine.id,documentQuantity);
-        if (billedUnits + documentQuantity > Number(purchaseLine.quantity_received_units)) {
-          matchStatus = 'EXCEPTION';
-          differences.push({ line: index + 1, kind: 'invoice_ahead_of_receipt',
-            received: Number(purchaseLine.quantity_received_units),
-            previouslyBilled: billedUnits, billed: quantity });
-        }
-        const approvedUnitCostMinor = require('../domain/currency').toMinor(purchaseLine.unit_cost,purchaseOrder.currency,{optional:true,label:'Approved PO price'});
-        if (unitCostMinor !== approvedUnitCostMinor) {
-          matchStatus = 'EXCEPTION';
-          differences.push({ line: index + 1, kind: 'price_outside_approved_cost',
-            approvedUnitCostMinor, billedUnitCostMinor: unitCostMinor });
-        }
-      } else if (purchaseOrder) {
-        matchStatus = 'EXCEPTION';
-        differences.push({ line: index + 1, kind: 'missing_purchase_order_line' });
-      }
-      subtotal += lineTotalMinor;
-      prepared.push({ ...line, quantity, unitCostMinor, lineTotalMinor, purchaseLine,billedUnits });
-      journalLines.push({ accountKey: purchaseLine ? 'RECEIVED_NOT_INVOICED' : 'OPERATING_EXPENSE',
-        debitMinor: lineTotalMinor, supplierId: supplier.id, skuId: line.skuId || purchaseLine?.sku_id || null,
-        memo: line.description });
+      const purchaseLine=line.purchaseOrderLineId?byPoLine.get(line.purchaseOrderLineId):null;
+      if(line.purchaseOrderLineId&&!purchaseLine)throw new ValidationError('The invoice line does not match this purchase order.');
+      const preparedLine=matcher.prepareLine(line,purchaseLine,billedByLine.get(purchaseLine?.id),receipts.get(purchaseLine?.id),quantitiesThisDocument,index+1,purchaseOrder?.currency||currency,{priceApproved:priceApproval?.allow_price_difference===true,trackingApproved:priceApproval?.allow_tracking_confirmation===true});
+      if(!purchaseLine&&purchaseOrder)preparedLine.differences.push({line:index+1,kind:'missing_purchase_order_line'});
+      differences.push(...preparedLine.differences);if(preparedLine.differences.some(d=>!d.approved))matchStatus='EXCEPTION';
+      subtotal=require('../domain/currency').sum([subtotal,preparedLine.lineTotalMinor]);prepared.push(preparedLine);
+      journalLines.push({accountKey:purchaseLine?'RECEIVED_NOT_INVOICED':'OPERATING_EXPENSE',debitMinor:preparedLine.matchedReceiptMinor,supplierId:supplier.id,skuId:line.skuId||purchaseLine?.sku_id||null,memo:line.description});
+      const variance=preparedLine.lineTotalMinor-preparedLine.matchedReceiptMinor;if(variance)journalLines.push({accountKey:'OPERATING_EXPENSE',...(variance>0?{debitMinor:variance}:{creditMinor:-variance}),supplierId:supplier.id,skuId:line.skuId||purchaseLine?.sku_id||null,memo:'Owner-approved invoice price variance'});
     }
     const taxMinor = nonNegativeMinor(input.taxMinor || 0, 'Supplier invoice tax');
-    const charges=input.charges||[];if(!Array.isArray(charges)||charges.length>50)throw new ValidationError('Use at most 50 explicit invoice charges.');
+    const charges=input.charges||[];if(!Array.isArray(charges))throw new ValidationError('Use the complete list of explicit invoice charges.');
     let chargesMinor=0;for(const charge of charges){if(!charge||!['freight','insurance','duty','discount','other'].includes(charge.kind)||!trimOrNull(charge.label)||String(charge.label).length>240||!Number.isSafeInteger(charge.amountMinor)||(charge.kind==='discount'?charge.amountMinor>0:charge.amountMinor<0))throw new ValidationError('Every charge needs its document label, supported kind and exact signed minor amount. Tax belongs in the invoice tax field.');chargesMinor+=charge.amountMinor;if(!Number.isSafeInteger(chargesMinor))throw new ValidationError('The invoice charges exceed the accounting range.');journalLines.push({accountKey:'OPERATING_EXPENSE',...(charge.amountMinor<0?{creditMinor:-charge.amountMinor}:{debitMinor:charge.amountMinor}),supplierId:supplier.id,memo:charge.label});}
     if (taxMinor) journalLines.push({ accountKey: 'SALES_TAX_RECOVERABLE', debitMinor: taxMinor, supplierId: supplier.id });
     const totalMinor = subtotal + taxMinor+chargesMinor;
     if(!Number.isSafeInteger(totalMinor)||totalMinor<=0)throw new ValidationError('A supplier invoice must have a positive, supported total. Use a supplier credit for a credit document.');
     if(input.documentTotalMinor!==undefined&&input.documentTotalMinor!==null){nonNegativeMinor(input.documentTotalMinor,'Document total');if(input.documentTotalMinor!==totalMinor){matchStatus='EXCEPTION';differences.push({kind:'document_total_differs',documentTotalMinor:input.documentTotalMinor,calculatedTotalMinor:totalMinor});}}
-    if(purchaseOrder&&chargesMinor){matchStatus='EXCEPTION';differences.push({kind:'additional_charges_require_review',chargesMinor});}
+    const termsAuthority=matcher.terms(supplier,issueDate,dueDate,input.sourcePaymentTerms),adjustmentAuthority=await matcher.adjustments(client,ctx.workspaceId,purchaseOrder,currency,charges,taxMinor,documentFingerprint);
+    if(purchaseOrder&&charges.length&&!adjustmentAuthority.chargesApproved){matchStatus='EXCEPTION';differences.push({kind:'additional_charges_require_review',chargesMinor});}
     journalLines.push({ accountKey: 'ACCOUNTS_PAYABLE', creditMinor: totalMinor, supplierId: supplier.id });
     const billId = reviewed?.id||newId('apbill');
     const sourceKey = reviewed?.source_key||input.sourceKey || `supplier-invoice:${supplier.id}:${input.supplierInvoiceNumber || input.idempotencyKey}`;
-    const previewResult={preview:true,status:matchStatus==='EXCEPTION'?'DISPUTED':'OPEN',matchStatus,differences,subtotalMinor:subtotal,chargesMinor,taxMinor,totalMinor,currency,issueDate,dueDate,documentFingerprint,
-      matchFingerprint:require('../pricing/postgres-promotions').hash({documentFingerprint,differences,received:prepared.map(l=>({lineId:l.purchaseLine?.id||null,received:l.purchaseLine?.quantity_received_units||0,cost:l.purchaseLine?.unit_cost||null,billed:l.billedUnits})),matchStatus}),lines:prepared.map(l=>({skuId:l.skuId||l.purchaseLine?.sku_id||null,description:l.description,quantity:l.quantity,unitCostMinor:l.unitCostMinor,lineTotalMinor:l.lineTotalMinor}))};
+    const previewResult={preview:true,status:matchStatus==='EXCEPTION'?'DISPUTED':'OPEN',matchStatus,differences,subtotalMinor:subtotal,chargesMinor,taxMinor,totalMinor,currency,issueDate,dueDate,documentFingerprint,routineAdjustmentsProven:adjustmentAuthority.approved,routineTermsProven:termsAuthority.approved,
+      matchFingerprint:require('../pricing/postgres-promotions').hash({documentFingerprint,differences,received:prepared.map(l=>({lineId:l.purchaseLine?.id||null,received:l.purchaseLine?.quantity_received_units||0,cost:l.purchaseLine?.unit_cost||null,billed:l.billedUnits,secondaryReceived:l.purchaseLine?.secondary_quantity_received||0,secondaryQuantity:l.secondaryQuantity,priceQuantity:l.priceQuantity,receipt:receipts.get(l.purchaseLine?.id),adjustmentAuthority,termsAuthority})),matchStatus}),lines:prepared.map(l=>({skuId:l.skuId||l.purchaseLine?.sku_id||null,description:l.description,quantity:l.quantity,secondaryQuantity:l.secondaryQuantity,priceQuantity:l.priceQuantity,unitCostMinor:l.unitCostMinor,lineTotalMinor:l.lineTotalMinor}))};
     if(preview)return previewResult;
     if(input.expectedMatchFingerprint&&input.expectedMatchFingerprint!==previewResult.matchFingerprint)throw new ValidationError('The invoice, purchase order or matched business state changed after approval. Review it again.');
     if(reviewed&&Number(reviewed.total_minor)!==totalMinor)throw new ValidationError('The rechecked invoice total does not match its original recorded amount.');
@@ -548,18 +528,18 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
       status, matchStatus, currency, subtotal+chargesMinor,
       taxMinor, totalMinor, posted?.entry.id || null, sourceKey, JSON.stringify({ differences }),
       trimOrNull(input.notes), ctx.actorId, at]);
-    const invoiceInput={supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,supplierInvoiceNumber:invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges,taxMinor,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null};
+    const invoiceInput={supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,supplierInvoiceNumber:invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges,taxMinor,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null,...(input.sourceUploadId?{sourceUploadId:input.sourceUploadId}:{}),...(input.sourcePaymentTerms?{sourcePaymentTerms:input.sourcePaymentTerms}:{})};
     await client.query('UPDATE accounting_supplier_bills SET charges=$3::jsonb,document_total_minor=$4,source_message_id=$5,source_attachment_hash=$6,document_fingerprint=$7,invoice_input=$8::jsonb,agreed_discount_terms=$9 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,billId,JSON.stringify(charges),input.documentTotalMinor??null,input.sourceMessageId||null,input.sourceAttachmentHash||null,documentFingerprint,JSON.stringify(invoiceInput),supplier.payment_terms]);
     const defaultDebitAccountId = await accountId(client, ctx.workspaceId,
       purchaseOrder ? 'RECEIVED_NOT_INVOICED' : 'OPERATING_EXPENSE');
     for (const [index, line] of prepared.entries()) {
       await client.query(`INSERT INTO accounting_supplier_bill_lines
         (id,workspace_id,bill_id,line_number,description,quantity,unit_cost_minor,line_total_minor,debit_account_id,
-         item_id,sku_id,purchase_order_line_id,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         item_id,sku_id,purchase_order_line_id,created_at,secondary_quantity,price_quantity,document_line_total_minor,matched_receipt_minor,tracking_evidence,source_unit_cost_minor,source_price_quantity)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)`,
       [newId('apline'), ctx.workspaceId, billId, index + 1, line.description || `Invoice line ${index + 1}`,
-        line.quantity, line.unitCostMinor, line.lineTotalMinor, defaultDebitAccountId, line.itemId || null,
-        line.skuId || line.purchaseLine?.sku_id || null, line.purchaseOrderLineId || null, at]);
+        line.quantity, Number.isSafeInteger(line.unitCostMinor/line.priceQuantity)?line.unitCostMinor/line.priceQuantity:line.unitCostMinor, line.lineTotalMinor, defaultDebitAccountId, line.itemId || null,
+        line.skuId || line.purchaseLine?.sku_id || null, line.purchaseOrderLineId || null, at,line.secondaryQuantity,Number.isSafeInteger(line.unitCostMinor/line.priceQuantity)?1:line.priceQuantity,line.documentLineTotalMinor??null,line.matchedReceiptMinor,JSON.stringify(line.trackingEvidence||{}),line.unitCostMinor,line.priceQuantity]);
     }
     const result = { billId, billNumber, status, matchStatus, differences,
       totalMinor, balanceMinor: totalMinor, journalEntryId: posted?.entry.id || null };
@@ -812,7 +792,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [line.id, requested.locationId, ctx.workspaceId], `Fulfillment line ${index + 1} is not allocated at that location.`);
       if (allocation&&quantity > Number(allocation.quantity)) throw new ValidationError(`Fulfillment line ${index + 1} exceeds its allocation.`);
       const kitCost=requested.kit===true?await require('./postgres-kit-fulfillment').consume(client,ctx,line,{...requested,orderNumber:order.order_number},{quantity,at,key:input.idempotencyKey+':'+line.id}):null;
-      const physical = kitCost?{movementId:kitCost.movementId}:await inventory.issueInTransaction(client, ctx, {
+      const physical = kitCost?{movementId:kitCost.movementId}:await require('./postgres-stock-rotation').issue(client,ctx,allocation,{
         skuId: line.sku_id, locationId: requested.locationId, quantity,secondaryQuantity:requested.secondaryQuantity,
         lotId: requested.lotId, serialUnitIds: requested.serialUnitIds,
         reasonCode: 'sale', reference: order.order_number, occurredAt: at,

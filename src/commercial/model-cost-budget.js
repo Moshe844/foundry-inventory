@@ -23,9 +23,10 @@ async function periodBudget(database,scope,subscription){
 }
 function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor,providerExecutions=MAX_PROVIDER_EXECUTIONS){
  if(!Number.isInteger(providerExecutions)||providerExecutions<1||providerExecutions>MAX_PROVIDER_EXECUTIONS)throw new ValidationError('Invalid trusted provider execution bound.');
- const bytes=Buffer.byteLength(String(request.system||''))+Buffer.byteLength(String(request.prompt||''))+
+ const prompt=require('../ai/image-input').inspect(request.prompt);
+ const bytes=Buffer.byteLength(String(request.system||''))+Buffer.byteLength(prompt.text)+
   Buffer.byteLength(JSON.stringify(request.schema||{}));
- const inputTokens=bytes+INPUT_OVERHEAD_TOKENS;
+ const inputTokens=bytes+INPUT_OVERHEAD_TOKENS+prompt.imageTokens;
  const outputTokens=Number.isSafeInteger(request.maxOutputTokens)&&request.maxOutputTokens>0
    ?Math.min(request.maxOutputTokens,policy.maxOutputTokens):policy.maxOutputTokens;
  return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+outputTokens*outputRateMinor)*

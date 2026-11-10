@@ -30,7 +30,7 @@ async function snapshot(db,ctx,orderId,reference,basis){
   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.id`,[ctx.workspaceId,order.id])).rows,selected=new Map();
  for(const row of rows){
   const p=row.parsed;
-  for(const column of poColumns){const ref=String(row.raw[column.index]??'').trim().replace(/^#/,'');if(ref&&ref.toLowerCase()!==order.po_number.toLowerCase())throw new ValidationError('The purchase-order reference on the slip differs from '+order.po_number+'.');}
+  for(const column of poColumns){const ref=String(transforms.imageCellOverrides?.[row.row_number]?.[column.index]??row.raw[column.index]??'').trim().replace(/^#/,'');if(ref&&ref.toLowerCase()!==order.po_number.toLowerCase())throw new ValidationError('The purchase-order reference on the slip differs from '+order.po_number+'.');}
   if(row.status!=='VALID'||!p.existingSkuId||!Number.isFinite(Number(p.quantity))||Number(p.quantity)<=0)throw new ValidationError('Every delivered row needs one existing SKU and a positive, reviewed quantity. Resolve the file preview first.');
   const matches=lines.filter(l=>l.sku_id===p.existingSkuId);if(matches.length!==1)throw new ValidationError('Each source SKU must match one exact PO line and warehouse. Review split lines separately.');
   const line=matches[0];if(line.secondary_unit_label)throw new ValidationError(line.code+' needs its actual received weight. Use the tracked receiving form.');

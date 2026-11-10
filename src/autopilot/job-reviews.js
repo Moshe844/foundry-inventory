@@ -5,6 +5,9 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../documents/agent-contract-reader').definition,
+  require('../imports/handwritten-table').definition,
+  require('../warehouse/agent-stock-rotation').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../catalog/agent-channel-copy').definition,
   require('../sales/agent-website-stock-chat').definition,
@@ -42,7 +45,10 @@ const definitions=[
   require('./third-party-stock').definition,
   require('../sales/agent-arrived-stock').definition,
   require('../sales/agent-stock-ready').definition,
+  require('../purchasing/agent-supplier-invoice-intake').definition,
+  require('../purchasing/agent-supplier-invoice-intake').errorDefinition,
   require('../purchasing/agent-invoice-disputes').definition,
+  require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
   require('../documents/agent-product-facts').definition,
@@ -129,7 +135,7 @@ const suggestions={
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
   21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
-  22:r=>'Check the saved price and delivery terms with '+r.Supplier+' for '+r.SKU+'.',
+  22:r=>'Consider '+r.Supplier+' for '+r['Compared quantity']+' '+r.Unit+' of '+r.SKU+'. Recorded goods total: '+(r['Goods total']||'unknown')+'; delivery days: '+(r['Lead days']??'unknown')+'. '+r.Status+'.',
   23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',
   44:r=>'Review '+r.Order+' against its delivery record for '+r.SKU+'.',
@@ -191,6 +197,9 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(result.reorderForm?{reorderForm:true}:{}),
+      ...(result.supplierSelection?{supplierSelection:true}:{}),
+      ...(result.rotationForm?{rotationForm:true}:{}),
       ...inputs};
   }
   if(def.read){
@@ -211,7 +220,7 @@ async function run(db,ctx,key,options={}){
     rows=(await db.query(sql+' LIMIT 101 OFFSET $'+args.length,args)).rows;
     more=rows.length>100;rows=rows.slice(0,100);
     for(const row of rows) if(row.price_minor!=null){
-      row['Supplier unit price']=money.format(row.price_minor,row.Currency);delete row.price_minor;
+      row['Supplier unit price']=money.format(row.display_price_minor??row.price_minor,row.Currency)+(row.price_quantity!=null&&Number(row.price_quantity)!==1?' per '+row.price_quantity+' pricing units':'');delete row.price_minor;delete row.display_price_minor;delete row.price_quantity;
     }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
@@ -220,7 +229,7 @@ async function run(db,ctx,key,options={}){
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }
-  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read};
+  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

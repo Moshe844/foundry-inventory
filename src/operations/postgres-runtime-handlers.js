@@ -615,6 +615,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
     if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(
@@ -684,7 +686,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'purchasing.shutdown-plan.v1':external((job,database)=>require('../purchasing/agent-supplier-shutdowns').onProject(database,job.workspaceId,job.payload.shutdownId)),
   'catalog.retire-products.v1':external((job,database)=>require('../catalog/agent-product-retirements').onNotice(database,job.workspaceId,job.payload.noticeId)),
   'purchasing.blanket-release.v1':external((job,database)=>require('../purchasing/agent-blanket-releases').onContract(database,job.workspaceId,job.payload.contractId)),
-  'catalog.channel-copy.v1':external((job,database)=>require('../catalog/agent-channel-copy').onCopy(database,job.workspaceId,job.payload.copyId)),
+    'import.read-product-facts.v1':external((job,database)=>require('../documents/agent-product-source').run(job,database,{provider:options.productSourceProvider})),
+    'catalog.channel-copy.v1':external((job,database)=>require('../catalog/agent-channel-copy').onCopy(database,job.workspaceId,job.payload.copyId,job.payload.runId)),
   'team.procedure-draft.v1':external((job,database)=>require('../autopilot/team-procedures').onProcedure(database,job.workspaceId,job.payload.procedureId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
@@ -730,6 +733,9 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
     if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
   }),
+  'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
+  'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
+  'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     if(result.more)await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:job.kind,idempotencyKey:'supplier-claims:'+job.payload.cycleId+':'+result.nextAfterId,payload:{cycleId:job.payload.cycleId,afterId:result.nextAfterId},priority:65,maxAttempts:3});return result;

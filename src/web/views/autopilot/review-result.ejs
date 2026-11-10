@@ -1,4 +1,16 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.rotationForm){ %><form method="post" action="/autopilot/reviews/stock-rotation/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Exact order number <input name="order" required value="<%= filter||'' %>"></label><label>Stock rotation <select name="strategy"><option value="FIFO">Oldest recorded receipt first (FIFO)</option><option value="FEFO">Earliest recorded expiry first (FEFO)</option></select></label><label>For mixed untracked stock with earlier issues: your checked records establishing that those issues used FIFO (optional) <textarea name="historicalFifoEvidence" maxlength="4000"></textarea></label><p>A new historical age fact requires your individual review before any reservation can use it.</p><button class="btn">Review exact reservations</button></form><% } %>
+<% if(result.reorderForm||result.supplierSelection){ %><details><summary><%= result.supplierSelection?'Choose a buying supplier':'Prepare grouped purchase drafts' %></summary>
+<form method="post" action="/autopilot/reviews/<%= result.supplierSelection?'supplier-options':'reorder-drafts' %>/purchasing-prepare">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Exact product codes, one per line<%= result.supplierSelection?'':' (leave empty for the reorder list)' %> <textarea name="skuCodes" <%= result.supplierSelection?'required':'' %>><%= filter||'' %></textarea></label>
+<label>Receiving location (optional) <input name="location"></label>
+<% if(result.supplierSelection){ %><label>Exact stocking quantity for each comparison (optional; otherwise the current reorder need) <input name="quantity" inputmode="decimal"></label><% } %>
+<% if(result.supplierSelection){ %><p><a href="/autopilot/supplier-costs">Check delivery, tax recovery and exchange evidence</a></p><label>Choose by <select name="strategy"><option value="cheapest">Lowest comparable delivered economic cost</option><option value="fastest">Shortest recorded delivery time</option></select></label><label>Comparison basis <select name="comparisonBasis"><option value="economic">Delivered cost after shipping, charges and tax recovery</option><option value="goods">I explicitly want goods-only comparison</option></select></label><label>Comparison currency, if needed <input name="comparisonCurrency" maxlength="3" placeholder="USD"></label><label>For goods-only: your explicit request to review shipping and tax separately <textarea name="goodsOnlyReason" maxlength="2000"></textarea></label><% } %>
+<label>Independent requested weights, if applicable (product code | receiving location | pieces | weight) <textarea name="secondaryQuantities"></textarea></label>
+<p>Review missing costs, undated deliveries or existing unsent orders before purchasing. New supplier or price terms need individual approval.</p>
+<button class="btn"><%= result.supplierSelection?'Review supplier choice':'Review grouped drafts' %></button>
+</form></details><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>
