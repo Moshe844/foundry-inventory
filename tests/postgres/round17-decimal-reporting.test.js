@@ -41,6 +41,8 @@ test('reported fractional-stock quantities work in Money, reports, stock overvie
  for(const route of ['/','/money','/money/invoices','/money/bills','/money/profit','/reports','/inventory','/inventory/overview']){const page=await agent.get(route);assert.equal(page.status,200,route+': '+page.text.slice(0,300));assert.doesNotMatch(page.text,/exceeds the exact reporting range|INVENTORY_SUMMARY_PRECISION/);}
  assert.equal((await money.snapshot(db,ctx.workspaceId,{summary:true})).missingCostUnits,23.25);
  assert.equal((await money.snapshot(db,ctx.workspaceId,{summary:false})).missingCostUnits,23.25);
+ // Each product's line names its own unit: kilograms are never "units".
+ const valueReport=(await agent.get('/reports/business/stock-value')).text.replace(/<[^>]+>/g,' ');assert.match(valueReport,/1.25 kg need purchase costs/);assert.match(valueReport,/22 units need purchase costs/);assert.doesNotMatch(valueReport,/d.d+ units/);
  // Currency cents remain integer-only: supporting fractional stock does not
  // weaken financial precision or silently round a malformed money amount.
  assert.throws(()=>money.exact('1.25'),/exact reporting range/);
