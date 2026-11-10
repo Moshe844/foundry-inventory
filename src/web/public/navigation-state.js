@@ -16,7 +16,7 @@
   const keys=Object.keys(state.entries).sort((a,b)=>state.entries[a].at-state.entries[b].at);while(keys.length>maxEntries){const key=keys.shift();delete state.entries[key];}
   for(const [url,key]of Object.entries(state.latest))if(!state.entries[key])delete state.latest[url];persist();
  }
- function apply(saved){if(!valid(saved))return false;const disclosure=Array.from(document.querySelectorAll('main details:not(.ask-menu)'));for(const d of saved.details||[]){const e=d.key.startsWith('#')?document.getElementById(d.key.slice(1)):disclosure[Number(d.key.slice(6))];if(e?.tagName==='DETAILS')e.open=Boolean(d.open);}
+ function apply(saved){if(!valid(saved))return false;const disclosure=Array.from(document.querySelectorAll('main details:not(.ask-menu)'));for(const d of saved.details||[]){const e=d.key.startsWith('#')?document.getElementById(d.key.slice(1)):disclosure[Number(d.key.slice(6))];if(d.key.startsWith('index:')&&e?.id)continue;if(e?.tagName==='DETAILS')e.open=Boolean(d.open);}
   const targets=containers();for(const s of saved.containers||[]){const e=s.key.startsWith('#')?document.getElementById(s.key.slice(1)):targets[Number(s.key.slice(6))];if(e){e.scrollLeft=Number(s.x)||0;e.scrollTop=Number(s.y)||0;}}
   window.scrollTo({left:Number(saved.x)||0,top:Number(saved.y)||0,behavior:'instant'});restored=true;restoredUrl=href();return true;
  }
