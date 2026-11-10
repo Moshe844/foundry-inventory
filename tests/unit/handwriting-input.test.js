@@ -32,3 +32,8 @@ test('variant dimensions on different pages retain independent source axes even 
  const value=await table.parse(Buffer.concat(chunks),{purpose:'count',providerForPage:()=>({complete:async()=>({data:{documentKind:'count',complete:true,columns:[{field:'code',heading:'SKU'},{field:'quantity',heading:'Count'},{field:'variant1',heading:++n===1?'Size':'Colour'}],rows:[{cells:['ITEM-'+n,'1',n===1?'Large':'Blue'],uncertain:false,note:''}]}})})});
  assert.equal(value.sheets[0].columns[value.mappings.variant1].name,'Size');assert.equal(value.sheets[0].columns[value.mappings.variant2].name,'Colour');assert.equal(value.sheets[0].rows[0].cells[value.mappings.variant1],'Large');assert.equal(value.sheets[0].rows[0].cells[value.mappings.variant2],'');assert.equal(value.sheets[0].rows[1].cells[value.mappings.variant1],'');assert.equal(value.sheets[0].rows[1].cells[value.mappings.variant2],'Blue');
 });
+
+
+test('an oversized embedded PDF raster refuses the whole count before any model call instead of silently dropping a page',async()=>{
+ const image=await sharp({create:{width:3000,height:3000,channels:3,background:'white'}}).png().toBuffer(),PDF=require('pdfkit'),doc=new PDF(),parts=[];doc.on('data',b=>parts.push(b));const ended=new Promise(r=>doc.on('end',r));doc.text('Stock count original.');doc.addPage().text('Important handwritten quantity in the original raster.');doc.image(image,40,150,{width:500});doc.end();await ended;let calls=0;await assert.rejects(table.parse(Buffer.concat(parts),{purpose:'count',providerForPage:()=>{calls++;throw Error('A model must never receive a partial source.');}}),/image|safely|read/i);assert.equal(calls,0);
+});
