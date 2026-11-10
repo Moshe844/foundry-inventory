@@ -919,7 +919,7 @@
         <details class="disclosure take-payment">
           <summary>Record another payment — cash, cheque, transfer, card machine</summary>
           <form method="post" action="/sales/orders/<%= order.id %>/payment" data-busy>
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-other">
             <div class="card-body">
               <div class="field-row">
                 <label class="field">

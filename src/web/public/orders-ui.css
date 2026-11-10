@@ -317,6 +317,15 @@ a.ox-order { font-weight: 700; color: var(--ox-text) !important; white-space: no
 .ox-receipts li + li { border-top: 1px solid var(--ox-divider); }
 .ox-receipts b { color: var(--ox-text); min-width: 84px; }
 .ox-receipts span { flex: 1; min-width: 0; }
+/* Void a payment recorded by mistake: a quiet link that opens a reasoned form under its row. */
+.ox-receipts li { flex-wrap: wrap; }
+.ox-void > summary { list-style: none; cursor: pointer; color: var(--ox-text-3); }
+.ox-void > summary::-webkit-details-marker { display: none; }
+.ox-void > summary:hover, .ox-void[open] > summary { color: var(--ox-text-2); }
+.ox-void[open] { flex-basis: 100%; }
+.ox-void form { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.ox-void p { margin: 0; font-size: 13px; color: var(--ox-text-2); }
+.ox-void .ox-btn { align-self: flex-start; }
 .ox-collect { border-top: 1px solid var(--ox-divider); }
 .ox-collect > summary { list-style: none; }
 .ox-collect__body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; padding: 18px; }

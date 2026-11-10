@@ -2,6 +2,29 @@
 
 const {newId,nowIso}=require('../lib/util');
 
+// The books total for one control account, as debits less credits (or credits
+// less debits for sign -1): every line on it, less lines of entries not posted.
+// Reading lines by account and subtracting the rare unposted entries avoids
+// joining every line to its entry, which is what keeps this cheap at scale.
+// Unposted entries are almost always none, so that side starts from them.
+function ledgerMinor(systemKey,sign){
+  const accounts=`SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='${systemKey}'`;
+  return `(${sign<0?'-':''}((SELECT COALESCE(SUM(l.debit_minor-l.credit_minor),0) FROM accounting_journal_lines l
+      WHERE l.workspace_id=$1 AND l.account_id IN (${accounts}))
+    -(SELECT COALESCE(SUM(unposted.minor),0) FROM accounting_journal_entries e
+      CROSS JOIN LATERAL(SELECT SUM(l.debit_minor-l.credit_minor) AS minor FROM accounting_journal_lines l
+        WHERE l.workspace_id=e.workspace_id AND l.entry_id=e.id AND l.account_id IN (${accounts})) unposted
+      WHERE e.workspace_id=$1 AND e.status<>'POSTED')))`;
+}
+// A whole-business check: the books figure against the records' figure, for
+// businesses that keep books. No rows means they agree.
+function tieOut(key,systemKey,sign,recordsSql){return {key,whole:true,query:`WITH books AS (
+      SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1),
+    totals AS MATERIALIZED (SELECT ${ledgerMinor(systemKey,sign)}::bigint AS ledger_minor,(${recordsSql})::bigint AS records_minor)
+    SELECT books.base_currency AS currency,totals.ledger_minor,totals.records_minor,
+      (totals.ledger_minor-totals.records_minor)::bigint AS difference_minor
+    FROM books CROSS JOIN totals WHERE totals.ledger_minor<>totals.records_minor`};}
+
 const INVARIANTS=Object.freeze([
   {key:'inventory.balance_equals_movements',table:'skus',query:`WITH expected AS MATERIALIZED (
       SELECT sku_id,location_id,SUM(quantity_delta)::numeric AS quantity FROM movements
@@ -43,6 +66,59 @@ const INVARIANTS=Object.freeze([
       AND (COALESCE(supplier.status,customer.status) IS DISTINCT FROM 'SENT'
         OR COALESCE(supplier.external_message_id,customer.external_message_id) IS NULL
         OR NULLIF(effect.result->>'externalMessageId','') IS NULL) LIMIT 100`},
+  // Stock positions: none below zero unless the product allows it, and the
+  // value records never count more units than the shelf holds.
+  {key:'inventory.no_negative_stock',table:'skus',query:`SELECT b.sku_id,b.location_id,b.on_hand::numeric AS on_hand
+    FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id
+    JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+    WHERE b.workspace_id=$1 /* scope:b.sku_id */ AND b.on_hand<0 AND COALESCE(i.allow_negative,0)=0 LIMIT 100`},
+  {key:'inventory.costed_units_within_stock',table:'skus',query:`SELECT c.sku_id,c.location_id,
+      c.quantity_units::numeric AS costed_quantity,c.total_cost_minor::bigint AS value_minor,COALESCE(b.on_hand,0)::numeric AS on_hand
+    FROM accounting_inventory_cost_balances c LEFT JOIN balances b
+      ON b.workspace_id=c.workspace_id AND b.sku_id=c.sku_id AND b.location_id=c.location_id
+    WHERE c.workspace_id=$1 /* scope:c.sku_id */ AND (c.quantity_units<0 OR c.total_cost_minor<0
+      OR c.quantity_units>GREATEST(COALESCE(b.on_hand,0),0)) LIMIT 100`},
+  // Each control account in the books equals the sum of the records that keep it.
+  tieOut('accounting.inventory_ledger_matches_stock_value','INVENTORY_ASSET',1,
+    'SELECT COALESCE(SUM(total_cost_minor),0) FROM accounting_inventory_cost_balances WHERE workspace_id=$1'),
+  tieOut('accounting.receivables_ledger_matches_invoices','ACCOUNTS_RECEIVABLE',1,
+    "SELECT COALESCE(SUM(balance_minor),0) FROM accounting_customer_invoices WHERE workspace_id=$1 AND status NOT IN ('DRAFT','VOID') AND voided_at IS NULL"),
+  tieOut('accounting.payables_ledger_matches_bills','ACCOUNTS_PAYABLE',-1,
+    "SELECT COALESCE(SUM(balance_minor),0) FROM accounting_supplier_bills WHERE workspace_id=$1 AND journal_entry_id IS NOT NULL AND status<>'VOID' AND voided_at IS NULL"),
+  tieOut('accounting.deposits_ledger_matches_held_payments','CUSTOMER_DEPOSITS',-1,`SELECT COALESCE((SELECT SUM(p.amount_minor-COALESCE(applied.minor,0))
+      FROM accounting_payments p CROSS JOIN LATERAL(SELECT SUM(a.amount_minor) AS minor FROM accounting_payment_allocations a
+        WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id) applied
+      WHERE p.workspace_id=$1 AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED'),0)
+    -(SELECT COALESCE(SUM(amount_minor),0) FROM accounting_deposit_refunds WHERE workspace_id=$1)`),
+  {key:'accounting.invoice_total_matches_parts',whole:true,query:`SELECT id AS invoice_id,invoice_number,total_minor::bigint AS total_minor,
+      (subtotal_minor-discount_minor+tax_minor+COALESCE(charges_minor,0))::bigint AS parts_minor
+    FROM accounting_customer_invoices WHERE workspace_id=$1 AND status<>'DRAFT'
+      AND total_minor<>subtotal_minor-discount_minor+tax_minor+COALESCE(charges_minor,0) LIMIT 100`},
+  // A payment is the cash its entry moved, never applied for more than it paid,
+  // and a void one has its void entry. A payment entry always has its payment.
+  {key:'accounting.payments_match_their_entries',whole:true,query:`SELECT p.id AS payment_id,p.payment_number,p.status,
+      p.amount_minor::bigint AS amount_minor,COALESCE(cash.minor,0)::bigint AS entry_cash_minor,COALESCE(applied.minor,0)::bigint AS applied_minor
+    FROM accounting_payments p
+    LEFT JOIN accounting_journal_entries e ON e.workspace_id=p.workspace_id AND e.id=p.journal_entry_id AND e.status='POSTED'
+    CROSS JOIN LATERAL(SELECT SUM(CASE WHEN p.direction='CUSTOMER_RECEIPT' THEN l.debit_minor-l.credit_minor ELSE l.credit_minor-l.debit_minor END) AS minor
+      FROM accounting_journal_lines l WHERE l.workspace_id=p.workspace_id AND l.entry_id=e.id AND l.account_id=p.cash_account_id) cash
+    CROSS JOIN LATERAL(SELECT SUM(a.amount_minor) AS minor FROM accounting_payment_allocations a
+      WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id) applied
+    WHERE p.workspace_id=$1 AND (e.id IS NULL OR COALESCE(cash.minor,0)<>p.amount_minor OR COALESCE(applied.minor,0)>p.amount_minor
+      OR (p.status='VOID' AND (COALESCE(applied.minor,0)<>0 OR NOT EXISTS(SELECT 1 FROM accounting_journal_entries v
+        WHERE v.workspace_id=p.workspace_id AND v.source_type='payment_void' AND v.source_record_id=p.id AND v.status='POSTED'))))
+    LIMIT 100`},
+  {key:'accounting.payment_entries_have_payments',whole:true,query:`SELECT e.id AS journal_entry_id,e.entry_number,e.source_type
+    FROM accounting_journal_entries e WHERE e.workspace_id=$1 AND e.status='POSTED'
+      AND e.source_type IN ('customer_payment','supplier_payment','customer_deposit')
+      AND NOT EXISTS(SELECT 1 FROM accounting_payments p WHERE p.workspace_id=e.workspace_id AND p.journal_entry_id=e.id) LIMIT 100`},
+  // What an order line says shipped is what its invoices charged for.
+  {key:'sales.shipped_quantity_matches_invoices',whole:true,query:`SELECT line.id AS sales_order_line_id,o.order_number,
+      line.quantity_fulfilled::numeric AS shipped_quantity,COALESCE(invoiced.quantity,0)::numeric AS invoiced_quantity
+    FROM sales_order_lines line JOIN sales_orders o ON o.workspace_id=line.workspace_id AND o.id=line.sales_order_id
+    LEFT JOIN (SELECT sales_order_line_id,SUM(quantity) AS quantity FROM accounting_customer_invoice_lines
+      WHERE workspace_id=$1 AND sales_order_line_id IS NOT NULL GROUP BY sales_order_line_id) invoiced ON invoiced.sales_order_line_id=line.id
+    WHERE line.workspace_id=$1 AND line.quantity_fulfilled<>COALESCE(invoiced.quantity,0) LIMIT 100`},
 ]);
 
 function affected(rows){return rows.map((row)=>Object.fromEntries(Object.entries(row)
@@ -96,11 +172,13 @@ async function runBatch(database,workspaceId,{runId=null}={}){
     await database.query("UPDATE stockchief_runtime.business_reconciliation_runs SET status='RUNNING',completed_at=NULL WHERE workspace_id=$1 AND id=$2",[workspaceId,runId]);}
   const progress={phase:0,afterId:'',checkedRecords:0,mismatches:[],mismatchCount:0,...row.summary};
   const invariant=INVARIANTS[progress.phase];if(!invariant)throw new Error('Invalid reconciliation checkpoint.');
-  // Table names are constants from INVARIANTS, never request input.
-  const ids=(await database.query('SELECT id FROM '+invariant.table+' WHERE workspace_id=$1 AND id>$2 ORDER BY id LIMIT 251',[workspaceId,progress.afterId])).rows;
+  // A whole-business check runs as one statement; the rest page through their
+  // table. Table names are constants from INVARIANTS, never request input.
+  const ids=invariant.whole?[]:(await database.query('SELECT id FROM '+invariant.table+' WHERE workspace_id=$1 AND id>$2 ORDER BY id LIMIT 251',[workspaceId,progress.afterId])).rows;
   const page=ids.slice(0,250).map(r=>r.id);
-  const mismatches=page.length?(await database.query(scopedQuery(invariant),[workspaceId,page])).rows:[];
-  progress.checkedRecords+=page.length;
+  const mismatches=invariant.whole?(await database.query(invariant.query,[workspaceId])).rows
+    :page.length?(await database.query(scopedQuery(invariant),[workspaceId,page])).rows:[];
+  progress.checkedRecords+=invariant.whole?1:page.length;
   progress.mismatchCount+=mismatches.length;
   progress.mismatches=[...progress.mismatches,...mismatches].slice(0,100);
   if(mismatches.length)await suspend(database,workspaceId,[invariant.key]);
@@ -154,4 +232,40 @@ async function dueWorkspaces(database,at=nowIso()){return (await database.query(
     WHERE active.workspace_id=w.id AND active.kind='system.reconcile-business' AND active.status IN ('PENDING','RETRY','RUNNING'))
     AND (state.next_check_at IS NULL OR state.next_check_at<=$1) ORDER BY w.id`,[at])).rows.map((row)=>row.id);}
 
-module.exports={INVARIANTS,scopedQuery,run,runBatch,job,failedJob,dueWorkspaces};
+// What each check means to an owner, and where to look when it fails.
+const WORDS=Object.freeze({
+  'inventory.balance_equals_movements':{title:'Stock on hand does not match its stock history',href:'/inventory'},
+  'accounting.posted_journals_balance':{title:'A posted accounting entry does not balance',href:'/accounting'},
+  'purchasing.received_quantity_matches_evidence':{title:'A purchase order shows a different amount received than its receipts',href:'/purchasing/orders'},
+  'accounting.invoice_balance_is_bounded':{title:'An invoice balance is below zero or above its total',href:'/accounting/receivables'},
+  'communications.provider_success_is_applied':{title:'An email that was sent is not marked as sent',href:'/needs-you'},
+  'inventory.no_negative_stock':{title:'Stock is below zero on a product that does not allow it',href:'/inventory'},
+  'inventory.costed_units_within_stock':{title:'Stock value records count more units than are on the shelf',href:'/inventory'},
+  'accounting.inventory_ledger_matches_stock_value':{title:'Stock value in your books does not match your stock records',href:'/accounting',books:'Stock value'},
+  'accounting.receivables_ledger_matches_invoices':{title:'Money owed to you in your books does not match your open invoices',href:'/accounting/receivables',books:'Money owed to you'},
+  'accounting.payables_ledger_matches_bills':{title:'Money you owe suppliers in your books does not match your open bills',href:'/accounting/payables',books:'Money you owe suppliers'},
+  'accounting.deposits_ledger_matches_held_payments':{title:'Customer deposits in your books do not match deposits held on orders',href:'/money',books:'Customer deposits'},
+  'accounting.invoice_total_matches_parts':{title:'An invoice total does not add up from its subtotal, discount, tax and charges',href:'/accounting/receivables'},
+  'accounting.payments_match_their_entries':{title:'A payment does not match its accounting entry',href:'/accounting/receivables'},
+  'accounting.payment_entries_have_payments':{title:'An accounting entry for a payment has no payment behind it',href:'/accounting'},
+  'sales.shipped_quantity_matches_invoices':{title:'An order line shows a different quantity shipped than was invoiced',href:'/orders'},
+});
+
+// The failed checks from the latest finished check, worded for an owner.
+async function failures(database,workspaceId){
+  const rows=(await database.query(`SELECT c.invariant_key,c.observed,r.completed_at
+    FROM stockchief_runtime.workspace_reconciliation_state state
+    JOIN stockchief_runtime.business_reconciliation_runs r ON r.workspace_id=state.workspace_id AND r.id=state.last_run_id
+    JOIN stockchief_runtime.business_reconciliation_checks c ON c.workspace_id=r.workspace_id AND c.run_id=r.id
+    WHERE state.workspace_id=$1 AND state.status='FAILED' AND c.status='FAIL' ORDER BY c.created_at,c.id`,[workspaceId])).rows;
+  const money=require('../pricing/postgres-service').formatMinor;
+  return rows.map(row=>{const words=WORDS[row.invariant_key]||{title:'A record does not match the books',href:'/needs-you'};
+    const observed=row.observed||{},sample=(observed.rows||[])[0]||{},count=Number(observed.mismatchCount||0);
+    const named=(observed.rows||[]).map(r=>r.invoice_number||r.payment_number||r.order_number||(r.entry_number!=null?'entry #'+r.entry_number:null)).filter(Boolean).slice(0,3);
+    const happened=sample.ledger_minor!==undefined
+      ?`${words.books} in your books is ${money(Number(sample.ledger_minor),sample.currency)}; your records add up to ${money(Number(sample.records_minor),sample.currency)}.`
+      :`${count} ${count===1?'record does':'records do'} not match${named.length?': '+named.join(', '):''}.`;
+    return {key:row.invariant_key,title:words.title,href:words.href,happened,checkedAt:row.completed_at};});
+}
+
+module.exports={INVARIANTS,WORDS,scopedQuery,run,runBatch,job,failedJob,dueWorkspaces,failures};

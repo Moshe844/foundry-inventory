@@ -26,6 +26,25 @@ async function applyInTransaction(client,ctx,input){
  if(counted<0)throw new ValidationError('Stock was used after this count was reviewed. The remaining count would make stock negative; review this product before continuing.');
  const opening=['import_stock_count','physical_count_review'].includes(input.sourceType)&&delta>0&&before.physical===0&&before.costed===0&&!(await client.query('SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 LIMIT 1',[ctx.workspaceId,input.skuId,input.locationId])).rows.length;
  if(delta<0&&before.costed>0&&before.costed!==before.physical)throw new ValidationError('This position mixes costed and uncosted stock. Establish its cost evidence before reducing it with a file count.');
+ // A count that finds more stock values the extra units at what the product
+ // costs, so the books keep pace with the shelf: its saved purchase cost, else
+ // its average here, else its average elsewhere. Previewed counts (imports,
+ // reviews, campaigns) settled their cost when they were reviewed, and weighed
+ // stock is valued by weight, so neither is guessed here.
+ const weighed=state.secondary_physical!=null||(input.secondaryCountedQuantity!=null&&String(input.secondaryCountedQuantity).trim()!=='');
+ // Stock that has never had a cost stays uncosted as a whole until its cost is
+ // recorded, rather than becoming part costed and part not.
+ const uncostedOnly=before.physical>0&&before.costed===0;
+ if(delta>0&&input.unitCostMinor==null&&input.expectedCostDeltaMinor===undefined&&!weighed&&!uncostedOnly){
+  const books=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+  if(books){
+   const saved=await require('../pricing/postgres-service').purchaseCost(client,ctx.workspaceId,input.skuId);
+   const elsewhere=(await client.query('SELECT coalesce(sum(total_cost_minor),0)::bigint AS value,coalesce(sum(quantity_units),0) AS units FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=$2 AND quantity_units>0',[ctx.workspaceId,input.skuId])).rows[0];
+   const known=saved&&saved.currency===books.base_currency?Number(saved.amount_minor):before.costed>0?Math.round(before.value/before.costed):Number(elsewhere.units)>0?Math.round(Number(elsewhere.value)/Number(elsewhere.units)):null;
+   if(known!==null)input={...input,unitCostMinor:known};
+   else throw new ValidationError('Enter what the added units cost, so your stock value stays right.');
+  }
+ }
  const physical=await inventory.adjustInTransaction(client,ctx,{...input,countedQuantity:counted});
  if(physical.unchanged)return {...physical,costDeltaMinor:0,journalEntryId:null};
  settings=settings||(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];

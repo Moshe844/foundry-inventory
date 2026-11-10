@@ -189,6 +189,8 @@ async function postManyInTransaction(client,ctx,inputs,options={}){
       if(row.postingDate<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
       if(!periods.has(row.postingDate))periods.set(row.postingDate,await ensurePeriod(client,ctx.workspaceId,row.postingDate,true));
     }
+    const handMade=rows.filter(row=>['manual_adjustment','journal_reversal'].includes(row.input.sourceType));
+    if(handMade.length)await require('./record-owned-accounts').assertHandEntries(client,ctx.workspaceId,handMade.map(row=>({input:row.input,lines:row.normalized})));
     const allLines=rows.flatMap(row=>row.normalized),keys=[...new Set(allLines.map(line=>line.accountKey).filter(Boolean))],ids=[...new Set(allLines.map(line=>line.accountId).filter(Boolean))];
     const accounts=(await client.query('SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))',[ctx.workspaceId,keys,ids])).rows;
     const byKey=new Map(accounts.map(row=>[row.system_key,row.id])),byId=new Set(accounts.map(row=>row.id));

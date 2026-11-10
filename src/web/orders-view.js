@@ -59,7 +59,7 @@ function statusBadge(order) {
 // Payment is read from money actually received, not from whether an invoice
 // exists yet: an order paid upfront is paid before anything has shipped.
 function paymentBadge(order, invoiced, paidMinor, deposit) {
-  if (deposit && deposit.toRefundMinor > 0) return { text: 'Deposit to refund', tone: 'amber' };
+  if (deposit && deposit.toRefundMinor > 0) return { text: deposit.cancelled ? 'Deposit to refund' : 'Overpaid', tone: 'amber' };
   if (deposit && deposit.refundedMinor > 0 && !invoiced) return { text: 'Refunded', tone: 'grey' };
   const total = Number(order.pricing.totalMinor || 0);
   const quiet = order.status === 'DRAFT' || (order.status === 'CANCELLED' && !shippedSome(order));

@@ -293,8 +293,7 @@ async function salesOrder(database, workspaceId, id) {
     physicalAllocated:Number(row.allocated),kitReady,isKit:kitComponents.length>0,kitComponents,
     quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]};});
   const terms=paymentTerms.rows[0]||null;
-  const orderTotalMinor=header.rows[0].pricing_total_minor===null?Math.max(0,mappedLines.reduce((sum,row)=>sum+Number(row.quantity_ordered)*Number(row.unit_price_minor),0)
-    -Number(header.rows[0].discount_minor||0)+Number(header.rows[0].tax_minor||0)):Number(header.rows[0].pricing_total_minor);
+  const orderTotalMinor=require('../sales/order-total').orderTotalMinor(header.rows[0],mappedLines);
   const requiredDepositMinor=terms?.kind==='DEPOSIT'?(terms.deposit_minor==null
     ?Math.round(orderTotalMinor*Number(terms.deposit_percent||0)/100):Math.min(orderTotalMinor,Number(terms.deposit_minor))):0;
   return {order:header.rows[0],lines:mappedLines,
