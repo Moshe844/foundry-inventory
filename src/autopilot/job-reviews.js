@@ -44,6 +44,7 @@ const definitions=[
   require('../sales/agent-arrived-stock').definition,
   require('../sales/agent-stock-ready').definition,
   require('../purchasing/agent-invoice-disputes').definition,
+  require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
   require('../documents/agent-product-facts').definition,
