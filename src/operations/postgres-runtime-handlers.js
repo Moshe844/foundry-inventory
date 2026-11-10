@@ -734,6 +734,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'agent.channel-buffer.publish.v1':external(async(job,database)=>{const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-commerce-protocol').assertJob(effect,job.kind);if(effect.status==='CANCELLED')return {cancelledBeforeDelivery:true};return providerEffect(job,database,options,providers);}),
   'provider.commerce-recovery.v1':external((job,database)=>require('../connections/agent-channel-recovery').run(database,job,{providers})),
+  'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);

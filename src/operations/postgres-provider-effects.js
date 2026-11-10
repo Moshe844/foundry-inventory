@@ -2,7 +2,8 @@
 
 const { newId,nowIso }=require('../lib/util');
 const jobs=require('./postgres-job-queue');
-const effectJobKind=effect=>require('./agent-commerce-protocol').jobKind(effect)||require('./agent-mail-protocol').jobKind(effect);
+const effectJobKind=effect=>effect.kind==='shipping.freight_pickup'?'agent.shipping.freight-pickup.v1':
+  require('./agent-commerce-protocol').jobKind(effect)||require('./agent-mail-protocol').jobKind(effect);
 const { ValidationError,InvariantError,NotFoundError }=require('../domain/errors');
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),

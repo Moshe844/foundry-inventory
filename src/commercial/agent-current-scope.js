@@ -3,6 +3,8 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 66:{common:'Compares freight quotes for confirmed pallets, addresses, pickup times, classes and extra services. Books a pickup through your connected ShipStation API freight account and keeps the pickup confirmation and bill of lading with the packed shipment.',
+ enterprise:'You can authorize an exact carrier, service, route and pallet profile with a maximum quote. StockChief can then book the lowest matching offer without training. Staff confirm measurements and record the physical handoff separately.'},
  68:{common:'Accepts private preorders for exact products on a placed purchase order, including decimal quantities and lot- or serial-tracked products. Customers review the units, price, tax and expected stock date. StockChief prevents overlapping claims and reserves the exact quantity at the agreed location after receipt. Staff confirm the exact lots or serials at picking. Kits, catch-weight goods and dispatch have separate controls.',
  growth:'Collects exact private customer preorders. You review each request before creating its order draft and handle allocation separately.',
  pro:'Accepts known-customer preorders without training after the watch period and your authorization. Confirms and reserves the complete order only after enough of its linked stock has arrived, within current plan, price and location limits.',
