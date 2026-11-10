@@ -112,6 +112,10 @@ function createPostgresAutopilotRouter(database,options={}){
     const {id}=await sop.enqueue(database,req.ctx,req.files[0]);
     res.redirect(303,sopPath+'/'+id);
   }));
+  router.post(sopPath+'/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const {id}=await sop.retry(database,req.ctx,req.params.id);
+    res.redirect(303,sopPath+'/'+id);
+  }));
   router.post(sopPath+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const proposal=await sop.prepare(database,req.ctx,{...req.body,sourceId:req.params.id},{provider:options.provider});
     res.redirect(303,'/operating-instructions/'+proposal.id);

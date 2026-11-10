@@ -81,7 +81,7 @@ async function recover(client, now) {
       const source=(await client.query('SELECT input_options,source_hash FROM import_source_uploads WHERE job_id=$1 AND workspace_id=$2 AND plan_id IS NULL',[row.id,row.workspace_id])).rows[0];
       if(source){const reader=require('../imports/handwritten-table'),readingAttempt=require('node:crypto').createHash('sha256').update(row.lease_token||row.id).digest('hex').slice(0,20);await reader.refund(client,{workspaceId:row.workspace_id,actorId:row.payload?.actorId},reader.creditPrefix({...source.input_options,readingAttempt},source.source_hash));}
     }
-    if (['import.read-contract.v1','import.read-shelf-photo.v1','document.read-sop.v1'].includes(row.kind)) {
+    if (['import.read-contract.v1','import.read-shelf-photo.v1','import.read-sop.v1'].includes(row.kind)) {
       const reader = row.kind === 'import.read-contract.v1' ? require('../documents/agent-contract-reader')
         : row.kind === 'import.read-shelf-photo.v1' ? require('../warehouse/agent-shelf-photos')
         : require('../documents/agent-sop-sources');

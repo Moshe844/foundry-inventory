@@ -7,7 +7,7 @@ const policy=require('../commercial/agent-plan');
 const originals=require('./contract-source');
 const usage=require('../imports/handwritten-table');
 
-const kind='document.read-sop.v1';
+const kind='import.read-sop.v1';
 const table='stockchief_runtime.agent_sop_sources';
 const links='stockchief_runtime.agent_sop_proposals';
 const digest=value=>createHash('sha256').update(value).digest('hex');
@@ -27,7 +27,16 @@ async function authorize(db,ctx){
     FOR SHARE OF u,w`,[ctx.workspaceId,ctx.actorId])).rows[0];
   if(!owner)throw new AuthorizationError('Only the current owner can read private procedures or apply their settings.');
   await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
+  await db.query(`SELECT sub.id FROM account_subscriptions sub
+    JOIN workspaces w ON w.owner_account_id=sub.account_id WHERE w.id=$1 FOR SHARE OF sub`,[ctx.workspaceId]);
   return policy.requireWorkspaceJob(db,ctx.workspaceId,212,'draft');
+}
+
+async function queueReading(tx,ctx,id,idempotencyKey){
+  const scoped={query:(...args)=>tx.query(...args),transaction:fn=>fn(tx)};
+  const {job}=await require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,kind,
+    idempotencyKey,payload:{id,actorId:ctx.actorId},maxAttempts:1,priority:40});
+  return job.id;
 }
 
 async function enqueue(db,ctx,{filename,buffer}){
@@ -45,12 +54,24 @@ async function enqueue(db,ctx,{filename,buffer}){
     if(prior)return {...prior,replayed:true};
     await usage.documentCapacity(tx,ctx);
     const id=newId('sop');
-    const scoped={query:(...args)=>tx.query(...args),transaction:fn=>fn(tx)};
-    const {job}=await require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,kind,
-      idempotencyKey:id,payload:{id,actorId:ctx.actorId},maxAttempts:1,priority:40});
+    const jobId=await queueReading(tx,ctx,id,id);
     await require('../commercial/storage-capacity').reserve(tx,ctx.workspaceId,'sop-original:'+id,buffer.length+16384,{finished:true});
     await tx.query(`INSERT INTO ${table}(workspace_id,id,uploaded_by,job_id,filename,source_hash,content)
-      VALUES($1,$2,$3,$4,$5,$6,$7)`,[ctx.workspaceId,id,ctx.actorId,job.id,filename,sourceHash,buffer]);
+      VALUES($1,$2,$3,$4,$5,$6,$7)`,[ctx.workspaceId,id,ctx.actorId,jobId,filename,sourceHash,buffer]);
+    return {id};
+  },{isolation:'READ COMMITTED'});
+}
+
+async function retry(db,ctx,id){
+  return db.transaction(async tx=>{
+    await authorize(tx,ctx);
+    const source=(await tx.query(`SELECT state,job_id FROM ${table} WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
+    if(!source)throw new NotFoundError('This procedure is not in your inventory.');
+    if(source.state!=='FAILED')return {id,replayed:true};
+    await usage.documentCapacity(tx,ctx);
+    const jobId=await queueReading(tx,ctx,id,id+':retry:'+source.job_id);
+    await tx.query(`UPDATE ${table} SET state='QUEUED',job_id=$3,uploaded_by=$4,problem=NULL
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,jobId,ctx.actorId]);
     return {id};
   },{isolation:'READ COMMITTED'});
 }
@@ -137,8 +158,8 @@ async function run(job,db,{provider}={}){
     },{isolation:'READ COMMITTED'});
   }catch(error){
     await usage.refund(db,ctx,key);
-    await db.query(`UPDATE ${table} SET state='FAILED',problem=$3 WHERE workspace_id=$1 AND id=$2 AND state IN ('QUEUED','READING')`,
-      [ctx.workspaceId,record.id,String(error.message).slice(0,1000)]);
+    await db.query(`UPDATE ${table} SET state='FAILED',problem=$3 WHERE workspace_id=$1 AND id=$2 AND state IN ('QUEUED','READING') AND job_id=$4`,
+      [ctx.workspaceId,record.id,String(error.message).slice(0,1000),job.id]);
     throw error;
   }
 }
@@ -224,4 +245,4 @@ async function readPage(db,ctx,{filter='',page=1}={}){
 const definition={id:212,key:'procedure-originals',label:'Read and follow operating procedures',
   filterLabel:'Exact procedure filename',readPage};
 
-module.exports={kind,authorize,enqueue,load,run,recover,checked,prepare,attachProposal,checkProposalSource,page,definition};
+module.exports={kind,authorize,enqueue,retry,load,run,recover,checked,prepare,attachProposal,checkProposalSource,page,definition};
