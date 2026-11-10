@@ -24,17 +24,7 @@ module.exports=[
       ORDER BY k.code,v.name,si.id`},
   {id:26,key:'open-to-buy',label:'Plan purchasing within the monthly budget',filterLabel:'Month (YYYY-MM)',readPage:(db,ctx,options)=>require('../purchasing/agent-budgets').report(db,ctx,options,true)},
   {id:110,key:'purchase-budget',label:'Compare purchase budgets with actual spending',filterLabel:'Month (YYYY-MM)',readPage:require('../purchasing/agent-budgets').report},
-  {id:22,key:'supplier-options',label:'Compare buying options',summary:'Active supplier terms for each SKU. Cost ranks compare the same currency. Lead-time ranks use observed delivery times after three received orders, then saved item or supplier terms if available. Check minimums before ordering.',sql:`
-    WITH offers AS (SELECT si.*,s.currency,s.name,lead.effective_lead AS days
-      FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
-      JOIN stockchief_runtime.supplier_planning_leads lead ON lead.supplier_item_id=si.id
-      WHERE si.workspace_id=$1 AND si.is_active=1 AND s.status='active')
-    SELECT k.code AS "SKU",o.name AS "Supplier",o.currency AS "Currency",o.last_unit_cost AS "Unit price",o.days AS "Lead days",
-      o.minimum_order_quantity AS "Minimum quantity",o.units_per_purchase_unit AS "Pack size",
-      CASE WHEN o.last_unit_cost IS NOT NULL THEN dense_rank() OVER(PARTITION BY o.sku_id,o.currency ORDER BY o.last_unit_cost NULLS LAST) END AS "Cost rank",
-      CASE WHEN o.days IS NOT NULL THEN dense_rank() OVER(PARTITION BY o.sku_id ORDER BY o.days NULLS LAST) END AS "Speed rank"
-    FROM offers o JOIN skus k ON k.id=o.sku_id WHERE ($2='' OR lower(k.code)=lower($2))
-    ORDER BY k.code,o.currency,o.last_unit_cost NULLS LAST,o.days NULLS LAST,o.id`},
+  {id:22,key:'supplier-options',label:'Compare buying options',readPage:require('../purchasing/agent-reorder-workflows').review},
   {id:34,key:'measured-lead-times',label:'Compare promised and actual supplier lead times',summary:'First accepted receipt of this item on each of the last 12 received POs in a year. After three orders the reorder calculation uses the observed average, rounded up to whole days.',sql:`
     SELECT k.code AS "SKU",s.name AS "Supplier",l.samples AS "Delivered orders",l.configured_lead AS "Configured days",
       l.promised_days AS "Average promised days",l.measured_days AS "Average actual days",l.effective_lead AS "Supplier planning days"

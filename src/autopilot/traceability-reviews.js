@@ -1,18 +1,7 @@
 'use strict';
 
 module.exports=[
-  {id:1,key:'stock-lookup',label:'Look up an item, lot or serial',requiresFilter:true,prompt:'item name, SKU, lot or serial',summary:'SKU balances, lot positions and individual serials are separate views of the same stock. A serial that has left stock is marked issued.',sql:`
-    WITH positions AS (
-      SELECT s.code AS sku,i.name AS product,l.name AS location,'SKU balance' AS kind,s.variant_label AS identifier,b.on_hand AS units
-      FROM balances b JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=b.location_id
-      WHERE b.workspace_id=$1 AND (lower(s.code)=lower($2) OR lower(i.name)=lower($2) OR lower(s.variant_label)=lower($2))
-      UNION ALL SELECT s.code,i.name,l.name,'Lot',lot.code,b.quantity FROM lot_balances b JOIN lots lot ON lot.id=b.lot_id
-      JOIN skus s ON s.id=lot.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=b.location_id
-      WHERE b.workspace_id=$1 AND (lower(lot.code)=lower($2) OR lower(s.code)=lower($2))
-      UNION ALL SELECT s.code,i.name,coalesce(l.name,'Issued'),'Serial',u.serial,(u.status='in_stock')::int FROM serial_units u JOIN skus s ON s.id=u.sku_id
-      JOIN items i ON i.id=s.item_id LEFT JOIN locations l ON l.id=u.location_id WHERE u.workspace_id=$1 AND lower(u.serial)=lower($2))
-    SELECT sku AS "SKU",product AS "Product",kind AS "View",identifier AS "Variant or identifier",location AS "Location",units AS "Units" FROM positions
-    ORDER BY sku,kind,location,identifier`},
+  {id:1,key:'stock-lookup',label:'Look up an item, lot or serial',readPage:require('./stock-reading').lookup,requiresFilter:true,prompt:'item name, SKU, size, lot or serial'},
   {id:191,key:'expiring-lots',label:'Review expiring stock and waiting orders',summary:'Lots expiring within 30 days are paired with the earliest unfilled order for the SKU at that warehouse, due by expiry. Verify availability before assigning it.',usesDate:true,sql:`
     SELECT s.code AS "SKU",lot.code AS "Lot",l.name AS "Location",b.quantity AS "Units",lot.expires_at::date::text AS "Expires",
       CASE WHEN lot.recalled_at IS NOT NULL THEN 'Under recall' WHEN lot.expires_at::date<$3::date THEN 'Expired' ELSE coalesce(d.order_number,'No dated order found') END AS "Priority"
