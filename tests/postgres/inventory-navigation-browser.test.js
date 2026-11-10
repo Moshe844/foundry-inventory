@@ -57,8 +57,10 @@ test('inventory summary links reach understandable, working destinations in a re
     const overview=await page.goto(`${base}/inventory`);
     assert.equal(overview.status(),200);
     assert.match(await page.locator('main').innerText(),/4 matching products/);
-    await page.goto(`${base}/inventory/overview`);
+    await page.goto(`${base}/inventory/overview`,{referer:`${base}/inventory`});
     assert.match(await page.locator('main').innerText(),/5 SKUs tracked/);
+    // The way back to the Stock list is named as the menu names it.
+    assert.equal((await page.locator('a.page-back').innerText()).replace(/\s+/g,' ').trim(),'← Back to Stock');
     assert.match(await page.locator('main').innerText(),/Actual stock cost is missing for 10 units/);
     assert.doesNotMatch(await page.locator('main').innerText(),/amount above is not the full inventory value/);
     assert.match(await page.locator('main a[href="/inventory/table?group=healthy"] .sc-group-count').innerText(),/^2\b/);
