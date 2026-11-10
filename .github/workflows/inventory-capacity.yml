@@ -200,6 +200,9 @@ jobs:
       - name: Native contribution, reviewed fees, physical refunds, exact allocation and plan-safe bulk reports
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/order-contribution-calculation.test.js tests/postgres/agent-net-contribution.test.js tests/postgres/agent-net-contribution-boundaries.test.js tests/postgres/agent-net-contribution-allocation.test.js tests/postgres/agent-net-contribution-ui.test.js tests/postgres/agent-net-contribution-volume.test.js tests/postgres/agent-net-contribution-schema.test.js
+      - name: Physical return conditions, exact decisions, repair holds, human write-offs and plan-safe rules
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-return-disposition.test.js tests/postgres/agent-return-disposition-boundaries.test.js tests/postgres/agent-return-disposition-ui.test.js tests/postgres/agent-return-disposition-schema.test.js tests/postgres/agent-return-disposition-volume.test.js tests/postgres/agent-return-disposition-reporting.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
