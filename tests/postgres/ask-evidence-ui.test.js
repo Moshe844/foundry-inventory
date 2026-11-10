@@ -22,6 +22,7 @@ test('Ask routes broad questions through supported evidence and general knowledg
     const provider=fixture({name:'evidence-fixture',model:'fixture',async complete(input){
       if(input.schemaName==='stockchief_postgres_request'){
         const payload=JSON.parse(input.prompt);const question=payload.message;
+        if(question.startsWith('Que signifie'))return {data:{intent:'clarify',clarifyingQuestion:'Unsupported plan'},usage:{}};
         const view=question.includes('FIFO')?'general_knowledge':question.includes('reorder')?'replenishment':'business_analysis';
         const readQueries=question==='How many products and customer orders do we have?'?[
           {view:'inventory_summary',search:null,timeframe:'all_time'},
@@ -45,6 +46,21 @@ test('Ask routes broad questions through supported evidence and general knowledg
       }
       observed.push({schema:input.schemaName,prompt:JSON.parse(input.prompt)});
       if(input.schemaName==='stockchief_postgres_general_answer'){
+        const {question}=JSON.parse(input.prompt);
+        if(question.startsWith('Que signifie')){
+          assert.match(input.system,/If the request asks to perform, prepare or schedule an action, set supported=false/);
+          return {data:{answer:'Le premier produit entré est le premier sorti.',supported:true,evidenceKeys:[]},usage:{}};
+        }
+        if(question.includes('¿')){
+          assert.match(input.system,/language of the current user request/);
+          assert.match(input.system,/Preserve product and party names, identifiers, amounts, dates/);
+          return {data:{answer:'FIFO significa que lo primero que entra es lo primero que sale.',supported:true,evidenceKeys:[]},usage:{}};
+        }
+        if(question.includes('日本語')){
+          assert.match(input.system,/explicitly asks for another language/);
+          assert.match(input.system,/"language":"Hebrew"/);
+          return {data:{answer:'FIFOは、先に入ったものを先に出す方法です。',supported:true,evidenceKeys:[]},usage:{}};
+        }
         return {data:{answer:'FIFO means first in, first out. This is general information, not a reading of your inventory.',
           supported:true,evidenceKeys:[]},usage:{}};
       }
@@ -101,4 +117,11 @@ test('Ask routes broad questions through supported evidence and general knowledg
     assert.match(followup,/Two customer orders were recorded last month/);
     const reorder=await ask('What should I reorder?');
     assert.match(reorder,/There are no recorded stock positions to rank/);
+    const spanish=await ask('¿Qué significa FIFO?');
+    assert.match(spanish,/FIFO significa que lo primero que entra es lo primero que sale/);
+    const french=await ask('Que signifie FIFO en gestion de stock ?');
+    assert.match(french,/Le premier produit entré est le premier sorti/);
+    await require('../../src/assistant/postgres-answer-preferences').save(database,{workspaceId:owner.workspace_id,actorId:owner.actor_id},{answerLanguage:'he'});
+    const japanese=await ask('What does FIFO mean? 日本語で答えてください。');
+    assert.match(japanese,/FIFOは、先に入ったものを先に出す方法です/);
   });

@@ -74,7 +74,10 @@ async function start(db,ctx,message,options={}){
  const conversation=await require('./postgres-agent-context').capture(db,hasChatHistory?{...ctx,conversationId:chatId}:ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&!['codex-staging','hosted-business'].includes(goal.checkpoint.runtime))throw new ValidationError('That request already belongs to another Ask runtime.');
- const boundedRead=!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message);
+ const boundedCandidate=!goal.checkpoint.harness?.native?.codex&&require('./bounded-business-read').selected(message);
+ const presentation=boundedCandidate?await require('./postgres-answer-preferences').read(db,ctx):null;
+ const boundedRead=Boolean(boundedCandidate&&!presentation.answerStyle&&
+   (!presentation.answerLanguage||/^en(?:-|$)/i.test(presentation.answerLanguage)));
  const runtime=goal.checkpoint.runtime||(boundedRead||options.boundedProcessing===true?'codex-staging':'hosted-business');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
   [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1,...(chatId?{chatId}:{})}),JSON.stringify({runtime,pilotRevision:pilot.revision,
