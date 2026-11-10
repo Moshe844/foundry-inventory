@@ -2,7 +2,10 @@
 const exact=require('../domain/exact-quantity'),availability=require('../domain/postgres-stock-availability');
 
 async function lookup(c,ctx,{filter,page=1,today}){
- const result=(await c.query(`WITH matched AS (SELECT DISTINCT s.id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+ const result=(await c.query(`WITH exact_identifier AS (
+ SELECT EXISTS(SELECT 1 FROM lots WHERE workspace_id=$1 AND lower(code)=lower($2))
+ OR EXISTS(SELECT 1 FROM serial_units WHERE workspace_id=$1 AND lower(serial)=lower($2)) AS matched
+ ), matched AS (SELECT DISTINCT s.id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  WHERE s.workspace_id=$1 AND (lower(s.code)=lower($2) OR lower(i.name)=lower($2) OR lower(s.variant_label)=lower($2)
  OR EXISTS(SELECT 1 FROM lots lot WHERE lot.workspace_id=s.workspace_id AND lot.sku_id=s.id AND lower(lot.code)=lower($2))
  OR EXISTS(SELECT 1 FROM serial_units u WHERE u.workspace_id=s.workspace_id AND u.sku_id=s.id AND lower(u.serial)=lower($2)))),
@@ -16,12 +19,15 @@ async function lookup(c,ctx,{filter,page=1,today}){
  FROM matched match JOIN skus s ON s.id=match.id JOIN items i ON i.id=s.item_id JOIN lots lot ON lot.workspace_id=s.workspace_id AND lot.sku_id=s.id
  JOIN lot_balances b ON b.workspace_id=lot.workspace_id AND b.lot_id=lot.id JOIN locations l ON l.workspace_id=b.workspace_id AND l.id=b.location_id
  WHERE lower(lot.code)=lower($2) OR NOT EXISTS(SELECT 1 FROM lots x WHERE x.workspace_id=$1 AND lower(x.code)=lower($2))
- UNION ALL SELECT s.id,i.id,s.code,i.name,u.serial,l.id,coalesce(l.name,'Issued'),'Serial',(u.status='in_stock')::int::text,
+ UNION ALL SELECT s.id,i.id,s.code,i.name,u.serial,CASE WHEN u.status='in_stock' THEN l.id END,
+ CASE WHEN u.status='issued' THEN 'Issued' ELSE coalesce(l.name,'No recorded location') END,'Serial',(u.status='in_stock')::int::text,
  u.secondary_quantity::text,i.unit_label,i.secondary_unit_label,lot.recalled_at IS NOT NULL,lot.expires_at::date<$3::date
  FROM matched match JOIN skus s ON s.id=match.id JOIN items i ON i.id=s.item_id JOIN serial_units u ON u.workspace_id=s.workspace_id AND u.sku_id=s.id
  LEFT JOIN locations l ON l.workspace_id=u.workspace_id AND l.id=u.location_id LEFT JOIN lots lot ON lot.workspace_id=u.workspace_id AND lot.id=u.lot_id
  WHERE lower(u.serial)=lower($2) OR NOT EXISTS(SELECT 1 FROM serial_units x WHERE x.workspace_id=$1 AND lower(x.serial)=lower($2)))
- SELECT * FROM positions ORDER BY sku,sku_id,kind,location,location_id,identifier LIMIT 101 OFFSET $4`,[ctx.workspaceId,filter,today,(page-1)*100])).rows;
+ SELECT positions.* FROM positions CROSS JOIN exact_identifier
+ WHERE NOT exact_identifier.matched OR (kind IN ('Lot','Serial') AND lower(identifier)=lower($2))
+ ORDER BY sku,sku_id,kind,location,location_id,identifier LIMIT 101 OFFSET $4`,[ctx.workspaceId,filter,today,(page-1)*100])).rows;
  const more=result.length>100,selected=result.slice(0,100),ids=[...new Set(selected.map(r=>r.sku_id))];
  const stock=await availability.readMany(c,ctx.workspaceId,selected.filter(r=>r.location_id).map(r=>({skuId:r.sku_id,locationId:r.location_id})));
  const usable=await require('../domain/postgres-kit-availability').stock(c,ctx.workspaceId,ids),kits=await require('../domain/postgres-kit-availability').read(c,ctx.workspaceId,ids);
