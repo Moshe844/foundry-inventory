@@ -3632,9 +3632,11 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
    link colours would otherwise turn it into an ordinary link. */
 html:root body .rd-delete { color: var(--bad, #b42318) !important; }
 html:root body .rm-canvas .rd-actions .btn { background: #fff; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line, #d0d5dd), 0 1px 2px rgba(17, 21, 46, .06); }
-html:root body .rm-canvas .rd-actions .btn--danger { color: var(--bad, #b42318); box-shadow: inset 0 0 0 1px var(--bad-line, #f3c5c0), 0 1px 2px rgba(17, 21, 46, .06); }
-html:root body .rm-canvas .rd-actions .btn--danger:not(:disabled):hover { background: var(--bad-wash, #fef3f2); box-shadow: inset 0 0 0 1px var(--bad, #b42318); }
-html:root body .rm-canvas .rd-actions .btn--danger:disabled { opacity: .55; cursor: not-allowed; }
+/* Every irreversible action keeps the outlined red the base .btn--danger rule
+   intends; the depth layer would otherwise flatten it to plain ink. */
+html:root body .rm-canvas .rd-actions .btn--danger, html:root body .rm-canvas .btn--danger { color: var(--bad, #b42318); box-shadow: inset 0 0 0 1px var(--bad-line, #f3c5c0), 0 1px 2px rgba(17, 21, 46, .06); }
+html:root body .rm-canvas .rd-actions .btn--danger:not(:disabled):hover, html:root body .rm-canvas .btn--danger:not(:disabled):hover { background: var(--bad-wash, #fef3f2); box-shadow: inset 0 0 0 1px var(--bad, #b42318); }
+html:root body .rm-canvas .rd-actions .btn--danger:disabled, html:root body .rm-canvas .btn--danger:disabled { opacity: .55; cursor: not-allowed; }
 
 /* Variants: one searchable list for any number of variants (product page). */
 .vx-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -181,6 +181,8 @@ test('payments, deposits, hand-made entries and counts keep the books equal to t
   ({failed}=await checks());assert(failed.includes('accounting.inventory_ledger_matches_stock_value'),failed.join());
   await db.query('UPDATE accounting_inventory_cost_balances SET quantity_units=quantity_units+500 WHERE workspace_id=$1 AND sku_id=$2',[w,W]);
   ({failed}=await checks());assert(failed.includes('inventory.costed_units_within_stock'),failed.join());
+  const stock=(await recon.failures(db,w)).find(item=>item.key==='inventory.costed_units_within_stock');
+  assert.match(stock.happened,/WIDGET at Main/,'the item names the product and place');assert(stock.href.startsWith('/inventory/item_'),'and opens that product: '+stock.href);
   await db.query('UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled-1 WHERE workspace_id=$1 AND sales_order_id=$2',[w,so.salesOrderId]);
   await db.query('UPDATE accounting_customer_invoices SET total_minor=total_minor+7 WHERE id=$1',[invoice.id]);
   await db.query("UPDATE accounting_supplier_bills SET balance_minor=balance_minor+3 WHERE workspace_id=$1 AND journal_entry_id IS NOT NULL",[w]);

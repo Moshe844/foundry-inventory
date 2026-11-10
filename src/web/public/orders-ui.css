@@ -326,6 +326,9 @@ a.ox-order { font-weight: 700; color: var(--ox-text) !important; white-space: no
 .ox-void form { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .ox-void p { margin: 0; font-size: 13px; color: var(--ox-text-2); }
 .ox-void .ox-btn { align-self: flex-start; }
+/* Open, the form sits under the payment's own line, and its label keeps the field style the list's description rule would otherwise take. */
+.ox-paycard .ox-receipts .ox-void[open] { order: 4; }
+.ox-paycard .ox-receipts .ox-void .ox-field > span { order: 0; flex-basis: auto; font-size: 13px; font-weight: 600; color: var(--ox-text-2); }
 .ox-collect { border-top: 1px solid var(--ox-divider); }
 .ox-collect > summary { list-style: none; }
 .ox-collect__body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; padding: 18px; }
