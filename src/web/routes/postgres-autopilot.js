@@ -33,6 +33,7 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/preview',requireAuth,owner,asyncRoute(async(req,res)=>copyPage(req,res,{draft:await channelCopy.preview(database,req.ctx,req.body)})));
   router.post('/autopilot/channel-copy',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
+  router.post('/autopilot/channel-copy/runs/:runId/approve',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.approve(database,req.ctx,req.params.runId,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
   router.get('/autopilot/channel-copy/versions/:versionId/copy.csv',requireAuth,owner,asyncRoute(async(req,res)=>{const csv=await channelCopy.download(database,req.ctx,req.params.versionId);res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="prepared-channel-copy.csv"'});res.send(csv);}));
   router.get('/autopilot/channel-copy/:id',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));

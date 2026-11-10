@@ -52,7 +52,7 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},
       idempotencyKey,{operation});usageRecorded=true;
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
-    if(!includedReport && (!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`))await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey});return response;
+    if(!options.deferCustomerCommit && !includedReport && (!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`))await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey});return response;
   }catch(error){error.modelStarted=providerStarted;if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
     if(!usageRecorded&&(error.usage||response?.usage))await operations.modelUsage(database,scope,
       error.usage||response.usage,idempotencyKey,{operation,failed:true});
