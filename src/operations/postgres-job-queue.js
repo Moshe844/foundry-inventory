@@ -81,6 +81,10 @@ async function recover(client, now) {
       const source=(await client.query('SELECT input_options,source_hash FROM import_source_uploads WHERE job_id=$1 AND workspace_id=$2 AND plan_id IS NULL',[row.id,row.workspace_id])).rows[0];
       if(source){const reader=require('../imports/handwritten-table'),readingAttempt=require('node:crypto').createHash('sha256').update(row.lease_token||row.id).digest('hex').slice(0,20);await reader.refund(client,{workspaceId:row.workspace_id,actorId:row.payload?.actorId},reader.creditPrefix({...source.input_options,readingAttempt},source.source_hash));}
     }
+    if(row.kind==='import.read-contract.v1'){
+      const result=await require('../documents/agent-contract-reader').recover(client,hydrate(row));
+      if(result){await client.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',result=$2::jsonb,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,completed_at=$3,updated_at=$3 WHERE id=$1",[row.id,JSON.stringify(result),new Date(now).toISOString()]);await event(client,row.id,'COMPLETION_RECOVERED',result,now);continue;}
+    }
     const dead = row.attempt_count >= row.max_attempts;
     await client.query(`UPDATE stockchief_runtime.jobs SET status = $2, available_at = $3,
       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
@@ -126,7 +130,7 @@ async function claim(database, options = {}) {
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS, options.maintenanceOnly === true]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
-    if(['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read','import.analyse-source','import.analyse-handwriting.v1','import.execute-approved','import.revise-preview'].includes(selected.kind)){
+    if(['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read','import.analyse-source','import.analyse-handwriting.v1','import.read-contract.v1','import.execute-approved','import.revise-preview'].includes(selected.kind)){
       const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[selected.workspace_id])).rows[0]?.owner_account_id;
       const lane=selected.kind.startsWith('import.')?'imports':'agents';
       if(owner){const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[`jobs-account:${owner}:${lane}`])).rows[0].acquired;

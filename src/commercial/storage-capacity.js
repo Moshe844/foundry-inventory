@@ -29,7 +29,7 @@ async function measurement(db,workspaceId,relation=null,options={}){
   for(;;){const active=(await db.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE status='RUNNING'
    AND (kind=ANY($1::text[]) OR lease_owner LIKE '%:bulk')
    AND lease_expires_at>floor(extract(epoch FROM statement_timestamp())*1000) LIMIT 1`,
-   [['import.analyse-source','import.analyse-handwriting.v1','import.revise-preview','import.execute-approved','erp.cutover.continue','warehouse.count.apply','qualification.staging-million']])).rows.length;
+   [['import.analyse-source','import.analyse-handwriting.v1','import.read-contract.v1','import.revise-preview','import.execute-approved','erp.cutover.continue','warehouse.count.apply','qualification.staging-million']])).rows.length;
    if(!active){nextProbe=Date.now()+pollMs;return;}
    // Never retain an old MVCC snapshot while an import writes new versions.
    // Retrying the whole read also keeps partially measured bytes unpublished.

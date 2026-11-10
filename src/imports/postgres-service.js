@@ -466,7 +466,7 @@ async function analyseInner(database, ctx, input) {
   const sourceHash=digest(bytes);
   const handwriting=input.readingMode==='handwritten-count'?'count':input.readingMode==='handwritten-delivery'?'delivery':null;
   const authorizeHandwriting=()=>require('./handwritten-table').authorize(database,ctx);
-  if(handwriting){await authorizeHandwriting();input={...input,imageSource:true,handwritingDelivery:handwriting==='delivery',importMode:handwriting==='count'?'set':'add'};}
+  if(handwriting){await authorizeHandwriting();await require('./handwritten-table').reserveDocument(database,ctx,require('./handwritten-table').creditPrefix(input,sourceHash));input={...input,imageSource:true,handwritingDelivery:handwriting==='delivery',importMode:handwriting==='count'?'set':'add'};}
   const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
   const isImage=Boolean(buffer)&&require('./image-table').isImage(buffer);
   await input.onProgress?.({stage:'reading'});

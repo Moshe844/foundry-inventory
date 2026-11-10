@@ -615,6 +615,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};

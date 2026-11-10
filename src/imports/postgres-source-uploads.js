@@ -20,7 +20,7 @@ async function enqueue(database,ctx,input){
  if(bytes.length>require('../config').uploads.maxBytes)throw new ValidationError('This file exceeds the displayed upload size limit.');
  if(input.importMode!==undefined&&!['add','set'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
  if(input.readingMode&&!['standard','handwritten-count','handwritten-delivery'].includes(input.readingMode))throw new ValidationError('Choose the kind of file to read.');
- if(input.readingMode&&input.readingMode!=='standard'){await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,139,'draft');if(!input.buffer)throw new ValidationError('Upload the original handwritten page or PDF.');}
+ if(input.readingMode&&input.readingMode!=='standard'){await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,139,'draft');await require('./handwritten-table').documentCapacity(database,ctx);if(!input.buffer)throw new ValidationError('Upload the original handwritten page or PDF.');}
  if(input.readingMode&&input.readingMode!=='standard'&&bytes.length>(bytes.subarray(0,5).toString()==='%PDF-'?32:20)*1024*1024)throw new ValidationError('Handwriting supports PDFs up to 32 MB and page photos or scans up to 20 MB. Split this source before uploading.');
  const sourceHash=crypto.createHash('sha256').update(bytes).digest('hex'),key=String(input.requestKey||newId('source'));
  if(!/^[a-zA-Z0-9:_-]{1,200}$/.test(key))throw new ValidationError('Reload the upload form before saving this file.');
