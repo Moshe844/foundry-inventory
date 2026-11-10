@@ -185,6 +185,9 @@ jobs:
       - name: Annual count planning, database freezes, physical teams and owner sign-off
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-annual-stocktake.test.js tests/postgres/agent-annual-stocktake-planning.test.js tests/postgres/agent-annual-stocktake-boundaries.test.js tests/postgres/agent-annual-stocktake-ui.test.js tests/postgres/agent-annual-stocktake-recovery.test.js
+      - name: Partial picks, remaining stock, physical handoff, plan authority and measured work
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-partial-shipments.test.js tests/postgres/agent-partial-shipment-boundaries.test.js tests/postgres/agent-partial-shipment-reporting.test.js tests/postgres/agent-partial-shipment-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

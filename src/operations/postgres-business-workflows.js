@@ -720,11 +720,12 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     if (operation.replayed) return { ...operation.result, replayed: true };
     const order = await requireRow(client, `SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
       [salesOrderId, ctx.workspaceId], 'That sales order was not found.');
-    if (!['DRAFT', 'CONFIRMED', 'BACKORDERED'].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
+    if (!['DRAFT', 'CONFIRMED', 'BACKORDERED',...(input.resumeRemaining===true?['PARTIALLY_FULFILLED']:[])].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const lines = await client.query(`SELECT * FROM sales_order_lines
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const kitComponents=(await client.query('SELECT c.component_sku_id,c.sales_order_line_id FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE c.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows,kitLines=new Set(kitComponents.map(c=>c.sales_order_line_id));
+    if(order.status==='PARTIALLY_FULFILLED'&&(kitComponents.length||(await client.query("SELECT 1 FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2 AND (i.tracking_mode<>'quantity' OR i.quantity_precision<>0 OR i.secondary_unit_label IS NOT NULL) LIMIT 1",[ctx.workspaceId,salesOrderId])).rowCount))throw new ValidationError('Reserve remaining kits or tracked/measured goods through their exact individual workflow.');
     const skuIds = [...new Set([...lines.rows.map((line) => line.sku_id),...kitComponents.map(c=>c.component_sku_id)])];
     await client.query(`SELECT b.sku_id,b.location_id FROM balances b JOIN locations l ON l.id=b.location_id
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND l.is_active=1 AND l.custody_agreement_id IS NULL
@@ -765,7 +766,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const kitReservations=await require('./postgres-kit-allocations').reserve(client,ctx,salesOrderId,{lock:false,requireFull:input.requireFullAllocation===true});short=short||kitReservations.shortage;
     if (short && input.requireFullAllocation === true) throw new ValidationError(
       'The full order cannot be reserved from available stock. No confirmation or allocation was saved. Receive or transfer the missing stock, then try again.');
-    const status = short ? 'BACKORDERED' : 'CONFIRMED';
+    const status = lines.rows.some(line=>Number(line.quantity_fulfilled)>0)?'PARTIALLY_FULFILLED':short ? 'BACKORDERED' : 'CONFIRMED';
     const at = nowIso();
     await client.query(`UPDATE sales_orders SET status=$3,confirmed_by_user_id=$4,
       confirmed_at=COALESCE(confirmed_at,$5),updated_at=$5,version=version+1 WHERE id=$1 AND workspace_id=$2`,

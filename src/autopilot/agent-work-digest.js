@@ -47,7 +47,7 @@ async function report(db,ctx,{filter='',page=1}={}){
   SELECT 'action' AS origin,p.id,p.action_type,p.summary,p.result,p.executed_at,
    CASE WHEN p.action_type=ANY($6::text[]) THEN p.payload ELSE '{}'::jsonb END AS payload,
    EXISTS(SELECT 1 FROM security_event_history e WHERE e.workspace_id=p.workspace_id AND e.reference=p.id AND e.action='Agent action undone') AS undone
-  FROM stockchief_runtime.assistant_action_proposals p WHERE p.workspace_id=$1 AND p.status='EXECUTED' AND p.executed_at>=($2::text)::timestamptz AND p.executed_at<($3::text)::timestamptz
+  FROM stockchief_runtime.assistant_action_proposals p WHERE p.workspace_id=$1 AND p.status='EXECUTED' AND p.action_type<>'warehouse.release_partial_order' AND p.executed_at>=($2::text)::timestamptz AND p.executed_at<($3::text)::timestamptz
    AND ($5::text IS NULL OR p.executed_at>=$5::timestamptz) ORDER BY p.executed_at,p.id LIMIT $7
  ), routines AS (
   SELECT 'routine' AS origin,w.id,'routine' AS action_type,'Completed business routine: '||coalesce(w.recommended_action::jsonb->>'displayName',w.recommended_action::jsonb->>'poNumber','View recorded work') AS summary,
@@ -117,6 +117,15 @@ async function report(db,ctx,{filter='',page=1}={}){
   WHERE d.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND m.sent_at::timestamptz>=$2::timestamptz AND m.sent_at::timestamptz<$3::timestamptz
    AND ($5::text IS NULL OR m.sent_at::timestamptz>=$5::timestamptz) AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=d.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED')
   ORDER BY m.sent_at,d.id LIMIT $7
+ ), partial_shipments AS (
+  SELECT 'partial-shipment' AS origin,p.id,p.action_type,'Completed partial shipment for '||(p.payload#>>'{partialSummary,order}') AS summary,
+    p.result,${require('../warehouse/partial-shipment-evidence').completedAtSql('p')} AS executed_at,'{}'::jsonb AS payload,false AS undone
+  FROM stockchief_runtime.assistant_action_proposals p WHERE p.workspace_id=$1 AND p.action_type='warehouse.release_partial_order'
+    AND ${require('../warehouse/partial-shipment-evidence').completionSql('p')}
+    AND ${require('../warehouse/partial-shipment-evidence').completedAtSql('p')}>=$2::timestamptz
+    AND ${require('../warehouse/partial-shipment-evidence').completedAtSql('p')}<$3::timestamptz
+    AND ($5::text IS NULL OR ${require('../warehouse/partial-shipment-evidence').completedAtSql('p')}>=$5::timestamptz)
+  ORDER BY executed_at,p.id LIMIT $7
  ), annual_stocktakes AS (
   SELECT 'annual-stocktake' AS origin,p.id,'inventory.plan_annual_stocktake' AS action_type,'Signed off annual stocktake: '||p.title AS summary,
    p.signoff AS result,p.signed_off_at AS executed_at,'{}'::jsonb AS payload,false AS undone
@@ -145,7 +154,7 @@ async function report(db,ctx,{filter='',page=1}={}){
   JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
   WHERE p.workspace_id=$1 AND p.purchase_created_at>=$2::timestamptz AND p.purchase_created_at<$3::timestamptz
    AND ($5::text IS NULL OR p.purchase_created_at>=$5::timestamptz) ORDER BY p.purchase_created_at,p.id LIMIT $7
- ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans UNION ALL SELECT * FROM team_procedures UNION ALL SELECT * FROM product_retirements UNION ALL SELECT * FROM shutdown_purchases UNION ALL SELECT * FROM promotion_purchases UNION ALL SELECT * FROM delivery_quality UNION ALL SELECT * FROM supplier_rfqs UNION ALL SELECT * FROM supplier_claims UNION ALL SELECT * FROM channel_buffers UNION ALL SELECT * FROM annual_stocktakes) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
+ ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans UNION ALL SELECT * FROM team_procedures UNION ALL SELECT * FROM product_retirements UNION ALL SELECT * FROM shutdown_purchases UNION ALL SELECT * FROM promotion_purchases UNION ALL SELECT * FROM delivery_quality UNION ALL SELECT * FROM supplier_rfqs UNION ALL SELECT * FROM supplier_claims UNION ALL SELECT * FROM channel_buffers UNION ALL SELECT * FROM annual_stocktakes UNION ALL SELECT * FROM partial_shipments) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
   [ctx.workspaceId,from,to,(page-1)*100,history.activityAfter,[...kinds.keys()],page*100+1])).rows;
  const more=proposals.length>100;if(more)proposals.pop();const current=await states(db,ctx,proposals),entries=[];
  const rows=proposals.map(p=>{const undo=undoable(p,current);if(undo.allowed)entries.push({id:p.id,summary:p.summary,what:undo.reason});
