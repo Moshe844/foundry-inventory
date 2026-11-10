@@ -203,7 +203,7 @@ async function run(job,db,{transcriber,provider}={}){
     if(!active.rowCount)throw new ValidationError('This voice reading lost its worker lease.');
     await authorize(db,ctx);
     started=true;
-    const read=await transcriber.transcribe(wave);
+    const read=await transcriber.transcribe(wave,{hold:bound});
     if(Number.isFinite(read.seconds)&&read.seconds>=0){
       await require('../commercial/control-service').recordCost(db,scope,{provider:transcriber.name,model:transcriber.model,
         providerVersion:transcriber.providerVersion,operation:'audio_transcription',unit:'second',quantity:read.seconds,

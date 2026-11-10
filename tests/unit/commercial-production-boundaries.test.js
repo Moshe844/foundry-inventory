@@ -10,9 +10,10 @@ const read=name=>fs.readFileSync(path.join(src,name),'utf8');
 // The runtime guards make legacy model/HTTP paths fail closed if invoked.
 const expected={
  'documents/agent-contract-reader.js':1,
+ 'documents/agent-voice-receiving.js':1,'ai/providers/openai-transcription.js':1,
  'warehouse/agent-shelf-photos.js':1,
  'actions/second-read.js':1,'ai/deadline.js':1,'ai/providers/anthropic.js':1,
- 'assistant/bounded-business-read.js':1,
+ 'assistant/bounded-business-read.js':1,'assistant/postgres-answer-preferences.js':1,
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,
  'assistant/postgres-control-plane.js':3,'assistant/postgres-service.js':1,
  'assistant/postgres-evidence-answer.js':1,
@@ -62,9 +63,21 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  assert.match(read('assistant/postgres-service.js'),/const provider=fundedAskProvider\(/,
   'Ask and governed report calls must use the funded model provider');
  assert.match(read('ai/providers/anthropic.js'),/commercial_meter_required/);
+ assert.match(read('assistant/postgres-service.js'),/const provider=fundedAskProvider\([^\n]+direct-language[^\n]*\n[\s\S]*?localizeRecorded\(provider,/);
+ assert.match(read('documents/agent-voice-receiving.js'),/reserveTranscription[\s\S]*?transcriber\.transcribe\(wave,\{hold:bound\}\)/);
+ assert.match(read('ai/providers/openai-transcription.js'),/useTranscriptionHold\(hold\)/);
  assert.match(read('lib/provider-http.js'),/no commercial operation scope/);
  assert.match(read('operations/postgres-runtime-handlers.js'),/provider:'resend',operation:'system_email'/);
  assert.match(read('operations/postgres-monitoring.js'),/operation:'operational_alert'/);
  assert.match(read('operations/monitoring.js'),/legacy alert dispatcher is unavailable in PostgreSQL/);
  assert.match(read('shipping/shipengine-platform.js'),/legacy ShipEngine platform connector is not enabled in PostgreSQL/);
+});
+
+test('speech transport refuses a missing or forged cost hold before HTTP',async()=>{
+ const {create}=require('../../src/ai/providers/openai-transcription');
+ let calls=0;
+ const speech=create({apiKey:'synthetic-fixture',fetcher:async()=>{calls++;throw Error('unexpected HTTP');}});
+ await assert.rejects(speech.transcribe(Buffer.alloc(44)),error=>error.code==='commercial_meter_required');
+ await assert.rejects(speech.transcribe(Buffer.alloc(44),{hold:{status:'RESERVED'}}),error=>error.code==='commercial_meter_required');
+ assert.equal(calls,0);
 });

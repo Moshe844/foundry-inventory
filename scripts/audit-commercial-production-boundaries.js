@@ -6,6 +6,7 @@ const fs=require('node:fs');const path=require('node:path');
 const root=path.resolve(__dirname,'..','src');
 const entries=['postgres-app.js','postgres-worker-server.js','operations/postgres-runtime-handlers.js'];
 const patterns={model:/\b(?:provider|metered)\.complete\s*\(|\.messages\.create\s*\(/g,
+ speech:/\b(?:transcriber\.transcribe|transcriptionFetch)\s*\(/g,
  http:/\bproviderFetch\s*\(|(?:^|[^.\w])fetch\s*\(|\(options\.fetch\s*\|\|\s*fetch\)\s*\(|\b(?:globalThis\.fetch|https?\.request|axios\.[a-z]+)\s*\(/gm};
 function resolve(from,relative){const base=path.resolve(path.dirname(from),relative);
  for(const candidate of [base,`${base}.js`,path.join(base,'index.js')])
