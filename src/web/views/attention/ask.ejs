@@ -370,7 +370,7 @@
           </details></div>
         <% } %>
 
-        <div class="ask-foot"><% if (result.handoff) { %><a class="ask-foot__link" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a><% } %><%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id}) %></div>
+        <div class="ask-foot"><% if (result.handoff) { %><a class="ask-foot__link" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a><% } %><%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id,downloadable:(locals.downloadableAnswers||[]).includes(goal.id)}) %></div>
         <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification', 'navigation'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational && !result.emailProposal) { %>
           <%#
