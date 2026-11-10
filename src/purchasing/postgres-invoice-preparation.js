@@ -12,7 +12,17 @@ async function resolveLines(db,ctx,order,documentLines){
 }
 async function prepare(db,ctx,order,document){
  if(!document||typeof document!=='object'||Array.isArray(document)||!Array.isArray(document.lines))throw new ValidationError('Provide the complete structured invoice document.');
- const lines=await resolveLines(db,ctx,order,document.lines);
+ const resolved=await resolveLines(db,ctx,order,document.lines);
+ const lines=resolved.map((line,index)=>{
+   const source=document.lines[index];
+   if(source.quantityBasis!=='purchase'||source.priceQuantity!=null||source.documentLineTotalMinor!=null||line.secondaryUnitLabel)return line;
+   // Older structured callers read this field as minor currency per stock unit.
+   // Keep a pack rate when the exact conversion would require a fractional cent.
+   const denominator=BigInt(require('../domain/exact-quantity').atoms(line.priceQuantity,6));
+   const numerator=BigInt(line.unitCostMinor)*1000000n;
+   if(numerator%denominator!==0n||numerator/denominator>BigInt(Number.MAX_SAFE_INTEGER))return line;
+   return {...line,unitCostMinor:Number(numerator/denominator),priceQuantity:1};
+ });
  const payload={supplierId:order.supplier_id,purchaseOrderId:order.id,supplierInvoiceNumber:document.supplierInvoiceNumber,issueDate:document.issueDate,dueDate:document.dueDate||null,currency:document.currency||order.currency,...(document.sourcePaymentTerms?{sourcePaymentTerms:document.sourcePaymentTerms}:{}),lines,taxMinor:document.taxMinor||0,charges:document.charges||[],documentTotalMinor:document.documentTotalMinor,sourceMessageId:document.sourceMessageId||null,sourceAttachmentHash:document.sourceAttachmentHash||null};
  if(!payload.supplierInvoiceNumber||!payload.issueDate||!Number.isSafeInteger(payload.documentTotalMinor))throw new ValidationError('Read the invoice number, issue date and exact document total before preparing it.');
  const preview=await workflows.previewSupplierInvoice(db,ctx,payload);if(preview.replayed)throw new ValidationError('This invoice is already recorded. Use its existing bill.');
