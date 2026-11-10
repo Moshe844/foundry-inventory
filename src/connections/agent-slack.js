@@ -230,9 +230,20 @@ async function process(job,db,options={}){
   if(!claimed){await refund(db,ctx,id);return {status:'authority_changed'};}
   try{
     await require('../commercial/operations').run(db,workspaceId,{operation,provider:'slack',key:id,capability:'ask.lookup'},async()=>{
-      const response=await require('../lib/provider-http').providerFetch(destination,{method:'POST',redirect:'error',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify(slack.reply(result))},{provider:providerName,timeoutMs:8000,retries:0});
-      if(!response.ok)throw new ValidationError('Slack did not confirm the private answer.');
+      await db.transaction(async client=>{
+        const tx=scoped(client);
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['agent-slack:'+workspaceId]);
+        await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',[workspaceId,ctx.actorId]);
+        await client.query(`SELECT s.id FROM account_subscriptions s JOIN workspaces w ON w.owner_account_id=s.account_id
+          WHERE w.id=$1 FOR SHARE OF s`,[workspaceId]);
+        if(!await live(client,workspaceId,id,'CLAIMED'))throw new AuthorizationError('This Slack connection was stopped before delivery.');
+        const current=await authorize(tx,ctx,{routine:true});
+        if(current.role!==actor.role||JSON.stringify(current.permissions)!==JSON.stringify(actor.permissions))
+          throw new AuthorizationError('Your StockChief permissions changed before delivery.');
+        const response=await require('../lib/provider-http').providerFetch(destination,{method:'POST',redirect:'error',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify(slack.reply(result))},{provider:providerName,timeoutMs:8000,retries:0});
+        if(!response.ok)throw new ValidationError('Slack did not confirm the private answer.');
+      },{isolation:'READ COMMITTED'});
     });
   }catch(error){await mark(db,workspaceId,id,'HELD','CLAIMED');await refund(db,ctx,id);throw error;}
   await db.transaction(async client=>{
