@@ -67,12 +67,12 @@ BEGIN
   IF NEW.quantity>=OLD.quantity THEN RETURN NEW;END IF;
   SELECT coalesce(sum(r.quantity),0) INTO protected FROM stockchief_runtime.sales_rotation_entries r
    WHERE r.workspace_id=NEW.workspace_id AND r.lot_id=NEW.lot_id AND r.location_id=NEW.location_id AND r.allocation_key<>grant_key;
-  IF NEW.quantity<protected THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='This lot quantity is reserved by FIFO/FEFO customer allocations.';END IF;RETURN NEW;
+  IF protected>0 AND NEW.quantity<protected THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='This lot quantity is reserved by FIFO/FEFO customer allocations.';END IF;RETURN NEW;
  ELSE
   IF NEW.on_hand>=OLD.on_hand THEN RETURN NEW;END IF;
   SELECT coalesce(sum(r.quantity),0) INTO protected FROM stockchief_runtime.sales_rotation_entries r
    WHERE r.workspace_id=NEW.workspace_id AND r.sku_id=NEW.sku_id AND r.location_id=NEW.location_id AND r.allocation_key<>grant_key;
-  IF NEW.on_hand<protected THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Stock is reserved by FIFO/FEFO customer allocations. Use or release the original reservation.';END IF;RETURN NEW;
+  IF protected>0 AND NEW.on_hand<protected THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Stock is reserved by FIFO/FEFO customer allocations. Use or release the original reservation.';END IF;RETURN NEW;
  END IF;
 END;$$;
 CREATE TRIGGER protect_rotated_balance BEFORE UPDATE ON balances FOR EACH ROW EXECUTE FUNCTION stockchief_runtime.guard_rotated_stock();
