@@ -11,12 +11,44 @@ const entitlements=require('../../entitlements/postgres-service');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
 
-function createPostgresAutopilotRouter(database){
+function createPostgresAutopilotRouter(database,options={}){
   const router=express.Router();
   const playbooks=require('../../autopilot/playbooks');
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const voice=require('../../documents/agent-voice-receiving'),voicePath='/autopilot/receiving-voice-notes';
+  const voiceAvailable=options.voiceAvailable??Boolean(process.env.OPENAI_API_KEY&&require('../../config').ai.configured);
+  const voicePage=async(req,res)=>{
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    const included=policy.permits(state.plan,141,'draft');
+    const backTo={href:req.params.id?voicePath:'/autopilot/reviews',label:req.params.id?'Receiving voice notes':'Agent reviews'};
+    if(!included||!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{
+      title:'Receiving voice notes',nav:'autopilot',tier:'Growth',reviewTerms:included,backTo
+    });
+    return res.page('autopilot/receiving-voice-notes',{title:'Receiving voice notes',nav:'autopilot',backTo,
+      providerAvailable:voiceAvailable,
+      ...await voice.page(database,req.ctx,req.params.id)});
+  };
+  router.get('/autopilot/reviews/receiving-voice-notes',requireAuth,owner,(_req,res)=>res.redirect(303,voicePath));
+  router.get([voicePath,voicePath+'/:id'],requireAuth,owner,asyncRoute(voicePage));
+  router.get(voicePath+'/:id/audio',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await voice.authorize(database,req.ctx);
+    const note=await voice.load(database,req.ctx,req.params.id,{content:true});
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).type('audio/wav').send(note.content);
+  }));
+  router.post(voicePath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    await voice.authorize(database,req.ctx);
+    if(!voiceAvailable)throw new ValidationError('Voice note reading is currently unavailable.');
+    if(req.files?.length!==1||req.files[0].field!=='recording')throw new ValidationError('Choose one recording for this purchase order.');
+    const orderId=await voice.resolveOrder(database,req.ctx,req.body.orderNumber);
+    const {id}=await voice.enqueue(database,req.ctx,{...req.files[0],orderId,confirmed:req.body.confirmed});
+    res.redirect(303,voicePath+'/'+id);
+  }));
+  router.post(voicePath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await voice.confirm(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
+  }));
   function starterAgentPage(job,mode,title,render){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);

@@ -1,0 +1,49 @@
+<section class="rm-panel">
+  <h2>Prepare receiving paperwork</h2>
+  <p>Choose the placed purchase order and record a short note with the products and quantities you received. StockChief shows the original and transcript beside the prepared receipt. You confirm the goods before stock is updated.</p>
+  <% if(providerAvailable){ %>
+  <form method="post" action="/autopilot/receiving-voice-notes" enctype="multipart/form-data" class="rm-form" data-busy data-receiving-voice-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>Purchase order number</span><input name="orderNumber" maxlength="120" required></label>
+    <label class="rm-field"><span>Voice note</span><input type="file" name="recording" accept=".wav,audio/wav" required></label>
+    <p><button type="button" class="rm-button" data-record-voice hidden>Record a voice note</button>
+      <button type="button" class="rm-button" data-stop-voice hidden>Stop recording</button></p>
+    <p role="status" data-voice-status>Record here or upload a mono WAV up to two minutes.</p>
+    <label><input type="checkbox" name="confirmed" value="yes" required> I approve reading this recording for the selected purchase order.</label>
+    <p>A completed reading uses one document and AI credits for transcription and receipt preparation. The saved note shows the exact credits. Failed readings return the allowance.</p>
+    <button class="rm-button">Prepare receipt</button>
+  </form>
+  <script defer src="/receiving-voice-recorder.js"></script>
+  <% }else{ %><p>Voice note reading is currently unavailable. Saved notes are below.</p><% } %>
+</section>
+<% if(note){ %>
+<section class="rm-panel">
+  <h2><%= note.filename %></h2>
+  <audio controls preload="none" src="/autopilot/receiving-voice-notes/<%= note.id %>/audio">Play the original voice note.</audio>
+  <% if(note.state==='READY'){ %>
+    <p><%= note.credits_used %> AI credits used.</p>
+    <h3>Transcript</h3><blockquote><%= note.transcript %></blockquote>
+    <% if(note.receipt){ %>
+      <p><a href="/purchasing/orders/<%= note.purchase_order_id %>">Open the purchase order and recorded receipt</a></p>
+    <% }else if(note.draft.status==='DRAFT'){ %>
+      <h3>Prepared receipt for <%= note.draft.orderNumber %></h3>
+      <ul><% for(const row of note.draft.rows){ %><li>
+        <strong><%= row.name %> · <%= row.code %></strong>
+        <p><%= row.spokenQuantity %> <%= row.spokenUnit %> matches <%= row.quantity %> <%= row.unit %> at <%= row.locationName %>. Approved unit cost is <%= helpers.money(row.unitCostMinor,note.draft.currency) %>.</p>
+        <blockquote><%= row.quote %></blockquote>
+      </li><% } %></ul>
+      <form method="post" action="/autopilot/receiving-voice-notes/<%= note.id %>/confirm" class="rm-form" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="fingerprint" value="<%= note.draft.fingerprint %>">
+        <label><input type="checkbox" name="confirmed" value="yes" required> I checked the original and these exact goods physically arrived.</label>
+        <button class="rm-button">Confirm physical receipt</button>
+      </form>
+    <% }else{ %><p><%= note.draft.reason %></p><a href="/purchasing/orders/<%= note.purchase_order_id %>">Review the purchase order</a><% } %>
+  <% }else{ %><p role="status"><%= note.problem||(note.state==='FAILED'?'The reading stopped. Your original is saved.':'StockChief is reading your voice note. Refresh to check progress.') %></p><% } %>
+</section>
+<% } %>
+<section class="rm-panel">
+  <h2>Saved notes</h2>
+  <% if(!rows.length){ %><p>Your saved voice notes will appear here.</p><% } %>
+  <ul><% for(const row of rows){ %><li><a href="/autopilot/receiving-voice-notes/<%= row.id %>"><%= row.filename %> · <%= row.po_number %></a></li><% } %></ul>
+</section>
