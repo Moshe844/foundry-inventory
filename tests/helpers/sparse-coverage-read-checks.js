@@ -8,7 +8,14 @@ async function check(db,ctx){return db.withSessionLock('qualification:sparse-cos
   await c.query('CREATE UNIQUE INDEX qualification_coverage_positions ON sparse_cost_coverage(workspace_id,sku_id,location_id)');await c.query('CREATE INDEX qualification_coverage_values ON sparse_cost_coverage(workspace_id,missing_units,physical_units,costed_units,book_cost_minor)');await c.query('CREATE INDEX qualification_sparse_coverage ON sparse_cost_coverage(workspace_id,sku_id) INCLUDE(missing_units,physical_units) WHERE missing_units>0');await c.query('VACUUM ANALYZE sparse_cost_coverage');
   let captured;const reader={query:(sql,values)=>{const text=sql.replaceAll('FROM inventory_cost_coverage_positions','FROM pg_temp.sparse_cost_coverage');assert.notEqual(text,sql);captured={sql:text,values};return c.query(text,values);}};
   const coverage=require('../../src/accounting/postgres-quantity-coverage'),actual=await coverage.read(reader,ctx.workspaceId),q=captured;
-  assert.deepEqual(actual,{missingCostUnits:5});assert.deepEqual(await coverage.read(reader,'wsp_absentsparsecoverage'),{missingCostUnits:0});
+  assert.equal(actual.missingCostUnits,5);
+  const units=(await c.query(`SELECT CASE WHEN i.quantity_precision>0 THEN coalesce(nullif(i.unit_label,''),'measured') END AS unit,
+   sum(p.missing_units)::text quantity FROM sparse_cost_coverage p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
+   JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE p.workspace_id=$1 AND p.missing_units>0
+   GROUP BY 1 ORDER BY 1`,[ctx.workspaceId])).rows;
+  assert.equal(actual.missingCostCounted,Number(units.find(row=>!row.unit)?.quantity||0));
+  assert.deepEqual(actual.missingCostMeasured,units.filter(row=>row.unit).map(row=>({unit:row.unit,quantity:Number(row.quantity)})));
+  assert.deepEqual(await coverage.read(reader,'wsp_absentsparsecoverage'),{missingCostUnits:0,missingCostCounted:0,missingCostMeasured:[]});
   const control=(await c.query('SELECT sum(missing_units)::text total,count(*)::int positions FROM sparse_cost_coverage WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];assert.equal(Number(control.total),actual.missingCostUnits);
   const plan=(await c.query('EXPLAIN(ANALYZE,BUFFERS,FORMAT JSON) '+q.sql,q.values)).rows[0]['QUERY PLAN'][0],nodes=[];const visit=n=>{nodes.push(n);for(const child of n.Plans||[])visit(child);};visit(plan.Plan);
   if(control.positions>=10000){const reads=nodes.filter(n=>n['Relation Name']==='sparse_cost_coverage');assert(reads.length);assert(reads.every(n=>n['Node Type']==='Index Only Scan'&&['qualification_sparse_coverage','qualification_coverage_values'].includes(n['Index Name'])));assert(reads.reduce((n,p)=>n+p['Actual Rows']*p['Actual Loops'],0)<=5,'Fully costed stock must not be scanned to count missing costs');}
