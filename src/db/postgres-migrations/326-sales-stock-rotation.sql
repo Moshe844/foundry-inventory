@@ -150,3 +150,13 @@ BEGIN
  RETURN NULL;
 END;$$;
 CREATE TRIGGER track_native_rotation_layers AFTER INSERT ON movements REFERENCING NEW TABLE AS rotation_movements FOR EACH STATEMENT EXECUTE FUNCTION stockchief_runtime.track_rotation_layers();
+
+INSERT INTO commercial_storage_tables(relation,bytes_expression) VALUES
+ ('stockchief_runtime.stock_rotation_locks'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))'),
+ ('stockchief_runtime.stock_rotation_pools'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))'),
+ ('stockchief_runtime.stock_rotation_layers'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))'),
+ ('stockchief_runtime.stock_rotation_layer_uses'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))');
+INSERT INTO commercial_storage_usage(workspace_id,relation,baseline_complete)
+ SELECT w.id,t.relation,true FROM workspaces w CROSS JOIN commercial_storage_tables t
+ WHERE t.relation IN ('stockchief_runtime.stock_rotation_locks'::regclass,'stockchief_runtime.stock_rotation_pools'::regclass,
+ 'stockchief_runtime.stock_rotation_layers'::regclass,'stockchief_runtime.stock_rotation_layer_uses'::regclass);
