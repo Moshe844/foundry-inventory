@@ -187,7 +187,9 @@ test('payments, deposits, hand-made entries and counts keep the books equal to t
   await db.query('UPDATE accounting_customer_invoices SET total_minor=total_minor+7 WHERE id=$1',[invoice.id]);
   await db.query("UPDATE accounting_supplier_bills SET balance_minor=balance_minor+3 WHERE workspace_id=$1 AND journal_entry_id IS NOT NULL",[w]);
   ({failed}=await checks());
-  for(const key of ['sales.shipped_quantity_matches_invoices','accounting.invoice_total_matches_parts','accounting.payables_ledger_matches_bills'])assert(failed.includes(key),key+' in '+failed.join());
+  await db.query('UPDATE balances SET on_hand=-1 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[w,N,main.id]);
+  ({failed}=await checks());
+  for(const key of ['sales.shipped_quantity_matches_invoices','accounting.invoice_total_matches_parts','accounting.payables_ledger_matches_bills','inventory.no_negative_stock'])assert(failed.includes(key),key+' in '+failed.join());
   assert.equal(Number((await db.query('SELECT suspended FROM workspace_autopilot WHERE workspace_id=$1',[w])).rows[0].suspended),1,'automatic work pauses');
  });
 });

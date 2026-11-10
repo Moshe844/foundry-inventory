@@ -15,7 +15,7 @@ async function read(database,workspaceId){
     checks.push({kind,status:row.status,checked,updatedAt:row.updated_at,
       text:(kind==='autopilot.evaluate'?'Business review':'Stock and accounting check')+
         (row.status==='RUNNING'?' is running':' is waiting for its next batch')+
-        (checked?' · '+checked.toLocaleString('en-US')+(kind==='autopilot.evaluate'?' products reviewed.':' records checked.')+'.':'.')});
+        (checked?' · '+checked.toLocaleString('en-US')+(kind==='autopilot.evaluate'?' products reviewed':' records checked'):'')+'.'});
   }
   const latest=(await database.query(`SELECT latest.kind,latest.status,latest.result_status
     FROM (VALUES('autopilot.evaluate'),('system.reconcile-business')) wanted(kind)
