@@ -3,7 +3,7 @@ const path=require('node:path');
 async function read(file){
  const ext=path.extname(file.filename).toLowerCase();
  if(['.xlsx','.xls'].includes(ext))return await require('../connections/document-reader').read(file);
- const pages=await require('../documents/contract-source').read(file);if(pages.some(p=>p.requiresSourceConfirmation))return pages.map(p=>p.text).join('\n\n');for(const p of pages){
+ const pages=await require('../documents/contract-source').read({...file,invoiceLayout:true});if(pages.some(p=>p.requiresSourceConfirmation))return pages.map(p=>p.text).join('\n\n');for(const p of pages){
   const table=require('./supplier-invoice-visual-table'),overlap=(a,b)=>a.x0<b.x1&&a.x1>b.x0&&a.y0<b.y1&&a.y1>b.y0;
   if(p.sourceKind==='mixed'&&p.nativeGeometryComplete&&p.nativeWords?.length&&p.rasterRegions?.length&&!p.nativeWords.some(n=>p.rasterRegions.some(r=>overlap(n,r)))){const imageWords=(p.ocrWords||[]).filter(w=>p.rasterRegions.some(r=>(w.x0+w.x1)/2>=r.x0&&(w.x0+w.x1)/2<=r.x1&&(w.y0+w.y1)/2>=r.y0&&(w.y0+w.y1)/2<=r.y1)),combined=table.text({ocrWords:p.nativeWords.concat(imageWords)});if(combined){p.text=combined;p.sourceKind='separate_native_and_raster';continue;}}
   const visual=table.text(p);if(visual){if(p.sourceKind==='mixed')p.text=p.nativeText+'\n\n[Image reading of the same original page; duplicate native text is not another contract term]\n'+visual;else if(p.sourceKind==='scan')p.text=visual;}else if(p.sourceKind==='text'&&p.nativeGeometryComplete&&p.nativeWords?.length){const native=table.text({ocrWords:p.nativeWords});if(native)p.text=native;}

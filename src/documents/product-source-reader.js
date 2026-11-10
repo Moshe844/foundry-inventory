@@ -14,6 +14,7 @@ function originalSpan(text,candidate){
 }
 function unitPresent(text,value){if(!value)return true;const escaped=value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return new RegExp('(?:^|[^\\p{L}])'+escaped+'(?:$|[^\\p{L}])','u').test(text);}
 function sourceUncertainty(page,quote){
+ if(page.requiresSourceConfirmation)return 'The original page contains annotations or corrections. Compare the fact with the original before saving it.';
  const start=page.text.indexOf(quote),end=start+quote.length;
  for(const marked of page.text.matchAll(/\[(?:Tracked deletion:|Struck-out text; review:)[^\]]*\]/g)){if(start<marked.index+marked[0].length&&end>marked.index)return 'This passage includes tracked deletion or struck-out source text; compare the current original before saving it.';}
  if(/comments\.xml$/i.test(page.sourceName||''))return 'This passage is a Word comment. Confirm that it belongs in the current product facts.';
