@@ -10,6 +10,7 @@ const read=name=>fs.readFileSync(path.join(src,name),'utf8');
 // The runtime guards make legacy model/HTTP paths fail closed if invoked.
 const expected={
  'documents/agent-contract-reader.js':1,
+ 'warehouse/agent-shelf-photos.js':1,
  'actions/second-read.js':1,'ai/deadline.js':1,'ai/providers/anthropic.js':1,
  'assistant/bounded-business-read.js':1,
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,

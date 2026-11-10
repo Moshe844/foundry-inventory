@@ -17,6 +17,43 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const shelfPhotos=require('../../warehouse/agent-shelf-photos');
+  const shelfPath='/autopilot/shelf-photos';
+  const shelfPage=async(req,res)=>res.page('autopilot/shelf-photos',{
+    title:'Count boxes and read shelf labels',nav:'autopilot',
+    backTo:req.params.id?{href:shelfPath,label:'Shelf photos'}:{href:'/autopilot/reviews',label:'Agent reviews'},
+    ...await shelfPhotos.page(database,req.ctx,req.params.id,req.query.page||1)
+  });
+  router.get('/autopilot/reviews/shelf-photos',requireAuth,owner,(_req,res)=>res.redirect(303,shelfPath));
+  router.get(shelfPath,requireAuth,owner,asyncRoute(shelfPage));
+  router.get(shelfPath+'/:id',requireAuth,owner,asyncRoute(shelfPage));
+  router.get(shelfPath+'/:id/status',requireAuth,owner,asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','private, no-store').json(await shelfPhotos.status(database,req.ctx,req.params.id));
+  }));
+  router.post(shelfPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const files=req.files||[];
+    if(files.length!==1||files[0].field!=='shelfPhoto')throw new ValidationError('Choose one original shelf photo.');
+    const photo=await shelfPhotos.enqueue(database,req.ctx,{buffer:files[0].buffer,filename:files[0].filename,
+      requestKey:req.body.requestKey,locationId:req.body.locationId});
+    res.redirect(303,shelfPath+'/'+photo.id);
+  }));
+  router.get(shelfPath+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const photo=await shelfPhotos.load(database,req.ctx,req.params.id);
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',
+      'Content-Security-Policy':"sandbox; default-src 'none'"}).type('application/octet-stream').attachment(photo.filename).send(photo.content);
+  }));
+  router.get(shelfPath+'/:id/preview',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const photo=await shelfPhotos.load(database,req.ctx,req.params.id);
+    if(!photo.reading)throw new ValidationError('Wait until the original has been checked.');
+    const image=await shelfPhotos.readPhoto(photo.content);
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).type(image.source.media_type).send(Buffer.from(image.source.data,'base64'));
+  }));
+  for(const [step,operation] of [['confirm',shelfPhotos.confirm],['retry',shelfPhotos.retry],['stop',shelfPhotos.stopRule]]){
+    router.post(shelfPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await operation(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,shelfPath+'/'+req.params.id);
+    }));
+  }
   function starterAgentPage(job,mode,title,render){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);

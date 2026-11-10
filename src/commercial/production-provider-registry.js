@@ -4,6 +4,7 @@
 // PostgreSQL Anthropic/HTTP gates deny their unscoped execution before spend.
 const classification=Object.freeze({
  'documents/agent-contract-reader.js':'METERED',
+ 'warehouse/agent-shelf-photos.js':'METERED',
  'actions/second-read.js':'NOT_PG_ENABLED',
  'ai/deadline.js':'NOT_PG_ENABLED',
  'ai/providers/anthropic.js':'METERED',

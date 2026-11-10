@@ -3,6 +3,9 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 140:{common:'Counts visible boxes from a saved shelf photo and reads literal case and shelf labels separately. Highlights uncertain boxes and covered areas. The original and all corrections stay available, with 100 AI credits and one document per completed reading. A photo observation can inform a separately confirmed physical count.',
+ pro:'Reads the original shelf photo into a draft. You review the visible boxes, printed labels and uncertain areas before confirming it.',
+ enterprise:'Learns from an individually confirmed photo. Can confirm a matching observation at the exact location within the taught label set and maximum box count. Different or unclear photos wait for review. You can correct a trained observation and stop its rule.'},
  143:{common:'Reads complete PDF, Word, text and scanned contracts into private prices, currencies, units, payment conditions, notice periods and end-date facts beside literal original quotes. Retains every source section and original file; unclear, conflicting or OCR-derived facts need owner review. Uses 100 AI credits per complete file and one new document, reusing a paid mailbox source receipt. Failed readings refund the new credits. New prices, terms and financial records still need separate approval.',
  starter:'Prepares a read-only contract suggestion from the complete supplied original. Private source quotations and uncertainties stay visible. Automatic discovery and reading of newly filed contracts require Pro or Custom.',
  growth:'Prepares a read-only contract suggestion from the complete supplied original without training. You separately approve new or changed commercial terms. Automatic reading of newly filed contracts requires Pro or Custom.',
