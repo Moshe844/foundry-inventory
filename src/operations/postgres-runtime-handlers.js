@@ -733,6 +733,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
     if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
   }),
+  'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
+  'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);

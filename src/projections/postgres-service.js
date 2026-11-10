@@ -19,6 +19,7 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='DRAFT'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS export_paper_summary,
+ CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
  CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.changed_at)) FROM stockchief_runtime.agent_customer_invoice_work p WHERE p.workspace_id=$1 AND p.revision>p.completed_revision AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_invoice_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_order_cost_previews p WHERE p.workspace_id=$1 AND p.status='DRAFT'
@@ -85,7 +86,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-quality-holds').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-rfqs').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-claims').inbox(database,workspaceId,actorId):[],
-      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary)):[],
+      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary)):[],
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
       actor?.role==='owner'?require('../operations/agent-return-disposition').notices(actor.return_assessment_summary):[],
       actor?.role==='owner'?require('../sales/agent-customer-order-pages').notices(actor.customer_page_request_summary):[],

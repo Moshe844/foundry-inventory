@@ -4,34 +4,26 @@ const {createHash}=require('node:crypto'),path=require('node:path'),{ValidationE
 // Email and attachment text remain untrusted evidence for the actual agent.
 async function extractMessage(database,workspaceId,messageId){
  const message=(await database.query('SELECT id FROM connection_email_messages WHERE workspace_id=$1 AND id=$2',[workspaceId,messageId])).rows[0];if(!message)throw new NotFoundError('That message is not in this business.');
- const rows=(await database.query('SELECT id,filename,content,content_hash,extracted_text,extraction_status FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY id',[workspaceId,messageId])).rows,results=[],deadline=Date.now()+60000;
- for(const row of rows){let text=row.extracted_text,status='READABLE',error=null;
-  try{
-    if(!['.pdf','.txt'].includes(path.extname(row.filename).toLowerCase()))throw new ValidationError('This attachment format needs a manual document review.');
+ const rows=(await database.query('SELECT id FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY id',[workspaceId,messageId])).rows,results=[],deadline=Date.now()+60000;
+ for(const identity of rows){const result=await database.transaction(async client=>{
+  const row=(await client.query('SELECT id,filename,external_attachment_id,content,content_hash,extracted_text,extraction_status FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 AND id=$3 FOR UPDATE',[workspaceId,messageId,identity.id])).rows[0];if(!row)return {attachmentId:identity.id,status:'MISSING',characters:0};let text=row.extracted_text,status='READABLE',error=null,funding=null;
+  await client.query('SAVEPOINT attachment_source_read');try{
+    const current=(await client.query(`SELECT w.owner_account_id FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR SHARE OF w,a`,[workspaceId])).rows[0];if(!current)throw new ValidationError('The current inventory owner must have active access before an original can be read.');
+    if(row.external_attachment_id?.startsWith('stockchief:invoice-email-body:')&&!(await client.query("SELECT 1 FROM stockchief_runtime.agent_supplier_invoice_settings s JOIN connection_email_messages m ON m.workspace_id=s.workspace_id AND m.id=$2 WHERE s.workspace_id=$1 AND s.enabled AND m.connector_id=ANY(s.connector_ids)",[workspaceId,messageId])).rows.length)throw new ValidationError('Mailbox invoice source matching was stopped. The original body is retained and was not read again.');
+    await client.query('SELECT id FROM account_subscriptions WHERE account_id=$1 FOR SHARE',[current.owner_account_id]);
+    if(!['.pdf','.txt','.csv','.tsv','.html','.htm','.docx','.xlsx','.xls','.png','.jpg','.jpeg','.webp','.bmp','.tif','.tiff','.heic','.heif'].includes(path.extname(row.filename).toLowerCase()))throw new ValidationError('This attachment format needs a manual document review.');
     if(!Buffer.isBuffer(row.content)||!row.content.length||row.content.length>20*1024*1024)throw new ValidationError('The original attachment is unavailable or too large.');
     if(createHash('sha256').update(row.content).digest('hex')!==row.content_hash)throw new ValidationError('The saved attachment failed its integrity check.');
-    if(row.extraction_status!=='READABLE'||!text){if(Date.now()>deadline)throw new ValidationError('This message has more documents than can be read in one bounded review. The remaining originals need review.');text=await require('./document-reader').read({filename:row.filename,buffer:row.content});}
-  }catch(e){status='NEEDS_REVIEW';error=e instanceof ValidationError?e.message:'StockChief could not read this attachment completely. Review the original before using its figures.';}
-  await database.transaction(async client=>{
-    if(status==='READABLE'){
-      const ent=require('../commercial/entitlements'),scope=await ent.ownerScopeForWorkspace(client,workspaceId);
-      const sub=await ent.subscriptionFor(client,scope.accountId);
-      if(sub?.plan_configuration?.offerId==='agent-v3'){
-        const usage={meter:'agent_documents',units:1,idempotencyKey:'attachment:'+row.id+':'+row.content_hash};
-        try {
-          await ent.reserveUsage(client,scope,usage);
-          await ent.commitUsage(client,scope,usage);
-        } catch(e) {
-          if(!(e instanceof ent.EntitlementError)) throw e;
-          status='NEEDS_REVIEW';text=null;error='Your document allowance has been reached. Review the original or add documents and retry.';
-        }
-      }
-    }
-    await client.query(`UPDATE connection_email_attachments SET extracted_text=$4,extraction_status=$5,extraction_error=$6
-    WHERE workspace_id=$1 AND message_id=$2 AND id=$3 AND content_hash=$7`,[workspaceId,messageId,row.id,text||null,status,error,row.content_hash]);
-  },{isolation:'SERIALIZABLE',retrySafe:true});
-  results.push({attachmentId:row.id,status,characters:text?.length||0});
- }
+    const ent=require('../commercial/entitlements'),scope=await ent.ownerScopeForWorkspace(client,workspaceId),sub=await ent.subscriptionFor(client,scope.accountId);
+    if(sub?.plan_configuration?.offerId==='agent-v3')funding=await require('../purchasing/supplier-invoice-uploads').receipt(client,workspaceId,'attachment:'+row.id+':'+row.content_hash,{renew:true});
+    if(row.extraction_status!=='READABLE'||!text){if(Date.now()>deadline)throw new ValidationError('This message has more documents than can be read in one bounded review. Retry its saved originals to read the next batch.');text=await require('../purchasing/supplier-invoice-reader').read({filename:row.filename,buffer:row.content});}
+    if(text!==row.extracted_text)await require('../commercial/storage-capacity').reserve(client,workspaceId,'attachment-reading:'+row.id+':'+row.content_hash,Buffer.byteLength(text||'')+4096,{finished:true});
+    if(funding&&!funding.committed)await ent.commitUsage(client,funding.scope,funding.usage);
+    await client.query('RELEASE SAVEPOINT attachment_source_read');
+  }catch(e){await client.query('ROLLBACK TO SAVEPOINT attachment_source_read');await client.query('RELEASE SAVEPOINT attachment_source_read');const pending=(await client.query("SELECT account_id,status FROM commercial_usage_events WHERE workspace_id=$1 AND meter='agent_documents' AND idempotency_key=$2 FOR UPDATE",[workspaceId,'attachment:'+row.id+':'+row.content_hash])).rows[0];if(pending?.status==='RESERVED')await require('../commercial/entitlements').reverseUsage(client,{workspaceId,accountId:pending.account_id},{meter:'agent_documents',idempotencyKey:'attachment:'+row.id+':'+row.content_hash,reason:e.message});status='NEEDS_REVIEW';text=null;error=e instanceof ValidationError||e instanceof require('../commercial/entitlements').EntitlementError?e.message:'StockChief could not read this attachment completely. Review the original before using its figures.';}
+  await client.query(`UPDATE connection_email_attachments SET extracted_text=$4,extraction_status=$5,extraction_error=$6 WHERE workspace_id=$1 AND message_id=$2 AND id=$3 AND content_hash=$7`,[workspaceId,messageId,row.id,text||null,status,error,row.content_hash]);
+  return {attachmentId:row.id,status,characters:text?.length||0};
+ },{isolation:'SERIALIZABLE',retrySafe:true});results.push(result);}
  const review=await require('./postgres-document-review').prepare(database,workspaceId,messageId);
  return {messageId,attachments:results,modelCalls:0,businessEffects:0,review};
 }

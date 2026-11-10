@@ -6,7 +6,7 @@ const activities = new Map([
   ['repeat-order','Prepare and send a repeat purchase order'],
   ['supplier-response','File a supplier confirmation or document'],
   ['staff-request','Create a purchase order from an approved staff request'],
-  ['invoice-match','Enter and match a supplier invoice from an agent proposal'],
+  ['invoice-match','Read, enter and match one original supplier invoice'],
   ['customer-receipt','Match a recorded customer bank receipt to its invoice'],
   ['customer-reminder','Prepare and send a customer invoice payment reminder'],
   ['arrived-stock','Reserve arrived stock for a waiting customer order'],
@@ -86,7 +86,8 @@ async function report(db,ctx,window='week') {
     SELECT 'invoice-match',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a JOIN accounting_supplier_bills b
       ON b.workspace_id=a.workspace_id AND b.id=a.result->>'billId'
       WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='purchase_order.record_supplier_invoice'
-        AND a.result->>'status' IN ('OPEN','DISPUTED') GROUP BY b.id UNION ALL
+        AND a.result->>'status' IN ('OPEN','DISPUTED') AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_invoice_intakes q WHERE q.workspace_id=b.workspace_id AND q.bill_id=b.id AND q.status='POSTED') GROUP BY b.id UNION ALL
+    SELECT 'invoice-match',min(b.opened_at::timestamptz) FROM stockchief_runtime.agent_supplier_invoice_intakes q JOIN accounting_supplier_bills b ON b.workspace_id=q.workspace_id AND b.id=q.bill_id JOIN accounting_journal_entries j ON j.workspace_id=b.workspace_id AND j.id=b.journal_entry_id AND j.status='POSTED' WHERE q.workspace_id=$1 AND q.status='POSTED' AND b.status IN('OPEN','PARTIALLY_PAID','PAID') AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED') GROUP BY b.id UNION ALL
     SELECT 'customer-receipt',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
       JOIN accounting_bank_transactions t ON t.workspace_id=a.workspace_id AND t.id=a.result->>'bankTransactionId' AND t.status IN ('MATCHED','RECONCILED')
       JOIN accounting_payments p ON p.workspace_id=t.workspace_id AND p.id=t.matched_payment_id AND p.id=a.result->>'paymentId'
@@ -208,14 +209,11 @@ async function report(db,ctx,window='week') {
 }
 async function moneyReview(db,ctx,days){
   const money=require('../domain/currency');
-  const amounts=(await db.query(`WITH open_differences AS (
-    SELECT b.currency,sum(round(l.quantity * ((d->>'billedUnitCostMinor')::numeric-(d->>'approvedUnitCostMinor')::numeric))) AS amount
-    FROM accounting_supplier_bills b JOIN purchase_orders p ON p.workspace_id=b.workspace_id AND p.id=b.purchase_order_id AND p.currency=b.currency
-    CROSS JOIN LATERAL jsonb_array_elements(b.exception_detail::jsonb->'differences') d
-    JOIN accounting_supplier_bill_lines l ON l.workspace_id=b.workspace_id AND l.bill_id=b.id AND l.line_number=(d->>'line')::int
-    WHERE b.workspace_id=$1 AND b.status='DISPUTED' AND b.created_at::timestamptz BETWEEN now()-make_interval(days=>$2) AND now()
-      AND d->>'kind'='price_outside_approved_cost' AND (d->>'billedUnitCostMinor')::numeric>(d->>'approvedUnitCostMinor')::numeric
-    GROUP BY b.currency
+  const amounts=(await db.query(`WITH source_differences AS (
+    SELECT b.currency,l.quantity,l.secondary_quantity,l.price_quantity,d FROM accounting_supplier_bills b JOIN purchase_orders p ON p.workspace_id=b.workspace_id AND p.id=b.purchase_order_id AND p.currency=b.currency CROSS JOIN LATERAL jsonb_array_elements(b.exception_detail::jsonb->'differences') d JOIN accounting_supplier_bill_lines l ON l.workspace_id=b.workspace_id AND l.bill_id=b.id AND l.line_number=(d->>'line')::int WHERE b.workspace_id=$1 AND b.status='DISPUTED' AND b.created_at::timestamptz BETWEEN now()-make_interval(days=>$2) AND now()
+    UNION ALL SELECT q.prepared_input->>'currency',(l->>'quantity')::numeric,(l->>'secondaryQuantity')::numeric,coalesce((l->>'priceQuantity')::numeric,1),d FROM stockchief_runtime.agent_supplier_invoice_intakes q CROSS JOIN LATERAL jsonb_array_elements(q.comparison->'differences') d JOIN LATERAL(SELECT value l FROM jsonb_array_elements(q.prepared_input->'lines') WITH ORDINALITY x(value,n) WHERE x.n=(d->>'line')::int) x ON true WHERE q.workspace_id=$1 AND q.status='EXCEPTION' AND q.duplicate_bill_id IS NULL AND q.created_at BETWEEN now()-make_interval(days=>$2) AND now()
+  ), open_differences AS (
+    SELECT currency,sum(round(coalesce(secondary_quantity,quantity)*((d->>'billedUnitCostMinor')::numeric/coalesce((d->>'priceQuantity')::numeric,price_quantity,1)-(d->>'approvedUnitCostMinor')::numeric))) AS amount FROM source_differences WHERE d->>'kind'='price_outside_approved_cost' AND (d->>'billedUnitCostMinor')::numeric/coalesce((d->>'priceQuantity')::numeric,price_quantity,1)>(d->>'approvedUnitCostMinor')::numeric GROUP BY currency
   ), applied AS (
     SELECT b.currency,sum(c.amount_minor) AS amount FROM accounting_supplier_credits c
     JOIN accounting_supplier_bills b ON b.workspace_id=c.workspace_id AND b.id=c.supplier_bill_id

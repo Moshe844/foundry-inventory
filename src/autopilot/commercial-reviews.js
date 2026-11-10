@@ -65,25 +65,17 @@ module.exports=[
     FROM history h JOIN customers c ON c.id=h.customer_id WHERE ($2='' OR lower(c.name)=lower($2)) ORDER BY h.recent-h.prior,c.id`},
   {id:91,key:'supplier-price-increases',label:'Flag higher supplier prices',summary:'Supplier document prices compared with the original PO. Each difference retains its source and currency.',sql:`
     WITH evidence AS (
-      SELECT d.purchase_order_id,p.id AS line_id,(f->>'unitCostMinor')::numeric AS minor,d.document_reference AS reference,d.document_type AS kind,d.facts::jsonb->>'currency' AS currency
+      SELECT d.purchase_order_id,p.id AS line_id,(f->>'unitCostMinor')::numeric AS minor,d.document_reference AS reference,d.document_type AS kind,d.facts::jsonb->>'currency' AS currency,(f->>'unitCostMinor')::numeric source_minor,1::numeric price_quantity
       FROM supplier_documents d CROSS JOIN LATERAL jsonb_array_elements(d.facts::jsonb->'lines') f
       JOIN purchase_order_lines p ON p.workspace_id=$1 AND p.id=f->>'lineId' AND p.purchase_order_id=d.purchase_order_id
       WHERE d.workspace_id=$1 AND d.status<>'IGNORED' AND d.document_type IN ('quotation','price_update') AND f->>'unitCostMinor' IS NOT NULL
-      UNION ALL SELECT b.purchase_order_id,l.purchase_order_line_id,l.unit_cost_minor,b.supplier_invoice_number,'invoice',b.currency FROM accounting_supplier_bill_lines l
+      UNION ALL SELECT b.purchase_order_id,l.purchase_order_line_id,l.unit_cost_minor/l.price_quantity,b.supplier_invoice_number,'invoice',b.currency,coalesce(l.source_unit_cost_minor,l.unit_cost_minor),coalesce(l.source_price_quantity,l.price_quantity) FROM accounting_supplier_bill_lines l
       JOIN accounting_supplier_bills b ON b.id=l.bill_id AND b.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND b.status<>'VOID')
     SELECT s.code AS "SKU",v.name AS "Supplier",p.po_number AS "Order",e.kind AS "Source",e.reference AS "Document",p.currency AS "Currency",
-      l.unit_cost AS "PO unit price",e.minor AS price_minor,'/purchasing/orders/'||p.id AS link
+      l.unit_cost AS "PO unit price",e.minor AS price_minor,e.source_minor AS display_price_minor,e.price_quantity,'/purchasing/orders/'||p.id AS link
     FROM evidence e JOIN purchase_orders p ON p.id=e.purchase_order_id AND p.workspace_id=$1 JOIN purchase_order_lines l ON l.id=e.line_id AND l.workspace_id=$1
     JOIN suppliers v ON v.id=p.supplier_id JOIN skus s ON s.id=l.sku_id WHERE p.currency=e.currency AND l.unit_cost IS NOT NULL
       AND ($2='' OR lower(s.code)=lower($2)) ORDER BY v.name,s.code,p.id,e.kind,e.reference`,priceIncrease:true},
-  {id:99,key:'invoice-errors',label:'Find supplier invoice errors',summary:'Unresolved three-way matching exceptions on supplier bills. Open the bill to compare it with the approved price, prior billings and physical receipts.',sql:`
-    SELECT s.name AS "Supplier",coalesce(b.supplier_invoice_number,b.bill_number) AS "Invoice",p.po_number AS "Order",
-      d->>'kind' AS "Problem",d->>'line' AS "Line",d->>'received' AS "Received",d->>'previouslyBilled' AS "Previously billed",
-      d->>'billed' AS "Invoiced",'/money/bills/'||b.id AS link
-    FROM accounting_supplier_bills b JOIN suppliers s ON s.id=b.supplier_id LEFT JOIN purchase_orders p ON p.id=b.purchase_order_id
-    CROSS JOIN LATERAL jsonb_array_elements(b.exception_detail::jsonb->'differences') d
-    WHERE b.workspace_id=$1 AND b.status='DISPUTED' AND ($2='' OR lower(s.name)=lower($2) OR lower(b.supplier_invoice_number)=lower($2))
-    ORDER BY b.issue_date,b.id,(d->>'line')::integer NULLS LAST,d->>'kind'`},
   {id:105,key:'supplier-credits',label:'Trace supplier credits to their bills',summary:'Returns awaiting a credit appear first, followed by posted credit notes and the supplier bills they reduced.',sql:`
     WITH credits AS (
       SELECT s.name AS supplier,r.return_number AS reference,'Awaiting credit' AS status,r.expected_credit_minor AS amount,
