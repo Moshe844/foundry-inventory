@@ -165,6 +165,7 @@ function openPostgres(connectionString, options = {}) {
         return result;
       } catch (error) {
         try { await controlQuery(client,'ROLLBACK'); } catch { discard = true; }
+        if(error.code==='23514'&&error.constraint==='annual_stocktake_freeze')throw new (require('../domain/errors').ValidationError)(error.message);
         if (!['40001', '40P01'].includes(error.code) || attempt >= retries) throw error;
       } finally {
         if(!leasedClient){client.release(discard||observed.broken());observed.close();}

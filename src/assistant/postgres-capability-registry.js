@@ -14,6 +14,7 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  annualStocktake:{type:'string',maxLength:16000,description:'Owner-requested annual stocktake JSON: year, optional title, locations (exact existing location names) and counters (exact team names or work emails). locationIds/counterIds may be used only when already discovered in this inventory. Names resolve uniquely; ambiguous names require clarification. Choose active counters with count permission and warehouse access. Never invent a location, counter, year or physical count.'},
   bankTransaction:{type:'string',maxLength:160,description:'Exact recorded bank transaction ID discovered in the accounting evidence. It must be an incoming unmatched bank credit for the selected invoice, not a proposed or invented payment.'},
   filedDocument:{type:'string',maxLength:120,description:'Exact filed document ID from its business-record document list or saved document review. The source must belong to the selected record.'},
   documentFacts:{type:'string',maxLength:50000,description:'JSON list of source-backed product facts, each with field, value and exact quote copied from the filed source. Supported fields: manufacturer, model, composition, hazards, handling, storage, temperature, certifications, origin, revision. Literal values must occur inside their quotes; never infer missing values.'},

@@ -17,6 +17,12 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const annual=require('../../operations/agent-annual-stocktakes');
+  const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
+  router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));
+  router.get('/autopilot/annual-stocktakes/:id',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res,req.params.id)));
+  router.post('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await annual.create(database,req.ctx,req.body);req.flash('success','Count plan prepared. Review its exact scope and teams before freezing stock.');res.redirect(303,'/autopilot/annual-stocktakes/'+r.id);}));
+  for(const [path,method,message]of [['freeze','freeze','Stock locations frozen. The assigned blind count lists are ready.'],['recheck','recheck','The rechecked worksheet is ready for a new individual owner approval.'],['reassign','reassign','Remaining physical counts reassigned. Earlier counts keep their original counter.'],['signoff','signoff','Stocktake signed off. Its stock freeze has been released.'],['stop','stop','Stocktake stopped and freeze released. Completed adjustments remain posted.']])router.post('/autopilot/annual-stocktakes/:id/'+path,requireAuth,owner,asyncRoute(async(req,res)=>{await annual[method](database,req.ctx,req.params.id,req.body);req.flash('success',message);res.redirect(303,'/autopilot/annual-stocktakes/'+req.params.id);}));
   const buffers=require('../../connections/agent-channel-buffers');
   const bufferPage=async(req,res,input={})=>res.page('autopilot/channel-buffers',{title:'Channel stock buffers',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await buffers.page(database,req.ctx,{...req.query,...input})});
   router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{positionId:req.query.position})));

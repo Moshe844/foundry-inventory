@@ -5,10 +5,10 @@ async function authorize(c,ctx,approval=false){
  if(approval&&actor.role!=='owner')throw new ValidationError('An owner must approve all count variances.');
  await require('../commercial/enforcement').workspace(c,ctx.workspaceId,'inventory.counts');
 }
-async function header(c,ctx,id,lock=false){const row=(await c.query('SELECT * FROM warehouse_count_campaigns WHERE workspace_id=$1 AND id=$2'+(lock?' FOR UPDATE':''),[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count worksheet is not in this inventory.');await access.assertLocations(c,ctx,row.scope.locationIds);return row;}
-async function create(db,ctx,input){return db.transaction(async c=>{
+async function header(c,ctx,id,lock=false){const row=(await c.query('SELECT * FROM warehouse_count_campaigns WHERE workspace_id=$1 AND id=$2'+(lock?' FOR UPDATE':''),[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count worksheet is not in this inventory.');await access.assertLocations(c,ctx,row.scope.locationIds);await require('./agent-annual-stocktakes').assertCampaign(c,ctx,id,{lock,readOnly:!lock});return row;}
+async function create(db,ctx,input,options={}){return db.transaction(async c=>{
  await authorize(c,ctx);await access.assertLocations(c,ctx,[input.locationId]);
- const locations=await access.locations(c,ctx.workspaceId,[input.locationId]);if(!locations.length)throw new ValidationError('Choose an active warehouse, zone or bin.');
+ let locations=await access.locations(c,ctx.workspaceId,[input.locationId]);if(options.exactLocation)locations=locations.filter(l=>l.id===input.locationId);if(!locations.length)throw new ValidationError('Choose an active warehouse, zone or bin.');
  const category=String(input.category||'').trim().slice(0,120),title=String(input.title||'Physical stock count').trim().slice(0,160),id=newId('countsheet'),ids=locations.map(l=>l.id);
  await c.query('INSERT INTO warehouse_count_campaigns(id,workspace_id,created_by_user_id,title,scope) VALUES($1,$2,$3,$4,$5)',[id,ctx.workspaceId,ctx.actorId,title,{locationIds:ids,category,tracking:'quantity'}]);
  await c.query(`INSERT INTO warehouse_count_campaign_lines(workspace_id,campaign_id,sku_id,location_id,before_quantity,before_costed,before_value,balance_version,cost_version)
@@ -16,12 +16,12 @@ async function create(db,ctx,input){return db.transaction(async c=>{
  FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  LEFT JOIN accounting_inventory_cost_balances v ON v.workspace_id=b.workspace_id AND v.sku_id=b.sku_id AND v.location_id=b.location_id
  WHERE b.workspace_id=$1 AND b.location_id=ANY($3::text[]) AND s.is_active=1 AND i.is_active=1 AND i.tracking_mode='quantity' AND i.secondary_unit_label IS NULL
- AND ($4='' OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=i.workspace_id AND f.item_id=i.id AND lower(f.category)=lower($4)))`,[ctx.workspaceId,id,ids,category]);
+ AND ($5::boolean IS FALSE OR i.quantity_precision=0) AND ($4='' OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=i.workspace_id AND f.item_id=i.id AND lower(f.category)=lower($4)))`,[ctx.workspaceId,id,ids,category,Boolean(options.exactLocation)]);
  return {id};
  },{isolation:'REPEATABLE READ',retrySafe:true});}
 async function page(db,ctx,id,{afterLocation='',afterSku='',includeTotals=true,limit=100}={}){
  limit=Math.max(1,Math.min(1000,Number(limit)||100));
- await authorize(db,ctx);const campaign=await header(db,ctx,id),rows=(await db.query(`SELECT l.*,s.code,s.variant_label,i.name,loc.name location_name FROM warehouse_count_campaign_lines l JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id JOIN locations loc ON loc.id=l.location_id
+ await authorize(db,ctx);const campaign=await header(db,ctx,id),rows=(await db.query(`SELECT l.*,s.code,s.variant_label,i.name,loc.name location_name,coalesce(l.counter_recorded_name,counter.name) counter_name FROM warehouse_count_campaign_lines l JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id JOIN locations loc ON loc.id=l.location_id LEFT JOIN users counter ON counter.workspace_id=l.workspace_id AND counter.id=l.counter_recorded_by
  WHERE l.workspace_id=$1 AND l.campaign_id=$2 AND (l.location_id,l.sku_id)>($3,$4) ORDER BY l.location_id,l.sku_id LIMIT $5`,[ctx.workspaceId,id,afterLocation,afterSku,limit+1])).rows;
  const totals=includeTotals?(await db.query(`SELECT count(*)::int positions,count(*) FILTER(WHERE counted_quantity IS NULL)::int uncounted,count(*) FILTER(WHERE counted_quantity<>before_quantity)::int variances,count(*) FILTER(WHERE applied_at IS NOT NULL)::int applied,coalesce(sum(cost_delta_minor),0)::text cost_delta_minor FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2`,[ctx.workspaceId,id])).rows[0]:null;
  const currency=(await db.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency;
@@ -56,7 +56,7 @@ async function save(db,ctx,id,input){return db.transaction(async c=>{
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 // Enqueue on the same transaction/connection as the approved count. A separate
 // queue transaction could expose work before its approval is committed.
-async function enqueue(c,ctx,id,revision){return require('./postgres-job-queue').enqueue({query:c.query,transaction:operation=>operation(c)},{workspaceId:ctx.workspaceId,kind:'warehouse.count.apply',payload:{campaignId:id,actorId:ctx.actorId},idempotencyKey:'count-campaign:'+id+':'+revision});}
+async function enqueue(c,ctx,id,revision){const annual=Boolean((await c.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[ctx.workspaceId,id])).rowCount);return require('./postgres-job-queue').enqueue({query:c.query,transaction:operation=>operation(c)},{workspaceId:ctx.workspaceId,kind:annual?'agent.annual-stocktake.apply.v1':'warehouse.count.apply',payload:{campaignId:id,actorId:ctx.actorId},idempotencyKey:'count-campaign:'+id+':'+revision});}
 async function approve(db,ctx,id,revision){return db.transaction(async c=>{
  await authorize(c,ctx,true);const campaign=await header(c,ctx,id,true);
  if(campaign.status==='APPLYING'||campaign.status==='COMPLETED')return {replayed:true};
@@ -66,7 +66,7 @@ async function approve(db,ctx,id,revision){return db.transaction(async c=>{
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function run(job,db){const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId},id=job.payload.campaignId;
  try{return await db.transaction(async c=>{
-  await authorize(c,ctx,true);const campaign=await header(c,ctx,id,true);if(campaign.status!=='APPLYING')return {status:campaign.status};
+  await authorize(c,ctx,true);const campaign=await header(c,ctx,id,true);if(campaign.status!=='APPLYING')return {status:campaign.status};await require('./agent-annual-stocktakes').assertCampaign(c,ctx,id,{lock:true,adjustment:true});
   let lines=(await c.query('SELECT * FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2 AND applied_at IS NULL ORDER BY location_id,sku_id LIMIT 1000 FOR UPDATE',[ctx.workspaceId,id])).rows;
   if(!lines.length){await c.query("UPDATE warehouse_count_campaigns SET status='COMPLETED',completed_at=now() WHERE id=$1",[id]);return {status:'COMPLETED'};}
   if(lines.filter(l=>exact.canonical(l.counted_quantity)!==exact.canonical(l.before_quantity,{signed:true})).length>100)lines=lines.slice(0,100);
