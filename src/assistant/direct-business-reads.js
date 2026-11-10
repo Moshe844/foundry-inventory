@@ -137,7 +137,7 @@ async function answerQuery(service,db,ctx,message,options,query){const actor=(aw
   // A period still running ends today, as Reports shows it.
   const range={from:asked.from,to:asked.to>calendar.calendarDate&&asked.from<=calendar.calendarDate?calendar.calendarDate:asked.to};
   const business=require('../reports/business-reports'),sellers=business.definitions.find(d=>d.key==='sellers'),units=require('../lib/units');
-  const result=await read({...business.spec(sellers,range,null),filters:[...business.spec(sellers,range,null).filters,{field:'fulfilled_units',operator:'at_least',value:1}]},query.limit+1);result.rows=result.rows.slice(0,query.limit);
+  const result=await read(business.spec(sellers,range,null),query.limit+1);result.rows=result.rows.slice(0,query.limit);
   const day=value=>new Date(value+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}),dates=range.from===range.to?day(range.from):day(range.from)+' – '+day(range.to);
   return answer({answer:result.rows.length?'Best sellers, '+dates+', by recorded fulfilled units on orders placed in those dates: '+result.rows.map(r=>r.product_variant+' ('+r.sku+'): '+units.wholeUnits(r.total)).join('; ')+'. Returns are tracked separately.':'No fulfilled product sales are recorded for orders placed '+dates+'.',
    rows:result.rows,columns:result.columns,scope:range,handoff:{href:'/reports/business/sellers?'+new URLSearchParams({from:range.from,to:range.to}),label:'Review product and variant sales for these dates'}});}

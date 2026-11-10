@@ -3,7 +3,7 @@
   <div class="rm-title">
     <div>
       <h1><%= item.name %><% if (!item.is_active) { %> <span class="rm-pillbadge">Archived</span><% } %></h1>
-      <p><span class="mono"><%= helpers.productCode(item.base_code, skus[0].code) %></span> · <%= helpers.trackingLabel(item.tracking_mode) %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %><% if (item.description) { %> · <%= item.description %><% } %></p>
+      <p><span class="mono"><%= helpers.productCode(item.base_code, skus[0].code) %></span> · <%= helpers.trackingLabel(item.tracking_mode) %><% if (item.has_variants) { %> · <%= helpers.qty(variantTotal) %> variants<% } %><% if (item.description) { %> · <%= item.description %><% } %></p>
     </div>
     <div class="rm-title__do">
       <% if (item.is_active) { %><button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit">Edit details</button><% } %>
@@ -37,7 +37,7 @@
 </div>
 
 <section class="rm-panel">
-  <div class="rm-panel__head"><%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %><h2><%= item.has_variants ? 'Variants' : 'This product' %></h2><span class="right"><%= variantTotal %> tracked separately</span></div>
+  <div class="rm-panel__head"><%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %><h2><%= item.has_variants ? 'Variants' : 'This product' %></h2><span class="right"><%= helpers.qty(variantTotal) %> tracked separately</span></div>
   <div class="rm-scroll">
     <table class="rm-vtable">
       <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th><th class="num">On order</th><th>Selling price</th><th>Purchase cost</th><th>Where it is</th></tr></thead>
@@ -58,7 +58,7 @@
     </table>
   </div>
   <% if (variantPageCount > 1) { %>
-    <div class="rm-panel__foot"><span>Page <%= variantPage %> of <%= variantPageCount %></span>
+    <div class="rm-panel__foot"><span>Page <%= helpers.qty(variantPage) %> of <%= helpers.qty(variantPageCount) %></span>
       <% if (variantPage > 1) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage - 1 %>">Previous</a><% } %>
       <% if (variantPage < variantPageCount) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage + 1 %>">Next</a><% } %>
     </div>
