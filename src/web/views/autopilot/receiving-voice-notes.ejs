@@ -29,7 +29,10 @@
       <h3>Prepared receipt for <%= note.draft.orderNumber %></h3>
       <ul><% for(const row of note.draft.rows){ %><li>
         <strong><%= row.name %> · <%= row.code %></strong>
-        <p><%= row.spokenQuantity %> <%= row.spokenUnit %> matches <%= row.quantity %> <%= row.unit %> at <%= row.locationName %>. Approved unit cost is <%= helpers.money(row.unitCostMinor,note.draft.currency) %>.</p>
+        <p><%= row.spokenQuantity %> <%= row.spokenUnit %> matches <%= row.quantity %> <%= row.unit %> at <%= row.locationName %>. Approved cost is <%= helpers.money(row.unitCostMinor,note.draft.currency) %> per <%= row.secondaryUnit||row.unit %>.</p>
+        <% if(row.lotCode){ %><p>Lot <%= row.lotCode %><% if(row.expiresAt){ %> expires <%= row.expiresAt %><% } %>.</p><% } %>
+        <% if(row.serials?.length){ %><p>Serial numbers <%= row.serials.join(', ') %>.</p><% } %>
+        <% if(row.secondaryQuantity!=null){ %><p>Actual weight <%= row.secondaryQuantity %> <%= row.secondaryUnit %>.</p><% } %>
         <blockquote><%= row.quote %></blockquote>
       </li><% } %></ul>
       <form method="post" action="/autopilot/receiving-voice-notes/<%= note.id %>/confirm" class="rm-form" data-busy>

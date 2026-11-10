@@ -34,7 +34,7 @@ test('voice notes prepare purchase packs and post exact receipts only after an o
     const parsed=JSON.parse(input.prompt);
     assert.equal(parsed.transcript,quote);
     assert.equal(parsed.lines[0].purchaseUnit,'box');
-    return {data:{complete:true,rows:[{lineId:parsed.lines[0].id,quantity:'3',basis:'purchase',quote}]},usage:pricedUsage()};
+    return {data:{complete:true,rows:[{lineId:parsed.lines[0].id,quantity:'3',basis:'purchase',quote,lotCode:'',expiresAt:'',serials:[],secondaryQuantity:''}]},usage:pricedUsage()};
   }};
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),
     aiProvider:provider,audioTranscriber:transcriber});
@@ -133,4 +133,68 @@ test('voice notes prepare purchase packs and post exact receipts only after an o
   assert(require('../../src/documents/voice-wave').validate(Buffer.from(recorded)).seconds>0.25);
   assert.equal(calls,4);
   assert(await phone.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+});
+test('voice receipt preserves literal lot, serial and actual weight evidence',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20});
+  const {db,ctx,workflows}=f,location=f.location.id;
+  await f.subscribe('pro');
+  const catalog=require('../../src/domain/postgres-catalog-service');
+  const goods=[
+    {name:'Canned peaches',trackingMode:'lot'},
+    {name:'Serialized tool',trackingMode:'serial'},
+    {name:'Weighed cheese',trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:2}
+  ];
+  for(const item of goods)item.skuId=(await catalog.createItem(db,ctx,item)).skuIds[0];
+  const expires=require('../../src/accounting/customer-money').addDays(await require('../../src/lib/business-time').today(db,ctx.workspaceId),90);
+  const quotes=[
+    'Three units of Canned peaches, lot PEACH-4, expire '+expires+'.',
+    'Two units of Serialized tool, serials TOOL-40 and TOOL-41.',
+    'Two pieces of Weighed cheese, actual total 19.5 kilograms.'
+  ];
+  const facts=[
+    {quantity:'3',lotCode:'PEACH-4',expiresAt:expires,serials:[],secondaryQuantity:''},
+    {quantity:'2',lotCode:'',expiresAt:'',serials:['TOOL-40','TOOL-41'],secondaryQuantity:''},
+    {quantity:'2',lotCode:'',expiresAt:'',serials:[],secondaryQuantity:'19.5 kg'}
+  ];
+  async function purchase(){
+    const p=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:location,idempotencyKey:randomUUID(),
+      lines:goods.map((product,i)=>({skuId:product.skuId,quantityUnits:[5,4,3][i],unitCost:'2.00',...(i===2?{secondaryQuantity:'30.00'}:{})}))});
+    await workflows.approvePurchaseOrder(db,ctx,p.purchaseOrderId,{idempotencyKey:randomUUID()});
+    await workflows.placePurchaseOrder(db,ctx,p.purchaseOrderId,{idempotencyKey:randomUUID()});
+    return p;
+  }
+  let changed=false;
+  const transcriber={name:'openai',model,providerVersion:version,async transcribe(){return {text:quotes.join(' '),seconds:5};}};
+  const provider={name:'anthropic',model:'claude-haiku-4-5-20251001',async complete(input){
+    const parsed=JSON.parse(input.prompt);
+    return {data:{complete:true,rows:goods.map((product,i)=>({
+      lineId:parsed.lines.find(line=>line.name===product.name).id,basis:'stock',quote:i===0?quotes[i].toUpperCase():quotes[i],...facts[i],
+      ...(changed&&i===1?{serials:['TOOL-40','FORGED-99']}:{}),
+    }))},usage:pricedUsage()};
+  }};
+  const handlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{audioTranscriber:transcriber,aiProvider:provider});
+  const process=()=>require('../../src/operations/postgres-job-queue').processOne(db,{[voice.kind]:handlers[voice.kind]},{owner:'voice-tracked-worker'});
+  const first=await purchase();
+  const source=await voice.enqueue(db,ctx,{buffer:wave(),orderId:first.purchaseOrderId,confirmed:'yes'});
+  const job=await process();
+  assert.equal(job.status,'COMPLETED',JSON.stringify(job.lastError));
+  const note=await voice.load(db,ctx,source.id);
+  assert.equal(note.draft.status,'DRAFT',note.draft.reason);
+  const before=(await db.query('SELECT count(*)::int n FROM purchase_order_receipts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
+  const receipt=await voice.confirm(db,ctx,source.id,{confirmed:'yes',fingerprint:note.draft.fingerprint});
+  const lines=(await db.query(`SELECT sku_id,lot_code,expires_at,serials::jsonb,secondary_quantity::text
+    FROM purchase_order_receipt_lines WHERE workspace_id=$1 AND receipt_id=$2`,[ctx.workspaceId,receipt.receiptId])).rows;
+  const peach=lines.find(line=>line.sku_id===goods[0].skuId),tool=lines.find(line=>line.sku_id===goods[1].skuId),cheese=lines.find(line=>line.sku_id===goods[2].skuId);
+  assert.deepEqual([peach.lot_code,peach.expires_at],['PEACH-4',expires]);
+  assert.deepEqual(tool.serials,['TOOL-40','TOOL-41']);
+  assert.equal(Number(cheese.secondary_quantity),19.5);
+  assert.equal(receipt.lines.find(line=>line.lineId===first.lineIds[2]).totalCostMinor,3900);
+  changed=true;
+  const second=await purchase();
+  const unsupported=await voice.enqueue(db,ctx,{buffer:wave(),orderId:second.purchaseOrderId,confirmed:'yes'});
+  assert.equal((await process()).status,'COMPLETED');
+  const held=await voice.load(db,ctx,unsupported.id);
+  assert.equal(held.draft.status,'REVIEW');
+  await assert.rejects(voice.confirm(db,ctx,held.id,{confirmed:'yes',fingerprint:note.draft.fingerprint}),/checked receiving review/);
+  assert.equal((await db.query('SELECT count(*)::int n FROM purchase_order_receipts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,before+1);
 });
