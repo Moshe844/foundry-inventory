@@ -691,7 +691,9 @@ async function lookupRecords(database,ctx,request,options={}) {
       handoff:needs.length?{href:complete?'/needs-you':'/needs-you/all',label:'Review what needs you'}:null};
   }
   if(request.view==='inventory_summary'){
-    const {products,productsEver,skus,onHand}=await require('./postgres-inventory-summary').read(database,ctx.workspaceId);
+    const {products,productsEver,skus,onHand,measured}=await require('./postgres-inventory-summary').read(database,ctx.workspaceId);
+    // Measured stock (kg, m, L) is named in its own units, never added to the units.
+    const plusMeasured=measured&&measured.length?`, plus ${require('../domain/stock-totals').measuredText(measured)}`:'';
     const question=String(options.question||'');
     const asksSkus=/\b(?:SKUs?|variants?)\b/i.test(question);
     const asksProducts=/\b(?:products?|items?)\b/i.test(question);
@@ -703,17 +705,18 @@ async function lookupRecords(database,ctx,request,options={}) {
       asksProducts&&!asksSkus&&!asksUnits&&!asksHistory
         ?`You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} recorded.`:
       asksUnits&&!asksSkus&&!asksProducts&&!asksHistory
-        ?`You have ${onHand.toLocaleString('en-US')} units on hand across the business.`:
-      `You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand.${productsEver>products?` ${productsEver.toLocaleString('en-US')} products have been recorded here over time.`:''}`;
+        ?`You have ${onHand.toLocaleString('en-US')} units on hand across the business${plusMeasured}.`:
+      `You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand${plusMeasured}.${productsEver>products?` ${productsEver.toLocaleString('en-US')} products have been recorded here over time.`:''}`;
     return {answer,
       rows:[{products,skus,onHand,productsEver}],columns:['products','skus','onHand','productsEver'],
       handoff:{href:'/inventory',label:'Open inventory'}};
   }
   if(request.view==='locations'){
-    const rows=(await database.query(`SELECT l.id,l.name,l.kind,l.is_active,COALESCE(SUM(b.on_hand),0) AS units
-      FROM locations l LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
+    // Units at each place are counted units only, as on Home and Stock (domain/stock-totals.js).
+    const rows=(await database.query(`SELECT l.id,l.name,l.kind,l.is_active,(${require('../domain/stock-totals').totalsSql('l.workspace_id','l.id')}->>'units')::numeric AS units
+      FROM locations l
       WHERE l.workspace_id=$1 AND ($2::text IS NULL OR l.name ILIKE '%'||$2||'%')
-      GROUP BY l.id ORDER BY l.name LIMIT 101`,[ctx.workspaceId,search])).rows;
+      ORDER BY l.name LIMIT 101`,[ctx.workspaceId,search])).rows;
     const truncated=rows.length>100,visible=rows.slice(0,100).map(row=>evidenceRow({id:row.id,name:row.name,kind:row.kind,
       active:Boolean(Number(row.is_active)),receivingLocationEligible:Boolean(Number(row.is_active)),units:Number(row.units)},`/inventory?location=${row.id}`));
     return {answer:visible.length?`${truncated?'Showing the first 100 matching locations':`${visible.length} location${visible.length===1?'':'s'}`}, including inactive locations. `+

@@ -107,34 +107,37 @@ async function inventoryPosition(database,workspaceId){
       WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
     ), sku_position AS (
       SELECT s.id,s.item_id,COALESCE(b.on_hand,0)::numeric AS on_hand,
-        COALESCE(a.committed,0)::numeric AS committed,COALESCE(p.incoming,0)::numeric AS incoming
+        COALESCE(a.committed,0)::numeric AS committed,COALESCE(p.incoming,0)::numeric AS incoming,
+        ${require('../domain/stock-totals').MEASURED} AS measured
       FROM skus s LEFT JOIN stock_by_sku b ON b.sku_id=s.id
       LEFT JOIN commitments_by_sku a ON a.sku_id=s.id LEFT JOIN incoming_by_sku p ON p.sku_id=s.id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
     ), item_position AS (
-      SELECT item_id,SUM(on_hand) AS on_hand,SUM(committed) AS committed,SUM(incoming) AS incoming
+      SELECT item_id,SUM(on_hand) AS on_hand,SUM(committed) AS committed,SUM(incoming) AS incoming,bool_or(measured) AS measured
       FROM sku_position GROUP BY item_id
     ) SELECT COUNT(*)::bigint AS products,
-      (SELECT COUNT(*)::bigint FROM sku_position) AS skus,COALESCE(SUM(on_hand),0)::numeric AS on_hand,
-      COALESCE(SUM(committed),0)::numeric AS committed,COALESCE(SUM(incoming),0)::numeric AS incoming,
+      (SELECT COUNT(*)::bigint FROM sku_position) AS skus,
+      -- Promised and incoming add only counted units, like on hand (domain/stock-totals.js).
+      COALESCE(SUM(committed) FILTER(WHERE NOT measured),0)::numeric AS committed,COALESCE(SUM(incoming) FILTER(WHERE NOT measured),0)::numeric AS incoming,
       COUNT(*) FILTER (WHERE on_hand<=0)::bigint AS empty_count,
       COUNT(*) FILTER (WHERE committed>on_hand)::bigint AS shortage_count,
       COUNT(*) FILTER (WHERE incoming>0)::bigint AS incoming_count,
       COUNT(*) FILTER (WHERE on_hand>0 AND committed<=on_hand)::bigint AS healthy_count
     FROM item_position`,[workspaceId]);
-  const [locations,cost,names,coverage]=await Promise.all([
+  const [locations,cost,names,coverage,stock]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
     require('../projections/postgres-cost-summaries').totals(database,workspaceId),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
     require('../accounting/customer-money').inventoryCoverage(database,workspaceId),
+    require('../domain/stock-totals').forBusiness(database,workspaceId),
   ]);
   const row=result.rows[0];const groups=STOCK_GROUPS.flatMap((group)=>{
     const count=number(row[`${group.key}_count`]);
     return count?[{...group,count,itemIds:[],href:`/inventory/table?group=${encodeURIComponent(group.key)}`}]:[];
   });
   return {position:{tooLarge:number(row.products)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
-    products:number(row.products),skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},
+    products:number(row.products),skus:number(row.skus),onHand:stock.units,measured:stock.measured,committed:number(row.committed),incoming:number(row.incoming)}},
     stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost),...coverage}};
 }
 

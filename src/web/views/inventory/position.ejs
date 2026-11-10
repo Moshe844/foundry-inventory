@@ -45,7 +45,7 @@
 <% } else { %>
 
   <div class="sc-tiles">
-    <a class="sc-tile" href="/inventory/table"><span>On hand</span><strong><%= helpers.unitCount((totals.onHand || 0).toLocaleString('en-US'),'unit') %></strong><small>Across every location</small></a>
+    <a class="sc-tile" href="/inventory/table"><span>On hand</span><strong><%= helpers.unitCount(helpers.qty(totals.onHand),'unit') %></strong><small>Across every location<% if (totals.measured && totals.measured.length) { %>, plus <%= helpers.measuredStock(totals.measured) %><% } %></small></a>
     <a class="sc-tile" href="/accounting#inventory"><span>Known cost</span><strong class="<%= missingCostUnits > 0 ? 'is-important' : '' %>"><%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'Not recorded' %></strong><small><%= missingCostUnits > 0 ? helpers.unitCount(missingCostUnits.toLocaleString('en-US'),'unit') + ' still need a cost' : 'Every unit has a cost' %></small></a>
     <a class="sc-tile" href="/orders?status=open"><span>Promised to customers</span><strong><%= helpers.unitCount((totals.committed || 0).toLocaleString('en-US'),'unit') %></strong><small><%= totals.committed ? 'Already sold, not yet shipped' : 'Nothing is promised to a customer' %></small></a>
     <a class="sc-tile" href="/inventory/table?group=incoming"><span>On the way</span><strong><%= helpers.unitCount((totals.incoming || 0).toLocaleString('en-US'),'unit') %></strong><small>From purchase orders</small></a>

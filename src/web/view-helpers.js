@@ -226,6 +226,8 @@ module.exports = {
   currencyExponent:require('../domain/currency').exponent,
   unitCount,
   unitLabel,
+  // "3.75 kg, 12 m": measured stock, never added to counted units.
+  measuredStock:require('../domain/stock-totals').measuredText,
   icon,
   qty,
   money,
