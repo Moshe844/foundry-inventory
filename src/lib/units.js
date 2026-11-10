@@ -20,8 +20,12 @@
 const INVARIANT = new Set(['each', 'ea', 'pcs', 'pc', 'per', 'dozen', 'gross', 'stock']);
 const ALREADY_PLURAL = /(?:ies|ses|xes|zes|ches|shes|units|pieces|pairs|packs|rolls|pallets|cartons|bottles)$/i;
 
+// A number is shown with thousands separators ("6,800,913 units"); text a
+// caller already formatted ("1,234" or "less than 1") is shown as given.
+const COUNT_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 });
 function unitCount(quantity, label) {
-  return `${quantity} ${unitLabel(quantity, label)}`;
+  const shown = typeof quantity === 'number' && Number.isFinite(quantity) ? COUNT_FORMAT.format(quantity) : quantity;
+  return `${shown} ${unitLabel(quantity, label)}`;
 }
 
 function unitLabel(quantity, label) {

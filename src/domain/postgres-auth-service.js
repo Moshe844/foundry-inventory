@@ -197,7 +197,7 @@ async function listWorkspacesForAccount(database, accountId, {includeMetrics=tru
       u.id AS membership_id,u.role${includeMetrics?`,
       (SELECT COUNT(*) FROM items i WHERE i.workspace_id=w.id AND i.is_active=1) AS item_count,
       (SELECT COUNT(*) FROM locations l WHERE l.workspace_id=w.id AND l.is_active=1) AS location_count,
-      (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b WHERE b.workspace_id=w.id) AS units_on_hand,
+      (${require('./stock-totals').totalsSql('w.id')}->>'units')::numeric AS units_on_hand,
       (SELECT COUNT(*) FROM users members WHERE members.workspace_id=w.id) AS member_count`:''}
     FROM users u JOIN workspaces w ON w.id=u.workspace_id
     WHERE u.account_id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL) ORDER BY w.created_at,w.name`, [accountId]);
