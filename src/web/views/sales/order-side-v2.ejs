@@ -70,7 +70,7 @@
       <li><b class="ox-num"><%= helpers.money(receipt.amount_minor, cur) %></b>
         <span><%= receipt.method ? receipt.method.replace(/_/g, ' ') : 'payment' %><%= receipt.reference ? ' · ' + receipt.reference : '' %> · <%= helpers.shortDate(receipt.payment_date) %></span>
         <a href="/orders/<%= order.id %>/receipt/<%= receipt.id %>">Receipt</a>
-        <% if (receipt.voidable && locals.canRecordPayments !== false) { %><details class="ox-void"><summary>Void</summary>
+        <% if (receipt.voidable && locals.canRecordPayments !== false) { %><details class="ox-void" id="ox-payment-void-<%= receipt.id %>"><summary>Void</summary>
           <form method="post" action="/accounting/payments/<%= receipt.id %>/void" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-void-<%= receipt.id %>"><input type="hidden" name="returnTo" value="/orders/<%= order.id %>">
             <p>Only for a payment recorded by mistake. The invoice opens again and your books record the void.</p>
@@ -116,7 +116,7 @@
         <div class="ox-pay__change"><dt>Change to give back</dt><dd class="ox-num" data-ox-cash-change><%= helpers.money(0, cur) %></dd></div>
         <div><dt>Still owed after this</dt><dd class="ox-num" data-ox-cash-left><%= helpers.money(owed - ask, cur) %></dd></div>
       </dl>
-      <details class="ox-pay__note"><summary>Add a note</summary><input maxlength="120" placeholder="Optional" data-ox-cash-extra aria-label="Note"></details>
+      <details id="ox-cash-note" class="ox-pay__note"><summary>Add a note</summary><input maxlength="120" placeholder="Optional" data-ox-cash-extra aria-label="Note"></details>
       <button class="ox-btn ox-btn--primary ox-btn--block" type="submit" data-ox-cash-submit>Record <%= helpers.money(ask, cur) %> cash</button>
     </form>
 
@@ -158,7 +158,7 @@
         </div>
       <% } %>
       <% if (locals.canManageBankDetails) { %>
-        <details class="ox-bank-edit"<%= bank ? '' : ' open' %>>
+        <details id="ox-bank-transfer-details" class="ox-bank-edit"<%= bank ? '' : ' open' %>>
           <summary><%= bank ? 'Change bank details' : 'Add your bank details' %></summary>
           <form method="post" action="/settings/bank-transfer-details" class="ox-bank-form">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/orders/<%= order.id %>">
@@ -180,7 +180,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-transfer"><input type="hidden" name="method" value="bank transfer">
         <p class="ox-pay__step">When the money is in your account:</p>
         <label class="ox-field"><span>Amount received</span><input type="number" name="amount" step="0.01" min="0.01" max="<%= dollars(owed) %>" inputmode="decimal" value="<%= dollars(ask) %>" required></label>
-        <details class="ox-pay__note"><summary>Add a note</summary><input name="reference" maxlength="120" placeholder="Optional" aria-label="Note"></details>
+        <details id="ox-transfer-note" class="ox-pay__note"><summary>Add a note</summary><input name="reference" maxlength="120" placeholder="Optional" aria-label="Note"></details>
         <button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Mark transfer received</button>
       </form>
     </div>
