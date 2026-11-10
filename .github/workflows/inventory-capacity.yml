@@ -188,6 +188,9 @@ jobs:
       - name: Partial picks, remaining stock, physical handoff, plan authority and measured work
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-partial-shipments.test.js tests/postgres/agent-partial-shipment-boundaries.test.js tests/postgres/agent-partial-shipment-reporting.test.js tests/postgres/agent-partial-shipment-ui.test.js
+      - name: Purchased return-label mail, confirmed teaching, plan changes and provider recovery
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-return-labels.test.js tests/postgres/agent-return-label-boundaries.test.js tests/postgres/agent-return-label-ui.test.js tests/postgres/agent-return-label-reporting.test.js tests/postgres/agent-return-label-parcel-boundary.test.js tests/postgres/agent-return-label-recovery.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

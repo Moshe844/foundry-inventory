@@ -88,7 +88,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(options.agentRequested){
     const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
     if(policy.usesAgentTerms(state)){
-      const requestedJob=new Map([['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45]]).get(payload.standingAuthority?.kind);
+      const requestedJob=new Map([['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45],['return_label',112]]).get(payload.standingAuthority?.kind);
       agentJob=requestedJob!==undefined&&requestedJob===options.agentJob?requestedJob:policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
       policy.requireJob(state.plan,agentJob,'draft');
     }
@@ -204,6 +204,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(!connection||connection.status!=='connected'||connection.paused_at)
         throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
       if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(client,workspaceId,agentJob,'draft');
+      if(input.standingAuthority?.kind==='return_label')await require('../shipping/agent-return-instructions').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(client,workspaceId,input.standingAuthority);
@@ -235,8 +236,10 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='return_label')await require('../shipping/agent-return-instructions').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
         if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
+        if(input.standingAuthority?.kind==='return_label')await database.query("UPDATE stockchief_runtime.provider_effects SET result=result-'providerNotCalled' WHERE workspace_id=$1 AND id=$2 AND claim_token=$3",[workspaceId,effectId,effect.claimToken]);
         providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body,...(attachments?.length?{attachments}:{})},idempotencyKey:effect.idempotencyKey});
         if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;
@@ -254,6 +257,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
     return {message:await get(database,workspaceId,kind,input.communicationId),replayed:false};
   }catch(error){
     const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
+    if(!providerCalled&&input.standingAuthority?.kind==='return_label')await database.query(
+      "UPDATE stockchief_runtime.provider_effects SET result=jsonb_build_object('providerNotCalled',true) WHERE workspace_id=$1 AND id=$2 AND status='RUNNING' AND claim_token=$3",
+      [workspaceId,effectId,effect.claimToken]);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,apply:async(client)=>{
       const review=(!providerCalled&&input.standingAuthority?.kind==='shipment_notice'&&error.code==='shipment_needs_approval');
       const at=nowIso();await client.query(`UPDATE ${table} SET status=$5,error_message=$3,updated_at=$4

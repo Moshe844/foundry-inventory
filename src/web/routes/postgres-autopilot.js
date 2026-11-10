@@ -149,6 +149,10 @@ function createPostgresAutopilotRouter(database){
   router.post('/autopilot/supplier-forecast-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,null,{...req.body,ruleId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/supplier-forecasts');
   }));
+  router.post('/autopilot/return-labels/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Send this purchased return label and its authorized instructions',{action:'customer_return.send_label',recordReference:req.body.returnReference,mailbox:req.body.connectorId});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact authorized return and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
   router.post('/autopilot/customer-statements/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
