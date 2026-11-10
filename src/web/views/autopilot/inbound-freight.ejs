@@ -1,0 +1,120 @@
+<h1>Inbound ocean and air freight</h1>
+<p>Keep port and airport arrival updates, purchase orders, and expected deposits together. The freight arrival and warehouse delivery dates are shown separately.</p>
+<% if(!allowed){ %>
+  <p class="notice"><strong>Growth / Pro / Custom</strong> · Inbound freight tracking starts at Growth. <a class="btn" href="/billing">Upgrade</a></p>
+<% } %>
+<% if(freight){ %>
+  <section class="card"><div class="card-body">
+    <h2><%= freight.reference %> · <%= freight.mode==='ocean'?'Ocean':'Air' %></h2>
+    <p><%= freight.forwarder %> → <%= freight.destination %></p>
+    <p><strong><%= statusLabels[freight.status] %></strong><%= freight.eta?' · Expected arrival '+freight.eta:'' %></p>
+    <% if(issuedLink){ %>
+      <p class="notice">Share this private link with the forwarder responsible for this shipment.</p>
+      <label>Private update link<input readonly value="<%= origin+issuedLink %>"></label>
+    <% } %>
+    <% if(allowed){ %>
+      <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/link" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label><input type="checkbox" name="confirmed" value="yes" required> Issue a private forwarder link and replace any older link.</label>
+        <button class="btn">Create update link</button>
+      </form>
+    <% } %>
+    <% if(freight.link_expires_at){ %>
+      <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/revoke">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn">Revoke update link</button>
+      </form>
+    <% } %>
+    <% if(allowed||freight.routine){ %>
+      <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/routine" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= freight.revision %>">
+        <p>Routine updates are <strong><%= freight.routine?'on':'off' %></strong>.</p>
+        <% if(allowed){ %>
+          <label>Maximum change from the confirmed arrival date (days)<input type="number" min="1" max="365" name="maximumShiftDays"
+            value="<%= freight.maximum_shift_days||'' %>"></label>
+        <% } %>
+        <label><input type="checkbox" name="confirmed" value="yes" required> Confirm the routine settings for this shipment.</label>
+        <% if(allowed){ %><button class="btn" name="enable" value="yes">Authorize routine updates</button><% } %>
+        <% if(freight.routine){ %><button class="btn" name="enable" value="no">Pause routine updates</button><% } %>
+      </form>
+    <% } %>
+  </div></section>
+  <section class="card"><div class="card-body">
+    <h2>Purchase orders and deposits</h2>
+    <% for(const po of orders){ const deposit=deposits.find(row=>row.purchase_order_id===po.id); %>
+      <section>
+        <h3><a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a></h3>
+        <p>Expected at warehouse <%= po.expected_date||'No date recorded' %></p>
+        <% if(deposit){ const paid=Number(deposit.paid),expected=Number(deposit.amount_minor); %>
+          <p>Deposit <strong><%= helpers.money(expected,deposit.currency) %></strong> due <%= deposit.due_date %>.
+            <%= deposit.bill_number?'Recorded payments '+helpers.money(paid,deposit.currency)+'.':'Awaiting a matched posted deposit bill.' %>
+            <% if(deposit.bill_number){ %>Remaining <%= helpers.money(Math.max(0,expected-paid),deposit.currency) %>.<% } %>
+          </p>
+        <% } %>
+        <% if(allowed){ %>
+          <details><summary><%= deposit?'Edit deposit details':'Track a deposit' %></summary>
+            <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/deposit" class="form-stack">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="orderId" value="<%= po.id %>">
+              <input type="hidden" name="revision" value="<%= deposit?.revision||0 %>">
+              <label>Expected deposit (<%= po.currency %>)<input name="amount" inputmode="decimal" required
+                value="<%= deposit?helpers.money(Number(deposit.amount_minor),po.currency):'' %>"></label>
+              <label>Due date<input type="date" name="dueDate" value="<%= deposit?.due_date||'' %>" required></label>
+              <label>Posted deposit bill number (optional)<input name="billNumber" maxlength="150" value="<%= deposit?.bill_number||'' %>"></label>
+              <label><input type="checkbox" name="confirmed" value="yes" required> These deposit terms belong to this purchase order.</label>
+              <button class="btn">Save deposit</button>
+            </form>
+          </details>
+        <% } %>
+      </section>
+    <% } %>
+  </div></section>
+  <section class="card"><div class="card-body">
+    <h2>Forwarder updates</h2>
+    <% if(!history.length){ %><p>No forwarder updates yet.</p><% } %>
+    <% for(const update of history){ %>
+      <article>
+        <h3><%= statusLabels[update.status] %><%= update.eta?' · '+update.eta:'' %></h3>
+        <p><%= update.disposition==='APPLIED'?'Applied':update.revision===freight.revision?'Needs your review':'Earlier update retained' %></p>
+        <% if(update.note){ %><blockquote><%= update.note %></blockquote><% } %>
+        <% if(allowed&&update.disposition==='REVIEW'&&update.revision===freight.revision){ %>
+          <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/review" class="form-stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="updateId" value="<%= update.id %>">
+            <input type="hidden" name="revision" value="<%= freight.revision %>">
+            <label><input type="checkbox" name="confirmed" value="yes" required> Use this exact status and arrival update.</label>
+            <button class="btn">Apply update</button>
+          </form>
+        <% } %>
+      </article>
+    <% } %>
+  </div></section>
+<% }else if(allowed){ %>
+  <section class="card"><div class="card-body">
+    <h2>Track a shipment</h2>
+    <form method="post" action="/autopilot/inbound-freight" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Transport mode<select name="mode" required><option value="ocean">Ocean</option><option value="air">Air</option></select></label>
+      <label>Reference type<select name="referenceType" required>
+        <option value="container">Ocean container</option><option value="bill">Ocean bill of lading</option>
+        <option value="booking">Ocean booking</option><option value="waybill">Air waybill</option>
+      </select></label>
+      <label>Exact freight reference<input name="reference" maxlength="80" required></label>
+      <label>Carrier or forwarder<input name="forwarder" maxlength="150" required></label>
+      <label>Destination port or airport<input name="destination" maxlength="150" required></label>
+      <label>Expected arrival at port or airport<input type="date" name="eta"></label>
+      <label>Linked purchase order numbers (one per line)<textarea name="orders" required></textarea></label>
+      <label>Maximum routine arrival change (days)<input name="maximumShiftDays" type="number" min="1" max="365"></label>
+      <label><input type="checkbox" name="routine" value="yes"> Apply matching forwarder updates within this date limit.</label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked the shipment reference and linked orders.</label>
+      <button class="btn btn--primary">Track shipment</button>
+    </form>
+  </div></section>
+<% } %>
+<section class="card"><div class="card-body">
+  <h2>Recent inbound shipments</h2>
+  <% if(!rows.length){ %><p>No inbound freight shipments yet.</p><% }else{ %><ul>
+    <% for(const row of rows){ %><li><a href="/autopilot/inbound-freight/<%= row.id %>"><%= row.reference %> · <%= row.forwarder %> · <%= statusLabels[row.status] %><%= row.eta?' · '+row.eta:'' %></a></li><% } %>
+  </ul><% } %>
+</div></section>

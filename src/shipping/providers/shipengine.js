@@ -37,7 +37,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'ShipEngine', retries: options.retries });
+  }, { provider: 'ShipEngine', retries: options.retries, timeoutMs: options.timeoutMs });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -72,7 +72,7 @@ function address(input = {}) {
 
 function parcel(box = {}) {
   const out = {
-    weight: { value: Math.max(1, Number(box.weightGrams || 0)), unit: 'gram' },
+    weight: { value: Number(box.weightGrams) || 1, unit: 'gram' },
   };
   if (box.lengthMm && box.widthMm && box.heightMm) {
     out.dimensions = {

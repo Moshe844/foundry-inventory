@@ -99,6 +99,7 @@ function number(value,{positive=false}={}){const found=Number(value);return Numb
 function hydrate(row){if(!row)return null;return {id:row.id,workspaceId:row.workspace_id,createdByUserId:row.created_by_user_id,
   statedAs:row.stated_as,summary:row.summary,changes:parse(row.changes,[]),resolvedChanges:parse(row.resolved_changes,[]),
   questions:parse(row.questions,[]),status:row.status,integrityHash:row.integrity_hash,
+  ...(row.sop_source?{sopSource:parse(row.sop_source,null)}:{}),
   appliedRecords:parse(row.applied_records,[]),approvedAt:row.approved_at,createdAt:row.created_at,updatedAt:row.updated_at};}
 
 async function get(database,workspaceId,id,lock=false){const row=(await database.query(`SELECT * FROM operating_instruction_proposals
@@ -313,12 +314,17 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
       throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||difference);
   }
   if(typed&&questions.length)throw Object.assign(new ValidationError(questions[0],{reason:'instruction_input_required',question:questions[0]}),{effectMayHaveOccurred:false});
+  if(options.sopSource&&questions.length)throw new ValidationError('This original clause needs clarification. Upload a version with the complete settings.');
   const snapshot={statedAs:clean,resolvedChanges};
-  const id=newId('oin');const at=nowIso();await database.query(`INSERT INTO operating_instruction_proposals
+  const id=newId('oin');const at=nowIso();const persist=async client=>{await client.query(`INSERT INTO operating_instruction_proposals
     (id,workspace_id,created_by_user_id,stated_as,summary,changes,resolved_changes,questions,status,integrity_hash,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',$9,$10,$10)`,[id,ctx.workspaceId,ctx.actorId,clean,
     resolvedChanges.map(describe).join(' ').slice(0,500),JSON.stringify(read.changes.map(cleanChange)),
-    JSON.stringify(resolvedChanges),JSON.stringify(questions),hash(snapshot),at]);return get(database,ctx.workspaceId,id);}
+    JSON.stringify(resolvedChanges),JSON.stringify(questions),hash(snapshot),at]);
+    if(options.sopSource)await require('../documents/agent-sop-sources').attachProposal(client,ctx,options.sopSource,id,clean);
+    return get(client,ctx.workspaceId,id);
+  };
+  return options.sopSource?database.transaction(persist,{isolation:'SERIALIZABLE',retrySafe:true}):persist(database);}
 
 async function assertOwner(client,ctx){const actor=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',
   [ctx.workspaceId,ctx.actorId])).rows[0];if(actor?.role!=='owner')throw new ValidationError('Only an owner can approve standing operating rules.');}
@@ -481,6 +487,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_website_stock_chats WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_channel_copy_sets WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_contract_reading_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_shelf_photo_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_backup_supplier_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_blanket_contracts WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_term_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_term_rules WHERE workspace_id IN(SELECT id FROM owned))
@@ -488,6 +496,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_po_date_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_container_projects WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_container_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_inbound_freight WHERE workspace_id IN(SELECT id FROM owned) AND routine)
+      +(SELECT count(*) FROM stockchief_runtime.agent_van_route_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_team_procedure_sets WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_product_retirement_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_shutdowns WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
@@ -513,6 +523,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
 async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);
   const proposal=await get(client,ctx.workspaceId,id,true);if(proposal.status==='APPROVED')return {...proposal,replayed:true};
   if(proposal.status!=='PENDING')throw new InvariantError('That standing instruction is no longer waiting for approval.','instruction_not_pending');
+  if(proposal.sopSource)await require('../documents/agent-sop-sources').checkProposalSource(client,ctx,proposal);
   if(proposal.questions.length)throw new ValidationError(proposal.questions[0]);
   if(expectedHash&&expectedHash!==proposal.integrityHash)throw new ValidationError('This instruction changed since you reviewed it.');
   if(hash({statedAs:proposal.statedAs,resolvedChanges:proposal.resolvedChanges})!==proposal.integrityHash)

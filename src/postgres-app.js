@@ -48,7 +48,7 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
-function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
+function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,audioTranscriber=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
   commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
@@ -100,6 +100,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresCommercialWebhooks(database,commercialOptions?.billingProvider?{
     provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
+  app.use(require('./web/routes/agent-slack-command').router(database));
   app.use(require('./web/routes/postgres-shipstation-custom').createShipStationCustomRouter(database));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
   app.use(require('./web/routes/postgres-cardknox').createCardknoxPublicRouter(database));
@@ -107,6 +108,8 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined)}));
   app.post('/autopilot/delivery-quality/:id/photos',multipart({limit:10*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
+  app.post('/autopilot/procedure-originals',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
+  app.post('/autopilot/receiving-voice-notes',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
   // One bounded JSON field carries up to 500 checked packing profiles.
   // Keep the larger form allowance specific to this owner-only workflow.
@@ -184,6 +187,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(commonMiddleware.csrf);
   app.use('/customer/order',require('./web/routes/customer-order-page').csrfError);
   app.use(require('./web/routes/supplier-order-link').router(database));
+  app.use(require('./web/routes/inbound-freight-update').router(database));
   app.use(require('./web/routes/customer-order-page').router(database));
   app.use(require('./lib/request-read-cache').middleware);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
@@ -246,7 +250,10 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresImportsRouter(database,{provider:aiProvider}));
   app.use(require('./web/routes/postgres-erp-cutovers').createRouter(database));
   app.use(createPostgresCommerceRouter(database,{paymentOptions:paymentOptions||{}}));
-  app.use(createPostgresAutopilotRouter(database));
+  app.use(createPostgresAutopilotRouter(database,{
+    provider:aiProvider,
+    voiceAvailable:Boolean((audioTranscriber||process.env.OPENAI_API_KEY)&&(aiProvider||config.ai.configured))
+  }));
   app.use(createPostgresWarehouseRouter(database));
   app.use(createPostgresTransfersRouter(database));
   app.use(require('./web/routes/postgres-manufacturing').createPostgresManufacturingRouter(database));

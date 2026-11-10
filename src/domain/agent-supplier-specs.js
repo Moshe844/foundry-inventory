@@ -7,7 +7,10 @@ const {newId}=require('../lib/util');
 const aliases=new Map(Object.entries({
   barcode:['barcode',1],upc:['barcode',1],ean:['barcode',1],gtin:['barcode',1],
   weightgrams:['weight_grams',1],weightg:['weight_grams',1],weightkg:['weight_grams',1000],
-  lengthmm:['length_mm',1],lengthcm:['length_mm',10],widthmm:['width_mm',1],widthcm:['width_mm',10],heightmm:['height_mm',1],heightcm:['height_mm',10]
+  weightmg:['weight_grams',1,1000],weightlb:['weight_grams',45359237,100000],weightoz:['weight_grams',28349523125,1000000000],
+  lengthmm:['length_mm',1],lengthcm:['length_mm',10],lengthin:['length_mm',254,10],
+  widthmm:['width_mm',1],widthcm:['width_mm',10],widthin:['width_mm',254,10],
+  heightmm:['height_mm',1],heightcm:['height_mm',10],heightin:['height_mm',254,10]
 }));
 const labels={barcode:'Barcode',weight_grams:'Weight (g)',length_mm:'Length (mm)',width_mm:'Width (mm)',height_mm:'Height (mm)'};
 
@@ -26,12 +29,11 @@ const sourceFields=`WITH source_fields AS (
 )`;
 
 function decode(field,raw){
-  const value=String(raw??'').trim(),[key,factor]=field;
+  const value=String(raw??'').trim(),[key,numerator,denominator]=field;
   if(key==='barcode')return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/.test(value)&&!/^\d+(?:\.\d+)?e[+-]?\d+$/i.test(value)?value:null;
   if(!/^\d{1,10}(?:\.\d{1,6})?$/.test(value))return null;
-  const [whole,part='']=value.split('.'),scale=10**part.length,scaled=(Number(whole)*scale+Number(part))*factor;
-  const amount=scaled/scale;
-  return Number.isSafeInteger(amount)&&amount>0&&amount<=1000000000?amount:null;
+  try{return require('./physical-measure').convert(value,{numerator,denominator});}
+  catch(error){if(!(error instanceof ValidationError))throw error;return null;}
 }
 
 async function chosenSource(db,ctx,name){

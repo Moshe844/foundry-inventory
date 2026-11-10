@@ -1,5 +1,8 @@
 'use strict';
 
+const measurement=require('../domain/physical-measure');
+const nativeMeasureLimit=2147483647;
+
 const crypto=require('node:crypto');
 const { ValidationError,NotFoundError,InvariantError }=require('../domain/errors');
 const { newId,nowIso }=require('../lib/util');
@@ -60,7 +63,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
        handover,package_count,weight_grams,currency,created_by_user_id,created_at,updated_at,ship_to_address_fields)
       VALUES($1,$2,$3,$4,$11,$5,$6,'CARRIER',1,$7,$8,$9,$10,$10,$12::jsonb)`,[shipmentId,ctx.workspaceId,
       salesOrderId,shipmentNumber,input.shipFromLocationId||order.fulfillment_location_id,destination,
-      input.weightGrams?Math.round(Number(input.weightGrams)):null,order.currency||'USD',ctx.actorId,at,input.startPicking?'PICKING':'PACKED',destinationFields?JSON.stringify(destinationFields):null]);
+      measurement.optional(input.weightGrams,'Parcel weight',nativeMeasureLimit),order.currency||'USD',ctx.actorId,at,input.startPicking?'PICKING':'PACKED',destinationFields?JSON.stringify(destinationFields):null]);
     for(const [index,line] of input.lines.entries()){
       const quantity=Number(line.quantity);
       if(!Number.isSafeInteger(quantity)||quantity<=0)throw new ValidationError(`Parcel line ${index+1} quantity must be a whole number above zero.`);
@@ -80,7 +83,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`,[newId('shpl'),ctx.workspaceId,shipmentId,line.lineId,
         allocation.sku_id,line.locationId,quantity,at]);
     }
-    if(!input.weightGrams){const weights=(await client.query(`SELECT sum(l.quantity*s.weight_grams)::bigint AS grams,count(*) FILTER(WHERE s.weight_grams IS NULL)::int AS missing FROM sales_shipment_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id WHERE l.workspace_id=$1 AND l.shipment_id=$2`,[ctx.workspaceId,shipmentId])).rows[0];
+    if(!input.weightGrams){const weights=(await client.query(`SELECT sum(l.quantity*s.weight_grams) AS grams,count(*) FILTER(WHERE s.weight_grams IS NULL)::int AS missing FROM sales_shipment_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id WHERE l.workspace_id=$1 AND l.shipment_id=$2`,[ctx.workspaceId,shipmentId])).rows[0];
       if(!weights.missing&&Number(weights.grams)>0){await client.query('UPDATE sales_shipments SET weight_grams=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,shipmentId,weights.grams]);await client.query(`INSERT INTO shipment_packages(id,workspace_id,shipment_id,position,weight_grams,weight_source,created_at,updated_at) VALUES($1,$2,$3,1,$4,'ESTIMATED',$5,$5)`,[newId('pkg'),ctx.workspaceId,shipmentId,weights.grams,at]);}}
     const result={shipmentId,shipmentNumber,status:input.startPicking?'PICKING':'PACKED'};
     await client.query(`UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,
@@ -92,11 +95,11 @@ async function prepare(database,ctx,salesOrderId,input={}){
 async function packagesFor(database,workspaceId,shipmentId){
   const existing=await database.query(`SELECT * FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY position`,
     [workspaceId,shipmentId]);
-  if(existing.rows.length)return existing.rows.map((row)=>({id:row.id,position:Number(row.position),weightGrams:Number(row.weight_grams),
-    lengthMm:row.length_mm===null?null:Number(row.length_mm),widthMm:row.width_mm===null?null:Number(row.width_mm),
-    heightMm:row.height_mm===null?null:Number(row.height_mm),estimated:row.weight_source==='ESTIMATED'}));
+  const measure=value=>measurement.optional(value,'Saved parcel measurement',nativeMeasureLimit);
+  if(existing.rows.length)return existing.rows.map((row)=>({id:row.id,position:Number(row.position),weightGrams:measure(row.weight_grams),
+    lengthMm:measure(row.length_mm),widthMm:measure(row.width_mm),heightMm:measure(row.height_mm),estimated:row.weight_source==='ESTIMATED'}));
   const shipment=await requireShipment(database,workspaceId,shipmentId);
-  return [{id:null,position:1,weightGrams:shipment.weight_grams?Number(shipment.weight_grams):null,
+  return [{id:null,position:1,weightGrams:measure(shipment.weight_grams),
     lengthMm:null,widthMm:null,heightMm:null,estimated:false}];
 }
 
@@ -116,6 +119,7 @@ async function cancel(database,ctx,shipmentId,input={}){
     await client.query(`SELECT w.id FROM fulfillment_waves w WHERE w.workspace_id=$1 AND EXISTS(SELECT 1 FROM fulfillment_wave_shipments x WHERE x.workspace_id=w.workspace_id AND x.wave_id=w.id AND x.shipment_id=$2) ORDER BY w.id FOR UPDATE OF w`,[ctx.workspaceId,shipmentId]);
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
     if(shipment.status==='CANCELLED')return {shipmentId,salesOrderId:shipment.sales_order_id,replayed:true};
+    await require('./agent-freight-pickups').assertNoFreight(client,ctx.workspaceId,shipmentId);
     assertParcelEditable(shipment);
     const reason=String(input.reason||'').trim();if(reason.length>1000)throw new ValidationError('Keep the cancellation reason within 1,000 characters.');const at=nowIso();
     await client.query("UPDATE sales_shipments SET status='CANCELLED',notes=coalesce($3,notes),updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,reason||null,at]);
@@ -136,20 +140,18 @@ async function setPackagesInTransaction(client,ctx,shipmentId,boxes,options={}){
   boxes=require('./parcel-contract').boxes(boxes);
     await require('./postgres-parcel-options').actor(client,ctx);
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+    await require('./agent-freight-pickups').assertNoFreight(client,ctx.workspaceId,shipmentId);
     assertParcelEditable(shipment);
     require('./postgres-parcel-options').unchanged(shipment,options.expectedUpdatedAt);
     await client.query('DELETE FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
-    const now=nowIso();let total=0;
+    const now=nowIso();
+    const total=measurement.sum(boxes.map(box=>box.weightGrams),'Combined parcel weight',nativeMeasureLimit);
     for(const [index,box] of boxes.entries()){
-      const weight=Math.round(Number(box.weightGrams));
-      if(!Number.isSafeInteger(weight)||weight<=0)throw new ValidationError(`Package ${index+1} needs a positive weight in grams.`);
-      total+=weight;
       await client.query(`INSERT INTO shipment_packages
         (id,workspace_id,shipment_id,position,weight_grams,length_mm,width_mm,height_mm,weight_source,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9,$9)`,[newId('pkg'),ctx.workspaceId,shipmentId,index+1,weight,
-        box.lengthMm?Math.round(Number(box.lengthMm)):null,box.widthMm?Math.round(Number(box.widthMm)):null,
-        box.heightMm?Math.round(Number(box.heightMm)):null,now,options.weightSource==='ESTIMATED'?'ESTIMATED':'MEASURED']);
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9,$9)`,[newId('pkg'),ctx.workspaceId,shipmentId,index+1,box.weightGrams,
+        box.lengthMm,box.widthMm,box.heightMm,now,options.weightSource==='ESTIMATED'?'ESTIMATED':'MEASURED']);
     }
     await client.query(`UPDATE sales_shipments SET package_count=$3,weight_grams=$4,updated_at=$5
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,boxes.length,total,now]);
@@ -287,6 +289,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
     if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
+    await require('./agent-freight-pickups').assertNoFreight(client,ctx.workspaceId,shipmentId);
     if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,shipment.sales_order_id);
     if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel already has an external label. StockChief will not buy a second label. Manage the existing label in its shipping account.');
     if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('A label purchase or void is pending or needs review for this shipment.');
@@ -514,7 +517,7 @@ async function markPacked(database,ctx,shipmentId,input={}){
    if(count!==1)throw new ValidationError('Confirm each package’s measured weight in parcel setup.');const weight=require('./parcel-contract').boxes([{weightGrams:input.weightGrams}])[0].weightGrams;
    boxes=await setPackagesInTransaction(client,ctx,shipmentId,[{...boxes[0],weightGrams:weight}]);
   }
-  const total=boxes.every(b=>b.weightGrams>0)?boxes.reduce((n,b)=>n+b.weightGrams,0):null;await client.query("UPDATE sales_shipments SET status='PACKED',packed_at=$3,package_count=$4,weight_grams=$5,updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,nowIso(),count,total]);return {replayed:false};
+  const total=boxes.every(b=>b.weightGrams>0)?measurement.sum(boxes.map(b=>b.weightGrams),'Combined parcel weight',nativeMeasureLimit):null;await client.query("UPDATE sales_shipments SET status='PACKED',packed_at=$3,package_count=$4,weight_grams=$5,updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,nowIso(),count,total]);return {replayed:false};
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
@@ -530,12 +533,16 @@ async function handoff(database,ctx,shipmentId,input={}){
   }
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
   if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
-  if(['PENDING','REVIEW','VOID_PENDING','VOIDED'].includes(shipment.label_status))
+  const freight=shipment.label_status==='PURCHASED'?null:await require('./agent-freight-pickups').currentFreight(client,ctx.workspaceId,shipmentId);
+  if(freight?.status&&freight.status!=='SUCCEEDED')
+    throw new ValidationError('Verify this freight booking before recording its actual carrier handoff.');
+  if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status)||shipment.label_status==='VOIDED'&&!freight)
     throw new ValidationError('This label is pending, voided or needs verification. Resolve its saved request before confirming handoff.');
   const handover=String(input.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
-  const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
-  const selectedCarrier=String(input.carrier||shipment.carrier||'').trim();const carrier=require('../sales/carriers').lookup(selectedCarrier)?.code||selectedCarrier||require('../sales/carriers').detect(trackingNumber)?.code||null;
+  if(freight&&handover!=='CARRIER')throw new ValidationError('Resolve the saved freight pickup before choosing a different handoff method.');
+  const trackingNumber=String(input.trackingNumber||shipment.tracking_number||freight?.receipt?.proNumber||freight?.receipt?.bol||'').trim()||null;
+  const selectedCarrier=String(input.carrier||shipment.carrier||freight?.carrier||'').trim();const carrier=require('../sales/carriers').lookup(selectedCarrier)?.code||selectedCarrier||require('../sales/carriers').detect(trackingNumber)?.code||null;
   if(handover!=='COLLECTED'&&!addresses.parse(shipment.ship_to_address,shipment.ship_to_address_fields).complete)
     throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
@@ -750,6 +757,7 @@ async function observeExternalLabel(database,ctx,shipmentId,input){
   const connection=(await client.query(`SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND provider_type='shipstation_custom_store' AND status='connected' AND paused_at IS NULL AND authorized_by_user_id=$3`,[ctx.workspaceId,input.connectorId,ctx.actorId])).rows[0];
   if(!connection)throw new ValidationError('This shipping notification is not authorized for this inventory.');
   const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+  await require('./agent-freight-pickups').assertNoFreight(client,ctx.workspaceId,shipmentId);
   if(Number(shipment.package_count)>1)throw new ValidationError('Custom Store tracking needs individual package identities for this multi-package parcel. Use its connected shipping API instead.');
   if(!['PACKED','SHIPPED','DELIVERED'].includes(shipment.status))throw new ValidationError('The parcel must be packed before accepting an external label.');
   if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('Resolve the pending label purchase before accepting another label.');

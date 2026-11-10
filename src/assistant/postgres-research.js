@@ -103,7 +103,8 @@ async function research(database,ctx,question,{selectionProvider,answerProvider,
   }
   let composed;
   try{
-    const response=await answerProvider.complete({system:ANSWER_SYSTEM,
+    const prefs=require('./postgres-answer-preferences');
+    const response=await answerProvider.complete({system:ANSWER_SYSTEM+prefs.instructions(await prefs.read(database,ctx)),
       prompt:JSON.stringify({question,history:historyForPrompt(history),evidence:results}),
       schema:ANSWER_SCHEMA,schemaName:'stockchief_postgres_research_answer',maxOutputTokens:800});
     composed=response.data;

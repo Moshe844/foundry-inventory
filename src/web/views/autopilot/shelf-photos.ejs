@@ -1,0 +1,89 @@
+<h1>Count boxes and read shelf labels</h1>
+<p>Upload a photo from one location. StockChief shows visible boxes, printed labels and any areas the camera could not see. Confirm the observation against the original before using it for a physical count.</p>
+<% if (!record) { %>
+  <section class="card"><div class="card-body">
+  <% if (!allowed) { %>
+    <p><span class="badge">Pro</span> Shelf photo readings are available on Pro and Custom.</p>
+    <a class="btn" href="/billing">Upgrade</a>
+  <% } else if (!places.length) { %>
+    <p>Add a location before reading its shelf photos.</p><a class="btn" href="/locations">Locations</a>
+  <% } else { %>
+    <form method="post" action="/autopilot/shelf-photos" enctype="multipart/form-data" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="requestKey" value="<%= requestKey %>">
+      <label for="shelf-location">Location</label>
+      <select id="shelf-location" name="locationId" class="input" required><option value="">Choose a location</option>
+      <% for (const place of places) { %><option value="<%= place.id %>"><%= place.name %></option><% } %></select>
+      <label>Shelf photo<input type="file" name="shelfPhoto" class="input" accept="image/*,.heic,.heif,.tif,.tiff" required></label>
+      <p class="hint">One photo up to 20 MB. A completed reading uses 100 AI credits and one document. A failed reading releases the new credits.</p>
+      <button class="btn btn--primary">Read shelf photo</button>
+    </form>
+  <% } %>
+  </div></section>
+<% } else { %>
+  <section class="card"><div class="card-body">
+    <h2><%= record.filename %></h2>
+    <p><a href="/autopilot/shelf-photos/<%= record.id %>/original">Download saved original</a> · <a href="/autopilot/shelf-photos">All shelf photos</a></p>
+    <p><strong id="shelf-reading-status" role="status"><%= statusLabels[record.status] %></strong> · AI credits used: <%= record.credits_used %></p>
+    <% if (['QUEUED','READING'].includes(record.status) && !['DEAD','PAUSED'].includes(record.job_status)) { %>
+      <p>The original is saved. This page updates when the reading is ready.</p>
+      <script>
+        (()=>{
+          let timer;
+          async function poll(){
+            try{
+              const response=await fetch(location.pathname+'/status',{headers:{accept:'application/json'}});
+              if(!response.ok)return;
+              const state=await response.json();
+              if(!['QUEUED','READING'].includes(state.status)||['DEAD','PAUSED'].includes(state.jobStatus)){
+                location.reload();
+                return;
+              }
+              document.getElementById('shelf-reading-status').textContent=state.status==='READING'?'Reading visible boxes':'Waiting to read';
+            }catch(error){}
+            timer=setTimeout(poll,2000);
+          }
+          timer=setTimeout(poll,2000);
+          addEventListener('pagehide',()=>clearTimeout(timer),{once:true});
+        })();
+      </script>
+    <% } %>
+    <% if (record.problem) { %><p class="hint"><%= record.problem %></p><% } %>
+    <% if (record.job_status === 'DEAD' && allowed) { %>
+      <form method="post" action="/autopilot/shelf-photos/<%= record.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Retry reading</button></form>
+    <% } %>
+    <% if (record.reading) { %>
+      <img src="/autopilot/shelf-photos/<%= record.id %>/preview" alt="Original shelf photo" width="100%">
+      <p>Visible boxes: <strong><%= record.reading.visibleBoxes %></strong> · Check <%= record.reading.uncertainBoxes %> possible boxes</p>
+      <% if (record.reading.obstructions.length) { %><h3>Check what the camera could not see</h3><ul><% for (const note of record.reading.obstructions) { %><li><%= note %></li><% } %></ul><% } %>
+      <h3>Labels on boxes</h3>
+      <ol><% for (const box of record.reading.boxes) { %><li><%= box.label || 'Label unreadable or absent' %><%= box.uncertain ? ' · Check this box' : '' %></li><% } %></ol>
+      <h3>Separate shelf labels</h3>
+      <ul><% for (const label of record.reading.shelfLabels) { %><li><%= label.label || 'Label unreadable' %><%= label.uncertain ? ' · Check the original' : '' %></li><% } %></ul>
+    <% } %>
+    <% if (record.confirmation) { %>
+      <p><strong>Confirmed boxes: <%= record.confirmation.visibleBoxes %></strong></p>
+      <% if (record.confirmation.mode === 'trained') { %><p>Used a <a href="/autopilot/shelf-photos/<%= record.training_example_id %>">previously confirmed example</a>.</p><% } %>
+      <% if (record.confirmation.notes) { %><p><%= record.confirmation.notes %></p><% } %>
+    <% } %>
+    <% if ((record.status === 'REVIEW' || record.confirmation?.mode === 'trained') && allowed) { %>
+      <form class="form-stack" method="post" action="/autopilot/shelf-photos/<%= record.id %>/confirm">
+        <% if (record.confirmation?.mode === 'trained') { %><p>Correct this observation if the trained reading missed a box or label. Saving a correction also stops that training example.</p><% } %>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+        <label>Confirmed visible boxes<input class="input" name="count" type="number" min="0" max="9999" value="<%= record.reading.visibleBoxes %>" required></label>
+        <label>Corrections and checked labels<textarea class="input" name="notes" maxlength="4000"></textarea></label>
+        <label><input type="checkbox" name="confirmed" value="yes" required> I checked the visible boxes and labels against this original.</label>
+        <% if (mayTeach && record.status === 'REVIEW') { %><label><input type="checkbox" name="teach" value="yes"> Use this checked example to confirm matching future photos at this location, within the checked box count and label set.</label><% } %>
+        <button class="btn btn--primary">Confirm this photo observation</button>
+      </form>
+    <% } %>
+    <% if (record.confirmation?.taught) { %><form method="post" action="/autopilot/shelf-photos/<%= record.id %>/stop"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Stop using this training example</button></form><% } %>
+  </div></section>
+<% } %>
+
+<section class="card"><div class="card-body"><h2>Saved shelf photos</h2>
+  <% if (!rows.length) { %><p>No saved shelf photos.</p><% } %>
+  <ul><% for (const row of rows) { %><li><a href="/autopilot/shelf-photos/<%= row.id %>"><%= row.filename %></a> · <%= row.location || 'Archived location' %> · <%= statusLabels[row.status] %></li><% } %></ul>
+  <% if (number > 1) { %><a href="/autopilot/shelf-photos?page=<%= number-1 %>">Previous photos</a><% } %>
+  <% if (more) { %><a href="/autopilot/shelf-photos?page=<%= number+1 %>">More photos</a><% } %>
+</div></section>

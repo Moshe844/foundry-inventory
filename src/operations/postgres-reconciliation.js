@@ -225,6 +225,7 @@ async function job(job,database){
 }
 
 async function failedJob(database,job,error){
+    if(job.kind==='agent.slack.answer.v1')return require('../connections/agent-slack').recover(database,job);
     if(job.kind==='import.read-product-facts.v1')return require('../documents/agent-product-source').recover(database,job);
     if(job.kind==='catalog.channel-copy.v1')return require('../catalog/agent-channel-copy').failInterrupted(database,job.workspaceId,job.payload.copyId,job.payload.runId);
   if(job.kind!=='system.reconcile-business'||!job.payload?.runId)return;

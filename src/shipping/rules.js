@@ -137,8 +137,11 @@ function decide(db, workspaceId, rates, options = {}) {
   }
 
   const failures = [];
+  const compare=require('../domain/physical-measure').compare;
+  const measured=options.weightGrams>0;
   for (const rule of rules) {
-    if(rule.minWeightGrams!=null&&!(options.weightGrams>=rule.minWeightGrams)||rule.maxWeightGrams!=null&&!(options.weightGrams<=rule.maxWeightGrams)){
+    if(rule.minWeightGrams!=null&&(!measured||compare(options.weightGrams,rule.minWeightGrams)<0)||
+      rule.maxWeightGrams!=null&&(!measured||compare(options.weightGrams,rule.maxWeightGrams)>0)){
       failures.push(`${rule.name} — the measured package weight is outside this rule.`);continue;
     }
     const named = rates.filter((rate) => matchesService(rule, rate));

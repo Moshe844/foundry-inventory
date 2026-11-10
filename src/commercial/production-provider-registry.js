@@ -4,9 +4,13 @@
 // PostgreSQL Anthropic/HTTP gates deny their unscoped execution before spend.
 const classification=Object.freeze({
  'documents/agent-contract-reader.js':'METERED',
+ 'warehouse/agent-shelf-photos.js':'METERED',
  'actions/second-read.js':'NOT_PG_ENABLED',
  'ai/deadline.js':'NOT_PG_ENABLED',
  'ai/providers/anthropic.js':'METERED',
+ // The speech transport consumes the one-use, database-funded duration hold.
+ 'ai/providers/openai-transcription.js':'METERED',
+ 'documents/agent-voice-receiving.js':'METERED',
  // The data-only Ask interpreter rejects providers that are not host-branded
  // by the native relay, which owns reservations and exact cost settlement.
  'assistant/bounded-business-read.js':'METERED',
@@ -14,6 +18,7 @@ const classification=Object.freeze({
  'assistant/mail-draft.js':'NOT_PG_ENABLED',
  // Ask receives a per-call commercial/model wrapper in postgres-service;
  // planner retries, fit reviews and answers remain separate metered attempts.
+ 'assistant/postgres-answer-preferences.js':'METERED',
  'assistant/postgres-capability-planner.js':'METERED',
  'assistant/postgres-control-plane.js':'METERED',
  'assistant/postgres-evidence-answer.js':'METERED',
@@ -28,6 +33,7 @@ const classification=Object.freeze({
  'commercial/model.js':'METERED',
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
  'connections/postgres-reply-drafting.js':'METERED',
+ 'connections/agent-slack.js':'METERED',
  'connections/providers/common.js':'METERED',
  // The self-hosted transport is invoked by common.jsonRequest through providerFetch.
  'connections/providers/store-network.js':'METERED',
@@ -59,6 +65,7 @@ const classification=Object.freeze({
  'shipping/providers/shipstation.js':'METERED',
  'shipping/shipengine-platform.js':'NOT_PG_ENABLED',
  'shipping/shippo-link.js':'METERED',
+ 'shipping/van-road-times.js':'METERED',
 });
 function classify(boundary){
  if(boundary.file==='shipping/providers/shipengine.js'&&boundary.expression.includes('options.fetch'))

@@ -1,6 +1,7 @@
 'use strict';
 const express=require('express');
 const link=require('../../purchasing/supplier-order-link');
+const backup=require('../../purchasing/agent-backup-suppliers');
 const {asyncRoute,rateLimit}=require('../middleware');
 
 function router(db){
@@ -15,10 +16,15 @@ function router(db){
       JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
       JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
       WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.line_number`,[order.workspace_id,order.id])).rows;
-    return res.render('public/supplier-order-link',{order,lines,received:req.query.saved==='1'});
+    const backupLines=await backup.linkLines(db,order);
+    return res.render('public/supplier-order-link',{order,lines,backupLines,received:req.query.saved==='1'});
   }));
   router.post('/supplier/order/:token/respond',asyncRoute(async(req,res)=>{
     await link.submit(db,req.params.token,req.body.kind,req.body.date);
+    res.redirect(303,'/supplier/order/'+req.params.token+'?saved=1');
+  }));
+  router.post('/supplier/order/:token/unavailable',asyncRoute(async(req,res)=>{
+    await backup.supplierReply(db,req.params.token,req.body);
     res.redirect(303,'/supplier/order/'+req.params.token+'?saved=1');
   }));
   router.post('/supplier/order/:token/file/:kind',express.raw({type:'application/pdf',limit:'4mb'}),asyncRoute(async(req,res)=>{

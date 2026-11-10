@@ -1,0 +1,121 @@
+<h1>Own-van delivery routes</h1>
+<p>Build a driver manifest from packed shipments, road travel times, measured loads and customer delivery windows.</p>
+<% const labels={DRAFT:'Needs your review',READY:'Ready for drivers',STOPPED:'Stopped'}; %>
+<% if(!allowed){ %>
+  <p class="notice"><strong>Pro / Custom</strong> · Van routes require Pro or Custom. <a class="btn" href="/billing">Upgrade</a></p>
+<% }else if(run){ %>
+  <section class="card"><div class="card-body">
+    <h2><%= run.facts.depot.name %> · <%= run.delivery_date %></h2>
+    <p><strong><%= labels[run.status] %></strong><%= run.automatic?' · Published by the fleet rule':'' %></p>
+    <p>Depot <%= run.facts.depot.address %></p>
+    <% if(run.manifest.unassigned.length){ %>
+      <h3>Stops needing attention</h3>
+      <ul><% for(const item of run.manifest.unassigned){ const stop=run.facts.stops.find(entry=>entry.id===item.id); %>
+        <li><%= stop.number %> · <%= stop.customer %> · <%= item.reason %></li>
+      <% } %></ul>
+    <% } %>
+    <% for(const route of run.manifest.routes){ const van=run.facts.vans.find(entry=>entry.id===route.vehicleId); %>
+      <h3><%= van.id %> · <%= van.driver %></h3>
+      <p>Leave at <%= clock(route.start) %>, return by <%= clock(route.returnAt) %>. Load <%= route.loadGrams/1000 %> kg of <%= van.capacityGrams/1000 %> kg.</p>
+      <ol><% for(const visit of route.stops){ const stop=run.facts.stops.find(entry=>entry.id===visit.id); %>
+        <li><strong><%= clock(visit.arrival) %>–<%= clock(visit.leave) %></strong> · <%= stop.customer %> · <%= stop.address %> · <a href="/fulfilment/<%= stop.id %>"><%= stop.number %></a> (<%= stop.weightGrams/1000 %> kg)</li>
+      <% } %></ol>
+    <% } %>
+    <% if(run.status==='DRAFT'&&!run.manifest.unassigned.length){ %>
+      <form method="post" action="/autopilot/van-routes/<%= run.id %>/approve" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= run.revision %>">
+        <label><input type="checkbox" name="confirmed" value="yes" required> I checked the stops, driver and load.</label>
+        <button class="btn btn-primary" type="submit">Publish driver manifest</button>
+      </form>
+    <% } %>
+    <% if(run.status==='READY'){ %>
+      <p>Use your browser’s print command for the driver copy. Confirm physical handoff in the shipment record when each load leaves.</p>
+    <% } %>
+    <% if(run.status!=='STOPPED'){ %>
+      <form method="post" action="/autopilot/van-routes/<%= run.id %>/stop">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= run.revision %>">
+        <button class="btn" type="submit" name="confirmed" value="yes">Stop this route</button>
+      </form>
+    <% } %>
+  </div></section>
+  <% if((canTeach&&run.status!=='STOPPED'&&!run.manifest.unassigned.length)||control?.enabled){ %>
+    <section class="card"><div class="card-body">
+      <h2>Fleet rule</h2>
+      <p>Applies only to this depot and the same vans, drivers, shifts and capacities.</p>
+      <% if(canTeach&&run.status!=='STOPPED'&&!run.manifest.unassigned.length){ %>
+        <form method="post" action="/autopilot/van-routes/<%= run.id %>/configure" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="ruleRevision" value="<%= control?.revision||0 %>">
+          <label>Maximum stops per run <input type="number" name="maximumStops" min="<%= run.facts.stops.length %>" max="40" value="<%= control?.maximum_stops||run.facts.stops.length %>" required></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief publish matching, fully assigned routes when I select this rule.</label>
+          <button class="btn" type="submit">Save fleet rule</button>
+        </form>
+      <% } %>
+      <% if(control?.enabled){ %>
+        <form method="post" action="/autopilot/van-routes/<%= run.id %>/configure">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="ruleRevision" value="<%= control.revision %>">
+          <input type="hidden" name="confirmed" value="yes">
+          <button class="btn" type="submit" name="stop" value="yes">Stop fleet rule</button>
+        </form>
+      <% } %>
+    </div></section>
+  <% } %>
+<% }else{ %>
+  <section class="card"><div class="card-body">
+    <h2>Prepare a delivery run</h2>
+    <form method="get" action="/autopilot/van-routes">
+      <label>Dispatch depot <select name="depot" required>
+        <option value="">Choose a depot</option>
+        <% for(const row of depots){ %><option value="<%= row.id %>" <%= depot?.id===row.id?'selected':'' %>><%= row.name %></option><% } %>
+      </select></label>
+      <button class="btn" type="submit">Show packed shipments</button>
+    </form>
+    <% if(!depots.length){ %><p>Add a street address to your dispatch location first.</p><% } %>
+    <% if(depot&&!shipments.length){ %><p>Pack an order for your own delivery from this depot before planning a run.</p><% } %>
+    <% if(shipments.length){ %>
+      <form method="post" action="/autopilot/van-routes" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="depotId" value="<%= depot.id %>">
+        <label>Delivery date <input type="date" name="deliveryDate" value="<%= today %>" min="<%= today %>" required></label>
+        <% if(roadServiceAvailable){ %>
+          <label>Road times <select name="roadSource">
+            <option value="export">Use my road-time export</option>
+            <option value="router">Calculate with the connected road router</option>
+          </select></label>
+          <label>Depot pin <input name="depotPin" placeholder="Latitude, longitude"></label>
+        <% } %>
+        <fieldset>
+          <legend>Packed shipments and local delivery windows</legend>
+          <% for(const box of shipments){ %>
+            <div>
+              <label><input type="checkbox" name="selected" value="<%= box.id %>"> <%= box.shipment_number %> · <%= box.customer %> · <%= box.ship_to_address %></label>
+              <label>From <input type="time" name="opens[<%= box.id %>]" value="09:00"></label>
+              <label>Until <input type="time" name="closes[<%= box.id %>]" value="17:00"></label>
+              <label>Minutes at stop <input type="number" name="service[<%= box.id %>]" value="10" min="1" max="240"></label>
+              <% if(roadServiceAvailable){ %><label>Pin for the road router <input name="pins[<%= box.id %>]" placeholder="Latitude, longitude"></label><% } %>
+            </div>
+          <% } %>
+        </fieldset>
+        <label>Vans and drivers
+          <small>Enter one line per van. Use van name | driver | payload in kg | shift start | shift end.</small>
+          <textarea name="vans" rows="3" required placeholder="Van 1 | Driver name | 1000 | 08:00 | 18:00"></textarea>
+        </label>
+        <label>Road travel times
+          <small>Paste your road-time JSON. List DEPOT first, then the selected shipment numbers. Enter travel seconds for each direction.</small>
+          <textarea name="roadTimes" rows="4" <%= roadServiceAvailable?'':'required' %> placeholder='{"points":["DEPOT","SHP-00001"],"seconds":[[0,900],[960,0]]}'></textarea>
+        </label>
+        <label><input type="checkbox" name="confirmed" value="yes" required> These shipments are for our vans and the road data matches their delivery addresses.<% if(roadServiceAvailable){ %> If I select the router, send the confirmed pins to that service.<% } %></label>
+        <label><input type="checkbox" name="routine" value="yes"> Publish automatically if a matching fleet rule allows it.</label>
+        <button class="btn btn-primary" type="submit">Plan delivery routes</button>
+      </form>
+    <% } %>
+  </div></section>
+<% } %>
+<% if(allowed&&rows.length){ %>
+  <section class="card"><div class="card-body"><h2>Saved runs</h2>
+    <ul><% for(const row of rows){ %><li><a href="/autopilot/van-routes/<%= row.id %>"><%= row.delivery_date %> · <%= row.depot %> · <%= labels[row.status] %></a></li><% } %></ul>
+  </div></section>
+<% } %>

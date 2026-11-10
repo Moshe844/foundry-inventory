@@ -7,6 +7,18 @@
 <form method="post" action="<%= currentPath %>/respond"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <p><label>Expected delivery date <input type="date" name="date"></label></p>
 <button name="kind" value="confirm">Confirm this order</button> <button name="kind" value="date">Propose a delivery date</button></form>
+<% if (typeof backupLines!=='undefined' && backupLines.length) { %>
+  <h2>Report an unavailable item</h2>
+  <form method="post" action="<%= currentPath %>/unavailable">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p><label for="unavailable-product">Item</label> <select id="unavailable-product" name="lineId" required><option value="">Choose an item</option>
+    <% for (const line of backupLines) { %><option value="<%= line.id %>"><%= line.name %> · <%= line.code %></option><% } %></select></p>
+    <p><label>Unavailable through <input type="date" name="validThrough" required></label></p>
+    <p><label>Availability statement <textarea name="reason" required maxlength="1000"></textarea></label></p>
+    <p><label><input type="checkbox" name="confirmed" value="yes" required> I confirm this item is unavailable through the date entered.</label></p>
+    <button>Save availability statement</button>
+  </form>
+<% } %>
 <h2>Send a document</h2><form id="supplier-document" data-url="<%= currentPath %>/file/" data-csrf="<%= csrfToken %>">
 <label>Document type <select name="kind"><option value="invoice">Invoice</option><option value="ship-notice">Ship notice</option></select></label>
 <label>PDF, up to 4 MB <input type="file" name="document" accept="application/pdf" required></label>

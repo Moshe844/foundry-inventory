@@ -125,11 +125,14 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['document.read_contract',143],
-  ['sales_order.reserve_rotation',192],['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],
+  ['warehouse.read_shelf_photo',140],
+  ['sales_order.reserve_rotation',192],['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],['purchasing.switch_backup_supplier',95],
   ['purchasing.prepare_blanket_release',42],
   ['catalog.write_channel_copy',128],
   ['website.answer_stock',84],
   ['customer_order.from_page',83],
+  ['customer_order.from_preorder',68],
+  ['channel_sync.recover',182],
   ['customer_return.plan_disposition',113],
   ['shipping.prepare_export_papers',70],
   ['customer_return.send_label',112],
@@ -173,6 +176,7 @@ const actionJobs=new Map([
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
   ['inventory.transfer',118],['transfer.approve',118],['shipping.label',59],['shipping.batch_purchase',59],
+  ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
 ]);

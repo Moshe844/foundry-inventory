@@ -558,6 +558,7 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'webhook.deliver':external((job,database)=>require('../connections/postgres-outbound-webhooks').deliver(database,job,options.webhookDelivery||{})),'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
+  'agent.slack.answer.v1':external((job,database)=>require('../connections/agent-slack').process(job,database,{provider:options.aiProvider}),'reading'),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);
@@ -615,7 +616,11 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-voice-receipt.v1':external((job,database)=>require('../documents/agent-voice-receiving').run(job,database,
+    {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
@@ -678,6 +683,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
+  'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
+  'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
@@ -727,6 +734,9 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     return providerEffect(job,database,options,providers);
   }),
   'agent.channel-buffer.publish.v1':external(async(job,database)=>{const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-commerce-protocol').assertJob(effect,job.kind);if(effect.status==='CANCELLED')return {cancelledBeforeDelivery:true};return providerEffect(job,database,options,providers);}),
+  'provider.commerce-recovery.v1':external((job,database)=>require('../connections/agent-channel-recovery').run(database,job,{providers})),
+  'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
+  'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);

@@ -2283,8 +2283,24 @@ async function ask(database,ctx,message,options={}){
   const directStarted=Date.now();
   const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
+    const preferences=direct.answerPreferences;
+    const localize=preferences&&(preferences.answerStyle||preferences.answerLanguage&&!/^en(?:-|$)/i.test(preferences.answerLanguage));
+    if(localize&&direct.result.status==='ANSWERED'&&direct.step.contract.kind==='read'){
+      const raw=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+      if(raw){
+        const provider=fundedAskProvider(database,ctx,raw,`${options.usageKey||newId('askusage')}:direct-language`);
+        try{
+          const localized=await require('./postgres-answer-preferences').localizeRecorded(provider,message,direct.result,preferences);
+          direct.provenance.modelCalls=1;
+          direct.result.answer=localized;
+        }catch(error){
+          if(error.modelStarted)direct.provenance.modelCalls=1;
+          if(!['entitlement_required','rate_limited'].includes(error.code))console.warn('[stockchief] recorded answer translation failed',error.code||error.name);
+        }
+      }
+    }
     const result=await recordCapabilityOutcome(database,ctx,message,direct);
-    console.log(JSON.stringify({kind:'ask_direct_read_finished',interactionId:result.interactionId||null,queueWaitMs:0,modelCalls:0,toolCalls:1,toolMs,totalMs:Date.now()-directStarted}));return result;}
+    console.log(JSON.stringify({kind:'ask_direct_read_finished',interactionId:result.interactionId||null,queueWaitMs:0,modelCalls:direct.provenance.modelCalls,toolCalls:1,toolMs,totalMs:Date.now()-directStarted}));return result;}
   if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx)){
     // Preserve the existing zero-model page command. This is only a shortcut:
     // unknown destinations and compound requests still reach the native agent.

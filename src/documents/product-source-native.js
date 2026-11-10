@@ -10,9 +10,8 @@ function quantity(value,unit,kind){
  if(!/^\d{1,14}(?:\.\d{1,9})?$/.test(text))return {problem:'The numeric format needs review; no separator or decimal precision was guessed.'};
  const name=unitKey(unit),factor=units[name],mass=['g','gram','grams','gramme','grammes','kg','kilogram','kilograms','mg','lb','lbs','oz'].includes(name);
  if(!factor||mass!==(kind==='mass'))return {problem:'This source unit is not an exact supported conversion for this native field. The original measurement is retained.'};
- const [whole,decimal='']=text.split('.'),numerator=BigInt(whole+decimal)*BigInt(factor[0]),denominator=10n**BigInt(decimal.length)*BigInt(factor[1]);
- if(numerator<=0n||numerator%denominator!==0n||numerator/denominator>1000000000n)return {problem:'The native shipping field uses positive whole grams or millimetres. This exact source value needs separate review; it was not rounded.'};
- return {value:Number(numerator/denominator)};
+ try{return {value:require('../domain/physical-measure').convert(text,{numerator:factor[0],denominator:factor[1]})};}
+ catch(error){if(!(error instanceof ValidationError))throw error;return {problem:error.message+' Check the exact original measurement.'};}
 }
 function barcode(raw){
  let value=String(raw).trim();if(/^[\d\s-]+$/u.test(value)&&[8,12,13,14].includes(value.replace(/[\s-]/gu,'').length))value=value.replace(/[\s-]/gu,'');

@@ -401,8 +401,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
             &&registry.get(step.capability)?.kind==='mutation').map((step)=>({
               capability:step.capability,recordReference:step.args?.recordReference||null,
               status:'EXECUTED'}));
+          const preferences=provider?await require('./postgres-answer-preferences').read(database,ctx):undefined;
           const answered=await synthesizeReads(provider,claimed.source_message,
-            [{step:{contract},...outcome}],{completedActions});
+            [{step:{contract},...outcome}],{completedActions,preferences});
           outcome={...outcome,result:answered[0].result};
         }
         delete stored.failure;

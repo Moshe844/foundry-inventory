@@ -1,0 +1,49 @@
+<section class="rm-panel">
+  <h2>Read an operating procedure</h2>
+  <p>StockChief reads each page and keeps the original beside the steps it finds. You can review and authorize lasting settings from an exact clause.</p>
+  <form method="post" action="/autopilot/procedure-originals" enctype="multipart/form-data" class="rm-form" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>Procedure original</span><input type="file" name="procedure" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif,.tif,.tiff" required></label>
+    <p class="rm-sub">One document and 100 AI credits per completed reading. Failed readings return the allowance.</p>
+    <button class="rm-button">Read procedure</button>
+  </form>
+</section>
+<% if(record){ %>
+<section class="rm-panel">
+  <h2><%= record.filename %></h2>
+  <a href="/autopilot/procedure-originals/<%= record.id %>/original">Download original</a>
+  <% if(record.state==='READY'){ %>
+  <a href="/ask?from=<%= encodeURIComponent('/autopilot/procedure-originals/'+record.id) %>">Ask StockChief about this procedure</a>
+  <p><%= record.reading.steps.length %> steps from <%= record.reading.pages.length %> pages · <%= record.credits_used %> AI credits used</p>
+  <ol>
+    <% for(const step of record.reading.steps){ %>
+      <li>
+        <strong><%= step.label %></strong> · Page <%= step.page %>
+        <blockquote><%= step.quote %></blockquote>
+        <% if(step.category==='standing_rule'||step.canConfirmRule){ %>
+          <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/prepare" class="rm-form" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="quoteId" value="<%= step.id %>">
+            <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+            <label><input type="checkbox" name="confirmed" value="yes" required> I checked this exact clause against the original.</label>
+            <% if(step.canConfirmRule){ %><p>Check the scanned words and numbers against the original before preparing a rule.</p><% } %>
+            <button class="rm-button">Prepare settings for review</button>
+          </form>
+        <% } else { %><p><%= step.category==='human_review'?'Compare with the original before using this step.':'This step is for your team.' %></p><% } %>
+      </li>
+    <% } %>
+  </ol>
+  <% } else { %><p role="status"><%= record.problem||(record.state==='FAILED'?'The reading stopped. Your original is saved.':'StockChief is preparing your reading. Refresh this page to check progress.') %></p><% } %>
+  <% if(record.state==='FAILED'){ %>
+    <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/retry" class="rm-form" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-button">Retry this original</button>
+    </form>
+  <% } %>
+</section>
+<% } %>
+<section class="rm-panel">
+  <h2>Saved procedures</h2>
+  <% if(!rows.length){ %><p>Your saved originals will appear here.</p><% } %>
+  <ul><% for(const row of rows){ %><li><a href="/autopilot/procedure-originals/<%= row.id %>"><%= row.filename %></a></li><% } %></ul>
+</section>

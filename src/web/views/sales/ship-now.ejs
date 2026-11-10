@@ -9,13 +9,14 @@
   var working = ['PENDING', 'VOID_PENDING'].indexOf(s.label_status) >= 0;
   var review = s.label_status === 'REVIEW';
   var step = labelReady ? 3 : 2;
-  var pounds = s.weight_grams ? (Number(s.weight_grams) / 453.59237).toFixed(1) + ' lb' : null;
+  var exactGrams = s.weight_grams && !Number.isInteger(Number(s.weight_grams));
+  var displayWeight = s.weight_grams ? (exactGrams ? s.weight_grams + ' g' : (Number(s.weight_grams) / 453.59237).toFixed(1) + ' lb') : null;
   var cheapest = sn.rates[0];
   var accounts = sn.accounts.join(', ');
 %>
 <div class="card-body ship-now" id="ship-now">
   <ol class="ship-steps" aria-label="Shipping steps">
-    <li class="is-done"><span>1</span>Parcel<% if (pounds) { %> · <%= pounds %><% } %></li>
+    <li class="is-done"><span>1</span>Parcel<% if (displayWeight) { %> · <%= displayWeight %><% } %></li>
     <li class="<%= step > 2 ? 'is-done' : 'is-now' %>"><span>2</span>Choose a rate</li>
     <li class="<%= step === 3 ? 'is-now' : '' %>"><span>3</span>Print and hand over</li>
   </ol>
@@ -95,8 +96,8 @@
       <form method="post" action="/fulfilment/<%= s.id %>/reweigh" class="ship-now__form" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order">
         <%- include('ship-needs', { needs: sn.rates.length ? null : sn.needs }) %>
-        <label class="ship-now__field"><span>Weight <i class="ship-now__req" aria-hidden="true">*</i></span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required value="<%= s.weight_grams ? (Number(s.weight_grams) / 453.59237).toFixed(2) : '' %>" aria-label="New parcel weight">
-          <select name="weightUnit" aria-label="New weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g">g</option></select></span></label>
+        <label class="ship-now__field"><span>Weight <i class="ship-now__req" aria-hidden="true">*</i></span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required value="<%= s.weight_grams ? (exactGrams ? s.weight_grams : (Number(s.weight_grams) / 453.59237).toFixed(2)) : '' %>" aria-label="New parcel weight">
+          <select name="weightUnit" aria-label="New weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g" <%= exactGrams?'selected':'' %>>g</option></select></span></label>
         <label class="ship-now__field"><span>Box (L × W × H, optional)</span><span class="ship-now__pair"><input name="length" inputmode="decimal" placeholder="L" aria-label="New box length"><input name="width" inputmode="decimal" placeholder="W" aria-label="New box width"><input name="height" inputmode="decimal" placeholder="H" aria-label="New box height">
           <select name="sizeUnit" aria-label="New size unit"><option value="in">in</option><option value="cm">cm</option></select></span></label>
         <button class="btn <%= sn.rates.length ? '' : 'btn--primary' %>" type="submit"><%= sn.rates.length ? 'Get new rates' : 'Get rates' %></button>
