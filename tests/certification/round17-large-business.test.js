@@ -156,9 +156,12 @@ test('Round 17 realistic 50,000 SKU / five warehouse / 150,000 stock-row qualifi
  });
  await t.test('fractional kg stock remains usable throughout large Money, reports, stock overview and Ask context',async()=>{
   const sku=(await db.query("SELECT id,item_id FROM skus WHERE workspace_id=$1 AND code='R17-4999-9'",[ctx.workspaceId])).rows[0];
-  const summary=require('../../src/assistant/postgres-inventory-summary'),before=(await summary.context(db,ctx.workspaceId,{role:'owner'})).onHand;
+  const summary=require('../../src/assistant/postgres-inventory-summary'),before=await summary.context(db,ctx.workspaceId,{role:'owner'});
   const position=(await db.query('SELECT location_id FROM balances WHERE workspace_id=$1 AND sku_id=$2 ORDER BY location_id LIMIT 1',[ctx.workspaceId,sku.id])).rows[0];await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId:sku.id,locationId:position.location_id,quantity:'0.25',idempotencyKey:'round17-large-fraction'});
-  assert.equal((await summary.context(db,ctx.workspaceId,{role:'owner'})).onHand,before+0.25);assert.equal((await require('../../src/accounting/customer-money').inventoryCoverage(db,ctx.workspaceId)).missingCostUnits,0.25);
+  const after=await summary.context(db,ctx.workspaceId,{role:'owner'});
+  assert.equal(after.onHand,before.onHand);
+  assert.equal(after.measured.find(entry=>entry.unit==='kg').quantity,(before.measured.find(entry=>entry.unit==='kg')?.quantity||0)+0.25);
+  assert.equal((await require('../../src/accounting/customer-money').inventoryCoverage(db,ctx.workspaceId)).missingCostUnits,0.25);
   assert.equal((await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory_valuation'})).totals.missingCostUnits,0.25);
   for(const route of ['/money','/money/invoices','/money/bills','/money/profit','/reports','/inventory/overview']){const page=await agent.get(route);assert.equal(page.status,200,route);assert.doesNotMatch(page.text,/exceeds the exact reporting range/);}
  });
