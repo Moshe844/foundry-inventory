@@ -142,6 +142,25 @@ test('payments, deposits, hand-made entries and counts keep the books equal to t
   await clean('after counts');
  });
 
+ await t.test('a sale or count synced from a connected channel takes the value out of the books with the stock',async()=>{
+  const connections=require('../../src/connections/postgres-service'),ingestion=require('../../src/connections/postgres-event-ingestion');
+  const feed=await connections.createFeed(db,ctx,{displayName:'Shop feed',expectedIntervalMinutes:60});
+  const auth=await connections.authenticate(db,'Bearer '+feed.token);
+  const value=async()=>(await db.query('SELECT c.quantity_units::int units,c.total_cost_minor::int value,b.on_hand::int shelf FROM accounting_inventory_cost_balances c JOIN balances b USING(workspace_id,sku_id,location_id) WHERE c.workspace_id=$1 AND c.sku_id=$2 AND c.location_id=$3',[w,W,main.id])).rows[0];
+  const before=await value();assert.equal(before.units,before.shelf,'the widget position starts fully costed');
+  const sold=await ingestion.ingest(db,auth,{eventId:'shop-sale-1',type:'sale.completed',version:'1',occurredAt:at,
+   data:{externalSku:'shop-widget',skuCode:'WIDGET',externalLocationId:'shop-main',locationName:'Main',quantity:2}});
+  assert.equal(sold.accepted,true,JSON.stringify(sold));
+  let after=await value();assert.equal(after.shelf,before.shelf-2);assert.equal(after.units,after.shelf,'value left with the sold units');
+  assert.equal(after.value,before.value-2000);
+  const cogs=(await db.query("SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='connector_stock_removal'",[w])).rows[0].n;assert.equal(cogs,1);
+  const counted=await ingestion.ingest(db,auth,{eventId:'shop-count-1',type:'inventory.adjust',version:'1',occurredAt:new Date(Date.now()+1000).toISOString(),
+   data:{externalSku:'shop-widget',skuCode:'WIDGET',externalLocationId:'shop-main',locationName:'Main',countedQuantity:after.shelf-1}});
+  assert.equal(counted.accepted,true,JSON.stringify(counted));
+  const recount=await value();assert.equal(recount.units,recount.shelf,'a synced count that finds less takes the value too');
+  await clean('after connector sales and counts');
+ });
+
  await t.test('the check notices damage to records or books, and Needs you says what disagrees in words',async()=>{
   const so=await order(1);await ship(so,1);const [invoice]=await invoices(so);
   await db.query("UPDATE accounting_customer_invoices SET balance_minor=0,status='PAID' WHERE id=$1",[invoice.id]);
