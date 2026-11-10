@@ -83,7 +83,9 @@
         menu.appendChild(list);
         target.parentNode.insertBefore(menu, target);
       }
-      addDownload(answer, '?content=answer', 'Download answer');
+      // Only an answer worth keeping offers a download: a table, or a written
+      // report of 400 characters or more (the same rule as ask-export.js).
+      if (answer.querySelector('table') || answer.textContent.trim().length >= 400) addDownload(answer, '?content=answer', 'Download answer');
       answer.querySelectorAll('.rm-agent__table').forEach(function (table, index) {
         addDownload(table, '?table=' + index, 'Download');
       });
