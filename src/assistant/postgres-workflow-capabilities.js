@@ -806,7 +806,8 @@ const SPECS=Object.freeze([
     singleEffectPerTarget:true,
     record:'sales_order',fields:['recordReference'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
     states:['DRAFT','CONFIRMED','BACKORDERED'],verb:'Reserve all remaining stock for',
-    execute:(client,ctx,p)=>workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,{...p,requireFullAllocation:true}),
+    build:(db,ctx,row)=>require('../sales/agent-order-reservations').buildReservation(db,ctx,row),
+    execute:async(client,ctx,p)=>{if(p.reservationFingerprint)await require('../sales/agent-order-reservations').current(client,ctx,p);return workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,{...p,requireFullAllocation:true});},
     verify:async(client,ctx,r,p)=>Boolean(!r.shortage&&r.status==='CONFIRMED'&&
       await state(client,ctx,'sales_orders',p.recordId,['CONFIRMED']))},
   {name:'sales_order.fulfill',description:'Record allocated, quantity-tracked goods physically leaving an existing customer order; atomically post inventory, revenue, cost and invoice. Never substitute a draft or a shipment label.',
@@ -823,7 +824,7 @@ const SPECS=Object.freeze([
   {name:'sales_order.allocation_priority',description:'Change one open customer order’s allocation priority and needed-by date without silently reallocating, shipping, or charging the customer.',
     record:'sales_order',fields:['recordReference','allocationPriority','neededBy'],
     permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
-    build:(_database,_ctx,row,args)=>{if(['FULFILLED','CANCELLED'].includes(row.status))throw new ValidationError(
+    build:async(_database,_ctx,row,args)=>{if(['FULFILLED','CANCELLED'].includes(row.status))throw new ValidationError(
       'A finished order cannot be reprioritized.');
       const priority=Number(args.allocationPriority);
       if(!Number.isSafeInteger(priority)||priority<0||priority>1000)throw new ValidationError(
@@ -831,10 +832,11 @@ const SPECS=Object.freeze([
       const neededBy=args.neededBy==null?row.needed_by:String(args.neededBy);
       if(neededBy&&!/^\d{4}-\d{2}-\d{2}$/.test(String(neededBy)))throw new ValidationError(
         'The needed-by date must be YYYY-MM-DD.');
-      return prepareResult({recordId:row.id,expectedVersion:Number(row.version),priority,neededBy},
+      if(neededBy)require('../lib/business-time').dayBoundary(String(neededBy),'UTC');
+      return prepareResult(await require('../sales/agent-order-reservations').addPriorityScope(_database,_ctx,row,args,{recordId:row.id,expectedVersion:Number(row.version),priority,neededBy}),
         `Set allocation priority of ${row.order_number} to ${priority}${neededBy?` and needed-by date to ${neededBy}`:''}. `+
         'This changes scheduling preferences, not physical stock or payment.');},
-    execute:async(client,ctx,p)=>{const changed=await client.query(`UPDATE sales_orders SET allocation_priority=$3,
+    execute:async(client,ctx,p)=>{if(p.reservationFingerprint)await require('../sales/agent-order-reservations').current(client,ctx,p);const changed=await client.query(`UPDATE sales_orders SET allocation_priority=$3,
       needed_by=$4,updated_at=$5,version=version+1 WHERE workspace_id=$1 AND id=$2 AND version=$6
       AND status NOT IN ('FULFILLED','CANCELLED') RETURNING version`,
       [ctx.workspaceId,p.recordId,p.priority,p.neededBy,nowIso(),p.expectedVersion]);
