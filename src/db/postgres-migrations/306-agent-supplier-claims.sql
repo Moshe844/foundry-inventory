@@ -46,3 +46,9 @@ INSERT INTO commercial_storage_tables(relation,bytes_expression) VALUES
  ('stockchief_runtime.agent_supplier_claims'::regclass,'octet_length(convert_to(to_jsonb(t)::text,''UTF8''))');
 INSERT INTO commercial_storage_usage(workspace_id,relation,baseline_complete)
  SELECT id,r,true FROM workspaces CROSS JOIN unnest(ARRAY['stockchief_runtime.agent_quality_photos'::regclass,'stockchief_runtime.agent_supplier_claim_rules'::regclass,'stockchief_runtime.agent_supplier_claims'::regclass])r;
+
+ALTER TABLE stockchief_runtime.agent_time_samples DROP CONSTRAINT agent_time_samples_activity_check;
+ALTER TABLE stockchief_runtime.agent_time_samples ADD CHECK (activity IN (
+ 'repeat-order','supplier-response','staff-request','invoice-match','accounting-export',
+ 'count-adjustment','repeat-sale','margin-price','combine-purchases','split-purchase',
+ 'customer-receipt','customer-reminder','arrived-stock','stock-ready','invoice-dispute','customer-statement','quote-followup','supplier-forecast','return-email','bin-correction','supplier-details','po-delivery-date','container-plan','team-procedure','product-retirement','shutdown-purchase','promotion-purchase','delivery-qc','supplier-rfq','supplier-claim'));

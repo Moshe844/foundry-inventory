@@ -3,6 +3,13 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 45:{common:'Prepares and sends a damage claim for a failed native whole-unit PO delivery inspection with a person-recorded damaged-unit count, recorded PO goods cost and connected supplier mailbox. Short deliveries, tracked/measured goods, supplier portals, settlement, credits and write-offs need separate review.',
+ pro:'Learns from an exact manually approved claim accepted by the mailbox provider. Future damaged-delivery claims stay inside your supplier, product, receiving location, mailbox, unit, per-claim value, weekly value, receipt age and photo limits. People still count damage.',
+ enterprise:'Can prepare and send damage claims within an explicitly authorized supplier, product, location, mailbox, unit, goods-value, weekly and receipt-age scope without training. Actual physical findings come from people; settlement and accounting changes need separate approval.'},
+ 46:{common:'Preserves original JPEG/PNG inspection photos and prepares smaller email copies. Up to ten originals per physical inspection, 10 MB each, and three selected copies per claim. Original files stay unchanged; StockChief does not infer damage or counts from pictures.',
+ growth:'Lets staff preserve and download original physical inspection photos and smaller email copies for individual review. Sending a supplier claim requires Pro or Custom.',
+ pro:'Can attach up to three exact recorded photo copies within your current damage-claim authority without photo training. The claim itself still requires Pro teaching; more photos require individual selection.',
+ enterprise:'Can attach up to three exact recorded photo copies within your explicitly authorized damage-claim scope without training. More photos require individual selection; original evidence stays unchanged.'},
  11:{common:'Records scanned, physically confirmed moves between bins in the same warehouse.'},
  31:{common:'Handles exact delivery-date replies through the supplier’s original PO link. Quantity and price amendments remain planned.'},
  36:{common:'Prepares stock and 12-week forecast emails for approved suppliers. Growth approves each message; Pro and Custom can use an owner-authorized schedule.',

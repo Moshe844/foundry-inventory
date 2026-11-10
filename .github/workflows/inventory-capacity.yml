@@ -173,6 +173,9 @@ jobs:
       - name: Supplier RFQ batch sending, exact plan rules and safe delivery recovery
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-supplier-rfqs.test.js tests/postgres/agent-supplier-rfq-volume.test.js tests/postgres/agent-supplier-rfq-boundaries.test.js tests/postgres/agent-supplier-rfq-recovery.test.js tests/postgres/agent-supplier-rfq-reporting.test.js tests/postgres/agent-supplier-rfq-upgrade.test.js tests/postgres/agent-supplier-rfq-ui.test.js
+      - name: Supplier physical damage claims, original photo evidence and current plan authority
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/damage-photo-mail.test.js tests/postgres/agent-supplier-claims.test.js tests/postgres/agent-supplier-claim-boundaries.test.js tests/postgres/agent-supplier-claim-reporting.test.js tests/postgres/agent-supplier-claim-ui.test.js tests/postgres/agent-supplier-claim-upgrade.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

@@ -18,3 +18,7 @@ test('Microsoft 365 transports exact photo copies with Graph attachment fields a
 test('Photo preparation rejects non-photo, corrupt and oversized files before interpreting them',async()=>{
  const photos=require('../../src/operations/quality-photos');await assert.rejects(photos.emailCopy(Buffer.from('<svg><script>test</script></svg>')),/JPEG or PNG/);await assert.rejects(photos.emailCopy(Buffer.from([255,216,255,0])),/could not be read/);await assert.rejects(photos.emailCopy(Buffer.alloc(10485761)),/10 MB/);
 });
+test('Photo preparation bounds simultaneous decodes and releases capacity after completion',async()=>{
+ const bytes=await require('sharp')({create:{width:128,height:128,channels:3,background:'#6a4b2a'}}).png().toBuffer(),photos=require('../../src/operations/quality-photos');
+ const outcomes=await Promise.allSettled([photos.emailCopy(bytes),photos.emailCopy(bytes),photos.emailCopy(bytes)]);assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,2);assert.equal(outcomes.filter(r=>r.status==='rejected').length,1);assert.match(outcomes.find(r=>r.status==='rejected').reason.message,/Two delivery photos/);assert((await photos.emailCopy(bytes)).bytes.length>0);
+});

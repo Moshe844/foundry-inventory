@@ -83,6 +83,14 @@ async function page(db,ctx,{id=null}={}){
  return {goodsCost:saved?require('../domain/currency').format(saved.snapshot.totalMinor,saved.snapshot.currency):null,locked,plan:state.plan,shadow:state.shadow,rows,rules,saved,delivery:m,problem,words:saved?source.compose(saved.snapshot):null,matchingRule:saved?rules.find(r=>r.enabled&&r.profile_hash===hash(source.profile(saved.snapshot))):null,manualExampleReady:Boolean(saved&&!saved.automatic&&saved.reviewed_by===ctx.actorId&&m?.status==='SENT'&&m.external_message_id),routineReady:!locked&&!state.shadow&&(await require('../autopilot/postgres-service').getState(db,ctx.workspaceId)).canAutomate};
 }
 const definition={id:45,key:'supplier-damage-claims',label:'Open supplier damage claims',readPage:async()=>({summary:'Prepare an exact damage claim from a failed physical delivery inspection, actual damaged-unit count, recorded PO cost and selected original photo evidence. Pro learns from a completed manual send; Custom can authorize bounded routine claims without training. No credits, payments or stock write-offs.',rows:[{Action:'Review damage claims',link:'/autopilot/supplier-claims'}],more:false})};
+const photoDefinition={id:46,key:'delivery-damage-photos',label:'Prepare actual delivery damage photos',readPage:async()=>({summary:'Growth can preserve and prepare original JPEG/PNG delivery evidence for individual review. Pro and Custom can attach up to three resized copies within separately authorized claim rules without photo training. A person records the physical damage; photo preparation never infers a count or changes the original.',rows:[{Action:'Open physical delivery evidence',link:'/autopilot/delivery-quality'}],more:false})};
+async function inbox(db,workspaceId,actorId){
+ await source.owner(db,{workspaceId,actorId},{lock:false});const rows=(await db.query(`SELECT c.id,c.reference,c.created_at,m.status,e.status effect_status FROM stockchief_runtime.agent_supplier_claims c
+ LEFT JOIN supplier_communications m ON m.workspace_id=c.workspace_id AND m.id=c.communication_id
+ LEFT JOIN LATERAL(SELECT status FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=c.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' ORDER BY created_at DESC,id DESC LIMIT 1)e ON true
+ WHERE c.workspace_id=$1 AND (c.communication_id IS NULL OR m.status='FAILED' OR e.status='AMBIGUOUS') ORDER BY c.created_at,c.id LIMIT 50`,[workspaceId])).rows;
+ return rows.map(r=>({kind:'purchasing',importance:'Needs You',priority:r.effect_status==='AMBIGUOUS'?90:75,title:'Review supplier damage claim '+r.reference,happened:r.effect_status==='AMBIGUOUS'?'Mailbox acceptance is uncertain.':'A recorded physical delivery claim needs review.',why:r.effect_status==='AMBIGUOUS'?'Check the mailbox Sent folder before any further action.':'Review the actual inspection, damaged-unit count, goods cost, recipient and selected photos.',recommendation:'Open the exact saved claim. Credits, write-offs, replacement receipt and settlement need separate approval.',href:'/autopilot/supplier-claims/'+r.id,actionLabel:'Review claim',sourceId:'supplier-claim:'+r.id,at:r.created_at,createdAt:r.created_at}));
+}
 async function run(db,workspaceId,{afterId=''}={}){
  const candidates=(await db.query(`SELECT h.id,r.id rule_id,r.authorized_by,r.connector_id,r.include_photos,r.example_id FROM stockchief_runtime.agent_quality_holds h
   JOIN stockchief_runtime.agent_quality_policies q ON q.workspace_id=h.workspace_id AND q.id=h.policy_id
@@ -100,4 +108,4 @@ async function run(db,workspaceId,{afterId=''}={}){
  }
  return {results,more:candidates.length>40,nextAfterId:candidates.length>40?candidates[39].id:null};
 }
-module.exports={claim,preview,configure,authority,deliveryAuthority,attachments,send,sendAutomatic,rule,page,run,definition,kind,action};
+module.exports={claim,preview,configure,authority,deliveryAuthority,attachments,send,sendAutomatic,rule,page,run,inbox,definition,photoDefinition,kind,action};

@@ -1,5 +1,5 @@
 'use strict';
-const crypto=require('node:crypto'),{newId}=require('../lib/util'),{ValidationError,NotFoundError,AuthorizationError}=require('../domain/errors');
+const crypto=require('node:crypto'),{newId}=require('../lib/util'),{ValidationError,NotFoundError}=require('../domain/errors');
 const quality=require('./agent-quality-holds'),policy=require('../commercial/agent-plan');
 const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
 const maxOriginalBytes=10*1024*1024,maxEmailBytes=600*1024;
@@ -7,7 +7,12 @@ async function access(c,ctx,holdId,{write=false}={}){
  const hold=await quality.hold(c,ctx,holdId);await quality.actor(c,ctx,{locationId:hold.location_id,lock:write});
  if(write)await policy.requireWorkspaceJob(c,ctx.workspaceId,46,'draft');return hold;
 }
+let photoCopiesInProgress=0;
 async function emailCopy(bytes){
+ if(photoCopiesInProgress>=2)throw new ValidationError('Two delivery photos are being prepared right now. Try this upload again in a moment.');
+ photoCopiesInProgress++;try{return await prepareEmailCopy(bytes);}finally{photoCopiesInProgress--;}
+}
+async function prepareEmailCopy(bytes){
  if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>maxOriginalBytes)throw new ValidationError('Choose a JPEG or PNG photo up to 10 MB.');
  const png=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])),jpeg=bytes[0]===255&&bytes[1]===216&&bytes[2]===255;
  if(!png&&!jpeg)throw new ValidationError('Choose an original JPEG or PNG photograph. Other file types are not interpreted as evidence.');
