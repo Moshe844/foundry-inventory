@@ -42,13 +42,14 @@ async function prepare(database,ctx,salesOrderId,input={}){
       if(prior.rows[0]?.status==='COMPLETED')return {...prior.rows[0].result,replayed:true};
       throw new InvariantError('That parcel preparation is already running.','operation_in_progress');
     }
-    const order=(await client.query(`SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
+    const order=(await client.query(`SELECT o.*,c.shipping_address AS customer_shipping_address,c.shipping_address_fields AS customer_shipping_address_fields FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id WHERE o.workspace_id=$1 AND o.id=$2 FOR UPDATE OF o`,
       [ctx.workspaceId,salesOrderId])).rows[0];
     if(!order)throw new NotFoundError('That sales order was not found.');
     if(order.delivery_method!=='SHIP')throw new ValidationError('Only orders marked for shipping need a carrier parcel.');
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const destination=input.shipToAddress||order.ship_to_address;
-    if(!addresses.parse(destination).complete)throw new ValidationError(addresses.why(addresses.parse(destination)));
+    const destinationFields=input.shipToAddressFields||(destination===order.customer_shipping_address?order.customer_shipping_address_fields:null);
+    if(!addresses.parse(destination,destinationFields).complete)throw new ValidationError(addresses.why(addresses.parse(destination,destinationFields)));
     const actor=await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId]);
     if(!actor.rows.length)throw new ValidationError('The acting user does not belong to this inventory.');
     const shipmentId=newId('shp');
@@ -56,10 +57,10 @@ async function prepare(database,ctx,salesOrderId,input={}){
     const at=nowIso();
     await client.query(`INSERT INTO sales_shipments
       (id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,ship_to_address,
-       handover,package_count,weight_grams,currency,created_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$11,$5,$6,'CARRIER',1,$7,$8,$9,$10,$10)`,[shipmentId,ctx.workspaceId,
+       handover,package_count,weight_grams,currency,created_by_user_id,created_at,updated_at,ship_to_address_fields)
+      VALUES($1,$2,$3,$4,$11,$5,$6,'CARRIER',1,$7,$8,$9,$10,$10,$12::jsonb)`,[shipmentId,ctx.workspaceId,
       salesOrderId,shipmentNumber,input.shipFromLocationId||order.fulfillment_location_id,destination,
-      input.weightGrams?Math.round(Number(input.weightGrams)):null,order.currency||'USD',ctx.actorId,at,input.startPicking?'PICKING':'PACKED']);
+      input.weightGrams?Math.round(Number(input.weightGrams)):null,order.currency||'USD',ctx.actorId,at,input.startPicking?'PICKING':'PACKED',destinationFields?JSON.stringify(destinationFields):null]);
     for(const [index,line] of input.lines.entries()){
       const quantity=Number(line.quantity);
       if(!Number.isSafeInteger(quantity)||quantity<=0)throw new ValidationError(`Parcel line ${index+1} quantity must be a whole number above zero.`);
@@ -157,7 +158,7 @@ async function setPackagesInTransaction(client,ctx,shipmentId,boxes,options={}){
 
 async function state(database,workspaceId,shipmentId){
   const shipment=await requireShipment(database,workspaceId,shipmentId);
-  let to=addresses.parse(shipment.ship_to_address);
+  let to=addresses.parse(shipment.ship_to_address,shipment.ship_to_address_fields);
   to.name=shipment.customer_name||to.name;to.email=shipment.customer_email;to.phone=shipment.customer_phone;
   let from=addresses.parse(shipment.location_address);
   from.name=shipment.location_name||from.name;from.phone=shipment.location_phone;from.email=shipment.location_shipping_email;
@@ -169,6 +170,7 @@ async function state(database,workspaceId,shipmentId){
   if(shipment.customer_return_id)try{await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);}catch(error){blocked.push(error.message);}
   if(!to.complete)blocked.push(addresses.why(to));
   if(!from.complete)blocked.push(`Add an address to ${shipment.location_name||'the dispatch warehouse'} (ship-from). ${addresses.why(from,'The dispatch address')}`);
+  if(to.country!==from.country)blocked.push('International postage needs separately reviewed carrier customs data. Use your carrier’s international workflow; StockChief can prepare the recorded export paperwork.');
   if(!to.phone)blocked.push('The customer needs a shipping phone number. StockChief will not invent one.');
   if(!from.phone)blocked.push('The ship-from location needs a shipping contact phone.');
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
@@ -534,7 +536,7 @@ async function handoff(database,ctx,shipmentId,input={}){
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
   const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
   const selectedCarrier=String(input.carrier||shipment.carrier||'').trim();const carrier=require('../sales/carriers').lookup(selectedCarrier)?.code||selectedCarrier||require('../sales/carriers').detect(trackingNumber)?.code||null;
-  if(handover!=='COLLECTED'&&!addresses.parse(shipment.ship_to_address).complete)
+  if(handover!=='COLLECTED'&&!addresses.parse(shipment.ship_to_address,shipment.ship_to_address_fields).complete)
     throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
     throw new ValidationError('Enter the carrier tracking number, or buy and verify a label, before recording carrier handoff.');

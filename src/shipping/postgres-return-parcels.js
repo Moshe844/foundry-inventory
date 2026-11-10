@@ -23,7 +23,7 @@ async function prepare(database,ctx,returnId,input={}){return database.transacti
  let outbound=input.outboundShipmentId?outbounds.find(row=>row.id===input.outboundShipmentId):outbounds[0];
  if(!outbound)throw new ValidationError('Choose an original shipment that actually left for this customer.');
  if(!input.outboundShipmentId&&new Set(outbounds.map(row=>row.ship_to_address)).size>1)throw new ValidationError('This order went to different addresses. Select its original shipment before preparing return postage.');
- const source=await require('./postgres-service').requireShipment(client,ctx.workspaceId,outbound.id),address=require('./address'),origin=address.parse(source.ship_to_address);
+ const source=await require('./postgres-service').requireShipment(client,ctx.workspaceId,outbound.id),address=require('./address'),origin=address.parse(source.ship_to_address,source.ship_to_address_fields);
  Object.assign(origin,{name:source.customer_name,email:source.customer_email,phone:source.customer_phone});
  const location=(await client.query('SELECT * FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[ctx.workspaceId,input.locationId||source.ship_from_location_id])).rows[0];
  if(!origin.complete||!location||!address.parse(location.address).complete)throw new ValidationError('Confirm the complete customer collection and return-destination addresses before preparing postage.');

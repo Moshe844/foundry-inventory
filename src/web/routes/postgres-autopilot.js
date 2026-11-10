@@ -17,6 +17,20 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const exportPapers=require('../../shipping/agent-export-papers');
+  const exportPage=async(req,res,id=null)=>res.page('autopilot/export-papers',{title:'International paperwork',nav:'autopilot',suppressBack:true,backTo:{href:id?'/autopilot/export-papers':'/autopilot/reviews',label:id?'International paperwork':'Agent reviews'},...await exportPapers.screen(database,req.ctx,id,req.query)});
+  router.get('/autopilot/export-papers',requireAuth,owner,asyncRoute((req,res)=>exportPage(req,res)));
+  router.post('/autopilot/export-papers/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this private export invoice draft and packing list',{action:'shipping.prepare_export_papers',recordReference:req.body.shipmentReference});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact packed shipment.');res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/autopilot/export-papers/profile',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.saveProfile(database,req.ctx,req.body);req.flash('success','Exporter facts confirmed.');res.redirect(303,'/autopilot/export-papers');}));
+  router.post('/autopilot/export-papers/products',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.saveProducts(database,req.ctx,{...req.body,products:[{sku:req.body.sku,description:req.body.description,hsCode:req.body.hsCode,originCountry:req.body.originCountry,netWeightGrams:req.body.netWeightGrams,revision:req.body.revision}]});req.flash('success','Product trade facts confirmed.');res.redirect(303,'/autopilot/export-papers?'+new URLSearchParams({sku:req.body.sku})+'#trade-facts');}));
+  router.post('/autopilot/export-papers/origin',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.saveOrigin(database,req.ctx,req.body);req.flash('success','Dispatch fields confirmed.');res.redirect(303,'/autopilot/export-papers?'+new URLSearchParams({origin:req.body.locationId})+'#dispatch');}));
+  router.get('/autopilot/export-papers/:id/file',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await exportPapers.download(database,req.ctx,req.params.id);res.set({'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="'+file.filename+'"','Cache-Control':'private, no-store'});res.send(file.content);}));
+  router.get('/autopilot/export-papers/:id',requireAuth,owner,asyncRoute((req,res)=>exportPage(req,res,req.params.id)));
+  router.post('/autopilot/export-papers/:id/review',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.review(database,req.ctx,req.params.id,req.body);req.flash('success','Packet facts reviewed. No customs filing or shipment was made.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
+  router.post('/autopilot/export-papers/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Draft stopped. Its original saved copy is retained.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));

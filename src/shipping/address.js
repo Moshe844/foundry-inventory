@@ -49,14 +49,13 @@ const stateCode = (value) => {
 /**
  * What the text says, field by field.
  *
- * Deliberately conservative and deliberately American: the shop this was built
- * for ships domestically, every carrier here quotes on a five-digit ZIP, and a
- * parser that half-understood six countries would be worse than one that is
- * honest about the one it knows. A country other than US comes back
- * `complete: false` with the raw text intact, which routes it to a person.
+ * Free text retains its conservative US grammar. International destinations
+ * use explicit saved address fields whose formatted text must match exactly;
+ * the parser never guesses their country, city, province or postal code.
  */
-function parse(text) {
+function parse(text,confirmedFields=null) {
   const raw = clean(text);
+  if(confirmedFields)return require('./confirmed-address').parse(raw,confirmedFields);
   let stateAt = -1;
   const found = {
     raw, name: null, line1: null, line2: null, city: null,
@@ -143,7 +142,7 @@ function why(parsed,label='The delivery address') {
 function oneLine(parsed) {
   if (!parsed) return '';
   return [parsed.line1, parsed.line2, parsed.city,
-    [parsed.state, parsed.postalCode].filter(Boolean).join(' ')]
+    [parsed.state, parsed.postalCode].filter(Boolean).join(' '),parsed.country&&parsed.country!=='US'?parsed.country:null]
     .filter(Boolean).join(', ');
 }
 
