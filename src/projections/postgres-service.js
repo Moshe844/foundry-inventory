@@ -289,13 +289,8 @@ async function brief(database,workspaceId,actorId=null,{includeLocationStock=tru
   return {...data,needs:needItems};
 }
 async function briefData(database,workspaceId,{includeLocationStock,includeAvailability}){
-  const [stats,locations,activity,openOrders,openPurchases,totalAvailable]=await Promise.all([
+  const [stats,locations,activity,openOrders,openPurchases,totalAvailable,stock]=await Promise.all([
     database.query(`WITH stock_by_sku AS MATERIALIZED(${require('./postgres-sku-stock').source()}),
-     measured_items AS MATERIALIZED(SELECT id FROM items WHERE workspace_id=$1 AND quantity_precision>0),
-     measured_skus AS MATERIALIZED(SELECT s.id FROM measured_items i
-      CROSS JOIN LATERAL(SELECT id FROM skus WHERE workspace_id=$1 AND item_id=i.id OFFSET 0)s),
-     ordinary_units AS(SELECT coalesce((SELECT sum(quantity) FROM stock_by_sku),0)
-       -coalesce((SELECT sum(b.quantity) FROM stock_by_sku b JOIN measured_skus s ON s.id=b.sku_id),0) AS quantity),
      sku_stats AS (
       SELECT count(*) FILTER(WHERE s.is_active=1) AS sku_count,
         count(*) FILTER(WHERE s.is_active=1 AND coalesce(b.quantity,0)<=0) AS zero_count
@@ -305,16 +300,13 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       sku_stats.sku_count,
       (SELECT COUNT(*) FROM locations WHERE workspace_id=$1 AND is_active=1) AS location_count,
-      (SELECT quantity FROM ordinary_units)::numeric AS units_on_hand,
-      EXISTS(SELECT 1 FROM measured_items) AS has_measured_stock,
       sku_stats.zero_count,
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
         AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming FROM sku_stats`,[workspaceId]),
-    includeLocationStock?database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
-      LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
-      WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]):{rows:[]},
+    includeLocationStock?database.query(`SELECT l.id,l.name,${require('../domain/stock-totals').totalsSql('l.workspace_id','l.id')} AS stock FROM locations l
+      WHERE l.workspace_id=$1 AND l.is_active=1 ORDER BY l.name`,[workspaceId]):{rows:[]},
     database.query(`WITH recent_movements AS MATERIALIZED(
       SELECT id,seq,operation,quantity_delta,reference,notes,occurred_at,item_id,sku_id,location_id,actor_user_id
       FROM movements WHERE workspace_id=$1 ORDER BY occurred_at DESC,seq DESC LIMIT 12)
@@ -331,12 +323,13 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
     database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1
       AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')`,[workspaceId]),
     includeAvailability?require('../domain/postgres-stock-availability').total(database,workspaceId):null,
+    require('../domain/stock-totals').forBusiness(database,workspaceId),
   ]);
   const row=stats.rows[0];
   return {stats:{itemCount:number(row.item_count),skuCount:number(row.sku_count),locationCount:number(row.location_count),
-    unitsOnHand:number(row.units_on_hand),hasMeasuredStock:Boolean(row.has_measured_stock),zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
+    unitsOnHand:stock.units,hasMeasuredStock:stock.measured.length>0,measuredStock:stock.measured,zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
     available:totalAvailable,openOrders:number(openOrders.rows[0].count),
-    openPurchases:number(openPurchases.rows[0].count)},locations:locations.rows.map((entry)=>({...entry,onHand:number(entry.on_hand)})),
+    openPurchases:number(openPurchases.rows[0].count)},locations:locations.rows.map((entry)=>{const stock=require('../domain/stock-totals').read(entry.stock);return {id:entry.id,name:entry.name,on_hand:stock.units,onHand:stock.units,measured:stock.measured};}),
     activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)}))};
 }
 

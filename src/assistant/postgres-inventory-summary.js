@@ -8,15 +8,14 @@ async function read(database,workspaceId){
   (SELECT COUNT(*) FROM items WHERE workspace_id=$1) AS products_ever,
   (SELECT COUNT(*) FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS skus,
-  (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b
-   JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
-   JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-   WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[workspaceId])).rows[0];
+  ${require('../domain/stock-totals').totalsSql('$1')} AS stock`,[workspaceId])).rows[0];
  const counts={products:Number(row.products),productsEver:Number(row.products_ever),skus:Number(row.skus)};
  if(!Object.values(counts).every(Number.isSafeInteger))throw Error('INVENTORY_SUMMARY_PRECISION_REQUIRED');
- return {...counts,onHand:require('../domain/exact-quantity').safeNumber(row.on_hand,{signed:true,label:'On-hand quantity'})};
+ // The same on-hand total as Home and Stock: counted units, measured stock apart.
+ const stock=require('../domain/stock-totals').read(row.stock);
+ return {...counts,onHand:require('../domain/exact-quantity').safeNumber(stock.units,{signed:true,label:'On-hand quantity'}),measured:stock.measured};
 }
-const scope='Active products and active SKUs; physical units across all locations. productsEver includes inactive product records. On-hand units do not establish sellable or costed units.';
+const scope='Active products and active SKUs; on hand is whole units of counted products across all locations, with measured stock (kilograms, metres, litres) listed apart in its own units. productsEver includes inactive product records. On-hand units do not establish sellable or costed units.';
 async function context(database,workspaceId,actor){
  const permissions=require('../actions/permissions');
  if(!permissions.can(actor,permissions.VIEW))return null;
