@@ -27,6 +27,9 @@ const PAGES=[
     WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].return_number})},
   {route:/^\/supplier-returns\/([^/]+)(?:\/.*)?$/,sql:`SELECT return_number FROM supplier_returns
     WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].return_number})},
+  {route:/^\/autopilot\/procedure-originals\/(sop_[a-z0-9]+)$/,sql:`SELECT id FROM stockchief_runtime.agent_sop_sources
+    WHERE workspace_id=$1 AND id=$2 AND state='READY'`,
+  present:(rows)=>({procedureReview:{agentJob:'procedure-originals',search:rows[0].id}})},
 ];
 
 async function load(database,workspaceId,sourcePath){

@@ -372,24 +372,27 @@ add('read.staff_guide','Answer how-to questions about using StockChief. Return i
       sources:[{kind:'page',href:'/guide?q='+encodeURIComponent(guide.query),label:'Staff guide'}],coverage:guide.topics.length?'Matching staff instructions':'No matching staff instructions for this role'};
   },async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),{answerMode:'evidence'});
 add('read.agent_review','Run an operational review using recorded inventory, purchasing, sales or finance data. Discover this contract by name for the accepted agentJob keys. Use search for a SKU, lot, serial or other review filter. The owner’s plan controls access.',
-  ['agentJob','search','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
+  ['agentJob','search','offset','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
     const change=args.agentJob==='clearance-plan'?args.markdownPercent:args.demandChangePercent;
-    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change});
+    const procedure=args.agentJob==='procedure-originals',offset=procedure?Number(args.offset||0):0;
+    const page=offset/50+1;
+    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change,page});
     const query=new URLSearchParams();
     if(args.search)query.set('filter',args.search);
+    if(page>1)query.set('page',String(page));
     if(change!=null)query.set('change',String(change));
     const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(query.size?'?'+query:'');
     const sources=[{kind:'page',href,label:result.label}],visited=new Set([href]);
     for(const row of result.rows){
       if(sources.length===13)break;
       if(typeof row.link!=='string'||!/^\/(?!\/)/.test(row.link)||/[\\\r\n]/.test(row.link)||visited.has(row.link))continue;
-      const record=row.Order||row.Bill||row.Invoice||row.Transfer||row.SKU||row.Product||row.Customer||row.Supplier||row.Activity||row.Month;
+      const record=row.Order||row.Bill||row.Invoice||row.Transfer||row.SKU||row.Product||row.Customer||row.Supplier||row.Activity||row.Month||row.Step;
       if(!record)continue;
       sources.push({kind:'record',href:row.link,label:String(record)});visited.add(row.link);
     }
     const coverage=result.mode==='suggest'?'This plan shows up to one suggestion from the matching records.':
       result.more?'Open the review for the remaining results.':'All matching results for this review.';
-    return {rows:result.rows,summary:result.summary,coverage,sources};
+    return {rows:result.rows,summary:result.summary,coverage,sources,...(procedure?{extent:{offset,nextOffset:result.more?offset+50:null}}:{})};
   },async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{required:['agentJob'],ownerOnly:true,view:'agent_review',answerMode:'evidence'});
 add('read.report_schedules','List your private saved reports, definitions, local schedules, next send, last sent, pause state and exact IDs. Coverage is the latest 100 active templates in this inventory.',[],'read',permissions.VIEW,'none',(_service,db,ctx)=>require('../reports/ask-schedules').read(db,ctx),async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'report_schedules',answerMode:'evidence'});
 add('read.report_catalogue','Discover permitted report datasets and their exact calculation schemas. Search by dataset name or description; follow nextOffset for more. No second AI model is invoked.',['search','offset'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{const actor=await require('../reports/ask-schedules').actor(db,ctx),term=String(args.search||'').toLowerCase().replaceAll('_',' '),offset=Math.max(0,Number(args.offset)||0),available=governedReports.list(actor).filter(r=>!term||(r.key.replaceAll('_',' ')+' '+r.label).toLowerCase().includes(term));return {rows:available.slice(offset,offset+6).map(r=>({dataset:r.key,label:r.label,...require('../reports/postgres-service').queryContract(r.key,actor)})),extent:{offset,total:available.length,nextOffset:offset+6<available.length?offset+6:null},syntax:require('../reports/postgres-service').querySyntax,timeZone:(await require('../lib/business-time').forWorkspace(db,ctx.workspaceId)).timeZone,sources:[{kind:'page',href:'/reports',label:'Reports'}]};},async(_s,_d,_c,r)=>Array.isArray(r?.rows),{answerMode:'evidence'});
