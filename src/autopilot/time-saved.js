@@ -25,6 +25,7 @@ const activities = new Map([
   ['shutdown-purchase','Prepare one reviewed supplier shutdown purchase draft'],
   ['promotion-purchase','Prepare one promotion purchase draft'],
   ['delivery-qc','Apply a QC hold to one received product line'],
+  ['supplier-rfq','Prepare and send one supplier quotation request'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -110,6 +111,7 @@ async function report(db,ctx,window='week') {
     SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
       WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
     SELECT 'shutdown-purchase',p.purchase_created_at FROM stockchief_runtime.agent_supplier_shutdown_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
+    SELECT 'supplier-rfq',m.sent_at::timestamptz FROM stockchief_runtime.agent_rfq_deliveries d JOIN supplier_communications m ON m.workspace_id=d.workspace_id AND m.id=d.communication_id WHERE d.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=d.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED') UNION ALL
     SELECT 'delivery-qc',h.created_at FROM stockchief_runtime.agent_quality_holds h WHERE h.workspace_id=$1 AND h.automatic UNION ALL
     SELECT 'promotion-purchase',p.purchase_created_at FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
     SELECT 'product-retirement',n.applied_at FROM stockchief_runtime.agent_product_retirement_notices n WHERE n.workspace_id=$1 AND n.applied_at IS NOT NULL AND (n.result->>'changedCount')::int>0 UNION ALL

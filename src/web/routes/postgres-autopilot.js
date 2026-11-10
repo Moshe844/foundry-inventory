@@ -17,6 +17,15 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const rfqs=require('../../purchasing/agent-supplier-rfqs');
+  const rfqPage=async(req,res,id=null)=>res.page('autopilot/supplier-rfqs',{title:'Supplier quote requests',nav:'autopilot',backTo:{href:id?'/autopilot/supplier-rfqs':'/autopilot/reviews',label:id?'Supplier RFQs':'Agent reviews'},...await rfqs.page(database,req.ctx,{...req.query,id})});
+  router.get('/autopilot/supplier-rfqs',requireAuth,owner,asyncRoute((req,res)=>rfqPage(req,res)));
+  router.get('/autopilot/supplier-rfqs/:id',requireAuth,owner,asyncRoute((req,res)=>rfqPage(req,res,req.params.id)));
+  router.post('/autopilot/supplier-rfqs/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await rfqs.preview(database,req.ctx,await rfqs.fromForm(database,req.ctx,req.body));res.redirect(303,'/autopilot/supplier-rfqs/'+p.id);}));
+  router.post('/autopilot/supplier-rfqs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.send(database,req.ctx,req.params.id,req.body);req.flash('success','The exact RFQ emails are queued separately. No purchase was placed.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  router.post('/autopilot/supplier-rfqs/:id/authority',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.configure(database,req.ctx,req.params.id,req.body);req.flash('success','Saved this exact bounded RFQ authority.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  router.post('/autopilot/supplier-rfqs/:id/routine',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.sendAutomatic(database,req.ctx,req.params.id,req.body.ruleId);req.flash('success','RFQs within the existing rule are queued. Each send rechecks current authority.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  router.post('/autopilot/supplier-rfq-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.configure(database,req.ctx,null,{...req.body,stop:'yes',ruleId:req.params.id});res.redirect(303,'/autopilot/supplier-rfqs');}));
   const quality=require('../../operations/agent-quality-holds');
   router.get('/autopilot/delivery-quality',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/delivery-quality',{title:'Delivery quality checks',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await quality.page(database,req.ctx,req.query)})));
   router.get('/autopilot/delivery-quality/:id',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/delivery-quality',{title:'Inspect received goods',nav:'autopilot',backTo:{href:'/autopilot/delivery-quality',label:'Delivery quality'},...await quality.page(database,req.ctx,{id:req.params.id})})));

@@ -183,6 +183,7 @@ test('Orders list and New order: one primary action, tabs that add up, a one-pag
     await collectPayment();
     await pay.getByRole('tab',{name:'Bank transfer'}).click();
     const bankForm=pay.locator('.ox-bank-form');
+    assert.equal(await pay.locator('.ox-bank-edit').evaluate(panel=>panel.open),true,'A newly recorded payment must not close the first-time bank setup panel');
     await bankForm.getByLabel('Account name').fill('Hendels Shoes LLC');await bankForm.getByLabel('Bank',{exact:true}).fill('Chase');
     await bankForm.getByLabel('Routing number').fill('021000021');await bankForm.getByLabel('Account number').fill('123456789');
     await Promise.all([page.waitForURL(/pay=transfer/),bankForm.getByRole('button',{name:'Save bank details'}).click()]);
