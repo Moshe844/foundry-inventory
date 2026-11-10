@@ -33,6 +33,7 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/preview',requireAuth,owner,asyncRoute(async(req,res)=>copyPage(req,res,{draft:await channelCopy.preview(database,req.ctx,req.body)})));
   router.post('/autopilot/channel-copy',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
+  router.post('/autopilot/channel-copy/runs/:runId/approve',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.approve(database,req.ctx,req.params.runId,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
   router.get('/autopilot/channel-copy/versions/:versionId/copy.csv',requireAuth,owner,asyncRoute(async(req,res)=>{const csv=await channelCopy.download(database,req.ctx,req.params.versionId);res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="prepared-channel-copy.csv"'});res.send(csv);}));
   router.get('/autopilot/channel-copy/:id',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));
@@ -263,6 +264,15 @@ function createPostgresAutopilotRouter(database){
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);
     res.page('autopilot/filed-document',{title:'Filed document',nav:'autopilot',document,documentFactLabels:require('../../documents/agent-product-facts').labels,backTo:{href:document.targetHref,label:document.target_reference}});
   }));
+  const productSources=require('../../documents/agent-product-source');
+  router.get('/autopilot/product-facts',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/product-source',{title:'Product source readings',nav:'autopilot',screen:await productSources.screen(database,req.ctx,{itemId:req.query.itemId||null,page:req.query.page||1}),initial:{productReference:req.query.product||'',filedDocument:req.query.filedDocument||''}})));
+  router.post('/autopilot/product-facts',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});res.redirect(303,'/autopilot/product-facts/'+r.id);}));
+  router.get('/autopilot/product-facts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.load(database,req.ctx,req.params.id);res.set('Cache-Control','no-store').type('application/octet-stream').attachment(r.filename).send(r.content);}));
+  router.get('/autopilot/product-facts/:id/facts.csv',requireAuth,owner,asyncRoute(async(req,res)=>{res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="sourced-product-facts.csv"'}).send(await productSources.csv(database,req.ctx,req.params.id));}));
+  router.get('/autopilot/product-facts/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/product-source',{title:'Product source facts',nav:'autopilot',screen:await productSources.screen(database,req.ctx,{id:req.params.id}),initial:{}})));
+  router.post('/autopilot/product-facts/:id/approve',requireAuth,owner,asyncRoute(async(req,res)=>{await productSources.approve(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/product-facts/'+req.params.id);}));
+  router.post('/autopilot/product-facts/:id/acknowledge',requireAuth,owner,asyncRoute(async(req,res)=>{await productSources.acknowledge(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/product-facts/'+req.params.id);}));
+  router.post('/autopilot/product-facts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await productSources.load(database,req.ctx,req.params.id);const next=await productSources.enqueue(database,req.ctx,{itemId:r.item_id,buffer:r.content,filename:r.filename,fileAttachment:r.source_attachment_id,filedDocument:r.source_filed_id,documentKind:r.document_kind,targetConfirmed:r.target_confirmed,automatic:r.automatic,enrich:r.enrich});res.redirect(303,'/autopilot/product-facts/'+next.id);}));
   const jobModes=require('../../autopilot/job-modes');
   router.get('/autopilot/job-modes',requireAuth,owner,asyncRoute(async(req,res)=>{
     res.page('autopilot/job-modes',{title:'Authority by job',nav:'autopilot',jobs:await jobModes.page(database,req.ctx),modes:jobModes.modes});

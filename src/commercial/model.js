@@ -27,9 +27,10 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
   }
   const idempotencyKey=`${ctx.workspaceId}:${key||newId('modeloperation')}`;
   const internal=options.chargeCustomer===false;
-  if(internal&&(!options.fundingKey||!['ask','instruction'].includes(operation)))
+  if(internal&&(!options.fundingKey||!['ask','instruction','import_mapping'].includes(operation)))
     throw new ValidationError('An internal model call needs its original funded request.');
   const creditPolicy=await require('./ai-credit-policy').policy(database,scope);
+  if(internal&&operation==='import_mapping'&&!(await database.query("SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits' AND idempotency_key=$3 AND status IN('RESERVED','COMMITTED') AND detail->>'operation'='import_mapping' AND units>=$4",[scope.accountId,ctx.workspaceId,ctx.workspaceId+':'+options.fundingKey,Number(configured.units)*creditPolicy.scale])).rowCount)throw new ValidationError('Additional document pages need the original funded document reading. No model call was made.');
   const includedReport=options.includedReport===true && creditPolicy.fixedAgentCredits && /^stockchief_governed_report(?:_|$)/.test(request.schemaName);
   if(!internal && !includedReport){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units)*creditPolicy.scale,idempotencyKey,
     detail:{operation,model:provider.model,provisional:true,creditPolicy}});
@@ -52,7 +53,7 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},
       idempotencyKey,{operation});usageRecorded=true;
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
-    if(!includedReport && (!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`))await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey});return response;
+    if(!options.deferCustomerCommit && !includedReport && (!internal||costHold?.fundingUsageKey&&costHold.fundingUsageKey!==`${ctx.workspaceId}:${options.fundingKey}`))await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey:costHold?.fundingUsageKey||idempotencyKey});return response;
   }catch(error){error.modelStarted=providerStarted;if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
     if(!usageRecorded&&(error.usage||response?.usage))await operations.modelUsage(database,scope,
       error.usage||response.usage,idempotencyKey,{operation,failed:true});

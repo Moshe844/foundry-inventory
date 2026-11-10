@@ -21,6 +21,7 @@ const activities = new Map([
   ['po-delivery-date','Update a purchase order from an original supplier delivery promise'],
   ['container-plan','Calculate a container load plan from confirmed carton facts'],
   ['team-procedure','Write a private app procedure from verified completed team work'],
+  ['product-facts','Read one complete product source and save its verified facts on one native product'],
   ['channel-copy','Prepare and export one product-copy batch for one sales channel'],
   ['blanket-release','Prepare one unapproved scheduled supplier release (administration only)'],
   ['product-retirement','Retire one checked supplier notice batch and record its replacements'],
@@ -145,6 +146,7 @@ async function report(db,ctx,window='week') {
     SELECT 'promotion-purchase',p.purchase_created_at FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
     SELECT 'product-retirement',n.applied_at FROM stockchief_runtime.agent_product_retirement_notices n WHERE n.workspace_id=$1 AND n.applied_at IS NOT NULL AND (n.result->>'changedCount')::int>0 UNION ALL
     SELECT 'blanket-release',r.prepared_at FROM stockchief_runtime.agent_blanket_releases r JOIN purchase_orders o ON o.workspace_id=r.workspace_id AND o.id=r.purchase_order_id WHERE r.workspace_id=$1 AND r.automatic AND r.status='DRAFTED' AND r.prepared_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
+    SELECT 'product-facts',min(f.saved_at) FROM stockchief_runtime.agent_sourced_product_facts f JOIN stockchief_runtime.agent_product_source_readings r ON r.workspace_id=f.workspace_id AND r.id=f.reading_id WHERE f.workspace_id=$1 GROUP BY r.item_id,r.source_hash UNION ALL
     SELECT 'channel-copy',v.exported_at FROM stockchief_runtime.agent_channel_copy_versions v WHERE v.workspace_id=$1 AND v.exported_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_channel_copy_versions older WHERE older.workspace_id=v.workspace_id AND older.document_hash=v.document_hash AND older.exported_at IS NOT NULL AND (older.exported_at,older.id)<(v.exported_at,v.id)) UNION ALL
     SELECT 'team-procedure',v.created_at FROM stockchief_runtime.agent_team_procedure_versions v
       WHERE v.workspace_id=$1 AND v.created_at>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND NOT EXISTS(
