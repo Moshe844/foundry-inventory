@@ -26,7 +26,7 @@
 
 <% if(m.receivedNotBilledMinor){ %><a class="mn-note" href="/money/sources/received_unbilled?to=<%= m.to %>"><span aria-hidden="true">i</span><span><strong><%= amount(m.receivedNotBilledMinor) %></strong> of stock has arrived but has no supplier bill yet. It is not in “You owe suppliers” until the bill is added.</span><b>Review</b></a><% } %>
 <% if(m.foreignCurrencies.length){ %><p class="notice">Outstanding documents in <%= m.foreignCurrencies.join(', ') %> are kept separate from <%= m.currency %>. Review them in <a href="/accounting/books">Accountant view</a>.</p><% } %>
-<% if(m.missingCostUnits){ %><p class="notice notice--warn"><strong><%= helpers.unitCount(m.missingCostUnits,'unit') %> have no recorded cost,</strong> so profit may look higher than it really is. <a href="/money/profit?<%= q %>">See what this includes</a></p><% } %>
+<% if(m.missingCostUnits){ %><p class="notice notice--warn"><strong><%= helpers.missingCost(m) %> have no recorded cost,</strong> so profit may look higher than it really is. <a href="/money/profit?<%= q %>">See what this includes</a></p><% } %>
 
 <div class="mn-grid">
   <section class="sc-business-card mn-flow"><header><h2>From sales to profit</h2><a href="/money/profit?<%= q %>">Full breakdown →</a></header>

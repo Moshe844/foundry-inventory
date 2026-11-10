@@ -6,8 +6,20 @@ async function read(db,workspaceId){
  // read only missing stock instead of summing every fully costed position.
  // PostgreSQL numeric NaN is greater than zero, so damaged rows still reach
  // the existing validation and named-position warning path below.
- const result=await db.query('SELECT coalesce(sum(missing_units),0) AS missing_units FROM inventory_cost_coverage_positions WHERE workspace_id=$1 AND missing_units>0',[workspaceId]);
- try{return {missingCostUnits:exact.safeNumber(result.rows[0]?.missing_units??0,{label:'Stock quantity'})};}
+ // Counted and measured stock are summed apart (domain/stock-totals.js): 22
+ // units and 1.25 kg is never "23.25 units". missingCostUnits stays the total
+ // every caller tests for "anything missing".
+ const totals=require('../domain/stock-totals'),result=await db.query(`SELECT ${totals.MEASURED} AS measured,
+   CASE WHEN ${totals.MEASURED} THEN coalesce(nullif(i.unit_label,''),'measured') END AS unit,coalesce(sum(p.missing_units),0) AS missing_units
+   FROM inventory_cost_coverage_positions p LEFT JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
+   LEFT JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+   WHERE p.workspace_id=$1 AND p.missing_units>0 GROUP BY 1,2`,[workspaceId]);
+ try{
+  let all='0',counted='0';const measured=[];
+  for(const row of result.rows){exact.safeNumber(row.missing_units,{label:'Stock quantity'});all=exact.add(all,row.missing_units);
+   if(row.measured)measured.push({unit:row.unit,quantity:row.missing_units});else counted=exact.add(counted,row.missing_units);}
+  return {missingCostUnits:exact.safeNumber(all,{label:'Stock quantity'}),missingCostCounted:exact.safeNumber(counted,{label:'Stock quantity'}),missingCostMeasured:totals.byUnit(measured)};
+ }
  catch(error){if(error.code!=='validation_error')throw error;}
  // A damaged projection must not hide every invoice or business report. The
  // normal path is one indexed aggregate read; only invalid totals use pages.

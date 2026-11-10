@@ -41,4 +41,16 @@ test('Home, Stock, Ask and the business list give the same units on hand, with m
  assert.match(overview,new RegExp(shown+' units'),'Stock overview shows '+shown+' units');assert.match(overview,/plus 3\.75 kg/);
  assert.doesNotMatch(overview,new RegExp((units+3.75).toLocaleString('en-US')),'kilograms are never added to the units');
  assert.match(list,new RegExp(shown+'(</strong>)? (units )?on hand|'+shown+' units'),'the business list shows '+shown+' on hand');
+
+ // Stock still without a cost splits the same way: whole units, measured stock apart.
+ const coverage=await require('../../src/accounting/postgres-quantity-coverage').read(db,ctx.workspaceId);
+ const measuredMissing=(coverage.missingCostMeasured||[]).reduce((sum,m)=>sum+m.quantity,0);
+ assert.ok(Number.isInteger(coverage.missingCostCounted),'missing-cost units are whole: '+JSON.stringify(coverage));
+ assert.equal(coverage.missingCostUnits,coverage.missingCostCounted+measuredMissing,'the any-missing total still covers both');
+ assert.ok((coverage.missingCostMeasured||[]).every(m=>m.unit==='kg'));
+ assert.ok(measuredMissing>0&&coverage.missingCostCounted>0,'the uncosted boots and flour are both counted, apart: '+JSON.stringify(coverage));
+ assert.match(overview,new RegExp(coverage.missingCostCounted.toLocaleString('en-US')+' units and '+measuredMissing+' kg still need a cost'),'the Stock overview names both');
+ for(const [name,page] of [['Home',home],['Stock overview',overview]])
+  assert.doesNotMatch(page.replace(/<[^>]+>/g,' '),/\d\.\d+ units?\b/,name+' never shows a fraction of a unit');
+
 });
