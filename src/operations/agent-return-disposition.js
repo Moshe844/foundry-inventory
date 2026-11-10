@@ -67,11 +67,11 @@ async function saveRule(db,ctx,input){return tx(db,async c=>{
  });}
 async function configure(db,ctx,id,input){return tx(db,async c=>{
  await owner(c,ctx,true);const p=await rule(c,ctx,id,true);if(Number(input.revision)!==p.revision)throw new ValidationError('Reload the current return rule before changing it.');
- if(input.stop==='yes'){await c.query('UPDATE stockchief_runtime.agent_return_disposition_rules SET enabled=false,routine_enabled=false,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);return {id,stopped:true};}
+ if(input.stop==='yes'){await c.query('UPDATE stockchief_runtime.agent_return_disposition_rules SET enabled=false,routine_enabled=false,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await require('./postgres-security-audit').record(c,ctx,{action:'Return disposition rule stopped',reference:id,after:{existingPhysicalHoldsPreserved:true}});return {id,stopped:true};}
  const trained=await example(c,ctx,p,input.exampleId||p.trained_assessment_id);await access(c,ctx,{automatic:true,trained});
  if(input.confirmed!=='yes')throw new ValidationError('Confirm this exact automatic planning authority. Physical stock changes and write-offs still need individual approval.');
  if(p.outcome!=='SCRAP')await location(c,ctx,p.destination_id);await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],p.enabled?0:1);
- await c.query('UPDATE stockchief_runtime.agent_return_disposition_rules SET enabled=true,routine_enabled=true,trained_assessment_id=$3,authorized_by=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,trained?(input.exampleId||p.trained_assessment_id):null,ctx.actorId]);return {id};
+ await c.query('UPDATE stockchief_runtime.agent_return_disposition_rules SET enabled=true,routine_enabled=true,trained_assessment_id=$3,authorized_by=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,trained?(input.exampleId||p.trained_assessment_id):null,ctx.actorId]);await require('./postgres-security-audit').record(c,ctx,{action:'Routine return decision preparation authorized',reference:id,after:{maximumUnits:p.maximum_units,conditionCode:p.condition_code,outcome:p.outcome,destinationId:p.destination_id,completedExampleId:trained?(input.exampleId||p.trained_assessment_id):null,physicalActionsNeedSeparateApproval:true}});return {id};
  });}
 async function observe(db,ctx,input){return tx(db,async c=>{
  await owner(c,ctx,true);await access(c,ctx,{stopped:false});const f=await facts(c,ctx,input.returnId,{lock:true});
