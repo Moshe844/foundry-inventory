@@ -17,6 +17,9 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const purchaseFx=require('../../purchasing/agent-purchase-fx');
+  router.get('/autopilot/purchase-fx',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/purchase-fx',{title:'Foreign purchase currency exposure',nav:'autopilot',suppressBack:true},()=>purchaseFx.screen(database,req.ctx,req.query))));
+  router.post('/autopilot/purchase-fx/baseline',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await purchaseFx.saveBaseline(database,req.ctx,req.body);req.flash('success','Original comparison rate saved.');res.redirect(303,'/autopilot/purchase-fx?'+new URLSearchParams({order:r.id}));}));
   const exportPapers=require('../../shipping/agent-export-papers');
   const exportPage=async(req,res,id=null)=>res.page('autopilot/export-papers',{title:'International paperwork',nav:'autopilot',suppressBack:true,backTo:{href:id?'/autopilot/export-papers':'/autopilot/reviews',label:id?'International paperwork':'Agent reviews'},...await exportPapers.screen(database,req.ctx,id,req.query)});
   router.get('/autopilot/export-papers',requireAuth,owner,asyncRoute((req,res)=>exportPage(req,res)));

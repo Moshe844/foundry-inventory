@@ -194,6 +194,9 @@ jobs:
       - name: International address snapshots, real export PDFs, owner review and exact plan boundaries
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/confirmed-international-address.test.js tests/postgres/confirmed-international-shipment.test.js tests/postgres/agent-export-papers.test.js tests/postgres/agent-export-paper-boundaries.test.js tests/postgres/agent-export-paper-reporting.test.js tests/postgres/agent-export-paper-money.test.js tests/postgres/agent-export-papers-ui.test.js
+      - name: ECB foreign purchase comparisons, exact currency scales, scheduled reads and plan boundaries
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/purchase-fx-reference.test.js tests/postgres/agent-purchase-fx-access.test.js tests/postgres/agent-purchase-fx.test.js tests/postgres/agent-purchase-fx-volume.test.js tests/postgres/agent-purchase-fx-schema.test.js tests/postgres/agent-purchase-fx-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

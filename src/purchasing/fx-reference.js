@@ -1,0 +1,21 @@
+'use strict';
+const {ValidationError}=require('../domain/errors'),money=require('../domain/currency');
+const url='https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
+function decimal(value){const s=String(value??'');if(!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,9})?$/.test(s)||!/[1-9]/.test(s))throw new ValidationError('Use a positive decimal exchange rate, up to nine decimal places.');const [a,b='']=s.split('.');return {n:BigInt(a+b),d:10n**BigInt(b.length),text:s};}
+function day(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||!Number.isFinite(Date.parse(value+'T00:00:00Z'))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value)throw new ValidationError('Use a valid exchange-rate date.');return value;}
+function parse(xml,{now=Date.now()}={}){
+ if(typeof xml!=='string'||Buffer.byteLength(xml)>131072||/<!DOCTYPE|<!ENTITY/i.test(xml)||!xml.includes('http://www.ecb.int/vocabulary/2002-08-01/eurofxref'))throw new ValidationError('The ECB reference-rate document could not be verified.');
+ const dates=[...xml.matchAll(/<Cube\s+time=['"]([^'"]+)['"]\s*>/g)];if(dates.length!==1)throw new ValidationError('The ECB document needs one reference date.');const date=day(dates[0][1]),age=now-Date.parse(date+'T00:00:00Z');if(age<0||age>7*86400000)throw new ValidationError('The ECB reference date is future-dated or older than seven days. Check current rates before comparing costs.');
+ const rates={EUR:'1'};for(const m of xml.matchAll(/<Cube\s+currency=['"]([A-Z]{3})['"]\s+rate=['"]([^'"]+)['"]\s*\/>/g)){const currency=money.code(m[1]);if(Object.hasOwn(rates,currency))throw new ValidationError('The ECB document repeats a currency.');rates[currency]=decimal(m[2]).text;}
+ if(Object.keys(rates).length-1!==[...xml.matchAll(/<Cube\b[^>]*\bcurrency\s*=/g)].length||Object.keys(rates).length<2||Object.keys(rates).length>64)throw new ValidationError('The ECB document has no usable bounded rate table.');return {date,rates,url};
+}
+async function fetchRates({fetchImpl=globalThis.fetch,now=Date.now()}={}){
+ let response;try{response=await fetchImpl(url,{method:'GET',redirect:'error',signal:AbortSignal.timeout(10000),headers:{Accept:'application/xml,text/xml'}});}catch{throw new ValidationError('ECB reference rates are unavailable. Existing purchase amounts and saved comparisons are unchanged.');}
+ if(!response.ok||!response.body)throw new ValidationError('ECB reference rates are unavailable. Check the source before comparing costs.');let xml='',bytes=0;try{for await(const chunk of response.body){bytes+=Buffer.byteLength(chunk);if(bytes>131072)throw new ValidationError('The ECB reference document is larger than expected.');xml+=Buffer.from(chunk).toString('utf8');}}catch(error){if(error instanceof ValidationError)throw error;throw new ValidationError('The ECB reference-rate download did not finish.');}return parse(xml,{now});
+}
+let cached=null,pending=null,lastFailure=null;
+async function latest(){if(lastFailure&&Date.now()-lastFailure.at<300000)throw new ValidationError(lastFailure.message);if(cached&&Date.now()-cached.at<300000)return parse(cached.xml,{now:Date.now()});if(pending)return pending;pending=fetchRates().then(r=>{cached={at:Date.now(),xml:`<gesmes:Envelope xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube time="${r.date}">${Object.entries(r.rates).filter(([c])=>c!=='EUR').map(([c,v])=>`<Cube currency="${c}" rate="${v}"/>`).join('')}</Cube></gesmes:Envelope>`};return r;}).catch(error=>{lastFailure={at:Date.now(),message:error.message};throw error;}).finally(()=>{pending=null;});return pending;}
+function rounded(n,d){const value=Number((n+d/2n)/d);if(!Number.isSafeInteger(value)||value<0)throw new ValidationError('The converted goods estimate exceeds the exact currency range.');return value;}
+function convert(minor,foreign,base,quote){const amount=BigInt(money.integer(minor)),from=decimal(quote.rates[money.code(foreign)]),to=decimal(quote.rates[money.code(base)]);return rounded(amount*to.n*from.d*10n**BigInt(money.exponent(base)),to.d*from.n*10n**BigInt(money.exponent(foreign)));}
+function atRate(minor,foreign,base,rate){const r=decimal(rate);return rounded(BigInt(money.integer(minor))*r.n*10n**BigInt(money.exponent(base)),r.d*10n**BigInt(money.exponent(foreign)));}
+module.exports={url,decimal,day,parse,fetchRates,latest,convert,atRate};

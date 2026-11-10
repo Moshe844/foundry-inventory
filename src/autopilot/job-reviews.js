@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../purchasing/agent-purchase-fx').definition,
   require('../shipping/agent-export-papers').definition,
   require('../shipping/agent-return-instructions').definition,
   require('../warehouse/agent-partial-shipments').definition,
@@ -103,6 +104,7 @@ function offers(state){
 }
 
 const suggestions={
+  40:r=>r.Order?'The open recorded goods on '+r.Order+' are '+r['Open recorded goods']+'. Latest ECB reference estimate: '+r['Reference estimate']+'. '+r.Review:r.Review,
   13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
