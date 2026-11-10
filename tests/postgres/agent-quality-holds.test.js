@@ -7,6 +7,11 @@ test('Pro and Custom hold actual incoming stock, refuse early issue and release 
   await quality.configure(db,ctx,p.id,{revision:1,confirmed:'yes'});
   const po=await f.order(),receipt=await f.receive(po),id=receipt.qualityHoldIds[0];assert(id);assert.equal((await f.hold(id)).automatic,true);
   assert.equal(await f.balance(),18);assert.equal((await f.available()).available,8);
+  await db.transaction(async c=>{
+   await c.query('SET TRANSACTION READ ONLY');
+   assert.equal((await quality.page(c,ctx,{id})).selected.id,id);
+   assert.equal((await quality.inbox(c,ctx.workspaceId,ctx.actorId))[0].sourceId,'delivery-quality:'+id);
+  });
   await assert.rejects(f.inventory.issue(db,ctx,{idempotencyKey:randomUUID(),skuId:f.scope.skuId,locationId:f.location.id,quantity:9}),/delivery QC/);
   await assert.rejects(db.query('UPDATE balances SET on_hand=0 WHERE workspace_id=$1',[ctx.workspaceId]),/balances_quality_hold/);
   await assert.rejects(quality.inspect(db,ctx,id,{revision:1,decision:'PASS',checks:['0','1']}),/physically/);

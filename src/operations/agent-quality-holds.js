@@ -2,11 +2,11 @@
 const policy=require('../commercial/agent-plan'),permissions=require('../actions/permissions');
 const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/errors'),{newId}=require('../lib/util');
 const action='inventory.inspect_delivery';
-async function actor(c,ctx,{owner=false,locationId=null}={}){
+async function actor(c,ctx,{owner=false,locationId=null,lock=true}={}){
  const u=(await c.query(`SELECT u.* FROM users u JOIN workspaces w ON w.id=u.workspace_id
   WHERE u.workspace_id=$1 AND u.id=$2 AND w.deletion_requested_at IS NULL
    AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)
-   FOR SHARE OF u,w`,[ctx.workspaceId,ctx.actorId])).rows[0];
+   ${lock?'FOR SHARE OF u,w':''}`,[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!u||owner&&u.role!=='owner')throw new AuthorizationError(owner?'Only the inventory owner can authorize delivery inspection rules or manually release held goods.':'Your inventory access needs review.');
  permissions.assertCan(u,permissions.RECEIVE_PO,'inspect supplier deliveries');
  if(locationId)await require('./postgres-warehouse-access').assertLocations(c,ctx,[locationId]);
@@ -156,7 +156,7 @@ async function release(db,ctx,id,input){return db.transaction(async c=>{
  await audit(c,ctx,'Inspected delivery released by owner',id,{quantity:h.quantity});return {id};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function page(db,ctx,input={}){
- const user=await actor(db,ctx),state=await policy.accountState(db,ctx.workspaceId),locked=!policy.usesAgentTerms(state)||!policy.permits(state.plan,51,'draft');
+ const user=await actor(db,ctx,{lock:false}),state=await policy.accountState(db,ctx.workspaceId),locked=!policy.usesAgentTerms(state)||!policy.permits(state.plan,51,'draft');
  const n=Number(input.page||1);if(!Number.isSafeInteger(n)||n<1||n>1000000)throw new ValidationError('Choose a valid inspection page.');
  const roots=await require('./postgres-warehouse-access').scope(db,ctx);
  const scope=roots===null?null:(await require('./postgres-warehouse-access').locations(db,ctx.workspaceId,roots)).map(l=>l.id);
@@ -170,13 +170,13 @@ async function page(db,ctx,input={}){
  const policies=user.role==='owner'?(await db.query(`SELECT p.*,s.code,l.name location_name,v.name supplier_name FROM stockchief_runtime.agent_quality_policies p
   JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
   JOIN suppliers v ON v.workspace_id=p.workspace_id AND v.id=p.supplier_id WHERE p.workspace_id=$1 ORDER BY p.created_at DESC,p.id DESC LIMIT 101 OFFSET $2`,[ctx.workspaceId,(n-1)*100])).rows:[];
- let selected=null;if(input.id){selected=await hold(db,ctx,input.id);await actor(db,ctx,{locationId:selected.location_id});selected=rows.find(r=>r.id===selected.id)||{...selected,...(await db.query(`SELECT s.code,i.name,l.name location_name,v.name supplier_name,o.po_number FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.id=h.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=h.location_id JOIN stockchief_runtime.agent_quality_policies p ON p.id=h.policy_id JOIN suppliers v ON v.id=p.supplier_id JOIN purchase_order_receipt_lines rl ON rl.id=h.receipt_line_id JOIN purchase_order_receipts r ON r.id=rl.receipt_id JOIN purchase_orders o ON o.id=r.purchase_order_id WHERE h.workspace_id=$1 AND h.id=$2`,[ctx.workspaceId,selected.id])).rows[0]};}
- let editing=null;if(input.edit){await actor(db,ctx,{owner:true});editing=await getPolicy(db,ctx,input.edit);await facts(db,ctx,editing);editing={...editing,...(await db.query('SELECT s.code,l.name location_name,v.name supplier_name FROM skus s,locations l,suppliers v WHERE s.id=$1 AND l.id=$2 AND v.id=$3',[editing.sku_id,editing.location_id,editing.supplier_id])).rows[0]};}
+ let selected=null;if(input.id){selected=await hold(db,ctx,input.id);await actor(db,ctx,{locationId:selected.location_id,lock:false});selected=rows.find(r=>r.id===selected.id)||{...selected,...(await db.query(`SELECT s.code,i.name,l.name location_name,v.name supplier_name,o.po_number FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.id=h.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=h.location_id JOIN stockchief_runtime.agent_quality_policies p ON p.id=h.policy_id JOIN suppliers v ON v.id=p.supplier_id JOIN purchase_order_receipt_lines rl ON rl.id=h.receipt_line_id JOIN purchase_order_receipts r ON r.id=rl.receipt_id JOIN purchase_orders o ON o.id=r.purchase_order_id WHERE h.workspace_id=$1 AND h.id=$2`,[ctx.workspaceId,selected.id])).rows[0]};}
+ let editing=null;if(input.edit){await actor(db,ctx,{owner:true,lock:false});editing=await getPolicy(db,ctx,input.edit);await facts(db,ctx,editing);editing={...editing,...(await db.query('SELECT s.code,l.name location_name,v.name supplier_name FROM skus s,locations l,suppliers v WHERE s.id=$1 AND l.id=$2 AND v.id=$3',[editing.sku_id,editing.location_id,editing.supplier_id])).rows[0]};}
  return {locked,plan:state.plan,shadow:state.shadow,owner:user.role==='owner',rows:rows.slice(0,100),policies:policies.slice(0,100),more:rows.length>100||policies.length>100,page:n,selected,editing};
 }
 const definition={id:51,key:'delivery-quality',label:'Hold supplier deliveries until physical inspection',readPage:async()=>({summary:'Configure an exact supplier, whole-unit product, receiving location and physical checklist. Goods stay unavailable until a person checks them. Growth learns from a completed manual example; Pro and Custom can use explicit limits without training. Failed goods stay held.',rows:[{Action:'Open delivery QC',link:'/autopilot/delivery-quality'}],more:false})};
 async function inbox(db,workspaceId,actorId){
- await actor(db,{workspaceId,actorId},{owner:true});
+ await actor(db,{workspaceId,actorId},{owner:true,lock:false});
  const rows=(await db.query(`SELECT h.id,h.quantity,h.status,h.created_at,s.code,l.name FROM stockchief_runtime.agent_quality_holds h
   JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id JOIN locations l ON l.workspace_id=h.workspace_id AND l.id=h.location_id
   WHERE h.workspace_id=$1 AND h.status<>'PASSED' ORDER BY h.created_at,h.id LIMIT 50`,[workspaceId])).rows;
