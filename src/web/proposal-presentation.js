@@ -73,7 +73,7 @@ function present(proposal){
  }
  if(proposal.action_type==='document.save_product_facts'){
   const p=proposal.payload,labels=require('../documents/agent-product-facts').labels;
-  return {summary:proposal.summary,impact:'Saves sourced product facts',fields:[{label:'Product',value:p.productName},{label:'Source',value:p.filename},...p.facts.flatMap(f=>[{label:labels[f.field],value:f.value},{label:'Source quote',value:f.quote}])]};
+  return {summary:proposal.summary,impact:p.queueReading?'Queues the complete source reading':'Saves sourced product facts',fields:[{label:'Product',value:p.productName},{label:'Source',value:p.filename},...(p.facts||[]).flatMap(f=>[{label:labels[f.field],value:f.value},{label:'Source quote',value:f.quote}])]};
  }
  if(proposal.action_type?.startsWith('document.file_to_')){
   const p=proposal.payload;

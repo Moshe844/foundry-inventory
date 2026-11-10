@@ -6,6 +6,6 @@ test('automatic invoice evidence uses exact source headers, quantities and curre
  assert.throws(()=>parse(text('USD','1.25','2.51')),/line does not reconcile/);
  assert.throws(()=>parse(text('USD','1.25','2.50').replace('Due date: 2026-12-01','Due date: 2026-12-01\nDue date: 2027-01-01')),/one clear/);
  assert.throws(()=>parse(text('JPY','1.25','2.50')),/decimal|whole|fraction|places/);
- assert.throws(()=>parse(text('USD','1.25','2.50').replace('Quantity','Purchase packs')),/table needs/);
+ assert.equal(parse(text('USD','1.25','2.50').replace('Quantity','Purchase packs')).rows[0].quantityBasis,'purchase');
  assert.throws(()=>parse(text('USD','1.25','2.50')+'OTHER|1|1.00|1.00\n'),/total does not agree/);
 });

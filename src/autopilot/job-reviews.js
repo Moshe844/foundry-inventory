@@ -46,6 +46,8 @@ const definitions=[
   require('./third-party-stock').definition,
   require('../sales/agent-arrived-stock').definition,
   require('../sales/agent-stock-ready').definition,
+  require('../purchasing/agent-supplier-invoice-intake').definition,
+  require('../purchasing/agent-supplier-invoice-intake').errorDefinition,
   require('../purchasing/agent-invoice-disputes').definition,
   require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
@@ -219,7 +221,7 @@ async function run(db,ctx,key,options={}){
     rows=(await db.query(sql+' LIMIT 101 OFFSET $'+args.length,args)).rows;
     more=rows.length>100;rows=rows.slice(0,100);
     for(const row of rows) if(row.price_minor!=null){
-      row['Supplier unit price']=money.format(row.price_minor,row.Currency);delete row.price_minor;
+      row['Supplier unit price']=money.format(row.display_price_minor??row.price_minor,row.Currency)+(row.price_quantity!=null&&Number(row.price_quantity)!==1?' per '+row.price_quantity+' pricing units':'');delete row.price_minor;delete row.display_price_minor;delete row.price_quantity;
     }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);

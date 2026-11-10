@@ -1,0 +1,7 @@
+'use strict';
+// A complete, bounded HTML source becomes plain text; scripts and styles are
+// non-visible source code, never instructions. This parser performs no fetches.
+function text(value){if(typeof value!=='string'||value.length>2000000||/<!ENTITY|<!DOCTYPE(?!\s+html\s*>)/i.test(value))throw Error('Use a complete readable HTML invoice without external entity declarations.');const {DOMParser}=require('@xmldom/xmldom'),html=value.replace(/<!DOCTYPE\s+html\s*>/ig,''),doc=new DOMParser({errorHandler:{warning:()=>{},error:()=>{},fatalError:()=>{throw Error('This original HTML source could not be completely read.');}}}).parseFromString(html,'text/html');
+ const children=n=>{const a=[];for(let c=n.firstChild;c;c=c.nextSibling)a.push(c);return a;},walk=n=>{if(n.nodeType===3)return n.data;if(n.nodeType!==1&&n.nodeType!==9)return '';const tag=String(n.localName||'').toLowerCase();if(['script','style'].includes(tag))return '';if(tag==='br')return '\n';if(tag==='tr')return '\n'+children(n).filter(c=>['td','th'].includes(String(c.localName).toLowerCase())).map(c=>walk(c).replace(/\s+/g,' ').trim()).join('|')+'\n';const body=children(n).map(walk).join('');return ['p','div','h1','h2','h3','li','table'].includes(tag)?'\n'+body+'\n':body;};const result=walk(doc).replace(/[\t ]+/g,' ').replace(/\n[ ]+/g,'\n').replace(/\n{3,}/g,'\n\n').trim();if(!result)throw Error('This HTML invoice has no complete readable text.');return result;
+}
+module.exports={text};
