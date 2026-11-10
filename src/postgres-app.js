@@ -175,7 +175,9 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   });
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
+  app.use('/customer/order',require('./web/routes/customer-order-page').csrfError);
   app.use(require('./web/routes/supplier-order-link').router(database));
+  app.use(require('./web/routes/customer-order-page').router(database));
   app.use(require('./lib/request-read-cache').middleware);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
   app.use(require('./web/mfa-middleware')(database));

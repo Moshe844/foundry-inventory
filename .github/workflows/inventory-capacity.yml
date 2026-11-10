@@ -203,6 +203,9 @@ jobs:
       - name: Physical return conditions, exact decisions, repair holds, human write-offs and plan-safe rules
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-return-disposition.test.js tests/postgres/agent-return-disposition-boundaries.test.js tests/postgres/agent-return-disposition-ui.test.js tests/postgres/agent-return-disposition-schema.test.js tests/postgres/agent-return-disposition-navigation.test.js tests/postgres/agent-return-disposition-volume.test.js tests/postgres/agent-return-disposition-reporting.test.js
+      - name: Private customer order pages, accepted terms, Pro teaching, exact native drafts and plan-safe anonymous intake
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-customer-order-pages.test.js tests/postgres/agent-customer-order-page-boundaries.test.js tests/postgres/agent-customer-order-pages-ui.test.js tests/postgres/agent-customer-order-page-schema.test.js tests/postgres/agent-customer-order-page-http.test.js tests/postgres/agent-customer-order-page-volume.test.js tests/postgres/agent-customer-order-page-reporting.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
