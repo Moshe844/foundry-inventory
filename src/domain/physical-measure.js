@@ -9,6 +9,7 @@ const factor=10n**BigInt(scale);
 function decimal(value,label){
   const text=String(value??'').trim().replace(/(\.\d*?)0+$/,'$1').replace(/\.$/,'');
   const match=/^(\d{1,14})(?:\.(\d{1,18}))?$/.exec(text);
+  if(/^-\d+(?:\.\d+)?$/.test(text))throw new ValidationError(label+' must be positive.');
   if(!match)throw new ValidationError(label+' needs a plain decimal value.');
   const fraction=match[2]||'';
   return {numerator:BigInt(match[1]+fraction),denominator:10n**BigInt(fraction.length)};

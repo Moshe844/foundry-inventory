@@ -8,6 +8,9 @@ const classification=Object.freeze({
  'actions/second-read.js':'NOT_PG_ENABLED',
  'ai/deadline.js':'NOT_PG_ENABLED',
  'ai/providers/anthropic.js':'METERED',
+ // The speech transport consumes the one-use, database-funded duration hold.
+ 'ai/providers/openai-transcription.js':'METERED',
+ 'documents/agent-voice-receiving.js':'METERED',
  // The data-only Ask interpreter rejects providers that are not host-branded
  // by the native relay, which owns reservations and exact cost settlement.
  'assistant/bounded-business-read.js':'METERED',
@@ -15,6 +18,7 @@ const classification=Object.freeze({
  'assistant/mail-draft.js':'NOT_PG_ENABLED',
  // Ask receives a per-call commercial/model wrapper in postgres-service;
  // planner retries, fit reviews and answers remain separate metered attempts.
+ 'assistant/postgres-answer-preferences.js':'METERED',
  'assistant/postgres-capability-planner.js':'METERED',
  'assistant/postgres-control-plane.js':'METERED',
  'assistant/postgres-evidence-answer.js':'METERED',

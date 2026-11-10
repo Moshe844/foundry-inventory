@@ -6,6 +6,7 @@ const VERSION={anthropic:'2023-06-01',openai:'responses-2026-10-11'};
 const DEFAULTS={operation:{ask:.30,instruction:1.50,import_mapping:.30},
  period:{starter:25,growth:75,pro:100,enterprise:250}};
 const creditsOnly=()=>process.env.STOCKCHIEF_AI_METER!=='cost';
+const transcriptionHolds=new WeakSet();
 const MAX_PROVIDER_EXECUTIONS=3; // Initial request plus SDK's two transport retries.
 const INPUT_OVERHEAD_TOKENS=8192; // Conservative protocol/tool overhead on top of UTF-8 bytes.
 function configuredUsd(name,fallback){const raw=process.env[name];const value=raw===undefined?fallback:Number(raw);
@@ -96,7 +97,13 @@ async function reserveTranscription(database,scope,provider,seconds,idempotencyK
  const bound={provider:provider.name,model:provider.model,providerVersion:provider.providerVersion,rateSources:[rate.source],
   maximumMinor:Math.ceil(durationLimit*Number(rate.cost_per_unit_minor)*2*1e6)/1e6,
   providerExecutions:1,durationLimit};
- return {...await reserveBound(database,scope,bound,'import_mapping',idempotencyKey,idempotencyKey,{actorId:scope.actorId},true),durationLimit};
+ const hold={...await reserveBound(database,scope,bound,'import_mapping',idempotencyKey,idempotencyKey,
+  {actorId:scope.actorId},true),durationLimit};
+ transcriptionHolds.add(hold);
+ return hold;
+}
+function useTranscriptionHold(hold){
+ return transcriptionHolds.delete(hold);
 }
 async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope,nativeTransport=false){
  const operationCap=operationLimit(operation)*100;
@@ -331,4 +338,4 @@ async function status(database,workspaceId){
  return {...usage,creditsOnly:creditsOnly(),warning:enforceCost&&(usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8),
   blocked:enforceCost&&(usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor)};
 }
-module.exports={reserve,reserveNative,reserveTranscription,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};
+module.exports={reserve,reserveNative,reserveTranscription,useTranscriptionHold,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};
