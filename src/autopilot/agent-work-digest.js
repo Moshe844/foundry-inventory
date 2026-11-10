@@ -102,6 +102,13 @@ async function report(db,ctx,{filter='',page=1}={}){
   JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
   WHERE p.workspace_id=$1 AND p.purchase_created_at>=$2::timestamptz AND p.purchase_created_at<$3::timestamptz
    AND ($5::text IS NULL OR p.purchase_created_at>=$5::timestamptz) ORDER BY p.purchase_created_at,p.id LIMIT $7
+ ), delivery_quality AS (
+  SELECT 'delivery-qc' AS origin,h.id,'inventory.inspect_delivery' AS action_type,
+   'Applied delivery QC hold: '||h.quantity||' units of '||s.code AS summary,
+   jsonb_build_object('holdId',h.id) AS result,h.created_at AS executed_at,'{}'::jsonb AS payload,false AS undone
+  FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id
+  WHERE h.workspace_id=$1 AND h.automatic AND h.created_at>=$2::timestamptz AND h.created_at<$3::timestamptz
+   AND ($5::text IS NULL OR h.created_at>=$5::timestamptz) ORDER BY h.created_at,h.id LIMIT $7
  ), promotion_purchases AS (
   SELECT 'promotion-purchase' AS origin,p.id,'purchasing.plan_promotion_stock' AS action_type,
    'Prepared promotion purchase draft: '||o.po_number||' from '||s.reference AS summary,
@@ -110,11 +117,11 @@ async function report(db,ctx,{filter='',page=1}={}){
   JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
   WHERE p.workspace_id=$1 AND p.purchase_created_at>=$2::timestamptz AND p.purchase_created_at<$3::timestamptz
    AND ($5::text IS NULL OR p.purchase_created_at>=$5::timestamptz) ORDER BY p.purchase_created_at,p.id LIMIT $7
- ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans UNION ALL SELECT * FROM team_procedures UNION ALL SELECT * FROM product_retirements UNION ALL SELECT * FROM shutdown_purchases UNION ALL SELECT * FROM promotion_purchases) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
+ ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans UNION ALL SELECT * FROM team_procedures UNION ALL SELECT * FROM product_retirements UNION ALL SELECT * FROM shutdown_purchases UNION ALL SELECT * FROM promotion_purchases UNION ALL SELECT * FROM delivery_quality) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
   [ctx.workspaceId,from,to,(page-1)*100,history.activityAfter,[...kinds.keys()],page*100+1])).rows;
  const more=proposals.length>100;if(more)proposals.pop();const current=await states(db,ctx,proposals),entries=[];
  const rows=proposals.map(p=>{const undo=undoable(p,current);if(undo.allowed)entries.push({id:p.id,summary:p.summary,what:undo.reason});
-  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='promotion-purchase'?'/autopilot/promotion-stock/'+p.payload.promotionId:p.origin==='shutdown-purchase'?'/autopilot/supplier-shutdowns/'+p.payload.shutdownId:p.origin==='product-retirement'?'/autopilot/discontinued-products/'+p.id:p.origin==='team-procedure'?'/autopilot/team-procedures/'+p.id:p.origin==='container-plan'?'/autopilot/container-plans/'+p.id:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
+  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='delivery-qc'?'/autopilot/delivery-quality/'+p.id:p.origin==='promotion-purchase'?'/autopilot/promotion-stock/'+p.payload.promotionId:p.origin==='shutdown-purchase'?'/autopilot/supplier-shutdowns/'+p.payload.shutdownId:p.origin==='product-retirement'?'/autopilot/discontinued-products/'+p.id:p.origin==='team-procedure'?'/autopilot/team-procedures/'+p.id:p.origin==='container-plan'?'/autopilot/container-plans/'+p.id:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
  return {rows,more,undoForm:{day,entries},summary:'Recorded agent work for '+day+' in '+timeZone+'. Undo is available for an unchanged draft or the most recent purchase-cost update. Stock movements, sent messages and posted money need their own reviewed correction.'};
 }
 async function undo(db,ctx,id){return db.transaction(async c=>{
