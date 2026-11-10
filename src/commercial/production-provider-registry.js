@@ -34,6 +34,7 @@ const classification=Object.freeze({
  'foundry/document-intake.js':'NOT_PG_ENABLED',
  'foundry/understanding-service.js':'NOT_PG_ENABLED',
  'imports/mapping-service.js':'METERED',
+ 'imports/handwritten-table.js':'METERED',
  // Relational workbook interpretation receives the same funded import provider.
  'imports/workbook-relations.js':'METERED',
  'lib/provider-http.js':'METERED',

@@ -19,7 +19,7 @@ const expected={
  'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':2,
  'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
  'connections/providers/common.js':1,'connections/providers/store-network.js':1,'connections/reply-drafting.js':1,
- 'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,'imports/workbook-relations.js':1,
+ 'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,'imports/workbook-relations.js':1,'imports/handwritten-table.js':1,
  'lib/provider-http.js':1,'lib/postal-lookup.js':1,'manager/operating-instructions.js':1,
  'manager/postgres-operating-instructions.js':1,'operations/email.js':1,'operations/monitoring.js':1,
  'operations/postgres-monitoring.js':1,'payments/connect.js':3,'payments/providers/stripe.js':1,

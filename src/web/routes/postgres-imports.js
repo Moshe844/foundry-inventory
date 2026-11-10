@@ -34,7 +34,9 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       return next(new (require('../../domain/errors').AuthorizationError)('Purchase permissions are required to view source files and their costs.'));
     return next();
   });
-  async function renderStart(req,res){return res.page('imports/start',{
+  async function renderStart(req,res){const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId),scope={accountId:state.accountId,workspaceId:req.ctx.workspaceId},creditPolicy=await require('../../commercial/ai-credit-policy').policy(database,scope),readingPolicy=(await database.query("SELECT units FROM commercial_operation_policies WHERE operation='import_mapping'")).rows[0];return res.page('imports/start',{
+    handwritingPageCredits:Number(readingPolicy?.units||0)*creditPolicy.scale,
+    handwritingAllowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,139,'draft'),
     migrationAllowed:(await require('../../onboarding/postgres-cutover').planAccess(database,req.ctx)).allowed,
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
@@ -76,6 +78,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     // tab. They must not depend on refreshed markup or a JavaScript header.
     if(file||req.body.prepareAsync==='yes'||String(req.get('prefer')||'').includes('respond-async')){
       const upload=await sourceUploads.enqueue(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,filename:file?.filename,
+        readingMode:trimOrNull(req.body.readingMode),
         requestKey:trimOrNull(req.body.uploadKey),defaultLocationId:trimOrNull(req.body.defaultLocationId),
         usageKey:require('../../imports/usage-key').analysisUsageKey(sourceHash,req.body.usageKey)});
       if(wantsJson)return res.status(202).json({ok:true,location:upload.href});
@@ -86,6 +89,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       usageKey:require('../../imports/usage-key').analysisUsageKey(sourceHash,req.body.usageKey)});
     if(wantsJson)return res.status(201).json({ok:true,location:`/imports/${plan.id}`});
     return res.redirect(303,`/imports/${plan.id}`);
+  }));
+  router.get('/imports/:id/source',asyncRoute(async(req,res)=>{
+    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id),source=(await database.query('SELECT source_hash,source_content FROM import_source_snapshots WHERE workspace_id=$1 AND import_id=$2',[req.ctx.workspaceId,plan.id])).rows[0];
+    if(!source||crypto.createHash('sha256').update(source.source_content).digest('hex')!==plan.sourceHash||source.source_hash!==plan.sourceHash)throw new ValidationError('The original source is unavailable or failed its integrity check. Upload the original again before approving.');
+    const b=source.source_content,pdf=b.subarray(0,5).toString()==='%PDF-',png=b.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')),jpeg=b[0]===255&&b[1]===216,codec=require('../../imports/image-codecs').kind(b),kind=codec?[codec==='heic'?'image/heic':'image/tiff',codec]:pdf?['application/pdf','pdf']:png?['image/png','png']:jpeg?['image/jpeg','jpg']:['application/octet-stream','bin'];
+    res.set({'Content-Type':kind[0],'Content-Disposition':(pdf||png||jpeg?'inline':'attachment')+'; filename="original-source.'+kind[1]+'"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'",'Referrer-Policy':'no-referrer'});res.send(b);
   }));
   async function renderPreview(req,res,{reviewError=null}={}){
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
@@ -139,6 +148,13 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
+  router.post('/imports/:id/receiving-form',asyncRoute(async(req,res)=>{
+    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);if(plan.transformations.handwriting?.purpose!=='delivery')throw new ValidationError('Choose a handwritten delivery-note preview.');
+    await require('../../imports/handwritten-table').authorize(database,req.ctx);
+    const ref=typeof req.body.purchaseOrder==='string'?req.body.purchaseOrder.trim().replace(/^#/,''):'';const orders=(await database.query('SELECT po_number FROM purchase_orders WHERE workspace_id=$1 AND (id=$2 OR lower(po_number)=lower($2)) LIMIT 2',[req.ctx.workspaceId,ref])).rows;if(orders.length!==1)throw new ValidationError('Enter one exact purchase order number from this inventory.');
+    const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Prepare the receiving form from this reviewed original delivery note',{action:'purchase_order.receive_from_document',recordReference:orders[0].po_number,sourceImport:plan.id,receivingBasis:req.body.receivingBasis});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact placed purchase order and the written quantity units.');return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
   router.post('/imports/:id/previous-mapping',asyncRoute(async(req,res)=>{
     await require('../../imports/agent-column-mapping').apply(database,req.ctx,req.params.id,req.body);
     req.flash('success','The earlier column mapping was submitted for this preview. Review the updated rows before importing.');
@@ -176,6 +192,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       const quantityOverrides=Object.fromEntries(Object.entries(req.body).filter(([key,value])=>
         /^quantity_\d+$/.test(key)&&trimOrNull(value)).map(([key,value])=>[key.slice(9),String(value).trim()]));
       const codeOverrides=Object.fromEntries(Object.entries(req.body).filter(([key])=>/^image_code_\d+$/.test(key)).map(([key,value])=>[key.slice(11),String(value).trim()]));
+      const imageCellOverrides={};for(const [key,value] of Object.entries(req.body)){const m=key.match(/^image_cell_(\d+)_(\d+)$/);if(m)(imageCellOverrides[m[1]]||={})[m[2]]=String(value);}
       const moneyOverrides={};for(const [key,value] of Object.entries(req.body)){const m=key.match(/^image_money_(unitCost|sellingPrice)_(\d+)$/);if(m)(moneyOverrides[m[2]]||={})[m[1]]=String(value).trim();}
       const hasFieldMappings=plan.sourceColumns.some((column)=>
         Object.hasOwn(req.body,`mapping_${column.index}`));
@@ -191,7 +208,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
         }])),
         locationMappings,quantityOverrides,documentRowRoles:Object.fromEntries(Object.entries(req.body).filter(([key,value])=>/^document_role_\d+$/.test(key)&&value).map(([key,value])=>[key.slice(14),value])),fieldMappings,...(Object.keys(codeOverrides).length?{codeOverrides}:{}),...(Object.keys(moneyOverrides).length?{moneyOverrides}:{}),confirmImageReading:req.body.confirmImageReading==='yes',
-        ...(req.body.confirmImageReading==='yes'?{reviewedRowNumbers:Object.keys(codeOverrides)}:{}),
+        ...(Object.keys(imageCellOverrides).length?{imageCellOverrides}:{}),
+        ...(req.body.confirmImageReading==='yes'?{reviewedRowNumbers:[...new Set([...Object.keys(codeOverrides),...Object.keys(imageCellOverrides)])]}:{}),
         trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
           ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
         confirmTrackingChange:req.body.confirmTrackingChange==='yes',

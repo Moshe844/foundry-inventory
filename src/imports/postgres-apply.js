@@ -12,7 +12,7 @@ async function run(database,ctx,plan,executionId,inputOptions,deps){
   if(attempts++>0)onRetry?.();
   const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
   if(!locked||locked.approval_status!=='APPROVED'||locked.integrity_hash!==plan.integrityHash)throw new ValidationError('The approved import changed. Its saved batches remain recorded.');
-  await deps.assertOperator(client,ctx);await deps.assertSourceClaim(client,ctx,plan);await enforcement.workspace(client,ctx.workspaceId,'imports.spreadsheet');await deps.bulkPlanning(client);
+  await deps.assertOperator(client,ctx);await deps.assertSourceClaim(client,ctx,plan);await enforcement.workspace(client,ctx.workspaceId,'imports.spreadsheet');if(plan.transformations.handwriting)await require('../commercial/agent-plan').requireWorkspaceJob(client,ctx.workspaceId,139,'draft');await deps.bulkPlanning(client);
   if(batchSize===2000)await client.query("SET LOCAL stockchief.defer_import_coverage='on'");
   const saved=locked.apply_checkpoint||{};if(saved.hash&&saved.hash!==plan.integrityHash)throw new ValidationError('Saved import progress belongs to another approval.');
   const result=await operation(client,saved);
