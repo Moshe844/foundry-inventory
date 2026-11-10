@@ -259,13 +259,21 @@ async function failures(database,workspaceId){
     JOIN stockchief_runtime.business_reconciliation_checks c ON c.workspace_id=r.workspace_id AND c.run_id=r.id
     WHERE state.workspace_id=$1 AND state.status='FAILED' AND c.status='FAIL' ORDER BY c.created_at,c.id`,[workspaceId])).rows;
   const money=require('../pricing/postgres-service').formatMinor;
+  // Stock positions are named by product code and place, so the owner can open them.
+  const positions=rows.flatMap(row=>(row.observed?.rows||[]).filter(r=>r.sku_id&&r.location_id).map(r=>({sku_id:r.sku_id,location_id:r.location_id})));
+  const places=new Map(positions.length?(await database.query(`SELECT s.id AS sku_id,l.id AS location_id,s.code,s.item_id,l.name AS location_name
+    FROM jsonb_to_recordset($2::jsonb) x(sku_id text,location_id text) JOIN skus s ON s.workspace_id=$1 AND s.id=x.sku_id
+    JOIN locations l ON l.workspace_id=$1 AND l.id=x.location_id`,[workspaceId,JSON.stringify(positions)])).rows.map(p=>[p.sku_id+':'+p.location_id,p]):[]);
   return rows.map(row=>{const words=WORDS[row.invariant_key]||{title:'A record does not match the books',href:'/needs-you'};
-    const observed=row.observed||{},sample=(observed.rows||[])[0]||{},count=Number(observed.mismatchCount||0);
-    const named=(observed.rows||[]).map(r=>r.invoice_number||r.payment_number||r.order_number||(r.entry_number!=null?'entry #'+r.entry_number:null)).filter(Boolean).slice(0,3);
+    const observed=row.observed||{},list=observed.rows||[],sample=list[0]||{},count=Number(observed.mismatchCount||0);
+    const place=r=>places.get(r.sku_id+':'+r.location_id);
+    const named=[...new Set(list.map(r=>r.invoice_number||r.payment_number||r.order_number||(r.entry_number!=null?'entry #'+r.entry_number:null)
+      ||(place(r)?place(r).code+' at '+place(r).location_name:null)).filter(Boolean))].slice(0,3);
+    const items=[...new Set(list.map(r=>place(r)?.item_id).filter(Boolean))];
     const happened=sample.ledger_minor!==undefined
       ?`${words.books} in your books is ${money(Number(sample.ledger_minor),sample.currency)}; your records add up to ${money(Number(sample.records_minor),sample.currency)}.`
       :`${count} ${count===1?'record does':'records do'} not match${named.length?': '+named.join(', '):''}.`;
-    return {key:row.invariant_key,title:words.title,href:words.href,happened,checkedAt:row.completed_at};});
+    return {key:row.invariant_key,title:words.title,href:items.length===1?'/inventory/'+items[0]:words.href,happened,checkedAt:row.completed_at};});
 }
 
 module.exports={INVARIANTS,WORDS,scopedQuery,run,runBatch,job,failedJob,dueWorkspaces,failures};
