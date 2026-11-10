@@ -42,8 +42,8 @@ async function facts(db,ctx,id,connectorId){
  const evidence={recordId:id,returnNumber:rma.return_number,customerId:s.customer_id,customerName:s.customer_name,recipient:s.contact_email,
   orderNumber:s.order_number,shipmentId:s.id,labelUrl:s.label_url,labelReceipt:receipt.id,tracking:s.tracking_number,carrier:s.carrier,service:s.service,
   returnLocationId:s.ship_from_location_id,returnLocation:s.return_location,returnAddress:s.return_address,origin:s.return_origin,boxes,quantities,products,currency:s.currency,goodsValueMinor,
-  connectorId:mailbox.id,mailboxAccount:mailbox.provider_account_id};
- const training=require('../autopilot/draft-authority').scope(s.customer_id,s.currency,goodsValueMinor,[action,evidence.recipient,evidence.returnLocationId,evidence.returnAddress,evidence.origin,evidence.connectorId,evidence.mailboxAccount,products.map(({quantity,...p})=>p)],s.customer_name+' · '+s.return_location+' · '+products.map(p=>p.sku).join(', ')+' · same return route and mailbox');
+  connectorId:mailbox.id,mailboxProvider:mailbox.provider_type,mailboxAccount:mailbox.provider_account_id};
+ const training=require('../autopilot/draft-authority').scope(s.customer_id,s.currency,goodsValueMinor,[action,evidence.recipient,evidence.returnLocationId,evidence.returnAddress,evidence.origin,evidence.connectorId,evidence.mailboxProvider,evidence.mailboxAccount,products.map(({quantity,...p})=>p)],s.customer_name+' · '+s.return_location+' · '+products.map(p=>p.sku).join(', ')+' · same return route and mailbox');
  const known=(await db.query(`SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND customer_id=$2 AND lower(recipient)=lower($3)
  AND status='SENT' AND external_message_id IS NOT NULL LIMIT 1`,[ctx.workspaceId,s.customer_id,s.contact_email])).rowCount>0;
  return {...evidence,sourceFingerprint:hash(evidence),training,needsRecipientConfirmation:!known};
@@ -74,8 +74,13 @@ async function authority(db,workspaceId,p){
   const rule=(await db.query('SELECT maximum_minor,authorized_by FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4',[workspaceId,action,fresh.training.key,fresh.currency])).rows[0];
   if(rule&&(rule.authorized_by!==p.actorId||Number(rule.maximum_minor)<fresh.goodsValueMinor))throw new ValidationError('These returned goods exceed the current owner’s saved instructions authority. Review this message individually.');
  }
- const saved=(await db.query("SELECT recipient,subject,body,connector_id FROM customer_communications WHERE workspace_id=$1 AND idempotency_key=$2",[workspaceId,'return-label:'+fresh.shipmentId])).rows[0],words=compose(fresh);
- if(saved&&(saved.recipient!==fresh.recipient||saved.connector_id!==fresh.connectorId||saved.subject!==words.subject||saved.body!==words.body))throw new ValidationError('Review the earlier return-label delivery before replacing its message.');
+ const saved=(await db.query(`SELECT m.recipient,m.subject,m.body,m.connector_id,e.status effect_status,e.result effect_result,e.error_code effect_error FROM customer_communications m
+ LEFT JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send'
+ WHERE m.workspace_id=$1 AND m.idempotency_key=$2`,[workspaceId,p.deliveryKey||'return-label:'+fresh.shipmentId])).rows[0],words=compose(fresh);
+ if(saved&&(saved.recipient!==fresh.recipient||saved.connector_id!==fresh.connectorId||saved.subject!==words.subject||saved.body!==words.body)){
+  const reviewUnsent=!p.deliveryKey&&!p.automatic&&['FAILED','PENDING'].includes(saved.effect_status)&&saved.effect_error&&saved.effect_result?.providerNotCalled===true;
+  if(!reviewUnsent)throw new ValidationError('Review the earlier return-label delivery before replacing its message.');
+ }
  return fresh;
 }
 
@@ -94,7 +99,6 @@ async function execute(db,ctx,p){
  WHERE m.workspace_id=$1 AND e.payload->'standingAuthority'->>'kind'='return_label' AND e.payload->'standingAuthority'->>'shipmentId'=$2
  ORDER BY e.created_at DESC,e.id DESC LIMIT 1 FOR UPDATE OF m,e`,[ctx.workspaceId,fresh.shipmentId])).rows[0];
  if(existing){
-  if(existing.payload?.standingAuthority?.sourceFingerprint!==fresh.sourceFingerprint)throw new ValidationError('Review the existing label message and its source before sending another.');
   const unsent=['FAILED','PENDING'].includes(existing.effect_status)&&existing.effect_error&&existing.effect_result?.providerNotCalled===true;
   if(unsent){
    if(automatic)throw new ValidationError('This return email was held before the mailbox was called. Review and approve this exact retry individually.');
@@ -103,11 +107,12 @@ async function execute(db,ctx,p){
    key+=':after:'+existing.effect_id;
    await require('../operations/postgres-security-audit').record(db,ctx,{action:'Unsent return-label email replaced after individual review',reference:p.recordId,after:{previousMessage:existing.id,previousEffect:existing.effect_id,providerNotCalled:true}});
   }else{
+   if(existing.payload?.standingAuthority?.sourceFingerprint!==fresh.sourceFingerprint)throw new ValidationError('Review the existing label message and its source before sending another.');
    if(['FAILED','AMBIGUOUS','CANCELLED'].includes(existing.effect_status))throw new ValidationError('Review the existing label message and its delivery before sending another.');
    return {communicationId:existing.id,communicationKind:'customer',customerReturnId:p.recordId,effectId:existing.effect_id,status:existing.status,automatic,replayed:true};
   }
  }
- const r=await require('../connections/postgres-outbound-mail').queueInTransaction(db,ctx,{recipientKind:'customer',recipientId:fresh.customerId,recipientEmail:fresh.recipient,connectorId:fresh.connectorId,...compose(fresh),standingAuthority:grant},key,{agentRequested:true,agentJob:112});
+ const r=await require('../connections/postgres-outbound-mail').queueInTransaction(db,ctx,{recipientKind:'customer',recipientId:fresh.customerId,recipientEmail:fresh.recipient,connectorId:fresh.connectorId,...compose(fresh),standingAuthority:{...grant,deliveryKey:key}},key,{agentRequested:true,agentJob:112});
  return {...r,customerReturnId:p.recordId,automatic};
 }
 async function confirmedExample(db,workspaceId,p){return p.result?.automatic===false&&p.result?.replayed!==true&&Boolean((await db.query(`SELECT 1 FROM customer_communications m
