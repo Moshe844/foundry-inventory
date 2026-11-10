@@ -170,6 +170,9 @@ jobs:
       - name: Delivery QC holds, physical inspection, plan limits and native stock guards
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-quality-holds.test.js tests/postgres/agent-quality-warehouse.test.js tests/postgres/agent-quality-boundaries.test.js tests/postgres/agent-quality-holds-ui.test.js tests/postgres/agent-quality-upgrade.test.js tests/postgres/agent-quality-reporting-volume.test.js
+      - name: Supplier RFQ batch sending, exact plan rules and safe delivery recovery
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-supplier-rfqs.test.js tests/postgres/agent-supplier-rfq-volume.test.js tests/postgres/agent-supplier-rfq-boundaries.test.js tests/postgres/agent-supplier-rfq-recovery.test.js tests/postgres/agent-supplier-rfq-reporting.test.js tests/postgres/agent-supplier-rfq-upgrade.test.js tests/postgres/agent-supplier-rfq-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

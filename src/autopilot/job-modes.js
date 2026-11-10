@@ -2,7 +2,7 @@
 
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
-const auditedJobs=new Set([5,6,11,13,14,20,21,24,25,31,36,38,43,47,48,49,50,51,52,53,56,57,59,60,67,73,74,75,77,81,94,96,97,98,100,102,103,107,111,114,119,120,121,122,123,127,129,130,132,133,135,136,137,142,145,147,150,178]);
+const auditedJobs=new Set([5,6,11,13,14,20,21,24,25,31,36,38,43,47,48,49,50,51,52,53,56,57,59,60,67,73,74,75,77,81,93,94,96,97,98,100,102,103,107,111,114,119,120,121,122,123,127,129,130,132,133,135,136,137,142,145,147,150,178]);
 const definitions=require('../commercial/agent-plan-v3.json').filter(r=>auditedJobs.has(r.id));
 const tiers=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
 const modes={inherit:'Use inventory setting',watch:'Watch only',ask:'Ask me first',routine:'Handle routine work'};
