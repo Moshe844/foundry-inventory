@@ -84,6 +84,20 @@ async function reserveNative(database,scope,provider,{inputTokens,outputTokens},
  const bound=await pricedBound(database,provider,{},policy,operation,{inputTokens,outputTokens});
  return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope,true);
 }
+async function reserveTranscription(database,scope,provider,seconds,idempotencyKey){
+ if(!Number.isFinite(seconds)||seconds<0.15||seconds>120)throw new ValidationError('Voice note duration exceeds the approved transcription limit.');
+ const rate=(await database.query(`SELECT cost_per_unit_minor,source,pricing_basis FROM commercial_cost_rates
+  WHERE provider=$1 AND model=$2 AND provider_version=$3 AND operation='audio_transcription' AND unit='second'
+  AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
+  ORDER BY effective_from DESC,id DESC LIMIT 1`,[provider.name,provider.model,provider.providerVersion])).rows[0];
+ if(!rate||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT','CONSERVATIVE_ESTIMATE'].includes(rate.pricing_basis)||Number(rate.cost_per_unit_minor)<=0)
+  throw new ValidationError('The voice provider has no approved price bound. No provider call was made.');
+ const durationLimit=Math.ceil(seconds)+1;
+ const bound={provider:provider.name,model:provider.model,providerVersion:provider.providerVersion,rateSources:[rate.source],
+  maximumMinor:Math.ceil(durationLimit*Number(rate.cost_per_unit_minor)*2*1e6)/1e6,
+  providerExecutions:1,durationLimit};
+ return {...await reserveBound(database,scope,bound,'import_mapping',idempotencyKey,idempotencyKey,{actorId:scope.actorId},true),durationLimit};
+}
 async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope,nativeTransport=false){
  const operationCap=operationLimit(operation)*100;
  if(bound.maximumMinor>operationCap)throw Object.assign(new RateLimitError(
@@ -233,7 +247,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    [newId('modelhold'),scope.accountId,scope.workspaceId,idempotencyKey,bounds.start.toISOString(),bounds.end.toISOString(),
     bound.provider,bound.model,operation,bound.maximumMinor,
     JSON.stringify({...(includedReport?{includedReport:true}:{}),...(fundedCredits?{fundingUsageEventId:fundedCredits.eventId,costBoundedCredits:fundedCredits.credits}:{}),inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
-      providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
+      providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,...(bound.durationLimit?{durationLimitSeconds:bound.durationLimit}:{}),
       operationCapMinor:operationCap,...(certificationFundingWorkspaceId?{certificationFundingWorkspaceId}:{}),accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
       ...(temporaryGoalApproval?{temporaryGoalApproval:{approvalReference:temporaryGoalApproval.approvalReference,
        goalId:temporaryGoalApproval.goalId,maximumMinor:temporaryGoalApproval.maximumMinor,expiresAt:temporaryGoalApproval.expiresAt}}:{}),
@@ -317,4 +331,4 @@ async function status(database,workspaceId){
  return {...usage,creditsOnly:creditsOnly(),warning:enforceCost&&(usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8),
   blocked:enforceCost&&(usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor)};
 }
-module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};
+module.exports={reserve,reserveNative,reserveTranscription,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};

@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 141:{common:'Record a receiving note or upload a mono WAV of up to two minutes. StockChief transcribes it, matches clearly spoken products to a placed purchase order and prepares quantities from approved purchase packs and costs. The original and transcript stay visible. You confirm the goods before stock and accounting change. Preserves explicitly spoken lot codes, exact expiry dates, serial numbers and verified total weights. Unclear tracking and individually weighed serials need separate review. The saved note shows its exact AI credits.',
+ growth:'Prepares a private receiving draft from your voice note. You review the exact original and approve physical receipt.',
+ pro:'Prepares receiving paperwork from the original note and exact purchase order without training. Unclear details and the physical receipt need your review.',
+ enterprise:'Prepares receiving paperwork from the original note and exact purchase order without training, within your usage allowance. Unclear details and the physical receipt need your review.'},
  143:{common:'Reads complete PDF, Word, text and scanned contracts into private prices, currencies, units, payment conditions, notice periods and end-date facts beside literal original quotes. Retains every source section and original file; unclear, conflicting or OCR-derived facts need owner review. Uses 100 AI credits per complete file and one new document, reusing a paid mailbox source receipt. Failed readings refund the new credits. New prices, terms and financial records still need separate approval.',
  starter:'Prepares a read-only contract suggestion from the complete supplied original. Private source quotations and uncertainties stay visible. Automatic discovery and reading of newly filed contracts require Pro or Custom.',
  growth:'Prepares a read-only contract suggestion from the complete supplied original without training. You separately approve new or changed commercial terms. Automatic reading of newly filed contracts requires Pro or Custom.',

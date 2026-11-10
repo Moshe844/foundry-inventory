@@ -6,7 +6,7 @@ const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
   require('../documents/agent-contract-reader').definition,
-  require('../imports/handwritten-table').definition,
+  require('../imports/handwritten-table').definition,require('../documents/agent-voice-receiving').definition,
   require('../warehouse/agent-stock-rotation').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../catalog/agent-channel-copy').definition,
