@@ -21,6 +21,7 @@ const activities = new Map([
   ['po-delivery-date','Update a purchase order from an original supplier delivery promise'],
   ['container-plan','Calculate a container load plan from confirmed carton facts'],
   ['team-procedure','Write a private app procedure from verified completed team work'],
+  ['product-retirement','Retire one checked supplier notice batch and record its replacements'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -105,6 +106,7 @@ async function report(db,ctx,window='week') {
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
       WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
+    SELECT 'product-retirement',n.applied_at FROM stockchief_runtime.agent_product_retirement_notices n WHERE n.workspace_id=$1 AND n.applied_at IS NOT NULL AND (n.result->>'changedCount')::int>0 UNION ALL
     SELECT 'team-procedure',v.created_at FROM stockchief_runtime.agent_team_procedure_versions v
       WHERE v.workspace_id=$1 AND v.created_at>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND NOT EXISTS(
        SELECT 1 FROM stockchief_runtime.agent_team_procedure_versions older WHERE older.workspace_id=v.workspace_id AND older.procedure_id=v.procedure_id
