@@ -47,6 +47,9 @@ test('every Ask table downloads as PDF, Excel and CSV, only for the person who a
  const written=await store.create(db,ctx,'Show products');await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=checkpoint||'{\"runtime\":\"codex-staging\"}'::jsonb WHERE id=$1",[written.id,'### Products\n\n| Product | Price |\n|---|---:|\n| **Shoe** | $10.00 |\n| Hat | $5.00 |']);
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});t.after(()=>app.locals.sessionStore.close());
  const agent=await signIn(app,f);
+ // The latest answer, with records, offers Download answer like any earlier one.
+ const latest=await agent.get('/ask?chat=chat_export_answer');
+ assert.match(latest.text,new RegExp('/ask/answers/'+answer.interactionId+'/export\\.xlsx\\?content=answer'),'the latest answer with records offers Download answer');
  // A page hand-off is not a document: it gets no Download answer.
  const handoff=await assistant.ask(db,ctx,'Take me to purchase orders',{requestKey:'export-handoff',conversationId:'chat_export_answer',usageKey:'export-handoff'});
  assert.ok(handoff.interactionId&&String(handoff.answer).length<80,'a short hand-off answer: '+handoff.answer);
