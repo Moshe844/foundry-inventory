@@ -138,9 +138,20 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     return res.redirect(303,'/onboarding');
   }));
   router.get('/operating-instructions/:id',requireAuth,asyncRoute(async(req,res)=>{const proposal=await operatingInstructions.get(
-    database,req.ctx.workspaceId,req.params.id);const fromAsk=req.query.from==='ask';const nativeGoal=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);const notificationLog=proposal.resolvedChanges.some(c=>c.notificationChannel==='email')?(await database.query(`SELECT d.configuration_hash,r.notification_settings,d.status,d.last_error,d.created_at,d.communication_kind,d.communication_id,coalesce(s.status,c.status) AS message_status,coalesce(s.sent_at,c.sent_at) AS sent_at FROM stockchief_runtime.stock_threshold_deliveries d JOIN stockchief_runtime.stock_threshold_rules r ON r.workspace_id=d.workspace_id AND r.id=d.rule_id LEFT JOIN supplier_communications s ON s.workspace_id=d.workspace_id AND s.id=d.communication_id AND d.communication_kind='supplier' LEFT JOIN customer_communications c ON c.workspace_id=d.workspace_id AND c.id=d.communication_id AND d.communication_kind='customer' WHERE d.workspace_id=$1 AND r.notification_settings->>'approvalId'=$2 ORDER BY d.created_at DESC LIMIT 30`,[req.ctx.workspaceId,proposal.id])).rows.filter(d=>d.configuration_hash===require('../../pricing/postgres-promotions').hash(d.notification_settings)):[];return res.page('settings/postgres-operating-instruction',{
+    database,req.ctx.workspaceId,req.params.id);
+    if(proposal.sopSource){
+      if(req.user.role!=='owner')throw new (require('../../domain/errors').AuthorizationError)('Only the inventory owner can review a private procedure clause.');
+      const state=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId);
+      const policy=require('../../commercial/agent-plan'),included=policy.permits(state.plan,212,'draft');
+      if(!included||!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{
+        title:'Procedure settings',nav:'autopilot',tier:'Pro',reviewTerms:included,
+        backTo:{href:'/autopilot/procedure-originals',label:'Procedure originals'}
+      });
+    }
+    const fromAsk=req.query.from==='ask';const nativeGoal=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);const notificationLog=proposal.resolvedChanges.some(c=>c.notificationChannel==='email')?(await database.query(`SELECT d.configuration_hash,r.notification_settings,d.status,d.last_error,d.created_at,d.communication_kind,d.communication_id,coalesce(s.status,c.status) AS message_status,coalesce(s.sent_at,c.sent_at) AS sent_at FROM stockchief_runtime.stock_threshold_deliveries d JOIN stockchief_runtime.stock_threshold_rules r ON r.workspace_id=d.workspace_id AND r.id=d.rule_id LEFT JOIN supplier_communications s ON s.workspace_id=d.workspace_id AND s.id=d.communication_id AND d.communication_kind='supplier' LEFT JOIN customer_communications c ON c.workspace_id=d.workspace_id AND c.id=d.communication_id AND d.communication_kind='customer' WHERE d.workspace_id=$1 AND r.notification_settings->>'approvalId'=$2 ORDER BY d.created_at DESC LIMIT 30`,[req.ctx.workspaceId,proposal.id])).rows.filter(d=>d.configuration_hash===require('../../pricing/postgres-promotions').hash(d.notification_settings)):[];return res.page('settings/postgres-operating-instruction',{
       title:'Review standing instruction',nav:'settings',room:true,
-      backTo:fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
+      backTo:proposal.sopSource?{href:'/autopilot/procedure-originals/'+proposal.sopSource.sourceId,label:'Procedure original'}:
+        fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
       fromAsk,proposal,nativeGoal,notificationLog,editProposal:req.query.edit==='1',descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);
