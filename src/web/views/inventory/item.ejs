@@ -1,3 +1,4 @@
+<% for(const replacement of locals.replacementGuidance||[]){ %><aside class="notice section"><strong><%= replacement.old_code %> is discontinued.</strong><p>Recorded replacement: <a href="/inventory/<%= replacement.replacement_item_id %>"><%= replacement.replacement_code %> — <%= replacement.replacement_name %></a>. Check the customer’s requirements before choosing it; existing orders were not changed.</p></aside><% } %>
 <% if(locals.finding){ %><aside class="notice notice--warn section" data-item-finding><div><strong><%= finding.title %></strong><p style="margin:4px 0 0"><%= finding.concise_summary %> <%= finding.recommendation %></p><p class="btn-row" style="margin:10px 0 0"><a class="btn btn--primary btn--sm" href="/purchasing">See what to order</a> <a class="btn btn--sm" href="/transfers/new">Move stock</a></p></div></aside><% } %>
 <%
   /*

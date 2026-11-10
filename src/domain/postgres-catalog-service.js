@@ -498,7 +498,23 @@ async function setItemActive(database, ctx, itemId, active) {
   },{isolation:'SERIALIZABLE'});
 }
 
-module.exports = { createItem, createItemInTransaction, createImportedItemInTransaction, createImportedItemsInTransaction,
+// A bounded catalog-only retirement. Callers review open operational work and
+// replacement choices separately. No movement, write-off or deletion is made.
+async function archiveZeroStockItemsInTransaction(client,ctx,itemIds){
+  if(!Array.isArray(itemIds)||!itemIds.length||itemIds.length>100||new Set(itemIds).size!==itemIds.length)
+    throw new ValidationError('Choose one to 100 distinct zero-stock products.');
+  const items=(await client.query('SELECT id FROM items WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1 ORDER BY id FOR UPDATE',[ctx.workspaceId,itemIds])).rows;
+  if(items.length!==itemIds.length)throw new ValidationError('Every product must still be active in this inventory.');
+  await client.query('SELECT id FROM skus WHERE workspace_id=$1 AND item_id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,itemIds]);
+  if((await client.query('SELECT 1 FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND (b.on_hand<>0 OR coalesce(b.secondary_on_hand,0)<>0) LIMIT 1',[ctx.workspaceId,itemIds])).rowCount)
+    throw new ValidationError('A product still has stock. Resolve the physical stock separately before retirement.');
+  if((await client.query('SELECT 1 FROM accounting_inventory_cost_balances c JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id WHERE c.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND (c.quantity_units<>0 OR coalesce(c.secondary_quantity_units,0)<>0 OR c.total_cost_minor<>0) LIMIT 1',[ctx.workspaceId,itemIds])).rowCount)throw new ValidationError('Resolve the recorded stock cost before retiring this product.');
+  await client.query('UPDATE items SET is_active=0,updated_at=$3 WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,itemIds,nowIso()]);
+  await client.query('UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND item_id=ANY($2::text[])',[ctx.workspaceId,itemIds]);
+  return {archived:itemIds.length};
+}
+
+module.exports = { archiveZeroStockItemsInTransaction,createItem, createItemInTransaction, createImportedItemInTransaction, createImportedItemsInTransaction,
   updateImportedNamesInTransaction,listItems, getItem, updateItem, addVariant, setItemActive };
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createItem:'inventory.core',createItemInTransaction:'inventory.core',
- createImportedItemInTransaction:'inventory.core',createImportedItemsInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core'});
+ createImportedItemInTransaction:'inventory.core',createImportedItemsInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core',archiveZeroStockItemsInTransaction:'inventory.core'});

@@ -146,6 +146,9 @@ jobs:
       - name: Recorded team procedures, separate staff approval and current plan scope
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/agent-current-scope.test.js tests/unit/team-procedure-source.test.js tests/postgres/agent-current-scope-ui.test.js tests/postgres/team-procedure-source.test.js tests/postgres/team-procedure-source-volume.test.js tests/postgres/agent-team-procedures.test.js tests/postgres/agent-team-procedure-boundaries.test.js tests/postgres/agent-team-procedures-ui.test.js
+      - name: Discontinued products, replacement guidance and current owner authority
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/product-retirement-source.test.js tests/postgres/agent-product-retirements.test.js tests/postgres/agent-product-retirement-boundaries.test.js tests/postgres/agent-product-retirements-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
