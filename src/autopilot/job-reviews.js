@@ -7,6 +7,7 @@ const cash=require('../accounting/agent-cash-planning');
 const definitions=[
   require('../documents/agent-contract-reader').definition,
   require('../imports/handwritten-table').definition,
+  require('../warehouse/agent-stock-rotation').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../catalog/agent-channel-copy').definition,
   require('../sales/agent-website-stock-chat').definition,
@@ -196,6 +197,7 @@ async function run(db,ctx,key,options={}){
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),
+      ...(result.rotationForm?{rotationForm:true}:{}),
       ...inputs};
   }
   if(def.read){

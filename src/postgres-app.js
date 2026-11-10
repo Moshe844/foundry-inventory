@@ -64,6 +64,8 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.set('trust proxy',1);
   app.disable('x-powered-by');
   app.use(require('./web/security-headers'));
+  // Every page's forms carry a one-time key so a resent submission is recorded once.
+  app.use(require('./web/form-request-keys').middleware);
   // The private console is dispatched before ALL customer authentication,
   // tenant selection, subscription checks, API routes and application rendering.
   const ownerModule=require('./platform-owner/app');
@@ -210,6 +212,8 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
     }
     catch(error){return next(error);}
   });
+  // A form key that already went through is not run twice; see form-submission-replay.js.
+  app.use(require('./web/form-submission-replay').create(database));
   app.use(postgresPageRenderer);
   app.use(require('./web/routes/postgres-company-sign-in').createCompanySignInRouter(database,{...ssoOptions,publicOrigin:connectionPublicOrigin||(env==='test'?'request':config.connections.publicOrigin)}));
   app.use(require('./web/routes/postgres-support-conversations').createSupportConversationsRouter(database));
