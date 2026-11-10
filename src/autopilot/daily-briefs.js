@@ -20,7 +20,10 @@ async function deliver(db,workspaceId,account){
     ((SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND status='EXECUTED' AND executed_at>=$2 AND executed_at<$3)
      +(SELECT count(*)::int FROM stockchief_runtime.agent_supplier_term_sources WHERE workspace_id=$1 AND changed_count>0 AND processed_at>=$2 AND processed_at<$3)
      +(SELECT count(*)::int FROM stockchief_runtime.agent_po_date_sources WHERE workspace_id=$1 AND changed AND instruction_hash IS NOT NULL AND processed_at>=$2 AND processed_at<$3)
-     +(SELECT count(*)::int FROM stockchief_runtime.agent_container_runs WHERE workspace_id=$1 AND completed_at>=$2 AND completed_at<$3 AND (result->>'cartons')::int>0)) AS actions,
+     +(SELECT count(*)::int FROM stockchief_runtime.agent_container_runs WHERE workspace_id=$1 AND completed_at>=$2 AND completed_at<$3 AND (result->>'cartons')::int>0)
+     +(SELECT count(*)::int FROM stockchief_runtime.agent_team_procedure_versions v WHERE v.workspace_id=$1 AND v.created_at>=$2 AND v.created_at<$3 AND NOT EXISTS(
+       SELECT 1 FROM stockchief_runtime.agent_team_procedure_versions older WHERE older.workspace_id=v.workspace_id AND older.procedure_id=v.procedure_id
+        AND older.document_hash=v.document_hash AND (older.created_at,older.id)<(v.created_at,v.id)))) AS actions,
     (SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals p JOIN users u ON u.workspace_id=p.workspace_id AND u.id=p.actor_user_id AND u.role='owner'
       WHERE p.workspace_id=$1 AND p.status='PENDING') AS approvals,
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND NOT resolved) AS overdue,

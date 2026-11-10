@@ -17,7 +17,7 @@
     </div>
     <p class="pricing-result-count" data-plan-count aria-live="polite"></p>
     <div class="plan-job-groups"><% for(const group of detail.groups){ %><section data-plan-group><h4><%= group.label %></h4><ul>
-      <% for(const job of group.jobs){ %><li data-plan-job="<%= job.id %>" data-mode="<%= job.mode %>" data-status="<%= job.status %>"><div><span data-job-label><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>"><%= job.status==='pending'?'Planned · not available yet':job.verification %></small></div><span class="agent-mode agent-mode--<%= job.mode %>"><%= job.modeLabel %></span></li><% } %>
+      <% for(const job of group.jobs){ %><li data-plan-job="<%= job.id %>" data-mode="<%= job.mode %>" data-status="<%= job.status %>"><div><span data-job-label><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>"><%= job.status==='pending'?'Planned · not available yet':job.verification %></small><% if(job.currentScope){ %><p class="plan-current-scope" data-job-current-scope><strong>Available now:</strong> <%= job.currentScope %></p><% } %></div><span class="agent-mode agent-mode--<%= job.mode %>"><%= job.modeLabel %></span></li><% } %>
     </ul></section><% } %></div>
     <p class="plan-no-results" data-plan-empty hidden>No duties match. Try another level, status or search.</p>
     <details class="plan-dialog-tools"><summary>All included business tools <small>Owner-operated tools, alongside the agent duties above</small></summary><ul class="plan-features"><% for(const feature of plan.features){ %><li data-plan-feature="<%= feature.capability %>"><%= feature.text %></li><% } %></ul></details>

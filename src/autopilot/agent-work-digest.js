@@ -77,11 +77,21 @@ async function report(db,ctx,{filter='',page=1}={}){
   FROM stockchief_runtime.agent_container_runs r JOIN stockchief_runtime.agent_container_projects p ON p.workspace_id=r.workspace_id AND p.id=r.project_id
   WHERE r.workspace_id=$1 AND r.completed_at>=$2::timestamptz AND r.completed_at<$3::timestamptz AND (r.result->>'cartons')::int>0
    AND ($5::text IS NULL OR r.completed_at>=$5::timestamptz) ORDER BY r.completed_at,r.id LIMIT $7
- ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
+ ), team_procedures AS (
+  SELECT 'team-procedure' AS origin,v.procedure_id AS id,'team.write_procedure' AS action_type,
+   'Private app procedure written: '||(v.document->>'title') AS summary,
+   '{}'::jsonb AS result,v.created_at AS executed_at,'{}'::jsonb AS payload,false AS undone
+  FROM stockchief_runtime.agent_team_procedure_versions v
+  WHERE v.workspace_id=$1 AND v.created_at>=$2::timestamptz AND v.created_at<$3::timestamptz
+   AND ($5::text IS NULL OR v.created_at>=$5::timestamptz)
+   AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_team_procedure_versions older WHERE older.workspace_id=v.workspace_id AND older.procedure_id=v.procedure_id
+    AND older.document_hash=v.document_hash AND (older.created_at,older.id)<(v.created_at,v.id))
+  ORDER BY v.created_at,v.id LIMIT $7
+ ) SELECT * FROM (SELECT * FROM actions UNION ALL SELECT * FROM routines UNION ALL SELECT * FROM supplier_details UNION ALL SELECT * FROM po_dates UNION ALL SELECT * FROM container_plans UNION ALL SELECT * FROM team_procedures) all_work ORDER BY executed_at,origin,id LIMIT 101 OFFSET $4`,
   [ctx.workspaceId,from,to,(page-1)*100,history.activityAfter,[...kinds.keys()],page*100+1])).rows;
  const more=proposals.length>100;if(more)proposals.pop();const current=await states(db,ctx,proposals),entries=[];
  const rows=proposals.map(p=>{const undo=undoable(p,current);if(undo.allowed)entries.push({id:p.id,summary:p.summary,what:undo.reason});
-  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='container-plan'?'/autopilot/container-plans/'+p.id:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
+  return {Action:p.summary,When:new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.executed_at)),Status:p.undone?'Undone':'Completed','Undo or correction':undo.reason,link:p.origin==='team-procedure'?'/autopilot/team-procedures/'+p.id:p.origin==='container-plan'?'/autopilot/container-plans/'+p.id:p.origin==='po-delivery-date'?'/autopilot/po-delivery-dates/'+p.id:p.origin==='supplier-details'?'/mail/'+p.id+'/supplier-details':(p.origin==='routine'?'/autopilot/work/':'/actions/')+p.id};});
  return {rows,more,undoForm:{day,entries},summary:'Recorded agent work for '+day+' in '+timeZone+'. Undo is available for an unchanged draft or the most recent purchase-cost update. Stock movements, sent messages and posted money need their own reviewed correction.'};
 }
 async function undo(db,ctx,id){return db.transaction(async c=>{
