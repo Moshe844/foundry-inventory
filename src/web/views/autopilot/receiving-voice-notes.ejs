@@ -1,6 +1,7 @@
 <section class="rm-panel">
   <h2>Prepare receiving paperwork</h2>
   <p>Choose the placed purchase order and record a short note with the products and quantities you received. StockChief shows the original and transcript beside the prepared receipt. You confirm the goods before stock is updated.</p>
+  <p>For individually weighed items, say each serial number and its own weight together.</p>
   <% if(providerAvailable){ %>
   <form method="post" action="/autopilot/receiving-voice-notes" enctype="multipart/form-data" class="rm-form" data-busy data-receiving-voice-form>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -31,8 +32,10 @@
         <strong><%= row.name %> · <%= row.code %></strong>
         <p><%= row.spokenQuantity %> <%= row.spokenUnit %> matches <%= row.quantity %> <%= row.unit %> at <%= row.locationName %>. Approved cost is <%= helpers.money(row.unitCostMinor,note.draft.currency) %> per <%= row.secondaryUnit||row.unit %>.</p>
         <% if(row.lotCode){ %><p>Lot <%= row.lotCode %><% if(row.expiresAt){ %> expires <%= row.expiresAt %><% } %>.</p><% } %>
-        <% if(row.serials?.length){ %><p>Serial numbers <%= row.serials.join(', ') %>.</p><% } %>
-        <% if(row.secondaryQuantity!=null){ %><p>Actual weight <%= row.secondaryQuantity %> <%= row.secondaryUnit %>.</p><% } %>
+        <% if(row.serialWeights){ %>
+          <ul><% for(const serial of row.serials){ %><li><%= serial %> · <%= row.serialWeights[serial] %> <%= row.secondaryUnit %></li><% } %></ul>
+        <% }else if(row.serials?.length){ %><p>Serial numbers <%= row.serials.join(', ') %>.</p><% } %>
+        <% if(row.secondaryQuantity!=null){ %><p>Total actual weight <%= row.secondaryQuantity %> <%= row.secondaryUnit %>.</p><% } %>
         <blockquote><%= row.quote %></blockquote>
       </li><% } %></ul>
       <form method="post" action="/autopilot/receiving-voice-notes/<%= note.id %>/confirm" class="rm-form" data-busy>

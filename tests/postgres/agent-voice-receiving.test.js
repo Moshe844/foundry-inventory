@@ -142,23 +142,26 @@ test('voice receipt preserves literal lot, serial and actual weight evidence',{t
   const goods=[
     {name:'Canned peaches',trackingMode:'lot'},
     {name:'Serialized tool',trackingMode:'serial'},
-    {name:'Weighed cheese',trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:2}
+    {name:'Weighed cheese',trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:2},
+    {name:'Weighed motor',trackingMode:'serial',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:3}
   ];
   for(const item of goods)item.skuId=(await catalog.createItem(db,ctx,item)).skuIds[0];
   const expires=require('../../src/accounting/customer-money').addDays(await require('../../src/lib/business-time').today(db,ctx.workspaceId),90);
   const quotes=[
     'Three units of Canned peaches, lot PEACH-4, expire '+expires+'.',
     'Two units of Serialized tool, serials TOOL-40 and TOOL-41.',
-    'Two pieces of Weighed cheese, actual total 19.5 kilograms.'
+    'Two pieces of Weighed cheese, actual total 19.5 kilograms.',
+    'Two pieces of Weighed motor. Serial MOTOR-1 weighs 8.75 kg. Serial MOTOR-10 weighs 10.125 kilograms.'
   ];
   const facts=[
     {quantity:'3',lotCode:'PEACH-4',expiresAt:expires,serials:[],secondaryQuantity:''},
     {quantity:'2',lotCode:'',expiresAt:'',serials:['TOOL-40','TOOL-41'],secondaryQuantity:''},
-    {quantity:'2',lotCode:'',expiresAt:'',serials:[],secondaryQuantity:'19.5 kg'}
+    {quantity:'2',lotCode:'',expiresAt:'',serials:[],secondaryQuantity:'19.5 kg'},
+    {quantity:'2',lotCode:'',expiresAt:'',serials:['MOTOR-1','MOTOR-10'],secondaryQuantity:''}
   ];
   async function purchase(){
     const p=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:location,idempotencyKey:randomUUID(),
-      lines:goods.map((product,i)=>({skuId:product.skuId,quantityUnits:[5,4,3][i],unitCost:'2.00',...(i===2?{secondaryQuantity:'30.00'}:{})}))});
+      lines:goods.map((product,i)=>({skuId:product.skuId,quantityUnits:[5,4,3,3][i],unitCost:'2.00',...(i>=2?{secondaryQuantity:'30.00'}:{})}))});
     await workflows.approvePurchaseOrder(db,ctx,p.purchaseOrderId,{idempotencyKey:randomUUID()});
     await workflows.placePurchaseOrder(db,ctx,p.purchaseOrderId,{idempotencyKey:randomUUID()});
     return p;
@@ -180,6 +183,9 @@ test('voice receipt preserves literal lot, serial and actual weight evidence',{t
   assert.equal(job.status,'COMPLETED',JSON.stringify(job.lastError));
   const note=await voice.load(db,ctx,source.id);
   assert.equal(note.draft.status,'DRAFT',note.draft.reason);
+  assert.deepEqual(note.draft.rows.find(row=>row.name==='Weighed motor').serialWeights,{'MOTOR-1':8.75,'MOTOR-10':10.125});
+  const review=await f.browser.get('/autopilot/receiving-voice-notes/'+note.id).expect(200);
+  assert.match(review.text,/MOTOR-10 · 10\.125 kg/);
   const before=(await db.query('SELECT count(*)::int n FROM purchase_order_receipts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
   const receipt=await voice.confirm(db,ctx,source.id,{confirmed:'yes',fingerprint:note.draft.fingerprint});
   const lines=(await db.query(`SELECT sku_id,lot_code,expires_at,serials::jsonb,secondary_quantity::text
@@ -189,6 +195,11 @@ test('voice receipt preserves literal lot, serial and actual weight evidence',{t
   assert.deepEqual(tool.serials,['TOOL-40','TOOL-41']);
   assert.equal(Number(cheese.secondary_quantity),19.5);
   assert.equal(receipt.lines.find(line=>line.lineId===first.lineIds[2]).totalCostMinor,3900);
+  const weights=(await db.query(`SELECT serial,secondary_quantity::text AS weight FROM serial_units WHERE workspace_id=$1 AND sku_id=$2 ORDER BY serial`,
+    [ctx.workspaceId,goods[3].skuId])).rows;
+  assert.deepEqual(weights.map(row=>[row.serial,Number(row.weight)]),[['MOTOR-1',8.75],['MOTOR-10',10.125]]);
+  assert.equal(Number(lines.find(line=>line.sku_id===goods[3].skuId).secondary_quantity),18.875);
+  assert.equal(receipt.lines.find(line=>line.lineId===first.lineIds[3]).totalCostMinor,3775);
   changed=true;
   const second=await purchase();
   const unsupported=await voice.enqueue(db,ctx,{buffer:wave(),orderId:second.purchaseOrderId,confirmed:'yes'});
@@ -197,4 +208,21 @@ test('voice receipt preserves literal lot, serial and actual weight evidence',{t
   assert.equal(held.draft.status,'REVIEW');
   await assert.rejects(voice.confirm(db,ctx,held.id,{confirmed:'yes',fingerprint:note.draft.fingerprint}),/checked receiving review/);
   assert.equal((await db.query('SELECT count(*)::int n FROM purchase_order_receipts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,before+1);
+});
+
+test('individual serial weights never use an average, a conflicting reading or a different unit',()=>{
+  const line={id:'line',sku_id:'sku',code:'ITEM',name:'Weighed motor',unit_label:'piece',tracking_mode:'serial',
+    quantity_precision:0,quantity_increment:'1',secondary_unit_label:'kg',secondary_precision:3,secondary_increment:'0.001',
+    quantity_units:'2',quantity_received_units:'0',unit_cost:'2.00',location_id:'dock',location_name:'Dock'};
+  const basis={po:{currency:'USD',po_number:'PO-1'},lines:[line]};
+  function draft(quote,transcript=quote,secondaryQuantity=''){
+    return voice.readDraft({complete:true,rows:[{lineId:'line',quantity:'2',basis:'stock',quote,lotCode:'',expiresAt:'',
+      serials:['A-1','A-10'],secondaryQuantity}]},transcript,basis);
+  }
+  const exact='Two pieces of Weighed motor. Serial A-1 weighs 2.001 kg. Serial A-10 weighs 3.002 kg.';
+  assert.equal(draft(exact).rows[0].secondaryQuantity,5.003);
+  assert.equal(draft('Two pieces of Weighed motor, serials A-1 and A-10, total 5.003 kg.').status,'REVIEW');
+  assert.equal(draft(exact,exact+' Serial A-1 weighs 2.002 kg.').status,'REVIEW');
+  assert.equal(draft(exact.replace('3.002 kg','3.002 lb')).status,'REVIEW');
+  assert.equal(draft(exact,exact,'5.004').status,'REVIEW');
 });
