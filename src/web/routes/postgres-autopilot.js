@@ -54,6 +54,40 @@ function createPostgresAutopilotRouter(database){
       res.redirect(303,shelfPath+'/'+req.params.id);
     }));
   }
+  const backupSuppliers=require('../../purchasing/agent-backup-suppliers');
+  const backupPath='/autopilot/backup-suppliers';
+  const backupPage=async(req,res)=>res.page('autopilot/backup-suppliers',{
+    title:'Backup suppliers',nav:'autopilot',cash:require('../../domain/currency'),
+    backTo:req.params.id?{href:backupPath,label:'Backup suppliers'}:{href:'/autopilot/reviews',label:'Agent reviews'},
+    ...await backupSuppliers.page(database,req.ctx,req.params.id,req.query.page||1)
+  });
+  router.get('/autopilot/reviews/backup-suppliers',requireAuth,owner,(_req,res)=>res.redirect(303,backupPath));
+  router.get(backupPath,requireAuth,owner,asyncRoute(backupPage));
+  router.get(backupPath+'/:id',requireAuth,owner,asyncRoute(backupPage));
+  router.post(backupPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const exact=await backupSuppliers.exactChoice(database,req.ctx,req.body);
+    const result=await backupSuppliers.configure(database,req.ctx,{...req.body,...exact,id:null});
+    res.redirect(303,backupPath+'/'+result.id);
+  }));
+  router.post(backupPath+'/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const exact=await backupSuppliers.exactChoice(database,req.ctx,req.body);
+    const result=await backupSuppliers.configure(database,req.ctx,{...req.body,...exact,id:req.params.id});
+    res.redirect(303,backupPath+'/'+result.id);
+  }));
+  router.post(backupPath+'/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await backupSuppliers.configure(database,req.ctx,{id:req.params.id,revision:req.body.revision,stop:'yes'});
+    res.redirect(303,backupPath+'/'+req.params.id);
+  }));
+  for(const [step,apply] of [['execute',backupSuppliers.execute],['teach',backupSuppliers.teach],['unavailable',backupSuppliers.recordUnavailable]]){
+    router.post(backupPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await apply(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,backupPath+'/'+req.params.id);
+    }));
+  }
+  router.post(backupPath+'/:id/withdraw',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await backupSuppliers.withdrawNotice(database,req.ctx,req.body.noticeId);
+    res.redirect(303,backupPath+'/'+req.params.id);
+  }));
   function starterAgentPage(job,mode,title,render){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);

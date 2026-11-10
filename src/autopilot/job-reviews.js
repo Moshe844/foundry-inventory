@@ -10,6 +10,7 @@ const definitions=[
   require('../imports/handwritten-table').definition,
   require('../warehouse/agent-stock-rotation').definition,
   require('../purchasing/agent-blanket-releases').definition,
+  require('../purchasing/agent-backup-suppliers').definition,
   require('../catalog/agent-channel-copy').definition,
   require('../sales/agent-website-stock-chat').definition,
   require('../sales/agent-customer-order-pages').definition,
