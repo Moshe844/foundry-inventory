@@ -1,0 +1,79 @@
+<h1>Backup suppliers</h1>
+<p>Choose a backup for a product and receiving location. StockChief can switch future reorder preferences after a supplier reports the item unavailable or misses your confirmation deadline. Any existing purchase order keeps its own approval and follow-up.</p>
+<% if (!allowed) { %>
+  <section class="card"><div class="card-body"><p><span class="badge">Pro</span> Backup supplier rules are available on Pro and Custom.</p><a class="btn" href="/billing">Upgrade</a></div></section>
+<% } %>
+<% if (allowed && !detail) { %>
+  <section class="card"><div class="card-body"><h2>Set an exact backup</h2>
+    <form class="form-stack" method="post" action="/autopilot/backup-suppliers">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="0">
+      <label>Product code<input class="input" name="skuCode" required maxlength="150"></label>
+      <label for="backup-location">Receiving location</label><select id="backup-location" class="input" name="locationId" required><option value="">Choose a location</option><% for (const place of places) { %><option value="<%= place.id %>"><%= place.name %></option><% } %></select>
+      <label>Primary supplier name<input class="input" name="primaryName" required></label>
+      <label>Backup supplier name<input class="input" name="backupName" required></label>
+      <label>Days to wait for confirmation<input class="input" type="number" name="confirmationDays" min="1" max="90" required></label>
+      <label>Maximum goods value in the backup supplier’s currency<input class="input" name="maximumGoods" inputmode="decimal" required></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked the current backup price, pack and terms and approve this supplier preference rule.</label>
+      <button class="btn btn--primary">Save backup supplier rule</button>
+    </form>
+  </div></section>
+<% } %>
+<% if (detail) { const {rule,product,primary,backup,history,activeNotices,check,problem}=detail; const path='/autopilot/backup-suppliers/'+rule.id; %>
+  <section class="card"><div class="card-body">
+    <h2><%= product.code %> · <%= product.location_name %></h2>
+    <p><strong><%= primary.name %></strong> → <strong><%= backup.name %></strong></p>
+    <p><%= rule.enabled?'Rule enabled':'Rule stopped' %> · Wait <%= rule.confirmation_days %> days · Up to <%= cash.format(Number(rule.maximum_goods_minor),rule.currency) %> in goods</p>
+    <% if (plan==='pro') { %><p><%= rule.taught_run_id?'A completed individual switch taught this rule.':'Pro needs a completed individual switch before it can repeat that work.' %></p><% } %>
+    <% if (problem) { %><p class="notice"><%= problem %></p><% } %>
+    <% if (rule.enabled) { %><form method="post" action="<%= path %>/stop"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><button class="btn">Stop this rule</button></form><% } %>
+    <% if (allowed) { %><details><summary>Review or change this rule</summary>
+      <form class="form-stack" method="post" action="<%= path %>/settings">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+        <input type="hidden" name="skuCode" value="<%= product.code %>"><input type="hidden" name="locationId" value="<%= rule.location_id %>">
+        <label>Primary supplier name<input class="input" name="primaryName" value="<%= primary.name %>" required></label>
+        <label>Backup supplier name<input class="input" name="backupName" value="<%= backup.name %>" required></label>
+        <label>Days to wait for confirmation<input class="input" name="confirmationDays" type="number" min="1" max="90" value="<%= rule.confirmation_days %>" required></label>
+        <label>Maximum goods value in the backup supplier’s currency<input class="input" name="maximumGoods" inputmode="decimal" value="<%= cash.fromMinor(Number(rule.maximum_goods_minor),rule.currency) %>" required></label>
+        <label><input type="checkbox" name="restorePrimary" value="yes"> I checked that the primary supplier is available again. Restore it as the reorder preference.</label>
+        <label><input type="checkbox" name="confirmed" value="yes" required> I checked the current backup price, pack and terms.</label>
+        <button class="btn">Save checked rule</button>
+      </form>
+    </details><% } %>
+  </div></section>
+  <% if (allowed && check) { %><section class="card"><div class="card-body">
+    <h2>Review this switch</h2>
+    <% if (check.trigger.notice) { %><p>Supplier statement: <%= check.trigger.notice.evidence %></p><% } else { %><p>The original order reached your <%= rule.confirmation_days %>-day deadline without a matching acceptance.</p><% } %>
+    <p><%= check.terms.quantity %> <%= product.unit_label %> with <%= backup.name %> · <%= cash.format(check.terms.amount,check.terms.currency) %> in goods</p>
+    <form class="form-stack" method="post" action="<%= path %>/execute"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= check.fingerprint %>">
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked this source and approve the new reorder supplier.</label><button class="btn btn--primary">Switch reorder supplier</button>
+    </form>
+  </div></section><% } %>
+  <% if (allowed && rule.enabled) { %><section class="card"><div class="card-body"><h2>Record a supplier’s availability statement</h2>
+    <form class="form-stack" method="post" action="<%= path %>/unavailable"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Original supplier statement<textarea class="input" name="evidence" maxlength="4000" required></textarea></label>
+      <label>Unavailable through<input type="date" class="input" name="validThrough" required></label>
+      <label>Checked required quantity in <%= product.unit_label %><input class="input" name="referenceQuantity" inputmode="decimal" required></label>
+      <% if (product.secondary_unit_label) { %><label>Independently checked <%= product.secondary_unit_label %><input class="input" name="secondaryQuantity" inputmode="decimal" required></label><% } %>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked this is the current statement for this product and site.</label><button class="btn">Save supplier statement</button>
+    </form>
+  </div></section><% } %>
+  <section class="card"><div class="card-body"><h2>Saved supplier statements</h2>
+    <% for (const notice of activeNotices) { %><p><%= notice.evidence %> · Through <%= notice.valid_through %></p>
+      <form method="post" action="<%= path %>/withdraw"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="noticeId" value="<%= notice.id %>"><button class="btn">Withdraw this statement</button></form>
+    <% } %>
+  </div></section>
+  <section class="card"><div class="card-body"><h2>Previous switches</h2>
+    <% for (const run of history) { %><p><%= run.facts.terms.backupName %> · <%= run.mode==='automatic'?'Routine switch':'Individually confirmed' %> · <%= run.reason==='confirmation_overdue'?'Overdue confirmation':'Supplier unavailable' %></p>
+      <% if (allowed && plan==='pro' && rule.enabled && run.mode==='human' && rule.taught_run_id!==run.id) { %>
+      <form class="form-stack" method="post" action="<%= path %>/teach"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><input type="hidden" name="runId" value="<%= run.id %>">
+        <label><input type="checkbox" name="confirmed" value="yes" required> I authorize matching future switches within this example.</label><button class="btn">Teach from this completed switch</button>
+      </form><% } %>
+    <% } %>
+  </div></section>
+<% } %>
+<section class="card"><div class="card-body"><h2>Saved backup rules</h2>
+  <% if (!rows.length) { %><p>No backup supplier rules yet.</p><% } %>
+  <ul><% for (const row of rows) { %><li><a href="/autopilot/backup-suppliers/<%= row.id %>"><%= row.code %> · <%= row.location %></a> · <%= row.primary_name %> → <%= row.backup_name %><%= row.enabled?'':' · Stopped' %></li><% } %></ul>
+  <% if (number>1) { %><a href="/autopilot/backup-suppliers?page=<%= number-1 %>">Previous rules</a><% } %>
+  <% if (more) { %><a href="/autopilot/backup-suppliers?page=<%= number+1 %>">More rules</a><% } %>
+</div></section>
