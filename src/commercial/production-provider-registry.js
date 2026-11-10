@@ -33,6 +33,7 @@ const classification=Object.freeze({
  'commercial/model.js':'METERED',
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
  'connections/postgres-reply-drafting.js':'METERED',
+ 'connections/agent-slack.js':'METERED',
  'connections/providers/common.js':'METERED',
  // The self-hosted transport is invoked by common.jsonRequest through providerFetch.
  'connections/providers/store-network.js':'METERED',

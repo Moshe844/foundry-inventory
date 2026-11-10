@@ -1,0 +1,56 @@
+<h1>Ask StockChief in Slack</h1>
+<p>Use <code>/stockchief</code> to ask about your business records. The answer appears privately for the linked user.</p>
+<% if(!allowed){ %>
+  <p class="notice"><strong>Pro / Custom</strong> · Slack answers require Pro or Custom. <a class="btn" href="/billing">Upgrade</a></p>
+<% } %>
+<% if(owner&&allowed){ %>
+  <section class="card"><div class="card-body">
+    <h2>Slack app</h2>
+    <% if(connection?.enabled){ %><p>Saved Slack configuration for team <%= connection.slack_team %>.</p><% } %>
+    <% if(requestUrl){ %>
+      <label>Request URL for <code>/stockchief</code>
+        <input readonly value="<%= requestUrl %>">
+      </label>
+    <% } %>
+    <form class="form-stack" method="post" action="/autopilot/slack/connection">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="revision" value="<%= connection?.revision||0 %>">
+      <label>Slack team ID <input name="team" value="<%= connection?.slack_team||'' %>" required></label>
+      <label>Slack app ID <input name="app" value="<%= connection?.slack_app||'' %>" required></label>
+      <label>Signing secret <input type="password" name="secret" autocomplete="new-password" required></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> Allow current inventory-wide members to link their own Slack users and receive private answers using their StockChief permissions.</label>
+      <button type="submit" class="btn btn-primary"><%= connection?.enabled?'Replace Slack configuration':'Save Slack configuration' %></button>
+    </form>
+  </div></section>
+<% } %>
+<% if(allowed&&recent.length){ const statuses={PENDING:'Waiting',CLAIMED:'Sending',REPLIED:'Replied',HELD:'Held for review'}; %>
+  <section class="card"><div class="card-body">
+    <h2>Your recent Slack questions</h2>
+    <ul><% for(const row of recent){ %><li><%= row.created_at %> · <%= row.problem_code?'Needs review':statuses[row.status] %></li><% } %></ul>
+  </div></section>
+<% } %>
+<% if(owner&&connection?.enabled){ %>
+  <form method="post" action="/autopilot/slack/connection">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="revision" value="<%= connection.revision %>">
+    <input type="hidden" name="confirmed" value="yes">
+    <button type="submit" class="btn" name="stop" value="yes">Disconnect Slack for this inventory</button>
+  </form>
+<% } %>
+<% if(allowed&&connection?.enabled){ %>
+  <section class="card"><div class="card-body">
+    <h2>Your Slack user</h2>
+    <% if(issuedCode){ %><p>Run this command yourself in the connected Slack team within ten minutes.</p><p><code>/stockchief connect <%= issuedCode %></code></p><% } %>
+    <% if(linked){ %><p>Your user <%= linked %> is linked.</p><% } %>
+    <form method="post" action="/autopilot/slack/code">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn"><%= linked?'Generate a new link code':'Generate my link code' %></button>
+    </form>
+    <% if(linked){ %>
+      <form method="post" action="/autopilot/slack/unlink">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn">Unlink my Slack user</button>
+      </form>
+    <% } %>
+  </div></section>
+<% } %>

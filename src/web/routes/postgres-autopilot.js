@@ -323,6 +323,24 @@ function createPostgresAutopilotRouter(database,options={}){
       res.redirect(303,freightPath+'/'+req.params.id);
     }));
   }
+  const slack=require('../../connections/agent-slack');
+  const slackPage=async(req,res,issuedCode=null)=>{
+    const data=await slack.page(database,req.ctx);
+    const origin=require('../../config').connections.publicOrigin;
+    const requestPath=data.owner&&data.connection?slack.publicPath+'/'+data.connection.endpoint_id:null;
+    return res.set('Cache-Control','private, no-store').page('autopilot/slack',{title:'Ask StockChief in Slack',nav:'autopilot',issuedCode,
+      requestUrl:origin&&requestPath?new URL(requestPath,origin).href:requestPath,...data});
+  };
+  router.get(slack.path,requireAuth,asyncRoute((req,res)=>slackPage(req,res)));
+  router.post(slack.path+'/connection',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await slack.configure(database,req.ctx,req.body);
+    res.redirect(303,slack.path);
+  }));
+  router.post(slack.path+'/code',requireAuth,asyncRoute(async(req,res)=>slackPage(req,res,await slack.code(database,req.ctx))));
+  router.post(slack.path+'/unlink',requireAuth,asyncRoute(async(req,res)=>{
+    await slack.unlink(database,req.ctx);
+    res.redirect(303,slack.path);
+  }));
   const vanRoutes=require('../../shipping/agent-van-routes');
   const vanPath=vanRoutes.path;
   const vansPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/van-routes',{

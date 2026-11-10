@@ -47,6 +47,7 @@ async function reserveGmailQuota(database,quota,ceiling=GMAIL_PROJECT_DAILY_SAFE
 }
 async function before(context,url,init,provider){const def=definition(url);if(provider==='Odoo ERP'){def.provider='odoo';def.capability='connections.custom_api';def.version='json2';}
  if(provider==='StockChief Road Routing'){def.provider='stockchief_osrm';def.capability='shipping.workflow';def.version='table-v1';}
+ if(provider==='StockChief Slack'){def.provider='slack';def.capability='ask.lookup';def.version='slash-command-v1';}
  const headers=init.headers||{};const version=Object.entries(headers).find(([key])=>
    ['stripe-version','square-version','x-api-version'].includes(key.toLowerCase()))?.[1];
  const address=new URL(url);

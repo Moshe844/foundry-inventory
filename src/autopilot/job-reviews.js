@@ -29,6 +29,7 @@ const definitions=[
   require('../operations/agent-annual-stocktakes').definition,
   require('../connections/agent-channel-buffers').definition,
   require('../connections/agent-channel-recovery').definition,
+  require('../connections/agent-slack').definition,
   ...require('../sales/agent-order-reservations').definitions,
   require('../purchasing/agent-supplier-rfqs').definition,
   require('../purchasing/agent-supplier-claims').definition,

@@ -558,6 +558,7 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'webhook.deliver':external((job,database)=>require('../connections/postgres-outbound-webhooks').deliver(database,job,options.webhookDelivery||{})),'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
+  'agent.slack.answer.v1':external((job,database)=>require('../connections/agent-slack').process(job,database,{provider:options.aiProvider}),'reading'),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);

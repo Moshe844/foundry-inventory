@@ -20,7 +20,7 @@ const expected={
  'assistant/postgres-goal-controller.js':1,
  'assistant/postgres-supplier-acceptance.js':1,
  'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':2,
- 'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
+ 'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,'connections/agent-slack.js':2,
  'connections/providers/common.js':1,'connections/providers/store-network.js':1,'connections/reply-drafting.js':1,
  'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,'imports/workbook-relations.js':1,'imports/handwritten-table.js':1,
  'lib/provider-http.js':1,'lib/postal-lookup.js':1,'manager/operating-instructions.js':1,
