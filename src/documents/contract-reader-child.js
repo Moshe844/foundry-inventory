@@ -11,12 +11,16 @@ process.once('message',async input=>{
   const ocr=async(bytes,{allowEmpty=false}={})=>{worker ||=await require('../foundry/document-text').createOcrWorker();const result=await worker.recognize(bytes);if(!allowEmpty&&!result.data.text?.trim())throw Error('A source page could not be read. Upload a clearer original.');return result.data.text;};
   if(buffer.subarray(0,5).toString()==='%PDF-'){
    const pdf=await import('pdfjs-dist/legacy/build/pdf.mjs');let omitted=false;
-   console.log=console.warn=(...args)=>{if(args.some(v=>/Warning:.*(?:image|raster|pixels)/i.test(String(v))))omitted=true;};
-   loading=pdf.getDocument({data:new Uint8Array(buffer),useSystemFonts:true,isEvalSupported:false,maxImageSize:8000000,stopAtErrors:true});const doc=await loading.promise;
+   // This pdfjs version resolves an empty operator list after a strict raster
+   // failure. Surface its warning instead and reject before retaining any facts.
+   console.log=console.warn=(...args)=>{if(args.some(v=>/Warning:.*(?:image|raster|pixels|ignoring errors|invalid|failed)/i.test(String(v))))omitted=true;};
+   loading=pdf.getDocument({data:new Uint8Array(buffer),useSystemFonts:true,isEvalSupported:false,maxImageSize:8000000,stopAtErrors:false,verbosity:pdf.VerbosityLevel.WARNINGS});const doc=await loading.promise;
    if(doc.numPages>100)throw Error('Split contracts longer than 100 pages into their complete sections. No pages have been silently omitted.');
    for(let number=1;number<=doc.numPages;number++){
     const page=await doc.getPage(number);try{const operators=await page.getOperatorList();if(omitted)throw Error('A source page contains an image that could not be safely read.');const content=await page.getTextContent(),nativeText=content.items.map(item=>item.str+(item.hasEOL?'\n':' ')).join(''),imageOps=new Set(['paintImageXObject','paintInlineImageXObject','paintImageMaskXObject','paintImageXObjectRepeat','paintImageMaskXObjectGroup','paintInlineImageXObjectGroup','paintJpegXObject'].map(k=>pdf.OPS[k]).filter(n=>n!==undefined)),hasImages=operators.fnArray.some(n=>imageOps.has(n));let text=nativeText,sourceKind='text',visualObservation='';
     if(hasImages||nativeText.trim().length<20){const imageText=await ocr(await require('../foundry/document-text').renderPdfPage(page),{allowEmpty:true});sourceKind=nativeText.trim().length>=20?'mixed':'scan';visualObservation=imageText.trim()?'Page image checked; compare OCR-only characters and amounts with the original.':'Page image checked; no readable image text was detected. Check non-text marks in the original.';text=nativeText.trim().length>=20?nativeText+'\n\n[Image reading of the same original page; duplicate native text is not another contract term]\n'+imageText:imageText;}
+    // Raster warnings may arrive while rendering, after the operator list.
+    await new Promise(resolve=>setImmediate(resolve));if(omitted)throw Error('A source page contains an image that could not be safely read.');
     add(text,number,sourceKind,'',{nativeText,visualObservation});}finally{page.cleanup();}
    }
   }else if(ext==='.docx'){

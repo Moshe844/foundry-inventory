@@ -27,7 +27,7 @@ async function measurement(db,workspaceId,relation=null,options={}){
  let nextProbe=0;
  const waitForImports=async({insideTransaction=false,force=false}={})=>{if(!yielding||!force&&Date.now()<nextProbe)return;
   for(;;){const active=(await db.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE status='RUNNING'
-   AND (kind=ANY($1::text[]) OR lease_owner LIKE '%:bulk')
+   AND (kind LIKE 'import.%' OR kind=ANY($1::text[]) OR lease_owner LIKE '%:bulk')
    AND lease_expires_at>floor(extract(epoch FROM statement_timestamp())*1000) LIMIT 1`,
    [['import.analyse-source','import.analyse-handwriting.v1','import.read-contract.v1','import.revise-preview','import.execute-approved','erp.cutover.continue','warehouse.count.apply','qualification.staging-million']])).rows.length;
    if(!active){nextProbe=Date.now()+pollMs;return;}
@@ -88,7 +88,7 @@ async function refresh(db,workspaceId,options={}){return publish(db,workspaceId,
 async function schedule(db,{now=Date.now()}={}){
  const rows=(await db.query(`SELECT u.workspace_id,w.owner_account_id,w.deletion_requested_at FROM commercial_storage_usage u JOIN workspaces w ON w.id=u.workspace_id
  WHERE NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)
- AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs j WHERE (j.workspace_id=w.id OR j.kind='commercial.storage-baseline' AND j.payload->>'workspaceId'=w.id) AND j.kind IN('commercial.storage-baseline','import.execute-approved','import.analyse-source') AND j.status IN('PENDING','RUNNING','RETRY'))
+ AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs j WHERE (j.workspace_id=w.id OR j.kind='commercial.storage-baseline' AND j.payload->>'workspaceId'=w.id) AND (j.kind='commercial.storage-baseline' OR j.kind LIKE 'import.%') AND j.status IN('PENDING','RUNNING','RETRY'))
  GROUP BY u.workspace_id,w.owner_account_id,w.deletion_requested_at HAVING bool_or(NOT u.baseline_complete) OR min(u.measured_at)<to_timestamp($1/1000.0)-interval '24 hours'
  ORDER BY min(u.measured_at),u.workspace_id LIMIT 5`,[now])).rows;
  for(const row of rows)await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:row.deletion_requested_at?null:row.workspace_id,kind:'commercial.storage-baseline',idempotencyKey:`storage-refresh:${row.workspace_id}:${Math.floor(now/60000)}`,payload:{workspaceId:row.workspace_id,accountId:row.owner_account_id},maxAttempts:5,priority:1});return rows.length;

@@ -3,7 +3,9 @@ const {ValidationError}=require('../domain/errors'),parser=require('./parser');
 const {FIELD_IDS}=require('./fields');
 const imageInput=require('../ai/image-input');
 async function authorize(db,ctx){
- if(!(await db.query('SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)',[ctx.actorId,ctx.workspaceId])).rowCount)throw new ValidationError('This inventory or reading authority is no longer active. Your saved original is retained.');
+ const actor=(await db.query('SELECT u.role,u.permissions FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL) FOR SHARE OF u,w',[ctx.actorId,ctx.workspaceId])).rows[0];
+ if(!actor)throw new ValidationError('This inventory or reading authority is no longer active. Your saved original is retained.');
+ const permission=require('../actions/permissions');permission.assertCan(actor,permission.OPERATE,'import inventory data');await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  return require('../commercial/agent-plan').requireWorkspaceJob(db,ctx.workspaceId,139,'draft');
 }
 function creditPrefix(input,sourceHash){return (input.usageKey||require('./usage-key').analysisUsageKey(sourceHash))+':handwriting:'+String(input.readingAttempt||'first');}
@@ -16,10 +18,11 @@ async function reserveDocument(db,ctx,prefix){
  const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(db,ctx.workspaceId);
  return usage.reserveUsage(db,scope,{meter:'agent_documents',units:1,idempotencyKey:ctx.workspaceId+':'+prefix+':document',detail:{operation:'read_document',provisional:true}});
 }
-async function commitCredits(client,ctx,prefix){
+async function commitCredits(client,ctx,prefix,{documentReceiptKey=null}={}){
  const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(client,ctx.workspaceId),key=ctx.workspaceId+':'+prefix;
  const events=(await client.query("SELECT idempotency_key,meter FROM commercial_usage_events WHERE workspace_id=$1 AND account_id=$2 AND meter IN('ai_work_credits','agent_documents') AND status='RESERVED' AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':') ORDER BY idempotency_key",[ctx.workspaceId,scope.accountId,key])).rows;
- if(!events.some(e=>e.meter==='ai_work_credits')||!events.some(e=>e.meter==='agent_documents'))throw new ValidationError('This document reading needs both its document allowance and AI credit reservations. Read the original again.');
+ const paidDocument=documentReceiptKey&&Boolean((await client.query("SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='agent_documents' AND idempotency_key=$3 AND status='COMMITTED' AND units>=1",[scope.accountId,ctx.workspaceId,documentReceiptKey])).rowCount);
+ if(!events.some(e=>e.meter==='ai_work_credits')||!events.some(e=>e.meter==='agent_documents')&&!paidDocument)throw new ValidationError('This document reading needs both its document allowance and AI credit reservations. Read the original again.');
  for(const event of events)await usage.commitUsage(client,scope,{meter:event.meter,idempotencyKey:event.idempotency_key});
 }
 async function refund(db,ctx,prefix){

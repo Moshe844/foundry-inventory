@@ -124,6 +124,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
+  ['document.read_contract',143],
   ['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],
   ['purchasing.prepare_blanket_release',42],
   ['catalog.write_channel_copy',128],

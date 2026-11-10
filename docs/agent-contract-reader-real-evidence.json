@@ -1,0 +1,26 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-4-5-20251001",
+  "records": [
+    {
+      "syntheticFixture": true,
+      "filename": "synthetic-contract.pdf",
+      "pages": 2,
+      "facts": 8,
+      "credits": 100,
+      "providerCostUsd": 0.003033,
+      "uncertain": 8
+    },
+    {
+      "syntheticFixture": true,
+      "filename": "synthetic-contract.png",
+      "pages": 1,
+      "facts": 5,
+      "credits": 100,
+      "providerCostUsd": 0.002079,
+      "uncertain": 5
+    }
+  ],
+  "physicalStockChanged": false,
+  "termsAccepted": false
+}

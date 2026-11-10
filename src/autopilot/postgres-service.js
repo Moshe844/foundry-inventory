@@ -608,6 +608,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   const teamProcedures=options.afterSkuId?{skipped:'planning_continuation'}:await require('./team-procedures').schedule(database,ctx.workspaceId);
   const channelCopy=options.afterSkuId?{skipped:'planning_continuation'}:await require('../catalog/agent-channel-copy').schedule(database,ctx.workspaceId);
   const blanketReleases=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-blanket-releases').schedule(database,ctx.workspaceId);
+  if(!options.afterSkuId)await require('../documents/agent-contract-reader').schedule(database,ctx.workspaceId);
   const supplierInvoices=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-invoice-routine').run(database,ctx.workspaceId);
   const arrivedStock=options.afterSkuId?{skipped:'planning_continuation'}:await require('../sales/agent-arrived-stock').run(database,ctx.workspaceId);
   const stockReadyUpdates=options.afterSkuId?{skipped:'planning_continuation'}:await require('../sales/agent-stock-ready').run(database,ctx.workspaceId);

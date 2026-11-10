@@ -130,7 +130,7 @@ async function claim(database, options = {}) {
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS, options.maintenanceOnly === true]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
-    if(['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read','import.analyse-source','import.analyse-handwriting.v1','import.read-contract.v1','import.execute-approved','import.revise-preview'].includes(selected.kind)){
+    if(selected.kind.startsWith('import.')||['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read'].includes(selected.kind)){
       const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[selected.workspace_id])).rows[0]?.owner_account_id;
       const lane=selected.kind.startsWith('import.')?'imports':'agents';
       if(owner){const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[`jobs-account:${owner}:${lane}`])).rows[0].acquired;
