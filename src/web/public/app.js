@@ -1916,3 +1916,19 @@
 
 // Brand security-service navigation failures without caching or repeating requests.
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/edge-error-worker.js', {scope:'/', updateViaCache:'none'}).catch(function() {});
+
+// Every form arrives with a one-time key (the server adds it), so sending the
+// same page twice is recorded once. A form a script sends without leaving the
+// page gets a fresh key afterwards, so its next real submission is not taken
+// for a repeat. Forms that leave the page keep theirs: going Back and sending
+// that same page again is exactly the repeat the key exists to catch.
+document.addEventListener('submit', (event) => {
+  const form = event.target;
+  setTimeout(() => {
+    if (!event.defaultPrevented || !(form instanceof HTMLFormElement)) return;
+    const field = form.querySelector('input[name="idempotencyKey"]');
+    if (!field || !/^form-/.test(field.value)) return;
+    field.value = 'form-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+  }, 0);
+});
