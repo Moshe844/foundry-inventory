@@ -36,7 +36,7 @@ async function local(db,p){
  const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
  if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
  const availability=await require('../transfers/postgres-transfer-service').sourceAvailable(db,p.workspace_id,p.sku_id,p.location_id);
- return {value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed-Number(availability.reserved||0)),physical,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null};
+ return require('./agent-channel-buffers').apply(db,p,{value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed-Number(availability.reserved||0)),physical,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null});
 }
 async function mapped(db,p){
  return Boolean((await db.query(`SELECT 1 FROM connection_mappings sku JOIN connection_mappings loc ON loc.workspace_id=sku.workspace_id AND loc.connector_id=sku.connector_id AND loc.entity_type='location'
@@ -53,10 +53,11 @@ async function providerRead(db,c,p,adapter,key){
 async function issue(db,p,detail){
  const at=nowIso(),fingerprint='commerce-position:'+p.id;
  if(!detail){await db.query("UPDATE connection_issues SET status='RESOLVED',resolved_at=$4,updated_at=$4 WHERE workspace_id=$1 AND connector_id=$2 AND fingerprint=$3 AND status='OPEN'",[p.workspace_id,p.connector_id,fingerprint,at]);return;}
+ const buffered=p.field==='quantity'&&Boolean((await db.query('SELECT 1 FROM stockchief_runtime.agent_channel_buffers WHERE workspace_id=$1 AND position_id=$2 AND enabled',[p.workspace_id,p.id])).rows.length);
  await db.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
- VALUES($1,$2,$3,'COMMERCE_SYNC_REVIEW',$4,$5,$6,$7,'OPEN',$8,$8) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,title=EXCLUDED.title,detail=EXCLUDED.detail,updated_at=EXCLUDED.updated_at`,
- [newId('conissue'),p.workspace_id,p.connector_id,fingerprint,p.field==='quantity'?'Review channel stock difference':'Review channel price difference',detail,
-  'Ask StockChief to compare the saved channel synchronization for this product. Physical quantity corrections require evidence and approval; sales, receipts and refunds are never inferred from a count.',at]);
+ VALUES($1,$2,$3,'COMMERCE_SYNC_REVIEW',$4,$5,$6,$7,'OPEN',$8,$8) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,title=EXCLUDED.title,detail=EXCLUDED.detail,resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at`,
+ [newId('conissue'),p.workspace_id,p.connector_id,fingerprint,buffered?'Review channel stock buffer':p.field==='quantity'?'Review channel stock difference':'Review channel price difference',detail,
+  buffered?'Open this product’s stock buffer to review the exact channel quantity and current approval requirement. An uncertain delivery must be verified before another update.': 'Ask StockChief to compare the saved channel synchronization for this product. Physical quantity corrections require evidence and approval; sales, receipts and refunds are never inferred from a count.',at]);
 }
 async function audit(db,p,type,detail){const id=newId('evt'),at=nowIso();await db.query(`INSERT INTO domain_events(id,workspace_id,event_type,payload,source,source_record_type,source_record_id,idempotency_key,status,result,created_at,processed_at)
  VALUES($1,$2,$3,$4,'commerce_sync','connection',$5,$1,'PROCESSED','{"verified":true}',$6,$6)`,[id,p.workspace_id,type,JSON.stringify({positionId:p.id,skuId:p.sku_id,locationId:p.location_id,field:p.field,...detail}),p.connector_id,at]);}
@@ -129,11 +130,12 @@ async function configureInTransaction(db,ctx,payload){
  }
  return {connectorId:c.id,positionIds:payload.positions.map(p=>p.id),configured:true,providerDeliveryVerified:false};
 }
-async function queue(db,c,p,l,expected){
- const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected});
+async function queue(db,c,p,l,expected,options={}){
+ let channelBuffer=null;try{channelBuffer=await require('./agent-channel-buffers').queueAuthority(db,p,l,{...options,expected});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await issue(db,p,error.message);return {held:true,reason:error.message};}
+ const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected,...(channelBuffer?{channelBuffer}:{})});
  const queued=await effects.enqueueInTransaction(db,{workspaceId:p.workspace_id,kind:'commerce.position.publish',provider:c.provider_type,aggregateType:'connection_commerce_position',aggregateId:p.id,
   idempotencyKey:key,requestedByUserId:p.authorized_by_user_id,payload:{connectorId:c.id,positionId:p.id,revision:p.revision,value:l.value,localVersion:l.version,expected,
-   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field},maxAttempts:5});
+   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field,...(channelBuffer?{channelBuffer}:{})},maxAttempts:5});
  await db.query('UPDATE connection_commerce_positions SET pending_effect_id=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id,queued.effect.id]);
  return queued;
 }
@@ -184,7 +186,7 @@ async function reconcile(db,c){
   if(lc&&rc){await issue(db,p,'Both StockChief and the provider changed since their last verified baseline. Neither value was overwritten.');result.conflicts++;continue;}
   if(lc&&['outbound','two_way'].includes(p.mode)){
    if(l.value===null){await issue(db,p,'StockChief has no evidenced price to publish.');result.conflicts++;continue;}
-   await queue(db,c,p,l,r);result.queued++;continue;
+   const queued=await queue(db,c,p,l,r);if(queued.held)result.conflicts++;else result.queued++;continue;
   }
   if(rc&&['inbound','two_way'].includes(p.mode)&&p.field==='price'){
    if(!r||!Number.isSafeInteger(r.amount)||r.amount<0||!l.value||r.currency!==l.value.currency){await issue(db,p,'The incoming price or currency needs review. No conversion was invented.');result.conflicts++;continue;}
@@ -207,11 +209,14 @@ async function execute(db,workspaceId,effectId,options={}){
   if(p.provider_account_id!==c.provider_account_id)throw new ValidationError('The connected provider account changed before delivery.');
   if(!await mapped(db,p))throw new ValidationError('The mapped product or location changed before delivery.');
   const l=await local(db,p);if(!same(l.value,e.payload.value)||l.version!==e.payload.localVersion)throw new ValidationError('StockChief changed before delivery. A fresh synchronization must be prepared.');
+  await require('./agent-channel-buffers').deliveryAuthority(db,workspaceId,e.payload.channelBuffer,p,l,e.payload.expected);
   const result=await require('../commercial/operations').run(db,workspaceId,{capability:'connections.commerce',key:'commerce-write:'+e.id,provider:c.provider_type,operation:'commerce_position_publish',retryReversed:true},async()=>{
    const credentials=await require('./postgres-provider-service').loadProviderCredentials(db,c,adapter);
+   const checkBufferDelivery=async()=>{if(!e.payload.channelBuffer&&!l.bufferId)return;const fresh=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,p.id])).rows[0];if(!fresh||fresh.revision!==e.payload.revision||fresh.pending_effect_id!==e.id)throw new ValidationError('Channel synchronization authority changed before delivery.');const freshLocal=await local(db,fresh);if(!same(freshLocal.value,e.payload.value)||freshLocal.version!==e.payload.localVersion)throw new ValidationError('Stock changed before channel delivery. Prepare a fresh buffered update.');await require('./agent-channel-buffers').deliveryAuthority(db,workspaceId,e.payload.channelBuffer,fresh,freshLocal,e.payload.expected);};
+   await checkBufferDelivery();
    await effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id});
    attempted=true;
-   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id,
+   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id,beforeWrite:checkBufferDelivery,
     onAccepted:reference=>effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id,transactionId:reference.transactionId},{allowCommerceTransaction:true})});
   });
   const retained=(await effects.get(db,workspaceId,e.id)).providerReference;
@@ -230,6 +235,7 @@ async function execute(db,workspaceId,effectId,options={}){
    const p=(await tx.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,e.payload.positionId])).rows[0];
    if(p)await issue(tx,p,attempted?'The provider did not verify this delivery. The operation was retained without an automatic repeat.':'The prepared delivery changed before it was sent. Review the current product, price and stock.');
   }});
+  if(error.code==='entitlement_required'&&e.payload.channelBuffer){const p=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,e.payload.positionId])).rows[0];if(p)await issue(db,p,error.message);}
   if(ambiguous)await require('../operations/postgres-job-queue').enqueue(db,{workspaceId,kind:'provider.commerce-verify',idempotencyKey:'commerce-verify:'+e.id,payload:{effectId:e.id},maxAttempts:5,availableAt:Date.now()+10000});
   error.retryable=false;throw error;
  }
@@ -301,4 +307,5 @@ async function acceptCountInTransaction(db,ctx,payload){
  await audit(db,p,'connection.commerce_sync.count_confirmed',{before:l.physical,after:payload.countedQuantity,adjustmentId:physical.adjustmentId,journalEntryId:journal?.entry.id||null});
  return {...physical,positionId:p.id,journalEntryId:journal?.entry.id||null,verified:true};
 }
-module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction};
+async function readForReview(db,ctx,p,adapter){const c=await connection(db,ctx,p.connector_id);return providerRead(db,c,p,adapter,'buffer-review:'+newId('read'));}
+module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,queue,readForReview};

@@ -19,3 +19,5 @@ test('every operationally qualified duty explains its current scope while permis
  for(const id of [118,119])assert.equal(rows.find(r=>r.id===id).status,'partial','Native physical-transfer qualification has a bounded supported scope');
  assert.equal(rows.filter(r=>r.status==='complete').length,4,'Scope descriptions must not upgrade workflow qualification');
 });
+
+test('Channel-buffer plan scopes distinguish individually reviewed quantities from routines without training',()=>{const row=comparison.comparison().find(r=>r.id===183);assert.equal(row.status,'partial');assert.match(row.currentScope,/Shopify and WooCommerce/);assert.match(row.currentScope,/remain open/);assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/individual approval/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}});

@@ -66,9 +66,10 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
     require('./postgres-attention-inbox').summary(database,workspaceId),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
       i.issue_type,i.external_event_id,c.provider_type,
-      message.id AS reply_message_id,related_effect.id AS provider_effect_id
+      message.id AS reply_message_id,related_effect.id AS provider_effect_id,buffer.position_id AS buffer_position_id
       FROM connection_issues i JOIN workspace_connectors c ON c.id=i.connector_id
       LEFT JOIN connection_email_messages message ON message.workspace_id=i.workspace_id AND message.id=i.external_event_id
+      LEFT JOIN stockchief_runtime.agent_channel_buffers buffer ON buffer.workspace_id=i.workspace_id AND i.fingerprint='commerce-position:'||buffer.position_id AND buffer.enabled
       LEFT JOIN LATERAL (SELECT effect.id FROM stockchief_runtime.provider_effects effect
         WHERE effect.workspace_id=i.workspace_id AND effect.aggregate_id=i.external_event_id
         AND effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
@@ -166,11 +167,11 @@ async function needsUncached(database,workspaceId,actorId,actor){
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
     happened:row.detail,why:row.issue_type==='EMAIL_SEND_AMBIGUOUS'
       ?'The provider may have accepted the email before StockChief could verify delivery. Sending it again could create a duplicate.'
-      :`${require('../web/presentation/connections').name(row)} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
-    href:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
+      :row.buffer_position_id?'The channel stock update is held until its current stock, plan and approval requirements are met.':`${require('../web/presentation/connections').name(row)} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
+    href:row.buffer_position_id?`/autopilot/channel-buffers?position=${encodeURIComponent(row.buffer_position_id)}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
-    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
+    actionLabel:row.buffer_position_id?'Review stock buffer':row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
   for(const row of work.rows){if(row.summary){const shown=row.names||[],others=row.count-shown.length;items.push({kind:'approval',grouped:true,requiredPermissions:[row.kind==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],importance:row.urgentCount?'Urgent':'Important',priority:70+number(row.priority),title:row.title,happened:(row.urgentCount?row.urgentCount.toLocaleString()+' urgent. ':'')+(shown.length?'Includes '+shown.join(', ')+(others>0?' and '+others.toLocaleString()+' more.':'.'):row.count.toLocaleString()+' '+row.groupLabel+' await review.'),why:row.kind==='transfer'?'These locations are at or below their reorder points while another location has stock to spare.':'These products are at or below their reorder points, so they could run out.',recommendation:row.kind==='transfer'?'Move the stock rather than buying more. Approve them together, or review each one.':'Order them from their suppliers. Approve them together, or review each one.',href:row.href,actionLabel:'Review and approve',sourceId:row.id,createdAt:row.created_at,at:row.created_at});continue;}const action=object(row.recommended_action),outcome=object(row.outcome);const authority=object(row.policy_evaluation);
     if(outcome.decision&&preparedLinks.has(outcome.reviewHref))continue;
     if(outcome.decision){const d=outcome.decision,permission=action.type==='customer_order'?require('../actions/permissions').VIEW_SALES:action.type==='supplier_invoice'?require('../actions/permissions').VIEW_ACCOUNTING:require('../actions/permissions').VIEW_PURCHASING;
