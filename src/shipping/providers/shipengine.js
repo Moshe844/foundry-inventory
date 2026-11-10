@@ -37,7 +37,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'ShipEngine', retries: options.retries });
+  }, { provider: 'ShipEngine', retries: options.retries, timeoutMs: options.timeoutMs });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }

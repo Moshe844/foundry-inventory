@@ -284,6 +284,23 @@ function createPostgresAutopilotRouter(database,options={}){
       res.redirect(303,claimPath+'/'+req.params.id);
     }));
   }
+  const freightPickups=require('../../shipping/agent-freight-pickups');
+  const freightPath=freightPickups.path;
+  const freightPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/freight-pickups',{
+    title:'Pallet freight pickups',nav:'autopilot',backTo:{href:req.params.id?freightPath:'/autopilot/reviews',label:req.params.id?'Freight pickups':'Agent reviews'},
+    ...await freightPickups.page(database,req.ctx,{id:req.params.id,shipmentId:req.query.shipment,connectorId:req.query.connection})});
+  router.get(freightPath,requireAuth,owner,asyncRoute(freightPage));
+  router.get(freightPath+'/:id',requireAuth,owner,asyncRoute(freightPage));
+  router.post(freightPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const quoted=await freightPickups.prepare(database,req.ctx,req.body);
+    res.redirect(303,freightPath+'/'+quoted.id);
+  }));
+  for(const [step,method] of [['book','book'],['rule','saveRule'],['check','verify']]){
+    router.post(freightPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await freightPickups[method](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,freightPath+'/'+req.params.id);
+    }));
+  }
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));
