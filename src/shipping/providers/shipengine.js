@@ -72,7 +72,7 @@ function address(input = {}) {
 
 function parcel(box = {}) {
   const out = {
-    weight: { value: Math.max(1, Number(box.weightGrams || 0)), unit: 'gram' },
+    weight: { value: Number(box.weightGrams) || 1, unit: 'gram' },
   };
   if (box.lengthMm && box.widthMm && box.heightMm) {
     out.dimensions = {

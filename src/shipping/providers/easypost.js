@@ -71,7 +71,8 @@ const MM_PER_INCH = 25.4;
 
 /** EasyPost prices in ounces and inches; StockChief stores grams and millimetres. */
 function parcel(box = {}) {
-  const out = { weight: Math.max(0.1, Number(box.weightGrams || 0) / GRAMS_PER_OUNCE) };
+  const grams=Number(box.weightGrams||0);
+  const out = { weight: grams>0 ? grams/GRAMS_PER_OUNCE : 0.1 };
   if (box.lengthMm && box.widthMm && box.heightMm) {
     out.length = Number(box.lengthMm) / MM_PER_INCH;
     out.width = Number(box.widthMm) / MM_PER_INCH;

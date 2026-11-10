@@ -67,9 +67,26 @@ function address(input = {}) {
 const GRAMS_PER_OUNCE = 28.349523125;
 const MM_PER_INCH = 25.4;
 
+function exactParcelMeasure(values,units){
+  const measure=require('../../domain/physical-measure');
+  for(const [unit,numerator,denominator] of units){
+    try{
+      const converted=values.map(value=>String(measure.convert(value,{numerator,denominator,label:'Shippo parcel measurement',limit:2147483647})));
+      if(converted.every(value=>/^\d{1,6}(?:\.\d{1,4})?$/.test(value)))return {unit,values:converted};
+    }catch(error){if(!(error instanceof ValidationError))throw error;}
+  }
+  throw new ValidationError('Shippo cannot rate these exact measurements in its supported units and decimal precision. The saved measurements are unchanged.');
+}
 
 function parcel(box = {}) {
   if(![box.lengthMm,box.widthMm,box.heightMm].every(value=>Number(value)>0))throw new ValidationError('Shippo needs all three measured package dimensions. StockChief will not invent a box size.');
+  const dimensions=[box.lengthMm,box.widthMm,box.heightMm];
+  if([box.weightGrams,...dimensions].some(value=>!Number.isInteger(Number(value)))){
+    const weight=exactParcelMeasure([box.weightGrams],[['g',1,1],['kg',1,1000],['lb',100000,45359237],['oz',1000000000,28349523125]]);
+    const size=exactParcelMeasure(dimensions,[['mm',1,1],['cm',1,10],['m',1,1000],['in',10,254]]);
+    const [length,width,height]=size.values;
+    return {weight:weight.values[0],mass_unit:weight.unit,length,width,height,distance_unit:size.unit};
+  }
   return {
     weight: Math.max(0.1, Number(box.weightGrams || 0) / GRAMS_PER_OUNCE).toFixed(2),
     mass_unit: 'oz',
