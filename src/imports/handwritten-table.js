@@ -7,20 +7,29 @@ async function authorize(db,ctx){
  return require('../commercial/agent-plan').requireWorkspaceJob(db,ctx.workspaceId,139,'draft');
 }
 function creditPrefix(input,sourceHash){return (input.usageKey||require('./usage-key').analysisUsageKey(sourceHash))+':handwriting:'+String(input.readingAttempt||'first');}
+async function documentCapacity(db,ctx){
+ const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(db,ctx.workspaceId),state=await usage.meterState(db,scope,'agent_documents');
+ if(state.remaining!==null&&state.remaining<1)throw new usage.EntitlementError('Your document allowance has been reached. Add documents or upgrade before reading another file.',{meter:'agent_documents',remaining:state.remaining});
+ return state;
+}
+async function reserveDocument(db,ctx,prefix){
+ const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(db,ctx.workspaceId);
+ return usage.reserveUsage(db,scope,{meter:'agent_documents',units:1,idempotencyKey:ctx.workspaceId+':'+prefix+':document',detail:{operation:'read_document',provisional:true}});
+}
 async function commitCredits(client,ctx,prefix){
  const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(client,ctx.workspaceId),key=ctx.workspaceId+':'+prefix;
- const events=(await client.query("SELECT idempotency_key FROM commercial_usage_events WHERE workspace_id=$1 AND account_id=$2 AND meter='ai_work_credits' AND status='RESERVED' AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':') ORDER BY idempotency_key",[ctx.workspaceId,scope.accountId,key])).rows;
- if(!events.length)throw new ValidationError('This document reading has no open credit reservation. Read the original again.');
- for(const event of events)await usage.commitUsage(client,scope,{meter:'ai_work_credits',idempotencyKey:event.idempotency_key});
+ const events=(await client.query("SELECT idempotency_key,meter FROM commercial_usage_events WHERE workspace_id=$1 AND account_id=$2 AND meter IN('ai_work_credits','agent_documents') AND status='RESERVED' AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':') ORDER BY idempotency_key",[ctx.workspaceId,scope.accountId,key])).rows;
+ if(!events.some(e=>e.meter==='ai_work_credits')||!events.some(e=>e.meter==='agent_documents'))throw new ValidationError('This document reading needs both its document allowance and AI credit reservations. Read the original again.');
+ for(const event of events)await usage.commitUsage(client,scope,{meter:event.meter,idempotencyKey:event.idempotency_key});
 }
 async function refund(db,ctx,prefix){
  return (typeof db.transaction==='function'?fn=>db.transaction(fn):fn=>fn(db))(async client=>{
  const usage=require('../commercial/entitlements'),scope=await usage.ownerScopeForWorkspace(client,ctx.workspaceId),key=ctx.workspaceId+':'+prefix;
- const events=(await client.query("SELECT idempotency_key,status FROM commercial_usage_events WHERE workspace_id=$1 AND account_id=$2 AND meter='ai_work_credits' AND status IN('RESERVED','COMMITTED') AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':') ORDER BY idempotency_key",[ctx.workspaceId,scope.accountId,key])).rows;
+ const events=(await client.query("SELECT idempotency_key,status,meter FROM commercial_usage_events WHERE workspace_id=$1 AND account_id=$2 AND meter IN('ai_work_credits','agent_documents') AND status IN('RESERVED','COMMITTED') AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':') ORDER BY idempotency_key",[ctx.workspaceId,scope.accountId,key])).rows;
  // A read-back error after the artifact transaction committed is not a failed
  // reading. Keep that completed receipt and its provider accounting intact.
  if(events.some(e=>e.status==='COMMITTED'))return {refundedPages:0,completed:true};
- for(const event of events)await usage.reverseUsage(client,scope,{meter:'ai_work_credits',idempotencyKey:event.idempotency_key,reason:'The complete handwritten document could not be prepared. Original retained; no stock changed.'});
+ for(const event of events)await usage.reverseUsage(client,scope,{meter:event.meter,idempotencyKey:event.idempotency_key,reason:'The complete handwritten document could not be prepared. Original retained; no stock changed.'});
  await client.query("UPDATE commercial_model_cost_holds SET detail=detail||jsonb_build_object('customerCreditsConsumed',false,'wholeDocumentFailed',true) WHERE workspace_id=$1 AND account_id=$2 AND (idempotency_key=$3 OR left(idempotency_key,length($3)+1)=$3||':')",[ctx.workspaceId,scope.accountId,key]);
  return {refundedPages:events.length};
  });
@@ -73,4 +82,4 @@ async function readPage(db,ctx,{page=1}={}){
  const rows=(await db.query("SELECT p.source_name AS \"Original document\",p.transformations::jsonb#>>'{handwriting,purpose}' AS \"Document kind\",(p.transformations::jsonb#>>'{handwriting,pages}')::int AS \"Pages read\",(p.transformations::jsonb#>>'{handwriting,creditsUsed}')::int AS \"AI credits used\",p.records_detected AS \"Source rows\",CASE WHEN p.status='SUCCEEDED' THEN 'Imported after human approval' WHEN p.transformations::jsonb->>'imageReadingConfirmed'='true' THEN 'Reading checked; review stock separately' ELSE 'Compare reading with original' END AS \"Review\",'/imports/'||p.id AS link FROM import_plans p WHERE p.workspace_id=$1 AND p.transformations::jsonb?'handwriting' ORDER BY p.created_at DESC,p.id LIMIT 101 OFFSET $2",[ctx.workspaceId,(Math.max(1,Number(page)||1)-1)*100])).rows;
  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Reads handwritten count sheets and delivery notes from page photos, scans and PDFs into a private checked table. Original pages, written units, variants, quantities, costs, lots and serials are retained. Uncertain readings and physical stock changes require separate human confirmation. Upload a source in File imports.'};
 }
-module.exports={parse,pages,checked,creditPrefix,commitCredits,refund,authorize,SYSTEM,SCHEMA,definition:{id:139,key:'handwritten-sources',label:'Read handwritten count sheets and delivery notes',readPage}};
+module.exports={parse,pages,checked,creditPrefix,documentCapacity,reserveDocument,commitCredits,refund,authorize,SYSTEM,SCHEMA,definition:{id:139,key:'handwritten-sources',label:'Read handwritten count sheets and delivery notes',readPage}};
