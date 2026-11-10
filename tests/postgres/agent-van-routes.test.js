@@ -11,7 +11,10 @@ test('owners route actual packed shipments on Pro and Custom with exact, plan-bo
   const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
   const date=require('../../src/accounting/customer-money').addDays(today,1);
   const packed=await f.parcel();
-  assert.deepEqual(await require('../../src/db/migrate-postgres').migratePostgres(db),['339-agent-van-routes.sql']);
+  const priorMigrations=(await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows;
+  const applied=await require('../../src/db/migrate-postgres').migratePostgres(db);
+  assert(applied.includes('339-agent-van-routes.sql'));
+  assert.deepEqual((await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows.slice(0,priorMigrations.length),priorMigrations);
   const pagePath=vans.path+'?'+new URLSearchParams({depot:f.location.id});
   const standard='Van 1 | Jordan | 1000 | 08:00 | 17:00';
   const input=(box,extra={})=>({selected:box.shipmentId,depotId:f.location.id,deliveryDate:date,vans:standard,
