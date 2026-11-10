@@ -26,6 +26,14 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/contracts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await contractReader.load(database,req.ctx,req.params.id);res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"}).type('application/octet-stream').attachment(r.filename).send(r.content);}));
   router.get('/autopilot/contracts/:id',requireAuth,owner,asyncRoute(contractsPage));
   router.post('/autopilot/contracts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/contracts/'+req.params.id);}));
+  const customerInvoices=require('../../accounting/agent-customer-invoices');
+  router.get('/autopilot/customer-invoices',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/customer-invoices',{title:'Customer invoices after shipment',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await customerInvoices.page(database,req.ctx,req.query)})));
+  router.post('/autopilot/customer-invoices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this exact posted shipment invoice for printing',{action:'customer_invoice.prepare_document',recordReference:req.body.invoiceNumber});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact posted shipment invoice.');res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/autopilot/customer-invoices/settings',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await customerInvoices.configure(database,req.ctx,req.body);req.flash('success',r.stopped?'Customer invoice routine stopped.':'Customer invoice routine enabled. New confirmed dispatches queue private printable invoices.');res.redirect(303,'/autopilot/customer-invoices');}));
+  router.get('/autopilot/customer-invoices/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const d=await customerInvoices.document(database,req.ctx,req.params.id);res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.send(d.html);}));
   const blanket=require('../../purchasing/agent-blanket-releases');
   const blanketPage=async(req,res,draft=null)=>res.page('autopilot/blanket-releases',{title:'Supplier contracts and release drafts',nav:'autopilot',suppressBack:true,cash:require('../../domain/currency'),screen:await blanket.screen(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),draft});
   router.get('/autopilot/blanket-releases',requireAuth,owner,asyncRoute((req,res)=>blanketPage(req,res)));
@@ -42,6 +50,7 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/preview',requireAuth,owner,asyncRoute(async(req,res)=>copyPage(req,res,{draft:await channelCopy.preview(database,req.ctx,req.body)})));
   router.post('/autopilot/channel-copy',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
+  router.post('/autopilot/channel-copy/runs/:runId/approve',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.approve(database,req.ctx,req.params.runId,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
   router.get('/autopilot/channel-copy/versions/:versionId/copy.csv',requireAuth,owner,asyncRoute(async(req,res)=>{const csv=await channelCopy.download(database,req.ctx,req.params.versionId);res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="prepared-channel-copy.csv"'});res.send(csv);}));
   router.get('/autopilot/channel-copy/:id',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
   router.post('/autopilot/channel-copy/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));
@@ -498,6 +507,13 @@ function createPostgresAutopilotRouter(database){
   router.post('/autopilot/reviews/margin-prices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Review the selling price after the cost increase',
       {action:'catalog.restore_margin',sku:req.body.sku});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/reviews/:job/purchasing-prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const actions={'reorder-drafts':'purchase_order.reorder_drafts','reorder-explanation':'purchase_order.reorder_drafts','supplier-options':'purchasing.select_supplier'};
+    if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a reorder or supplier review.');
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review current purchasing preparation',
+      {action:actions[req.params.job],skuCodes:req.body.skuCodes,location:req.body.location,strategy:req.body.strategy,quantity:req.body.quantity,secondaryQuantities:req.body.secondaryQuantities});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{

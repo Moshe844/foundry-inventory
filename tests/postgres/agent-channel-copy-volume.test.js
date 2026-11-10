@@ -1,14 +1,14 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{fixture}=require('../helpers/agent-channel-copy-fixture');
-test('one thousand actual native products yield exact channel copy with bounded source reads and complete CSV output',{timeout:300000},async t=>{
+test('more than one thousand actual native products yield exact channel copy with bounded source reads and complete CSV output',{timeout:300000},async t=>{
  const f=await fixture(t),{db,ctx,service:s}=f,ids=[...f.item.skuIds];
- for(let n=1;n<1000;n++){const item=await f.catalog.createItem(db,ctx,{name:'Recorded native product '+n,baseCode:'COPY-'+String(n).padStart(4,'0'),trackingMode:'quantity'});ids.push(...item.skuIds);}
+ for(let n=1;n<1001;n++){const item=await f.catalog.createItem(db,ctx,{name:'Recorded native product '+n,baseCode:'COPY-'+String(n).padStart(4,'0'),trackingMode:'quantity'});ids.push(...item.skuIds);}
  let reads=0;const counted={query:async(...args)=>{reads++;return db.query(...args);}};
  const args={...f.input,skuIds:ids},preview=await s.preview(counted,ctx,args);
- assert.equal(preview.document.length,1000);assert(reads<=30,'Read 1,000 products in bounded batches, got '+reads);
- const p=await s.save(db,ctx,{...args,sourceHash:preview.sourceHash,confirmed:'yes'}),csv=await s.download(db,ctx,p.id);
- assert.match(csv,/"COPY-0999","Recorded native product 999"/);assert.equal((csv.match(/"Our online store"/g)||[]).length,1000);
- await assert.rejects(s.preview(db,ctx,{...args,skuIds:[...ids,'extra']}),/1,000/);assert.equal(await f.balance(),20);
+ assert.equal(preview.source.products.length,1001);assert(reads<=35,'Read 1,001 products in bounded batches, got '+reads);
+ const p=await f.prepare(args),csv=await s.download(db,ctx,p.id);
+ assert.match(csv,/"COPY-0999","Recorded native product 999"/);assert.equal((csv.match(/"Our online store"/g)||[]).length,1001);
+ assert.equal((await s.preview(db,ctx,{...f.input,allProducts:'yes'})).source.products.length,1001);assert.equal(await f.balance(),20);
 });
 test('enabled channel copy scopes share the real Pro 500-rule allowance and over-limit downgrades stop writing',{timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,service:s}=f,p=await f.prepare();await s.configure(db,ctx,p.copyId,{revision:1,confirmed:'yes'});

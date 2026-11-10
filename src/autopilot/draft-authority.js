@@ -4,6 +4,7 @@ const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
 const jobs=new Map([['customer_return.send_label',112],['warehouse.release_partial_order',61],['sales_order.reserve_all',12],['sales_order.allocation_priority',65],['sales_quote.followup',74],['customer.statement',81],['landed_cost.apply',49],['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+jobs.set('purchase_order.reorder_drafts',19);jobs.set('purchasing.select_supplier',22);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
 }
@@ -50,7 +51,7 @@ async function settings(db,ctx,id,maximum){
   return {action:p.action_type,bound,eligible:allowed,needsReturnLabelReceipt:p.action_type==='customer_return.send_label'&&state.plan==='growth'&&!await require('../shipping/agent-return-instructions').confirmedExample(db,ctx.workspaceId,p),needsPhysicalShipment:p.action_type==='warehouse.release_partial_order'&&state.plan==='pro'&&!await require('../warehouse/agent-partial-shipments').completedExample(db,ctx,p),exampleAmount:money.fromMinor(bound.amountMinor,bound.currency),
     preview:amount>0?{...(await history(db,ctx,p.action_type,bound,amount)),maximum:money.fromMinor(amount,bound.currency)}:null,
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
-    canTeach:allowed&&p.status==='EXECUTED'&&!state.shadow&&p.result?.replayed!==true&&p.result?.executionAuthority?.kind!=='standing_job_rule'&&
+    canTeach:allowed&&(!['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(p.action_type)||p.result?.automatic!==true)&&p.status==='EXECUTED'&&!state.shadow&&p.result?.replayed!==true&&p.result?.executionAuthority?.kind!=='standing_job_rule'&&
       (!['sales_order.reserve_all','sales_order.allocation_priority'].includes(p.action_type)||await require('../sales/agent-order-reservations').completedExample(db,ctx,p))&&
       (p.action_type!=='warehouse.release_partial_order'||await require('../warehouse/agent-partial-shipments').completedExample(db,ctx,p))&&
       (p.action_type!=='landed_cost.apply'||(p.result?.automatic!==true&&p.payload.needsLandedCostConfirmation===false))&&

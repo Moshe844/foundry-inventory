@@ -1,4 +1,14 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.reorderForm||result.supplierSelection){ %><details><summary><%= result.supplierSelection?'Choose a buying supplier':'Prepare grouped purchase drafts' %></summary>
+<form method="post" action="/autopilot/reviews/<%= result.supplierSelection?'supplier-options':'reorder-drafts' %>/purchasing-prepare">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Exact product codes, one per line<%= result.supplierSelection?'':' (leave empty for the reorder list)' %> <textarea name="skuCodes" <%= result.supplierSelection?'required':'' %>><%= filter||'' %></textarea></label>
+<label>Receiving location (optional) <input name="location"></label>
+<% if(result.supplierSelection){ %><label>Choose by <select name="strategy"><option value="cheapest">Lowest total goods cost after packs and minimums</option><option value="fastest">Shortest recorded delivery time</option></select></label><% } %>
+<label>Independent requested weights, if applicable (product code | receiving location | pieces | weight) <textarea name="secondaryQuantities"></textarea></label>
+<p>Review missing costs, undated deliveries or existing unsent orders before purchasing. New supplier or price terms need individual approval.</p>
+<button class="btn"><%= result.supplierSelection?'Review supplier choice':'Review grouped drafts' %></button>
+</form></details><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>

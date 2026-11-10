@@ -45,6 +45,7 @@ const definitions=[
   require('../sales/agent-arrived-stock').definition,
   require('../sales/agent-stock-ready').definition,
   require('../purchasing/agent-invoice-disputes').definition,
+  require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
   require('../documents/agent-product-facts').definition,
@@ -131,7 +132,7 @@ const suggestions={
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
   21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
-  22:r=>'Check the saved price and delivery terms with '+r.Supplier+' for '+r.SKU+'.',
+  22:r=>'Consider '+r.Supplier+' for '+r['Compared quantity']+' '+r.Unit+' of '+r.SKU+'. Recorded goods total: '+(r['Goods total']||'unknown')+'; delivery days: '+(r['Lead days']??'unknown')+'. '+r.Status+'.',
   23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
   32:r=>'Contact '+r.Supplier+' about overdue order '+r.Order+'.',
   44:r=>'Review '+r.Order+' against its delivery record for '+r.SKU+'.',
@@ -193,6 +194,8 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(result.reorderForm?{reorderForm:true}:{}),
+      ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...inputs};
   }
   if(def.read){
@@ -222,7 +225,7 @@ async function run(db,ctx,key,options={}){
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }
-  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read};
+  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};
