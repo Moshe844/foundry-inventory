@@ -209,6 +209,7 @@ async function requestInTransaction(client, rawContext, input) {
     const available=Math.min(availability.available,Math.max(0,total.available-already));
     if(quantity>available)throw new ValidationError(`${sku.name} only has ${available} available at ${from.name} after customer commitments and other transfer requests.`);
     if(serialUnitIds.length){
+      if((await client.query('SELECT 1 FROM stockchief_runtime.sales_rotation_entries WHERE workspace_id=$1 AND serial_unit_id=ANY($2::text[]) LIMIT 1',[ctx.workspaceId,serialUnitIds])).rowCount)throw new ValidationError('One selected serial is reserved by a FIFO/FEFO customer order.');
       const reserved=await client.query(`SELECT 1 FROM inventory_transfer_serials serial
         JOIN inventory_transfer_lines line ON line.id=serial.transfer_line_id
         JOIN inventory_transfers transfer ON transfer.id=line.transfer_id

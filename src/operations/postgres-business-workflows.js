@@ -812,7 +812,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [line.id, requested.locationId, ctx.workspaceId], `Fulfillment line ${index + 1} is not allocated at that location.`);
       if (allocation&&quantity > Number(allocation.quantity)) throw new ValidationError(`Fulfillment line ${index + 1} exceeds its allocation.`);
       const kitCost=requested.kit===true?await require('./postgres-kit-fulfillment').consume(client,ctx,line,{...requested,orderNumber:order.order_number},{quantity,at,key:input.idempotencyKey+':'+line.id}):null;
-      const physical = kitCost?{movementId:kitCost.movementId}:await inventory.issueInTransaction(client, ctx, {
+      const physical = kitCost?{movementId:kitCost.movementId}:await require('./postgres-stock-rotation').issue(client,ctx,allocation,{
         skuId: line.sku_id, locationId: requested.locationId, quantity,secondaryQuantity:requested.secondaryQuantity,
         lotId: requested.lotId, serialUnitIds: requested.serialUnitIds,
         reasonCode: 'sale', reference: order.order_number, occurredAt: at,

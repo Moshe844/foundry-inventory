@@ -146,6 +146,7 @@
   "189": "Lets an authorized Custom API client start registered read-only reviews and receive signed completion webhooks. Write actions are outside this endpoint.",
   "190": "Imports reviewed supported ERP exports with opening stock, value and unpaid balances, then reconciles before owner activation. Arbitrary old-system extraction and live external ERP acceptance remain open.",
   "191": "Pairs expiring stock with suitable unfilled orders due before expiry and supports expiry-prioritized fulfillment. Physical shipping stays separate.",
+  "192": "Reserves exact FIFO receipt layers or FEFO lots and serials at existing allocated locations, including variants, kits and measured goods. Protects competing commitments; missing age, expiry, cost and independent weight need evidence. Physical picking, stock and value changes remain separate.",
   "193": "Traces a recalled lot through posted stock issues to the customers and quantities that received it, including after downgrade.",
   "194": "Blocks normal and earliest-expiry shipment of recalled or expired lots, including after downgrade. Recall release needs the current owner review.",
   "195": "Shows a scanned serial's recorded receipt and issue history and its current issued or in-stock state.",
