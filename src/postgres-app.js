@@ -48,7 +48,7 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
-function createPostgresApp({database,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
+function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
   commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
@@ -63,6 +63,8 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
   app.disable('x-powered-by');
+  // The stall monitor knows which requests were in flight when the server paused.
+  if(requestTracker)app.use(requestTracker);
   app.use(require('./web/security-headers'));
   // Every page's forms carry a one-time key so a resent submission is recorded once.
   app.use(require('./web/form-request-keys').middleware);
