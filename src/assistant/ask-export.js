@@ -40,21 +40,46 @@ async function send(res,format,result){
  res.set('Cache-Control','private, no-store');
  return res.send(output);
 }
+// Several tables in one answer share one sheet: each after the first starts
+// with a blank row, its heading and its own column names.
+function stacked(found,fallbackTitle){
+ const width=Math.max(...found.map(table=>table.columns.length)),columns=Array.from({length:width},(_,index)=>'column_'+index);
+ const pad=row=>Array.from({length:width},(_,index)=>row[index]??'');
+ const rows=found.flatMap((table,index)=>[...(index?[pad([]),...(table.title?[pad([table.title])]:[]),pad(table.columns)]:[]),...table.rows.map(pad)]);
+ return shape({title:found[0].title||fallbackTitle,columns,labels:Object.fromEntries(columns.map((column,index)=>[column,found[0].columns[index]??''])),rows});
+}
+// Long lines break between words, so no word is cut across two rows.
+function wrap(line,size=240){
+ const parts=[];let rest=line;
+ while(rest.length>size){const high=rest.charCodeAt(size-1),head=rest.slice(0,high>=0xd800&&high<=0xdbff?size-1:size),space=head.lastIndexOf(' '),take=space>size/2?head.slice(0,space):head;parts.push(take);rest=rest.slice(take.length).replace(/^ /,'');}
+ parts.push(rest);return parts;
+}
 function written(answer){
  if(typeof answer!=='string'||!answer.trim())throw new NotFoundError('This answer has no saved text to download.');
  // Split long responses so one spreadsheet cell or PDF table row cannot truncate the answer.
- const lines=answer.split(/\r?\n/).flatMap(line=>line.match(/[\s\S]{1,240}/gu)||['']);
+ const lines=answer.split(/\r?\n/).flatMap(line=>wrap(line));
  return {...shape({title:'StockChief answer',columns:['answer'],labels:{answer:'Answer'},rows:lines.map(line=>[line])}),sourceLabel:'Saved StockChief answer'};
 }
-async function interaction(database,ctx,id,columnLabel,fullAnswer=false){
+// A spreadsheet of an answer holds its figures in columns, one per field; the
+// written words belong in the PDF. An answer with no table downloads as its text.
+const SHEET=new Set(['csv','xlsx']);
+async function interaction(database,ctx,id,columnLabel,fullAnswer=false,format){
  const row=(await database.query('SELECT message,answer,evidence,intent FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3',[ctx.workspaceId,ctx.actorId,id])).rows[0];
  if(!row)throw new NotFoundError('That answer is not in your saved work.');
  const rows=row.evidence||[],presentation=row.intent?.presentation||{},columns=(presentation.columns?.length?presentation.columns:Object.keys(rows[0]||{})).filter(column=>column!=='href');
- if(fullAnswer||!rows.length)return written(row.answer);
+ if((fullAnswer&&!SHEET.has(format))||!rows.length){
+  const inText=fullAnswer&&SHEET.has(format)?tables(row.answer):[];
+  if(inText.length)return inText.length===1?fromTable(inText[0],row.message):stacked(inText,row.message);
+  return written(row.answer);
+ }
  return shape({title:row.message,columns,labels:Object.fromEntries(columns.map(column=>[column,presentation.columnLabels?.[column]||columnLabel(column)||column])),rows:rows.map(item=>Object.fromEntries(columns.map(column=>[column,item[column]===null||item[column]===undefined?'':item[column]])))});
 }
-function goal(found,index,fullAnswer=false){
- if(fullAnswer)return written(found?.answer);
+function goal(found,index,fullAnswer=false,format){
+ if(fullAnswer){
+  const inText=SHEET.has(format)?tables(found?.answer):[];
+  if(!inText.length)return written(found?.answer);
+  return inText.length===1?fromTable(inText[0],found.original_request):stacked(inText,found.original_request);
+ }
  const available=tables(found?.answer);
  if(!available.length&&index===undefined)return written(found?.answer);
  const table=available[Number(index)||0];
