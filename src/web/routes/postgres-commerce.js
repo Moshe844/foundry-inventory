@@ -631,7 +631,8 @@ function createPostgresCommerceRouter(database,options={}){
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
-    return res.page('buy/receive',{title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
+    const qualityConfigured=(await database.query('SELECT EXISTS(SELECT 1 FROM stockchief_runtime.agent_quality_policies WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=ANY($3::text[]) AND enabled) required',[req.ctx.workspaceId,detail.order.supplier_id,detail.lines.map(l=>l.sku_id)])).rows[0].required;
+    return res.page('buy/receive',{qualityConfigured,title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
       permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
   }));
@@ -837,8 +838,9 @@ function createPostgresCommerceRouter(database,options={}){
         .filter((line)=>Number(line.quantity)>0);
     if(!lines.length)throw new ValidationError('Say how much of the order physically arrived.');
     const receiptKey=key(req,'po-receive');
-    await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:receiptKey,
-      reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),
+    const receipt=await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:receiptKey,
+      damagedLineIds:lines.filter(l=>req.body['condition_'+l.lineId]==='damaged').map(l=>l.lineId),
+      reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),qcConfirmed:req.body.qcConfirmed,
       overReceiptApproved:req.body.overReceiptApproved==='1'||req.body.approveOverReceipt==='1',lines});
     // Units marked damaged arrived and are written off at once through the
     // stock-removal path's own "damaged" reason, so they never count as
@@ -853,7 +855,7 @@ function createPostgresCommerceRouter(database,options={}){
     const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
     const places=[...new Set(lines.map((line)=>line.locationId))];
     const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
-    req.flash('success',`${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
+    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 
