@@ -4,9 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-async function migratePostgres(database) {
+async function migratePostgres(database, options = {}) {
   const directory = path.join(__dirname, 'postgres-migrations');
-  const files = fs.readdirSync(directory).filter((name) => /^\d{3}-[a-z-]+\.(?:sql|js)$/.test(name)).sort();
+  let files = fs.readdirSync(directory).filter((name) => /^\d{3}-[a-z-]+\.(?:sql|js)$/.test(name)).sort();
+  if(options?.through){const last=files.indexOf(options.through);if(last<0)throw new Error('Unknown migration cutoff: '+options.through);files=files.slice(0,last+1);}
   return database.transaction(async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(741923609)');
     await client.query(`CREATE TABLE IF NOT EXISTS stockchief_postgres_migrations (

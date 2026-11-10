@@ -201,7 +201,9 @@ async function stopped(db,workspaceId,account,capability,automatic,payload){
     if(filingMode)return filingMode;
   }
   const job=actionJob(capability,automatic?'automatic':'draft',payload);
-  return require('../autopilot/job-modes').restriction(db,workspaceId,job,automatic);
+  const jobRestriction=await require('../autopilot/job-modes').restriction(db,workspaceId,job,automatic);
+  if(jobRestriction)return jobRestriction;
+  return automatic?require('./agent-rule-quota').restriction(db,account):null;
 }
 
 async function customerOrderNeedsPerson(db,workspaceId,capability,payload,proposalId=null,state=null){

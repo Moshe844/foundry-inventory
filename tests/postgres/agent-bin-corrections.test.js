@@ -99,9 +99,10 @@ test('phone bin-correction journey exposes plan locks, physical confirmation, ow
 
 test('the approved downgrade exception only settles physical moves recorded on Pro or Custom, never new work or authority',{timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,service}=f,before=await f.totals(),beforeLedger=await f.ledger();
+ await db.query("INSERT INTO stockchief_runtime.agent_draft_rules(workspace_id,action_type,scope_key,scope_label,currency,maximum_minor,authorized_by) SELECT $1,'sales_order.repeat','retained-pro-rule-'||i,'Existing bounded routine','USD',100,$2 FROM generate_series(1,500)i",[ctx.workspaceId,ctx.actorId]);
  for(const plan of ['starter','growth']){
   await f.subscribe('pro');const physical=await f.open(),unmoved=await f.open();assert.equal((await f.scan(physical.id)).needsApproval,true);const row=await service.get(db,ctx,physical.id);assert.equal(row.scanned_plan,'pro');
-  await f.subscribe(plan);await assert.rejects(f.open(),e=>e.code==='entitlement_required');await assert.rejects(f.approve(physical.id),e=>e.code==='entitlement_required');
+  await f.subscribe(plan);assert.match(await require('../../src/commercial/agent-rule-quota').restriction(db,{accountId:f.owner.accountId,plan}),/Automatic work is paused/);await assert.rejects(f.open(),e=>e.code==='entitlement_required');await assert.rejects(f.approve(physical.id),e=>e.code==='entitlement_required');
   await assert.rejects(service.configure(db,ctx,{maximumUnits:1,confirmed:'yes',revision:0}),e=>e.code==='entitlement_required');
   await assert.rejects(service.approve(db,ctx,unmoved.id,{confirmed:'yes',expectedFingerprint:(await service.get(db,ctx,unmoved.id)).fingerprint,manualRecovery:'yes'}),/physical scan evidence/);
   await assert.rejects(service.approve(db,ctx,physical.id,{expectedFingerprint:row.fingerprint,manualRecovery:'yes'}),/Approve the exact/);
