@@ -14,6 +14,9 @@ const governedReports=require('../reports/postgres-registry');
 
 const agentReviews=require('../autopilot/job-reviews');
 const FIELDS=Object.freeze({
+  historicalFifoEvidence:{type:'string',maxLength:4000,description:'Exact owner-checked records establishing that earlier untracked issues used FIFO. Never infer or invent this historical fact. Initial mixed-age custody always requires individual approval even on Pro or Custom.'},
+  skuCodes:{type:'string',maxLength:200000,description:'Exact active SKU codes, one per line or comma separated. Omit for the full current reorder list. Never invent product codes.'},
+  secondaryQuantities:{type:'string',maxLength:200000,description:'Owner-supplied independent requested weights, one line per measured reorder: exact SKU code | exact receiving location | exact pieces | exact weight. Never estimate weight from a piece count.'},
   annualStocktake:{type:'string',maxLength:16000,description:'Owner-requested annual stocktake JSON: year, optional title, locations (exact existing location names) and counters (exact team names or work emails). locationIds/counterIds may be used only when already discovered in this inventory. Names resolve uniquely; ambiguous names require clarification. Choose active counters with count permission and warehouse access. Never invent a location, counter, year or physical count.'},
   bankTransaction:{type:'string',maxLength:160,description:'Exact recorded bank transaction ID discovered in the accounting evidence. It must be an incoming unmatched bank credit for the selected invoice, not a proposed or invented payment.'},
   filedDocument:{type:'string',maxLength:120,description:'Exact filed document ID from its business-record document list or saved document review. The source must belong to the selected record.'},
@@ -165,7 +168,7 @@ const FIELDS=Object.freeze({
   externalId:{type:'string',description:'Exact external provider or bank reference ID.'},
   accountCode:{type:'string',description:'Exact StockChief ledger account code.'},
   authority:{type:'string',description:'Accounting connector authority: OBSERVE or POST.'},
-  strategy:{type:'string',description:'Fulfillment picking strategy: WAVE, BATCH, or CLUSTER.'},
+  strategy:{type:'string',description:'Fulfillment picking strategy: WAVE, BATCH, or CLUSTER. For supplier selection, cheapest or fastest. For customer stock rotation, FIFO or FEFO.'},
   scanLocation:{type:'string',description:'Exact location barcode or name physically scanned.'},
   scanItem:{type:'string',description:'Exact product barcode or SKU physically scanned.'},
   lotBarcode:{type:'string',description:'Exact physical lot barcode, if applicable.'},

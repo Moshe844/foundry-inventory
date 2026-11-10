@@ -491,6 +491,20 @@ function createPostgresAutopilotRouter(database){
       {action:'catalog.restore_margin',sku:req.body.sku});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/reviews/stock-rotation/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review exact FIFO/FEFO reservations for this order',{action:'sales_order.reserve_rotation',recordReference:req.body.order,strategy:req.body.strategy,historicalFifoEvidence:req.body.historicalFifoEvidence});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/stock-rotation/:order/release',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../warehouse/agent-stock-rotation').release(database,req.ctx,req.params.order);res.redirect(303,'/orders/'+req.params.order);
+  }));
+  router.post('/autopilot/reviews/:job/purchasing-prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const actions={'reorder-drafts':'purchase_order.reorder_drafts','reorder-explanation':'purchase_order.reorder_drafts','supplier-options':'purchasing.select_supplier'};
+    if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a reorder or supplier review.');
+    const prepared=await assistant.prepareAction(database,req.ctx,'Review current purchasing preparation',
+      {action:actions[req.params.job],skuCodes:req.body.skuCodes,location:req.body.location,strategy:req.body.strategy,quantity:req.body.quantity,secondaryQuantities:req.body.secondaryQuantities});
+    res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{
     const actions={'combine-draft-orders':'purchase_order.combine_drafts','split-draft-orders':'purchase_order.split_draft'};
     if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a purchase-order grouping.');

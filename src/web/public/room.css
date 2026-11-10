@@ -75,6 +75,7 @@
 .rm-agent__approval-choice p { margin:0 0 12px; }
 .rm-agent__approval-note { font-size:12px; color:var(--muted); }
 .rm-mission-review { display:block; }
+.rm-mission-review .message-body { min-width:0; overflow-wrap:anywhere; }
 .rm-mission-request { margin-bottom:20px; font-size:14px; }
 .rm-mission-request summary { cursor:pointer; color:var(--muted); }
 .rm-mission-scope { display:block; margin:20px 0; padding:0; }
