@@ -678,6 +678,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
+  'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
+  'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
