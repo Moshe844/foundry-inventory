@@ -28,7 +28,15 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
  WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS return_assessment_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_customer_page_requests p WHERE p.workspace_id=$1 AND p.status='RECEIVED'
- AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_page_request_summary
+ AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_page_request_summary,
+ CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
+ FROM stockchief_runtime.agent_channel_copy_sets p LEFT JOIN LATERAL(
+  SELECT v.document_hash,v.exported_at,v.automatic FROM stockchief_runtime.agent_channel_copy_versions v
+  WHERE v.workspace_id=p.workspace_id AND v.copy_id=p.id ORDER BY v.created_at DESC,v.id DESC LIMIT 1
+ ) latest ON true WHERE p.workspace_id=$1 AND p.enabled
+ AND (p.last_issue IS NOT NULL OR latest.automatic AND latest.exported_at IS NULL AND NOT EXISTS(
+  SELECT 1 FROM stockchief_runtime.agent_channel_copy_versions done WHERE done.workspace_id=p.workspace_id AND done.document_hash=latest.document_hash AND done.exported_at IS NOT NULL))
+ AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS channel_copy_summary
  FROM users WHERE workspace_id=$1 AND id=$2`,[workspaceId,actorId])).rows[0]:null;}
 function visible(item,actor){const p=require('../actions/permissions'),required={accounting:p.VIEW_ACCOUNTING,order:p.VIEW_SALES,shipping:p.VIEW_SALES,purchase:p.VIEW_PURCHASING,repair:p.ADMIN,provider:p.ADMIN};return (item.requiredPermissions||[required[item.kind]||p.VIEW]).every(key=>p.can(actor,key));}
 
@@ -51,7 +59,7 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
@@ -73,10 +81,11 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
       actor?.role==='owner'?require('../operations/agent-return-disposition').notices(actor.return_assessment_summary):[],
       actor?.role==='owner'?require('../sales/agent-customer-order-pages').notices(actor.customer_page_request_summary):[],
+      actor?.role==='owner'?require('../catalog/agent-channel-copy').notices(actor.channel_copy_summary):[],
     ]);
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
-    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent

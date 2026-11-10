@@ -209,6 +209,9 @@ jobs:
       - name: Published website stock, checked delivery facts, cross-site phone embedding and current plan boundaries
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-website-stock-chat.test.js tests/postgres/agent-website-stock-chat-boundaries.test.js tests/postgres/agent-website-stock-chat-ui.test.js tests/postgres/agent-website-stock-chat-volume.test.js tests/postgres/agent-website-stock-chat-schema.test.js
+      - name: Factual channel copy, individually reviewed Growth batches, native Pro routines, exported work and plan-safe bulk sources
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/channel-copy-format.test.js tests/postgres/agent-channel-copy.test.js tests/postgres/agent-channel-copy-boundaries.test.js tests/postgres/agent-channel-copy-schema.test.js tests/postgres/agent-channel-copy-volume.test.js tests/postgres/agent-channel-copy-ui.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

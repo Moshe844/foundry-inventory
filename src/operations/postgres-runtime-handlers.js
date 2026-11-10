@@ -683,6 +683,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'purchasing.promotion-stock-plan.v1':external((job,database)=>require('../purchasing/agent-promotion-stock').onProject(database,job.workspaceId,job.payload.promotionId)),
   'purchasing.shutdown-plan.v1':external((job,database)=>require('../purchasing/agent-supplier-shutdowns').onProject(database,job.workspaceId,job.payload.shutdownId)),
   'catalog.retire-products.v1':external((job,database)=>require('../catalog/agent-product-retirements').onNotice(database,job.workspaceId,job.payload.noticeId)),
+  'catalog.channel-copy.v1':external((job,database)=>require('../catalog/agent-channel-copy').onCopy(database,job.workspaceId,job.payload.copyId)),
   'team.procedure-draft.v1':external((job,database)=>require('../autopilot/team-procedures').onProcedure(database,job.workspaceId,job.payload.procedureId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),

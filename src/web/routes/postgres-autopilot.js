@@ -17,6 +17,15 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const channelCopy=require('../../catalog/agent-channel-copy');
+  const copyPage=async(req,res,extra={})=>res.page('autopilot/channel-copy',{title:'Product copy for sales channels',nav:'autopilot',suppressBack:true,screen:await channelCopy.screen(database,req.ctx,{id:req.params.id||req.body?.id||null,page:req.query.page||1,versionId:req.query.versionId||null}),draft:null,...extra});
+  router.get('/autopilot/channel-copy',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
+  router.post('/autopilot/channel-copy/preview',requireAuth,owner,asyncRoute(async(req,res)=>copyPage(req,res,{draft:await channelCopy.preview(database,req.ctx,req.body)})));
+  router.post('/autopilot/channel-copy',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await channelCopy.save(database,req.ctx,req.body);res.redirect(303,'/autopilot/channel-copy/'+r.copyId);}));
+  router.get('/autopilot/channel-copy/versions/:versionId/copy.csv',requireAuth,owner,asyncRoute(async(req,res)=>{const csv=await channelCopy.download(database,req.ctx,req.params.versionId);res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="prepared-channel-copy.csv"'});res.send(csv);}));
+  router.get('/autopilot/channel-copy/:id',requireAuth,owner,asyncRoute((req,res)=>copyPage(req,res)));
+  router.post('/autopilot/channel-copy/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));
+  router.post('/autopilot/channel-copy/:id/refresh',requireAuth,owner,asyncRoute(async(req,res)=>{await channelCopy.request(database,req.ctx,req.params.id);req.flash('success','Private copy refresh queued. Nothing will be published.');res.redirect(303,'/autopilot/channel-copy/'+req.params.id);}));
   const stockChat=require('../../sales/agent-website-stock-chat');
   router.get('/autopilot/website-stock-chat',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/website-stock-chat',{title:'Website stock and delivery answers',nav:'autopilot',suppressBack:true,issuedUrl:null,screen:await stockChat.screen(database,req.ctx,req.query)})));
   router.post('/autopilot/website-stock-chat/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const base=new URL(req.protocol+'://'+req.get('host'));if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new ValidationError('Open the current StockChief website before publishing its assistant link.');const p=await stockChat.publish(database,req.ctx,req.body);res.page('autopilot/website-stock-chat',{title:'Website assistant ready',nav:'autopilot',suppressBack:true,issuedUrl:new URL('/stock-assistant/'+p.token,base.origin).href,screen:await stockChat.screen(database,req.ctx)});}));
