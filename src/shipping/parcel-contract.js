@@ -1,16 +1,24 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
+const measurement=require('../domain/physical-measure');
 const MAX_PACKAGES=100;
 const MAX_WEIGHT_GRAMS=1000000;
-function weight(box,label){
+const MAX_DIMENSION=2147483647;
+const weightUnits={g:[1,1],kg:[1000,1],oz:[28349523125,1000000000],lb:[45359237,100000]};
+function weight(box,label,{nearestImperial=false}={}){
  const measured=box.weight??(box.weightUnit?box.weightGrams:undefined);
- if(measured==null||measured===''){
-  const grams=positive(box.weightGrams,label);if(grams>MAX_WEIGHT_GRAMS)throw new ValidationError(label+' exceeds 1,000 kg per package.');return grams;
- }
- const unit=String(box.weightUnit||'g').toLowerCase(),factor={g:1,kg:1000,oz:28.349523125,lb:453.59237}[unit];
- if(!factor)throw new ValidationError('Choose g, kg, oz or lb for package weight.');
- const raw=String(measured).trim();if(!/^\d+(?:\.\d{1,6})?$/.test(raw)||Number(raw)<=0)throw new ValidationError(label+' must be a positive weight, with at most six decimal places.');
- const grams=Math.ceil(Number(raw)*factor-1e-9);if(grams>MAX_WEIGHT_GRAMS)throw new ValidationError(label+' exceeds 1,000 kg per package.');return grams;
+ const direct=measured==null||measured==='';
+ const unit=direct?'g':String(box.weightUnit||'g').toLowerCase();
+ if(!Object.hasOwn(weightUnits,unit))throw new ValidationError('Choose g, kg, oz or lb for package weight.');
+ const ratio=weightUnits[unit];
+ const canonical=measurement.convert(direct?box.weightGrams:measured,{numerator:ratio[0],denominator:ratio[1],label,limit:MAX_DIMENSION});
+ // Preserve the established carrier weight conversion for manually entered
+ // pounds or ounces. Supplier-derived and metric weights stay exact.
+ const grams=unit==='lb'||unit==='oz'
+  ?nearestImperial?Math.max(1,Math.round(Number(canonical))):Math.ceil(Number(canonical)-1e-9)
+  :canonical;
+ if(Number(grams)>MAX_WEIGHT_GRAMS)throw new ValidationError(label+' exceeds 1,000 kg per package.');
+ return grams;
 }
 function format(value,downloadUrl){let inferred;try{inferred=new URL(downloadUrl).pathname.split('.').at(-1);}catch{}
  const name=String(value||inferred||'PDF').toUpperCase();
@@ -18,15 +26,13 @@ function format(value,downloadUrl){let inferred;try{inferred=new URL(downloadUrl
  if(['ZPL','ZPLII','APPLICATION/ZPL','APPLICATION/X-ZPL','TEXT/ZPL'].includes(name))return 'ZPL';
  throw new ValidationError('The carrier returned an unsupported label format. Verify its saved purchase without buying again.');
 }
-function positive(value,label){const n=Number(value);if(!Number.isSafeInteger(n)||n<1||n>2147483647)throw new ValidationError(label+' must be a whole number from 1 to 2,147,483,647.');return n;}
 function boxes(input){
  if(!Array.isArray(input)||input.length<1||input.length>MAX_PACKAGES)throw new ValidationError('A shipment needs 1 to '+MAX_PACKAGES+' packages.');
  const rows=input.map((box,i)=>{if(!box||typeof box!=='object')throw new ValidationError('Package '+(i+1)+' is not readable.');
   const result={weightGrams:weight(box,'Package '+(i+1)+' weight')};
-  for(const key of ['lengthMm','widthMm','heightMm'])result[key]=box[key]==null||box[key]===''?null:positive(box[key],'Package '+(i+1)+' dimension');
+  for(const key of ['lengthMm','widthMm','heightMm'])result[key]=measurement.optional(box[key],'Package '+(i+1)+' dimension',MAX_DIMENSION);
   if(Object.values(result).slice(1).filter(v=>v!==null).length%3!==0)throw new ValidationError('Package '+(i+1)+' needs all three measured dimensions, or none.');
   return result;});
- if(rows.reduce((sum,row)=>sum+row.weightGrams,0)>2147483647)throw new ValidationError('Combined package weight exceeds the supported 2,147,483,647 grams.');
  return rows;
 }
 function options(input={},previous={}){

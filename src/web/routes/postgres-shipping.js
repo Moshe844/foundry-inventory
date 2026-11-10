@@ -69,8 +69,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
     maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
     maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
     requireByPromised:Boolean(Number(row.require_by_promised)),active:Boolean(Number(row.is_active)),currency:row.currency,
-    minWeightGrams:row.min_weight_grams==null?null:Number(row.min_weight_grams),maxWeightGrams:row.max_weight_grams==null?null:Number(row.max_weight_grams)})).filter(rule=>rule.active);
-  const ruled=rules.length?require('../../shipping/rules').decide(null,workspaceId,rates,{rules,promisedDate:s.needed_by||null,weightGrams:Number(s.weight_grams)}):null;
+    minWeightGrams:row.min_weight_grams,maxWeightGrams:row.max_weight_grams})).filter(rule=>rule.active);
+  const ruled=rules.length?require('../../shipping/rules').decide(null,workspaceId,rates,{rules,promisedDate:s.needed_by||null,weightGrams:s.weight_grams}):null;
   const recommended=rates.length&&mode!=='MANUAL'&&!rules.length
     ?{rate:rates[0],because:'This is the lowest current carrier price. Confirm its service and delivery date before buying.'}:null;
   let providerCapabilities={};
@@ -302,10 +302,17 @@ function createPostgresShippingRouter(database,options={}){
   // weight, packs it and fetches rates; choosing a rate, buying, printing and
   // the handover all happen on the order too (returnTo=order).
   const readiness=require('../../shipping/readiness');
-  const parcelBox=(body)=>{const toGrams={lb:453.59237,oz:28.349523125,kg:1000,g:1}[body.weightUnit],weight=Number(String(body.weight||'').replace(',','.'));
-    if(!toGrams||!(weight>0))throw new ValidationError('Enter the parcel weight.');
-    const toMm={in:25.4,cm:10}[body.sizeUnit]||25.4,size=name=>{const value=Number(String(body[name]||'').replace(',','.'));return value>0?Math.round(value*toMm):undefined;};
-    return {weightGrams:Math.max(1,Math.round(weight*toGrams)),lengthMm:size('length'),widthMm:size('width'),heightMm:size('height')};};
+  const parcelBox=body=>{
+    const contract=require('../../shipping/parcel-contract'),measurement=require('../../domain/physical-measure');
+    const decimal=value=>String(value||'').trim().replace(',','.');
+    if(!body.weightUnit||!decimal(body.weight))throw new ValidationError('Enter the parcel weight and choose its unit.');
+    const weightGrams=contract.weight({weight:decimal(body.weight),weightUnit:body.weightUnit},'Parcel weight',{nearestImperial:true});
+    const units={in:[254,10],cm:[10,1],mm:[1,1]},unit=body.sizeUnit||'in';
+    if(!Object.hasOwn(units,unit))throw new ValidationError('Choose inches, centimetres or millimetres for the parcel size.');
+    const [numerator,denominator]=units[unit];
+    const size=name=>decimal(body[name])?measurement.convert(decimal(body[name]),{numerator,denominator,label:'Parcel '+name,limit:2147483647}):null;
+    return {weightGrams,lengthMm:size('length'),widthMm:size('width'),heightMm:size('height')};
+  };
   const backTo=async(req,res,anchor)=>{if(req.body.returnTo!=='order')return res.redirect(303,'/fulfilment/'+req.params.id+anchor);
     const parcel=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);return res.redirect(303,'/orders/'+parcel.sales_order_id+'#ship-now');};
   const quoteFlash=async(req,shipmentId,key)=>{

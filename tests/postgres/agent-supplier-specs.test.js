@@ -33,7 +33,7 @@ test('supplier specs fill only evidenced missing fields, govern bulk approval, a
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
   await subscribe('enterprise');
   await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
-  const source=await imports.analyse(db,ctx,{text:'Name,SKU,Location,Qty,Width cm\nSmall box,BOX-S,Dispatch,0,20\nLarge box,BOX-L,Dispatch,0,30',allowModel:false});
+  const source=await imports.analyse(db,ctx,{text:'Name,SKU,Location,Qty,Width cm\nSmall box,BOX-S,Dispatch,0,20.025\nLarge box,BOX-L,Dispatch,0,30',allowModel:false});
   await imports.approve(db,ctx,source.id,source.integrityHash);
   assert.ok((await imports.execute(db,ctx,source.id)).verified);
   const {rows}=await db.query("SELECT id,code FROM skus WHERE workspace_id=$1 AND code IN ('BOX-S','BOX-L') ORDER BY code",[ctx.workspaceId]);
@@ -54,11 +54,11 @@ test('supplier specs fill only evidenced missing fields, govern bulk approval, a
   const proposal=await prep(),page=await browser.get('/actions/'+proposal.proposal.id).expect(200);
   assert.match(page.text,/Weight \(g\)/);assert.match(page.text,/1250/);
   await subscribe('starter');await assert.rejects(assistant.executeProposal(db,ctx,proposal.proposal.id),e=>e.code==='entitlement_required');
-  await subscribe('growth');await write(small,3,'Weight g','260');
+  await subscribe('growth');await write(small,3,'Weight g','260.125');
   await assert.rejects(assistant.executeProposal(db,ctx,proposal.proposal.id),/changed/);
   const approved=await prep();await assistant.executeProposal(db,ctx,approved.proposal.id);await assistant.executeProposal(db,ctx,approved.proposal.id);
   const actual=(await db.query('SELECT code,barcode,width_mm,weight_grams,length_mm,height_mm FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY code',[ctx.workspaceId,[small.id,large.id]])).rows;
-  assert.deepEqual(actual.map(r=>[r.code,Number(r.width_mm),Number(r.weight_grams),r.barcode,r.length_mm,r.height_mm]),[['BOX-L',300,1250,null,null,null],['BOX-S',200,260,null,null,null]]);
+  assert.deepEqual(actual.map(r=>[r.code,r.width_mm,r.weight_grams,r.barcode,r.length_mm,r.height_mm]),[['BOX-L','300','1250',null,null,null],['BOX-S','200.25','260.125',null,null,null]]);
   await assert.rejects(prep(),/No missing/);
   assert.equal((await db.query("SELECT count(*)::int n FROM catalogue_change_history WHERE workspace_id=$1 AND action='fill_supplier_spec'",[ctx.workspaceId])).rows[0].n,4);
   await write(large,2,'Height (cm)','40');
@@ -70,4 +70,11 @@ test('supplier specs fill only evidenced missing fields, govern bulk approval, a
   await subscribe('pro');await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   await assistant.executeMission(db,ctx,mission.proposal.id);
   assert.equal(Number((await db.query('SELECT height_mm FROM skus WHERE id=$1 AND workspace_id=$2',[large.id,ctx.workspaceId])).rows[0].height_mm),400);
+  await subscribe('enterprise');
+  await write(small,3,'Height (in)','0.125');
+  const custom=await prep(small.code);
+  await plans.save(db,ctx,'Fill these exact missing supplier measurements',randomUUID(),[{contract:registry.get('catalog.fill_supplier_specs'),args:{},dependsOn:[]},
+    {contract:registry.get('read.agent_review'),args:{agentJob:'catalog-health'},dependsOn:[0]}],[{result:custom},{result:{status:'CLARIFY'}}]);
+  await assistant.executeMission(db,ctx,custom.proposal.id);
+  assert.equal((await db.query('SELECT height_mm FROM skus WHERE id=$1 AND workspace_id=$2',[small.id,ctx.workspaceId])).rows[0].height_mm,'3.175');
 });

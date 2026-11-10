@@ -72,3 +72,18 @@ test('Shippo forwards the explicit location contact to its address contract',asy
   assert.equal(request.address_from.email,'dispatch@example.test');
  }finally{global.fetch=previous;}
 });
+
+test('fractional parcel measurements use exact Shippo units and refuse unsupported precision before a request',async()=>{
+ const previous=global.fetch;const requests=[];
+ global.fetch=async(_url,init)=>{requests.push(JSON.parse(init.body));return {ok:true,status:200,text:async()=>JSON.stringify({object_id:'exact-metric-parcel',rates:[]})};};
+ const ctx={shippoApiKey:'shippo_test_contact_fixture'};
+ const parcel={weightGrams:'37.625',lengthMm:'250.25',widthMm:'127.25',heightMm:'20.5'};
+ const input={from:{email:'dispatch@example.test'},to:{},packages:[parcel]};
+ try{
+  await shippo.quote(ctx,input);
+  const [sent]=requests[0].parcels;
+  assert.deepEqual(sent,{weight:'37.625',mass_unit:'g',length:'250.25',width:'127.25',height:'20.5',distance_unit:'mm'});
+  await assert.rejects(shippo.quote(ctx,{...input,packages:[{...parcel,heightMm:'0.00001'}]}),/cannot rate these exact measurements/);
+  assert.equal(requests.length,1);
+ }finally{global.fetch=previous;}
+});
