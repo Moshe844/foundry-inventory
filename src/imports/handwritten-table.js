@@ -3,7 +3,9 @@ const {ValidationError}=require('../domain/errors'),parser=require('./parser');
 const {FIELD_IDS}=require('./fields');
 const imageInput=require('../ai/image-input');
 async function authorize(db,ctx){
- if(!(await db.query('SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL)',[ctx.actorId,ctx.workspaceId])).rowCount)throw new ValidationError('This inventory or reading authority is no longer active. Your saved original is retained.');
+ const actor=(await db.query('SELECT u.role,u.permissions FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL) FOR SHARE OF u,w',[ctx.actorId,ctx.workspaceId])).rows[0];
+ if(!actor)throw new ValidationError('This inventory or reading authority is no longer active. Your saved original is retained.');
+ const permission=require('../actions/permissions');permission.assertCan(actor,permission.OPERATE,'import inventory data');await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
  return require('../commercial/agent-plan').requireWorkspaceJob(db,ctx.workspaceId,139,'draft');
 }
 function creditPrefix(input,sourceHash){return (input.usageKey||require('./usage-key').analysisUsageKey(sourceHash))+':handwriting:'+String(input.readingAttempt||'first');}
