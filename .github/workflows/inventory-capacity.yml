@@ -179,6 +179,9 @@ jobs:
       - name: Native customer reservation teaching, scarce-stock priority and safe current plan limits
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-customer-reservations.test.js tests/postgres/agent-customer-stock-priorities.test.js tests/postgres/agent-customer-reservation-boundaries.test.js tests/postgres/agent-customer-reservation-ui.test.js tests/postgres/agent-customer-reservation-reporting.test.js
+      - name: Buffered channel stock, exact plan authority and verified provider recovery
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/channel-buffer-protocol.test.js tests/postgres/agent-channel-buffers.test.js tests/postgres/agent-channel-buffer-boundaries.test.js tests/postgres/agent-channel-buffer-stock-and-limits.test.js tests/postgres/agent-channel-buffer-ui.test.js tests/postgres/agent-channel-buffer-reporting.test.js tests/postgres/agent-channel-buffer-authority.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

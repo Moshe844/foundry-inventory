@@ -54,6 +54,7 @@ function adapter(type,transport){
   if(field==='price'){
    if(!value||!Number.isSafeInteger(value.amount)||value.amount<0||!current.value||value.currency!==current.value.currency)throw new ValidationError('The provider and StockChief must use the same evidenced currency and exact non-negative price.');
   }else integer(value);
+  if(input.beforeWrite)await input.beforeWrite();
   if(type==='shopify'){
    let result;if(field==='price')result=(await transport.graphql(credentials,`mutation SyncPrice($product:ID!,$variants:[ProductVariantsBulkInput!]!){productVariantsBulkUpdate(productId:$product,variants:$variants,allowPartialUpdates:false){userErrors{code message field} productVariants{id price}}}`,
     {product:current.productId,variants:[{id:externalId,price:money.fromMinor(value.amount,value.currency)}]})).productVariantsBulkUpdate;

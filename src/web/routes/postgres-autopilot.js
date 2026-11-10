@@ -17,6 +17,14 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const buffers=require('../../connections/agent-channel-buffers');
+  const bufferPage=async(req,res,input={})=>res.page('autopilot/channel-buffers',{title:'Channel stock buffers',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await buffers.page(database,req.ctx,{...req.query,...input})});
+  router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{positionId:req.query.position})));
+  router.get('/autopilot/channel-buffer-reviews/:id',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{reviewId:req.params.id})));
+  router.post('/autopilot/channel-buffers/batch',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await buffers.configureBatch(database,req.ctx,req.body);req.flash('success','Saved '+r.changed+' of '+r.count+' exact product buffers together. Identical settings share one saved-rule slot.');res.redirect(303,'/autopilot/channel-buffers');}));
+  router.post('/autopilot/channel-buffers/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await buffers.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Buffer removed. Ordinary channel synchronization may publish more units.':'Channel buffer saved. Every provider update rechecks current stock, plan and authority.');res.redirect(303,'/autopilot/channel-buffers?'+new URLSearchParams({position:req.params.id}));}));
+  router.post('/autopilot/channel-buffer-rules/:id/review',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await buffers.prepareReview(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/channel-buffer-reviews/'+r.id);}));
+  router.post('/autopilot/channel-buffer-reviews/:id/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const result=await buffers.publish(database,req.ctx,req.params.id,req.body);req.flash('success',result.alreadyMatches?'The channel already reports this exact buffered quantity. No provider write was needed.':'The exact buffered sellable quantity is queued for verified channel delivery. Physical stock is unchanged.');res.redirect(303,'/autopilot/channel-buffer-reviews/'+req.params.id);}));
   const rfqs=require('../../purchasing/agent-supplier-rfqs');
   const rfqPage=async(req,res,id=null)=>res.page('autopilot/supplier-rfqs',{title:'Supplier quote requests',nav:'autopilot',backTo:{href:id?'/autopilot/supplier-rfqs':'/autopilot/reviews',label:id?'Supplier RFQs':'Agent reviews'},...await rfqs.page(database,req.ctx,{...req.query,id})});
   router.get('/autopilot/supplier-rfqs',requireAuth,owner,asyncRoute((req,res)=>rfqPage(req,res)));
