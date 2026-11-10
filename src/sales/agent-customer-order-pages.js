@@ -151,7 +151,12 @@ async function onRequest(db,workspaceId,id,ownerId,{preorder=false}={}){try{
  if(preorder)await settlePreorders(db,workspaceId,{requestId:id});
  return result;
 }catch(e){if(![400,402,403,404,422].includes(e.status))throw e;await db.query("UPDATE stockchief_runtime.agent_customer_page_requests SET problem=$3 WHERE workspace_id=$1 AND id=$2 AND status='RECEIVED'",[workspaceId,id,String(e.message).slice(0,500)]);return {held:true,reason:e.message};}}
+async function preorderSchemaExists(db){
+ const {rows:[row]}=await db.query("SELECT to_regclass('stockchief_runtime.agent_preorder_claims') IS NOT NULL AS installed");
+ return row.installed;
+}
 async function queueArrival(client,ctx,receiptId,lineIds){
+ if(!await preorderSchemaExists(client))return;
  const affected=(await client.query(`SELECT 1 FROM stockchief_runtime.agent_preorder_claims
   WHERE workspace_id=$1 AND purchase_order_line_id=ANY($2::text[]) LIMIT 1`,[ctx.workspaceId,lineIds])).rowCount;
  if(affected)await require('../operations/postgres-job-queue').enqueue(scoped(client),{
@@ -160,7 +165,7 @@ async function queueArrival(client,ctx,receiptId,lineIds){
 
 async function settlePreorders(db,workspaceId,{requestId=null,receiptId=null}={}){
  const state=await policy.accountState(db,workspaceId);
- if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,68,'automatic'))return {reserved:0,held:0};
+ if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,68,'automatic')||!await preorderSchemaExists(db))return {reserved:0,held:0};
  const due=(await db.query(`SELECT r.id,p.authorized_by FROM stockchief_runtime.agent_customer_page_requests r
   JOIN stockchief_runtime.agent_customer_order_pages p ON p.workspace_id=r.workspace_id AND p.id=r.page_id
   JOIN sales_orders o ON o.workspace_id=r.workspace_id AND o.id=r.sales_order_id

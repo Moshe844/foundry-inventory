@@ -411,16 +411,20 @@ async function lookupRecords(database,ctx,request,options={}) {
     const summary=(await database.query(positions+`SELECT count(*)::text AS positions,count(*) FILTER(WHERE p.has_cost_record)::text AS cost_positions,
       COALESCE(sum(p.physical_units),0)::text AS physical_units,COALESCE(sum(p.costed_units),0)::text AS costed_units,
       COALESCE(sum(p.cost_minor),0)::text AS cost_minor,
-      COALESCE(sum(GREATEST(p.physical_units-p.costed_units,0)),0)::text AS missing_cost_units
+      COALESCE(sum(GREATEST(p.physical_units-p.costed_units,0)),0)::text AS missing_cost_units,
+      COALESCE(sum(GREATEST(p.physical_units-p.costed_units,0)) FILTER(WHERE NOT ${require('../domain/stock-totals').MEASURED}),0)::text AS missing_cost_counted,
+      COALESCE(jsonb_agg(jsonb_build_object('unit',coalesce(nullif(i.unit_label,''),'measured'),'quantity',p.physical_units-p.costed_units))
+        FILTER(WHERE ${require('../domain/stock-totals').MEASURED} AND p.physical_units>p.costed_units),'[]'::jsonb) AS missing_cost_measured
     FROM positions p JOIN skus s ON s.workspace_id=$1 AND s.id=p.sku_id
     JOIN items i ON i.workspace_id=$1 AND i.id=s.item_id JOIN locations l ON l.workspace_id=$1 AND l.id=p.location_id
     WHERE ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')`,[ctx.workspaceId,search])).rows[0];
     const exact=value=>{const n=Number(value);if(!Number.isSafeInteger(n))throw new ValidationError('This inventory total exceeds the exact reporting range. Choose a narrower scope.');return n;};
     const quantity=value=>require('../domain/exact-quantity').safeNumber(value,{signed:true,label:'Stock quantity'});
     const totals={physicalUnits:quantity(summary.physical_units),costedUnits:quantity(summary.costed_units),
-      inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:quantity(summary.missing_cost_units),complete:true};
+      inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:quantity(summary.missing_cost_units),
+      missingCostCounted:quantity(summary.missing_cost_counted),missingCostMeasured:require('../domain/stock-totals').byUnit(summary.missing_cost_measured),complete:true};
     totals.inventoryBookCost=pricing.formatMinor(totals.inventoryBookCostMinor,currency);
-    return {answer:totals.inventoryBookCost+' at recorded cost. '+(totals.missingCostUnits?require('../lib/units').unitCount(totals.missingCostUnits,'unit')+' still need actual cost, so this value is incomplete. ':'')+(Number(summary.positions)?'This total covers every matching stock position.':'There are no recorded stock positions.'),totals,
+    return {answer:totals.inventoryBookCost+' at recorded cost. '+(totals.missingCostUnits?require('../domain/stock-totals').missingCostText(totals)+' still need actual cost, so this value is incomplete. ':'')+(Number(summary.positions)?'This total covers every matching stock position.':'There are no recorded stock positions.'),totals,
       coverage:{scope:search?'All positions matching the literal name or code filter':'All inventory positions in this business',
         totalPositions:exact(summary.positions),costPositions:exact(summary.cost_positions),returnedPositions:rows.length,
         returnedCostPositions:rows.filter(row=>row.hasCostRecord).length,detailComplete:rows.length===exact(summary.positions)},rows,

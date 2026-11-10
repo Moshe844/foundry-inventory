@@ -15,6 +15,7 @@
   var value = locals.stockValue;
   var knownCostUnits = value ? Number(value.totalUnits || 0) : 0;
   var missingCostUnits = value && value.missingCostUnits != null ? Number(value.missingCostUnits) : Math.max(0, Number(totals.onHand || 0) - knownCostUnits);
+  var missingCostShown = value && value.missingCostUnits != null ? helpers.missingCost(value) : helpers.unitCount(missingCostUnits, 'unit');
 %>
 
 
@@ -46,13 +47,13 @@
 
   <div class="sc-tiles">
     <a class="sc-tile" href="/inventory/table"><span>On hand</span><strong><%= helpers.unitCount(helpers.qty(totals.onHand),'unit') %></strong><small>Across every location<% if (totals.measured && totals.measured.length) { %>, plus <%= helpers.measuredStock(totals.measured) %><% } %></small></a>
-    <a class="sc-tile" href="/accounting#inventory"><span>Known cost</span><strong class="<%= missingCostUnits > 0 ? 'is-important' : '' %>"><%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'Not recorded' %></strong><small><%= missingCostUnits > 0 ? helpers.unitCount(missingCostUnits.toLocaleString('en-US'),'unit') + ' still need a cost' : 'Every unit has a cost' %></small></a>
+    <a class="sc-tile" href="/accounting#inventory"><span>Known cost</span><strong class="<%= missingCostUnits > 0 ? 'is-important' : '' %>"><%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'Not recorded' %></strong><small><%= missingCostUnits > 0 ? missingCostShown + ' still need a cost' : 'Every unit has a cost' %></small></a>
     <a class="sc-tile" href="/orders?status=open"><span>Promised to customers</span><strong><%= helpers.unitCount((totals.committed || 0).toLocaleString('en-US'),'unit') %></strong><small><%= totals.committed ? 'Already sold, not yet shipped' : 'Nothing is promised to a customer' %></small></a>
     <a class="sc-tile" href="/inventory/table?group=incoming"><span>On the way</span><strong><%= helpers.unitCount((totals.incoming || 0).toLocaleString('en-US'),'unit') %></strong><small>From purchase orders</small></a>
   </div>
 
   <% if (missingCostUnits > 0) { %>
-    <p class="sc-stock-notice"><%= typeof postgresNative!=='undefined'&&postgresNative?'Actual stock cost':'Purchase cost' %> is missing for <strong><%= missingCostUnits.toLocaleString('en-US') %></strong> units<% if(value && value.totalCostMinor){ %>, so <%= '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') %> is not the full inventory value<% } %>. <% if(typeof postgresNative!=='undefined'&&postgresNative){ %><a href="/inventory/table">Open a product to record stock cost.</a><% }else{ %><a href="/accounting#inventory">Show the units and recorded cost.</a><% } %></p>
+    <p class="sc-stock-notice"><%= typeof postgresNative!=='undefined'&&postgresNative?'Actual stock cost':'Purchase cost' %> is missing for <strong><%= missingCostShown %></strong><% if(value && value.totalCostMinor){ %>, so <%= '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') %> is not the full inventory value<% } %>. <% if(typeof postgresNative!=='undefined'&&postgresNative){ %><a href="/inventory/table">Open a product to record stock cost.</a><% }else{ %><a href="/accounting#inventory">Show the units and recorded cost.</a><% } %></p>
   <% } %>
 
   <section class="sc-business-card sc-stock-groups"><h2>Where your products stand</h2>

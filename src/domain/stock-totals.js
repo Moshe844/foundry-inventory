@@ -38,4 +38,25 @@ function measuredText(measured){
   return (measured||[]).map(m=>`${qty.format(m.quantity)} ${m.unit}`).join(', ');
 }
 
-module.exports={MEASURED,totalsSql,read,forBusiness,measuredText};
+// Measured amounts listed per position or group, added up per unit.
+function byUnit(entries){
+  const totals=new Map();
+  for(const entry of entries||[]){const quantity=Number(entry.quantity);if(!quantity)continue;totals.set(String(entry.unit),(totals.get(String(entry.unit))||0)+quantity);}
+  return [...totals].sort(([a],[b])=>a.localeCompare(b)).map(([unit,quantity])=>({unit,quantity:Math.round(quantity*1e6)/1e6}));
+}
+
+// "22 units and 1.25 kg": stock still without a recorded cost, counted and
+// measured apart. missingCostUnits stays the any-missing signal callers test;
+// a summary saved before the split is shown as it was.
+function missingCostText(coverage){
+  const {unitCount}=require('../lib/units');
+  if(!coverage)return '';
+  const measured=coverage.missingCostMeasured||[];
+  const counted=coverage.missingCostCounted!=null?Number(coverage.missingCostCounted):measured.length?0:Number(coverage.missingCostUnits)||0;
+  const parts=[];
+  if(counted)parts.push(unitCount(counted,'unit'));
+  if(measured.length)parts.push(measuredText(measured));
+  return parts.join(' and ')||unitCount(Number(coverage.missingCostUnits)||0,'unit');
+}
+
+module.exports={MEASURED,totalsSql,read,forBusiness,measuredText,byUnit,missingCostText};
