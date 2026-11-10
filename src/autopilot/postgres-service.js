@@ -15,6 +15,9 @@ const entitlements=require('../entitlements/postgres-service');
 const {newAppendId}=require('../lib/append-id');
 
 const MODES = Object.freeze({ OBSERVE:'OBSERVE', SUPERVISED:'SUPERVISED', POLICY_AUTOMATED:'POLICY_AUTOMATED' });
+// A planning pass may reuse one read; execution and provider delivery receive
+// fresh state and therefore always recheck the current account allowance.
+const planningRuleQuota=Symbol('planningRuleQuota');
 const ACTIONS = Object.freeze({ TRANSFER:'transfer', PURCHASE:'approve_purchase_order' });
 const STATUSES = Object.freeze({ WAITING:'WAITING_FOR_APPROVAL', AUTHORIZED:'AUTHORIZED', EXECUTING:'EXECUTING',
   COMPLETED:'COMPLETED', CANCELLED:'CANCELLED', FAILED:'FAILED' });
@@ -306,6 +309,8 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
       return {decision:'needs_approval',reason:'Your current plan or shadow period requires approval for this action.',policy};
     const restriction=await require('./job-modes').restriction(database,workspaceId,candidate.type==='transfer'?119:20,true);
     if(restriction)return {decision:'needs_approval',reason:restriction,policy};
+    const ruleRestriction=Object.hasOwn(state,planningRuleQuota)?state[planningRuleQuota]:await require('../commercial/agent-rule-quota').restriction(database,account);
+    if(ruleRestriction)return {decision:'needs_approval',reason:ruleRestriction,policy};
     if(candidate.type==='purchase'){
       const reason=await agentPlan.purchaseReview(database,workspaceId,candidate,policy,account,committedPurchaseOrderId);
       if(reason) return {decision:'needs_approval',reason,policy};
@@ -375,6 +380,7 @@ async function persistPlannedWork(database,workspaceId,entries){
 async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0,refreshRequested=false,planningRevision=null,cycleId=null,onlySkuIds=null}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');
   await ensure(database,workspaceId);
   const state=await getState(database,workspaceId);
+  if(state.agentTerms&&state.mode===MODES.POLICY_AUTOMATED&&!state.paused&&!state.suspended){const account=await agentPlan.accountState(database,workspaceId);Object.defineProperty(state,planningRuleQuota,{value:await require('../commercial/agent-rule-quota').restriction(database,account)});}
   if(!onlySkuIds&&!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
   planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId,onlySkuIds})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}

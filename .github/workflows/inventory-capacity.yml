@@ -161,6 +161,9 @@ jobs:
       - name: Promotion planning, exact plan ceilings and one unapproved purchase
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/promotion-stock-calculation.test.js tests/postgres/agent-promotion-stock.test.js tests/postgres/agent-promotion-stock-boundaries.test.js tests/postgres/agent-promotion-stock-ui.test.js tests/postgres/agent-promotion-stock-reporting.test.js tests/postgres/agent-promotion-stock-upgrade.test.js tests/postgres/promotion-stock-volume.test.js
+      - name: Core autopilot rule limits and complete physical transfer follow-through
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-core-runtime-rule-quota.test.js tests/postgres/agent-location-transfer-workflows.test.js tests/postgres/replenishment-outcome-correctness.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
