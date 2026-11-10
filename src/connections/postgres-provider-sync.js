@@ -148,7 +148,7 @@ async function sync(job,client,providers=defaultProviders){
   [job.workspaceId,connectorId,adapter.integrationClass==='accounting'?connection.setup_status:needsMapping?'MAPPING':'CONNECTED',completedAt,startedAt]);
   await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'
-      AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED')`,
+      AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED','PROVIDER_ACCESS_REQUIRED')`,
   [job.workspaceId,connectorId,completedAt]);
   return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt,reconciled,commerceReconciled};
   };
@@ -174,20 +174,8 @@ async function sync(job,client,providers=defaultProviders){
   }
   return result;
   }catch(error){
-    const failureCount=Math.min(8,Number(syncConfig.syncFailureCount||0)+1);
-    const delay=Math.max(Number.isFinite(error.retryAfterMs)?error.retryAfterMs:0,
-      Math.min(60*60_000,60_000*2**(failureCount-1)));
-    const at=nowIso(),retryAt=new Date(Date.now()+delay).toISOString();
-    await database.transaction(async queryable=>{
-      await queryable.query(`UPDATE connection_sync_runs SET status='FAILED',completed_at=$2 WHERE id=$1`,[runId,at]);
-      await queryable.query(`UPDATE workspace_connectors SET
-        config=(config::jsonb||$3::jsonb)::text,last_error=$4,updated_at=$5
-        WHERE workspace_id=$1 AND id=$2 AND status='connected' AND paused_at IS NULL`,
-      [job.workspaceId,connectorId,JSON.stringify({syncRetryAt:retryAt,syncFailureCount:failureCount}),
-        error.status===429?'The provider asked StockChief to wait. Updates will retry automatically.':
-          'The latest provider check did not finish. Your saved records are preserved; StockChief will retry automatically.',at]);
-    },{isolation:'SERIALIZABLE',retrySafe:true});
-    error.retryAfterMs=delay;throw error;
+    await require('./provider-sync-failure').record(database,connection,runId,error);
+    throw error;
   }finally{try{previousScratch?.close();}finally{discoveryScratch?.close();}}
 }
 
