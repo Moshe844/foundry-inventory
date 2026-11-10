@@ -346,7 +346,7 @@ async function supplierView(database, workspaceId, supplier, allOrders, can, tod
  * suggested amount is the existing "needed" figure from the shortage list,
  * turned into the supplier's packs; nothing here orders anything.
  */
-async function reorderView(database, workspaceId, overview) {
+async function reorderView(database, workspaceId, overview, { lowItems = null } = {}) {
   const rows = (overview.rows || []).filter((row) => Number(row.needed) > 0);
   const skuIds = [...new Set(rows.map((row) => row.sku_id))];
   const [links, locations] = await Promise.all([
@@ -389,7 +389,8 @@ async function reorderView(database, workspaceId, overview) {
     const deliverTo = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || locations.rows[0]?.id || null;
     return { ...group, deliverTo, totalMinor: group.items.reduce((sum, item) => sum + (item.costMinor || 0), 0) };
   }).sort((a, b) => b.items.length - a.items.length || a.name.localeCompare(b.name));
-  return { groups: list, unlinked, count: Math.max(seen.size, Number(overview.atOrBelowTotal || 0)), hasMore: Boolean(overview.hasMore), nextAfter: overview.nextAfterSkuId,
+  // Unsearched, the count is the shared low-stock items count (the one Reports and Purchase orders show).
+  return { groups: list, unlinked, count: lowItems ?? Math.max(seen.size, Number(overview.atOrBelowTotal || 0)), hasMore: Boolean(overview.hasMore), nextAfter: overview.nextAfterSkuId,
     totalMinor: list.reduce((sum, group) => sum + group.totalMinor, 0) };
 }
 

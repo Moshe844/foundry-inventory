@@ -41,4 +41,12 @@ function unitLabel(quantity, label) {
   return /(s|x|z|ch|sh)$/i.test(word) ? `${word}es` : `${word}s`;
 }
 
-module.exports = { unitCount, unitLabel, INVARIANT, ALREADY_PLURAL };
+// A total of units in a summary (a headline, a card, a note): a whole number
+// with separators, because 6,800,678.75 units reads as noise. A real amount
+// under one unit says so rather than rounding to nothing. Exact quantities stay
+// on the rows that hold them.
+function wholeUnits(quantity){const n=Number(quantity)||0,rounded=Math.round(n);
+  return rounded===0&&n!==0?'less than 1':rounded.toLocaleString('en-US');}
+function wholeUnitCount(quantity,label){const n=Math.abs(Math.round(Number(quantity)||0));return wholeUnits(quantity)+' '+unitLabel(n===0&&Number(quantity)?1:n,label);}
+
+module.exports = {unitCount, unitLabel, INVARIANT, ALREADY_PLURAL, wholeUnits, wholeUnitCount };

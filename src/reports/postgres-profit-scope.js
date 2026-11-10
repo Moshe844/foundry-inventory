@@ -21,4 +21,19 @@ function bind(source,values,ids){
  values.push(ids);
  return source.replaceAll(/\/\*(?:profit|ledger)-account-scope\*\//g,`AND l.account_id=ANY($${values.length}::text[])`);
 }
-module.exports={accountIds,bind,required};
+// Whether a profit report's period is quiet enough to read entry by entry (see
+// profitActivityByEntry): both ends of the posting date are fixed dates and no
+// more than ENTRY_LIMIT posted entries fall between them. Counting stops at the
+// limit and walks the date index in order, so the check costs a few
+// milliseconds even on a large history.
+const ENTRY_LIMIT=2000,DAY=/^\d{4}-\d{2}-\d{2}$/;
+async function byEntry(database,workspaceId,config){
+ if(config.dataset!=='profit_activity')return false;
+ const dates=(config.filters||[]).filter(f=>f.field==='posting_date');
+ const from=dates.find(f=>['after','at_least'].includes(f.operator))?.value,to=dates.find(f=>['before','at_most'].includes(f.operator))?.value;
+ if(!DAY.test(String(from||''))||!DAY.test(String(to||'')))return false;
+ const n=(await database.query(`SELECT count(*)::int AS n FROM (SELECT 1 FROM accounting_journal_entries
+   WHERE workspace_id=$1 AND posting_date>=$2 AND posting_date<=$3 AND status='POSTED' ORDER BY posting_date LIMIT ${ENTRY_LIMIT+1}) x`,[workspaceId,from,to])).rows[0].n;
+ return n<=ENTRY_LIMIT;
+}
+module.exports={accountIds,bind,required,byEntry,ENTRY_LIMIT};

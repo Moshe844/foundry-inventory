@@ -470,7 +470,8 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const reorderOverview=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,req.query);
-    const reorder=await require('../buy-view').reorderView(database,req.ctx.workspaceId,reorderOverview);
+    const lowItems=String(req.query.q||'').trim()?null:await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).then((low)=>low.items).catch(()=>null);
+    const reorder=await require('../buy-view').reorderView(database,req.ctx.workspaceId,reorderOverview,{lowItems});
     return res.page('buy/reorder',{title:'What to order',nav:'purchasing',room:true,reorder,reorderOverview,draftKey:newId('reorder-drafts'),
       permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }));
@@ -520,8 +521,8 @@ function createPostgresCommerceRouter(database,options={}){
     const can=purchasingPermissions(req),size=require('../presentation/pagination').pageSize(req);
     const list=await require('../buy-view').purchaseOrdersList(database,req.ctx.workspaceId,
       await commerce.purchaseOrders(database,req.ctx.workspaceId),{...req.query,pageSize:size},can,dateToday(req));
-    const lowCount=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,{})
-      .then((found)=>Math.max(found.rows.length,Number(found.atOrBelowTotal||0))).catch(()=>0);
+    // The same items count Reports shows for low stock.
+    const lowCount=await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).then((low)=>low.items).catch(()=>0);
     const agentPolicy=require('../../commercial/agent-plan');
     const agentState=await agentPolicy.accountState(database,req.ctx.workspaceId);
     const purchaseRequests=agentPolicy.usesAgentTerms(agentState)?agentPolicy.allowance(agentState.plan,41):null;

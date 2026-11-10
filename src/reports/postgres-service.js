@@ -245,7 +245,7 @@ function filterParameter(filter){
     ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`
     :filter.value;
 }
-function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profitAccountIds=null,includeOverall=false}={}){
+function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profitAccountIds=null,includeOverall=false,byEntry=false}={}){
   config=require('./relative-dates').resolve(config,dateContext);
   const dataset=registry.get(config.dataset);const values=[workspaceId];
   const clauses=config.filters.map((filter)=>{if(!['is_null','is_empty','not_empty'].includes(filter.operator))values.push(filterParameter(filter));
@@ -296,7 +296,8 @@ function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null,profit
   const allMetrics=[{aggregate:config.aggregate,measure:config.measure},...(config.extras||[])];
   const needed=[...config.groups,...config.filters.map(f=>f.field),...allMetrics.flatMap(({aggregate,measure})=>{const metric=dataset.metrics?.[measure];return aggregate==='count'?[]:metric?[metric.numerator,metric.denominator]:[measure];})];
   const reduced=(config.groups.length||config.summary)&&[dataset.aggregateProjection,...(dataset.aggregateProjections||[])].filter(Boolean).find(p=>(!p.aggregates||allMetrics.every(({aggregate})=>p.aggregates.includes(aggregate)))&&(!p.filterFields||config.filters.every(f=>p.filterFields.includes(f.field)))&&(!p.groupFields||config.groups.every(f=>p.groupFields.includes(f)))&&needed.every(f=>p.fields.includes(f)));
-  const rawSource=reduced?reduced.source:dataset.source;
+  // A quiet period reads its few entries first (see postgres-profit-scope.byEntry).
+  const rawSource=reduced?(byEntry&&reduced===dataset.aggregateProjection&&dataset.entryProjection?dataset.entryProjection.source:reduced.source):dataset.source;
   const transformed=dataset.sourceTransform?dataset.sourceTransform(rawSource,config,{dateContext,values}):rawSource;
   const source=require('./postgres-profit-scope').bind(transformed,values,profitAccountIds);
   values.push(limit,offset);
@@ -324,7 +325,8 @@ async function run(database,ctx,actor,spec,options={}){
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,includeOverall});
   const fetched=await require('../lib/versioned-read-model').read(database,ctx.workspaceId,['report-rows',sql,values],async()=>(await database.transaction(async client=>{
     const profitAccountIds=await require('./postgres-profit-scope').accountIds(client,ctx.workspaceId,config);
-    const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds,includeOverall});
+    const byEntry=await require('./postgres-profit-scope').byEntry(client,ctx.workspaceId,config);
+    const query=queryFor(config,ctx.workspaceId,{limit:queryLimit,offset,dateContext,profitAccountIds,includeOverall,byEntry});
     return client.query(query.sql,query.values);
   },{isolation:require('./postgres-profit-scope').required(config)?'REPEATABLE READ':'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000,jit:false})).rows,{domain:['profit_activity','sales_order_lines','inventory_valuation','low_stock','movements','posted_sales_activity','supplier_bills','tax_activity','stock','catalogue','expenses','replenishment_rules','journal_lines','inventory_cost_movements','customers','sales_orders','purchase_orders','purchase_order_lines','supplier_items'].includes(config.dataset)?'business':'all'});
   const warnings=config.dataset==='movements'&&actor.role==='owner'
