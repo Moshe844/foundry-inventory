@@ -164,6 +164,9 @@ jobs:
       - name: Core autopilot rule limits and complete physical transfer follow-through
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/postgres/agent-core-runtime-rule-quota.test.js tests/postgres/agent-location-transfer-workflows.test.js tests/postgres/replenishment-outcome-correctness.test.js
+      - name: Individually approved return receipt and exact refund accounting
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-return-refund-qualification.test.js tests/postgres/agent-return-refund-boundaries.test.js tests/postgres/agent-return-refund-ui.test.js tests/postgres/round9-return-credits.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
