@@ -424,6 +424,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
       [receiptId, JSON.stringify(movementGroupIds), JSON.stringify(result)]);
     await event(client, 'purchase_order_events', null, { workspaceId: ctx.workspaceId, recordId: purchaseOrderId,
       type: 'received', detail: { receiptId, status, lines: received }, actorId: ctx.actorId, at: nowIso() });
+    await require('../sales/agent-customer-order-pages').queueArrival(client,ctx,receiptId,received.map(line=>line.lineId));
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
 }

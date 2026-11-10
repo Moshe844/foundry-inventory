@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 68:{common:'Accepts private preorders for exact whole-unit SKUs on a placed purchase order. The customer reviews the quantity, price, tax and expected stock date. StockChief prevents two requests from claiming the same incoming units and follows the receipt order at the agreed location. Kits, tracked or measured goods and physical dispatch need separate handling.',
+ growth:'Collects exact private customer preorders. You review each request before creating its order draft and handle allocation separately.',
+ pro:'Accepts known-customer preorders without training after the watch period and your authorization. Confirms and reserves the complete order only after enough of its linked stock has arrived, within current plan, price and location limits.',
+ enterprise:'Accepts known-customer preorders without training within your current authority. Confirms and reserves the complete order only after enough of its linked stock has arrived. Stock movements, dispatch and payments have separate controls.'},
  143:{common:'Reads complete PDF, Word, text and scanned contracts into private prices, currencies, units, payment conditions, notice periods and end-date facts beside literal original quotes. Retains every source section and original file; unclear, conflicting or OCR-derived facts need owner review. Uses 100 AI credits per complete file and one new document, reusing a paid mailbox source receipt. Failed readings refund the new credits. New prices, terms and financial records still need separate approval.',
  starter:'Prepares a read-only contract suggestion from the complete supplied original. Private source quotations and uncertainties stay visible. Automatic discovery and reading of newly filed contracts require Pro or Custom.',
  growth:'Prepares a read-only contract suggestion from the complete supplied original without training. You separately approve new or changed commercial terms. Automatic reading of newly filed contracts requires Pro or Custom.',
