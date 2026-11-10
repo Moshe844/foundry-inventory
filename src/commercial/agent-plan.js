@@ -130,6 +130,7 @@ const actionJobs=new Map([
   ['catalog.write_channel_copy',128],
   ['website.answer_stock',84],
   ['customer_order.from_page',83],
+  ['channel_sync.recover',182],
   ['customer_return.plan_disposition',113],
   ['shipping.prepare_export_papers',70],
   ['customer_return.send_label',112],
