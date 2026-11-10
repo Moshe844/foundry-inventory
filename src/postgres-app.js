@@ -102,6 +102,7 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
   app.use(createPostgresProviderWebhooks(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined)}));
   app.post('/autopilot/delivery-quality/:id/photos',multipart({limit:10*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
+  app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
   // One bounded JSON field carries up to 500 checked packing profiles.
   // Keep the larger form allowance specific to this owner-only workflow.

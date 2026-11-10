@@ -684,6 +684,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'purchasing.shutdown-plan.v1':external((job,database)=>require('../purchasing/agent-supplier-shutdowns').onProject(database,job.workspaceId,job.payload.shutdownId)),
   'catalog.retire-products.v1':external((job,database)=>require('../catalog/agent-product-retirements').onNotice(database,job.workspaceId,job.payload.noticeId)),
   'purchasing.blanket-release.v1':external((job,database)=>require('../purchasing/agent-blanket-releases').onContract(database,job.workspaceId,job.payload.contractId)),
+    'import.read-product-facts.v1':external((job,database)=>require('../documents/agent-product-source').run(job,database,{provider:options.productSourceProvider})),
     'catalog.channel-copy.v1':external((job,database)=>require('../catalog/agent-channel-copy').onCopy(database,job.workspaceId,job.payload.copyId,job.payload.runId)),
   'team.procedure-draft.v1':external((job,database)=>require('../autopilot/team-procedures').onProcedure(database,job.workspaceId,job.payload.procedureId)),
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
