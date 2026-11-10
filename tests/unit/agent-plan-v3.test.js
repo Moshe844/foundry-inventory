@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { allowance, permits, requireJob } = require('../../src/commercial/agent-plan');
+test('lower-plan automatic reservation refusals name Pro teaching and Custom without training',()=>{
+ for(const id of [12,65])assert.throws(()=>requireJob('growth',id,'automatic',{trained:false}),e=>e.code==='entitlement_required'&&/Pro plan with a completed taught rule/.test(e.message)&&/Custom plan without training/.test(e.message)&&e.details.minimum==='pro');
+});
 test('the pricing chart tracks the row-by-row verification record and executable permissions',()=>{
   const fs=require('node:fs'),path=require('node:path'),progress=require('../../src/commercial/agent-plan-progress.json');
   const ledger=fs.readFileSync(path.join(__dirname,'../../docs/agent-plan-v3-verification.md'),'utf8');

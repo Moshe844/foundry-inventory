@@ -27,6 +27,8 @@ const activities = new Map([
   ['delivery-qc','Apply a QC hold to one received product line'],
   ['supplier-rfq','Prepare and send one supplier quotation request'],
   ['supplier-claim','Prepare and send one physically evidenced supplier damage claim'],
+  ['customer-reservation','Reserve one complete customer order from actual available stock'],
+  ['customer-priority','Apply one checked customer stock priority'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -112,6 +114,13 @@ async function report(db,ctx,window='week') {
     SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
       WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
     SELECT 'shutdown-purchase',p.purchase_created_at FROM stockchief_runtime.agent_supplier_shutdown_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
+    SELECT 'customer-reservation',a.executed_at FROM stockchief_runtime.assistant_action_proposals a
+      JOIN stockchief_runtime.business_operations o ON o.workspace_id=a.workspace_id AND o.idempotency_key=a.idempotency_key AND o.kind='sales_order.confirm' AND o.status='COMPLETED'
+      WHERE a.workspace_id=$1 AND a.action_type='sales_order.reserve_all' AND a.status='EXECUTED' AND a.result->>'replayed' IS DISTINCT FROM 'true'
+       AND jsonb_array_length(coalesce(a.result->'allocations','[]'::jsonb))>0 AND o.result->>'salesOrderId'=a.payload->>'recordId' AND o.result->'allocations'=a.result->'allocations' UNION ALL
+    SELECT 'customer-priority',a.executed_at FROM stockchief_runtime.assistant_action_proposals a WHERE a.workspace_id=$1 AND a.action_type='sales_order.allocation_priority' AND a.status='EXECUTED'
+      AND a.payload->>'reservationFingerprint' IS NOT NULL AND (a.result->>'version')::int=(a.payload->>'expectedVersion')::int+1
+      AND ((a.payload->>'beforePriority')::int<>(a.payload->>'priority')::int OR coalesce(a.payload->>'beforeNeededBy','')<>coalesce(a.payload->>'neededBy','')) UNION ALL
     SELECT 'supplier-claim',m.sent_at::timestamptz FROM stockchief_runtime.agent_supplier_claims c JOIN supplier_communications m ON m.workspace_id=c.workspace_id AND m.id=c.communication_id WHERE c.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=c.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED') UNION ALL
     SELECT 'supplier-rfq',m.sent_at::timestamptz FROM stockchief_runtime.agent_rfq_deliveries d JOIN supplier_communications m ON m.workspace_id=d.workspace_id AND m.id=d.communication_id WHERE d.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=d.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED') UNION ALL
     SELECT 'delivery-qc',h.created_at FROM stockchief_runtime.agent_quality_holds h WHERE h.workspace_id=$1 AND h.automatic UNION ALL

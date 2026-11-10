@@ -52,6 +52,8 @@ function requireJob(plan, id, operation, facts) {
   const minimum = plans.find(p => permits(p, id, operation, facts));
   if(operation==='automatic'&&allowance(plan,id)==='trained'&&facts?.trained!==true)
     throw new EntitlementError('Individually approve a matching example and teach its scope and limit before StockChief can handle this step on '+labels[plan]+'.'+(minimum?' Automatic handling without a taught rule requires '+labels[minimum]+'.':''),{jobId:id,currentPlan:plan,minimum});
+  const taughtMinimum=operation==='automatic'?plans.find(p=>permits(p,id,operation,{...facts,trained:true})):null;
+  if(taughtMinimum&&minimum&&taughtMinimum!==minimum&&allowance(taughtMinimum,id)==='trained')throw new EntitlementError(`This agent job requires the ${labels[taughtMinimum]} plan with a completed taught rule, or the ${labels[minimum]} plan without training.`,{jobId:id,currentPlan:plan,minimum:taughtMinimum,requiresTraining:true,automaticWithoutTraining:minimum});
   throw new EntitlementError(minimum
     ? `This agent job requires the ${labels[minimum]} plan for that level of control.`
     : 'This agent job needs additional authorization.', { jobId: id, currentPlan: plan, minimum });

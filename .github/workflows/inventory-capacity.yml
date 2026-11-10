@@ -176,6 +176,9 @@ jobs:
       - name: Supplier physical damage claims, original photo evidence and current plan authority
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/damage-photo-mail.test.js tests/postgres/agent-supplier-claims.test.js tests/postgres/agent-supplier-claim-boundaries.test.js tests/postgres/agent-supplier-claim-reporting.test.js tests/postgres/agent-supplier-claim-ui.test.js tests/postgres/agent-supplier-claim-upgrade.test.js
+      - name: Native customer reservation teaching, scarce-stock priority and safe current plan limits
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/postgres/agent-customer-reservations.test.js tests/postgres/agent-customer-stock-priorities.test.js tests/postgres/agent-customer-reservation-boundaries.test.js tests/postgres/agent-customer-reservation-ui.test.js tests/postgres/agent-customer-reservation-reporting.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
