@@ -1,6 +1,7 @@
 'use strict';
 // Describe implemented behavior in customer language. The PDF assignment stays
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
+const summaries=require('./agent-current-scope-summaries.json');
 const notes={
  11:{common:'Records scanned, physically confirmed moves between bins in the same warehouse.'},
  31:{common:'Handles exact delivery-date replies through the supplier’s original PO link. Quantity and price amendments remain planned.'},
@@ -30,5 +31,5 @@ const notes={
   pro:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.',
   enterprise:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.'}
 };
-function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):null;}
+function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};
