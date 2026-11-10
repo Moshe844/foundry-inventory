@@ -2,7 +2,7 @@
 
 const {newId,nowIso,requireText,trimOrNull}=require('../lib/util');
 const {ValidationError,InvariantError}=require('../domain/errors');
-const inventory=require('../domain/postgres-inventory-engine');
+const inventory=require('../domain/postgres-inventory-engine'),stockValue=require('../accounting/postgres-stock-removal');
 const workflows=require('../operations/postgres-business-workflows');
 const commerce=require('../operations/postgres-commerce');
 const jobs=require('../operations/postgres-job-queue');
@@ -528,6 +528,11 @@ async function ingest(database,auth,raw,options={}){
       result=await inventory.issueInTransaction(client,ctx,{...common,quantity:quantity(event.data.quantity),
         serialUnitIds:serialIds,lotId:event.data.lotId,
         lotCode:event.data.lotCode,reasonCode:trimOrNull(event.data.reasonCode)||(event.sourceType==='damage'?'damaged':'sold')});
+      // Valued stock that leaves through a connected channel takes its value out
+      // of the books with it, as a sale or a write-off.
+      if(!result.replayed)await stockValue.followRemovalValueInTransaction(client,ctx,{skuId:sku,locationId:location,movementId:result.movementId,
+        physicalBefore:require('../domain/exact-quantity').add(result.balanceAfter,result.quantity),reasonCode:trimOrNull(event.data.reasonCode)||(event.sourceType==='damage'?'damaged':'sold'),
+        occurredAt:common.occurredAt,sourceType:'connector_stock_removal',keyPrefix:'connector-issue:'});
       actionType='inventory.issue';
     }else if(event.type==='inventory.receipt'||event.type==='return.completed'){
       result=await inventory.receiveInTransaction(client,ctx,{...common,quantity:quantity(event.data.quantity),
@@ -547,6 +552,10 @@ async function ingest(database,auth,raw,options={}){
         countedQuantity:count,
         reasonCode:trimOrNull(event.data.reasonCode)||'physical_count',reference,notes,
         occurredAt:event.occurredAt||receivedAt,idempotencyKey:common.idempotencyKey});
+      // A synced count that finds less stock takes the missing units' value out too.
+      if(!result.replayed&&result.movementId&&Number(result.counted)<Number(result.expected))await stockValue.followRemovalValueInTransaction(client,ctx,{skuId:sku,locationId:location,
+        movementId:result.movementId,physicalBefore:result.expected,reasonCode:trimOrNull(event.data.reasonCode)||'physical_count',occurredAt:event.occurredAt||receivedAt,
+        sourceType:'connector_stock_removal',keyPrefix:'connector-count:'});
       actionType='inventory.adjust';
     }else{
       const serialIds=await serialUnitIds(client,auth.workspaceId,sku,locations.source,event.data.serials);
@@ -554,6 +563,8 @@ async function ingest(database,auth,raw,options={}){
         destinationLocationId:locations.destination,quantity:quantity(event.data.quantity),serialUnitIds:serialIds,
         lotId:event.data.lotId,lotCode:event.data.lotCode,reference,notes,occurredAt:event.occurredAt||receivedAt,
         idempotencyKey:common.idempotencyKey});
+      if(!result.replayed)await stockValue.followTransferValueInTransaction(client,ctx,{skuId:sku,sourceLocationId:locations.source,outMovementId:result.outMovementId,
+        inMovementId:result.inMovementId,sourceBefore:require('../domain/exact-quantity').add(result.sourceAfter,result.quantity),sourceType:'connector_transfer'});
       actionType='inventory.transfer';
     }
     const movementIds=[result.movementId,result.outMovementId,result.inMovementId].filter(Boolean);

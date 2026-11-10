@@ -5,8 +5,11 @@ test('large catalogs do not expand irrelevant planning positions and reconciliat
  const root=process.env.STOCKCHIEF_TEST_SOURCE||path.resolve(__dirname,'../..');
  const inventory=require(root+'/src/domain/postgres-inventory-engine'),locations=require(root+'/src/domain/postgres-location-service');
  const destination=await locations.createLocation(db,ctx,{name:'Neutral destination',kind:'store'});
- await inventory.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'scale-demand-a'});
- await inventory.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'scale-demand-b'});
+ // Demand leaves through the same costed removal the product page uses, so the
+ // books keep pace with the shelf and every reconciliation check holds.
+ const removal=require(root+'/src/accounting/postgres-stock-removal');
+ await removal.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,reasonCode:'sold',idempotencyKey:'scale-demand-a'});
+ await removal.issue(db,ctx,{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,reasonCode:'sold',idempotencyKey:'scale-demand-b'});
  // Match production's bounded catalogue batches; one huge fixture statement
  // needlessly builds a long chain of updates to the same parent rollup.
  for(let first=1;first<=30000;first+=1000)await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,position,is_active,created_at)

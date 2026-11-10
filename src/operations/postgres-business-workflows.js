@@ -915,32 +915,8 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     let invoiceState = (await client.query(`SELECT * FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [ctx.workspaceId, invoice.id])).rows[0];
     for (const payment of depositRows.rows) {
-      const available = Number(payment.amount_minor) - Number(payment.allocated_minor);
-      const applied = Math.min(available, Number(invoiceState.balance_minor));
-      if (applied <= 0) continue;
-      const depositPosted = await ledger.postInTransaction(client, ctx, {
-        postingInstant:at,
-        sourceKey: `deposit-applied:${invoice.id}:${payment.id}:${payment.allocated_minor}:${applied}`,
-        description: `Apply customer deposit to ${invoice.invoice_number}`,
-        sourceType: 'customer_deposit_applied', sourceRecordType: 'customer_invoice',
-        sourceRecordId: invoice.id, currency: invoiceState.currency,
-        lines: [
-          { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: applied, customerId: order.customer_id },
-          { accountKey: 'ACCOUNTS_RECEIVABLE', creditMinor: applied, customerId: order.customer_id },
-        ],
-      });
-      await client.query(`INSERT INTO accounting_payment_allocations
-        (id,workspace_id,payment_id,customer_invoice_id,supplier_bill_id,amount_minor,created_at)
-        VALUES($1,$2,$3,$4,NULL,$5,$6)`,
-      [newId('payalloc'), ctx.workspaceId, payment.id, invoice.id, applied, nowIso()]);
-      const balanceMinor = Number(invoiceState.balance_minor) - applied;
-      const invoiceStatus = balanceMinor === 0 ? 'PAID' : 'PARTIALLY_PAID';
-      await client.query(`UPDATE accounting_customer_invoices SET balance_minor=$2::bigint,status=$3,updated_at=$4,
-        paid_at=CASE WHEN $2::bigint=0::bigint THEN $4 ELSE paid_at END WHERE id=$1`,
-      [invoice.id, balanceMinor, invoiceStatus, nowIso()]);
-      invoiceState = { ...invoiceState, balance_minor: balanceMinor, status: invoiceStatus,
-        deposit_journal_entry_id: depositPosted.entry.id };
-      appliedDepositMinor += applied;
+      const step = await applyDepositToInvoice(client, ctx, { payment, invoiceState, customerId: order.customer_id, posting: { postingInstant: at } });
+      invoiceState = step.invoiceState; appliedDepositMinor += step.applied;
     }
     const shipments=input.shipment?await require('../shipping/postgres-physical-record').recordWithin(client,ctx,order,fulfilled,input.shipment):[];
     await event(client, 'sales_order_events', null, { workspaceId: ctx.workspaceId, recordId: salesOrderId,
@@ -1107,6 +1083,37 @@ async function reviseDraftSalesOrderLine(database,rawContext,salesOrderId,input)
   return transaction(database,(client)=>reviseDraftSalesOrderLineInTransaction(client,rawContext,salesOrderId,input));
 }
 
+// Moves what is left of one held deposit onto one open invoice: the books move
+// it from customer deposits to receivables, and the invoice balance falls.
+async function applyDepositToInvoice(client, ctx, { payment, invoiceState, customerId, posting }) {
+  const available = Number(payment.amount_minor) - Number(payment.allocated_minor);
+  const applied = Math.min(available, Number(invoiceState.balance_minor));
+  if (applied <= 0) return { applied: 0, invoiceState };
+  const depositPosted = await ledger.postInTransaction(client, ctx, {
+    ...posting,
+    sourceKey: `deposit-applied:${invoiceState.id}:${payment.id}:${payment.allocated_minor}:${applied}`,
+    description: `Apply customer deposit to ${invoiceState.invoice_number}`,
+    sourceType: 'customer_deposit_applied', sourceRecordType: 'customer_invoice',
+    sourceRecordId: invoiceState.id, currency: invoiceState.currency,
+    lines: [
+      { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: applied, customerId },
+      { accountKey: 'ACCOUNTS_RECEIVABLE', creditMinor: applied, customerId },
+    ],
+  });
+  await client.query(`INSERT INTO accounting_payment_allocations
+    (id,workspace_id,payment_id,customer_invoice_id,supplier_bill_id,amount_minor,created_at)
+    VALUES($1,$2,$3,$4,NULL,$5,$6)`,
+  [newId('payalloc'), ctx.workspaceId, payment.id, invoiceState.id, applied, nowIso()]);
+  const balanceMinor = Number(invoiceState.balance_minor) - applied;
+  const invoiceStatus = balanceMinor === 0 ? 'PAID' : 'PARTIALLY_PAID';
+  await client.query(`UPDATE accounting_customer_invoices SET balance_minor=$2::bigint,status=$3,updated_at=$4,
+    paid_at=CASE WHEN $2::bigint=0::bigint THEN $4 ELSE paid_at END WHERE id=$1`,
+  [invoiceState.id, balanceMinor, invoiceStatus, nowIso()]);
+  payment.allocated_minor = Number(payment.allocated_minor) + applied;
+  return { applied, invoiceState: { ...invoiceState, balance_minor: balanceMinor, status: invoiceStatus,
+    deposit_journal_entry_id: depositPosted.entry.id } };
+}
+
 async function recordPaymentInTransaction(client, rawContext, input) {
   const providerSystem=rawContext?.systemSource==='payment_provider';
   const ctx=providerSystem
@@ -1212,6 +1219,17 @@ async function recordCustomerDeposit(database, rawContext, input) {
     const order = await requireRow(client, `SELECT * FROM sales_orders
       WHERE id=$1 AND workspace_id=$2 AND customer_id=$3 FOR UPDATE`,
     [input.salesOrderId, ctx.workspaceId, input.customerId], 'That sales order was not found for this customer.');
+    // Money a payment provider already took is recorded whatever it was for; if
+    // the order cannot use it, it shows as owed back. Anyone typing a payment in
+    // is held to what the order still owes.
+    if (!providerSystem) {
+      const formatMinor = require('../pricing/postgres-service').formatMinor;
+      if (order.status === 'CANCELLED') throw new ValidationError('This order was cancelled, so there is nothing left to pay on it.');
+      const owedMinor = await require('../sales/postgres-deposit-refunds').owed(client, ctx.workspaceId, order);
+      if (amountMinor > owedMinor) throw new ValidationError(owedMinor > 0
+        ? `That is more than this order still owes (${formatMinor(owedMinor, order.currency)}).`
+        : 'This order is already paid in full.');
+    }
     const posted = await ledger.postInTransaction(client, ctx, {
       postingDate: paymentDate, sourceKey: `journal:${input.sourceKey || input.idempotencyKey}`,
       description: `Customer deposit for ${order.order_number}`, sourceType: 'customer_deposit',
@@ -1232,15 +1250,27 @@ async function recordCustomerDeposit(database, rawContext, input) {
     [id, ctx.workspaceId, paymentNumber, order.customer_id, paymentDate, amountMinor, input.currency || order.currency,
       input.method || null, input.reference || null, order.id, cashAccountId, posted.entry.id,
       input.sourceKey || `customer_deposit:${input.idempotencyKey}`, ctx.actorId, at]);
+    // Paid after an invoice already exists: it goes straight onto that invoice,
+    // oldest first, instead of waiting for goods that have already gone.
+    const payment = { id, amount_minor: amountMinor, allocated_minor: 0 };
+    let appliedMinor = 0;
+    const openInvoices = (await client.query(`SELECT * FROM accounting_customer_invoices
+      WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('OPEN','PARTIALLY_PAID') AND voided_at IS NULL AND balance_minor>0
+      ORDER BY issue_date,created_at,id FOR UPDATE`, [ctx.workspaceId, order.id])).rows;
+    for (const invoiceState of openInvoices) {
+      if (appliedMinor >= amountMinor) break;
+      const step = await applyDepositToInvoice(client, ctx, { payment, invoiceState, customerId: order.customer_id, posting: { postingDate: paymentDate } });
+      appliedMinor += step.applied;
+    }
     const result = { paymentId: id, paymentNumber, direction: 'CUSTOMER_RECEIPT', amountMinor,
-      salesOrderId: order.id, status: 'POSTED', journalEntryId: posted.entry.id };
+      salesOrderId: order.id, status: 'POSTED', journalEntryId: posted.entry.id, appliedToInvoicesMinor: appliedMinor };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
   });
 }
 
-// Hands back a deposit from a cancelled order: the money leaves the bank and the
-// business no longer holds it for the customer. Revenue was never recorded.
+// Hands back money an order can no longer use (it was cancelled, or the customer
+// paid more than it came to). Cash leaves and the deposit liability falls; revenue is unchanged.
 async function refundCustomerDeposit(database, rawContext, input) {
   const ctx = requireContext(rawContext);
   return transaction(database, async (client) => {
@@ -1249,7 +1279,7 @@ async function refundCustomerDeposit(database, rawContext, input) {
     if (operation.replayed) return { ...operation.result, replayed: true };
     const order = await requireRow(client, `SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
       [input.salesOrderId, ctx.workspaceId], 'That sales order was not found.');
-    if (order.status !== 'CANCELLED') throw new ValidationError('Only a cancelled order has a deposit to refund.');
+    if (!['CANCELLED', 'FULFILLED'].includes(order.status)) throw new ValidationError('Money paid on an open order is still waiting for its goods. Cancel the order, or ship it, before refunding.');
     const position = await require('../sales/postgres-deposit-refunds').forOrder(client, ctx.workspaceId, order.id);
     const amountMinor = positiveInteger(input.amountMinor, 'Refund amount');
     if (!position || amountMinor > position.toRefundMinor) throw new ValidationError('That is more than this order has left to refund.');
@@ -1257,7 +1287,7 @@ async function refundCustomerDeposit(database, rawContext, input) {
     const sourceKey = `customer_deposit_refund:${input.idempotencyKey}`;
     const posted = await ledger.postInTransaction(client, ctx, {
       postingDate: refundDate, sourceKey: `journal:${sourceKey}`,
-      description: `Deposit refund for cancelled ${order.order_number}`, sourceType: 'customer_deposit_refund',
+      description: order.status === 'CANCELLED' ? `Deposit refund for cancelled ${order.order_number}` : `Overpayment refund for ${order.order_number}`, sourceType: 'customer_deposit_refund',
       sourceRecordType: 'sales_order', sourceRecordId: order.id, currency: order.currency,
       lines: [
         { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: amountMinor, customerId: order.customer_id },
@@ -1271,6 +1301,93 @@ async function refundCustomerDeposit(database, rawContext, input) {
     [id, ctx.workspaceId, order.id, order.customer_id, amountMinor, order.currency, refundDate, input.method || null,
       input.reference || null, posted.entry.id, sourceKey, ctx.actorId, nowIso()]);
     const result = { refundId: id, amountMinor, salesOrderId: order.id, journalEntryId: posted.entry.id };
+    await completeOperation(client, operation, result);
+    return { ...result, replayed: false };
+  });
+}
+
+// Takes back a payment recorded by mistake. The original entry stays; a dated
+// void entry undoes it, every invoice or bill it paid opens again by exactly what
+// it paid there, and any part still held as a deposit leaves the deposit balance.
+// The payment is kept, marked void, so the history still shows it. Money a
+// payment provider took is refunded through the provider instead.
+async function voidPayment(database, rawContext, paymentId, input = {}) {
+  const ctx = requireContext(rawContext);
+  return transaction(database, async (client) => {
+    await requirePermission(client, ctx, access.RECORD_PAYMENTS, 'void payments');
+    const operation = await beginOperation(client, ctx, 'payment.void', input.idempotencyKey || `void:${paymentId}`);
+    if (operation.replayed) return { ...operation.result, replayed: true };
+    const payment = await requireRow(client, 'SELECT * FROM accounting_payments WHERE id=$1 AND workspace_id=$2 FOR UPDATE',
+      [paymentId, ctx.workspaceId], 'That payment was not found.');
+    if (payment.status !== 'POSTED') throw new ValidationError(`${payment.payment_number} is already void.`);
+    if (require('../payments/postgres-collection').isProviderReceipt(payment.source_key)) {
+      throw new ValidationError('This payment was taken online through your payment provider. Refund it there; it cannot be voided here.');
+    }
+    const reason = trimOrNull(input.reason);
+    if (!reason) throw new ValidationError('Say why this payment is being voided.');
+    if (reason.length > 240) throw new ValidationError('Keep the reason under 240 characters.');
+    const customer = payment.direction === 'CUSTOMER_RECEIPT';
+    const amountMinor = Number(payment.amount_minor);
+    const allocations = (await client.query(`SELECT * FROM accounting_payment_allocations
+      WHERE workspace_id=$1 AND payment_id=$2 ORDER BY created_at,id`, [ctx.workspaceId, payment.id])).rows;
+    const allocatedMinor = allocations.reduce((sum, row) => sum + Number(row.amount_minor), 0);
+    const heldMinor = amountMinor - allocatedMinor;
+    if (heldMinor < 0) throw new InvariantError(`${payment.payment_number} is applied for more than it paid. Nothing was changed.`, 'payment_over_allocated');
+    if (heldMinor > 0 && !(customer && payment.sales_order_id)) {
+      throw new ValidationError(`${payment.payment_number} is not tied to an invoice or bill, so it cannot be voided here.`);
+    }
+    if (heldMinor > 0) {
+      // Deposit money already handed back cannot also be taken back by a void.
+      const held = (await client.query(`SELECT coalesce(sum(p.amount_minor-coalesce((SELECT sum(a.amount_minor) FROM accounting_payment_allocations a
+          WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id),0)),0)::bigint AS held_minor,
+          (SELECT coalesce(sum(r.amount_minor),0) FROM accounting_deposit_refunds r WHERE r.workspace_id=$1 AND r.sales_order_id=$2)::bigint AS refunded_minor
+        FROM accounting_payments p WHERE p.workspace_id=$1 AND p.sales_order_id=$2 AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED'`,
+      [ctx.workspaceId, payment.sales_order_id])).rows[0];
+      if (Number(held.held_minor) - heldMinor < Number(held.refunded_minor)) {
+        throw new ValidationError(`Part of ${payment.payment_number} was already refunded to the customer, so it cannot be voided.`);
+      }
+    }
+    const table = customer ? 'accounting_customer_invoices' : 'accounting_supplier_bills';
+    const column = customer ? 'customer_invoice_id' : 'supplier_bill_id';
+    const at = nowIso(), reopened = [];
+    for (const allocation of allocations) {
+      if (!allocation[column]) throw new InvariantError(`${payment.payment_number} has an allocation of the wrong kind. Nothing was changed.`, 'payment_allocation_kind');
+      const document = (await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
+        [ctx.workspaceId, allocation[column]])).rows[0];
+      const number = customer ? document.invoice_number : document.bill_number;
+      const balanceMinor = Number(document.balance_minor) + Number(allocation.amount_minor);
+      if (balanceMinor > Number(document.total_minor)) {
+        throw new ValidationError(`${number} was reduced by a return or credit after this payment. Correct that return or credit before voiding the payment.`);
+      }
+      await client.query(`UPDATE ${table} SET balance_minor=$3::bigint,status=$4,paid_at=NULL,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
+        [ctx.workspaceId, document.id, balanceMinor, balanceMinor === Number(document.total_minor) ? 'OPEN' : 'PARTIALLY_PAID', at]);
+      reopened.push({ id: document.id, number, amountMinor: Number(allocation.amount_minor) });
+    }
+    const party = customer ? { customerId: payment.customer_id } : { supplierId: payment.supplier_id };
+    const voidDate = dateOnly(input.voidDate || await require('../lib/business-time').today(client, ctx.workspaceId), 'Void date');
+    const posted = await ledger.postInTransaction(client, ctx, {
+      postingDate: voidDate, sourceKey: `payment-void:${payment.id}`,
+      description: `Void ${payment.payment_number}: ${reason}`, sourceType: 'payment_void',
+      sourceRecordType: 'payment', sourceRecordId: payment.id, currency: payment.currency,
+      metadata: { paymentId: payment.id, originalJournalEntryId: payment.journal_entry_id, reason, reopened, heldMinor },
+      lines: customer ? [
+        { accountKey: 'ACCOUNTS_RECEIVABLE', debitMinor: allocatedMinor, ...party },
+        { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: heldMinor, ...party },
+        { accountId: payment.cash_account_id, creditMinor: amountMinor, ...party },
+      ].filter((line) => (line.debitMinor || line.creditMinor) > 0) : [
+        { accountId: payment.cash_account_id, debitMinor: amountMinor, ...party },
+        { accountKey: 'ACCOUNTS_PAYABLE', creditMinor: allocatedMinor, ...party },
+      ],
+    });
+    // A void payment pays nothing: its allocations go, and the void entry's
+    // metadata keeps what they were.
+    await client.query('DELETE FROM accounting_payment_allocations WHERE workspace_id=$1 AND payment_id=$2', [ctx.workspaceId, payment.id]);
+    await client.query("UPDATE accounting_payments SET status='VOID',voided_at=$3 WHERE workspace_id=$1 AND id=$2", [ctx.workspaceId, payment.id, at]);
+    if (payment.sales_order_id) await event(client, 'sales_order_events', null, { workspaceId: ctx.workspaceId, recordId: payment.sales_order_id,
+      type: 'payment_voided', detail: { paymentId: payment.id, paymentNumber: payment.payment_number, amountMinor, reason }, actorId: ctx.actorId,
+      key: `payment-void:${payment.id}:event`, at });
+    const result = { paymentId: payment.id, paymentNumber: payment.payment_number, amountMinor, reopened, heldMinor,
+      salesOrderId: payment.sales_order_id || null, voidJournalEntryId: posted.entry.id };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
   });
@@ -1317,7 +1434,7 @@ module.exports = {
   reviseDraftSalesOrderLine,
   reviseDraftSalesOrderLineInTransaction,
   recordCustomerPayment,
-  recordCustomerDeposit,refundCustomerDeposit,
+  recordCustomerDeposit,refundCustomerDeposit,voidPayment,
   recordSupplierPayment,
   recordSupplierPaymentInTransaction,
 };

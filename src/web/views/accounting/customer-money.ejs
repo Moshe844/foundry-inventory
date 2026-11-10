@@ -16,7 +16,7 @@
   </div>
 </section>
 
-<% if((locals.depositsToRefund||[]).length){ %><section class="sc-business-card sc-money-needs" data-money-needs-you aria-label="Needs you"><h2>Needs you · <%= depositsToRefund.length %></h2><% depositsToRefund.forEach(function(row){ %><p class="sc-business-note"><a href="/orders/<%= row.orderId %>#deposit-refund"><strong>Deposit to refund: <%= helpers.money(row.toRefundMinor,row.currency) %></strong></a> to <%= row.customerName %>, from cancelled order <%= row.orderNumber %>.</p><% }); %></section><% } %>
+<% if((locals.depositsToRefund||[]).length){ %><section class="sc-business-card sc-money-needs" data-money-needs-you aria-label="Needs you"><h2>Needs you · <%= depositsToRefund.length %></h2><% depositsToRefund.forEach(function(row){ %><p class="sc-business-note"><a href="/orders/<%= row.orderId %>#deposit-refund"><strong><%= row.cancelled ? 'Deposit' : 'Overpayment' %> to refund: <%= helpers.money(row.toRefundMinor,row.currency) %></strong></a> to <%= row.customerName %>, from <%= row.cancelled ? 'cancelled' : 'overpaid' %> order <%= row.orderNumber %>.</p><% }); %></section><% } %>
 
 <div class="sc-money-cards">
 <a class="sc-money-card" href="/money/invoices" data-money-card="invoices" data-amount-minor="<%= r.totalMinor %>" data-count="<%= r.count %>"><span>Customers owe you</span><strong><%= amount(r.totalMinor) %></strong><small><%= r.count %> unpaid <%= word(r.count) %> · <em class="<%= r.lateMinor>0?'is-urgent':'' %>"><%= r.lateMinor>0?amount(r.lateMinor)+' late':'none late' %></em></small><b>See who owes you →</b></a>

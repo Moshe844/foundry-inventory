@@ -31,8 +31,8 @@
   // Paid means nothing is owed, before an invoice exists as well as after.
   var toRefund = Number(money.depositToRefundMinor || 0);
   var cancelled = order.status === 'CANCELLED' && !money.invoiced;
-  var state = toRefund > 0 ? 'Deposit to refund' : cancelled ? 'Cancelled' : owed === 0 && Number(money.paidMinor || 0) > 0 && !refunded ? 'Paid' : sv.state;
-  var stateTone = { Paid: 'green', 'Partly paid': 'amber', 'Deposit to refund': 'amber', Unpaid: money.invoiced ? 'rose' : 'grey' }[state] || 'grey';
+  var state = toRefund > 0 ? (order.status === 'CANCELLED' ? 'Deposit to refund' : 'Overpaid') : cancelled ? 'Cancelled' : owed === 0 && Number(money.paidMinor || 0) > 0 && !refunded ? 'Paid' : sv.state;
+  var stateTone = { Paid: 'green', 'Partly paid': 'amber', 'Deposit to refund': 'amber', Overpaid: 'amber', Unpaid: money.invoiced ? 'rose' : 'grey' }[state] || 'grey';
   var bank = locals.bankDetails;
   var bankText = bank ? [bank.bank_name, 'Account name: ' + bank.account_name, bank.routing_number ? 'Routing: ' + bank.routing_number : null, 'Account: ' + bank.account_number, bank.note].filter(Boolean).join('\n') : '';
   var dollars = function (minor) { return (Number(minor || 0) / 100).toFixed(2); };
@@ -49,12 +49,12 @@
       <div><dt>Paid</dt><dd class="ox-num"><%= helpers.money(money.paidMinor, cur) %></dd></div>
     <% } %>
     <% if (cancelled && refunded) { %><div><dt>Refunded</dt><dd class="ox-num"><%= helpers.money(refunded, cur) %></dd></div><% } %>
-    <% if (toRefund > 0) { %><div class="ox-paycard__due"><dt>Deposit to refund</dt><dd class="ox-num"><%= helpers.money(toRefund, cur) %></dd></div>
+    <% if (toRefund > 0) { %><div class="ox-paycard__due"><dt><%= order.status === 'CANCELLED' ? 'Deposit to refund' : 'To refund' %></dt><dd class="ox-num"><%= helpers.money(toRefund, cur) %></dd></div>
     <% } else if (!cancelled) { %><div class="ox-paycard__due"><dt>Balance due</dt><dd class="ox-num"><%= helpers.money(owed, cur) %></dd></div><% } %>
   </dl>
   <% if (toRefund > 0 && locals.canRecordPayments !== false) { %>
   <div class="ox-refund" id="deposit-refund">
-    <p>This order was cancelled after the customer paid. Send the money back, then record it here. If they paid online, refund it in your payment provider first.</p>
+    <p><%= order.status === 'CANCELLED' ? 'This order was cancelled after the customer paid.' : 'The customer paid more than this order came to.' %> Send the money back, then record it here. If they paid online, refund it in your payment provider first.</p>
     <form method="post" action="/orders/<%= order.id %>/deposit-refund" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.depositRefundKey %>">
       <label class="ox-field"><span>Amount</span><input name="amount" inputmode="decimal" required value="<%= dollars(toRefund) %>"></label>
@@ -69,7 +69,14 @@
     <% receipts.forEach(function (receipt) { %>
       <li><b class="ox-num"><%= helpers.money(receipt.amount_minor, cur) %></b>
         <span><%= receipt.method ? receipt.method.replace(/_/g, ' ') : 'payment' %><%= receipt.reference ? ' · ' + receipt.reference : '' %> · <%= helpers.shortDate(receipt.payment_date) %></span>
-        <a href="/orders/<%= order.id %>/receipt/<%= receipt.id %>">Receipt</a></li>
+        <a href="/orders/<%= order.id %>/receipt/<%= receipt.id %>">Receipt</a>
+        <% if (receipt.voidable && locals.canRecordPayments !== false) { %><details class="ox-void"><summary>Void</summary>
+          <form method="post" action="/accounting/payments/<%= receipt.id %>/void" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-void-<%= receipt.id %>"><input type="hidden" name="returnTo" value="/orders/<%= order.id %>">
+            <p>Only for a payment recorded by mistake. The invoice opens again and your books record the void.</p>
+            <label class="ox-field"><span>Why</span><input name="reason" required maxlength="240" placeholder="Recorded twice"></label>
+            <button class="ox-btn ox-btn--danger" type="submit">Void <%= helpers.money(receipt.amount_minor, cur) %></button>
+          </form></details><% } %></li>
     <% }) %>
   </ul>
   <% } %>
@@ -101,7 +108,7 @@
     </div>
 
     <form class="ox-pay__panel" role="tabpanel" data-ox-pay-panel="cash" method="post" action="/sales/orders/<%= order.id %>/payment" data-ox-cash>
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="method" value="cash">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-cash"><input type="hidden" name="method" value="cash">
       <input type="hidden" name="amount" value="<%= dollars(ask) %>" data-ox-cash-amount><input type="hidden" name="reference" data-ox-cash-note>
       <label class="ox-field"><span>Cash received</span><input type="number" step="0.01" min="0.01" inputmode="decimal" value="<%= dollars(ask) %>" required data-ox-cash-received></label>
       <dl class="ox-pay__calc">
@@ -170,7 +177,7 @@
         <p class="ox-help">No bank details are set up yet. Someone who manages accounting can add them here.</p>
       <% } %>
       <form method="post" action="/sales/orders/<%= order.id %>/payment" class="ox-pay__record">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="method" value="bank transfer">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-transfer"><input type="hidden" name="method" value="bank transfer">
         <p class="ox-pay__step">When the money is in your account:</p>
         <label class="ox-field"><span>Amount received</span><input type="number" name="amount" step="0.01" min="0.01" max="<%= dollars(owed) %>" inputmode="decimal" value="<%= dollars(ask) %>" required></label>
         <details class="ox-pay__note"><summary>Add a note</summary><input name="reference" maxlength="120" placeholder="Optional" aria-label="Note"></details>
@@ -179,7 +186,7 @@
     </div>
 
     <form class="ox-pay__panel" role="tabpanel" data-ox-pay-panel="cheque" hidden method="post" action="/sales/orders/<%= order.id %>/payment">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="method" value="cheque">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= locals.paymentFormKey %>-cheque"><input type="hidden" name="method" value="cheque">
       <label class="ox-field"><span>Cheque amount</span><input type="number" name="amount" step="0.01" min="0.01" max="<%= dollars(owed) %>" inputmode="decimal" value="<%= dollars(ask) %>" required></label>
       <label class="ox-field"><span>Cheque number <small>optional</small></span><input name="reference" maxlength="60" inputmode="numeric"></label>
       <button class="ox-btn ox-btn--primary ox-btn--block" type="submit">Record cheque</button>
