@@ -6,11 +6,11 @@ const assert=require('node:assert/strict');
 const vans=require('../../src/shipping/agent-van-routes');
 
 test('owners route actual packed shipments on Pro and Custom with exact, plan-bound routine authority',{timeout:720000},async t=>{
-  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12,timeZone:'America/New_York',through:338});
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12,timeZone:'America/New_York',through:'338-agent-inbound-freight.sql'});
   const {db,ctx,browser,csrf}=f;
   const date=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
   const packed=await f.parcel();
-  await require('../../src/db/migrate-postgres').migratePostgres(db);
+  assert.deepEqual(await require('../../src/db/migrate-postgres').migratePostgres(db),['339-agent-van-routes.sql']);
   const pagePath=vans.path+'?'+new URLSearchParams({depot:f.location.id});
   const standard='Van 1 | Jordan | 1000 | 08:00 | 17:00';
   const input=(box,extra={})=>({selected:box.shipmentId,depotId:f.location.id,deliveryDate:date,vans:standard,
