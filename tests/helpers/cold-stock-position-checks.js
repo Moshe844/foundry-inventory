@@ -6,9 +6,10 @@ async function check(db,ctx){return db.withSessionLock('qualification:cold-stock
   await c.query("SELECT set_config('work_mem','4MB',false),set_config('jit','off',false)");
   await c.query('CREATE TEMP TABLE cold_locations AS SELECT * FROM locations WHERE workspace_id=$1',[ctx.workspaceId]);
   await c.query(`INSERT INTO cold_locations SELECT (jsonb_populate_record(NULL::public.locations,to_jsonb(l)||jsonb_build_object('id','cold-loc-'||n,'name','Cold read bin '||n,'kind','bin','parent_location_id',l.id,'custody_agreement_id',NULL,'is_active',1))).* FROM (SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 LIMIT 1)l CROSS JOIN generate_series(1,23)n`,[ctx.workspaceId]);
-  await c.query("CREATE TEMP TABLE cold_balances AS SELECT s.workspace_id,s.id sku_id,'cold-loc-'||n location_id,1::numeric on_hand FROM skus s CROSS JOIN generate_series(1,23)n WHERE s.workspace_id=$1 AND s.is_active=1",[ctx.workspaceId]);
-  await c.query("INSERT INTO cold_balances SELECT 'wsp_foreigncold',sku_id,'foreign-'||location_id,on_hand*7 FROM cold_balances");
+  await c.query("CREATE TEMP TABLE cold_balances AS SELECT s.workspace_id,s.id sku_id,'cold-loc-'||n location_id,1::numeric on_hand,0::numeric quality_held FROM skus s CROSS JOIN generate_series(1,23)n WHERE s.workspace_id=$1 AND s.is_active=1",[ctx.workspaceId]);
+  await c.query("INSERT INTO cold_balances SELECT 'wsp_foreigncold',sku_id,'foreign-'||location_id,on_hand*7,quality_held FROM cold_balances");
   await c.query('CREATE UNIQUE INDEX cold_positions ON cold_balances(workspace_id,location_id,sku_id) INCLUDE(on_hand)');
+  await c.query('CREATE INDEX cold_quality_pending ON cold_balances(workspace_id,sku_id,location_id) WHERE quality_held>0');
   await c.query('CREATE INDEX cold_positions_location ON cold_balances(location_id)');await c.query('CREATE INDEX cold_positions_workspace ON cold_balances(workspace_id)');
   await c.query('CREATE TEMP TABLE cold_cost_balances AS SELECT workspace_id,sku_id,location_id,on_hand AS quantity_units,on_hand*200 AS total_cost_minor FROM cold_balances');await c.query('CREATE INDEX cold_cost_values ON cold_cost_balances(workspace_id,sku_id) INCLUDE(quantity_units,total_cost_minor)');
   await c.query('CREATE INDEX cold_locations_scope ON cold_locations(workspace_id,id)');await c.query('VACUUM ANALYZE cold_balances');await c.query('VACUUM ANALYZE cold_cost_balances');await c.query('ANALYZE cold_locations');
