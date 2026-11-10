@@ -91,7 +91,7 @@ async function task(c,ctx,id,lock=false){
   const row=(await c.query(`SELECT t.*,s.title,s.scope,s.status,s.revision FROM stockchief_runtime.agent_count_tasks t JOIN warehouse_count_campaigns s
     ON s.workspace_id=t.workspace_id AND s.id=t.campaign_id WHERE t.workspace_id=$1 AND t.campaign_id=$2 AND t.counter_id=$3`+(lock?' FOR UPDATE OF t,s':''),[ctx.workspaceId,id,ctx.actorId])).rows[0];
   if(!row)throw new NotFoundError('This count is not assigned to you.');
-  await counter(c,ctx,row.scope.locationIds);
+  await counter(c,ctx,row.scope.locationIds);await require('./agent-annual-stocktakes').assertCampaign(c,ctx,id,{lock});
   return row;
 }
 async function page(db,ctx,id){
@@ -116,7 +116,7 @@ async function record(db,ctx,id,input){
       throw new ValidationError('This position already has a count. Ask the owner to review the difference.');
     }
     if(assigned.status!=='DRAFT'||assigned.observed_at)throw new ValidationError('This count is already closed.');
-    await c.query('UPDATE warehouse_count_campaign_lines SET counter_quantity=$5 WHERE workspace_id=$1 AND campaign_id=$2 AND location_id=$3 AND sku_id=$4',[ctx.workspaceId,id,input.locationId,input.skuId,quantity]);
+    await c.query('UPDATE warehouse_count_campaign_lines SET counter_quantity=$5,counter_recorded_by=$6,counter_recorded_name=(SELECT name FROM users WHERE workspace_id=$1 AND id=$6),counter_recorded_at=clock_timestamp() WHERE workspace_id=$1 AND campaign_id=$2 AND location_id=$3 AND sku_id=$4',[ctx.workspaceId,id,input.locationId,input.skuId,quantity,ctx.actorId]);
     await c.query(`UPDATE stockchief_runtime.agent_count_tasks SET observed_at=now() WHERE workspace_id=$1 AND campaign_id=$2 AND NOT EXISTS(
       SELECT 1 FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2 AND counter_quantity IS NULL)`,[ctx.workspaceId,id]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
