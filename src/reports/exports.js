@@ -15,25 +15,33 @@ function exportValue(result,rowIndex,column){
 function csvCell(value,{numeric=false}={}){let text=cell(value);if(numeric&&/^-?\d+(?:\.\d+)?$/.test(text))return text;
   if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text=`'${text}`;
   return `"${text.replaceAll('"','""')}"`;}
-function csvHeader(result){return `${result.columns.map((column)=>csvCell(result.columnLabels?.[column]||column)).join(',')}\r\n`;}
+// Excel reads a CSV as the computer's old code page unless it starts with the
+// UTF-8 mark, which turns a dash or an accented name into garbage.
+const UTF8_MARK=String.fromCharCode(0xfeff);
+function csvHeader(result){return `${UTF8_MARK}${result.columns.map((column)=>csvCell(result.columnLabels?.[column]||column)).join(',')}\r\n`;}
 function csvRows(result){return result.rows.map((_row,index)=>
   `${result.columns.map((column)=>csvCell(exportValue(result,index,column),{numeric:['number','money_minor'].includes(result.columnTypes?.[column])})).join(',')}\r\n`).join('');}
 function csv(result){return Buffer.from(csvHeader(result)+csvRows(result),'utf8');}
-function xml(value){return cell(value).replace(/[&<>"']/g,(character)=>({
+// XML 1.0 cannot hold most control characters or unpaired surrogates, and
+// Excel refuses a whole file that contains one, so they are left out.
+const NOT_XML=/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+function xml(value){return cell(value).replace(NOT_XML,'').replace(/[&<>"']/g,(character)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[character]));}
 function crc32(buffer){let crc=~0;for(const byte of buffer){crc^=byte;for(let bit=0;bit<8;bit++)
   crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (~crc)>>>0;}
+// Each entry is dated 1 January 1980, the first valid date a zip can hold.
+const DOS_DATE=(0<<9)|(1<<5)|1;
 function zip(files){
   const local=[],central=[];let offset=0;
   for(const [name,content] of Object.entries(files)){
     const filename=Buffer.from(name),original=Buffer.from(content),compressed=zlib.deflateRawSync(original),
       crc=crc32(original),header=Buffer.alloc(30),directory=Buffer.alloc(46);
-    header.writeUInt32LE(0x04034b50,0);header.writeUInt16LE(20,4);header.writeUInt16LE(8,8);
+    header.writeUInt32LE(0x04034b50,0);header.writeUInt16LE(20,4);header.writeUInt16LE(8,8);header.writeUInt16LE(DOS_DATE,12);
     header.writeUInt32LE(crc,14);header.writeUInt32LE(compressed.length,18);
     header.writeUInt32LE(original.length,22);header.writeUInt16LE(filename.length,26);
     local.push(header,filename,compressed);
     directory.writeUInt32LE(0x02014b50,0);directory.writeUInt16LE(20,4);
-    directory.writeUInt16LE(20,6);directory.writeUInt16LE(8,10);
+    directory.writeUInt16LE(20,6);directory.writeUInt16LE(8,10);directory.writeUInt16LE(DOS_DATE,14);
     directory.writeUInt32LE(crc,16);directory.writeUInt32LE(compressed.length,20);
     directory.writeUInt32LE(original.length,24);directory.writeUInt16LE(filename.length,28);
     directory.writeUInt32LE(offset,42);central.push(directory,filename);
@@ -44,6 +52,14 @@ function zip(files){
   end.writeUInt16LE(Object.keys(files).length,10);end.writeUInt32LE(directory.length,12);
   end.writeUInt32LE(offset,16);return Buffer.concat([...local,directory,end]);
 }
+// A column with no declared type holds figures saved as text ("4", "12.5"):
+// they go in as numbers so Excel can add them up. Codes with a leading zero and
+// long digit runs such as barcodes stay text, so Excel cannot rewrite them.
+const PLAIN_NUMBER=/^-?(?:0|[1-9]\d{0,8})(?:\.\d+)?$/;
+// Spreadsheet column names: A..Z, then AA, AB, and on.
+function columnName(index){let name='';for(let n=index+1;n>0;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;return name;}
+// Excel checks every part against its declared type and refuses the file when
+// one is wrong, so the workbook part names its own type, not the file type.
 function xlsx(result){
   const rows=[result.columns.map((column)=>result.columnLabels?.[column]||column),
     ...result.rows.map((_row,index)=>result.columns.map((column)=>
@@ -51,16 +67,17 @@ function xlsx(result){
   const worksheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row,index)=>
       `<row r="${index+1}">${row.map((value,column)=>{
-        const numeric=index>0&&value!==null&&value!==''&&(typeof value==='number'&&Number.isFinite(value)||['number','money_minor'].includes(result.columnTypes?.[result.columns[column]])&&/^-?\d+(?:\.\d+)?$/.test(String(value)));
-        const address=`${String.fromCharCode(65+column)}${index+1}`;
+        const type=result.columnTypes?.[result.columns[column]];
+        const numeric=index>0&&value!==null&&value!==''&&(typeof value==='number'&&Number.isFinite(value)||['number','money_minor'].includes(type)&&/^-?\d+(?:\.\d+)?$/.test(String(value))||!type&&PLAIN_NUMBER.test(String(value)));
+        const address=`${columnName(column)}${index+1}`;
         return numeric?`<c r="${address}"><v>${value}</v></c>`:
-          `<c r="${address}" t="inlineStr"><is><t>${xml(value)}</t></is></c>`;
+          `<c r="${address}" t="inlineStr"><is><t xml:space="preserve">${xml(cell(value).slice(0,32767))}</t></is></c>`;
       }).join('')}</row>`).join('')}</sheetData></worksheet>`;
   return zip({'[Content_Types].xml':`<?xml version="1.0" encoding="UTF-8"?>
     <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
     <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
     <Default Extension="xml" ContentType="application/xml"/>
-    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/>
+    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
     <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
     </Types>`,
   '_rels/.rels':`<?xml version="1.0" encoding="UTF-8"?>

@@ -217,11 +217,11 @@ function createPostgresAskRouter(database,options={}){
   // The saved table from an answer, in the format asked for.
   router.get('/ask/answers/:id/export.:format',asyncRoute(async(req,res)=>{
     const exporter=require('../../assistant/ask-export');
-    return exporter.send(res,req.params.format,await exporter.interaction(database,req.ctx,req.params.id,require('../view-helpers').columnLabel,req.query.content==='answer'));
+    return exporter.send(res,req.params.format,await exporter.interaction(database,req.ctx,req.params.id,require('../view-helpers').columnLabel,req.query.content==='answer',req.params.format));
   }));
   router.get('/ask/goals/:id/export.:format',asyncRoute(async(req,res)=>{
     const exporter=require('../../assistant/ask-export');
-    return exporter.send(res,req.params.format,exporter.goal(await goalStore.get(database,req.ctx,req.params.id),req.query.table,req.query.content==='answer'));
+    return exporter.send(res,req.params.format,exporter.goal(await goalStore.get(database,req.ctx,req.params.id),req.query.table,req.query.content==='answer',req.params.format));
   }));
   router.post('/ask/goals/:id/next',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),saved=delivery.visible(goal);

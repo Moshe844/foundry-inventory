@@ -95,4 +95,20 @@
   document.addEventListener('click', function (event) {
     document.querySelectorAll('.ask-download[open]').forEach(function (open) { if (!open.contains(event.target)) open.open = false; });
   });
+  // A menu opens downward unless the box that scrolls or clips it ends first;
+  // then it opens upward, so every format can be seen and chosen.
+  document.addEventListener('toggle', function (event) {
+    var menu = event.target;
+    if (!menu.classList || !menu.classList.contains('ask-download')) return;
+    menu.classList.remove('ask-download--up');
+    var list = menu.querySelector('.ask-download__menu');
+    if (!menu.open || !list) return;
+    var top = 0, bottom = window.innerHeight;
+    for (var box = menu.parentElement; box && box !== document.body; box = box.parentElement) {
+      if (getComputedStyle(box).overflowY === 'visible') continue;
+      var edge = box.getBoundingClientRect(); top = Math.max(top, edge.top); bottom = Math.min(bottom, edge.bottom);
+    }
+    var place = menu.getBoundingClientRect(), room = list.offsetHeight + 8;
+    if (place.bottom + room > bottom && place.top - room >= top) menu.classList.add('ask-download--up');
+  }, true);
 }());
