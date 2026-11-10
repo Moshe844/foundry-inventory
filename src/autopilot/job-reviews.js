@@ -38,6 +38,7 @@ const definitions=[
   require('../catalog/agent-product-retirements').definition,
   require('./team-procedures').definition,
   require('../purchasing/agent-container-plans').definition,
+  require('../purchasing/agent-inbound-freight').definition,
   require('../purchasing/agent-po-delivery-dates').definition,
   require('../purchasing/agent-supplier-benefits').reviewDefinition,
   require('../purchasing/agent-supplier-email-terms').definition,

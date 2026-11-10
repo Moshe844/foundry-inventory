@@ -3,6 +3,7 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 39:{common:'Keeps ocean and air arrivals, linked purchase orders, and deposits in one record. Give your forwarder a private link to send updates. StockChief applies matching changes inside your authorized date limit and sends larger shifts or exceptions to review. An exact posted deposit bill brings in recorded payments automatically.'},
  63:{common:'Prepares and files lost or damaged parcel claims for shipments with active insurance on an existing EasyPost account. Confirms the exact tracking number and coverage, sends your original evidence, and checks uncertain filings by their saved reference.',
  pro:'You individually file the first matching claim and wait for EasyPost confirmation. Then StockChief can file future confirmed claims inside your taught account, warehouse, claimant, claim type and amount.',
  enterprise:'Can file within an authorized account, warehouse, claimant, claim type and maximum amount without training. Staff confirm what happened and attach the original evidence.'},

@@ -186,6 +186,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(commonMiddleware.csrf);
   app.use('/customer/order',require('./web/routes/customer-order-page').csrfError);
   app.use(require('./web/routes/supplier-order-link').router(database));
+  app.use(require('./web/routes/inbound-freight-update').router(database));
   app.use(require('./web/routes/customer-order-page').router(database));
   app.use(require('./lib/request-read-cache').middleware);
   app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));

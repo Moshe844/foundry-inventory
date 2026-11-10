@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Freight update · StockChief</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="card"><div class="card-body">
+    <h1>Update <%= mode==='ocean'?'ocean':'air' %> shipment <%= reference %></h1>
+    <p>Current status <strong><%= statusLabels[status] %></strong></p>
+    <% if(eta){ %><p>Current expected arrival <%= eta %></p><% } %>
+    <% if(saved){ %><p role="status">Your update was saved.</p><% } %>
+    <form method="post" action="<%= action %>" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="revision" value="<%= revision %>">
+      <label>Status<select name="status" required>
+        <% for(const [value,label] of Object.entries(statusLabels)){ %><option value="<%= value %>" <%= value===status?'selected':'' %>><%= label %></option><% } %>
+      </select></label>
+      <label>Updated arrival at the port or airport (if known)<input type="date" name="eta"></label>
+      <label>Source or note (optional)<textarea name="note" maxlength="1000"></textarea></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked this update against the shipment details.</label>
+      <button class="btn btn--primary">Send shipment update</button>
+    </form>
+  </div></main>
+</body>
+</html>

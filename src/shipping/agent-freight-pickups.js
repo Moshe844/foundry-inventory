@@ -318,6 +318,8 @@ async function verify(db,ctx,id){
 }
 
 async function currentFreight(db,workspaceId,shipmentId){
+  const {rows:[schema]}=await db.query("SELECT to_regclass('stockchief_runtime.agent_freight_pickups') IS NOT NULL AS installed");
+  if(!schema.installed)return null;
   const held=(await db.query(`SELECT e.status,p.receipt,p.approved_offer->>'carrier' carrier
     FROM stockchief_runtime.agent_freight_pickups p JOIN stockchief_runtime.provider_effects e
     ON e.workspace_id=p.workspace_id AND e.id=p.effect_id WHERE p.workspace_id=$1 AND p.shipment_id=$2`,[workspaceId,shipmentId])).rows[0];

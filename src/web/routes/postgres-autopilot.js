@@ -258,6 +258,28 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/export-papers/:id',requireAuth,owner,asyncRoute((req,res)=>exportPage(req,res,req.params.id)));
   router.post('/autopilot/export-papers/:id/review',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.review(database,req.ctx,req.params.id,req.body);req.flash('success','Packet facts reviewed. No customs filing or shipment was made.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
   router.post('/autopilot/export-papers/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Draft stopped. Its original saved copy is retained.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
+  const inbound=require('../../purchasing/agent-inbound-freight');
+  const inboundPath=inbound.path;
+  const inboundPage=async(req,res,issuedLink=null)=>res.set('Cache-Control','private, no-store').page('autopilot/inbound-freight',{
+    title:'Inbound ocean and air freight',nav:'autopilot',issuedLink,
+    backTo:{href:req.params.id?inboundPath:'/autopilot/reviews',label:req.params.id?'Inbound freight':'Agent reviews'},
+    ...await inbound.page(database,req.ctx,req.params.id)});
+  router.get(inboundPath,requireAuth,owner,asyncRoute((req,res)=>inboundPage(req,res)));
+  router.get(inboundPath+'/:id',requireAuth,owner,asyncRoute((req,res)=>inboundPage(req,res)));
+  router.post(inboundPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const shipment=await inbound.create(database,req.ctx,req.body);
+    res.redirect(303,inboundPath+'/'+shipment.id);
+  }));
+  router.post(inboundPath+'/:id/link',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const issued=await inbound.issueLink(database,req.ctx,req.params.id,req.body);
+    return inboundPage(req,res,issued);
+  }));
+  for(const [step,method] of [['revoke','stopLink'],['routine','configure'],['review','reviewUpdate'],['deposit','saveDeposit']]){
+    router.post(inboundPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await inbound[method](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,inboundPath+'/'+req.params.id);
+    }));
+  }
   const carrierClaims=require('../../shipping/agent-carrier-claims');
   const claimPath=carrierClaims.path;
   const carrierClaimPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/carrier-claims',{
