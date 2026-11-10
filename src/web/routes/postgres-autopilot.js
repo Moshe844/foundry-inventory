@@ -17,6 +17,40 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const backupSuppliers=require('../../purchasing/agent-backup-suppliers');
+  const backupPath='/autopilot/backup-suppliers';
+  const backupPage=async(req,res)=>res.page('autopilot/backup-suppliers',{
+    title:'Backup suppliers',nav:'autopilot',cash:require('../../domain/currency'),
+    backTo:req.params.id?{href:backupPath,label:'Backup suppliers'}:{href:'/autopilot/reviews',label:'Agent reviews'},
+    ...await backupSuppliers.page(database,req.ctx,req.params.id,req.query.page||1)
+  });
+  router.get('/autopilot/reviews/backup-suppliers',requireAuth,owner,(_req,res)=>res.redirect(303,backupPath));
+  router.get(backupPath,requireAuth,owner,asyncRoute(backupPage));
+  router.get(backupPath+'/:id',requireAuth,owner,asyncRoute(backupPage));
+  router.post(backupPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const exact=await backupSuppliers.exactChoice(database,req.ctx,req.body);
+    const result=await backupSuppliers.configure(database,req.ctx,{...req.body,...exact,id:null});
+    res.redirect(303,backupPath+'/'+result.id);
+  }));
+  router.post(backupPath+'/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const exact=await backupSuppliers.exactChoice(database,req.ctx,req.body);
+    const result=await backupSuppliers.configure(database,req.ctx,{...req.body,...exact,id:req.params.id});
+    res.redirect(303,backupPath+'/'+result.id);
+  }));
+  router.post(backupPath+'/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await backupSuppliers.configure(database,req.ctx,{id:req.params.id,revision:req.body.revision,stop:'yes'});
+    res.redirect(303,backupPath+'/'+req.params.id);
+  }));
+  for(const [step,apply] of [['execute',backupSuppliers.execute],['teach',backupSuppliers.teach],['unavailable',backupSuppliers.recordUnavailable]]){
+    router.post(backupPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await apply(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,backupPath+'/'+req.params.id);
+    }));
+  }
+  router.post(backupPath+'/:id/withdraw',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await backupSuppliers.withdrawNotice(database,req.ctx,req.body.noticeId);
+    res.redirect(303,backupPath+'/'+req.params.id);
+  }));
   const contractReader=require('../../documents/agent-contract-reader');
   const contractsPage=async(req,res)=>res.page('autopilot/contracts',{title:'Contract prices, terms and dates',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},contractLabels:contractReader.labels,screen:await contractReader.page(database,req.ctx,{id:req.params.id,page:req.query.page||1})});
   router.get('/autopilot/reviews/contract-readings',requireAuth,owner,(req,res)=>res.redirect(303,'/autopilot/contracts'));
