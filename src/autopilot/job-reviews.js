@@ -20,6 +20,7 @@ const definitions=[
   require('../warehouse/agent-partial-shipments').definition,
   require('../operations/agent-annual-stocktakes').definition,
   require('../connections/agent-channel-buffers').definition,
+  require('../connections/agent-channel-recovery').definition,
   ...require('../sales/agent-order-reservations').definitions,
   require('../purchasing/agent-supplier-rfqs').definition,
   require('../purchasing/agent-supplier-claims').definition,

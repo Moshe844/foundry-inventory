@@ -3,6 +3,11 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 182:{common:'Reviews uncertain Shopify and WooCommerce stock and price updates. Uses the current authorized connection and exact mapped product and location. When the provider confirms the saved value, StockChief repairs the delivery record without sending another update. Mismatches, permission changes and missing evidence stay in review. Amazon and eBay need separate integration.',
+ starter:'Shows which saved channel updates need attention and links you to the connection. Automatic readback recovery starts at Growth.',
+ growth:'Can verify retained Shopify and WooCommerce delivery results without training after the watch period and your routine authority. Rechecks the plan, account and product mapping before saving the result.',
+ pro:'Can verify retained Shopify and WooCommerce delivery results without training after the watch period and your routine authority. Rechecks the plan, account and product mapping before saving the result.',
+ enterprise:'Can verify retained Shopify and WooCommerce delivery results without training within your authorized connection and provider limits. Conflicting results stay in review.'},
  143:{common:'Reads complete PDF, Word, text and scanned contracts into private prices, currencies, units, payment conditions, notice periods and end-date facts beside literal original quotes. Retains every source section and original file; unclear, conflicting or OCR-derived facts need owner review. Uses 100 AI credits per complete file and one new document, reusing a paid mailbox source receipt. Failed readings refund the new credits. New prices, terms and financial records still need separate approval.',
  starter:'Prepares a read-only contract suggestion from the complete supplied original. Private source quotations and uncertainties stay visible. Automatic discovery and reading of newly filed contracts require Pro or Custom.',
  growth:'Prepares a read-only contract suggestion from the complete supplied original without training. You separately approve new or changed commercial terms. Automatic reading of newly filed contracts requires Pro or Custom.',
