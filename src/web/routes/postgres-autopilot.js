@@ -17,6 +17,14 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const customerInvoices=require('../../accounting/agent-customer-invoices');
+  router.get('/autopilot/customer-invoices',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/customer-invoices',{title:'Customer invoices after shipment',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await customerInvoices.page(database,req.ctx,req.query)})));
+  router.post('/autopilot/customer-invoices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this exact posted shipment invoice for printing',{action:'customer_invoice.prepare_document',recordReference:req.body.invoiceNumber});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact posted shipment invoice.');res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/autopilot/customer-invoices/settings',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await customerInvoices.configure(database,req.ctx,req.body);req.flash('success',r.stopped?'Customer invoice routine stopped.':'Customer invoice routine enabled. New confirmed dispatches queue private printable invoices.');res.redirect(303,'/autopilot/customer-invoices');}));
+  router.get('/autopilot/customer-invoices/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const d=await customerInvoices.document(database,req.ctx,req.params.id);res.set({'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.send(d.html);}));
   const blanket=require('../../purchasing/agent-blanket-releases');
   const blanketPage=async(req,res,draft=null)=>res.page('autopilot/blanket-releases',{title:'Supplier contracts and release drafts',nav:'autopilot',suppressBack:true,cash:require('../../domain/currency'),screen:await blanket.screen(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),draft});
   router.get('/autopilot/blanket-releases',requireAuth,owner,asyncRoute((req,res)=>blanketPage(req,res)));

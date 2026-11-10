@@ -711,6 +711,7 @@ const SPECS=Object.freeze([
   require('../warehouse/agent-partial-shipments').spec,
   require('../operations/agent-annual-stocktakes').spec,
   require('../accounting/agent-customer-payment-matches').spec,
+  require('../accounting/agent-customer-invoices').spec,
   require('../accounting/agent-invoice-reminders').spec,
   require('../accounting/agent-customer-statements').spec,
   require('../sales/agent-quote-followups').spec,
