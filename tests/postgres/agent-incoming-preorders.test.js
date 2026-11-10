@@ -23,6 +23,12 @@ test('preorders claim exact placed supply and reserve the actual receipt at the 
   await f.subscribe('growth');
   await assert.rejects(f.publish(),e=>e.code==='entitlement_required'&&/Pro/.test(e.message));
   const growth=await f.publish({preorderOrder,label:'Growth incoming offer'});
+  const published=await service.page(db,ctx,growth.id);
+  const {preorderPrecision,...legacy}=published.source_snapshot;
+  assert.equal(preorderPrecision,true);
+  legacy.products=legacy.products.map(({unit_label,quantity_increment,quantity_precision,tracking_mode,...product})=>product);
+  await db.query('UPDATE stockchief_runtime.agent_customer_order_pages SET source_snapshot=$3::jsonb,source_hash=$4 WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,growth.id,JSON.stringify(legacy),require('../../src/pricing/postgres-promotions').hash(legacy)]);
   const publicPage=await f.browser.get('/customer/order/'+growth.token).expect(200);
   assert.match(publicPage.text,/preorder for incoming stock/);
   const reviewed=await f.browser.post('/customer/order/'+growth.token+'/review').type('form').send({

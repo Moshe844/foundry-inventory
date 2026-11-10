@@ -82,7 +82,7 @@ async function requireCapacity(db,ctx,page,selection,requested,{excludeRequestId
   const confirmed=[];
   for(const request of requested){
     const line=bySku.get(request.skuId);
-    if(!line||exact.atoms(request.quantity,0)>exact.atoms(await incomingCapacity(db,ctx.workspaceId,line,{excludeRequestId}),0)){
+    if(!line||exact.safeNumber(request.quantity)>exact.safeNumber(await incomingCapacity(db,ctx.workspaceId,line,{excludeRequestId}))){
       throw new ValidationError('There is no longer enough incoming stock for this preorder. Check the current quantity before confirming.');
     }
     confirmed.push({...line,quantity:exact.canonical(request.quantity)});
@@ -107,8 +107,8 @@ async function assertCurrentClaim(db,ctx,page,selection,requestId,lines){
   if(original.length!==lines.length||lines.some(line=>{
     const held=original.find(c=>c.sku_id===line.skuId);
     const purchase=held&&orderLines.find(row=>row.id===held.purchase_order_line_id&&row.sku_id===held.sku_id);
-    return !purchase||exact.atoms(held.quantity,0)!==exact.atoms(line.quantity,0)||
-      exact.atoms(exact.add(purchase.incoming,held.arrived),0)<exact.atoms(line.quantity,0);
+    return !purchase||exact.canonical(held.quantity)!==exact.canonical(line.quantity)||
+      exact.safeNumber(exact.add(purchase.incoming,held.arrived))<exact.safeNumber(line.quantity);
   }))throw new ValidationError('The original incoming stock changed. Review this preorder before creating its order.');
 }
 
@@ -134,7 +134,7 @@ async function hasArrived(db,ctx,requestId){
   for(const event of rows){
     if(!waiting.has(event.purchase_order_line_id))waiting.set(event.purchase_order_line_id,{claims:[],next:0});
     const queue=waiting.get(event.purchase_order_line_id);
-    let quantity=exact.atoms(event.quantity,0);
+    let quantity=exact.safeNumber(event.quantity);
     if(event.kind==='claim'){
       const hold={remaining:quantity};
       queue.claims.push(hold);
@@ -143,8 +143,8 @@ async function hasArrived(db,ctx,requestId){
     }
     while(quantity&&queue.next<queue.claims.length){
       const hold=queue.claims[queue.next],covered=Math.min(quantity,hold.remaining);
-      quantity-=covered;
-      hold.remaining-=covered;
+      quantity=exact.safeNumber(exact.subtract(quantity,covered));
+      hold.remaining=exact.safeNumber(exact.subtract(hold.remaining,covered));
       if(!hold.remaining)queue.next++;
     }
   }
