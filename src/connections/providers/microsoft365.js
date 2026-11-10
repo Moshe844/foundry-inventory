@@ -156,8 +156,10 @@ async function fetchMessage({ credentials, messageId }) {
 }
 
 async function send({ credentials, message }) {
+  const attachments=require('./photo-attachments').graph(message.attachments);
   await graph(credentials, '/me/sendMail', { method: 'POST', body: JSON.stringify({ message: {
     subject: message.subject, body: { contentType: 'Text', content: message.body },
+    ...(attachments.length?{attachments}:{}),
     toRecipients: [{ emailAddress: { address: message.recipient } }],
     internetMessageHeaders: message.id
       ? [{ name: 'X-StockChief-Message', value: String(message.id) }] : undefined }, saveToSentItems: true }) });

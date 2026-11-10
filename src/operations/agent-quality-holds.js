@@ -138,6 +138,8 @@ async function inspect(db,ctx,id,input){return db.transaction(async c=>{
  const checks=Array.isArray(input.checks)?input.checks:[input.checks].filter(Boolean);
  if(input.decision==='PASS'&&(checks.length!==h.checklist.length||h.checklist.some((_,i)=>!checks.includes(String(i)))))throw new ValidationError('Confirm every recorded physical check before marking this delivery as passed.');
  const note=String(input.note||'').trim();if(note.length>1000||input.decision==='FAIL'&&!note)throw new ValidationError('Describe a failed inspection in up to 1,000 characters.');
+ const damagedText=String(input.damagedQuantity??'').trim(),damagedQuantity=damagedText===''?null:Number(damagedText);
+ if(damagedQuantity!==null&&(!/^\d{1,6}$/.test(damagedText)||!Number.isSafeInteger(damagedQuantity)||damagedQuantity<1||damagedQuantity>h.quantity||input.decision!=='FAIL'))throw new ValidationError('Enter the actual damaged whole-unit count within this held delivery, only for a failed physical inspection.');
  let release=false,reason=null;const p=await getPolicy(c,ctx,h.policy_id,'share');
  if(input.decision==='PASS')try{
   if(h.policy_revision!==p.revision)throw new ValidationError('The QC authority changed. The owner must review this exact inspected delivery.');
@@ -145,8 +147,8 @@ async function inspect(db,ctx,id,input){return db.transaction(async c=>{
  }catch(error){if(![400,402,403,404,422].includes(error.status))throw error;reason=error.message;}
  await c.query(`UPDATE stockchief_runtime.agent_quality_holds SET status=$3,inspection=$4,inspected_by=$5,inspected_at=clock_timestamp(),
   released_by=$6,released_at=CASE WHEN $6::text IS NOT NULL THEN clock_timestamp() END,revision=revision+1 WHERE workspace_id=$1 AND id=$2`,
- [ctx.workspaceId,id,release?'PASSED':input.decision==='FAIL'?'FAILED':'HELD',JSON.stringify({decision:input.decision,checks,note,releaseReason:reason}),ctx.actorId,release?p.authorized_by:null]);
- await audit(c,ctx,'Physical delivery inspection recorded',id,{decision:input.decision,released:release,quantity:h.quantity});return {id,released:release,reason};
+ [ctx.workspaceId,id,release?'PASSED':input.decision==='FAIL'?'FAILED':'HELD',JSON.stringify({decision:input.decision,checks,note,damagedQuantity,releaseReason:reason}),ctx.actorId,release?p.authorized_by:null]);
+ await audit(c,ctx,'Physical delivery inspection recorded',id,{decision:input.decision,released:release,quantity:h.quantity,damagedQuantity});return {id,released:release,reason};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function release(db,ctx,id,input){return db.transaction(async c=>{
  const h=await hold(c,ctx,id,true);await actor(c,ctx,{owner:true,locationId:h.location_id});await access(c,ctx);
@@ -172,7 +174,10 @@ async function page(db,ctx,input={}){
   JOIN suppliers v ON v.workspace_id=p.workspace_id AND v.id=p.supplier_id WHERE p.workspace_id=$1 ORDER BY p.created_at DESC,p.id DESC LIMIT 101 OFFSET $2`,[ctx.workspaceId,(n-1)*100])).rows:[];
  let selected=null;if(input.id){selected=await hold(db,ctx,input.id);await actor(db,ctx,{locationId:selected.location_id,lock:false});selected=rows.find(r=>r.id===selected.id)||{...selected,...(await db.query(`SELECT s.code,i.name,l.name location_name,v.name supplier_name,o.po_number FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.id=h.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=h.location_id JOIN stockchief_runtime.agent_quality_policies p ON p.id=h.policy_id JOIN suppliers v ON v.id=p.supplier_id JOIN purchase_order_receipt_lines rl ON rl.id=h.receipt_line_id JOIN purchase_order_receipts r ON r.id=rl.receipt_id JOIN purchase_orders o ON o.id=r.purchase_order_id WHERE h.workspace_id=$1 AND h.id=$2`,[ctx.workspaceId,selected.id])).rows[0]};}
  let editing=null;if(input.edit){await actor(db,ctx,{owner:true,lock:false});editing=await getPolicy(db,ctx,input.edit);await facts(db,ctx,editing);editing={...editing,...(await db.query('SELECT s.code,l.name location_name,v.name supplier_name FROM skus s,locations l,suppliers v WHERE s.id=$1 AND l.id=$2 AND v.id=$3',[editing.sku_id,editing.location_id,editing.supplier_id])).rows[0]};}
- return {locked,plan:state.plan,shadow:state.shadow,owner:user.role==='owner',rows:rows.slice(0,100),policies:policies.slice(0,100),more:rows.length>100||policies.length>100,page:n,selected,editing};
+ const photos=selected?await require('./quality-photos').list(db,ctx,selected.id):[],canAddPhotos=policy.usesAgentTerms(state)&&policy.permits(state.plan,46,'draft'),canClaim=user.role==='owner'&&policy.usesAgentTerms(state)&&policy.permits(state.plan,45,'draft');
+ const claimMailboxes=canClaim&&selected?.status==='FAILED'?await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId):[];
+ const existingClaim=selected?(await db.query('SELECT id,reference FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND hold_id=$2',[ctx.workspaceId,selected.id])).rows[0]:null;
+ return {locked,plan:state.plan,shadow:state.shadow,owner:user.role==='owner',rows:rows.slice(0,100),policies:policies.slice(0,100),more:rows.length>100||policies.length>100,page:n,selected,editing,photos,canAddPhotos,canClaim,claimMailboxes,existingClaim};
 }
 const definition={id:51,key:'delivery-quality',label:'Hold supplier deliveries until physical inspection',readPage:async()=>({summary:'Configure an exact supplier, whole-unit product, receiving location and physical checklist. Goods stay unavailable until a person checks them. Growth learns from a completed manual example; Pro and Custom can use explicit limits without training. Failed goods stay held.',rows:[{Action:'Open delivery QC',link:'/autopilot/delivery-quality'}],more:false})};
 async function inbox(db,workspaceId,actorId){

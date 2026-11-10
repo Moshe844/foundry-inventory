@@ -176,7 +176,7 @@ async function fetchMessage({ credentials, messageId }) {
 }
 
 async function send({ credentials, message: outgoing }) {
-  const raw = [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`,
+  const raw = require('./photo-attachments').mime(outgoing) || [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`,
     ...(outgoing.id ? [`X-StockChief-Message: ${outgoing.id}`] : []), 'Content-Type: text/plain; charset="UTF-8"',
     '', outgoing.body].join('\r\n');
   const encoded = Buffer.from(raw).toString('base64url');

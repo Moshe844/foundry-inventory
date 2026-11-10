@@ -124,6 +124,8 @@ const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoi
 const actionJobs=new Map([
   ['inventory.inspect_delivery',51],
   ['supplier.request_quotes',93],
+  ['supplier.open_damage_claim',45],
+  ['supplier.attach_damage_photos',46],
   ['purchasing.plan_supplier_shutdown',147],
   ['purchasing.plan_promotion_stock',145],
   ['catalog.retire_discontinued',132],

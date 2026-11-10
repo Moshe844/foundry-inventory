@@ -423,6 +423,7 @@ async function autopilotEvaluate(job,client){
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+    await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
     if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
@@ -718,6 +719,15 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     return providerEffect(job,database,options,providers);
   }),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
+  'agent.mail.supplier_claim.v1':external(async(job,database)=>{
+    const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
+    const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
+    if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
+  }),
+  'agent.supplier-claims':external(async(job,database)=>{
+    const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
+    if(result.more)await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:job.kind,idempotencyKey:'supplier-claims:'+job.payload.cycleId+':'+result.nextAfterId,payload:{cycleId:job.payload.cycleId,afterId:result.nextAfterId},priority:65,maxAttempts:3});return result;
+  }),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
