@@ -50,11 +50,7 @@ function checked(data,purpose){
 async function* pages(buffer){
  if(!Buffer.isBuffer(buffer)||!buffer.length||buffer.length>32*1024*1024)throw new ValidationError('Upload a business document of up to 32 MB for handwriting reading.');
  if(buffer.subarray(0,5).toString()==='%PDF-'){
-  const pdfjs=await import('pdfjs-dist/legacy/build/pdf.mjs');let doc,loading;
-  try{loading=pdfjs.getDocument({data:new Uint8Array(buffer),useSystemFonts:true,isEvalSupported:false});doc=await loading.promise;
-   if(doc.numPages>30)throw new ValidationError('Split documents longer than 30 pages before reading handwriting. Every page in the chosen document will be checked.');
-   for(let n=1;n<=doc.numPages;n++){const page=await doc.getPage(n),base=page.getViewport({scale:1}),scale=Math.min(2,2048/Math.max(base.width,base.height)),viewport=page.getViewport({scale}),canvas=require('@napi-rs/canvas').createCanvas(Math.ceil(viewport.width),Math.ceil(viewport.height));try{await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;yield {page:n,total:doc.numPages,block:await imageInput.prepare(canvas.toBuffer('image/png'))};}finally{page.cleanup();}}
-  }catch(e){if(e instanceof ValidationError)throw e;throw new ValidationError('This PDF could not be safely opened. Upload an unlocked readable PDF or page photos.');}finally{await loading?.destroy();}
+  for(const page of await require('./visual-pdf-pages').read(buffer))yield page;
  }else if(require('./image-codecs').kind(buffer)){
   const decoded=await require('./image-codecs').decode(buffer),sharp=require('sharp');let n=0;
   for(const frame of decoded.frames){const png=await sharp(Buffer.from(frame.pixels),{raw:{width:frame.width,height:frame.height,channels:4}}).toColourspace('srgb').withMetadata({orientation:frame.orientation}).png().toBuffer();yield {page:++n,total:decoded.frames.length,block:await imageInput.prepare(png)};}
