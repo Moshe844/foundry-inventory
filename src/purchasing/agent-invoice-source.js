@@ -27,8 +27,10 @@ async function qualify(db,ctx,p,loaded){
  if(!po||po.supplier_id!==s.supplier_id||doc.purchaseOrder.toLowerCase()!==po.po_number.toLowerCase()||doc.invoiceNumber!==p.supplierInvoiceNumber||doc.currency!==p.currency||doc.issueDate!==p.issueDate||sourceDueDate!==p.dueDate||doc.total!==p.documentTotalMinor||doc.tax!==p.taxMinor||(doc.paymentTerms||null)!==(p.sourcePaymentTerms||null)||doc.rows.length!==p.lines.length)throw new ValidationError('The prepared invoice fields do not match the original document exactly.');
  if(!same(doc.charges||[],p.charges||[]))throw new ValidationError('The prepared charges differ from the complete original document.');
  const sourceLines=await require('./postgres-invoice-preparation').resolveLines(db,ctx,{id:p.purchaseOrderId},doc.rows.map(r=>({sku:r.code,description:r.description,quantity:r.quantity,quantityBasis:r.quantityBasis,secondaryQuantity:r.secondaryQuantity,priceQuantity:r.priceQuantity,priceUnit:r.priceUnit,lotCode:r.lotCode,serials:r.serials,unitCostMinor:r.unitCostMinor,documentLineTotalMinor:r.lineTotalMinor})));
- const comparable=l=>({id:l.purchaseOrderLineId,sku:l.skuId,quantity:Number(l.quantity),secondary:l.secondaryQuantity==null?null:Number(l.secondaryQuantity),price:Number(l.priceQuantity??1),cost:Number(l.unitCostMinor),lot:l.lotCode||null,serials:l.serials||null,total:l.documentLineTotalMinor??require('../domain/exact-quantity').costMinor(l.secondaryQuantity??l.quantity,Number(l.unitCostMinor),{perQuantity:l.priceQuantity??1})});
- if(!same(sourceLines.map(comparable),p.lines.map(comparable)))throw new ValidationError('The prepared invoice items differ from the original table.');
+ const exact=require('../domain/exact-quantity');
+ const comparable=l=>({id:l.purchaseOrderLineId,sku:l.skuId,quantity:Number(l.quantity),secondary:l.secondaryQuantity==null?null:Number(l.secondaryQuantity),lot:l.lotCode||null,serials:l.serials||null,total:l.documentLineTotalMinor??exact.costMinor(l.secondaryQuantity??l.quantity,Number(l.unitCostMinor),{perQuantity:l.priceQuantity??1})});
+ const sameRate=(source,prepared)=>BigInt(source.unitCostMinor)*BigInt(exact.atoms(prepared.priceQuantity??1,6))===BigInt(prepared.unitCostMinor)*BigInt(exact.atoms(source.priceQuantity??1,6));
+ if(!same(sourceLines.map(comparable),p.lines.map(comparable))||sourceLines.some((line,index)=>!sameRate(line,p.lines[index])))throw new ValidationError('The prepared invoice items differ from the original table.');
  return evidence;
 }
 async function capture(db,ctx,p){
