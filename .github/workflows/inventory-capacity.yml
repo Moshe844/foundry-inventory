@@ -149,6 +149,9 @@ jobs:
       - name: Discontinued products, replacement guidance and current owner authority
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
         run: node --test --test-concurrency=2 tests/unit/product-retirement-source.test.js tests/postgres/agent-product-retirements.test.js tests/postgres/agent-product-retirement-boundaries.test.js tests/postgres/agent-product-retirements-ui.test.js
+      - name: Provider access refusals, preserved reconnects and read backoff
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
+        run: node --test --test-concurrency=2 tests/unit/provider-sync-failure.test.js tests/postgres/provider-sync-access-failure.test.js tests/postgres/provider-refresh-serialization.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
