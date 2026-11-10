@@ -80,7 +80,7 @@ test('in the browser the Ask page cannot get stuck, and the top bar and customer
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(ok=>{const s=app.listen(0,'127.0.0.1',()=>ok(s));}),origin='http://127.0.0.1:'+server.address().port,browser=await require('playwright').chromium.launch();
  t.after(async()=>{await browser.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
  const moved=page=>page.evaluate(()=>['html','body','.app','main#main','.sc-chat-workspace','.rm-chat'].map(s=>s==='html'?document.documentElement:document.querySelector(s)).filter(Boolean).filter(e=>e.scrollTop||e.scrollLeft).length);
- for(const [width,height] of [[1440,800],[390,844]]){
+ for(const [width,height] of [[1440,800],[750,900],[390,844]]){
   const context=await browser.newContext({viewport:{width,height}}),page=await context.newPage();
   await page.goto(origin+'/login');await page.getByLabel('Work email').fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
   await page.goto(origin+'/ask?chat='+chatId+'&goal='+written.id+'#focused-goal');await page.waitForTimeout(500);
@@ -99,10 +99,12 @@ test('in the browser the Ask page cannot get stuck, and the top bar and customer
   }
   await page.evaluate(()=>document.querySelectorAll('.ask-download[open]').forEach(d=>{d.open=false;}));
   assert.equal(await page.evaluate(()=>{const c=document.querySelector('[data-chat-scroll]');c.scrollTop=0;return c.scrollHeight>c.clientHeight;}),true,'The conversation itself still scrolls');
-  for(const path of ['/','/orders','/money']){await page.goto(origin+path);const cut=await page.evaluate(()=>[...document.querySelectorAll('.sc-toolbar a,.sc-toolbar button')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left<-1);}).map(e=>e.textContent.trim()));assert.deepEqual(cut,[],width+' '+path+': nothing in the top bar is cut off');}
+  for(const path of ['/','/orders','/money']){await page.goto(origin+path);const cut=await page.evaluate(()=>[...document.querySelectorAll('.sc-toolbar a,.sc-toolbar button')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left<-1);}).map(e=>e.textContent.trim()));assert.deepEqual(cut,[],width+' '+path+': nothing in the top bar is cut off');
+   const search=await page.evaluate(()=>Math.round(document.querySelector('.sc-toolbar .sc-global-search input').getBoundingClientRect().width));assert.ok(search>=150,width+' '+path+': the search box stays usable ('+search+'px)');}
   await page.goto(origin+'/sales/customers?q=OBrien');
   const list=await page.evaluate(()=>{const row=document.querySelector('main table tbody tr'),name=row.querySelector('a').getBoundingClientRect(),contact=row.children[1],box=contact.getBoundingClientRect();let n=row,inner=false;while(n&&n.tagName!=='MAIN'){if(/(auto|scroll)/.test(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight+1)inner=true;n=n.parentElement;}return {separate:name.bottom<=box.top+1||innerWidth>800,wide:row.getBoundingClientRect().width>=Math.min(innerWidth,700)*.8,inner,sideways:document.documentElement.scrollWidth>innerWidth};});
-  assert.deepEqual(list,{separate:true,wide:true,inner:false,sideways:false},width+': customer card');
+  // The customer card layout is checked at phone and desktop widths; 750 checks the top bar only.
+  if(width!==750)assert.deepEqual(list,{separate:true,wide:true,inner:false,sideways:false},width+': customer card');
   await context.close();
  }
 });

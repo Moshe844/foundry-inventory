@@ -30,6 +30,14 @@ const { unitCount, unitLabel } = require('../lib/units');
 function plural(count, one, many) {
   return Number(count) === 1 ? one : many || unitLabel(count, one);
 }
+// The CSS width of a bar showing part of a whole. Any part that is not zero
+// stays visible (at least 4px), however small its share: 32 of 52,574 is a
+// sliver, never an empty track. A zero part draws nothing.
+function barWidth(part, whole) {
+  const p = Math.abs(Number(part) || 0), w = Math.abs(Number(whole) || 0);
+  if (!p || !w) return '0%';
+  return `max(4px, ${Math.round(Math.min(100, p / w * 100) * 100) / 100}%)`;
+}
 function displayName(value){return String(value||'').trim().split(/\s+/u).map(word=>{const letters=Array.from(word.toLocaleLowerCase());return letters.length?letters[0].toLocaleUpperCase()+letters.slice(1).join(''):'';}).join(' ');}
 function customerCopy(value){return String(value??'').replace(/^Business-calendar posting for journal \d+$/i,'Accounting date correction').replace(/\b(?:reportdelivery|supportmessage|support|pgprop|goal|rjob)_[a-z0-9]{12,}\b/gi,'saved record').replace(/(?<![\w.-])1(?:\.0+)?\s+units\b/g,'1 unit');}
 function businessDay(value,timeZone='UTC'){if(typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value))return value;return new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));}
@@ -232,6 +240,7 @@ module.exports = {
   missingCost:require('../domain/stock-totals').missingCostText,
   icon,
   qty,
+  barWidth,
   money,
   moneyInput:(value,currency='USD')=>require('../domain/currency').fromMinor(value,currency),
   moneyDecimal:(value,currency='USD')=>{const m=require('../domain/currency');return m.format(m.toMinor(value,currency),currency);},

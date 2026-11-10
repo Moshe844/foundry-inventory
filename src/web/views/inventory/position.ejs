@@ -62,14 +62,14 @@
       <%
         /* The bar is this group's share of the products counted, on one scale
            across every row, so the shape of the inventory reads at a glance. */
-        var share = totals.skus ? Math.max(3, Math.round((group.count / totals.skus) * 100)) : 0;
+        var share = helpers.barWidth(group.count, totals.products);
       %>
       <a class="rm-group" href="<%= group.href %>">
         <span class="rm-group__body">
           <span class="rm-group__n"><%= group.name %></span>
           <span class="rm-group__d"><%= group.detail %></span>
         </span>
-        <span class="sc-group-count"><strong><%= group.count.toLocaleString('en-US') %></strong><span class="rm-meter <%= group.tone === 'hot' ? 'is-flag' : group.tone === 'ok' ? 'is-good' : 'is-quiet' %>"><span style="width:<%= share %>%"></span></span></span>
+        <span class="sc-group-count"><strong><%= group.count.toLocaleString('en-US') %></strong><span class="rm-meter <%= group.tone === 'hot' ? 'is-flag' : group.tone === 'ok' ? 'is-good' : 'is-quiet' %>"><span style="width:<%= share %>"></span></span></span>
       </a>
     <% }) %>
     </div>
