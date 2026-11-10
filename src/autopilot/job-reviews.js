@@ -23,6 +23,7 @@ const definitions=[
   require('../shipping/agent-export-papers').definition,
   require('../shipping/agent-carrier-claims').definition,
   require('../shipping/agent-freight-pickups').definition,
+  require('../shipping/agent-van-routes').definition,
   require('../shipping/agent-return-instructions').definition,
   require('../warehouse/agent-partial-shipments').definition,
   require('../operations/agent-annual-stocktakes').definition,

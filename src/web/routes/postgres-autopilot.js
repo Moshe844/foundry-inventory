@@ -323,6 +323,23 @@ function createPostgresAutopilotRouter(database,options={}){
       res.redirect(303,freightPath+'/'+req.params.id);
     }));
   }
+  const vanRoutes=require('../../shipping/agent-van-routes');
+  const vanPath=vanRoutes.path;
+  const vansPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/van-routes',{
+    title:'Own-van delivery routes',nav:'autopilot',backTo:{href:req.params.id?vanPath:'/autopilot/reviews',label:req.params.id?'Van routes':'Agent reviews'},
+    ...await vanRoutes.page(database,req.ctx,{id:req.params.id,depotId:req.query.depot})});
+  router.get(vanPath,requireAuth,owner,asyncRoute(vansPage));
+  router.get(vanPath+'/:id',requireAuth,owner,asyncRoute(vansPage));
+  router.post(vanPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const run=await vanRoutes.prepare(database,req.ctx,req.body);
+    res.redirect(303,vanPath+'/'+run.id);
+  }));
+  for(const step of ['approve','configure','stop']){
+    router.post(vanPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await vanRoutes[step](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,vanPath+'/'+req.params.id);
+    }));
+  }
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));

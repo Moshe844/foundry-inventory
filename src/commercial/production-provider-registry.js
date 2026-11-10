@@ -64,6 +64,7 @@ const classification=Object.freeze({
  'shipping/providers/shipstation.js':'METERED',
  'shipping/shipengine-platform.js':'NOT_PG_ENABLED',
  'shipping/shippo-link.js':'METERED',
+ 'shipping/van-road-times.js':'METERED',
 });
 function classify(boundary){
  if(boundary.file==='shipping/providers/shipengine.js'&&boundary.expression.includes('options.fetch'))
