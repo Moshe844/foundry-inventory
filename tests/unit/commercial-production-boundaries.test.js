@@ -30,7 +30,7 @@ const expected={
  'sales/order-from-email.js':1,'shipping/providers/easypost-partner.js':1,
  'shipping/providers/easypost.js':1,'shipping/providers/shipengine.js':2,
  'shipping/providers/shippo.js':1,'shipping/providers/shipstation.js':1,
- 'shipping/shipengine-platform.js':1,'shipping/shippo-link.js':1,
+ 'shipping/shipengine-platform.js':1,'shipping/shippo-link.js':1,'shipping/van-road-times.js':1,
 };
 test('PostgreSQL production dependency graph has no unclassified direct provider boundary',()=>{
  const {boundaries}=scan();const actual={};for(const item of boundaries)actual[item.file]=(actual[item.file]||0)+1;

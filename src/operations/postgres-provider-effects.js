@@ -2,7 +2,12 @@
 
 const { newId,nowIso }=require('../lib/util');
 const jobs=require('./postgres-job-queue');
-const effectJobKind=effect=>require('./agent-commerce-protocol').jobKind(effect)||require('./agent-mail-protocol').jobKind(effect);
+const shippingJobKinds=new Map([
+  ['shipping.carrier_claim','agent.shipping.carrier-claim.v1'],
+  ['shipping.freight_pickup','agent.shipping.freight-pickup.v1']
+]);
+const effectJobKind=effect=>shippingJobKinds.get(effect.kind)||
+  require('./agent-commerce-protocol').jobKind(effect)||require('./agent-mail-protocol').jobKind(effect);
 const { ValidationError,InvariantError,NotFoundError }=require('../domain/errors');
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),

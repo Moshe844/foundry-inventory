@@ -1,0 +1,154 @@
+<h1>Pallet freight pickups</h1>
+<p>Compare freight quotes for a packed shipment. Book a pickup with your connected ShipStation API freight account and keep the carrier’s bill of lading with the shipment.</p>
+<% const statusLabels={PENDING:'Queued',RUNNING:'Booking',FAILED:'Held for review',AMBIGUOUS:'Awaiting carrier confirmation',
+  SUCCEEDED:'Booked',CANCELLED:'Stopped',booked:'Booked',in_transit:'In transit',delivered:'Delivered',cancelled:'Cancelled'}; %>
+<% if(!allowed){ %>
+  <p class="notice"><strong>Custom</strong> · Pallet pickup booking requires Custom. <a class="btn" href="/billing">Upgrade</a></p>
+<% }else if(blocked){ %><p class="notice"><%= blocked %></p><% } %>
+<% if(selected){ %>
+  <section class="card"><div class="card-body">
+    <h2>Saved pickup</h2>
+    <p><a href="/fulfilment/<%= selected.shipment_id %>">Open packed shipment</a></p>
+    <p><%= selected.facts.shipFrom.company_name %> → <%= selected.facts.shipTo.company_name %></p>
+    <p>Pickup <%= selected.facts.pickup.pickup_date %>, <%= selected.facts.pickup.ready_time %>–<%= selected.facts.pickup.close_time %> local time</p>
+    <p>Status <strong><%= statusLabels[selected.receipt?.status||effect?.status]||'Quotes ready' %></strong></p>
+    <% if(effect?.errorMessage){ %><p class="notice"><%= effect.errorMessage %></p><% } %>
+    <% if(selected.receipt){ %>
+      <% if(selected.receipt.number){ %><p>Pickup confirmation <strong><%= selected.receipt.number %></strong></p><% } %>
+      <% if(selected.receipt.bol){ %><p>Bill of lading <strong><%= selected.receipt.bol %></strong></p><% } %>
+      <% if(selected.receipt.document){ %><p><a class="btn" rel="noopener noreferrer" href="<%= selected.receipt.document %>">Download bill of lading</a></p><% } %>
+    <% } %>
+    <% if(effect?.providerReference?.externalId&&['AMBIGUOUS','SUCCEEDED'].includes(effect.status)){ %>
+      <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/check">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn">Check carrier status</button>
+      </form>
+    <% }else if(effect?.status==='AMBIGUOUS'){ %>
+      <p>Check the original booking in your carrier portal. Use freight reference <strong><%= selected.id %></strong>.</p>
+    <% } %>
+    <% if(allowed&&!blocked&&canRequote){ %>
+      <p><a class="btn" href="/autopilot/freight-pickups?shipment=<%= encodeURIComponent(selected.shipment_id) %>&amp;connection=<%= encodeURIComponent(selected.connector_id) %>">Request fresh freight quotes</a></p>
+    <% } %>
+  </div></section>
+  <% if(allowed&&!blocked){ for(const offer of selected.offers){ const rule=rules[offer.id],fresh=Date.parse(offer.expiresAt)>Date.now(); %>
+    <section class="card"><div class="card-body">
+      <h2><%= offer.carrierName %> · <%= offer.service %></h2>
+      <p><strong><%= helpers.money(offer.amountMinor,'USD') %></strong> quoted<%= fresh?'':' · Expired' %></p>
+      <% if(offer.estimatedDelivery){ %><p><%= offer.guaranteed?'Guaranteed':'Estimated' %> delivery <%= offer.estimatedDelivery.slice(0,10) %></p><% } %>
+      <% if(!effect&&fresh){ %>
+        <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/book" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="revision" value="<%= selected.revision %>">
+          <input type="hidden" name="offerId" value="<%= offer.id %>">
+          <label><input type="checkbox" name="confirmed" value="yes" required> Book this pickup at the displayed quote. The carrier can adjust the final invoice after reweighing or reclassification.</label>
+          <button class="btn btn--primary">Book pickup</button>
+        </form>
+        <details><summary>Authorize this exact route and pallet profile for routine booking</summary>
+          <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/rule" class="form-stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="revision" value="<%= selected.revision %>">
+            <input type="hidden" name="offerId" value="<%= offer.id %>">
+            <input type="hidden" name="ruleRevision" value="<%= rule?.revision||0 %>">
+            <label>Maximum quoted freight cost (USD)<input name="maximum" inputmode="decimal" value="<%= rule?helpers.money(Number(rule.maximum_minor),'USD'):'' %>" required></label>
+            <label><input name="confirmed" type="checkbox" value="yes" required> Authorize this carrier, service, route and exact pallet profile up to this amount.</label>
+            <button class="btn">Save booking rule</button>
+          </form>
+        </details>
+        <% if(rule&&Number(rule.maximum_minor)>=offer.amountMinor){ %>
+          <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/book">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="revision" value="<%= selected.revision %>">
+            <input type="hidden" name="offerId" value="<%= offer.id %>">
+            <button class="btn" name="useRoutine" value="yes">Book within saved authority</button>
+          </form>
+        <% } %>
+      <% } %>
+      <% if(rule){ %>
+        <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/rule">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="revision" value="<%= selected.revision %>">
+          <input type="hidden" name="offerId" value="<%= offer.id %>">
+          <input type="hidden" name="ruleRevision" value="<%= rule.revision %>">
+          <input type="hidden" name="confirmed" value="yes">
+          <button class="btn" name="remove" value="yes">Remove booking rule</button>
+        </form>
+      <% } %>
+    </div></section>
+  <% } } %>
+<% }else if(allowed&&!blocked){ %>
+  <section class="card"><div class="card-body">
+    <h2>Choose the packed shipment and connection</h2>
+    <% if(!connectors.length){ %><p>Connect your ShipStation API account with an active freight provider.</p><% }
+    else if(!shipments.length){ %><p>Pack a customer shipment before requesting a freight quote.</p><% }else{ %>
+      <form method="get" action="/autopilot/freight-pickups" class="form-stack">
+        <label>Packed shipment<select name="shipment" required><option value="">Choose shipment</option>
+          <% for(const shipment of shipments){ %><option value="<%= shipment.id %>" <%= exact?.id===shipment.id?'selected':'' %>><%= shipment.shipment_number %></option><% } %>
+        </select></label>
+        <label>ShipStation API connection<select name="connection" required><option value="">Choose connection</option>
+          <% for(const connector of connectors){ %><option value="<%= connector.id %>" <%= connectorId===connector.id?'selected':'' %>><%= connector.display_name %></option><% } %>
+        </select></label>
+        <button class="btn">Load freight accounts</button>
+      </form>
+    <% } %>
+  </div></section>
+  <% if(exact&&connectorId){ %>
+    <section class="card"><div class="card-body">
+      <h2>Quote <%= exact.number %></h2>
+      <p><strong>Pickup</strong> <%= exact.origin.company %>, <%= exact.origin.raw %> · <%= exact.origin.phone %></p>
+      <p><strong>Delivery</strong> <%= exact.destination.company %>, <%= exact.destination.raw %> · <%= exact.destination.phone %></p>
+      <% if(!freightAccounts.length){ %><p>No active freight providers were returned for this connection.</p><% }else{ %>
+        <form method="post" action="/autopilot/freight-pickups" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="shipmentId" value="<%= exact.id %>">
+          <input type="hidden" name="sourceFingerprint" value="<%= exact.fingerprint %>">
+          <input type="hidden" name="connectorId" value="<%= connectorId %>">
+          <label>Freight provider<select name="accountId" required><option value="">Choose freight provider</option>
+            <% for(const account of freightAccounts){ %><option value="<%= account.id %>"><%= account.name %></option><% } %>
+          </select></label>
+          <% for(const [field,label] of [['fromType','Pickup site type'],['toType','Delivery site type']]){ %>
+            <label><%= label %><select name="<%= field %>" required><option value="">Choose site type</option>
+              <% for(const type of locationTypes){ %><option value="<%= type %>"><%= type.replaceAll('_',' ') %></option><% } %>
+            </select></label>
+          <% } %>
+          <label>Pickup date<input type="date" name="pickupDate" required></label>
+          <label>Ready from (local time)<input type="time" name="readyTime" required></label>
+          <label>Dock closes (local time)<input type="time" name="closeTime" required></label>
+          <fieldset>
+            <legend>Pickup and delivery services</legend>
+            <% for(const service of accessorials){ %><label><input type="checkbox" name="accessorials" value="<%= service %>"> <%= service.replaceAll('_',' ') %></label><% } %>
+          </fieldset>
+          <section data-production-repeat>
+            <h3>Measured pallets and goods</h3>
+            <p>Use the same group number for different goods on the same type of pallet. Enter dimensions and commodity weights for one pallet.</p>
+            <div data-production-rows><fieldset data-production-row>
+              <legend>Pallet group and commodity</legend>
+              <% for(const [field,label,value] of [['palletGroup','Group number','1'],['palletCount','Number of identical pallets','1'],
+                ['palletLength','Length (inches)',''],['palletWidth','Width (inches)',''],['palletHeight','Height (inches)','']]){ %>
+                <label><%= label %><input inputmode="decimal" name="<%= field %>" value="<%= value %>" required></label>
+              <% } %>
+              <label>Stackable<select name="palletStackable" required><option value="no">No</option><option value="yes">Yes</option></select></label>
+              <label>Commodity description<input name="commodityName" maxlength="180" required></label>
+              <label>Packages of this commodity<input name="commodityCount" inputmode="numeric" required></label>
+              <label>Weight of this commodity (pounds)<input name="commodityWeight" inputmode="decimal" required></label>
+              <label>Confirmed freight class<select name="commodityClass" required><option value="">Choose class</option>
+                <% for(const code of freightClasses){ %><option value="<%= code %>"><%= code %></option><% } %>
+              </select></label>
+              <label>NMFC code (optional)<input name="commodityNmfc" maxlength="24"></label>
+            </fieldset></div>
+            <button class="btn" type="button" data-add-row>Add pallet group or commodity</button>
+          </section>
+          <label><input type="checkbox" name="confirmed" value="yes" required> I checked these addresses, measurements, weights and freight classes.</label>
+          <label><input type="checkbox" name="nonHazardous" value="yes" required> This shipment contains non-hazardous freight.</label>
+          <label><input type="checkbox" name="useRoutine" value="yes"> Book the lowest quote covered by an existing booking rule.</label>
+          <button class="btn btn--primary">Get freight quotes</button>
+        </form>
+        <script src="/manufacturing.js" defer></script>
+      <% } %>
+    </div></section>
+  <% } %>
+<% } %>
+<section class="card"><div class="card-body"><h2>Recent freight pickups</h2>
+  <% if(rows.length){ %><ul><% for(const row of rows){ %>
+    <li><a href="/autopilot/freight-pickups/<%= row.id %>"><%= row.shipment_number %> · <%= statusLabels[row.receipt?.status||row.status]||'Quoted' %></a></li>
+  <% } %></ul><% }else{ %><p>No freight pickups yet.</p><% } %>
+</div></section>
