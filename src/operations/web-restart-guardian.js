@@ -13,7 +13,10 @@ async function start({entrypoint,port=0,host='0.0.0.0',env=process.env,restartDe
  const server=http.createServer((req,res)=>{
   if(req.url==='/status'||req.url.startsWith('/status?')){res.writeHead(302,{Location:statusUrl,'Cache-Control':'no-store','Strict-Transport-Security':'max-age=31536000; includeSubDomains','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"});res.end();return;}
   if(!backendPort)return fallback(req,res);
+  const received=Date.now();
   const upstream=http.request({hostname:'127.0.0.1',port:backendPort,path:req.url,method:req.method,headers:req.headers,agent},response=>{
+   // A slow first answer is reported to the backend, which records it with its own pauses.
+   const waited=Date.now()-received;if(waited>=1500)report('slow_answer',waited,{route:require('./web-stall-monitor').route(req.method,req.url),status:response.statusCode});
    res.writeHead(response.statusCode,response.headers);response.pipe(res);response.on('error',()=>res.destroy());
   });
   upstream.setTimeout(65000,()=>upstream.destroy());upstream.on('error',()=>fallback(req,res));req.on('aborted',()=>upstream.destroy());res.on('close',()=>{if(!res.writableEnded)upstream.destroy();});
@@ -27,7 +30,11 @@ async function start({entrypoint,port=0,host='0.0.0.0',env=process.env,restartDe
   next.once('error',error=>{logger({event:'stockchief.web.spawn_error',code:error.code||'spawn_failed'});ended(null,null);});
  }
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,host,resolve);});launch();
- async function close(){if(closing)return;closing=true;clearTimeout(restartTimer);const current=child;let timer;const forced=new Promise(resolve=>{timer=setTimeout(()=>{current?.kill('SIGKILL');server.closeAllConnections();resolve();},shutdownTimeoutMs);timer.unref();}),stopped=current&&current.exitCode===null?new Promise(resolve=>{current.once('exit',resolve);current.kill('SIGTERM');}):Promise.resolve(),drained=new Promise(resolve=>{server.close(resolve);server.closeIdleConnections();});await Promise.race([Promise.all([stopped,drained]),forced]);clearTimeout(timer);agent.destroy();}
+ // The proxy's own pauses: a 250 ms timer that fires late means this process
+ // could not pass requests on either. Reported to the backend, which records them.
+ function report(kind,ms,detail={}){try{if(child&&child.connected)child.send({type:'stockchief.guardian.stall',kind,ms,detail});}catch{}}
+ let lastTick=Date.now();const watch=setInterval(()=>{const now=Date.now(),late=now-lastTick-250;lastTick=now;if(late>=500)report('proxy_pause',late);},250);watch.unref();
+ async function close(){if(closing)return;closing=true;clearTimeout(restartTimer);clearInterval(watch);const current=child;let timer;const forced=new Promise(resolve=>{timer=setTimeout(()=>{current?.kill('SIGKILL');server.closeAllConnections();resolve();},shutdownTimeoutMs);timer.unref();}),stopped=current&&current.exitCode===null?new Promise(resolve=>{current.once('exit',resolve);current.kill('SIGTERM');}):Promise.resolve(),drained=new Promise(resolve=>{server.close(resolve);server.closeIdleConnections();});await Promise.race([Promise.all([stopped,drained]),forced]);clearTimeout(timer);agent.destroy();}
  return {server,events,close,status:()=>({ready:Boolean(backendPort),restarts,pid:child?.pid||null})};
 }
 module.exports={start,fallback};
