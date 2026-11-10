@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 68:{common:'Accepts private preorders for exact whole-unit SKUs on a placed purchase order. The customer reviews the quantity, price, tax and expected stock date. StockChief prevents two requests from claiming the same incoming units and follows the receipt order at the agreed location. Kits, tracked or measured goods and physical dispatch need separate handling.',
+ growth:'Collects exact private customer preorders. You review each request before creating its order draft and handle allocation separately.',
+ pro:'Accepts known-customer preorders without training after the watch period and your authorization. Confirms and reserves the complete order only after enough of its linked stock has arrived, within current plan, price and location limits.',
+ enterprise:'Accepts known-customer preorders without training within your current authority. Confirms and reserves the complete order only after enough of its linked stock has arrived. Stock movements, dispatch and payments have separate controls.'},
  140:{common:'Counts visible boxes from a saved shelf photo and reads literal case and shelf labels separately. Highlights uncertain boxes and covered areas. The original and all corrections stay available, with 100 AI credits and one document per completed reading. A photo observation can inform a separately confirmed physical count.',
  pro:'Reads the original shelf photo into a draft. You review the visible boxes, printed labels and uncertain areas before confirming it.',
  enterprise:'Learns from an individually confirmed photo. Can confirm a matching observation at the exact location within the taught label set and maximum box count. Different or unclear photos wait for review. You can correct a trained observation and stop its rule.'},

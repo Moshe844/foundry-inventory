@@ -15,6 +15,7 @@ const definitions=[
   require('../catalog/agent-channel-copy').definition,
   require('../sales/agent-website-stock-chat').definition,
   require('../sales/agent-customer-order-pages').definition,
+  require('../sales/agent-customer-order-pages').preorderDefinition,
   require('../operations/agent-return-disposition').definition,
   require('../reports/agent-net-contribution').definition,
   require('../purchasing/agent-purchase-fx').definition,
