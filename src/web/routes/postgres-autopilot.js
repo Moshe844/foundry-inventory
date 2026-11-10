@@ -11,12 +11,40 @@ const entitlements=require('../../entitlements/postgres-service');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
 
-function createPostgresAutopilotRouter(database){
+function createPostgresAutopilotRouter(database,options={}){
   const router=express.Router();
   const playbooks=require('../../autopilot/playbooks');
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const sop=require('../../documents/agent-sop-sources');
+  const sopPath='/autopilot/procedure-originals';
+  const sopPage=async(req,res)=>{
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    const included=policy.permits(state.plan,212,'draft');
+    const backTo={href:req.params.id?sopPath:'/autopilot/reviews',label:req.params.id?'Procedure originals':'Agent reviews'};
+    if(!included||!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{
+      title:'Procedure originals',nav:'autopilot',tier:'Pro',reviewTerms:included,backTo
+    });
+    return res.page('autopilot/procedure-originals',{title:'Procedure originals',nav:'autopilot',backTo,...await sop.page(database,req.ctx,req.params.id)});
+  };
+  router.get('/autopilot/reviews/procedure-originals',requireAuth,owner,(_req,res)=>res.redirect(303,sopPath));
+  router.get([sopPath,sopPath+'/:id'],requireAuth,owner,asyncRoute(sopPage));
+  router.get(sopPath+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await sop.authorize(database,req.ctx);
+    const record=await sop.load(database,req.ctx,req.params.id);
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"})
+      .attachment(record.filename).type('application/octet-stream').send(record.content);
+  }));
+  router.post(sopPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(req.files?.length!==1||req.files[0].field!=='procedure')throw new ValidationError('Choose one complete procedure original.');
+    const {id}=await sop.enqueue(database,req.ctx,req.files[0]);
+    res.redirect(303,sopPath+'/'+id);
+  }));
+  router.post(sopPath+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const proposal=await sop.prepare(database,req.ctx,{...req.body,sourceId:req.params.id},{provider:options.provider});
+    res.redirect(303,'/operating-instructions/'+proposal.id);
+  }));
   function starterAgentPage(job,mode,title,render){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);
