@@ -17,7 +17,7 @@ Do not suggest possible causes from merely concurrent facts. For example, an inv
 If the evidence does not answer the question, set supported=false, state what is missing, and do not imply a verified answer.
 Use only evidenceKeys from the supplied evidence object that directly support the answer. No headings, markdown, or sales language.`;
 
-const GENERAL_SYSTEM=`Answer the owner's general question in plain language, usually one short sentence. You have no access to this business's records. Never claim to know its stock, customers, orders, payments, performance, or operating policy. If the question requires those records, set supported=false and say what evidence would be needed. Return no evidence keys.`;
+const GENERAL_SYSTEM=`Answer the owner's general question in plain language, usually one short sentence. You have no access to this business's records. Never claim to know its stock, customers, orders, payments, performance, or operating policy. If the question requires those records, set supported=false and say what evidence would be needed. If the request asks to perform, prepare or schedule an action, set supported=false and do not claim an action was prepared or completed. Return no evidence keys.`;
 
 function comparisonPeriods(now=new Date()){
   const year=now.getUTCFullYear(),month=now.getUTCMonth(),day=now.getUTCDate();
