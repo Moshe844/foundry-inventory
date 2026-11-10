@@ -197,10 +197,12 @@ async function salesOrderPage(database,workspaceId,id){
     heldReason:{pick:held?'The agreed payment is still due before this order can be picked.':null,
       ship:terms?.hold_shipping&&invoiceOutstanding>0?'The remaining balance is due before this order can ship.':null},
     blocksPicking:held,blocksShipping:Boolean(terms?.hold_shipping&&invoiceOutstanding>0),override:null,dueDate:null};
-  // A cancelled order with no invoice owes nothing. What was already paid is the customer's to get back.
-  if(detail.order.status==='CANCELLED'){const deposit=await require('../../sales/postgres-deposit-refunds').forOrder(database,workspaceId,id);
-    money.depositToRefundMinor=deposit?.toRefundMinor||0;money.refundedMinor+=deposit?.refundedMinor||0;
-    if(!detail.invoices.length)Object.assign(money,{outstandingMinor:0,dueNowMinor:0,blocksPicking:false,blocksShipping:false,state:'Cancelled',heldReason:{pick:null,ship:null}});}
+  // Money the order can no longer use (it was cancelled, or the customer paid
+  // more than it came to) is the customer's to get back.
+  if(['CANCELLED','FULFILLED'].includes(detail.order.status)){const deposit=await require('../../sales/postgres-deposit-refunds').forOrder(database,workspaceId,id);
+    money.depositToRefundMinor=deposit?.toRefundMinor||0;money.refundedMinor+=deposit?.refundedMinor||0;}
+  // A cancelled order with no invoice owes nothing.
+  if(detail.order.status==='CANCELLED'&&!detail.invoices.length)Object.assign(money,{outstandingMinor:0,dueNowMinor:0,blocksPicking:false,blocksShipping:false,state:'Cancelled',heldReason:{pick:null,ship:null}});
   const accountingTotals=accountingRows.rows.reduce((total,row)=>({revenueMinor:total.revenueMinor+Number(row.revenue_minor),
     cogsMinor:total.cogsMinor+Number(row.cogs_minor)}),{revenueMinor:0,cogsMinor:0});
   const latestAccounting=accountingRows.rows[0];const accounting=latestAccounting?{id:latestAccounting.id,
@@ -212,7 +214,7 @@ async function salesOrderPage(database,workspaceId,id){
     fulfilment:{state:fulfilmentState,label:fulfilmentState,detail:shipments.length?`${shipments.length} shipment${shipments.length===1?'':'s'}`:null},
     customerNotices:communications.rows.map((notice)=>({...notice,shipmentId:notice.shipment_id,
       messageKind:notice.message_kind,status:notice.status,sentAt:notice.sent_at})),
-    customerReceipts:receipts.rows,paymentRequests:detail.paymentRequests.map((request)=>({...request,
+    customerReceipts:receipts.rows.map((row)=>({...row,voidable:!require('../../payments/postgres-collection').isProviderReceipt(row.source_key)})),paymentRequests:detail.paymentRequests.map((request)=>({...request,
       hostedUrl:request.hosted_url,amountMinor:Number(request.amount_minor),paidMinor:Number(request.paid_minor),
       lastError:request.last_error})),
     skus:catalogue.map((sku)=>({
@@ -1118,7 +1120,7 @@ function createPostgresCommerceRouter(database,options={}){
       openPaymentUrl:null,paymentProviders:page.paymentProviders,paymentAccount:page.paymentAccount,
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
       customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(req),
-      returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form')});
+      returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form'),paymentFormKey:newId('payment-form')});
   }));
 
   // Bank details customers use to pay by transfer; saved from the order page.
@@ -1321,11 +1323,9 @@ function createPostgresCommerceRouter(database,options={}){
     const invoice=detail.invoices.find((candidate)=>['OPEN','PARTIALLY_PAID'].includes(candidate.status));
     if(!invoice&&!detail.invoices.length&&detail.order.status!=='CANCELLED'){
       // Paid before anything left: a customer deposit, which the existing
-      // engine applies to the invoice when the goods go.
+      // engine applies to the invoice when the goods go. The engine holds it to
+      // what the order still owes.
       const amountMinor=minor(req.body.amount,'Payment amount',detail.order.currency);
-      const paid=Number((await database.query(`SELECT coalesce(sum(amount_minor),0)::bigint AS minor FROM accounting_payments
-        WHERE workspace_id=$1 AND sales_order_id=$2 AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,[req.ctx.workspaceId,detail.order.id])).rows[0].minor);
-      if(amountMinor>Math.max(0,detail.orderTotalMinor-paid))throw new ValidationError('That is more than this order still owes.');
       await workflows.recordCustomerDeposit(database,req.ctx,{customerId:detail.order.customer_id,salesOrderId:detail.order.id,amountMinor,
         paymentDate:req.body.paymentDate||dateToday(req),currency:detail.order.currency,method:trimOrNull(req.body.method),
         reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-deposit')});

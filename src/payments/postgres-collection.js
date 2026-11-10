@@ -221,7 +221,7 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
     const paymentInput={customerId:request.customer_id,customerInvoiceId:request.invoice_id,
       salesOrderId:request.sales_order_id,amountMinor:delta,paymentDate:(read.paidAt||at).slice(0,10),
       currency:read.currency||request.currency,method:read.method||providerName,
-      reference:read.externalPaymentId||externalEventId,sourceKey:`${providerName}:${request.id}:paid:${cumulative}`,
+      reference:read.externalPaymentId||externalEventId,sourceKey:providerReceiptKey(providerName,request.id,cumulative),
       idempotencyKey:`provider-payment:${providerName}:${request.id}:${cumulative}`};
     const receipt=await (request.purpose==='DEPOSIT'?workflows.recordCustomerDeposit:workflows.recordCustomerPayment)(scopedDatabase(client),{
       workspaceId,actorId:null,systemSource:'payment_provider',providerEventId:eventId,providerRequestId:request.id,
@@ -345,7 +345,11 @@ async function availableProviders(database,workspaceId){return (await database.q
  LEFT JOIN workspace_connectors c ON c.workspace_id=a.workspace_id AND c.id=a.connector_id
  WHERE a.workspace_id=$1 AND a.charges_enabled=1 AND (c.status='connected' OR (a.provider='stripe' AND a.connector_id IS NULL)) ORDER BY a.provider`,[workspaceId])).rows
  .filter(r=>providerRegistry.has(r.provider)&&(r.provider!=='cardknox'||require('./postgres-cardknox').enabled())).map(r=>r.provider);}
-module.exports={hydrate,get,listForOrder,accountFor,providerContext,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
+// Money a payment provider took is keyed by its request; it is refunded through
+// the provider, never voided by hand.
+function providerReceiptKey(providerName,requestId,cumulative){return `${providerName}:${requestId}:paid:${cumulative}`;}
+function isProviderReceipt(sourceKey){return /^[^:]+:[^:]+:paid:\d+$/.test(String(sourceKey||''));}
+module.exports={providerReceiptKey,isProviderReceipt,hydrate,get,listForOrder,accountFor,providerContext,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
   queueCustomerReturnRefund,executeRefundEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
   executeRequestEffect:'payments.customer',executeRefundEffect:'payments.customer'});

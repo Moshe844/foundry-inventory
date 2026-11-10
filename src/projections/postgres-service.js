@@ -133,6 +133,7 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
     require('../domain/postgres-batch-expiry').summary(database,workspaceId),
     require('../sales/postgres-deposit-refunds').due(database,workspaceId),
     require('../lib/business-time').forWorkspace(database,workspaceId),
+    require('../operations/postgres-reconciliation').failures(database,workspaceId),
   ]);});}
 async function needsUncached(database,workspaceId,actorId,actor){
   const [inputs,nativeApprovals]=await Promise.all([
@@ -140,7 +141,7 @@ async function needsUncached(database,workspaceId,actorId,actor){
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
   ]);
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar]=inputs;
+    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar,booksMismatches=[]]=inputs;
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
@@ -150,10 +151,16 @@ async function needsUncached(database,workspaceId,actorId,actor){
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,grouped:Boolean(row.summary),href:row.href||(row.item_id?`/inventory/${row.item_id}?finding=${encodeURIComponent(row.id)}`:'/needs-you/findings'),actionLabel:row.summary?'Review group':'See what to do',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
+  // The 15-minute check found the books and the records disagree. Automatic
+  // work is paused until they agree, so this outranks everything it could do.
+  for(const row of booksMismatches)items.push({kind:'accounting',importance:'Urgent',priority:97,title:row.title,happened:row.happened,
+    why:'StockChief checks your books against your records every 15 minutes. Automatic work is paused until they agree, so nothing builds on a wrong figure.',
+    recommendation:'Find what changed and correct it on the record itself. Automatic work starts again once the next check passes.',
+    href:row.href,actionLabel:'Look into it',sourceId:'books-check:'+row.key,createdAt:row.checkedAt,timeLabel:'Checked',updatedAt:row.checkedAt,at:row.checkedAt});
   for(const row of depositRefunds){const amount=require('../pricing/postgres-service').formatMinor(row.toRefundMinor,row.currency);
-    items.push({kind:'accounting',importance:olderThanDays(row.cancelledAt,3)?'Important':'Needs You',priority:88,title:'Deposit to refund: '+amount+' to '+row.customerName,happened:row.orderNumber+' was cancelled after the customer paid.',
+    items.push({kind:'accounting',importance:olderThanDays(row.changedAt,3)?'Important':'Needs You',priority:88,title:(row.cancelled?'Deposit to refund: ':'Overpayment to refund: ')+amount+' to '+row.customerName,happened:row.orderNumber+(row.cancelled?' was cancelled after the customer paid.':' is complete and the customer paid more than it came to.'),
       why:'That money is still theirs. It stays on your books as a customer deposit until it is returned.',recommendation:'Send the money back, then record the refund on the order.',
-      href:'/orders/'+row.orderId+'#deposit-refund',actionLabel:'Refund deposit',sourceId:'deposit-refund:'+row.orderId,createdAt:row.cancelledAt,timeLabel:'Cancelled',updatedAt:row.cancelledAt,at:row.cancelledAt});}
+      href:'/orders/'+row.orderId+'#deposit-refund',actionLabel:row.cancelled?'Refund deposit':'Refund overpayment',sourceId:'deposit-refund:'+row.orderId,createdAt:row.changedAt,timeLabel:row.cancelled?'Cancelled':'Completed',updatedAt:row.changedAt,at:row.changedAt});}
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
     happened:row.detail,why:row.issue_type==='EMAIL_SEND_AMBIGUOUS'
       ?'The provider may have accepted the email before StockChief could verify delivery. Sending it again could create a duplicate.'

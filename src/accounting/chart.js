@@ -3,21 +3,23 @@
 // A configurable starting chart, not business-specific data. `systemKey` is
 // the stable semantic identity used by deterministic posting rules even when
 // an accountant changes the visible code or name.
+// `keptBy` names the records whose sum an account must always equal; those
+// accounts change only through the records, never by a hand-made entry.
 const DEFAULT_ACCOUNTS = Object.freeze([
   { code: '1000', name: 'Cash', type: 'ASSET', subtype: 'CASH', normal: 'DEBIT', systemKey: 'CASH', control: true },
-  { code: '1100', name: 'Accounts receivable', type: 'ASSET', subtype: 'RECEIVABLE', normal: 'DEBIT', systemKey: 'ACCOUNTS_RECEIVABLE', control: true },
-  { code: '1200', name: 'Inventory asset', type: 'ASSET', subtype: 'INVENTORY', normal: 'DEBIT', systemKey: 'INVENTORY_ASSET', control: true },
-  { code: '1210', name: 'Inventory in transit', type: 'ASSET', subtype: 'INVENTORY_IN_TRANSIT', normal: 'DEBIT', systemKey: 'INVENTORY_IN_TRANSIT', control: true },
-  { code: '1215', name: 'Returned inventory pending refund', type: 'ASSET', subtype: 'RETURN_COST_PENDING', normal: 'CREDIT', systemKey: 'CUSTOMER_RETURN_COST_PENDING', control: true },
+  { code: '1100', name: 'Accounts receivable', type: 'ASSET', subtype: 'RECEIVABLE', normal: 'DEBIT', systemKey: 'ACCOUNTS_RECEIVABLE', control: true, keptBy: 'customer invoices and payments' },
+  { code: '1200', name: 'Inventory asset', type: 'ASSET', subtype: 'INVENTORY', normal: 'DEBIT', systemKey: 'INVENTORY_ASSET', control: true, keptBy: 'stock records' },
+  { code: '1210', name: 'Inventory in transit', type: 'ASSET', subtype: 'INVENTORY_IN_TRANSIT', normal: 'DEBIT', systemKey: 'INVENTORY_IN_TRANSIT', control: true, keptBy: 'stock transfers' },
+  { code: '1215', name: 'Returned inventory pending refund', type: 'ASSET', subtype: 'RETURN_COST_PENDING', normal: 'CREDIT', systemKey: 'CUSTOMER_RETURN_COST_PENDING', control: true, keptBy: 'customer returns' },
   { code: '1300', name: 'Sales tax recoverable', type: 'ASSET', subtype: 'TAX', normal: 'DEBIT', systemKey: 'SALES_TAX_RECOVERABLE', control: true },
-  { code:'2090',name:'Customer refunds payable',type:'LIABILITY',subtype:'CUSTOMER_REFUND',normal:'CREDIT',systemKey:'CUSTOMER_REFUNDS_PAYABLE',control:true },
-  { code: '2000', name: 'Accounts payable', type: 'LIABILITY', subtype: 'PAYABLE', normal: 'CREDIT', systemKey: 'ACCOUNTS_PAYABLE', control: true },
-  { code: '2050', name: 'Received, not yet invoiced', type: 'LIABILITY', subtype: 'RECEIVED_NOT_INVOICED', normal: 'CREDIT', systemKey: 'RECEIVED_NOT_INVOICED', control: true },
+  { code:'2090',name:'Customer refunds payable',type:'LIABILITY',subtype:'CUSTOMER_REFUND',normal:'CREDIT',systemKey:'CUSTOMER_REFUNDS_PAYABLE',control:true, keptBy: 'customer returns' },
+  { code: '2000', name: 'Accounts payable', type: 'LIABILITY', subtype: 'PAYABLE', normal: 'CREDIT', systemKey: 'ACCOUNTS_PAYABLE', control: true, keptBy: 'supplier bills and payments' },
+  { code: '2050', name: 'Received, not yet invoiced', type: 'LIABILITY', subtype: 'RECEIVED_NOT_INVOICED', normal: 'CREDIT', systemKey: 'RECEIVED_NOT_INVOICED', control: true, keptBy: 'purchase receipts and supplier bills' },
   { code: '2100', name: 'Sales tax payable', type: 'LIABILITY', subtype: 'TAX', normal: 'CREDIT', systemKey: 'SALES_TAX_PAYABLE', control: true },
   { code: '2200', name: 'Credit cards payable', type: 'LIABILITY', subtype: 'CREDIT_CARD', normal: 'CREDIT', systemKey: 'CREDIT_CARD_PAYABLE', control: true },
-  { code: '2300', name: 'Customer deposits', type: 'LIABILITY', subtype: 'CUSTOMER_DEPOSITS', normal: 'CREDIT', systemKey: 'CUSTOMER_DEPOSITS', control: true },
+  { code: '2300', name: 'Customer deposits', type: 'LIABILITY', subtype: 'CUSTOMER_DEPOSITS', normal: 'CREDIT', systemKey: 'CUSTOMER_DEPOSITS', control: true, keptBy: 'order deposits' },
   { code: '1400', name: 'Supplier advances', type: 'ASSET', subtype: 'SUPPLIER_ADVANCES', normal: 'DEBIT', systemKey: 'SUPPLIER_ADVANCES', control: true },
-  { code: '1410', name: 'Supplier returns receivable', type: 'ASSET', subtype: 'SUPPLIER_RETURNS', normal: 'DEBIT', systemKey: 'SUPPLIER_CREDITS_RECEIVABLE', control: true },
+  { code: '1410', name: 'Supplier returns receivable', type: 'ASSET', subtype: 'SUPPLIER_RETURNS', normal: 'DEBIT', systemKey: 'SUPPLIER_CREDITS_RECEIVABLE', control: true, keptBy: 'supplier returns' },
   { code: '3000', name: "Owner's equity", type: 'EQUITY', subtype: 'OWNER_EQUITY', normal: 'CREDIT', systemKey: 'OWNERS_EQUITY', control: false },
   { code: '3100', name: 'Retained earnings', type: 'EQUITY', subtype: 'RETAINED_EARNINGS', normal: 'CREDIT', systemKey: 'RETAINED_EARNINGS', control: true },
   { code: '4000', name: 'Sales revenue', type: 'INCOME', subtype: 'OPERATING_REVENUE', normal: 'CREDIT', systemKey: 'SALES_REVENUE', control: false },

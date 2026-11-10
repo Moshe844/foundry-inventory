@@ -344,8 +344,10 @@ function createPostgresProjectionsRouter(database){
     return res.redirect(303,/^\/purchasing\/orders\/[A-Za-z0-9_-]+$/.test(returnTo)?returnTo:'/accounting/payables');
   }));
   router.get('/accounting/adjustments/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create accounting adjustments'),asyncRoute(async(req,res)=>{
+    // Accounts kept by invoices, bills, payments or stock only change through those records.
+    const kept=require('../../accounting/record-owned-accounts').keptBy;
     const accounts=(await database.query(`SELECT * FROM accounting_accounts WHERE workspace_id=$1 AND active=1 ORDER BY code,id`,
-      [req.ctx.workspaceId])).rows;
+      [req.ctx.workspaceId])).rows.filter((account)=>!kept(account.system_key));
     return res.page('accounting/adjustment-new',{title:'New accounting adjustment',nav:'accounting',today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),accounts});
   }));
   router.post('/accounting/adjustments',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create accounting adjustments'),asyncRoute(async(req,res)=>{
@@ -449,10 +451,27 @@ function createPostgresProjectionsRouter(database){
     const entry=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND id=$2`,
       [req.ctx.workspaceId,req.params.id])).rows[0];
     if(!entry)return res.status(404).page('error',{title:'Entry not found',status:404,message:'That journal entry does not exist.'});
-    const lines=(await database.query(`SELECT l.*,a.code AS account_code,a.name AS account_name FROM accounting_journal_lines l
+    const lines=(await database.query(`SELECT l.*,a.code AS account_code,a.name AS account_name,a.system_key FROM accounting_journal_lines l
       JOIN accounting_accounts a ON a.id=l.account_id WHERE l.workspace_id=$1 AND l.entry_id=$2 ORDER BY l.line_number`,
     [req.ctx.workspaceId,entry.id])).rows;
-    entry.lines=lines;return res.page('accounting/entry',{title:`Entry #${entry.entry_number}`,nav:'accounting',entry,ownerExplanation:null});
+    // Entries made by invoices, payments, bills or stock are corrected on those
+    // records; a payment's entry offers the payment's own void instead.
+    let blocker=require('../../accounting/record-owned-accounts').reversalBlocker(entry,lines),payment=null;
+    if(blocker?.kind==='payment'){
+      payment=(await database.query('SELECT id,payment_number,status,voided_at,source_key FROM accounting_payments WHERE workspace_id=$1 AND journal_entry_id=$2',[req.ctx.workspaceId,entry.id])).rows[0]||null;
+      if(payment?.status==='VOID'){blocker={kind:'record',message:`${payment.payment_number} was voided${payment.voided_at?' on '+String(payment.voided_at).slice(0,10):''}. Its void entry undoes this one.`};payment=null;}
+      else if(payment&&require('../../payments/postgres-collection').isProviderReceipt(payment.source_key)){blocker={kind:'record',message:`${payment.payment_number} was taken online through your payment provider. Refund it there.`};payment=null;}
+    }
+    entry.lines=lines;return res.page('accounting/entry',{title:`Entry #${entry.entry_number}`,nav:'accounting',entry,ownerExplanation:null,
+      correction:{blocker,payment,formKey:newId('payment-void')}});
+  }));
+  router.post('/accounting/payments/:id/void',requireAuth,requirePermission(permissions.RECORD_PAYMENTS,'void payments'),asyncRoute(async(req,res)=>{
+    const result=await workflows.voidPayment(database,req.ctx,req.params.id,{reason:req.body.reason,
+      idempotencyKey:trimOrNull(req.body.idempotencyKey)||undefined});
+    const reopened=result.reopened.map(row=>row.number).join(', ');
+    req.flash('success',`${result.paymentNumber} is void.${reopened?` ${reopened} ${result.reopened.length===1?'is':'are'} open again.`:''}`);
+    const returnTo=String(req.body.returnTo||'');
+    return res.redirect(303,/^\/(orders|accounting\/entries)\/[A-Za-z0-9_-]+$/.test(returnTo)||/^\/accounting\/(receivables|payables)$/.test(returnTo)?returnTo:`/accounting/entries/${result.voidJournalEntryId}`);
   }));
   router.post('/accounting/entries/:id/reverse',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'reverse journal entries'),asyncRoute(async(req,res)=>{
     const entry=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND id=$2`,
