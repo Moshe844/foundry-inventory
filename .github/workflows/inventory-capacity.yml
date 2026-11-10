@@ -196,7 +196,10 @@ jobs:
         run: node --test --test-concurrency=2 tests/unit/confirmed-international-address.test.js tests/postgres/confirmed-international-shipment.test.js tests/postgres/agent-export-papers.test.js tests/postgres/agent-export-paper-boundaries.test.js tests/postgres/agent-export-paper-reporting.test.js tests/postgres/agent-export-paper-money.test.js tests/postgres/agent-export-papers-ui.test.js
       - name: ECB foreign purchase comparisons, exact currency scales, scheduled reads and plan boundaries
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
-        run: node --test --test-concurrency=2 tests/unit/purchase-fx-reference.test.js tests/postgres/agent-purchase-fx.test.js tests/postgres/agent-purchase-fx-volume.test.js tests/postgres/agent-purchase-fx-schema.test.js tests/postgres/agent-purchase-fx-ui.test.js
+        run: node --test --test-concurrency=2 tests/unit/purchase-fx-reference.test.js tests/postgres/agent-purchase-fx-access.test.js tests/postgres/agent-purchase-fx.test.js tests/postgres/agent-purchase-fx-volume.test.js tests/postgres/agent-purchase-fx-schema.test.js tests/postgres/agent-purchase-fx-ui.test.js
+      - name: Native contribution, reviewed fees, physical refunds, exact allocation and plan-safe bulk reports
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/order-contribution-calculation.test.js tests/postgres/agent-net-contribution.test.js tests/postgres/agent-net-contribution-boundaries.test.js tests/postgres/agent-net-contribution-allocation.test.js tests/postgres/agent-net-contribution-ui.test.js tests/postgres/agent-net-contribution-volume.test.js tests/postgres/agent-net-contribution-schema.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |

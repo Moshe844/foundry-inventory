@@ -17,8 +17,14 @@ function createPostgresAutopilotRouter(database){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const contribution=require('../../reports/agent-net-contribution');
+  router.get('/autopilot/net-contribution',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/net-contribution',{title:'Sales after fees, shipping and returns',nav:'autopilot',suppressBack:true},()=>contribution.screen(database,req.ctx,req.query))));
+  router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
+  router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));
+  router.post('/autopilot/net-contribution/reviews/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await contribution.apply(database,req.ctx,req.params.id,req.body);req.flash('success','Actual cost facts confirmed for the contribution report.');res.redirect(303,'/autopilot/net-contribution/reviews/'+req.params.id);}));
+  router.post('/autopilot/net-contribution/reviews/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await contribution.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Unreviewed cost import stopped.');res.redirect(303,'/autopilot/net-contribution/reviews/'+req.params.id);}));
   const purchaseFx=require('../../purchasing/agent-purchase-fx');
-  router.get('/autopilot/purchase-fx',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/purchase-fx',{title:'Foreign purchase currency exposure',nav:'autopilot',suppressBack:true,...await purchaseFx.screen(database,req.ctx,req.query)})));
+  router.get('/autopilot/purchase-fx',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/purchase-fx',{title:'Foreign purchase currency exposure',nav:'autopilot',suppressBack:true},()=>purchaseFx.screen(database,req.ctx,req.query))));
   router.post('/autopilot/purchase-fx/baseline',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await purchaseFx.saveBaseline(database,req.ctx,req.body);req.flash('success','Original comparison rate saved.');res.redirect(303,'/autopilot/purchase-fx?'+new URLSearchParams({order:r.id}));}));
   const exportPapers=require('../../shipping/agent-export-papers');
   const exportPage=async(req,res,id=null)=>res.page('autopilot/export-papers',{title:'International paperwork',nav:'autopilot',suppressBack:true,backTo:{href:id?'/autopilot/export-papers':'/autopilot/reviews',label:id?'International paperwork':'Agent reviews'},...await exportPapers.screen(database,req.ctx,id,req.query)});

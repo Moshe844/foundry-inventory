@@ -1,0 +1,4 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+test('A pre-Agent owner sees a friendly plan review page; accepting Starter terms opens only its read-only FX suggestion',{timeout:240000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t),locked=await f.browser.get('/autopilot/purchase-fx');assert.equal(locked.status,200);assert.match(locked.text,/data-agent-plan-locked/);assert.match(locked.text,/Review plans and terms/);assert.doesNotMatch(locked.text,/name="basePerForeign"/);await f.subscribe('starter');const current=await f.browser.get('/autopilot/purchase-fx');assert.equal(current.status,200);assert.match(current.text,/Starter/);assert.match(current.text,/Growth/);assert.doesNotMatch(current.text,/name="basePerForeign"/);assert.equal(await f.balance(),4);
+});

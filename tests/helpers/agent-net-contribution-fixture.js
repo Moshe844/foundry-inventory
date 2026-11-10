@@ -1,0 +1,3 @@
+'use strict';
+async function fixture(t,{paid=true}={}){const f=await require('./agent-return-qualification-fixture').fixture(t,{paid}),service=require('../../src/reports/agent-net-contribution'),number=(await f.db.query('SELECT order_number FROM sales_orders WHERE workspace_id=$1 AND id=$2',[f.ctx.workspaceId,f.sale.salesOrderId])).rows[0].order_number,rows=()=>service.columns.join(',')+'\n'+number+',USD,Website,1.00,2.00,Checked original processor and carrier statements';const save=async()=>{const p=await service.preview(f.db,f.ctx,{rows:rows()});await service.apply(f.db,f.ctx,p.id,{confirmed:'yes'});return p;};return {...f,service,number,rows,save};}
+module.exports={fixture};
