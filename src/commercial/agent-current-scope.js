@@ -3,6 +3,9 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 63:{common:'Prepares and files lost or damaged parcel claims for shipments with active insurance on an existing EasyPost account. Confirms the exact tracking number and coverage, sends your original evidence, and checks uncertain filings by their saved reference.',
+ pro:'You individually file the first matching claim and wait for EasyPost confirmation. Then StockChief can file future confirmed claims inside your taught account, warehouse, claimant, claim type and amount.',
+ enterprise:'Can file within an authorized account, warehouse, claimant, claim type and maximum amount without training. Staff confirm what happened and attach the original evidence.'},
  68:{common:'Accepts private preorders for exact products on a placed purchase order, including decimal quantities and lot- or serial-tracked products. Customers review the units, price, tax and expected stock date. StockChief prevents overlapping claims and reserves the exact quantity at the agreed location after receipt. Staff confirm the exact lots or serials at picking. Kits, catch-weight goods and dispatch have separate controls.',
  growth:'Collects exact private customer preorders. You review each request before creating its order draft and handle allocation separately.',
  pro:'Accepts known-customer preorders without training after the watch period and your authorization. Confirms and reserves the complete order only after enough of its linked stock has arrived, within current plan, price and location limits.',

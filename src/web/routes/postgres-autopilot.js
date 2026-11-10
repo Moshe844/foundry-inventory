@@ -258,6 +258,32 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/export-papers/:id',requireAuth,owner,asyncRoute((req,res)=>exportPage(req,res,req.params.id)));
   router.post('/autopilot/export-papers/:id/review',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.review(database,req.ctx,req.params.id,req.body);req.flash('success','Packet facts reviewed. No customs filing or shipment was made.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
   router.post('/autopilot/export-papers/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await exportPapers.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Draft stopped. Its original saved copy is retained.');res.redirect(303,'/autopilot/export-papers/'+req.params.id);}));
+  const carrierClaims=require('../../shipping/agent-carrier-claims');
+  const claimPath=carrierClaims.path;
+  const carrierClaimPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/carrier-claims',{
+    title:'Carrier claims',nav:'autopilot',backTo:{href:req.params.id?claimPath:'/autopilot/reviews',label:req.params.id?'Carrier claims':'Agent reviews'},
+    ...await carrierClaims.page(database,req.ctx,req.params.id,req.query.parcel)});
+  router.get(claimPath,requireAuth,owner,asyncRoute(carrierClaimPage));
+  router.get(claimPath+'/:id',requireAuth,owner,asyncRoute(carrierClaimPage));
+  router.get(claimPath+'/:id/evidence/:field',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const file=await carrierClaims.original(database,req.ctx,req.params.id,req.params.field);
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Type':'application/octet-stream',
+      'Content-Disposition':'attachment; filename="'+file.filename+'"'}).send(file.content);
+  }));
+  router.post(claimPath,requireAuth,owner,require('../multipart').multipart({limit:3*carrierClaims.limit+32768,maxFiles:3}),asyncRoute(async(req,res)=>{
+    let selected;
+    try{selected=JSON.parse(req.body.parcelKey);}catch{throw new ValidationError('Choose the exact shipment and tracking number.');}
+    if(!Array.isArray(selected)||selected.length!==2||selected.some(value=>typeof value!=='string'))throw new ValidationError('Choose the exact shipment and tracking number.');
+    const result=await carrierClaims.prepare(database,req.ctx,{...req.body,shipmentId:selected[0],trackingNumber:selected[1]},req.files);
+    res.redirect(303,claimPath+'/'+result.id);
+  }));
+  for(const [step,method] of [['file','approve'],['rule','saveRule'],['check','verify']]){
+    router.post(claimPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      if(method==='verify')await carrierClaims.verify(database,req.ctx,req.params.id);
+      else await carrierClaims[method](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,claimPath+'/'+req.params.id);
+    }));
+  }
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));
