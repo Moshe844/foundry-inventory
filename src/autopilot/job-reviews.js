@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../purchasing/agent-supplier-shutdowns').definition,
   require('../catalog/agent-product-retirements').definition,
   require('./team-procedures').definition,
   require('../purchasing/agent-container-plans').definition,

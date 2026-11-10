@@ -22,6 +22,7 @@ const activities = new Map([
   ['container-plan','Calculate a container load plan from confirmed carton facts'],
   ['team-procedure','Write a private app procedure from verified completed team work'],
   ['product-retirement','Retire one checked supplier notice batch and record its replacements'],
+  ['shutdown-purchase','Prepare one reviewed supplier shutdown purchase draft'],
   ['accounting-export','Export and verify an agent-queued accounting journal'],
   ['count-adjustment','Post a stock count difference within the owner’s limit'],
   ['repeat-sale','Prepare a repeat customer order at current prices'],
@@ -106,6 +107,7 @@ async function report(db,ctx,window='week') {
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
       WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
+    SELECT 'shutdown-purchase',p.purchase_created_at FROM stockchief_runtime.agent_supplier_shutdown_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL
     SELECT 'product-retirement',n.applied_at FROM stockchief_runtime.agent_product_retirement_notices n WHERE n.workspace_id=$1 AND n.applied_at IS NOT NULL AND (n.result->>'changedCount')::int>0 UNION ALL
     SELECT 'team-procedure',v.created_at FROM stockchief_runtime.agent_team_procedure_versions v
       WHERE v.workspace_id=$1 AND v.created_at>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND NOT EXISTS(

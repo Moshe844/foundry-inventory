@@ -152,6 +152,9 @@ jobs:
       - name: Provider access refusals, preserved reconnects and read backoff
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
         run: node --test --test-concurrency=2 tests/unit/provider-sync-failure.test.js tests/postgres/provider-sync-access-failure.test.js tests/postgres/provider-refresh-serialization.test.js
+      - name: Supplier shutdown dates, warehouse facts and separately reviewed purchases
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agents' }}
+        run: node --test --test-concurrency=2 tests/unit/supplier-shutdown-calculation.test.js tests/postgres/supplier-shutdown-source.test.js tests/postgres/agent-supplier-shutdowns.test.js tests/postgres/agent-supplier-shutdown-boundaries.test.js tests/postgres/agent-supplier-shutdowns-ui.test.js tests/postgres/supplier-shutdown-volume.test.js
       - name: Full unit and integration regression audit
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'unit' }}
         run: |
