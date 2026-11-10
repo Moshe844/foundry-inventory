@@ -36,6 +36,6 @@ test('report cards share exact complete totals without rereading current data',{
  await t.test('the complete report dashboard has two concurrent card reads and no duplicate current summaries',async()=>{
   let active=0,peak=0,reads=0;const bounded={query:db.query.bind(db),transaction:(fn,options)=>db.transaction(c=>fn(new Proxy(c,{get(target,key){if(key==='query')return async(sql,values)=>{if(!sql.startsWith('WITH source AS'))return target.query(sql,values);active++;reads++;peak=Math.max(peak,active);try{return await target.query(sql,values);}finally{active--;}};return Reflect.get(target,key);}})),options)};
   const cards=await require('../../src/reports/business-reports').cards(bounded,ctx,actor,{});
-  assert.equal(cards.length,9);assert.equal(cards.find(c=>c.key==='stock-value').value,'$26.50');assert.equal(cards.find(c=>c.key==='low-stock').value,'18 positions');assert(peak<=2);assert(reads<=16,'Nine charts and seven previous-period summaries need at most sixteen data reads');
+  assert.equal(cards.length,9);assert.equal(cards.find(c=>c.key==='stock-value').value,'$26.50');assert.equal(cards.find(c=>c.key==='low-stock').value,'18 items');assert(peak<=2);assert(reads<=16,'Nine charts and seven previous-period summaries need at most sixteen data reads');
  });
 });

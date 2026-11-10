@@ -38,7 +38,7 @@ async function compute(db,workspaceId){
 
 // Cached with the business's other figures and refreshed when stock or rules change.
 function summary(db,workspaceId){
-  return require('../lib/versioned-read-model').read(db,workspaceId,['low-stock-items'],()=>compute(db,workspaceId),{domain:'business'});
+  return require('../lib/versioned-read-model').read(db,workspaceId,['low-stock-items'],()=>module.exports.compute(db,workspaceId),{domain:'business'});
 }
 
 module.exports={summary,compute,QUERY};
