@@ -9,6 +9,7 @@ const definitions=[
   require('../documents/agent-contract-reader').definition,
   require('../warehouse/agent-shelf-photos').definition,
   require('../imports/handwritten-table').definition,
+  require('../documents/agent-voice-receiving').definition,
   require('../warehouse/agent-stock-rotation').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../purchasing/agent-backup-suppliers').definition,
