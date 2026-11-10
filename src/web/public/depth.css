@@ -572,6 +572,8 @@ html:root body .rm-canvas .hm-metrics .sc-metric.is-alarm > strong { color:#C241
 html:root body .rm-canvas .hm-sub.is-go { color:#067647; font-weight:500; }
 html:root body .rm-canvas .hm-meter { display:block; height:5px; margin-top:8px; border-radius:3px; background:#FBE6D4; overflow:hidden; }
 html:root body .rm-canvas .hm-meter b { display:block; height:100%; border-radius:3px; background:#EA580C; animation:pd-bar .6s var(--d-ease); transform-origin:left; }
+/* "plus 3.75 kg" beside a metric name moves as one piece instead of splitting across lines. */
+html:root body .sc-metric > span small { white-space:nowrap; }
 @keyframes pd-bar { from { transform:scaleX(0); } }
 html:root body .rm-canvas section[data-home-section=needs] { padding:0; border-radius:12px; background:#fff; box-shadow:var(--d-1); overflow:hidden; }
 html:root body .rm-canvas section[data-home-section=needs] > header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0; padding:12px 16px; border-bottom:1px solid #F0F1F6; }
@@ -912,7 +914,11 @@ html:root body.page-ask .sc-chat-history { min-height:0; overflow:auto; scrollba
 /* ———— Phones ———— */
 html:root body .sc-phone-extras { display:none; }
 @media (max-width:760px) {
- /* The top bar fits the screen: nothing runs off the edge or needs a sideways swipe. */
+ /* The top bar fits the screen: nothing runs off the edge or needs a sideways swipe.
+    The bar wraps from the same width the phone layout starts, so the actions take
+    their own row and the search keeps the row beside Menu instead of shrinking to nothing. */
+ html:root body .sc-toolbar { flex-wrap:wrap; }
+ html:root body .sc-toolbar .sc-global-search.rail-search { min-width:min(160px,100%); }
  html:root body .sc-toolbar .sc-toolbar-actions { flex-wrap:wrap !important; justify-content:flex-end; gap:6px; width:100%; max-width:100%; overflow:visible; }
  html:root body .sc-toolbar .sc-toolbar-actions > * { flex:0 1 auto; min-width:0; }
  html:root body .sc-toolbar .sc-toolbar-actions :is(.sc-usage-link,.sc-upgrade-link) { display:none; }
