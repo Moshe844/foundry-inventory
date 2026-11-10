@@ -86,4 +86,19 @@ function goal(found,index,fullAnswer=false,format){
  if(!table)throw new NotFoundError('That answer has no table to download.');
  return fromTable(table,found.original_request);
 }
-module.exports={TYPES,tables,send,interaction,goal};
+// A download is offered only for an answer worth keeping: one with records, a
+// table, or a written report. "Opening Purchasing." is not a document.
+// ask-tools.js applies the same length to answers written in the page.
+const LONG_ANSWER=400;
+function worthKeeping(answer,rowCount=0){
+ return Number(rowCount)>0||tables(answer).length>0||String(answer||'').trim().length>=LONG_ANSWER;
+}
+// Which of these saved answers (one query for the whole page) are worth keeping.
+async function keepable(database,ctx,ids){
+ const wanted=[...new Set(ids.filter(id=>typeof id==='string'))];
+ if(!wanted.length)return [];
+ const rows=(await database.query(`SELECT id,answer,CASE WHEN jsonb_typeof(evidence)='array' THEN jsonb_array_length(evidence) ELSE 0 END AS row_count
+   FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
+ return rows.filter(row=>worthKeeping(row.answer,row.row_count)).map(row=>row.id);
+}
+module.exports={TYPES,LONG_ANSWER,tables,send,interaction,goal,worthKeeping,keepable};

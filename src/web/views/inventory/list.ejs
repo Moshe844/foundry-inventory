@@ -145,7 +145,7 @@
                 <span class="sc-avatar" aria-hidden="true"><%= String(item.name||'?').trim().split(/\s+/).slice(0,2).map(function(word){return word.charAt(0);}).join('').toUpperCase() %></span><a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
                 <span class="cell-sub">
                   <span class="mono"><%= helpers.productCode(item.base_code, item.first_sku_code) %></span><%
-                    %><% if (item.has_variants && item.sku_count > 1) { %> · <%= item.sku_count %> variants<% } %><%
+                    %><% if (item.has_variants && item.sku_count > 1) { %> · <%= helpers.qty(item.sku_count) %> variants<% } %><%
                     %><% if (tracksUnits) { %> · <%= tracking.label %><% } %>
                 </span>
                 <% if(item.missingStockCostUnits>0){ %><small class="is-warn"><%= helpers.unitCount(helpers.qty(item.missingStockCostUnits),'unit') %> still need a purchase cost before completing a sale.</small><% } %>

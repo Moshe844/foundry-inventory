@@ -59,7 +59,7 @@ function postgresPageRenderer(req,res,next){
       moreSections,panelMode:req.path==='/ask'&&req.query.panel==='1',navigation:require('./presentation/navigation'),pageSection:require('./presentation/navigation').sectionFor(req.path),
       assetVersion:res.locals.assetVersion,
       flash:flashMessages,csrfToken:res.locals.csrfToken,
-      backTo:data.suppressBack||menuPage?null:(setBack || arrivedFrom || data.backToFallback || null),
+      backTo:data.suppressBack||menuPage?null:require('./presentation/return-navigation').menuNamed(setBack || arrivedFrom || data.backToFallback || null),
       onboardingEntry,
       navigationArrival:null,agentArrival,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,
       currentHref,screenGuide:data.screenGuide || null,

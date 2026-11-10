@@ -15,7 +15,18 @@ function resolve(currentHref,sourceHref,labels={}){
  }
  // Redirects after saving often retain the creation/edit form as the referrer.
  if(/\/(new|edit)$/.test(source.pathname)&&sourceList)return {href:sourceList.href,label:sourceList.label};
- const href=source.pathname+source.search,label=labels[href]||destinations.find(d=>d.href===source.pathname)?.label;
+ const href=source.pathname+source.search,label=named(source.pathname,labels[href])||destinations.find(d=>d.href===source.pathname)?.label;
  return label?{href,label}:null;
 }
-module.exports={resolve};
+// A way back to a menu page uses a name the menu shows for it ("Stock",
+// "Products"), never an older page title the menu no longer uses.
+function named(path,label){
+ const names=destinations.filter(d=>d.href===path).map(d=>d.label);
+ return !names.length||names.includes(label)?label:names[0];
+}
+function menuNamed(link){
+ if(!link?.href)return link||null;
+ const path=new URL(link.href,'http://stockchief.invalid').pathname,label=named(path,link.label);
+ return label===link.label?link:{...link,label};
+}
+module.exports={resolve,menuNamed};
