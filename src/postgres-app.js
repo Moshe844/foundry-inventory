@@ -157,6 +157,8 @@ function createPostgresApp({database,resourceDatabase=database,probeDatabase=dat
         deadJobs:Number(state.dead_jobs),staleJobs:Number(state.stale_jobs)});
     }catch{return res.status(503).json({ok:false,database:'unavailable'});}
   });
+  // Public read-only stock widgets do not use cookies, sessions or private account navigation.
+  app.use(require('./web/routes/website-stock-chat').router(database));
   // Static assets, provider callbacks and health probes have their own
   // boundaries above. Limit dynamic browser requests before session reads.
   app.use(commonMiddleware.rateLimit({windowMs:60000,max:3000,maxBuckets:10000}));
