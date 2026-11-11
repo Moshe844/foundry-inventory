@@ -10,8 +10,8 @@ test('Voice note, beside Speak, records a voice note and puts its words in the q
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t);
  const app=require('../../src/postgres-app').createPostgresApp({database:f.db,env:'test',sessionSecret:randomUUID()});
  const server=await new Promise(ok=>{const s=app.listen(0,'127.0.0.1',()=>ok(s));}),origin='http://127.0.0.1:'+server.address().port;
- const browser=await require('playwright').chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});
- t.after(async()=>{await browser.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
+ const browser=await manualMicrophone(t);
+ t.after(async()=>{server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
  const context=await browser.newContext({permissions:['microphone']}),page=await context.newPage();
  await page.goto(origin+'/login');await page.getByLabel('Work email').fill(f.email);await page.locator('[name=password]').fill(f.password);
  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
@@ -43,8 +43,8 @@ test('on a phone, Voice note shows even when only the worker can read it, as an 
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t);
  const app=require('../../src/postgres-app').createPostgresApp({database:f.db,env:'test',sessionSecret:randomUUID()});
  const server=await new Promise(ok=>{const s=app.listen(0,'127.0.0.1',()=>ok(s));}),origin='http://127.0.0.1:'+server.address().port;
- const browser=await require('playwright').chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});
- t.after(async()=>{await browser.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
+ const browser=await manualMicrophone(t);
+ t.after(async()=>{server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
  const page=await (await browser.newContext({viewport:{width:390,height:844},permissions:['microphone']})).newPage();
  await page.goto(origin+'/login');await page.getByLabel('Work email').fill(f.email);await page.locator('[name=password]').fill(f.password);
  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
@@ -72,6 +72,16 @@ function soundFile(path,{speakSeconds,quietSeconds}){
  const head=Buffer.alloc(44);head.write('RIFF',0);head.writeUInt32LE(36+data.length,4);head.write('WAVEfmt ',8);head.writeUInt32LE(16,16);head.writeUInt16LE(1,20);head.writeUInt16LE(1,22);
  head.writeUInt32LE(rate,24);head.writeUInt32LE(rate*2,28);head.writeUInt16LE(2,32);head.writeUInt16LE(16,34);head.write('data',36);head.writeUInt32LE(data.length,40);
  require('node:fs').writeFileSync(path,Buffer.concat([head,data]));return path;
+}
+async function manualMicrophone(t){
+ const fs=require('node:fs'),path=require('node:path');
+ const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'stockchief-voice-'));
+ const recording=soundFile(path.join(dir,'speech.wav'),{speakSeconds:4,quietSeconds:2});
+ let browser;
+ t.after(async()=>{try{await browser?.close();}finally{fs.unlinkSync(recording);fs.rmdirSync(dir);}});
+ browser=await require('playwright').chromium.launch({args:['--use-fake-ui-for-media-stream',
+   '--use-fake-device-for-media-stream','--use-file-for-fake-audio-capture='+recording]});
+ return browser;
 }
 test('Voice note stops by itself when you stop speaking, and sends nothing when nothing was said',{timeout:240000},async t=>{
  const old=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='test-key-not-used';
