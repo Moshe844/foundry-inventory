@@ -76,7 +76,7 @@
   "103": "Matches supported same-currency bank credits to issued invoices and records receipt and allocation together. Live bank ingestion, other cash accounts and batch remittances remain open.",
   "104": "Prepares the weekly supplier payment review from posted bills, with recorded early-payment discounts. You approve and make the payment.",
   "105": "Tracks expected supplier-return credits and applies an approved credit to its original bill once.",
-  "106": "Shows recorded inventory value in an operational report. Broader recommendations for releasing stock investment still need qualification.",
+  "106": "Shows recorded inventory value and identifies clearance candidates by SKU and location. It keeps stock needed for orders, transfers, rentals and replenishment out of the list and flags missing costs before decisions.",
   "107": "Prepares an exact paid cash-refund review or closes a return after its posted unpaid-invoice credit. Every refund needs individual approval. Live payment-provider refunds remain unqualified.",
   "108": "Uses the original bill's early-payment terms to show the discount opportunity and reduced payment-review amount.",
   "109": "Forecasts 13 weeks of posted supplier bills and unbilled purchase commitments separately by currency. Customer-receipt forecasting still needs qualification.",

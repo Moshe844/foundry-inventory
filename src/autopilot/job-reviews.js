@@ -102,6 +102,7 @@ const definitions=[
     ...await require('./catalog-health').findings(db,ctx,options),summary:'Review the flagged fields against the product or supplier record.'})},
   {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
   {id:9,key:'slow-stock',label:'Find dead and slow stock',readPage:require('../forecasting/agent-excess-stock').slowStock},
+  {id:106,key:'cash-in-stock',label:'Review cash tied up in stock',readPage:require('../forecasting/agent-excess-stock').cashInStock},
   {id:86,key:'clearance-plan',label:'Estimate proceeds from clearance stock',readPage:require('../forecasting/agent-excess-stock').clearance,
     requiresChange:true,changeLabel:'Proposed markdown (%)',minChange:0,maxChange:100},
   {id:58,key:'timely-shipping-rates',label:'Find the least expensive service meeting the delivery date',readPage:require('../shipping/agent-delivery-rates').review},

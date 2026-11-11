@@ -56,6 +56,10 @@ test('clearance and aging use held stock and actual receipt dates, without chang
     const slow=(await read('slow-stock','CLEAR-OLD')).rows;
     const plan=(await read('clearance-plan','CLEAR-OLD',25)).rows;
     const aged=(await read('stock-age','CLEAR-LOT')).rows;
+    const cash=await reviews.run(db,ctx,'cash-in-stock',{filter:'CLEAR-OLD',scheduled:true});
+    assert.equal(cash.mode,'alone',tier);
+    assert.match(cash.summary,/Recorded stock value across the inventory/);
+    assert.deepEqual(cash.rows.map(row=>[row.SKU,row['Clearance units'],row['Allocated book value']]),[['CLEAR-OLD',10,'$20.00']],tier);
     if(tier==='starter'){
       for(const row of [slow[0],plan[0],aged[0]])assert.deepEqual(Object.keys(row),['Suggestion']);
       const page=await browser.get('/autopilot/reviews/clearance-plan').expect(200);
@@ -69,6 +73,7 @@ test('clearance and aging use held stock and actual receipt dates, without chang
       assert.equal((await read('stock-age','CLEAR-OLD')).rows[0]['Days since receipt'],210);
     }
     assert.deepEqual((await read('slow-stock','CLEAR-NEW')).rows,[]);
+    assert.deepEqual((await read('cash-in-stock','CLEAR-NEW')).rows,[]);
     await assert.rejects(reviews.run(db,ctx,'clearance-plan',{scheduled:true,trained:true,change:25}),e=>e.code==='entitlement_required');
   }
   const unknown=(await read('clearance-plan','CLEAR-LOT',25)).rows[0];assert.equal(unknown['Gross proceeds if sold'],null);
@@ -79,6 +84,22 @@ test('clearance and aging use held stock and actual receipt dates, without chang
     idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:3,unitPriceMinor:999}]});
   await f.workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});
   assert.equal((await read('clearance-plan','CLEAR-OLD',0)).rows[0]['Clearance units'],9);
+  const destination=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Second clearance warehouse',kind:'warehouse'});
+  await require('../../src/transfers/postgres-transfer-service').request(db,ctx,{fromLocationId:location.id,toLocationId:destination.id,
+    expectedArrivalDate:today,idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:2}]});
+  const [reserved]=(await read('cash-in-stock','CLEAR-OLD')).rows;
+  assert.deepEqual([reserved['Clearance units'],reserved['Recorded position value'],reserved['Allocated book value']],[7,'$24.00','$14.00']);
+  await require('../../src/autopilot/lot-controls').recall(db,ctx,{sku:'CLEAR-LOT',lot:'BATCH-A',action:'hold',revision:0,reason:'Supplier recalled this batch'});
+  assert.deepEqual((await read('cash-in-stock','CLEAR-LOT')).rows,[]);
+  await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId:sku,locationId:location.id,quantity:1,idempotencyKey:randomUUID()});
+  const unclear=await read('cash-in-stock','CLEAR-OLD');
+  assert.match(unclear.summary,/incomplete cost records/);
+  assert.equal(unclear.rows[0]['Allocated book value'],'Needs cost review');
+  const cashPage=await browser.get('/autopilot/reviews/cash-in-stock?filter=CLEAR-OLD').expect(200);
+  assert.match(cashPage.text,/Review cash tied up in stock/);
+  const ask=require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review');
+  const exactCash=await ask.prepare(null,db,ctx,'',{agentJob:'cash-in-stock',search:'CLEAR-OLD'});
+  assert.equal(exactCash.rows[0].SKU,'CLEAR-OLD');
   await assert.rejects(read('clearance-plan','CLEAR-OLD',101),/0% to 100%/);
   assert.equal((await pricing.currentPrice(db,ctx.workspaceId,sku)).amount_minor,999);
 });

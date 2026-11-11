@@ -56,6 +56,52 @@ async function slowStock(db,ctx,options){
       link:'/inventory/'+position.item_id}))};
 }
 
+async function cashInStock(db,ctx,options){
+  const workspaceId=ctx.workspaceId;
+  const [totalResult,result]=await Promise.all([
+    db.query(`SELECT a.base_currency AS currency,coalesce(t.book_cost_minor,0)::text AS book_cost,
+      EXISTS(SELECT 1 FROM inventory_cost_coverage_positions p WHERE p.workspace_id=a.workspace_id AND p.missing_units>0) AS missing_cost
+      FROM accounting_settings a LEFT JOIN inventory_cost_coverage_totals t ON t.workspace_id=a.workspace_id
+      WHERE a.workspace_id=$1 AND a.enabled=1`,[workspaceId]),
+    candidates(db,ctx,options)
+  ]);
+  const total=totalResult.rows[0];
+  if(!total)return {rows:[],more:false,summary:'Set up the inventory books to see the value tied up in stock.'};
+  const value=money.format(money.integer(total.book_cost,'Recorded stock value',{signed:true}),total.currency);
+  const summary='Recorded stock value across the inventory is '+value+'. '+
+    (total.missing_cost?'Some physical stock has incomplete cost records. ':'')+
+    'Clearance candidates exclude stock needed for orders, transfers, rentals, holds and replenishment. The allocated value estimates the recorded cost of those units.';
+  const selection=result.rows.filter(row=>row.units>0);
+  if(!selection.length)return {rows:[],more:result.more,summary};
+  const positions=selection.map(({position})=>({skuId:position.sku_id,locationId:position.location_id}));
+  const [available,costs]=await Promise.all([
+    require('../domain/postgres-stock-availability').readMany(db,workspaceId,positions,{sellableOnly:true}),
+    db.query(`SELECT c.sku_id,c.location_id,c.quantity_units,c.total_cost_minor FROM accounting_inventory_cost_balances c
+      JOIN jsonb_to_recordset($2::jsonb) AS p("skuId" text,"locationId" text)
+        ON c.sku_id=p."skuId" AND c.location_id=p."locationId" WHERE c.workspace_id=$1`,[workspaceId,JSON.stringify(positions)])
+  ]);
+  const costsByPosition=new Map(costs.rows.map(row=>[JSON.stringify([row.sku_id,row.location_id]),row]));
+  const rows=[];
+  for(const {position,kind,units} of selection){
+    const key=JSON.stringify([position.sku_id,position.location_id]),current=available.get(key),cost=costsByPosition.get(key);
+    if(!current||current.onHand!==position.onHand)continue;
+    const extraUnavailable=Math.max(0,exact.safeNumber(exact.subtract(position.available,current.available),{signed:true}));
+    const clearanceUnits=exact.safeNumber(exact.subtract(units,extraUnavailable),{signed:true});
+    if(clearanceUnits<=0)continue;
+    const costed=cost&&Number(cost.quantity_units)===current.onHand;
+    const bookValue=costed?money.integer(cost.total_cost_minor,'Position book value'):null;
+    rows.push({position,kind,clearanceUnits,bookValue,allocated:costed?exact.ratioMinor(bookValue,clearanceUnits,cost.quantity_units,{rounding:'floor'}):null});
+  }
+  rows.sort((a,b)=>(b.allocated??-1)-(a.allocated??-1)||a.position.code.localeCompare(b.position.code));
+  return {more:result.more,summary,rows:rows.map(({position,kind,clearanceUnits,bookValue,allocated})=>({
+    SKU:position.code,Location:position.location_name,Finding:kind.label,'Clearance units':clearanceUnits,
+    'Recorded position value':bookValue===null?'Needs cost review':money.format(bookValue,total.currency),
+    'Allocated book value':allocated===null?'Needs cost review':money.format(allocated,total.currency),
+    'Suggested next step':allocated===null?'Complete the stock cost before deciding.':'Review a supplier return or markdown.',
+    link:'/inventory/'+position.item_id
+  }))};
+}
+
 async function clearance(db,ctx,options){
   const value=String(options.change??'').trim();
   if(!value)return {rows:[],more:false,summary:'Enter a markdown to estimate the proceeds if the listed units sell.'};
@@ -71,4 +117,4 @@ async function clearance(db,ctx,options){
     })};
 }
 
-module.exports={slowStock,clearance};
+module.exports={slowStock,clearance,cashInStock};
