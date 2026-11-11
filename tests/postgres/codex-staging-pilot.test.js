@@ -44,8 +44,10 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Pilot stock',baseCode:sku,trackingMode:'quantity'});
  const skus=(await db.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,item.itemId])).rows;
  const store=require('../../src/assistant/postgres-goal-store');
+ const chatId=await page.locator('[data-ask-form] input[name="chatId"]').inputValue();
+ const checkpoint=JSON.stringify({runtime:'codex-staging',chatId});
  let goal=await store.create(db,ctx,`Receive 3 ${sku} at ${location}, reference STAGE-SMOKE, after my approval.`,{budgetMinor:100});
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[goal.id]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||$2::jsonb WHERE id=$1`,[goal.id,checkpoint]);
  goal=await store.claim(db,ctx,goal.id);
  const gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:goal.original_request,goalId:goal.id,runToken:goal.run_token,
   provider:{complete:async()=>{throw Error('NO_PAID_MODELS');}}});
@@ -55,7 +57,7 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  const ready=await session.handoffApprovals();assert.equal(ready.approvals.length,1);
  const followup=await store.create(db,ctx,'Read my current products.');
  const formattedAnswer='Your current inventory:\n\n| Item | SKU | On hand |\n|---|---|---:|\n| Sample A | A | 20 |\n| Sample B | B | 8 |\n| Sample C | C | 0 |\n\nSample C is out of stock, with 2 units on order.';
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[followup.id,formattedAnswer]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=checkpoint||$3::jsonb WHERE id=$1`,[followup.id,formattedAnswer,checkpoint]);
  await page.reload();assert.equal(await page.getByRole('button',{name:'Approve this change'}).count(),1,(await page.locator('body').innerText()).slice(-3500));
  const answerPanel=page.locator(`[data-adaptive-goal="${followup.id}"]`);
  assert.equal(await answerPanel.getByRole('table').count(),1);assert.equal(await answerPanel.getByRole('row').count(),4);
@@ -78,7 +80,7 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  // Reproduce the live failure: reject in another tab while this page remains
  // open. Waiting for the owner is not runtime, and old approval forms vanish.
  const rejected=await store.create(db,ctx,'Prepare a receipt for owner review.');
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET created_at=now()-interval '87 minutes',checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[rejected.id]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET created_at=now()-interval '87 minutes',checkpoint=checkpoint||$2::jsonb WHERE id=$1`,[rejected.id,checkpoint]);
  const held=await store.claim(db,ctx,rejected.id);assert(Date.now()-new Date(held.checkpoint.runStartedAt).getTime()<5000);
  const rejectionGateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:held.original_request,goalId:held.id,runToken:held.run_token,provider:{complete:async()=>{throw Error('NO_PAID_MODELS');}}});
  const rejectionSession=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:held.id,runToken:held.run_token,candidate:'codex',authorize:rejectionGateway.authorize});
