@@ -403,9 +403,13 @@ async function transferInTransaction(client, rawContext, input) {
     const destination = await target(client, ctx, input.skuId, input.destinationLocationId);
     stockQuantity.validate(destination,quantity);
     const at = input.occurredAt || nowIso();
+    const outboundCustody = !source.custody_agreement_id && destination.custody_agreement_id &&
+      (source.tracking_mode === 'lot' || source.tracking_mode === 'serial');
+    const handoffDate = outboundCustody ? await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)) : null;
     const groupId = newId('grp');
     let lot = null;
     if (source.tracking_mode === 'lot') lot = await resolveLot(client, ctx, source, input, at, false);
+    if (outboundCustody) assertLotEligible(lot,{occurredAt:handoffDate});
     await require('../operations/postgres-return-holds').assertCanMove(client,ctx,{skuId:source.id,locationId:source.location_id,quantity,lotId:lot?.id,serialUnitIds:input.serialUnitIds||[]});
     const sourceAfter = await balanceDelta(client, ctx, source, -quantity, at);
     const destinationAfter = await balanceDelta(client, ctx, destination, quantity, at);
@@ -423,7 +427,8 @@ async function transferInTransaction(client, rawContext, input) {
       [ctx.workspaceId, source.id, source.location_id, destination.location_id, at, ids]);
       if (moved.rows.length !== quantity) throw new InvariantError('One or more selected units are no longer available.', 'unit_not_in_stock');
       serialUnitIds = ids;
-      await serialBatchDeltas(client,ctx,ids,source.location_id,destination.location_id,at);
+      await serialBatchDeltas(client,ctx,ids,source.location_id,destination.location_id,at,
+        outboundCustody ? {issue:true,occurredAt:handoffDate} : undefined);
     }
     const outMovementId = await movement(client, ctx, source, { groupId, operation: 'transfer', leg: 'out',
       counterpartyLocationId: destination.location_id, quantityDelta: -quantity,secondaryQuantityDelta:secondaryQuantity===null?null:-secondaryQuantity, balanceAfter: sourceAfter,

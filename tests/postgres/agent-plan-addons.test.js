@@ -8,7 +8,10 @@ const policy=require('../../src/commercial/agent-plan');
 
 test('approved monthly offers have plan-specific checkout, verified paid grants and retry-safe renewal', {timeout:180000},async t=>{
   const cluster=await startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_CUSTOMER_ACCESS'];
+  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   t.after(async()=>{await db.close();await cluster.stop();});
+  t.after(()=>{for(const key of keys)if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];});
   await require('../../src/db/migrate-postgres').migratePostgres(db);
   const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Monthly grants',email:randomUUID()+'@example.test',password:'Demo!'+randomUUID()});
   const scope={accountId:owner.accountId,workspaceId:owner.workspaceId},customer='cus_fixture';
@@ -45,6 +48,14 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   }
   await plan('starter');
   assert.equal((await ent.meterState(db,scope,'ai_work_credits')).included,5000);
+  process.env.STOCKCHIEF_RUNTIME_ENV='production';
+  process.env.STOCKCHIEF_CODEX_CUSTOMER_ACCESS='1';
+  const askContext={...scope,actorId:owner.userId};
+  const health=require('../../src/assistant/postgres-ask-health');
+  await db.query(`INSERT INTO stockchief_runtime.assistant_worker_health(kind,worker_identity,last_seen_at)
+    VALUES('database-read','credit-fixture',now())`);
+  await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES($1,$2,'ai_work_credits',0,'Exercise purchased credits')",[randomUUID(),scope.accountId]);
+  assert.equal((await health.read(db,askContext)).reason,'credits_exhausted');
   await assert.rejects(addons.begin(db,scope,input('agent-pro-edi'),options),/current plan/);
   await assert.rejects(addons.begin(db,scope,input('agent-monthly-credits'),options),/actual usage costs/);
   // Synthetic reconciliation for exercising checkout and grants. No real customer usage.
@@ -75,7 +86,8 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   assert.equal(budgets.rowCount,1);
   assert.equal(Number(budgets.rows[0].budget_minor),2940);
   assert.equal((await ent.meterState(db,scope,'ai_work_credits')).purchasedRemaining,5000);
-  await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES($1,$2,'ai_work_credits',0,'Exercise purchased credits')",[randomUUID(),scope.accountId]);
+  await db.query("UPDATE stockchief_runtime.assistant_worker_health SET last_seen_at=now() WHERE kind='database-read'");
+  assert.equal((await health.read(db,askContext)).ok,true,'The paid add-on restores Ask without waiting for a new billing period.');
   const fixture=require('../helpers/postgres-model-fixture');
   const model=require('../../src/commercial/model').wrap(db,{...scope,actorId:owner.userId},{
     name:'anthropic',model:fixture.PRICED_MODEL,complete:async()=>({data:{ok:true},usage:fixture.pricedUsage()})

@@ -6,6 +6,69 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const returns=require('../../src/operations/postgres-returns');
 
+test('the daily stock check reports negative stock, overdue transfers and repeated adjustments on the allowed plans',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:10});
+  const {db,ctx,subscribe,browser}=f,skuId=f.item.skuIds[0];
+  const stock=require('../../src/domain/postgres-inventory-engine'),transfers=require('../../src/transfers/postgres-transfer-service');
+  const locations=require('../../src/domain/postgres-location-service'),notices=require('../../src/autopilot/operational-notices');
+  const runtime=require('../../src/operations/postgres-runtime-handlers');
+  const queue=require('../../src/operations/postgres-job-queue');
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const destination=await locations.createLocation(db,ctx,{name:'Receiving warehouse',kind:'warehouse'});
+  const countShelf=await locations.createLocation(db,ctx,{name:'Count shelf',kind:'warehouse'});
+  const negativeShelf=await locations.createLocation(db,ctx,{name:'Negative shelf',kind:'warehouse'});
+  const transfer=await transfers.request(db,ctx,{fromLocationId:f.location.id,toLocationId:destination.id,
+    expectedArrivalDate:require('../../src/accounting/customer-money').addDays(today,-1),
+    idempotencyKey:randomUUID(),lines:[{skuId,quantity:3}]});
+  for(const action of ['approve','pick','dispatch','markInTransit'])
+    await transfers[action](db,ctx,transfer.id,{idempotencyKey:randomUUID()});
+  await stock.receive(db,ctx,{skuId,locationId:countShelf.id,quantity:3,idempotencyKey:randomUUID()});
+  for(const quantity of [2,1])await stock.adjust(db,ctx,{skuId,locationId:countShelf.id,countedQuantity:quantity,
+    reasonCode:'cycle_count',idempotencyKey:randomUUID()});
+  await db.query('UPDATE items SET allow_negative=1 WHERE workspace_id=$1 AND id=(SELECT item_id FROM skus WHERE id=$2)',[ctx.workspaceId,skuId]);
+  await stock.issue(db,ctx,{skuId,locationId:negativeShelf.id,quantity:1,idempotencyKey:randomUUID()});
+
+  const inspect=()=>db.transaction(c=>runtime.autopilotEvaluate({id:randomUUID(),workspaceId:ctx.workspaceId,
+    payload:{actorId:ctx.actorId,requestedByUser:true}},c));
+  const snapshot=async()=>(await db.query(`SELECT checked_on::text,findings FROM stockchief_runtime.agent_stock_discrepancy_checks
+    WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
+  const dueNotice=async()=>(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).find(n=>n.sourceId==='agent-notice-3');
+  const advanceCheck=()=>db.query('UPDATE stockchief_runtime.agent_stock_discrepancy_checks SET checked_on=checked_on-1 WHERE workspace_id=$1',[ctx.workspaceId]);
+  await subscribe('growth');
+  const sweep=await db.transaction(c=>runtime.runtimeSweep({payload:{now:Date.now()}},c));
+  assert.equal(sweep.scheduledAutopilotChecks,1);
+  const job=await queue.processOne(db,{'autopilot.evaluate':runtime.autopilotEvaluate},{owner:'stock-discrepancy-worker'});
+  assert.equal(job.status,'COMPLETED',JSON.stringify(job.lastError));
+  assert.deepEqual(await snapshot(),{checked_on:today,findings:3});
+  await subscribe('starter');
+  await advanceCheck();
+  await inspect();
+  assert.notEqual((await snapshot()).checked_on,today);
+  assert.equal(await dueNotice(),undefined);
+  assert.equal((await reviews.run(db,ctx,'stock-exceptions')).rows.length,1);
+  for(const tier of ['growth','pro','enterprise']){
+    await subscribe(tier);
+    await advanceCheck();
+    await inspect();
+    assert.deepEqual(await snapshot(),{checked_on:today,findings:3});
+    assert.match((await dueNotice()).happened,/found 3 issues/);
+    const current=await reviews.run(db,ctx,'stock-exceptions');
+    assert.deepEqual(current.rows.map(row=>row.Problem),['Negative stock','Overdue transfer '+transfer.transfer_number,'Repeated stock reductions']);
+  }
+  const page=await browser.get('/needs-you').expect(200);
+  assert.match(page.text,/Review stock discrepancies/);
+  assert.equal((await notices.inbox(db,ctx.workspaceId,'someone-else')).some(n=>n.sourceId==='agent-notice-3'),false);
+  await subscribe('starter');
+  assert.equal(await dueNotice(),undefined);
+  await subscribe('growth');
+  await stock.receive(db,ctx,{skuId,locationId:negativeShelf.id,quantity:1,idempotencyKey:randomUUID()});
+  await inspect();
+  assert.deepEqual(await snapshot(),{checked_on:today,findings:3},'The same business day does not run a second scan.');
+  await advanceCheck();
+  await inspect();
+  assert.deepEqual(await snapshot(),{checked_on:today,findings:2},'The next check reflects the corrected quantity.');
+});
+
 test('scheduled transfer follow-ups reach the inbox, retain partial receipts and clear on arrival',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:10});
   const {db,ctx,subscribe,browser}=f,tr=require('../../src/transfers/postgres-transfer-service');

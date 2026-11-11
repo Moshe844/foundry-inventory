@@ -846,6 +846,11 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../autopilot/brand-watches').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/brand-watches');
   }));
+  router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
+    req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');
+    return res.redirect(303,'/autopilot/reviews/payment-run');
+  }));
   router.get('/autopilot/reviews/:job/download',requireAuth,owner,asyncRoute(async(req,res)=>{
     const packs=require('../../accounting/agent-report-packs');
     const definition=packs.definitions.find(d=>d.key===req.params.job);

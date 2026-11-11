@@ -6,6 +6,99 @@ const reviews=require('../../src/autopilot/job-reviews'),policy=require('../../s
 const staffRequests=require('../../src/purchasing/agent-purchase-requests');
 const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
 
+test('supplier payment runs and early discounts respect plan limits, current bills and individual approval',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,workflows,subscribe}=f;
+  const cash=require('../../src/accounting/agent-cash-planning');
+  const commerce=require('../../src/operations/postgres-commerce');
+  const runtime=require('../../src/operations/postgres-runtime-handlers');
+  const queue=require('../../src/operations/postgres-job-queue');
+  const notices=require('../../src/autopilot/operational-notices');
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const date=offset=>require('../../src/accounting/customer-money').addDays(today,offset);
+  const skuId=f.item.skuIds[0];
+  await subscribe('pro');
+  await db.query('UPDATE accounting_settings SET accounting_start_date=$2 WHERE workspace_id=$1',[ctx.workspaceId,date(-30)]);
+  async function bill(reference,{issue,due,terms}){
+    const supplier=await commerce.createSupplier(db,ctx,{name:reference,paymentTerms:terms,currency:'USD'});
+    const order=await workflows.createPurchaseOrder(db,ctx,{supplierId:supplier.id,destinationLocationId:f.location.id,
+      idempotencyKey:randomUUID(),lines:[{skuId,quantityUnits:2,unitCost:5}]});
+    await workflows.approvePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});
+    await workflows.placePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID()});
+    await workflows.receivePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID(),
+      lines:[{lineId:order.lineIds[0],quantity:2,locationId:f.location.id}]});
+    const saved=await workflows.recordSupplierInvoice(db,ctx,{supplierId:supplier.id,purchaseOrderId:order.purchaseOrderId,
+      supplierInvoiceNumber:reference,issueDate:date(issue),dueDate:date(due),currency:'USD',idempotencyKey:randomUUID(),
+      lines:[{purchaseOrderLineId:order.lineIds[0],skuId,quantity:2,unitCostMinor:500}]});
+    assert.equal(saved.status,'OPEN');
+    return {supplierId:supplier.id,billId:saved.billId};
+  }
+  const early=await bill('Eligible discount',{issue:-8,due:22,terms:'2% off within 10 days, net 30'});
+  await bill('Ordinary due bill',{issue:-5,due:1,terms:'Net 30'});
+  await bill('Expired discount',{issue:-20,due:3,terms:'2/10 net 30'});
+  await bill('Later due bill',{issue:-4,due:20,terms:'Net 30'});
+  const ids=async()=>(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).map(n=>n.sourceId);
+  const review=()=>reviews.run(db,ctx,'payment-run');
+  const discountReview=()=>reviews.run(db,ctx,'early-discounts');
+  const paymentCount=async()=>(await db.query("SELECT count(*)::int AS n FROM accounting_payments WHERE workspace_id=$1 AND direction='SUPPLIER_PAYMENT'",[ctx.workspaceId])).rows[0].n;
+  const approve=digest=>cash.approvePaymentRun(db,ctx,{digest,confirmed:'yes'});
+  const inspect=()=>db.transaction(c=>runtime.autopilotEvaluate({id:randomUUID(),workspaceId:ctx.workspaceId,
+    payload:{actorId:ctx.actorId,requestedByUser:true}},c));
+
+  const scheduled=await db.transaction(c=>runtime.runtimeSweep({payload:{now:Date.now()}},c));
+  assert.equal(scheduled.scheduledAutopilotChecks,1);
+  assert.equal((await queue.processOne(db,{'autopilot.evaluate':runtime.autopilotEvaluate},{owner:'supplier-payment-run-test'})).status,'COMPLETED');
+  assert((await ids()).includes('agent-notice-104'));
+  assert((await ids()).includes('agent-notice-108'));
+  const before=await review();
+  assert.deepEqual(before.rows.map(row=>row.Supplier),['Ordinary due bill','Eligible discount','Expired discount']);
+  assert.deepEqual(before.rows.map(row=>row['Review amount']),['$10.00','$9.80','$10.00']);
+  assert.deepEqual((await discountReview()).rows.map(row=>row['Discount deadline']),[date(2)]);
+  assert.equal(await paymentCount(),0);
+
+  await subscribe('starter');
+  await assert.rejects(review(),error=>error.code==='entitlement_required');
+  await assert.rejects(approve(before.paymentRun.digest),error=>error.code==='entitlement_required');
+  assert.deepEqual(Object.keys((await discountReview()).rows[0]),['Suggestion']);
+  assert.equal((await ids()).some(id=>['agent-notice-104','agent-notice-108'].includes(id)),false);
+  await subscribe('growth');
+  await inspect();
+  assert.equal((await review()).mode,'draft');
+  assert(!(await ids()).includes('agent-notice-104'));
+  assert((await ids()).includes('agent-notice-108'));
+
+  await subscribe('enterprise');
+  await inspect();
+  assert.equal((await review()).mode,'alone');
+  assert((await ids()).includes('agent-notice-104'));
+  const page=await browser.get('/autopilot/reviews/payment-run').expect(200);
+  assert.match(page.text,/Approve this payment run/);
+  const digest=/name="digest" value="([a-f0-9]+)"/.exec(page.text)[1];
+  await browser.post('/autopilot/reviews/payment-run/approve').type('form').send({_csrf:f.csrf(page.text),digest,confirmed:'yes'})
+    .expect(303).expect('Location','/autopilot/reviews/payment-run');
+  assert.equal((await approve(digest)).replayed,true);
+  assert((await review()).paymentRun.approvedAt);
+  assert(!(await ids()).includes('agent-notice-104'));
+  assert.equal(await paymentCount(),0);
+
+  await workflows.recordSupplierPayment(db,ctx,{supplierId:early.supplierId,supplierBillId:early.billId,
+    amountMinor:100,idempotencyKey:randomUUID()});
+  await assert.rejects(approve(digest),/bills or discount terms changed/i);
+  assert.deepEqual((await discountReview()).rows,[]);
+  assert.equal(await paymentCount(),1);
+  const rows=(await db.query('SELECT digest FROM stockchief_runtime.agent_supplier_payment_approvals WHERE workspace_id=$1',[ctx.workspaceId])).rows;
+  assert.deepEqual(rows,[{digest}]);
+  await subscribe('growth');
+  const revised=(await review()).paymentRun.digest;
+  assert.notEqual(revised,digest);
+  assert.equal((await approve(revised)).replayed,false);
+  assert.equal(await paymentCount(),1);
+  const jobModes=require('../../src/autopilot/job-modes');
+  await jobModes.save(db,ctx,104,{mode:'watch',revision:0});
+  await jobModes.save(db,ctx,108,{mode:'watch',revision:0});
+  assert(!(await ids()).includes('agent-notice-108'));
+  await assert.rejects(approve(revised),/Watch only/);
+});
+
 test('agent jobs run through paid plans, posted books, stock records and approved staff purchases',{timeout:240000},async t=>{
   const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner,workflows}=f;
   const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),days=require('../../src/accounting/customer-money').addDays;

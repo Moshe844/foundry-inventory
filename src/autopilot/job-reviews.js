@@ -190,7 +190,7 @@ async function run(db,ctx,key,options={}){
   if(!Number.isSafeInteger(page)||page<1||page>1000000) throw new ValidationError('Choose a valid results page.');
   if(def.requiresFilter && !filter) return {label:def.label,summary:'Enter the exact '+(def.prompt||(def.id===195?'serial number':'SKU'))+' to look up.',rows:[],mode,filterable:true};
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
-  let rows,summary=def.summary,more=false;
+  let rows,summary=def.summary,more=false,paymentRun;
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
@@ -219,7 +219,7 @@ async function run(db,ctx,key,options={}){
   }
   if(def.read){
     const result=await def.read(db,ctx,{today,adviceOnly:mode==='suggest'});
-    rows=result.rows;summary=result.summary;
+    rows=result.rows;summary=result.summary;paymentRun=result.paymentRun;
     more=rows.length>page*100;
     rows=rows.slice((page-1)*100,page*100);
   }else{
@@ -244,7 +244,8 @@ async function run(db,ctx,key,options={}){
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }
-  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
+  return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,
+    ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

@@ -48,7 +48,7 @@ jobs:
         timeout-minutes: 8
         run: |
           printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -65,9 +65,18 @@ jobs:
       - run: npm ci
       - name: Audit runtime and development dependencies
         run: npm audit --audit-level=moderate
-      - id: test_ready
+      - name: Install and verify Chromium
+        id: test_ready
+        timeout-minutes: 8
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
+          probe_chromium() {
+            node -e 'require("playwright").chromium.launch().then(browser=>browser.close()).catch(error=>{console.error(error); process.exitCode=1;});'
+          }
+          if ! probe_chromium; then
+            npx playwright install-deps chromium
+            probe_chromium
+          fi
           mkdir -p output/inventory-ci
       - name: Query deadlines, recovery and dense catalogue regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
