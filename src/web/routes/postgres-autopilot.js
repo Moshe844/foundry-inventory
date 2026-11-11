@@ -614,6 +614,24 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const shippingOriginals=require('../../documents/agent-shipping-document-reader');
+  const shippingOriginalPage=async(req,res)=>res.page('autopilot/shipping-document-reading',{title:'Bills of lading and customs papers',nav:'autopilot',
+    screen:await shippingOriginals.screen(database,req.ctx,{...req.query,id:req.params.id||null}),shippingProof:require('../../documents/shipping-document-proof')});
+  router.get('/autopilot/shipping-documents',requireAuth,owner,asyncRoute(shippingOriginalPage));
+  router.post('/autopilot/shipping-documents',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await shippingOriginals.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,'/autopilot/shipping-documents/'+result.id);
+  }));
+  router.get('/autopilot/shipping-documents/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await shippingOriginals.load(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.get('/autopilot/shipping-documents/:id',requireAuth,owner,asyncRoute(shippingOriginalPage));
+  for(const [operation,run] of [['approve',shippingOriginals.approve],['retry',shippingOriginals.retry],['dismiss',shippingOriginals.dismiss]]){
+    router.post('/autopilot/shipping-documents/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/shipping-documents/'+req.params.id);
+    }));
+  }
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
     const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
     const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));

@@ -2,6 +2,8 @@
  <h2><%= document.filename %></h2>
  <p>Filed on <a href="<%= document.targetHref %>"><%= document.target_reference %></a> · <%= document.document_kind.replace(/_/g,' ') %></p>
  <p><a class="btn" href="/autopilot/documents/<%= document.id %>/download">Download original file</a></p>
+ <% if(document.shipping_reading_id){ %><p><a href="/autopilot/shipping-documents/<%= document.shipping_reading_id %>">See original reading and exact PO evidence</a></p><% } %>
+ <% if(document.target_kind==='purchase_order'&&!document.shipping_reading_id&&['bill_of_lading','customs'].includes(document.document_kind)){ %><p><a href="/autopilot/shipping-documents?filedDocument=<%= document.id %>&amp;reference=<%= encodeURIComponent(document.target_reference) %>">Read the complete shipping original</a></p><% } %>
  <p>This document is saved as evidence. Filing it does not record stock, an invoice, payment or accepted terms.</p>
  <% if(document.target_kind==='item'&&['specification','safety_sheet'].includes(document.document_kind)){ %><p><a class="btn" href="/autopilot/product-facts?filedDocument=<%= document.id %>&amp;product=<%= encodeURIComponent(document.target_reference) %>">Read complete product facts from this original</a></p><% } %>
  <h3>Readable source text</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"><%= document.extracted_text %></pre>
