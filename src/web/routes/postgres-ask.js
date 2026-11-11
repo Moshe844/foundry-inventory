@@ -480,7 +480,7 @@ function createPostgresAskRouter(database,options={}){
     const recentRequests=await chats.list(database,req.ctx,{limit:40}),businessZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;
     const currentChat=recentRequests.find(chat=>chat.chat_id===req.session.postgresAskConversationId)||null;
     const downloadableAnswers=await require('../../assistant/ask-export').keepable(database,req.ctx,transcript.flatMap(turn=>(turn.goals||[]).map(goal=>goal.id)));
-    return res.page('attention/ask',{downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
+    return res.page('attention/ask',{voiceNotes:require('../../assistant/ask-voice').available(),downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
@@ -578,6 +578,16 @@ function createPostgresAskRouter(database,options={}){
       return null;
     }
   }
+  // A voice note becomes text in the question box, in the language it was
+  // spoken; the person checks it and sends it like a typed question.
+  router.post('/ask/voice',asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'ask.lookup');
+    const recordings=(req.files||[]).filter(file=>file.field==='recording'&&file.size>0);
+    if(recordings.length!==1)throw new ValidationError('Record one voice note at a time.');
+    const read=await require('../../assistant/ask-voice').transcribe(database,req.ctx,recordings[0].buffer,{usageKey:req.body.usageKey});
+    res.set('Cache-Control','no-store');
+    return res.json(read);
+  }));
   router.post('/ask',asyncRoute(async(req,res)=>{
     const result=await submitAsk(req);
     if(!result)return res.redirect(303,'/ask#submission-problem');

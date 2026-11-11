@@ -65,7 +65,7 @@ test('inventory summary links reach understandable, working destinations in a re
     assert.doesNotMatch(await page.locator('main').innerText(),/amount above is not the full inventory value/);
     assert.match(await page.locator('main a[href="/inventory/table?group=healthy"] .sc-group-count').innerText(),/^2\b/);
     const expected=[
-      {group:'empty',name:'Nothing on hand',item:'Unstocked Hinge'},
+      {group:'empty',name:'Out of stock',item:'Unstocked Hinge'},
       {group:'incoming',name:'On the way',item:'Ordered Bracket'},
       {group:'healthy',name:'Available now',item:'Ready Clamp'},
     ];
