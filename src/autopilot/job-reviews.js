@@ -148,7 +148,8 @@ const suggestions={
   55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
   3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
   64:r=>'Review '+r.Order+' for '+r.Customer+'. '+r['Waiting units']+' units of '+r.SKU+' are still waiting for stock.',
-  116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled units were returned.',
+  116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled '+(r.Unit==='unit'?'units':r.Unit)+
+    ' were returned. '+r.Finding+'.',
   110:r=>'Review the '+r.Month+' purchase budget for '+r.Category+' in '+r.Currency+'.',
   144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
