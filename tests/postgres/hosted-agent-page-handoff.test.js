@@ -113,3 +113,44 @@ test('a new page request reaches the page even when the agent tries to finish fi
  assert.equal(handed.checkpoint.navigation.href,'/inventory');assert.equal(handed.answer,'Ready to open Inventory in your browser.');
  await followHandOff(s,goalId,'/inventory','Inventory');
 });
+
+// Staging, 16:25: the agent opened Inventory correctly, but the owner's network
+// (an HTTPS filter) held the live update stream back, so the page sat on
+// "Waiting to start" until the owner pressed Stop. Separately, the page treated
+// the hidden text of the "Ask next" suggestions as an unsent draft and never
+// moved on its own. A real browser must follow the hand-off with the stream
+// held back and with it working.
+test('the Ask page opens the requested page by itself, whether its live updates arrive or are held back',{timeout:300000},async t=>{
+ const s=await setup(t),{db,ctx,store,controller}=s;
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(ok=>{const l=app.listen(0,'127.0.0.1',()=>ok(l));}),origin='http://127.0.0.1:'+server.address().port,browser=await require('playwright').chromium.launch();
+ t.after(async()=>{await browser.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));await app.locals.sessionStore.close();});
+ for(const holdStream of [true,false]){
+  const page=await (await browser.newContext({viewport:{width:1280,height:800}})).newPage();
+  let held=0,streamed=0;
+  if(holdStream)await page.route('**/ask/goals/*/stream',()=>{held++;});// never answered, like a buffering filter
+  page.on('response',r=>{if(r.url().endsWith('/stream'))streamed++;});
+  await page.goto(origin+'/login');await page.getByLabel('Work email').fill(s.email);await page.locator('[name=password]').fill(s.password);
+  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+  await page.goto(origin+'/ask');
+  await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill(YIDDISH);
+  await Promise.all([page.waitForURL(/[?&]goal=/),page.getByRole('button',{name:'Continue',exact:true}).click()]);
+  const goalId=new URL(page.url()).searchParams.get('goal');assert(goalId);
+  assert(await page.locator('input[type="hidden"][name="message"]').count()>0,'"Ask next" suggestions (hidden message inputs) are on the page');
+  // The worker's run: open the page, then finish.
+  const plan=[decision('operate',{steps:[{capability:'navigate.inventory',arguments:[],dependsOn:[]}]}),decision('finish',{answer:'Opening the stock tab.',evidence:[0]})];
+  await controller.run(db,ctx,goalId,{provider:s.model(()=>plan.shift()).provider});
+  assert.equal((await store.get(db,ctx,goalId)).status,'WAITING_EVENT');
+  const started=Date.now();
+  try{await page.waitForURL(origin+'/inventory',{timeout:30000});}catch(e){
+   t.diagnostic('NOT FOLLOWED '+JSON.stringify({holdStream,url:page.url(),state:await page.evaluate(()=>({phase:document.querySelector('[data-goal-phase-text]')?.textContent,
+    hint:document.querySelector('[data-goal-hint]')?.textContent,status:document.querySelector('[data-adaptive-goal]')?.dataset.goalStatus}))}));throw e;}
+  const seconds=(Date.now()-started)/1000;
+  await page.waitForFunction(()=>document.querySelector('[data-agent-arrival]')?.dataset.confirmed==='true',null,{timeout:15000});
+  if(holdStream)assert(held>=1,'The live stream really was held back');else assert(streamed>=1,'The live stream really was used');
+  const done=await store.get(db,ctx,goalId);
+  assert.equal(done.status,'COMPLETED');assert.equal(done.answer,'Opened Inventory in your browser.');
+  assert(seconds<=(holdStream?12:20),(holdStream?'Held':'Live')+' stream: followed after '+seconds+'s');
+  t.diagnostic(JSON.stringify({holdStream,secondsToFollow:Math.round(seconds*10)/10}));
+  await page.context().close();
+ }
+});
