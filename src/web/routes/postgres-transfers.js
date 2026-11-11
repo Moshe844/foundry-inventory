@@ -4,6 +4,7 @@ const express = require('express');
 const transfers = require('../../transfers/postgres-transfer-service');
 const permissions = require('../../actions/permissions');
 const arrivals = require('../../transfers/agent-transfer-arrivals');
+const agentPlan = require('../../commercial/agent-plan');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { newId, trimOrNull } = require('../../lib/util');
 
@@ -32,6 +33,17 @@ function createPostgresTransfersRouter(database) {
       pageOf: (rows) => require('../presentation/pagination').slice(req, rows), ...access(req.user) });
   }));
   router.get('/transfers/arrival-follow-up', asyncRoute(async(req,res) => {
+    permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
+    permissions.assertCan(req.user, permissions.RECEIVE_TRANSFER, 'review receiving follow-ups');
+    const state = await agentPlan.accountState(database, req.ctx.workspaceId);
+    const included = agentPlan.permits(state.plan, 124, 'suggest');
+    if (!included || !agentPlan.usesAgentTerms(state)) {
+      return res.page('autopilot/agent-plan-locked', {
+        title: 'Receiving transfer follow-up', nav: 'transfers', tier: 'Growth',
+        reviewTerms: included, showPlanOptions: req.user.role === 'owner',
+        backTo: { href: '/transfers', label: 'Transfers' },
+      });
+    }
     const result=await arrivals.page(database,req.ctx,{locationId:String(req.query.location||''),page:req.query.page||1});
     return res.page('transfers/arrival-follow-up',{title:'Receiving transfer follow-up',nav:'transfers',room:true,...result});
   }));
