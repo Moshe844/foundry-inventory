@@ -17,6 +17,18 @@ function createPostgresAutopilotRouter(database,options={}){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const chases=require('../../purchasing/agent-supplier-delivery-chases');
+  const chasePage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/supplier-delivery-chases',{
+    title:'Late supplier delivery reminders',nav:'autopilot',backTo:req.params.id?{href:chases.path,label:'Supplier reminders'}:{href:'/autopilot/reviews',label:'Agent reviews'},
+    ...await chases.page(database,req.ctx,{...req.query,id:req.params.id})});
+  router.get('/autopilot/reviews/late-supplier-deliveries',requireAuth,owner,(_req,res)=>res.redirect(303,chases.path));
+  router.get(chases.path,requireAuth,owner,asyncRoute(chasePage));
+  router.get(chases.path+'/:id',requireAuth,owner,asyncRoute(chasePage));
+  for(const route of [chases.path,chases.path+'/:id'])router.post(route,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await chases.configure(database,req.ctx,{...req.body,id:req.params.id});
+    req.flash('success',result.stopped?'Future late reminders are stopped.':'Late reminders are authorized for the selected supplier and mailbox.');
+    res.redirect(303,chases.path+'/'+result.id);
+  }));
   const shelfPhotos=require('../../warehouse/agent-shelf-photos');
   const shelfPath='/autopilot/shelf-photos';
   const shelfPage=async(req,res)=>res.page('autopilot/shelf-photos',{

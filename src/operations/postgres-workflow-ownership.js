@@ -51,7 +51,8 @@ async function purchase(database,workspaceId,id,prior,clock){
  const po=(await database.query(`SELECT p.*,s.name AS supplier_name,s.follow_up_days FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id WHERE p.workspace_id=$1 AND p.id=$2`,[workspaceId,id])).rows[0];
  if(!po)return missing();
  const lines=(await database.query(`SELECT id,sku_id,quantity_units,quantity_received_units,
-   to_jsonb(l)->>'supplier_amendment_closed_at' AS amendment_closed
+   to_jsonb(l)->>'supplier_amendment_closed_at' AS amendment_closed,
+   to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold
    FROM purchase_order_lines l WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY line_number,id`,[workspaceId,id])).rows;
  let documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id,NULL AS reply_kind FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED'
  UNION ALL SELECT r.id,CASE WHEN r.kind IN ('amendment','date') OR (r.expected_date IS NOT NULL AND p.expected_date IS NOT NULL AND r.expected_date<>p.expected_date::date)
@@ -83,12 +84,24 @@ async function purchase(database,workspaceId,id,prior,clock){
   return {...base,phase:'RECEIPT_REVIEW',nextAction:'Reconcile the physical receipt records',decision:decision('receipt_evidence_missing','The order is marked received, but its receipt evidence does not reconcile.','StockChief cannot confirm completion.',['Order quantities','Canonical receipt lines'],'Review the receipt history.',['Investigate the recorded receiving event'],'Confirm the correct receiving evidence; never receive it twice.')};
  }
  if(['DRAFT','AWAITING_APPROVAL'].includes(po.status))return {...base,phase:'PURCHASE_PREPARATION',nextAction:'Review and approve the purchase order; no supplier commitment has been sent.'};
+ if(lines.some(line=>line.supply_hold&&Number(line.quantity_units)>Number(line.quantity_received_units)))return {
+   ...base,phase:'SUPPLIER_AVAILABILITY_REVIEW',nextAction:'Review the recorded supplier availability and the affected purchase lines',
+   decision:decision('supplier_unavailable','The supplier reported that goods on this purchase are unavailable.',
+     'The reported units are excluded from dependable incoming.',['Original supplier response','Current purchase and receipt quantities'],
+     'Review the original supplier statement and check whether the expected delivery is still possible.',[],
+     'Confirm revised quantities or availability before relying on these goods.'),reviewHref:base.href};
  const acknowledgment=newestConfirmation?.status==='MATCHED'?newestConfirmation:null;
  const communication=prior.communicationId?(await database.query('SELECT status,sent_at,external_message_id FROM supplier_communications WHERE workspace_id=$1 AND id=$2',[workspaceId,prior.communicationId])).rows[0]:null;
  const sentAt=communication?.status==='SENT'&&communication.external_message_id?communication.sent_at:po.ordered_at;
  const confirmationDue=sentAt?new Date(Date.parse(sentAt)+Math.max(1,Number(po.follow_up_days)||2)*86400000).toISOString():null;
- if(!acknowledgment&&confirmationDue&&confirmationDue<clock.instant)return {...base,phase:'CONFIRMATION_OVERDUE',deadline:confirmationDue,nextAction:'Request supplier acceptance and an expected date',decision:decision('supplier_confirmation_due',`${po.supplier_name} has not provided a matched acceptance for ${po.po_number}.`,`${proof.ordered-proof.received} units are expected; acceptance is unverified.`,['Sent-message receipt','Trusted supplier documents','Current purchase status'],'Prepare a supplier confirmation request.',['Wait with a revised deadline','Review an alternative supplier'],'Review the follow-up before sending unless a separate communication rule covers it.')};
- if(po.expected_date&&po.expected_date<clock.calendarDate)return {...base,phase:'DELIVERY_OVERDUE',deadline:time.dayBoundary(po.expected_date,clock.timeZone,{nextDay:true}),nextAction:'Check the overdue delivery and affected customer orders',decision:decision('supplier_delivery_late',`${po.supplier_name}'s delivery was expected on ${po.expected_date}.`,`${proof.ordered-proof.received} units remain outstanding.`,['Expected delivery date','Partial receipts','Supplier documents'],'Prepare a delivery update request and review existing-stock alternatives.',['Transfer available stock','Review another supplier'],'Approve only any changed cost or customer promise outside existing authority.')};
+ const confirmationNeeded=!acknowledgment&&confirmationDue&&confirmationDue<clock.instant;
+ const late=po.ordered_at&&['ORDERED','PARTIALLY_RECEIVED'].includes(po.status)&&po.expected_date&&po.expected_date<clock.calendarDate;
+ const prioritizeLate=late&&confirmationNeeded&&po.delivery_kind==='WAREHOUSE'&&
+   await require('../purchasing/agent-supplier-delivery-chases').activeRule(database,workspaceId,po.supplier_id);
+ if(late&&(!confirmationNeeded||prioritizeLate))return {...base,phase:'DELIVERY_OVERDUE',deadline:time.dayBoundary(po.expected_date,clock.timeZone,{nextDay:true}),
+   followUpSourceHash:require('../pricing/postgres-promotions').hash({date:po.expected_date,status:po.status,lines,documents:proof.documentIds}),
+   nextAction:'Check the overdue delivery and affected customer orders',decision:decision('supplier_delivery_late',`${po.supplier_name}'s delivery was expected on ${po.expected_date}.`,`${proof.ordered-proof.received} units remain outstanding.`,['Expected delivery date','Partial receipts','Supplier documents'],'Prepare a delivery update request and review existing-stock alternatives.',['Transfer available stock','Review another supplier'],'Approve only any changed cost or customer promise outside existing authority.')};
+ if(confirmationNeeded)return {...base,phase:'CONFIRMATION_OVERDUE',deadline:confirmationDue,nextAction:'Request supplier acceptance and an expected date',decision:decision('supplier_confirmation_due',`${po.supplier_name} has not provided a matched acceptance for ${po.po_number}.`,`${proof.ordered-proof.received} units are expected; acceptance is unverified.`,['Sent-message receipt','Trusted supplier documents','Current purchase status'],'Prepare a supplier confirmation request.',['Wait with a revised deadline','Review an alternative supplier'],'Review the follow-up before sending unless a separate communication rule covers it.')};
  if(acknowledgment&&!po.expected_date&&!json(acknowledgment.facts).expectedArrivalDate)return {...base,phase:'DELIVERY_DATE_NEEDED',nextAction:'Confirm the supplier’s expected delivery date',decision:decision('supplier_delivery_date_missing','The supplier accepted the order without a confirmed delivery date.',`${proof.ordered-proof.received} units are expected, but their arrival cannot yet be supervised.`,['Supplier acceptance','Order and per-line delivery expectations'],'Prepare a request for the supplier’s delivery date.',['Agree a revised promise with affected customers'],'Confirm the expected date from supplier evidence.')};
  const arrival=po.expected_date||json(acknowledgment?.facts).expectedArrivalDate;
  return {...base,phase:acknowledgment?'AWAITING_PHYSICAL_RECEIPT':'AWAITING_SUPPLIER_CONFIRMATION',deadline:acknowledgment&&arrival?time.dayBoundary(arrival,clock.timeZone,{nextDay:true}):confirmationDue,nextAction:acknowledgment?'Monitor the agreed delivery and wait for physical receiving confirmation.':'Check for the supplier’s explicit acceptance and delivery date.'};
@@ -152,7 +165,8 @@ async function refreshInTransaction(client,workspaceId,workId,{now=new Date()}={
  }
  const clock=await time.forWorkspace(client,workspaceId,now);let snapshot=await ({purchase,supplier_invoice:supplierInvoice,customer_order:customerOrder,transfer}[kind])(client,workspaceId,recordId,prior,clock),followUps=prior.followUps||[];
  if(kind==='purchase'){
-  if(!snapshot.decision){for(const follow of followUps.filter(f=>f.proposalId&&!f.effectId))await client.query("UPDATE stockchief_runtime.assistant_action_proposals SET status='CANCELLED',cancelled_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'",[workspaceId,follow.proposalId]);}
+  for(const follow of followUps.filter(f=>f.proposalId&&!f.effectId&&f.phase!==snapshot.decision?.code))
+   await client.query("UPDATE stockchief_runtime.assistant_action_proposals SET status='CANCELLED',cancelled_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'",[workspaceId,follow.proposalId]);
   const prepared=await require('../purchasing/postgres-supplier-followups').prepare(client,workspaceId,work,snapshot,prior,clock);snapshot=prepared.snapshot;followUps=prepared.followUps;
  }
  const at=now.toISOString(),next=new Date(now.getTime()+15*60000).toISOString(),status=snapshot.cancelled?'CANCELLED':snapshot.complete?'COMPLETED':'EXECUTING';
@@ -169,4 +183,4 @@ async function scheduleDue(client,now=Date.now()){
  const due=(await client.query(`SELECT w.id,w.workspace_id FROM work_items w JOIN workspaces b ON b.id=w.workspace_id WHERE b.deletion_requested_at IS NULL AND w.execution_status='EXECUTING' AND (w.source=$1 OR w.source='postgres_autopilot') AND w.due_at IS NOT NULL AND w.due_at<=$2 ORDER BY w.due_at,w.id LIMIT 200`,[SOURCE,new Date(now).toISOString()])).rows;
  let count=0;for(const work of due){const queued=await enqueue(client,work.workspace_id,work.id,'due-'+Math.floor(now/60000));if(queued.created)count++;}return count;
 }
-module.exports={SOURCE,kinds,capture,captureResult,refresh,refreshInTransaction,scheduleDue,kindOf};
+module.exports={SOURCE,kinds,capture,captureResult,refresh,refreshInTransaction,scheduleDue,kindOf,purchaseSnapshot:purchase};

@@ -5,6 +5,7 @@ const policy = require('../commercial/agent-plan');
 const activities = new Map([
   ['repeat-order','Prepare and send a repeat purchase order'],
   ['supplier-response','File a supplier confirmation or document'],
+  ['supplier-delivery-followup','Check a late purchase and send one supplier reminder'],
   ['staff-request','Create a purchase order from an approved staff request'],
   ['invoice-match','Read, enter and match one original supplier invoice'],
   ['customer-receipt','Match a recorded customer bank receipt to its invoice'],
@@ -122,6 +123,13 @@ async function report(db,ctx,window='week') {
     ${comparisonEvents}
     SELECT 'repeat-order' AS activity,occurred FROM first_send UNION ALL
     SELECT 'supplier-response',occurred FROM responses UNION ALL
+    SELECT 'supplier-delivery-followup',m.sent_at::timestamptz FROM supplier_communications m
+      WHERE m.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL
+        AND m.idempotency_key LIKE 'supplier-follow-up:%:supplier_delivery_late:%'
+        AND m.sent_at::timestamptz>=CURRENT_TIMESTAMP-($2::int * interval '24 hours')
+        AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=m.workspace_id
+          AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+          AND e.payload->'standingAuthority'->>'kind'='purchase_followup' AND e.payload->'standingAuthority'->>'ruleId' IS NOT NULL) UNION ALL
     SELECT 'staff-request',r.decided_at FROM stockchief_runtime.purchase_requests r
       JOIN purchase_orders p ON p.workspace_id=r.workspace_id AND p.id=r.purchase_order_id WHERE r.workspace_id=$1 AND r.status='APPROVED' UNION ALL
     SELECT 'invoice-match',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a JOIN accounting_supplier_bills b

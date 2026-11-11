@@ -226,8 +226,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},async()=>{
         if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,agentJob,'draft');
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
-        if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
+        if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='supplier_forecast')await require('../purchasing/agent-supplier-forecasts').authority(database,workspaceId,input.standingAuthority);

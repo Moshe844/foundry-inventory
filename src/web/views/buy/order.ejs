@@ -154,6 +154,9 @@
           <a class="ox-btn ox-btn--secondary ox-btn--block" href="/autopilot/delivery-checks?orderId=<%= order.id %>">Compare actual delivery</a>
         </section>
       <% } %>
+      <% if(permissions.supplierDeliveryChases&&['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)){ %>
+        <a class="ox-btn" href="/autopilot/supplier-delivery-chases?supplierId=<%= encodeURIComponent(order.supplier_id) %>">Authorize reminders for this supplier</a>
+      <% } %>
       <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-money" style="padding-top:18px">
         <h2 id="ox-h-money">Money</h2>
         <div class="ox-sum__row"><span>Order total</span><b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></div>
