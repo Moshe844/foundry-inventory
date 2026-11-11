@@ -941,12 +941,11 @@ function createPostgresAutopilotRouter(database,options={}){
     res.redirect(303,'/autopilot/reviews/third-party-stock');
   }));
   const abcPath=require('../../forecasting/monthly-product-classes').path;
-  router.get(abcPath+'/products/:itemId',requireAuth,owner,asyncRoute(async(req,res)=>{
-    return agentPage(req,res,'autopilot/monthly-abc-planning',{
+  router.get(abcPath+'/products/:itemId',requireAuth,owner,starterAgentPage(15,'suggest','ABC count and safety planning',async(req,res)=>{
+    return res.page('autopilot/monthly-abc-planning',{
       title:'ABC count and safety planning',nav:'autopilot',backTo:{href:abcPath,label:'Monthly ABC product classes'},
-    },async()=>({
       model:await require('../../forecasting/agent-safety-stock').classPlanning(database,req.ctx,req.params.itemId,req.query),
-    }),402);
+    });
   }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
@@ -1032,12 +1031,14 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   const writeDown=require('../../accounting/agent-inventory-write-downs');
   const writeDownRoute=require('../../forecasting/agent-stock-age').route;
-  router.get(writeDownRoute,requireAuth,owner,asyncRoute(async(req,res)=>{
-    return agentPage(req,res,'autopilot/stock-write-down',{
+  router.get(writeDownRoute,requireAuth,owner,starterAgentPage(17,'draft','Review inventory write-down',async(req,res)=>{
+    if(!req.query.position)return res.redirect(303,'/autopilot/reviews/stock-age');
+    return res.page('autopilot/stock-write-down',{
       title:'Review inventory write-down',nav:'autopilot',
-      backTo:{href:'/autopilot/reviews/stock-age',label:'Stock by age'}
-    },async()=>({review:await writeDown.page(database,req.ctx,req.query.position),formKey:newId('stock-write-down')}));
-  }));
+      backTo:{href:'/autopilot/reviews/stock-age',label:'Stock by age'},
+      review:await writeDown.page(database,req.ctx,req.query.position),formKey:newId('stock-write-down')
+    });
+  },'Growth'));
   router.post(writeDownRoute,requireAuth,owner,asyncRoute(async(req,res)=>{
     if(req.body.confirmed!=='yes'||!req.body.expectedStockFingerprint)throw new ValidationError('Confirm the whole position and its valuation evidence before preparing the write-down.');
     const result=await assistant.prepareAction(database,req.ctx,'Prepare this stock write-down from the supported net recoverable value.',{
