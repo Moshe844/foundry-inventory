@@ -79,7 +79,7 @@
   "106": "Shows recorded inventory value and identifies clearance candidates by SKU and location. It keeps stock needed for orders, transfers, rentals and replenishment out of the list and flags missing costs before decisions.",
   "107": "Prepares an exact paid cash-refund review or closes a return after its posted unpaid-invoice credit. Every refund needs individual approval. Live payment-provider refunds remain unqualified.",
   "108": "Finds valid early-payment discounts in posted supplier bills and includes upcoming deadlines and possible savings in the payment run. Starter gets one suggestion. Growth, Pro and Custom get an automatic in-app alert.",
-  "109": "Forecasts 13 weeks of posted supplier bills and unbilled purchase commitments separately by currency. Customer-receipt forecasting still needs qualification.",
+  "109": "Forecasts thirteen weeks of expected customer receipts and supplier payments by currency using posted balances, purchase goods and recorded charges. Pro and Custom can run the full forecast without training. Growth receives one suggestion. Missing dates or prices stay visible.",
   "110": "Compares monthly category budgets with posted purchases in the original currency and supports owner-reviewed budget changes.",
   "114": "Prepares physical return receipt and its exact credit review for quantity goods. You confirm receipt; goods stay unavailable until inspection and restock. Automatic restock remains open.",
   "115": "Tracks supplier-return authorization, shipment and credit reconciliation. An approved credit reduces the correct open supplier bill once.",
