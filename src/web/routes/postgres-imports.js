@@ -54,8 +54,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       const model=await countSources.page(database,req.ctx,{id:req.params.id,after:req.query.after});
       return res.set('Cache-Control','private, no-store').page('imports/physical-count-source',{...view,model});
     }catch(error){
-      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
-      return res.status(402).page('autopilot/locked',{...view,message:error.message});
+      if(error.code!=='entitlement_required'||req.accepts(['html','json'])!=='html')throw error;
+      return res.set('Cache-Control','private, no-store').page('autopilot/locked',{...view,message:error.message});
     }
   };
   router.get(countPath,requireOwner,asyncRoute(countPage));

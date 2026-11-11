@@ -811,7 +811,7 @@ function createPostgresAutopilotRouter(database,options={}){
   // enforce the plan on every read and mutation; only the HTML presentation changes.
   async function agentPage(req,res,view,locals,load,lockedStatus=200){
     try{return res.page(view,{...locals,...(await load())});}
-    catch(error){if(error.code!=='entitlement_required')throw error;
+    catch(error){if(error.code!=='entitlement_required'||req.accepts(['html','json'])==='json')throw error;
       res.status(lockedStatus);
       return res.page('autopilot/locked',{...locals,message:error.message});}
   }
@@ -915,7 +915,7 @@ function createPostgresAutopilotRouter(database,options={}){
     const page=Number(req.query.page||1);
     if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid results page.');
     return agentPage(req,res,'autopilot/customer-check-ins',{title:'Customer check-in drafts',nav:'autopilot'},
-      ()=>customerCheckins.page(database,req.ctx,{customerId:req.query.customer,selectedId:req.query.draft,page}),402);
+      ()=>customerCheckins.page(database,req.ctx,{customerId:req.query.customer,selectedId:req.query.draft,page}));
   }));
   router.post(checkinPath+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const p=await assistant.prepareAction(database,req.ctx,'Prepare this customer check-in.',{action:customerCheckins.ACTION,recordReference:req.body.customerId});
