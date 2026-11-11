@@ -45,6 +45,7 @@
 <% if(result.supplierCreditLink){ %><p><a class="btn" href="/autopilot/supplier-credits">Open credit notes and applications</a></p><% } %>
 <% if(result.documentDiscoveryLink){ %><p><a class="btn" href="/autopilot/document-filing">Discover and file originals</a></p><% } %>
 <% if(result.shippingDocumentLink){ %><p><a class="btn" href="/autopilot/shipping-documents">Read shipping originals</a></p><% } %>
+<% if(result.variantImportLink){ %><p><a class="btn" href="/imports/variants">Open spreadsheet variants</a></p><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>

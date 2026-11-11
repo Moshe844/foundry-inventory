@@ -2,6 +2,7 @@
 
 const documentRecovery = new Map([
   ['import.discover-filed-document.v1', () => require('../documents/agent-document-discovery')],
+  ['import.variant-sheet.v1', () => require('../imports/agent-exact-variant-import')],
   ['import.read-contract.v1', () => require('../documents/agent-contract-reader')],
   ['import.read-shipping-document.v1', () => require('../documents/agent-shipping-document-reader')],
   ['import.read-shelf-photo.v1', () => require('../warehouse/agent-shelf-photos')],
