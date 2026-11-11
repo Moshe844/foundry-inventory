@@ -11,6 +11,7 @@
 <p>Review missing costs, undated deliveries or existing unsent orders before purchasing. New supplier or price terms need individual approval.</p>
 <button class="btn"><%= result.supplierSelection?'Review supplier choice':'Review grouped drafts' %></button>
 </form></details><% } %>
+<% if(result.documentDiscoveryLink){ %><p><a class="btn" href="/autopilot/document-filing">Discover and file originals</a></p><% } %>
 <% if(result.shippingDocumentLink){ %><p><a class="btn" href="/autopilot/shipping-documents">Read shipping originals</a></p><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
