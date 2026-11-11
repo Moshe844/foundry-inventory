@@ -218,6 +218,7 @@ async function run(db,ctx,key,options={}){
       ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...(result.rotationForm?{rotationForm:true}:{}),
       ...(def.id===196?{lotCertificateLink:true}:{}),
+      ...(def.id===137?{shippingDocumentLink:true}:{}),
       ...inputs};
   }
   if(def.read){

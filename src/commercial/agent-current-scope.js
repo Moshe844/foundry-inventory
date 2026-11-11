@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 137:{common:'Reads complete original bills of lading and customs papers from uploads, saved attachments or earlier filings. Preserves each page and the original file. Exact printed PO numbers link the source to native purchase orders. The review shows page quotations for purchase orders, shipment references, containers, carriers and customs details.',
+ growth:'Reviews the complete original and prepares its exact PO links. You approve each batch. If the source does not establish a PO, you confirm the matching record and evidence.',
+ pro:'Can file clearly proven PO links from an explicitly authorized original without training after Watch and within current routine authority. Scanned or conflicting references need individual review. Existing paid attachment receipts are reused.',
+ enterprise:'Can file proven PO links from an exact owner-authorized original without training after Watch. Current authority and supplier and PO identity are checked again at dispatch. Complete originals and links remain available after downgrade.'},
  196:{common:'Preserves original certificates of analysis and safety sheets and links them to exact native SKUs and lots. Required evidence is checked against business-local expiry dates for recorded warehouse, serialized and supplier-direct lots. Missing or expired certificates appear in Needs You. Original bytes and link history stay available after downgrade.',
  growth:'Prepares an exact link from an uploaded, filed or mailbox original. You approve each link and confirm its expiry. A scoped supplier mailbox can prepare matching documents for review.',
  pro:'Can link clear originals from an explicitly approved supplier, mailbox, SKU and certificate scope without training after Watch. Conflicting, unconfirmed or scanned identities and dates need your review. Coverage alerts stay separate from physical stock decisions.',

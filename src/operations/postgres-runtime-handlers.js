@@ -619,6 +619,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
   'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
