@@ -923,6 +923,31 @@ html:root body.page-ask .sc-chat-history .ask-menu > summary { opacity:0; transi
 html:root body.page-ask .sc-chat-history .ask-chat:is(:hover,:focus-within,[aria-current]) .ask-menu > summary,html:root body.page-ask .sc-chat-history .ask-menu[open] > summary { opacity:1; }
 @media (hover:none) { html:root body.page-ask .sc-chat-history .ask-menu > summary { opacity:1; } }
 html:root body.page-ask .sc-chat-history > :is(.ask-all,.sc-ai-details,.sc-feedback) { flex:none; }
+/* Each conversation reads as its own row, not one long run of bold text: a small chat
+   mark starts it, the title is plain weight, and the open one is a white card with an
+   indigo mark. On the full list the time sits under the title, beside the same mark. */
+html:root body .ask-chat .sc-recent-request,html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:9px; align-items:start; }
+html:root body .ask-chat__mark { grid-row:span 2; display:grid; place-items:center; width:22px; height:22px; border-radius:6px; background:#fff; color:#6A7188; box-shadow:0 0 0 1px #E2E5EE; transition:background .14s,color .14s,box-shadow .14s; }
+html:root body .ask-chat:hover .ask-chat__mark { color:#3B4260; box-shadow:0 0 0 1px #CDD2DE; }
+html:root body .ask-chat[aria-current] .ask-chat__mark { background:#EEF0FF; color:#4F46E5; box-shadow:0 0 0 1px #C7CBFA; }
+/* A title in Hebrew or Yiddish reads right to left but stays beside its mark, and the
+   full list's request count lines up under the title. */
+html:root body .ask-chat .sc-recent-request strong { text-align:left; }
+html:root body .sc-conversation-row > p { padding-left:31px; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request { padding:7px 4px 7px 8px; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request strong { padding-top:2px; font-weight:400 !important; color:#3B4260; }
+html:root body.page-ask .sc-chat-history .ask-chat[aria-current] .sc-recent-request strong { font-weight:500 !important; color:var(--d-ink); }
+html:root body.page-ask .sc-chat-history .ask-chats > section { display:flex; flex-direction:column; gap:2px; }
+/* A row's menu is a solid card with a clear edge, never greyed by the list's fading
+   edge, and it opens upward when the list would cut it off at the bottom. */
+html:root body.page-ask .sc-chat-history .ask-chats:has(.ask-menu[open]) { -webkit-mask-image:none; mask-image:none; }
+html:root body .ask-menu__panel { width:216px; padding:6px; border:1px solid #D5D9E4; border-radius:10px; background:#fff; box-shadow:0 2px 4px rgba(17,21,46,.08),0 12px 24px -10px rgba(17,21,46,.30); }
+html:root body .ask-menu__panel :is(button,a) { font-weight:500; color:var(--d-ink); }
+html:root body .ask-menu__panel :is(button,a):hover { background:#F1F2F7; }
+html:root body .ask-menu__rename { flex-direction:column; align-items:stretch; gap:4px; margin:2px 0; padding:6px 0; border-top:1px solid #EEF0F5; border-bottom:1px solid #EEF0F5; }
+html:root body .ask-menu__rename input { min-height:32px; padding:4px 8px; font-size:13px; }
+html:root body .ask-menu__rename button { align-self:flex-end; width:auto; padding:5px 10px; color:#4338CA; }
+html:root body .ask-menu.ask-menu--up .ask-menu__panel { top:auto; bottom:28px; }
 /* The message box never shows a scrollbar while it fits; ask-tools.js sizes it to its words. */
 html:root body.page-ask .rm-chat > .rm-composer .rm-composer__input { overflow-y:hidden; }
 /* The chat column clips anything outside it, and the box is as wide as the column
@@ -977,3 +1002,58 @@ html:root body .ask-download > summary::before,html:root body .ask-download > su
 /* Remaining white surfaces get the shared card edge, and body text reads at 15px. */
 html:root body .rm-canvas :is(.raw-movement-ledger,.rm-transfer-board) { border:0; border-radius:12px; background:#fff; box-shadow:var(--d-1); }
 html:root body { font-size:15px; }
+
+/* ———— Home's four numbers ————
+   Each box says at a glance what it is and whether the news is good: a coloured mark
+   (solid red and pulsing only when something is urgent), a coloured edge along the top,
+   its small line in the same colour, and a bar drawn from the same records. The bars
+   grow in once as the page opens and home-tiles.js counts the number up. */
+html:root body .hm .hm-metrics .hm-tile { --tone:#4F46E5; --tone-ink:#4338CA; --tone-bg:#EEF0FF; --tone-soft:#B9BDF7; }
+html:root body .hm .hm-metrics .sc-metric.hm-tile,html:root body .hm .hm-metrics .sc-metric.hm-tile[data-tone] {
+  display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-rows:auto auto auto 1fr; column-gap:10px; row-gap:2px; align-content:start;
+  padding:15px 16px 14px; overflow:hidden; box-shadow:var(--d-1),inset 0 3px 0 var(--tone); }
+html:root body .hm .hm-metrics .hm-tile[data-tone=ok] { --tone:#12B76A; --tone-ink:#067647; --tone-bg:#E3F8EC; --tone-soft:#8EDDB2; }
+html:root body .hm .hm-metrics .hm-tile[data-tone=important] { --tone:#F97316; --tone-ink:#C4320A; --tone-bg:#FFEFE3; --tone-soft:#FDBA8C; }
+html:root body .hm .hm-metrics .hm-tile[data-tone=urgent] { --tone:#D92D20; --tone-ink:#B42318; --tone-bg:#FEECEB; --tone-soft:#F6A39C; }
+html:root body .hm .hm-metrics .hm-tile[data-tone=stock] { --tone:#0E9384; --tone-ink:#107569; --tone-bg:#E1F6F3; --tone-soft:#93DDD3; }
+html:root body .hm .hm-metrics .sc-metric.hm-tile[data-tone]:hover { box-shadow:var(--d-2),inset 0 3px 0 var(--tone); }
+html:root body .hm .hm-metrics .hm-tile > span:first-child { grid-column:1; grid-row:1; align-self:center; justify-self:start; font-weight:500; color:#3B4260; }
+html:root body .hm .hm-metrics .hm-tile > strong { grid-column:1; grid-row:2; position:relative; font-size:24px; font-variant-numeric:tabular-nums; }
+html:root body .hm .hm-metrics .hm-tile > .hm-sub { grid-column:1 / -1; grid-row:3; margin-top:2px; }
+html:root body .hm .hm-metrics .hm-tile > :is(.hm-meter,.hm-days) { grid-column:1 / -1; grid-row:4; align-self:end; justify-self:stretch; }
+html:root body .hm .hm-tile__mark { grid-column:2; grid-row:1 / span 2; align-self:start; display:grid; place-items:center; width:34px; height:34px; border-radius:10px; background:var(--tone-bg); color:var(--tone-ink); transition:transform .2s var(--d-ease); animation:hm-mark .5s var(--d-ease) .15s backwards; }
+html:root body .hm .hm-tile:hover .hm-tile__mark { transform:scale(1.08) rotate(-4deg); }
+html:root body .hm .hm-tile[data-tone=urgent] .hm-tile__mark { background:var(--tone); color:#fff; animation:hm-mark .5s var(--d-ease) .15s backwards,hm-alarm 1.8s ease-out .7s infinite; }
+/* The small line takes the box's colour when it carries news: up, down, ready, all in stock. */
+html:root body .hm .hm-metrics .hm-tile small.hm-sub.is-go { color:#067647; font-weight:500; }
+html:root body .hm .hm-metrics .hm-tile small.hm-sub.is-down { color:#C4320A; font-weight:500; }
+html:root body .hm .hm-metrics .hm-tile .hm-key { display:inline; font-size:12px; font-weight:500; color:var(--tone-ink); }
+/* Out of stock: the whole box turns red, not orange, so it matches every other urgent thing. */
+html:root body .rm-canvas .hm-metrics .hm-tile.is-alarm { background:#FFF7F6; box-shadow:0 0 0 1px #F8D3CF,0 8px 18px -10px rgba(180,35,24,.35),inset 0 3px 0 var(--tone); }
+html:root body .rm-canvas .hm-metrics .hm-tile.is-alarm > span:first-child { color:#B42318; font-weight:500; }
+html:root body .rm-canvas .hm-metrics .hm-tile.is-alarm > strong { color:#D92D20; }
+html:root body .rm-canvas .hm-metrics .hm-tile.is-alarm > .hm-sub { color:#B42318; }
+/* Bars: what part of the whole the number is. */
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter { height:6px; margin-top:12px; border-radius:3px; background:#E8EAF2; }
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter b { border-radius:3px; background:var(--tone); animation:pd-bar .8s var(--d-ease) .2s backwards; }
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter--ready b { background:#12B76A; }
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter--stock { background:#3CCB7F; animation:pd-bar .8s var(--d-ease) .2s backwards; transform-origin:left; }
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter--stock b { background:#D92D20; box-shadow:1px 0 0 #fff; }
+html:root body .rm-canvas .hm-metrics .hm-tile .hm-meter--reserved { background:var(--tone-soft); }
+/* Sales: one bar per day of the month, today's the strongest, days still ahead a faint line. */
+html:root body .hm .hm-days { display:flex; align-items:flex-end; gap:2px; height:30px; margin-top:12px; }
+html:root body .hm .hm-days i { flex:1 1 0; min-width:0; height:var(--h); min-height:2px; border-radius:2px 2px 1px 1px; background:var(--tone-soft); transform-origin:bottom; animation:hm-grow .5s var(--d-ease) backwards; animation-delay:calc(.2s + var(--i) * 14ms); }
+html:root body .hm .hm-days i.is-today { background:var(--tone); }
+html:root body .hm .hm-days i.is-ahead { background:#E4E7EE; }
+html:root body .hm .hm-tile:hover .hm-days i:not(.is-ahead) { background:var(--tone); }
+html:root body .hm .hm-tile > strong.is-counting { color:transparent !important; }
+html:root body .hm .hm-tile > strong.is-counting::after { content:attr(data-count); position:absolute; left:0; top:0; color:var(--count-ink); }
+@keyframes hm-grow { from { transform:scaleY(0); } }
+@keyframes hm-mark { from { opacity:0; transform:scale(.6) rotate(-12deg); } }
+@keyframes hm-alarm { 0% { box-shadow:0 0 0 0 rgba(217,45,32,.45); } 70%,100% { box-shadow:0 0 0 9px rgba(217,45,32,0); } }
+@media (max-width:640px) {
+  html:root body .hm .hm-metrics .hm-tile { padding:13px 13px 12px; column-gap:8px; }
+  html:root body .hm .hm-metrics .hm-tile > strong { font-size:20px; }
+  html:root body .hm .hm-tile__mark { width:28px; height:28px; border-radius:8px; }
+  html:root body .hm .hm-tile__mark svg { width:14px; height:14px; }
+}

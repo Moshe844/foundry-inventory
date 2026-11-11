@@ -159,13 +159,17 @@
   document.addEventListener('click', function (event) {
     document.querySelectorAll('.ask-download[open]').forEach(function (open) { if (!open.contains(event.target)) open.open = false; });
   });
-  // A menu opens downward unless the box that scrolls or clips it ends first;
-  // then it opens upward, so every format can be seen and chosen.
+  // A menu (an answer's download formats, a conversation's options) opens downward
+  // unless the box that scrolls or clips it ends first; then it opens upward, so every
+  // choice can be seen and chosen.
+  var menus = { 'ask-download': '.ask-download__menu', 'ask-menu': '.ask-menu__panel' };
   document.addEventListener('toggle', function (event) {
-    var menu = event.target;
-    if (!menu.classList || !menu.classList.contains('ask-download')) return;
-    menu.classList.remove('ask-download--up');
-    var list = menu.querySelector('.ask-download__menu');
+    var menu = event.target, kind = null;
+    if (!menu.classList) return;
+    for (var name in menus) if (menu.classList.contains(name)) kind = name;
+    if (!kind) return;
+    menu.classList.remove(kind + '--up');
+    var list = menu.querySelector(menus[kind]);
     if (!menu.open || !list) return;
     var top = 0, bottom = window.innerHeight;
     for (var box = menu.parentElement; box && box !== document.body; box = box.parentElement) {
@@ -173,6 +177,6 @@
       var edge = box.getBoundingClientRect(); top = Math.max(top, edge.top); bottom = Math.min(bottom, edge.bottom);
     }
     var place = menu.getBoundingClientRect(), room = list.offsetHeight + 8;
-    if (place.bottom + room > bottom && place.top - room >= top) menu.classList.add('ask-download--up');
+    if (place.bottom + room > bottom && place.top - room >= top) menu.classList.add(kind + '--up');
   }, true);
 }());

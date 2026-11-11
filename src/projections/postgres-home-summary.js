@@ -26,9 +26,12 @@ async function read(db,workspaceId,{seesMoney=false,sales:current=null,skuCount=
   skuCount===null?db.query('SELECT count(*)::int AS count FROM skus WHERE workspace_id=$1 AND is_active=1',[workspaceId]).then(result=>result.rows[0].count):skuCount,
  ]);
  if(!Number.isSafeInteger(watching)||watching<0)throw new RangeError('Home needs an exact active-SKU count.');
- const out={days:DAYS,watching,found:work.proposed+work.found,resolved:work.resolved,doneAlone:work.alone,doneApproved:work.approved,readyToShip:ready.rows[0].count,canAutomate:Boolean(state.canAutomate),salesChange:null,stockValue:null};
+ const out={days:DAYS,watching,found:work.proposed+work.found,resolved:work.resolved,doneAlone:work.alone,doneApproved:work.approved,readyToShip:ready.rows[0].count,canAutomate:Boolean(state.canAutomate),salesChange:null,salesDays:null,stockValue:null};
  if(seesMoney&&current){
-  const today=(await clock.forWorkspace(db,workspaceId)).calendarDate,prior=await sales.forPeriod(db,workspaceId,sameDaysLastMonth(today));
+  const today=(await clock.forWorkspace(db,workspaceId)).calendarDate;
+  const [prior,days]=await Promise.all([sales.forPeriod(db,workspaceId,sameDaysLastMonth(today)),sales.byDay(db,workspaceId,{from:current.from||today.slice(0,7)+'-01',to:current.to||today})]);
+  // Each day of the month so far, and how many days the month has, for Home's sales bars.
+  if(days)out.salesDays={days,monthDays:new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).getUTCDate()};
   if(Number(prior.minor)>0)out.salesChange=Math.round((Number(current.minor)-Number(prior.minor))*100/Number(prior.minor));
   const stock=await require('../lib/versioned-read-model').read(db,workspaceId,['home-stock-value'],()=>require('./postgres-cost-summaries').value(db,workspaceId),{domain:'business'});
   out.stockValue={minor:Number(stock.minor),currency:current.currency};

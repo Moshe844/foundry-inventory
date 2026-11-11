@@ -77,6 +77,10 @@ test('cancelled orders, deposits, one sales total, plan locks, number order and 
   const view=await require('../../src/web/orders-view').ordersList(db,ctx.workspaceId,await require('../../src/web/postgres-presenters').sales(db,ctx.workspaceId),{});
   assert.equal(view.kpis.month.minor,shared.minor);
   assert.equal(shared.minor,money.pnl.revenueMinor);assert(shared.minor>0);assert(shared.minor<100000,'ten unshipped units are not counted');
+  // Home's day-by-day sales bars are the same sales: every day of the month so far, adding up to the month.
+  const days=await require('../../src/accounting/posted-sales').byDay(db,ctx.workspaceId,{from:shared.from,to:shared.to});
+  assert.equal(days.length,Number(shared.to.slice(8,10)));assert.equal(days[0].day,shared.from);assert.equal(days.at(-1).day,shared.to);
+  assert.equal(days.reduce((sum,entry)=>sum+entry.minor,0),Number(shared.minor),'the days add up to the month');
 
  });
 
