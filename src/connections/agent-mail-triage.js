@@ -30,7 +30,8 @@ function decide(message,kind){
   const orderIntent=require('./email-ingestion').looksLikeAnOrderRequest(text.toLowerCase().replace(/[’‘]/gu,"'"));
   const asks=issue.test(text)||translatedQuestion.test(text)||/[?¿]/u.test(text)||
     triage.ASKING.some(phrase=>triage.saysPhrase(text.toLowerCase(),phrase));
-  if(orderIntent||!asks&&(fresh&&!sample.test(heading)&&(orderRequest.test(heading)||poHeading.test(heading))||
+  const structuredCustomerOrder=kind==='customer'&&require('../sales/postgres-email-order').isOrderEnvelope(subject,body,filenames.length>0);
+  if(orderIntent||!asks&&(structuredCustomerOrder||fresh&&!sample.test(heading)&&(orderRequest.test(heading)||poHeading.test(heading))||
     orderWords.test(heading)&&attaches.test(body)))
     return {category:'order',reason:'The current message asks to place an order or submits a named order.'};
   if(!asks&&(fresh&&!sample.test(heading)&&invoiceWords.test(heading)||inlineInvoice.test(body)&&invoiceTotals.test(body)))

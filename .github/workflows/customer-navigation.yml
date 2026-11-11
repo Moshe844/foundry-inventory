@@ -9,9 +9,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [core, crawl, shipping, agent-plans]
+        include:
+          - group: core
+          - group: crawl
+          - group: shipping
+          - group: agent-plans-1
+            plan_shard: 1
+          - group: agent-plans-2
+            plan_shard: 2
+          - group: agent-plans-3
+            plan_shard: 3
+          - group: agent-plans-4
+            plan_shard: 4
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.group == 'agent-plans' && 55 || 40 }}
+    timeout-minutes: ${{ startsWith(matrix.group, 'agent-plans-') && 55 || 40 }}
     env:
       NODE_ENV: test
       STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
@@ -63,10 +74,14 @@ jobs:
           fi
           mkdir -p output/customer-navigation-ci
       - name: Agent plan permissions and operational workflows
-        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agent-plans' }}
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && startsWith(matrix.group, 'agent-plans-') }}
+        env:
+          PLAN_SHARD: ${{ matrix.plan_shard }}
         run: |
           set -euo pipefail
-          npm run test:agent-plans 2>&1 | tee output/customer-navigation-ci/agent-plans.log
+          read -r -a tests <<< "$(node -p 'require("./package.json").scripts["test:agent-plans"]')"
+          test "${tests[0]}" = node
+          node --test-shard="$PLAN_SHARD/4" "${tests[@]:1}" 2>&1 | tee output/customer-navigation-ci/agent-plans.log
       - name: Private authentication persists before redirects
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
