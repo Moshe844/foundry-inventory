@@ -38,16 +38,20 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  return {actor,pilot,commercialAccess:{scope,entitlement},environment:{business:{name:row.business_name},actor:{role:actor.role},clock:{utc:new Date().toISOString()}}};
 }
 async function selected(db,ctx){if(!configured(ctx))return false;try{await access(db,ctx,{enabled:true});return true;}catch(e){if(e instanceof AuthorizationError)return false;throw e;}}
-function spendingLockMessage(pilot){
- if(!pilot.approval_reference||Number(pilot.ceiling_micro_usd)<=0)return 'The pilot is enabled, but paid agent work is locked until a Staging budget is approved.';
- if(new Date(pilot.period_ends_at)<=new Date())return 'Your approved Staging budget period has expired. Paid agent work is locked.';
- if(pilot.stopped)return 'Agent spending is paused. Your Staging budget is already approved.';
+function spendingLockMessage(pilot,now=Date.now()){
+ const staging=pilot?.admission_kind!=='COMMERCIAL';
+ const allowance=staging?'Staging test allowance':'AI allowance';
+ if(!pilot?.enabled)return allowance+' is unavailable for this inventory.';
+ if(!pilot.approval_reference||!(Number(pilot.ceiling_micro_usd)>0))return allowance+' needs approval before model-backed requests can run.';
+ const expiry=new Date(pilot.period_ends_at).getTime();
+ if(!Number.isFinite(expiry)||expiry<=now)return allowance+' has expired.';
+ if(pilot.stopped)return allowance+' was paused by an operator.';
  return null;
 }
 async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);
  if(pilot.admission_kind==='COMMERCIAL')return null;
- const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status();return {
- enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
+ const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status(),lockMessage=spendingLockMessage(pilot);return {
+ enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!lockMessage,lockMessage,
  workerAvailable:Boolean(pilot.worker_seen_at&&Date.now()-new Date(pilot.worker_seen_at).getTime()<30000)||
   (await db.query("SELECT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_worker_health WHERE kind='database-read' AND last_seen_at>now()-interval '30 seconds') AS available")).rows[0].available,
  budget:{ceiling:usage.ceiling,committed:usage.committed,remaining:usage.remaining},
@@ -68,7 +72,11 @@ async function start(db,ctx,message,options={}){
  ctx=await require('./codex-model-routing').context(db,ctx);
  await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
- const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
+ const locked=spendingLockMessage(pilot);
+ if(locked){
+  console.warn(JSON.stringify({kind:'ask_allowance_unavailable',reason:locked}));
+  throw new ValidationError('Ask is temporarily paused. '+locked+' Your message is saved below.',{reason:'agent_allowance_unavailable'});
+ }
  const chatId=typeof options.conversationId==='string'&&/^[a-zA-Z0-9_-]{8,160}$/.test(options.conversationId)?options.conversationId:null;
  const hasChatHistory=chatId&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 UNION ALL SELECT 1 FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->>'chatId'=$3 LIMIT 1",[ctx.workspaceId,ctx.actorId,chatId])).rows.length;
  const conversation=await require('./postgres-agent-context').capture(db,hasChatHistory?{...ctx,conversationId:chatId}:ctx,options.startedAt||null);
@@ -227,7 +235,7 @@ async function continuation(db,ctx,id){return db.transaction(async client=>{
 },{isolation:'REPEATABLE READ',readOnly:true});}
 async function resume(db,ctx,id){
  await require('./postgres-codex-enrollment').ensure(db,ctx);
- const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
+ const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused. '+locked+' Your saved request is still available.',{reason:'agent_allowance_unavailable'});
  const goal=await db.transaction(async client=>{
   const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
   if(row?.checkpoint.legacyReviewOnly)throw new ValidationError('This saved request is available for review. Start a new question to continue with the hosted agent; previously approved work will not be replayed.');
