@@ -75,7 +75,10 @@ test('Custom monthly buying plans allocate exact category and currency packs and
   const before=await effects(),path=workflow.path,request={month,secondaryQuantities:'MEASURED-REQUEST | '+annex.name+' | 2 | 5.125'};
   for(const tier of ['starter','growth','pro']){
     await subscribe(tier);
-    await browser.get(path+'?month='+month).expect(402);
+    const locked=await browser.get(path+'?month='+month).expect(200);
+    assert.match(locked.text,/data-agent-plan-locked/);
+    assert.match(locked.text,/Custom/);
+    await browser.get(path+'?month='+month).set('Accept','application/json').expect(402);
     await assert.rejects(workflow.prepare(db,ctx,request),e=>e.code==='entitlement_required');
     await assert.rejects(workflow.configure(db,ctx,{confirmed:'yes'}),e=>e.code==='entitlement_required');
   }

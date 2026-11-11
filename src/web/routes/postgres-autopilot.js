@@ -838,9 +838,10 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   const monthlyBuying=require('../../purchasing/agent-open-to-buy');
   const buyingPage=async(req,res)=>agentPage(req,res,'autopilot/open-to-buy',{title:'Monthly open-to-buy',nav:'purchasing',
-    backTo:{href:'/autopilot/reviews/open-to-buy',label:'Open-to-buy headroom'}},async()=>({
+    backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>({
     model:await monthlyBuying.page(database,req.ctx,{id:req.params.id,month:req.query.month,after:req.query.after}),
-  }),402);
+    backTo:{href:'/autopilot/reviews/open-to-buy',label:'Open-to-buy headroom'},
+  }));
   router.get(monthlyBuying.path,requireAuth,owner,asyncRoute(buyingPage));
   router.post(monthlyBuying.path,requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await monthlyBuying.prepare(database,req.ctx,req.body);
