@@ -108,6 +108,8 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresProviderWebhooks(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined)}));
   app.post('/autopilot/delivery-quality/:id/photos',multipart({limit:10*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
+  app.post('/autopilot/document-filing',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
+  app.post('/autopilot/shipping-documents',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/procedure-originals',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/receiving-voice-notes',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));

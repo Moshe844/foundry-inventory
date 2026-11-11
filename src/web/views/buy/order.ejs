@@ -44,6 +44,7 @@
     </div>
   </header>
   <%- include('../partials/filed-documents-link',{documentTargetKind:'purchase_order',documentTargetId:order.id}) %>
+  <% if(locals.currentUser?.role==='owner'){ %><p><a href="/autopilot/shipping-documents?reference=<%= encodeURIComponent(order.po_number) %>">Read a bill of lading or customs original</a></p><% } %>
   <%- include('_tabs', { active: '/purchasing/orders' }) %>
   <% if(dual){ %><section class="ox-note"><h2>Two-person approval</h2>
     <% if(dual.locked){ %><p>Your saved purchase threshold still applies. Pro or Custom is required to collect signatures.</p><a href="/billing">View plans</a>

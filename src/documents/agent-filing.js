@@ -4,7 +4,14 @@ const policy=require('../commercial/agent-plan'),kinds=['other','packing_slip','
 const targets={purchase_order:{table:'purchase_orders',reference:'po_number',party:'supplier_id',path:'/purchasing/orders/'},sales_order:{table:'sales_orders',reference:'order_number',party:'customer_id',path:'/orders/'},item:{table:'items',reference:'name',path:'/inventory/'}};
 const digest=v=>createHash('sha256').update(v).digest('hex');
 function job(kind){return ['bill_of_lading','customs'].includes(kind)?137:142;}
-async function owner(db,ctx){if(!(await db.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner'",[ctx.workspaceId,ctx.actorId])).rowCount)throw new AuthorizationError('Only the inventory owner can file or open these business documents.');}
+async function owner(db,ctx){
+ const member=(await db.query(`SELECT 1 FROM workspaces w JOIN users u ON u.workspace_id=w.id AND u.account_id=w.owner_account_id
+   WHERE w.id=$1 AND u.id=$2 AND u.role='owner' AND w.deletion_requested_at IS NULL
+   AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=w.owner_account_id AND x.disabled_at IS NOT NULL)`,
+   [ctx.workspaceId,ctx.actorId])).rowCount;
+ if(!member)throw new AuthorizationError('Only the current inventory owner can file or open these private business documents.');
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
+}
 async function source(db,ctx,id,lock=false){
  const row=(await db.query(`SELECT a.*,m.supplier_id,m.trust_status,CASE WHEN m.classification='customer' THEN
   (SELECT min(c.id) FROM customers c WHERE c.workspace_id=m.workspace_id AND lower(c.email)=lower(m.sender) AND c.record_state='ACTIVE' HAVING count(*)=1) END AS customer_id
@@ -20,8 +27,12 @@ async function build(db,ctx,row,args,kind){
  await policy.requireWorkspaceJob(db,ctx.workspaceId,142,'draft');
  const s=await source(db,ctx,args.fileAttachment);
  // An omitted or relabelled document type cannot lower the source's plan ceiling.
- if(/^\s*bill\s+of\s+lading\b/im.test(s.extracted_text))documentKind='bill_of_lading';
+ const proof=require('./shipping-document-proof'),visible=proof.inspect([{page:1,text:s.extracted_text,sourceKind:'text'}]);
+ if(visible.kind)documentKind=visible.kind;
+ else if(visible.headings.length&&job(documentKind)!==137)throw new ValidationError('This source includes shipping paperwork. Choose its exact type and purchase order.');
+ else if(/^\s*bill\s+of\s+lading\b/im.test(s.extracted_text))documentKind='bill_of_lading';
  else if(/^\s*customs\s+(declaration|entry|papers?|clearance)\b/im.test(s.extracted_text))documentKind='customs';
+ if(job(documentKind)===137&&visible.unrelated)throw new ValidationError('This original identifies a different business document type. Use its matching filing workflow.');
  if(job(documentKind)===137&&kind!=='purchase_order')throw new ValidationError('File bills of lading and customs papers on their purchase order.');
  await policy.requireWorkspaceJob(db,ctx.workspaceId,job(documentKind),'draft');
  const type=targets[kind],reference=row[type.reference];
@@ -29,7 +40,17 @@ async function build(db,ctx,row,args,kind){
  if(type.party&&s[type.party]&&s[type.party]!==party)throw new ValidationError('The attachment belongs to a different '+(kind==='purchase_order'?'supplier':'customer')+'.');
  let identifiers=[reference];if(kind==='item')identifiers=(await db.query('SELECT code FROM skus WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,row.id])).rows.map(r=>r.code);
  const mentioned=identifiers.some(code=>code&&new RegExp('(?<![A-Za-z0-9])'+String(code).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![A-Za-z0-9])','i').test(s.extracted_text));
- const needsTargetConfirmation=!mentioned||s.trust_status!=='TRUSTED'||(kind==='purchase_order'&&documentKind==='other')||(type.party?!s[type.party]:!s.supplier_id);
+ let proven=mentioned;
+ if(job(documentKind)===137){
+  proven=false;
+  try{
+   const pages=await require('./contract-source').read({filename:s.filename,buffer:s.content});
+   const printed=proof.inspect(pages);
+   proven=printed.kind===documentKind&&printed.headings.some(h=>!h.uncertain)&&printed.references.length>0&&
+    printed.references.every(r=>!r.uncertain&&proof.normalized(r.value)===proof.normalized(reference))&&!printed.issues.length;
+  }catch(error){if(error.code!=='validation_error')throw error;}
+ }
+ const needsTargetConfirmation=!proven||s.trust_status!=='TRUSTED'||(kind==='purchase_order'&&documentKind==='other')||(type.party?!s[type.party]:!s.supplier_id);
  return {payload:{recordId:row.id,targetKind:kind,targetReference:reference,attachmentId:s.id,messageId:s.message_id,sourceHash:s.content_hash,textHash:digest(s.extracted_text),filename:s.filename,documentKind,needsTargetConfirmation},
   summary:'File '+s.filename+' on '+reference+'. Save the original document and its readable text.'+(needsTargetConfirmation?' Confirm that this is the right record; the source does not independently prove the match.':' The source identifies this record.')+' This files evidence only; it does not record stock, an invoice, payment or changed terms.'};
 }

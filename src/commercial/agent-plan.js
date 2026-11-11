@@ -144,7 +144,7 @@ async function automaticPurchaseCommitments(database,state,currency,exceptId=nul
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['purchasing.supplier_direct',37],
-  ['document.read_contract',143],
+  ['document.read_contract',143],['document.read_shipping_original',137],['document.discover_filing',142],
   ['warehouse.read_shelf_photo',140],
   ['sales_order.reserve_rotation',192],['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],['purchasing.switch_backup_supplier',95],
   ['purchasing.prepare_blanket_release',42],

@@ -1,0 +1,87 @@
+<div style="display:grid;gap:1rem;min-width:0">
+<header class="card card-body"><h1>Discover and file originals</h1>
+<p>Check incoming attachments and file original evidence on the exact purchase order, customer order or product.</p>
+<p><a href="/autopilot/documents">Open filed documents</a></p>
+<% if(!screen.allowed){ %><p class="notice" data-filing-plan-locked>Growth, Pro or Custom is required for new filing. Your existing originals remain available. <a href="/billing">Review plans</a></p><% }else if(screen.stop){ %><p class="notice"><%= screen.stop %></p><% } %>
+</header>
+<% const d=screen.selected; if(d){ %>
+<section class="card card-body" style="min-width:0;overflow-wrap:anywhere">
+<h2><%= d.filename %></h2>
+<p data-filing-status><%= {PENDING:'Queued',RUNNING:'Reading original',REVIEW:'Needs owner review',FILED:'Filed',FAILED:'Reading stopped'}[d.status] %></p>
+<p><a class="btn" href="/autopilot/document-filing/<%= d.id %>/original">Download exact original</a></p>
+<% if(['PENDING','RUNNING'].includes(d.status)){ %><p><a href="/autopilot/document-filing/<%= d.id %>">Refresh status</a></p><% } %>
+<% if(d.filings.length){ %><ul><% d.filings.forEach(file=>{ %><li><a href="/autopilot/documents/<%= file.id %>">Filed copy</a> · <a href="<%= file.recordHref %>"><%= screen.targetKinds[file.kind] %> <%= file.reference %></a></li><% }); %></ul><% } %>
+<% if(d.issue){ %><p class="notice"><%= d.issue %></p><% } %>
+<% if(d.evidence.issues?.length||d.evidence.references?.length){ %>
+<h3>Original evidence</h3>
+<ul><% for(const reference of d.evidence.references||[]){ %><li>Section <%= reference.page %> · <%= reference.quote %><% if(reference.uncertain){ %> · Check against original<% } %></li><% } %>
+<% for(const issue of d.evidence.issues||[]){ %><li><%= issue.reason %><% if(issue.quote){ %> · Section <%= issue.page %> · <%= issue.quote %><% } %></li><% } %></ul>
+<% } %>
+<% if(d.sections.length){ %><details><summary>Read the original sections</summary>
+<% for(const page of d.sections){ %><h3>Section <%= page.page %><% if(page.sourceName){ %> · <%= page.sourceName %><% } %></h3>
+<% if(page.visualObservation){ %><p><%= page.visualObservation %></p><% } %>
+<pre style="white-space:pre-wrap;overflow-wrap:anywhere"><%= page.text %></pre><% } %></details><% } %>
+<% if(['FILED','REVIEW'].includes(d.status)){ %><p><%= d.documents_used %> new document reads used for this original.</p><% } %>
+<% if(d.status==='REVIEW'&&screen.allowed&&!screen.stop){ %>
+<form method="post" action="/autopilot/document-filing/<%= d.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= screen.reviewHash %>">
+<% if(d.evidence.candidates.length){ %><fieldset><legend>Exact records from this original</legend><% for(const candidate of d.evidence.candidates){ %>
+<p><label><input type="checkbox" name="targets" value="<%= candidate.kind %>:<%= candidate.value %>"> File on <%= screen.targetKinds[candidate.kind] %> <%= candidate.reference %></label> · <a href="<%= candidate.href %>">Open record</a></p>
+<% } %></fieldset><% } %>
+<% if(d.document_kind==='other'||d.evidence.shippingKinds.length>1){ %>
+<p><label>Document type <select name="documentKind">
+<% for(const type of d.evidence.shippingKinds.length>1?d.evidence.shippingKinds:screen.documentKinds){ %><option value="<%= type %>"><%= type.replace(/_/g,' ') %></option><% } %>
+</select></label></p><% } %>
+<details<% if(!d.evidence.candidates.length){ %> open<% } %>><summary>Enter an exact verified record</summary>
+<p><label for="filing-target-kind">Record type</label> <select id="filing-target-kind" name="targetKind"><% for(const [kind,name] of Object.entries(screen.targetKinds)){ %><option value="<%= kind %>"><%= name %></option><% } %></select></p>
+<p><label>Exact order number, SKU or product code <input name="reference" maxlength="120"></label></p>
+</details>
+<p><label>How you verified any uncertain match <textarea name="reason" maxlength="1000" rows="3"></textarea></label></p>
+<p><label><input type="checkbox" required name="confirmed" value="yes"> I checked the exact original and confirm these records.</label></p>
+<button class="btn btn-primary">File on confirmed records</button>
+</form>
+<% } %>
+<% if(d.status==='FAILED'&&screen.allowed&&!screen.stop){ %><form method="post" action="/autopilot/document-filing/<%= d.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Retry for owner review</button></form><% } %>
+<% if(['REVIEW','FAILED'].includes(d.status)&&!d.dismissed_at){ %><form method="post" action="/autopilot/document-filing/<%= d.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Dismiss review notice</button></form><% } %>
+</section>
+<% } %>
+<% if(screen.allowed&&!screen.stop){ %>
+<section class="card card-body"><h2>Check an original</h2>
+<form method="post" action="/autopilot/document-filing" enctype="multipart/form-data">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(screen.fileAttachment){ %><input type="hidden" name="fileAttachment" value="<%= screen.fileAttachment %>"><p>Use the selected mailbox attachment.</p><% }else{ %>
+<p><label>Original file up to 20 MB <input type="file" name="original" required></label></p><% } %>
+<% if(screen.canAuto){ %><p><label><input type="checkbox" name="automatic" value="yes"> File exact links automatically for this original.</label></p>
+<p><label><input type="checkbox" name="authorized" value="yes"> I authorize automatic filing of proven links from this original.</label></p><% } %>
+<p>One new complete original uses one document read. A paid read of the same original is reused.</p>
+<button class="btn btn-primary">Find exact filing records</button>
+</form></section>
+<% } %>
+<% if(screen.allowed||screen.scopes.length){ %>
+<section class="card card-body"><h2>Automatic mailbox filing</h2>
+<% if(screen.scopes.length){ %><ul><% for(const scope of screen.scopes){ %><li style="overflow-wrap:anywhere"><strong><%= scope.email %></strong> · <%= scope.mailbox %> · <%= scope.target_kinds.map(kind=>screen.targetKinds[kind]).join(', ') %>
+<form method="post" action="/autopilot/document-filing/scope"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="stop" value="yes">
+<input type="hidden" name="id" value="<%= scope.id %>"><input type="hidden" name="revision" value="<%= scope.revision %>">
+<button class="btn">Stop this scope</button></form></li><% } %></ul><% }else{ %><p>No mailbox senders are approved for automatic filing.</p><% } %>
+<% if(screen.canAuto&&screen.mailboxes.length&&screen.parties.length){ %>
+<form method="post" action="/autopilot/document-filing/scope">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p><label for="filing-mailbox">Connected mailbox</label> <select id="filing-mailbox" name="connectorId" required><option value="">Choose mailbox</option><% for(const mailbox of screen.mailboxes){ %><option value="<%= mailbox.id %>"><%= mailbox.display_name %></option><% } %></select></p>
+<p><label for="filing-sender">Known sender</label> <select id="filing-sender" name="party" required><option value="">Choose known sender</option><% for(const party of screen.parties){ %><option value="<%= party.value %>"><%= party.type %> · <%= party.name %> · <%= party.email %></option><% } %></select></p>
+<fieldset><legend>Records StockChief can file on</legend>
+<p><label><input type="checkbox" name="targetKinds" value="purchase_order"> Purchase orders for this supplier</label></p>
+<p><label><input type="checkbox" name="targetKinds" value="sales_order"> Customer orders for this customer</label></p>
+<p><label><input type="checkbox" name="targetKinds" value="item"> Products recorded for this sender</label></p>
+</fieldset>
+<p><label><input type="checkbox" name="confirmed" value="yes" required> I authorize filing proven links from new originals sent by this sender to this mailbox.</label></p>
+<button class="btn btn-primary">Approve mailbox filing scope</button>
+</form>
+<% }else if(screen.allowed){ %><p><%= screen.autoStop||'Enable routine authority and connect a mailbox with a recorded supplier or customer email to approve a filing scope.' %></p><% } %>
+</section><% } %>
+<section class="card card-body"><h2>Original filing history</h2>
+<% if(!screen.rows.length){ %><p>No originals have been checked.</p><% }else{ %><ul><% for(const row of screen.rows){ %>
+<li style="overflow-wrap:anywhere"><a href="/autopilot/document-filing/<%= row.id %>"><%= row.filename %></a> · <%= {PENDING:'Queued',RUNNING:'Reading',REVIEW:'Needs review',FILED:'Filed',FAILED:'Reading stopped'}[row.status] %></li>
+<% } %></ul><% } %>
+<% if(screen.page>1){ %><a href="/autopilot/document-filing?page=<%= screen.page-1 %>">Previous originals</a><% } %>
+<% if(screen.more){ %><a href="/autopilot/document-filing?page=<%= screen.page+1 %>">Next originals</a><% } %>
+</section></div>

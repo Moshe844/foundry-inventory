@@ -614,10 +614,53 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const discovery=require('../../documents/agent-document-discovery');
+  const filingPath='/autopilot/document-filing';
+  const discoveryPage=async(req,res)=>res.set('Cache-Control','no-store').page('autopilot/document-discovery',{
+    title:'Discover and file originals',nav:'autopilot',screen:await discovery.screen(database,req.ctx,{...req.query,id:req.params.id||null})});
+  router.get(filingPath,requireAuth,owner,asyncRoute(discoveryPage));
+  router.post(filingPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await discovery.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,filingPath+'/'+result.id);
+  }));
+  router.post(filingPath+'/scope',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../documents/document-filing-scopes').configure(database,req.ctx,req.body);
+    res.redirect(303,filingPath);
+  }));
+  router.get(filingPath+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await discovery.load(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.get(filingPath+'/:id',requireAuth,owner,asyncRoute(discoveryPage));
+  for(const [operation,run] of [['approve',discovery.approve],['retry',discovery.retry],['dismiss',discovery.dismiss]]){
+    router.post(filingPath+'/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,filingPath+'/'+req.params.id);
+    }));
+  }
+  const shippingOriginals=require('../../documents/agent-shipping-document-reader');
+  const shippingOriginalPage=async(req,res)=>res.page('autopilot/shipping-document-reading',{title:'Bills of lading and customs papers',nav:'autopilot',
+    screen:await shippingOriginals.screen(database,req.ctx,{...req.query,id:req.params.id||null}),shippingProof:require('../../documents/shipping-document-proof')});
+  router.get('/autopilot/shipping-documents',requireAuth,owner,asyncRoute(shippingOriginalPage));
+  router.post('/autopilot/shipping-documents',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await shippingOriginals.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,'/autopilot/shipping-documents/'+result.id);
+  }));
+  router.get('/autopilot/shipping-documents/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await shippingOriginals.load(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.get('/autopilot/shipping-documents/:id',requireAuth,owner,asyncRoute(shippingOriginalPage));
+  for(const [operation,run] of [['approve',shippingOriginals.approve],['retry',shippingOriginals.retry],['dismiss',shippingOriginals.dismiss]]){
+    router.post('/autopilot/shipping-documents/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/shipping-documents/'+req.params.id);
+    }));
+  }
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
     const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
     const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));
-    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
+    const filingEnabled=discovery.available(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId));
+    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,filingEnabled,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
   }));
   router.get('/autopilot/documents/:id/download',requireAuth,owner,asyncRoute(async(req,res)=>{
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);
