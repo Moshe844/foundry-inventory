@@ -38,6 +38,7 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   const provider=providers.get(connection.provider_type);
   if(!provider?.poll)throw Object.assign(new Error('This mailbox provider has no polling implementation.'),
     {code:'mailbox_poll_unavailable',retryable:false});
+  if(provider.pollPage&&client.withSessionLock)return require('../connections/postgres-mailbox-poll').run(client,job,connection,provider);
   const database=scopedDatabase(client);
   const pollScope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId),incoming=await require('../commercial/usage-categories').incomingMeter(database,pollScope);
   if(incoming==='incoming_emails'&&(await entitlements.meterState(database,pollScope,incoming)).remaining<=0)throw new entitlements.EntitlementError('Incoming email processing has reached the current allowance. Add a pack or upgrade to resume processing.',{meter:incoming});
@@ -330,7 +331,7 @@ async function runtimeSweep(job,client,options={}){
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
       const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
-        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
+        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY','PAUSED') LIMIT 1`,
       [connector.workspace_id,connector.id]);
       if(due&&!active.rows.length){
         const bucket=Math.floor(now/intervalMs);
