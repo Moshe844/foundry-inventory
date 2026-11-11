@@ -1,0 +1,43 @@
+
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Private quotation · StockChief</title>
+<style>
+body{margin:0;background:#f5f7fa;color:#182333;font:1rem/1.5 system-ui,sans-serif}
+main{max-width:44rem;margin:2rem auto;padding:0 1rem;overflow-wrap:anywhere}
+section,form{margin:1rem 0;padding:1rem;background:white;border:1px solid #d6dfe8;border-radius:12px}
+h1,h2{line-height:1.2}h2{font-size:1.25rem}
+dl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem 1rem}dd{margin:0;text-align:right}
+ul{padding-left:1.25rem}li+li{margin-top:.7rem}label{display:block;margin:1rem 0}
+input:not([type=checkbox]){display:block;box-sizing:border-box;width:100%;margin-top:.3rem;padding:.65rem;border:1px solid #8b98a6;border-radius:6px;font:inherit}
+button{padding:.75rem 1rem;background:#4438b4;color:white;border:0;border-radius:8px;font:inherit;font-weight:650;cursor:pointer}
+</style></head><body><main>
+<% if(problem){ %>
+<h1>Private quotation</h1><p role="alert"><%= problem %></p>
+<% if(retryPath){ %><p><a href="<%= retryPath %>">Reload quotation</a></p><% } %>
+<% }else if(receipt){ %>
+<h1>Acceptance received</h1><p>The business received your acceptance of <strong><%= receipt.quoteNumber %></strong> on <%= helpers.dateTime(receipt.acceptedAt) %>.</p>
+<p>Contact the business for order, delivery or collection updates.</p>
+<% }else if(offer){ %>
+<h1>Quotation <%= offer.quoteNumber %></h1><p>From <strong><%= offer.issuer %></strong> for <strong><%= offer.customer %></strong></p>
+<p><% if(offer.orderDate){ %>Issued <%= offer.orderDate %> · <% } %>Valid through <%= offer.validUntil %></p>
+<section><h2>Products and prices</h2><ul>
+<% offer.lines.forEach(line=>{ %><li><strong><%= line.product %></strong><br><%= line.quantity %> <%= line.unit %><% if(line.pricedQuantity!=null&&line.priceUnit!==line.unit){ %> · <%= line.pricedQuantity %> <%= line.priceUnit %><% } %> · <%= helpers.money(line.unitPriceMinor,offer.currency) %> per <%= line.priceUnit %><br>
+<%= helpers.money(line.totalMinor,offer.currency) %> including tax and discounts
+<% if(line.discountMinor||line.taxMinor){ %><br>Discount <%= helpers.money(line.discountMinor||0,offer.currency) %> · Tax <%= helpers.money(line.taxMinor||0,offer.currency) %><% } %></li><% }); %></ul>
+<dl><dt>Products</dt><dd><%= helpers.money(offer.subtotalMinor,offer.currency) %></dd>
+<dt>Discount</dt><dd><%= helpers.money(offer.discountMinor,offer.currency) %></dd>
+<dt>Tax</dt><dd><%= helpers.money(offer.taxMinor,offer.currency) %></dd>
+<% if(offer.chargesMinor){ %><dt>Charges</dt><dd><%= helpers.money(offer.chargesMinor,offer.currency) %></dd><% } %>
+<dt><strong>Total (<%= offer.currency %>)</strong></dt><dd><strong><%= helpers.money(offer.totalMinor,offer.currency) %></strong></dd></dl></section>
+<section><h2>Payment and delivery</h2><p><%= offer.terms %></p>
+<p><%= offer.deliveryMethod==='PICKUP'?'Customer pickup':offer.shippingAddress %></p>
+<% if(offer.neededBy){ %><p>Requested by <%= offer.neededBy %></p><% } %></section>
+<form method="post" action="/customer/quote/<%= token %>/accept">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedOffer" value="<%= offerHash %>">
+<label>Your full name<input required name="buyerName" autocomplete="name" maxlength="160"></label>
+<label>Email address on this quotation<input required type="email" name="buyerEmail" autocomplete="email" maxlength="254"></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> I accept these products, quantities, prices and terms.</label>
+<button type="submit">Accept this quotation</button>
+</form><% } %>
+</main></body></html>

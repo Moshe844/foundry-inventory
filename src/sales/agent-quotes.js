@@ -56,12 +56,15 @@ const specs=[{
   build:async(db,ctx,row)=>{
     await policy.requireWorkspaceJob(db,ctx.workspaceId,75,'draft');
     const quote=await quotes.get(db,ctx.workspaceId,row.id);
+    const buyers=require('./agent-quote-buyers'),link=await buyers.linked(db,ctx.workspaceId,quote.id);
+    if(link)return buyers.build(db,ctx,quote,link);
     if(quote.status!=='OPEN')throw new ValidationError('Choose an open quotation the customer has accepted.');
     const today=await require('../lib/business-time').today(db,ctx.workspaceId);
     if(quote.valid_until<today)throw new ValidationError('This quote expired. Prepare a current revision.');
     return {payload:{recordId:quote.id,reviewedHash:quote.pricing_hash},summary:'Confirm the customer accepted '+quote.quote_number+' and create its draft order at the agreed quote prices.'};
   },execute:async(db,ctx,p)=>{
     await policy.requireWorkspaceJob(db,ctx.workspaceId,75,'draft');
+    if(p.buyerAcceptanceId)return require('./agent-quote-buyers').approve(db,ctx,p);
     return quotes.decide(scoped(db),ctx,p.recordId,{accept:true,expectedHash:p.reviewedHash,today:await require('../lib/business-time').today(db,ctx.workspaceId)});
   },verify:async(db,ctx,r,p)=>{
     const quote=await quotes.get(db,ctx.workspaceId,p.recordId);

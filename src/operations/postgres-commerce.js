@@ -277,9 +277,7 @@ async function salesOrder(database, workspaceId, id) {
         ON effect.workspace_id=request.workspace_id AND effect.kind='payment.request.create'
         AND effect.payload->>'requestId'=request.id
       WHERE request.workspace_id=$1 AND request.sales_order_id=$2 ORDER BY request.created_at DESC,request.id DESC`,[workspaceId,id]),
-    database.query(`SELECT * FROM customer_payment_terms
-      WHERE workspace_id=$1 AND (customer_id=$2 OR customer_id IS NULL)
-      ORDER BY (customer_id IS NULL),updated_at DESC,id DESC LIMIT 1`,[workspaceId,header.rows[0].customer_id]),
+    require('../sales/postgres-payment-terms').forOrder(database,workspaceId,id,header.rows[0].customer_id),
     database.query(`SELECT COALESCE(SUM(amount_minor),0)::bigint AS received_minor
       FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2
         AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,[workspaceId,id]),
@@ -292,7 +290,7 @@ async function salesOrder(database, workspaceId, id) {
   const mappedLines=lines.rows.map((row)=>{const kitComponents=kitParts.get(row.id)||[],kitReady=kitView.ready(kitComponents);return {...row,allocated:Number(row.allocated)+kitReady,
     physicalAllocated:Number(row.allocated),kitReady,isKit:kitComponents.length>0,kitComponents,
     quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]};});
-  const terms=paymentTerms.rows[0]||null;
+  const terms=paymentTerms;
   const orderTotalMinor=require('../sales/order-total').orderTotalMinor(header.rows[0],mappedLines);
   const requiredDepositMinor=terms?.kind==='DEPOSIT'?(terms.deposit_minor==null
     ?Math.round(orderTotalMinor*Number(terms.deposit_percent||0)/100):Math.min(orderTotalMinor,Number(terms.deposit_minor))):0;

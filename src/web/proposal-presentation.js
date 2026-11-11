@@ -38,6 +38,16 @@ function present(proposal){
    {label:'Posting date',value:p.date}
   ]};
  }
+ if(proposal.action_type==='sales_quote.accept'&&proposal.payload.buyerAcceptanceId){
+  const {offer,buyerName,buyerEmail,acceptedAt}=proposal.payload,money=require('../domain/currency');
+  return {summary:proposal.summary,impact:'Creates one draft sales order',fields:[
+    {label:'Quotation',value:offer.quoteNumber},{label:'Customer',value:offer.customer},
+    {label:'Buyer',value:buyerName+' · '+buyerEmail},{label:'Accepted',value:new Date(acceptedAt).toISOString()},
+    {label:'Products',value:offer.lines.map(l=>l.quantity+' '+l.unit+' · '+l.product).join('\n'),multiline:true},
+    {label:'Discount',value:money.format(offer.discountMinor,offer.currency)},{label:'Tax',value:money.format(offer.taxMinor,offer.currency)},
+    {label:'Total',value:money.format(offer.totalMinor,offer.currency)+' '+offer.currency},
+    {label:'Payment terms',value:offer.terms},{label:'Delivery',value:offer.deliveryMethod==='PICKUP'?'Customer pickup':offer.shippingAddress}]};
+ }
  if(proposal.action_type==='sales_quote.add_companions'){
   const p=proposal.payload,format=n=>require('../domain/currency').format(n,p.currency);
   return {summary:proposal.summary,impact:'Saves a private revision with the original quote and its terms in history.',fields:[

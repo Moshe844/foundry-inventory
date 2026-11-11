@@ -985,6 +985,26 @@ function createPostgresCommerceRouter(database,options={}){
     let form={};if(req.query.revise){const q=await quotations.get(database,req.ctx.workspaceId,req.query.revise),p=q.input;form={...p,skuId:p.lines.map(l=>l.skuId),quantity:p.lines.map(l=>l.quantity),unitPrice:p.lines.map(l=>l.unitPriceMinor==null?'':require('../../domain/currency').fromMinor(l.unitPriceMinor,p.currency)),priceOverride:p.lines.map(l=>l.priceOverride?'1':'0'),customerShippingAddress:p.shipToAddress,tax:require('../../domain/currency').fromMinor(p.taxMinor,p.currency),discount:require('../../domain/currency').fromMinor(p.discountMinor,p.currency),couponCodes:(p.codes||[]).join(', '),orderDate:entryToday(req),supersedesId:q.id};}return renderEntry(req,res,{quotation:true,form});
   }));
   router.post('/quotes',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),q=await quotations.create(database,req.ctx,{...input,validUntil:req.body.validUntil,requestKey:req.body.idempotencyKey,supersedesId:req.body.supersedesId||null});return res.redirect(303,'/quotes/'+q.id);}catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{quotation:true,form:req.body,formError:error.message,status:400});}}));
+  const quoteBuyers=require('../../sales/agent-quote-buyers');
+  const buyerUrl=id=>'/quotes/'+encodeURIComponent(id)+'/buyer';
+  router.get('/quotes/:id/buyer',requireOwner,asyncRoute(async(req,res)=>{
+    res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});
+    return res.page('sales/quote-buyer',{title:'Private buyer acceptance',nav:'sales',model:await quoteBuyers.page(database,req.ctx,req.params.id)});
+  }));
+  router.post('/quotes/:id/buyer/publish',requireOwner,asyncRoute(async(req,res)=>{
+    await quoteBuyers.publish(database,req.ctx,req.params.id,req.body);
+    return res.redirect(303,buyerUrl(req.params.id));
+  }));
+  router.post('/quotes/:id/buyer/revoke',requireOwner,asyncRoute(async(req,res)=>{
+    await quoteBuyers.revoke(database,req.ctx,req.params.id,req.body);
+    return res.redirect(303,buyerUrl(req.params.id));
+  }));
+  router.post('/quotes/:id/buyer/review',requireOwner,asyncRoute(async(req,res)=>{
+    const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Review the exact buyer acceptance.',
+      {action:'sales_quote.accept',recordReference:req.params.id});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review the saved buyer acceptance before drafting an order.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
   const quoteCompanions=require('../../sales/agent-quote-companions');
   const companionUrl=id=>'/quotes/'+encodeURIComponent(id)+'/companions';
   async function companionSelection(req){
@@ -1016,12 +1036,16 @@ function createPostgresCommerceRouter(database,options={}){
     return res.redirect(303,companionUrl(req.params.id)+'?'+new URLSearchParams({locationId:req.body.locationId}));
   }));
   router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>{
-    const [quotation,successor]=await Promise.all([
+    const [quotation,successor,buyerLink,agent]=await Promise.all([
       quotations.get(database,req.ctx.workspaceId,req.params.id),
       database.query('SELECT id,quote_number FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2 LIMIT 1',
-        [req.ctx.workspaceId,req.params.id]).then(r=>r.rows[0])
+        [req.ctx.workspaceId,req.params.id]).then(r=>r.rows[0]),
+      quoteBuyers.linked(database,req.ctx.workspaceId,req.params.id),
+      require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId)
     ]);
+    const policy=require('../../commercial/agent-plan');
     return res.page('sales/quote',{title:'Quotation',nav:'sales',quotation,successor,today:entryToday(req),
+      buyerManaged:Boolean(buyerLink),canOpenBuyer:req.user?.role==='owner'&&(buyerLink||policy.usesAgentTerms(agent)&&policy.permits(agent.plan,75,'draft')),
       canEmailQuotation:req.user?.role==='owner',canReviewCompanions:req.user?.role==='owner'});
   }));
   const quotationMail=require('../../sales/quotation-mail');
@@ -1040,6 +1064,7 @@ function createPostgresCommerceRouter(database,options={}){
   }));
   router.get('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
     const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);if(!['DRAFT','CONFIRMED','BACKORDERED'].includes(d.order.status))throw new ValidationError('Only an order that has not started shipping can be edited.');
+    if(d.paymentTerms?.quoteBound)throw new ValidationError('The buyer accepted the exact terms on this order. Use a new quotation for changes.');
     const q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
     return renderEntry(req,res,{form:entry.formFromOrder(d.order,d.lines,q),editOrder:d.order});
   }));

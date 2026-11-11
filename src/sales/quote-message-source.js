@@ -12,6 +12,9 @@ async function facts(db,ctx,id,{jobId=null}={}){
  const today=await require('../lib/business-time').today(db,ctx.workspaceId);
  if(q.status!=='OPEN'||q.sales_order_id||q.valid_until<today)throw new ValidationError('Use an open, unexpired quotation. Accepted or declined quotes need no follow-up, and expired terms need a new review.');
  if((await db.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2 LIMIT 1',[ctx.workspaceId,id])).rowCount)throw new ValidationError('A newer quotation replaces this one. Use the actual current revision.');
+ if((await db.query("SELECT 1 FROM stockchief_runtime.quote_buyer_acceptances WHERE workspace_id=$1 AND quote_id=$2 AND state<>'WITHDRAWN'",[ctx.workspaceId,id])).rowCount){
+  throw new ValidationError('The buyer accepted this quotation. Review its acceptance receipt.');
+ }
  const pricing=require('../pricing/postgres-promotions');if(pricing.quoteHash(q.pricing)!==q.pricing_hash)throw new ValidationError('The saved quotation terms do not match their integrity record. Review the quotation.');
  if(pricing.quoteHash(await pricing.prepareQuote(db,ctx,q.input))!==q.pricing_hash)throw new ValidationError('Current prices or customer terms no longer match this quote. Review a current quotation before sending a message.');
  if(Object.keys(q.line_units||{}).length){const units=(await db.query('SELECT s.id,i.unit_label,i.secondary_unit_label FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])',[ctx.workspaceId,q.input.lines.map(l=>l.skuId)])).rows;if(units.some(r=>q.line_units[r.id]?.quantity!==r.unit_label||q.line_units[r.id]?.price!==(r.secondary_unit_label||r.unit_label)))throw new ValidationError('The product units changed after this quotation was saved. Review a current revision before sending a message.');}

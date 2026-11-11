@@ -15,7 +15,7 @@ async function create(db,ctx,input){return db.transaction(async c=>{
  const valid=String(input.validUntil||''),day=String(input.orderDate||new Date().toISOString().slice(0,10));if(!/^\d{4}-\d{2}-\d{2}$/.test(valid)||!Number.isFinite(Date.parse(valid))||new Date(valid).toISOString().slice(0,10)!==valid||valid<day)throw new ValidationError('Choose a quotation expiry on or after its issue date.');
  const {requestKey,validUntil,supersedesId,...terms}=input;
  if(prior){if(pricing.hash(prior.input)!==pricing.hash(terms)||prior.valid_until!==valid||prior.supersedes_id!==(supersedesId||null))throw new ValidationError('This quotation request was already used with different terms.');return {...prior,replayed:true};}
- if(supersedesId){const previous=await get(c,ctx.workspaceId,supersedesId,{lock:true});if(previous.status==='ACCEPTED')throw new ValidationError('An accepted quotation cannot be revised.');if((await c.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2',[ctx.workspaceId,supersedesId])).rows.length)throw new ValidationError('A newer revision already exists. Revise that quotation.');}
+ if(supersedesId){const previous=await get(c,ctx.workspaceId,supersedesId,{lock:true});if(previous.status==='ACCEPTED')throw new ValidationError('An accepted quotation cannot be revised.');const receipt=await require('./agent-quote-buyers').accepted(c,ctx.workspaceId,supersedesId);if(['RECEIVED','HELD'].includes(receipt?.state))throw new ValidationError('Review or withdraw the buyer’s acceptance before revising this quotation.');if((await c.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2',[ctx.workspaceId,supersedesId])).rows.length)throw new ValidationError('A newer revision already exists. Revise that quotation.');}
  const quote=await pricing.prepareQuote(c,ctx,terms,{lock:true});if(quote.violations.length)throw new ValidationError('Resolve the pricing safeguards before saving this quotation.');
  const count=Number((await c.query('SELECT count(*) n FROM sales_quotations WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),id=newId('quote'),number='QT-'+String(count+1).padStart(5,'0');
  const {labels,units}=await describeLines(c,ctx.workspaceId,terms.lines);
@@ -26,12 +26,19 @@ async function create(db,ctx,input){return db.transaction(async c=>{
 async function decide(db,ctx,id,{accept,expectedHash,today}){return db.transaction(async c=>{
  await actor(c,ctx,access.OPERATE);const q=await get(c,ctx.workspaceId,id,{lock:true});if(q.pricing_hash!==expectedHash)throw new ValidationError('Review this exact quotation before continuing.');
  if(q.status==='ACCEPTED'&&accept)return {salesOrderId:q.sales_order_id,replayed:true};if(q.status!=='OPEN')throw new ValidationError('This quotation has already been decided.');
- if(accept){if(q.valid_until<(today||new Date().toISOString().slice(0,10)))throw new ValidationError('This quotation expired. Prepare a current revision for review.');
+ if(accept){if(await require('./agent-quote-buyers').linked(c,ctx.workspaceId,id))throw new ValidationError('Open the private buyer acceptance and review its recorded receipt.');if(q.valid_until<(today||new Date().toISOString().slice(0,10)))throw new ValidationError('This quotation expired. Prepare a current revision for review.');
   if((await c.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2',[ctx.workspaceId,id])).rows.length)throw new ValidationError('A newer quotation replaces this one. Review that revision.');
   // Reuse the canonical pricing/approval calculation. A changed promotion,
   // customer exemption, redemption limit or price requires renewed review.
-  const result=await require('../operations/postgres-business-workflows').createSalesOrderInTransaction(c,ctx,{...q.input,orderNumber:null,pricingQuoteHash:q.pricing_hash,idempotencyKey:'quotation:'+q.id});await c.query("UPDATE sales_quotations SET status='ACCEPTED',sales_order_id=$3,decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,result.salesOrderId]);return result;
+  return completeAcceptance(c,ctx,q,q.input,q.pricing_hash);
  }
- await c.query("UPDATE sales_quotations SET status='DECLINED',decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);return {declined:true};
+ await c.query("UPDATE sales_quotations SET status='DECLINED',decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);await require('./agent-quote-buyers').revokeInTransaction(c,ctx,id);return {declined:true};
  },{isolation:'SERIALIZABLE',retrySafe:true});}
-module.exports={get,list,create,decide,describeLines};
+async function completeAcceptance(db,ctx,q,input,pricingHash){
+  const result=await require('../operations/postgres-business-workflows').createSalesOrderInTransaction(db,ctx,{
+    ...input,orderNumber:null,pricingQuoteHash:pricingHash,idempotencyKey:'quotation:'+q.id});
+  await db.query("UPDATE sales_quotations SET status='ACCEPTED',sales_order_id=$3,decided_at=now() WHERE workspace_id=$1 AND id=$2",
+    [ctx.workspaceId,q.id,result.salesOrderId]);
+  return result;
+}
+module.exports={get,list,create,decide,describeLines,completeAcceptance};

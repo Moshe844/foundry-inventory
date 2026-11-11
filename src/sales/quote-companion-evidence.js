@@ -61,10 +61,11 @@ async function original(db,ctx,id,{lock=false}={}){
   const history=(await db.query(`SELECT
     (SELECT id FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2 LIMIT 1) revision_id,
     EXISTS(SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND idempotency_key='quotation-email:'||$2) emailed,
-    EXISTS(SELECT 1 FROM stockchief_runtime.agent_quote_followups WHERE workspace_id=$1 AND quote_id=$2) presented`,
+    EXISTS(SELECT 1 FROM stockchief_runtime.agent_quote_followups WHERE workspace_id=$1 AND quote_id=$2) presented,
+    EXISTS(SELECT 1 FROM stockchief_runtime.quote_buyer_links WHERE workspace_id=$1 AND quote_id=$2 AND enabled) shared`,
   [ctx.workspaceId,id])).rows[0];
   qualification(!history.revision_id,'A newer revision already exists. Use the current quotation.');
-  qualification(!history.emailed&&!history.presented,'This quotation has delivery evidence or a queued email. Use the native manual revision for customer-facing changes.');
+  qualification(!history.emailed&&!history.presented&&!history.shared,'This quotation has delivery evidence or a queued email. Use the native manual revision for customer-facing changes.');
   qualification(pricing.quoteHash(q.pricing)===q.pricing_hash,'The saved quotation integrity record needs review.');
   qualification(!q.input.pricingInputLines&&!q.input.recordedAmounts,'These imported pricing terms require the native manual revision.');
   qualification(!(Number(q.input.taxMinor)>0&&!q.input.taxRateId&&!q.pricing.customerTaxExemption),

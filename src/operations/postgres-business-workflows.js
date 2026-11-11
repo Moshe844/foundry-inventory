@@ -654,6 +654,7 @@ async function createSalesOrder(database, rawContext, input) {
 // The order's customer, delivery and lines replaced in place, priced by the
 // same quote as entry. Shared by draft edits and open-order edits.
 async function replaceDraftContents(client,ctx,id,order,input,eventType,eventKey){
+  await require('../sales/postgres-payment-terms').assertEditableOrder(client,ctx.workspaceId,id);
   const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input),at=nowIso(),promotions=require('../pricing/postgres-promotions');
   const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});
   if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost.');
@@ -935,7 +936,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         VALUES($1,$2,$3,$4,$5,$6,'OPEN',$7,0,0,0,0,0,$8,$9,$10,$10,$10)`,
       [invoiceId, ctx.workspaceId, invoiceNumber, order.customer_id, salesOrderId, await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)), order.currency,
         `sales-order:${salesOrderId}`, ctx.actorId, nowIso()]);
-      await client.query('UPDATE accounting_customer_invoices SET due_date=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,await require('../accounting/customer-terms').dueDate(client,ctx.workspaceId,order.customer_id,await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)))]);
+      await client.query('UPDATE accounting_customer_invoices SET due_date=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,await require('../accounting/customer-terms').dueDate(client,ctx.workspaceId,order.customer_id,await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),{orderId:order.id})]);
       invoice = { id: invoiceId, invoice_number: invoiceNumber };
     }
     const revenueAccount = await accountId(client, ctx.workspaceId, 'SALES_REVENUE');

@@ -6,4 +6,25 @@ async function saveInTransaction(client,ctx,input){permissions.assertCan((await 
  else await client.query(`INSERT INTO customer_payment_terms(id,workspace_id,customer_id,kind,deposit_percent,deposit_minor,net_days,hold_shipping,credit_approved,credit_limit_minor,note,auto_request_enabled,auto_request_limit_minor,agreed_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)`,[newId('cpt'),ctx.workspaceId,customerId,...values,ctx.actorId,at]);
  return {customerId};
 }
-module.exports={saveInTransaction};
+async function forCustomer(db,workspaceId,customerId,{lock=false}={}){
+  return (await db.query(`SELECT * FROM customer_payment_terms WHERE workspace_id=$1 AND (customer_id=$2 OR customer_id IS NULL)
+    ORDER BY (customer_id IS NULL),updated_at DESC,id DESC LIMIT 1`+(lock?' FOR UPDATE':''),[workspaceId,customerId])).rows[0]||null;
+}
+function forQuote(terms){
+  return {kind:terms?.kind||'ON_ACCOUNT',net_days:Number(terms?.net_days??30),
+    deposit_percent:terms?.deposit_percent??null,deposit_minor:terms?.deposit_minor??null,hold_shipping:terms?.hold_shipping?1:0};
+}
+async function forOrder(db,workspaceId,orderId,customerId,options){
+  if(orderId){
+    const saved=(await db.query(`SELECT a.payment_terms FROM stockchief_runtime.quote_buyer_acceptances a
+      JOIN sales_orders o ON o.workspace_id=a.workspace_id AND o.id=a.order_id
+      WHERE a.workspace_id=$1 AND a.order_id=$2 AND o.customer_id=$3 AND a.state='DRAFTED'`,[workspaceId,orderId,customerId])).rows[0];
+    if(saved)return {...saved.payment_terms,quoteBound:true};
+  }
+  return forCustomer(db,workspaceId,customerId,options);
+}
+async function assertEditableOrder(db,workspaceId,orderId){
+  if((await db.query('SELECT 1 FROM stockchief_runtime.quote_buyer_acceptances WHERE workspace_id=$1 AND order_id=$2',
+    [workspaceId,orderId])).rowCount)throw new ValidationError('The buyer accepted the exact terms on this order. Use a new quotation for changes.');
+}
+module.exports={saveInTransaction,forCustomer,forOrder,forQuote,assertEditableOrder};

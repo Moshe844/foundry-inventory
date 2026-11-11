@@ -83,14 +83,19 @@ async function queueRequest(database,ctx,orderId,input={}){
       return {request:hydrate(prior),effectId:effect?.id||null,queued:prior.status==='PENDING',replayed:true};}
     let amountMinor=Number(invoice?.balance_minor||0);let currency=invoice?.currency||order.currency;
     if(purpose==='DEPOSIT'){
-      const terms=(await client.query(`SELECT * FROM customer_payment_terms
-        WHERE workspace_id=$1 AND (customer_id=$2 OR customer_id IS NULL)
-        ORDER BY (customer_id IS NULL),updated_at DESC,id DESC LIMIT 1 FOR UPDATE`,
-      [ctx.workspaceId,order.customer_id])).rows[0];
+      const terms=await require('../sales/postgres-payment-terms').forOrder(client,ctx.workspaceId,orderId,order.customer_id,{lock:true});
       if(!terms||terms.kind!=='DEPOSIT')throw new ValidationError('This customer has no agreed deposit terms. Set the terms before requesting money.');
-      const total=(await client.query(`SELECT COALESCE(SUM(quantity_ordered*unit_price_minor),0)::bigint AS subtotal
-        FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,orderId])).rows[0];
-      const orderTotal=Math.max(0,Number(total.subtotal)-Number(order.discount_minor||0)+Number(order.tax_minor||0));
+      let orderTotal;
+      if(terms.quoteBound){
+        orderTotal=Number(order.pricing_total_minor);
+        if(order.pricing_total_minor==null||!Number.isSafeInteger(orderTotal)||orderTotal<0){
+          throw new ValidationError('The accepted order needs its exact saved total before requesting the deposit.');
+        }
+      }else{
+        const total=(await client.query(`SELECT COALESCE(SUM(quantity_ordered*unit_price_minor),0)::bigint AS subtotal
+          FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,orderId])).rows[0];
+        orderTotal=Math.max(0,Number(total.subtotal)-Number(order.discount_minor||0)+Number(order.tax_minor||0));
+      }
       const required=terms.deposit_minor==null
         ?Math.round(orderTotal*Number(terms.deposit_percent||0)/100)
         :Math.min(orderTotal,Number(terms.deposit_minor));

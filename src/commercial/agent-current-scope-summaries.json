@@ -53,7 +53,7 @@
   "72": "Prepares an unsent customer reply from visible order and stock facts and withholds private facts for ambiguous senders. Automatic replies and live delivery remain open.",
   "73": "Prepares a quotation from exact customer item requests using current prices, currency and delivery facts. Pro automation needs a taught customer/product/value scope.",
   "74": "Schedules a scoped follow-up from verified quotation-send or owner-confirmed receipt evidence. Current terms, recipients and authority are rechecked; live delivery remains open.",
-  "75": "Turns an unexpired, accepted quotation into one customer-order draft with its saved pricing. Connected-channel customer acceptance still needs verification.",
+  "75": "A buyer accepts an exact quotation revision through its private link. Growth approves one draft order. Pro and Custom can draft it without training under explicit owner authority. The order carries the accepted prices, discounts, taxes, payment terms and delivery.",
   "76": "Applies saved customer quantity prices, discounts and payment terms to orders and shipment invoices. Other currencies and deposit variations still need qualification.",
   "77": "Flags comparable cost increases from saved costs, posted receipts and matched supplier bills. Starter and Growth get one price suggestion. Pro and Custom can prepare an exact local catalogue price for individual owner approval.",
   "78": "Prepares a check-in draft for a customer with older fulfilled orders and no recent shipment. Sending it is separate.",
