@@ -9,11 +9,10 @@
   <meta property="og:title" content="StockChief">
   <meta property="og:description" content="StockChief handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="<%= origin %>/og.png">
+  <%- include('partials/share-image') %>
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="StockChief — Your inventory operation, managed.">
   <meta name="twitter:description" content="StockChief handles routine inventory work and brings you the exceptions that need your judgement.">
-  <meta name="twitter:image" content="<%= origin %>/og.png">
   <%# Keep the application shell self-contained. A remote font stylesheet used
       to block every navigation when Google Fonts was slow or unavailable. %>
   <% if(locals.productionPage){ %><link rel="stylesheet" href="/manufacturing.css?v=<%= assetVersion %>"><% } %>
