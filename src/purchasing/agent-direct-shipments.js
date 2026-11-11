@@ -148,7 +148,8 @@ async function prepare(db,ctx,input){
         quantityPurchaseUnits:product.purchaseUnits,unitsPerPurchaseUnit:product.unitsPerPurchaseUnit,purchaseUnit:product.purchaseUnit,
         unitCost:product.unitCost,secondaryQuantity:product.secondaryQuantity,supplierSku:product.supplierSku}))
     });
-    await c.query(`UPDATE purchase_orders SET delivery_kind='CUSTOMER_DIRECT',direct_sales_order_id=$3,destination_location_id=NULL
+    await c.query(`UPDATE purchase_orders SET delivery_kind='CUSTOMER_DIRECT',direct_sales_order_id=$3,destination_location_id=NULL,
+      expected_date=NULL,expected_date_source='unknown'
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,po.purchaseOrderId,customer.id]);
     await c.query('UPDATE purchase_order_lines SET destination_location_id=NULL WHERE workspace_id=$1 AND purchase_order_id=$2',
       [ctx.workspaceId,po.purchaseOrderId]);

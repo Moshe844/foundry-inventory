@@ -9,7 +9,8 @@ const deliveries=`SELECT p.id,p.po_number,p.supplier_id,p.expected_date::date AS
   (p.ordered_at::timestamptz AT TIME ZONE $3)::date AS placed,
   (max(r.received_at::timestamptz) AT TIME ZONE $3)::date AS received
   FROM purchase_orders p JOIN purchase_order_receipts r ON r.workspace_id=p.workspace_id AND r.purchase_order_id=p.id
-  WHERE p.workspace_id=$1 AND p.status='RECEIVED' AND p.ordered_at IS NOT NULL GROUP BY p.id`;
+  WHERE p.workspace_id=$1 AND p.status='RECEIVED' AND p.ordered_at IS NOT NULL
+    AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' GROUP BY p.id`;
 
 async function habits(db,ctx,{filter,page,today}){
   const {salesFrom}=await require('../commercial/agent-history').access(db,ctx.workspaceId);
@@ -31,7 +32,7 @@ async function habits(db,ctx,{filter,page,today}){
     JOIN suppliers s ON s.workspace_id=$1 AND s.id=r.supplier_id AND s.status='active' WHERE ($2='' OR s.id=$2 OR lower(s.name)=lower($2))
   ) SELECT kind,name,id,samples,latest::text,typical,expected FROM partners ORDER BY kind,name,id LIMIT 101 OFFSET $6`,
     [ctx.workspaceId,filter,timeZone,today,salesFrom,(page-1)*100]);
-  return {summary:'After three distinct ordering days or three completed deliveries, StockChief shows the middle observed interval. Customer dates are estimates. Supplier lead time runs from placement to final receipt.',
+  return {summary:'After three distinct ordering days or three completed warehouse deliveries, StockChief shows the middle observed interval. Customer dates are estimates. Supplier lead time runs from placement to final warehouse receipt.',
     more:rows.length>100,rows:rows.slice(0,100).map(r=>({Partner:r.name,Type:r.kind,'Observed days or deliveries':Number(r.samples),
       'Last recorded':r.latest,Pattern:r.kind==='Customer'?'Orders about every '+r.typical+' days':'Delivers in about '+r.typical+' days',
       'Estimated next order':r.expected,link:(r.kind==='Customer'?'/sales/customers/':'/suppliers/')+r.id}))};

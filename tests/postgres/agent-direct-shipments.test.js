@@ -184,8 +184,18 @@ test('connected purchase mail, private supplier submissions and the real dispatc
     VALUES($1,$2,$1,'Direct purchase mailbox','gmail','[]','{}','connected','["MAIL_SEND"]',$3,'CONNECTED',$4,'direct-mailbox',now(),now())`,
     [connector,ctx.workspaceId,'connection_credentials:'+connector,ctx.actorId]);
   await db.transaction(c=>require('../../src/connections/postgres-credential-store').put(c,ctx.workspaceId,connector,'provider',{accessToken:'synthetic-token'}));
-  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId:f.item.skuIds[0],lastUnitCost:'7.50',
-    purchaseUnit:'unit',unitsPerPurchaseUnit:1,minimumOrderQuantity:1,orderMultiple:1});
+  const skuId=f.item.skuIds[0];
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const yesterday=require('../../src/accounting/customer-money').addDays(today,-1);
+  const reviews=require('../../src/autopilot/job-reviews');
+  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId,lastUnitCost:'7.50',
+    leadTimeDays:4,purchaseUnit:'unit',unitsPerPurchaseUnit:1,minimumOrderQuantity:1,orderMultiple:1});
+  await db.query(`UPDATE purchase_orders SET expected_date=$2,expected_date_source='manual'
+    WHERE workspace_id=$1 AND delivery_kind='WAREHOUSE'`,[ctx.workspaceId,yesterday]);
+  const leadHistory=async()=>(await db.query(`SELECT samples,observed_lead,effective_lead
+    FROM stockchief_runtime.supplier_planning_leads WHERE workspace_id=$1 AND sku_id=$2 AND supplier_id='fixture-supplier'`,
+    [ctx.workspaceId,skuId])).rows[0];
+  assert.deepEqual(await leadHistory(),{samples:1,observed_lead:null,effective_lead:'4'});
   const outbound=require('../../src/connections/postgres-outbound-mail'),sender=require('../../src/purchasing/direct-shipment-mail');
   const sent=[],provider={send:async({message})=>{sent.push(message);return {externalMessageId:'accepted-'+message.id};}};
   for(const plan of ['growth','pro','enterprise']){
@@ -204,8 +214,12 @@ test('connected purchase mail, private supplier submissions and the real dispatc
     const mailHandler=require('../../src/operations/postgres-runtime-handlers').create({get:()=>provider})[mailKind];
     const sentJob=await mailJobs.processOne(db,{[mailKind]:mailHandler},{owner:'direct-purchase-mail-test'});
     assert.equal(sentJob.status,'COMPLETED',JSON.stringify(sentJob.lastError));
-    assert.equal((await db.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
-      [ctx.workspaceId,draft.purchase_order_id])).rows[0].status,'ORDERED');
+    assert.deepEqual((await db.query('SELECT status,expected_date,expected_date_source FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,draft.purchase_order_id])).rows[0],{status:'ORDERED',expected_date:null,expected_date_source:'unknown'});
+    // A recorded direct-delivery promise still does not describe incoming warehouse stock.
+    await db.query("UPDATE purchase_orders SET expected_date=$3,expected_date_source='manual' WHERE workspace_id=$1 AND id=$2",
+      [ctx.workspaceId,draft.purchase_order_id,yesterday]);
+    assert.equal((await reviews.run(db,ctx,'overdue-incoming')).rows.length,0);
     const sentMessage=sent.at(-1);
     assert.match(sentMessage.body,/Deliver directly to/);
     assert.match(sentMessage.body,/10 Jobsite Rd/);
@@ -216,7 +230,7 @@ test('connected purchase mail, private supplier submissions and the real dispatc
     assert.match(supplierPage.text,/Deliver to/);
     const source=(await db.query('SELECT id FROM stockchief_runtime.agent_direct_order_lines WHERE workspace_id=$1 AND direct_order_id=$2',
       [ctx.workspaceId,draft.id])).rows[0];
-    const evidence={actualShipment:'yes',supplierReference:'DISPATCH-'+plan,shippedAt:new Date(Date.now()-1000).toISOString(),carrier:'UPS',
+    const evidence={actualShipment:'yes',supplierReference:'DISPATCH-'+plan,shippedAt:new Date().toISOString(),carrier:'UPS',
       trackingNumber:'1Z999AA10123456784',lines:[{lineId:source.id,quantity:2}]};
     const {lines:submittedLines,...shipmentFields}=evidence;
     const submitted=await f.browser.post('/supplier/order/'+token+'/direct-shipment').type('form').send({
@@ -245,6 +259,15 @@ test('connected purchase mail, private supplier submissions and the real dispatc
     assert.equal(await f.balance(),20);
   }
   assert.equal(sent.length,3);
+  assert.deepEqual(await leadHistory(),{samples:1,observed_lead:null,effective_lead:'4'});
+  const score=(await reviews.run(db,ctx,'supplier-scorecard')).rows.find(row=>row.Supplier==='Fixture parts');
+  assert.equal(Number(score['Placed orders']),1);
+  assert.equal(Number(score['Filled %']),100);
+  const service=(await reviews.run(db,ctx,'service-levels')).rows.find(row=>row['Party type']==='Supplier');
+  assert.equal(service['Due orders'],1);
+  assert.equal(Number(service['Filled units']),20);
+  const habits=(await reviews.run(db,ctx,'partner-habits')).rows;
+  assert.equal(habits.some(row=>row.Type==='Supplier'),false);
   const timings=(await require('../../src/autopilot/time-saved').report(db,ctx,'week')).rows;
   for(const key of ['supplier-direct-purchase','supplier-direct-dispatch']){
     const measured=timings.find(row=>row.key===key);

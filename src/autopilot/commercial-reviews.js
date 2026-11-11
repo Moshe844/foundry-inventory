@@ -36,6 +36,7 @@ module.exports=[
     FROM purchase_orders p JOIN purchase_order_lines l ON l.workspace_id=p.workspace_id AND l.purchase_order_id=p.id
     JOIN skus s ON s.id=l.sku_id JOIN suppliers v ON v.id=p.supplier_id
     WHERE p.workspace_id=$1 AND p.expected_date::date<$3::date AND p.status IN ('ORDERED','PARTIALLY_RECEIVED')
+      AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
       AND l.quantity_units>l.quantity_received_units AND ($2='' OR lower(s.code)=lower($2) OR lower(v.name)=lower($2))
     ORDER BY p.expected_date,p.id,l.line_number`,usesDate:true},
   {id:78,key:'customer-check-in',salesHistory:true,label:'Draft check-ins for inactive customers',summary:'Customers with at least two shipped orders and no shipment in 90 days. Review the draft before contacting anyone.',sql:`
