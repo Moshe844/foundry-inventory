@@ -65,7 +65,7 @@
   "87": "Compares verified channel prices with the catalog and owner-entered advertised-price minimum, and opens or clears an in-app warning. Real provider qualification remains open.",
   "88": "Scores customer activity from comparable orders and product units actually shipped across two 30-day periods. Starter gets one suggestion. Growth, Pro and Custom get automatic owner notices when recent purchases decline.",
   "89": "Prepares scoped supplier messages about orders and follow-ups with fresh send authority. Live mailbox acceptance remains unverified.",
-  "90": "Shows a supplier scorecard using recorded order and receipt facts. A full multi-supplier late-delivery and dispute scenario remains open.",
+  "90": "Scores suppliers from actual warehouse deliveries, due-line fill, recorded price changes and invoice errors. Starter receives one suggestion. Growth, Pro and Custom can schedule the scorecard without training.",
   "91": "Links invoice price increases to the approved purchase order. Positive supplier-price-list comparison still needs source qualification.",
   "92": "Compares supplier quotation prices for the same exact product and links each result to its captured source message.",
   "94": "Drafts a negotiation message from completed, dated supplier deliveries. Pro reviews each draft; Custom can use a taught scope. Sending remains separate.",
