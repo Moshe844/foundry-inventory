@@ -25,6 +25,7 @@ function createRouter(db){
   const putawayPolicy=require('../../commercial/agent-plan'),putawayState=await putawayPolicy.accountState(db,req.ctx.workspaceId);
   res.locals.canCorrectBins=permissions.can(req.user,permissions.REQUEST_TRANSFER);
   res.locals.binCorrectionAllowed=putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,11,'draft');
+  res.locals.staffRequestsAllowed=putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,41,'draft');
   res.locals.putawayInstructions=[];
   if(locationId&&putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,47,'draft')){
     const prepared=(await db.query(`SELECT p.id,p.source FROM stockchief_runtime.agent_putaway_instructions p
@@ -32,6 +33,20 @@ function createRouter(db){
     const permitted=new Set(locations.map(l=>l.id));res.locals.putawayInstructions=prepared.filter(p=>permitted.has(p.source.to.id));
   }
   return res.render('warehouse/stock-access',{title:'Warehouse stock',locations,locationId,q,rows:rows.slice(0,100),next:rows.length>100?rows[99].id:null,operationKey:newId('warehouse-receipt'),canReceive:permissions.can(req.user,permissions.OPERATE),canCount:permissions.can(req.user,permissions.ADJUST),message:String(req.query.saved||'')==='1'?'Stock received with its purchase cost.':String(req.query.saved||'')==='count'?'Count saved for an owner to review.':null,restricted:roots!==null});
+ }));
+ router.get('/purchasing/requests',asyncRoute(async(req,res)=>{
+  const notices=req.session.flash||[];req.session.flash=[];
+  try{
+   const model=await require('../../purchasing/agent-purchase-requests').page(db,req.ctx);
+   return res.render('warehouse/purchase-requests',{...model,requestKey:newId('req'),notices,lockedMessage:null});
+  }catch(error){
+   if(error.code!=='entitlement_required')throw error;
+   return res.render('warehouse/purchase-requests',{notices,lockedMessage:error.message});
+  }
+ }));
+ router.post('/purchasing/requests',asyncRoute(async(req,res)=>{
+  await require('../../purchasing/agent-purchase-requests').submit(db,req.ctx,req.body);
+  return res.redirect(303,'/purchasing/requests');
  }));
  router.post('/warehouse/stock/receive',requirePermission(permissions.OPERATE,'receive stock'),asyncRoute(async(req,res)=>{
   await access.assertLocations(db,req.ctx,[req.body.locationId]);
@@ -51,6 +66,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(countPath||req.method==='GET'&&req.path==='/guide')return router(req,res,next);
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
+  if(req.path==='/purchasing/requests'&&['GET','POST'].includes(req.method))return router(req,res,next);
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);

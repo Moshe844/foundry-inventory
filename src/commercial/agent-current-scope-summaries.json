@@ -30,7 +30,7 @@
   "33": "Refreshes a ready replenishment proposal when stock or reservations change. An approved supplier action creates one purchase order and queues one message.",
   "34": "Uses observed supplier receipt times, including split receipts, in the live replenishment calculation.",
   "35": "Gives suppliers a private link to confirm an approved purchase, propose delivery changes and upload PDF invoices or shipping documents. The original invoice goes into matching on the exact purchase, including after delivery.",
-  "41": "Turns a staff purchase request into an owner decision and, after approval, a native purchase draft. Staff warehouse restrictions apply.",
+  "41": "Turns a short staff request into a decision using the exact saved product name, item code or nickname. The owner chooses a linked supplier and confirms any missing quantity before creating the purchase draft. Staff keep their assigned warehouse access.",
   "43": "Fills a physical-receipt review from a supported packing CSV or readable PDF using the actual PO packs, costs and warehouse. A person confirms receipt; no bill or payment is posted.",
   "44": "Shows the quantity still due after a partial purchase receipt. Wrong-item and over-delivery reviews still need complete workflow verification.",
   "47": "Prepares product and bin labels and put-away instructions from confirmed whole-unit receipts. Physical put-away, hardware printers and tracked or measured goods remain open.",
