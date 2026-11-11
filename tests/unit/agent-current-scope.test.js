@@ -6,7 +6,16 @@ test('Contribution scopes keep Starter suggest-only and require actual cost fact
 test('Foreign-purchase reference comparisons keep Starter suggest-only and paid scheduled reviews distinct from financial conversion',()=>{const row=comparison.comparison().find(r=>r.id===40);assert.equal(row.status,'partial');assert.equal(row.plans.find(p=>p.tier==='starter').mode,'suggest');assert.match(row.plans.find(p=>p.tier==='starter').currentScope,/one read-only/);for(const tier of ['growth','pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}assert.match(row.currentScope,/1,000 lines/);assert.match(row.currentScope,/remain open/);});
 test('Export packet scopes preserve exact plan levels, no-training drafts and separate owner review',()=>{const row=comparison.comparison().find(r=>r.id===70);assert.equal(row.status,'partial');assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.equal(row.plans.find(p=>p.tier==='growth').mode,'draft');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/individual approval/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}assert.match(row.currentScope,/100 whole-unit/);assert.match(row.currentScope,/remain open/);});
 test('limited plan descriptions state actual current work and keep higher-plan tracking out of Growth',()=>{
- const rows=comparison.comparison(),byId=id=>rows.find(row=>row.id===id);assert.match(byId(31).currentScope,/delivery-date/);assert.match(byId(31).currentScope,/Quantity and price amendments remain planned/);
+ const rows=comparison.comparison(),byId=id=>rows.find(row=>row.id===id);
+ const amendments=byId(31);
+ assert.match(amendments.currentScope,/revised quantities, measured weights, prices and delivery dates/);
+ assert.match(amendments.currentScope,/connected purchase email thread/);
+ assert.match(amendments.currentScope,/Earlier receipts and invoices keep their original/);
+ for(const tier of ['starter','growth'])assert.equal(amendments.plans.find(plan=>plan.tier===tier).mode,'excluded');
+ assert.equal(amendments.plans.find(plan=>plan.tier==='pro').mode,'trained');
+ assert.match(amendments.plans.find(plan=>plan.tier==='pro').currentScope,/approved matching example/);
+ assert.equal(amendments.plans.find(plan=>plan.tier==='enterprise').mode,'alone');
+ assert.match(amendments.plans.find(plan=>plan.tier==='enterprise').currentScope,/without teaching/);
  const benefit=byId(97);assert.match(benefit.plans.find(p=>p.tier==='growth').currentScope,/one-time estimate/);assert.match(benefit.plans.find(p=>p.tier==='pro').currentScope,/Tracks checked rebate/);assert.equal(benefit.plans.find(p=>p.tier==='starter').currentScope,null);
  assert.match(byId(38).currentScope,/500 lines and 2,000 cartons/);const pro=comparison.presentation().plans.pro.groups.flatMap(g=>g.jobs).find(j=>j.id===97),growth=comparison.presentation().plans.growth.groups.flatMap(g=>g.jobs).find(j=>j.id===97);assert.match(pro.currentScope,/Tracks checked/);assert.match(growth.currentScope,/one-time estimate/);
  const promotion=byId(145);assert.equal(promotion.plans.find(p=>p.tier==='growth').currentScope,null);assert.match(promotion.plans.find(p=>p.tier==='pro').currentScope,/Automatic planning and draft preparation require Custom/);assert.match(promotion.plans.find(p=>p.tier==='enterprise').currentScope,/without training/);
