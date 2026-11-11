@@ -2,14 +2,20 @@
 
 const {documents,addDays} = require('./customer-money');
 const money = require('../domain/currency');
+const {createHash} = require('node:crypto');
+const policy = require('../commercial/agent-plan');
+const {ValidationError} = require('../domain/errors');
 
 function terms(text) {
   const value=String(text||'').trim();
   const net=/^net\s*(\d{1,3})\s*(?:days?)?$/i.exec(value);
   if(net) return {net:Number(net[1])};
-  const match=/^(\d{1,2}(?:\.\d{1,2})?)\s*%?\s*\/\s*(\d{1,3})\s*[,;]?\s*(?:net|n)\s*\/?\s*(\d{1,3})$/i.exec(value);
-  if(!match || Number(match[1])<=0 || Number(match[2])>Number(match[3])) return {};
-  return {percent:Number(match[1]),days:Number(match[2]),net:Number(match[3])};
+  const match=/^(\d{1,2}(?:\.\d{1,2})?)\s*%?\s*\/\s*(\d{1,3})\s*[,;]?\s*(?:net|n)\s*\/?\s*(\d{1,3})$/i.exec(value)||
+    /^(\d{1,2}(?:\.\d{1,2})?)\s*%\s*(?:off\s*)?(?:if\s+paid\s+)?(?:in|within)\s+(\d{1,3})\s+days?(?:\s*[,;]?\s*net\s*(\d{1,3}))?$/i.exec(value);
+  if(!match)return {};
+  const percent=Number(match[1]),days=Number(match[2]),netDays=match[3]==null?null:Number(match[3]);
+  if(percent<=0||(netDays!=null&&days>netDays))return {};
+  return {percent,days,net:netDays};
 }
 
 function opportunity(bill,today) {
@@ -22,20 +28,85 @@ function opportunity(bill,today) {
   return minor>0 && minor<=bill.balance_minor ? {deadline,minor} : null;
 }
 
-async function payments(db,ctx,{today,discountsOnly=false}) {
-  const bills=await documents(db,ctx.workspaceId,'bills',today);
-  const end=addDays(today,6),rows=[];
+function weekStart(today){
+  const day=new Date(today+'T12:00:00Z').getUTCDay();
+  return addDays(today,-((day+6)%7));
+}
+
+async function paymentFacts(db,workspaceId,today){
+  const bills=await documents(db,workspaceId,'bills',today),end=addDays(today,6);
+  const dueThisRun=[],discounts=[];
   for(const bill of bills){
+    if(bill.issue_date>today)continue;
     const offer=opportunity(bill,today);
     const due=bill.due_date || (terms(bill.agreed_discount_terms).net!=null ? addDays(bill.issue_date,terms(bill.agreed_discount_terms).net) : null);
-    if(discountsOnly ? !offer : !(offer && offer.deadline<=end) && due && due>end) continue;
-    rows.push({Supplier:bill.party_name,Bill:bill.number,Due:due||'Confirm due date',
-      Balance:money.format(bill.balance_minor,bill.currency),'Discount deadline':offer?.deadline||'',
-      'Possible saving':offer?money.format(offer.minor,bill.currency):'',
-      'Review amount':money.format(bill.balance_minor-(offer?.minor||0),bill.currency),link:bill.href});
+    const entry={id:bill.id,supplier:bill.party_name,number:bill.number,currency:bill.currency,due,
+      balance:bill.balance_minor,offer,link:bill.href};
+    if(offer)discounts.push(entry);
+    if(!due||due<=end||offer?.deadline<=end)dueThisRun.push(entry);
   }
-  return {summary:discountsOnly?'Unpaid posted bills within documented early-payment terms. Confirm the discount basis with the supplier.':
-    'Bills due through '+end+', discount deadlines this week and bills needing a due date. Review each bill before paying.',rows};
+  const deadline=entry=>[entry.due,entry.offer?.deadline].filter(Boolean).sort()[0]||'9999-12-31';
+  dueThisRun.sort((a,b)=>deadline(a).localeCompare(deadline(b))||a.id.localeCompare(b.id));
+  discounts.sort((a,b)=>a.offer.deadline.localeCompare(b.offer.deadline)||a.id.localeCompare(b.id));
+  const week=weekStart(today);
+  const digest=dueThisRun.length?createHash('sha256').update(JSON.stringify({week,dueThisRun})).digest('hex'):null;
+  return {end,week,digest,dueThisRun,discounts};
+}
+
+function paymentRow(entry){
+  const {offer,currency,balance}=entry;
+  return {Supplier:entry.supplier,Bill:entry.number,Due:entry.due||'Confirm due date',
+    Balance:money.format(balance,currency),'Discount deadline':offer?.deadline||'',
+    'Possible saving':offer?money.format(offer.minor,currency):'',
+    'Review amount':money.format(balance-(offer?.minor||0),currency),link:entry.link};
+}
+
+async function payments(db,ctx,{today,discountsOnly=false}) {
+  const facts=await paymentFacts(db,ctx.workspaceId,today);
+  if(discountsOnly)return {summary:'Unpaid posted bills within documented early-payment terms. Confirm the discount basis with the supplier.',
+    rows:facts.discounts.map(paymentRow)};
+  const approved=facts.digest&&(await db.query(`SELECT approved_at FROM stockchief_runtime.agent_supplier_payment_approvals
+    WHERE workspace_id=$1 AND week_start=$2 AND digest=$3`,[ctx.workspaceId,facts.week,facts.digest])).rows[0];
+  const approvalHold=facts.digest&&await require('../autopilot/job-modes').restriction(db,ctx.workspaceId,104,false);
+  return {summary:'Bills due through '+facts.end+', discount deadlines this week and bills needing a due date. Review each bill before paying.',
+    rows:facts.dueThisRun.map(paymentRow),paymentRun:{digest:facts.digest,approvedAt:approved?.approved_at||null,
+      count:facts.dueThisRun.length,approvalHold}};
+}
+
+async function approvePaymentRun(db,ctx,{digest,confirmed}){
+  if(confirmed!=='yes'||!(/^[a-f0-9]{64}$/).test(digest||''))
+    throw new ValidationError('Review the listed bills and confirm this payment run.');
+  return db.transaction(async client=>{
+    const state=await require('../autopilot/job-reviews').ownerState(client,ctx);
+    policy.requireJob(policy.usesAgentTerms(state)?state.plan:null,104,'draft');
+    const hold=await require('../autopilot/job-modes').restriction(client,ctx.workspaceId,104,false);
+    if(hold)throw new ValidationError(hold);
+    const today=await require('../lib/business-time').today(client,ctx.workspaceId);
+    const facts=await paymentFacts(client,ctx.workspaceId,today);
+    if(facts.digest!==digest)throw new ValidationError('The bills or discount terms changed. Open the current run and review it again.');
+    const saved=await client.query(`INSERT INTO stockchief_runtime.agent_supplier_payment_approvals(workspace_id,week_start,digest,approved_by)
+      VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING approved_at`,[ctx.workspaceId,facts.week,digest,ctx.actorId]);
+    if(saved.rowCount)await require('../operations/postgres-security-audit').record(client,ctx,{action:'Supplier payment run reviewed',
+      after:{week:facts.week,billCount:facts.dueThisRun.length,digest}});
+    return {replayed:!saved.rowCount};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+async function preparePaymentChecks(db,workspaceId,state,today){
+  const jobs=require('../autopilot/job-modes');
+  const prepareRun=policy.permits(state.plan,104,'automatic')&&!await jobs.restriction(db,workspaceId,104,true);
+  const findDiscounts=policy.permits(state.plan,108,'automatic')&&!await jobs.restriction(db,workspaceId,108,true);
+  if(!prepareRun&&!findDiscounts)return;
+  const modes=(prepareRun?1:0)+(findDiscounts?2:0);
+  const previous=await db.query(`SELECT 1 FROM stockchief_runtime.agent_supplier_payment_checks
+    WHERE workspace_id=$1 AND (checked_on>$2 OR (checked_on=$2 AND check_modes=$3))`,[workspaceId,today,modes]);
+  if(previous.rowCount)return;
+  const facts=await paymentFacts(db,workspaceId,today);
+  await db.query(`INSERT INTO stockchief_runtime.agent_supplier_payment_checks AS prior(workspace_id,checked_on,check_modes,run_digest,bill_count,discount_count)
+    VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id) DO UPDATE SET checked_on=excluded.checked_on,check_modes=excluded.check_modes,
+    run_digest=excluded.run_digest,bill_count=excluded.bill_count,discount_count=excluded.discount_count
+    WHERE prior.checked_on<excluded.checked_on OR (prior.checked_on=excluded.checked_on AND prior.check_modes<>excluded.check_modes)`,
+    [workspaceId,today,modes,prepareRun?facts.digest:null,prepareRun?facts.dueThisRun.length:0,findDiscounts?facts.discounts.length:0]);
 }
 
 async function forecast(db,ctx,{today,adviceOnly=false}) {
@@ -83,4 +154,4 @@ async function forecast(db,ctx,{today,adviceOnly=false}) {
   return {summary:'Overdue amounts enter week one. Unbilled goods use expected delivery plus supplier terms. Unbilled freight, tax, deposits and opening bank balances are excluded. '+undated.size+' documents need a date or price.'+
     (undated.size?' Review '+[...undated].slice(0,8).join(', ')+'.':''),rows};
 }
-module.exports={payments,forecast,terms};
+module.exports={payments,approvePaymentRun,preparePaymentChecks,forecast,terms};
