@@ -1,32 +1,5 @@
 'use strict';
-const money=require('../domain/currency');
-
-async function credit(db,ctx,{filter,page}){
-  const {rows}=await db.query(`WITH selected AS (
-    SELECT o.id,o.order_number,o.customer_id,o.currency,c.name,t.credit_limit_minor,b.base_currency FROM sales_orders o JOIN customers c
-      ON c.workspace_id=o.workspace_id AND c.id=o.customer_id JOIN accounting_settings b ON b.workspace_id=o.workspace_id AND b.enabled=1
-      JOIN LATERAL (SELECT credit_limit_minor FROM customer_payment_terms WHERE workspace_id=o.workspace_id AND (customer_id=o.customer_id OR customer_id IS NULL)
-        ORDER BY (customer_id IS NOT NULL) DESC LIMIT 1)t ON t.credit_limit_minor IS NOT NULL
-      WHERE o.workspace_id=$1 AND o.status IN ('DRAFT','CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED') AND ($2='' OR lower(o.order_number)=lower($2) OR lower(c.name)=lower($2))
-      ORDER BY o.order_date DESC,o.id LIMIT 51 OFFSET $3)
-    SELECT s.*,d.debt,k.unbilled,d.foreign_debt,k.unknown FROM selected s CROSS JOIN LATERAL (
-      SELECT coalesce(sum(balance_minor) FILTER(WHERE currency=s.base_currency),0) debt,bool_or(currency<>s.base_currency) foreign_debt
-      FROM accounting_customer_invoices i WHERE i.workspace_id=$1 AND i.customer_id=s.customer_id AND i.balance_minor>0 AND i.status IN ('OPEN','PARTIALLY_PAID'))d
-    CROSS JOIN LATERAL (SELECT coalesce(sum(greatest(o.pricing_total_minor-coalesce(billed.total,0),0)),0) unbilled,
-      bool_or(o.pricing_total_minor IS NULL OR o.currency<>s.base_currency OR billed.foreign_invoice) unknown FROM sales_orders o
-      LEFT JOIN LATERAL (SELECT sum(i.total_minor) total,bool_or(i.currency<>o.currency) foreign_invoice FROM accounting_customer_invoices i WHERE i.workspace_id=o.workspace_id
-        AND i.sales_order_id=o.id AND i.status IN ('OPEN','PARTIALLY_PAID','PAID'))billed ON true
-      WHERE o.workspace_id=$1 AND o.customer_id=s.customer_id AND (o.id=s.id OR o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED'))) k
-    ORDER BY s.order_number,s.id`,[ctx.workspaceId,filter,(page-1)*50]);
-  return {rows:rows.slice(0,50).map(r=>{
-    const limit=money.integer(r.credit_limit_minor),known=!(r.unknown||r.foreign_debt||r.currency!==r.base_currency);
-    const total=known?money.sum([money.integer(r.debt),money.integer(r.unbilled)]):null;
-    const fmt=n=>money.format(n,r.base_currency);
-    return {Order:r.order_number,Customer:r.name,'Credit limit':fmt(limit),'Open invoices':r.foreign_debt?null:fmt(r.debt),
-      'Unbilled orders':r.unknown?null:fmt(r.unbilled),'Exposure with this order':total==null?null:fmt(total),
-      Result:total==null?'Review currencies or missing prices':total>limit?'Over limit':'Within limit',link:'/orders/'+r.id};
-  }),more:rows.length>50,summary:'Compares each proposed order and existing confirmed commitments with the saved customer credit limit. Amounts already billed are counted once. Unapplied deposits are excluded. Mixed currencies need review.'};
-}
+const {review:credit}=require('./order-credit-exposure');
 
 async function priceProblems(db,ctx,{filter,page}){
   const {rows}=await db.query(`WITH lines AS (SELECT o.id,o.order_number,o.currency,s.code,l.id AS line_id,

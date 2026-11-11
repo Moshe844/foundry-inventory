@@ -58,7 +58,7 @@
   "77": "Suggests or prepares a margin-preserving selling price from recorded cost. A person always approves the price change.",
   "78": "Prepares a check-in draft for a customer with older fulfilled orders and no recent shipment. Sending it is separate.",
   "79": "Suggests companion products from recorded items bought together. Adding the suggestion to a quotation still needs workflow verification.",
-  "80": "Reviews customer credit exposure across unpaid invoices, partly billed orders and new drafts without counting the same exposure twice.",
+  "80": "Checks credit on the draft order before confirmation. Starter shows one suggestion. Growth, Pro and Custom automatically surface over-limit or incomplete checks and show the draft, unbilled commitments and open invoices against the saved credit limit.",
   "81": "Prepares a reconciled customer account statement with current-month entries and outstanding invoices, separately by currency. Large statements, PDF attachments and live delivery remain open.",
   "82": "Flags orders below recorded cost and discounts that differ from the saved quotation.",
   "86": "Estimates clearance quantities and gross proceeds from an owner-entered markdown. It does not change selling prices without a separate approval.",

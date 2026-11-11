@@ -11,7 +11,8 @@ const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
-const monitoredJobs=[10,110,116];
+const orderCredit=require('../sales/order-credit-exposure');
+const monitoredJobs=[10,80,110,116];
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
       CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
@@ -104,6 +105,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
+    (monitors.has(80)?' UNION ALL '+orderCredit.notices:'')+
     (includeReturnRates?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
     (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
@@ -181,6 +183,10 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' '+(r.n===1?'category budget is':'category budgets are')+' below billed purchases.',
       why:'StockChief compared posted supplier bills with each saved category budget in the same currency.',
       href:'/autopilot/reviews/purchase-budget?filter='+encodeURIComponent(r.due.slice(0,7)),actionLabel:'Review purchase budgets',sourceId:'agent-notice-110'};
+    if(Number(r.job_id)===80)return {kind:'accounting',grouped:true,importance:'Important',priority:70,title:'Draft orders need a credit check',
+      happened:r.n+' '+(r.n===1?'draft has':'drafts have')+' an over-limit or incomplete credit check.',
+      why:'The check compares current draft amounts, unbilled commitments and open invoices with saved customer limits.',
+      href:'/autopilot/reviews/order-credit-limits',actionLabel:'Review customer credit',sourceId:'agent-notice-80'};
     if(Number(r.job_id)===116)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'High return rates need review',
       happened:r.n+' '+(r.n===1?'SKU or customer rate is above its peer rate.':'SKU or customer rates are above their peer rates.'),
       why:returnRates.summary,href:'/autopilot/reviews/customer-return-rates',actionLabel:'Review return rates',sourceId:'agent-notice-116'};

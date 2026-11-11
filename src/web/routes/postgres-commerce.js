@@ -1147,6 +1147,9 @@ function createPostgresCommerceRouter(database,options={}){
       commerce.locations(database,req.ctx.workspaceId),
     ]);
     const plans=require('../../commercial/agent-plan'),agentState=await plans.accountState(database,req.ctx.workspaceId);
+    const orderCredit=page.order.status==='DRAFT'&&permissions.can(req.user,permissions.VIEW_ACCOUNTING)&&
+      plans.usesAgentTerms(agentState)&&plans.permits(agentState.plan,80,'suggest')
+      ?await require('../../sales/order-credit-exposure').forOrder(database,req.ctx,page.order.id):null;
     const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&require('../../sales/agent-ship-from').eligible(page.order)
       ?{available:plans.permits(agentState.plan,121,'draft')}:null;
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
@@ -1168,7 +1171,8 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      shipFromReview,agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
+      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),
+      agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,
