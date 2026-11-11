@@ -944,6 +944,7 @@ async function approve(database, ctx, id, expectedHash) {
     const plan=hydratePlan(result.rows[0]);
     if(plan.transformations.handwriting)await require('../commercial/agent-plan').requireWorkspaceJob(client,ctx.workspaceId,139,'draft');
     await require('./agent-catalog-intake').assertNotReceiving(client,ctx,plan);
+    if(plan.transformations.importMode==='set')await require('./physical-count-sources').sourceFence(client,ctx,plan.sourceHash,{legacy:true});
     if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
     if(!plan.transformations.dataset&&supplierDataset.classify(plan.sourceColumns))

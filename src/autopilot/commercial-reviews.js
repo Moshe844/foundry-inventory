@@ -1,7 +1,7 @@
 'use strict';
 
 module.exports=[
-  {id:24,key:'combine-draft-orders',label:'Combine unsent supplier orders',summary:'Draft orders for the same supplier, currency and delivery date can share one replacement PO. Original drafts stay in the history. Shipping savings depend on the supplier’s actual charges.',
+  {id:24,key:'combine-draft-orders',label:'Combine unsent supplier orders',summary:'Compare drafts with the same supplier, currency and delivery date. StockChief uses recorded freight terms when the drafts share one receiving location. An approved rule can combine drafts when those terms show a saving. Original drafts stay in the history.',
     sql:`WITH draft AS (SELECT p.*,s.name FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
       WHERE p.workspace_id=$1 AND p.status='DRAFT' AND ($2='' OR lower(s.name)=lower($2)))
       SELECT name AS "Supplier",currency AS "Currency",expected_date AS "Expected date",count(*) AS "Drafts",
@@ -46,23 +46,9 @@ module.exports=[
       AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
       AND l.quantity_units>l.quantity_received_units AND ($2='' OR lower(s.code)=lower($2) OR lower(v.name)=lower($2))
     ORDER BY p.expected_date,p.id,l.line_number`,usesDate:true},
-  {id:78,key:'customer-check-in',salesHistory:true,label:'Draft check-ins for inactive customers',summary:'Customers with at least two shipped orders and no shipment in 90 days. Review the draft before contacting anyone.',sql:`
-    WITH sales AS (SELECT o.customer_id,max(h.shipped_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC'))::date AS last_sale,count(DISTINCT o.id) AS n
-      FROM sales_orders o JOIN sales_shipments h ON h.sales_order_id=o.id AND h.workspace_id=o.workspace_id
-      JOIN workspaces w ON w.id=o.workspace_id JOIN accounts a ON a.id=w.owner_account_id
-      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.customer_return_id IS NULL AND h.shipped_at IS NOT NULL AND ($4::text IS NULL OR o.order_date >= $4) GROUP BY o.customer_id)
-    SELECT c.name AS "Customer",s.last_sale::text AS "Last shipment",s.n AS "Previous orders",
-      'Hello '||c.name||', our last shipment to you was on '||s.last_sale::text||'. Would you like an updated stock list or help planning your next order?' AS "Draft"
-    FROM sales s JOIN customers c ON c.id=s.customer_id AND c.record_state='ACTIVE'
-    WHERE s.n>=2 AND s.last_sale<($3::date-90) AND ($2='' OR lower(c.name)=lower($2)) ORDER BY s.last_sale,c.id`,usesDate:true},
-  {id:79,key:'bought-together',salesHistory:true,label:'Find items commonly bought together',requiresFilter:true,summary:'Companion items from other completed or partly fulfilled orders containing the selected SKU. Review these before adding them to a quote.',sql:`
-    WITH orders AS (SELECT DISTINCT l.sales_order_id,l.sku_id FROM sales_order_lines l JOIN skus s ON s.id=l.sku_id
-      JOIN sales_orders so ON so.workspace_id=l.workspace_id AND so.id=l.sales_order_id
-      WHERE l.workspace_id=$1 AND lower(s.code)=lower($2) AND l.quantity_fulfilled>0 AND ($3::text IS NULL OR so.order_date >= $3))
-    SELECT s.code AS "SKU",i.name AS "Product",count(DISTINCT l.sales_order_id) AS "Shared orders"
-    FROM orders o JOIN sales_order_lines l ON l.workspace_id=$1 AND l.sales_order_id=o.sales_order_id AND l.sku_id<>o.sku_id AND l.quantity_fulfilled>0
-    JOIN skus s ON s.id=l.sku_id AND s.is_active=1 JOIN items i ON i.id=s.item_id AND i.is_active=1
-    GROUP BY s.id,s.code,i.name ORDER BY count(DISTINCT l.sales_order_id) DESC,s.id`},
+  require('../sales/agent-customer-checkins').definition,
+  {id:79,key:'bought-together',label:'Find items commonly bought together',requiresFilter:true,
+    readPage:require('../sales/quote-companion-evidence').readReport},
   {id:88,key:'customer-health',label:'Flag customers buying less',summary:'Compare distinct shipped orders in the last 30 days with the preceding 30 days.',sql:`
     WITH history AS (SELECT o.customer_id,count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '30 days') AS recent,
       count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '30 days') AS prior

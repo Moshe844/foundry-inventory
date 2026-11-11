@@ -38,6 +38,28 @@ function present(proposal){
    {label:'Posting date',value:p.date}
   ]};
  }
+ if(proposal.action_type==='sales_quote.accept'&&proposal.payload.buyerAcceptanceId){
+  const {offer,buyerName,buyerEmail,acceptedAt}=proposal.payload,money=require('../domain/currency');
+  return {summary:proposal.summary,impact:'Creates one draft sales order',fields:[
+    {label:'Quotation',value:offer.quoteNumber},{label:'Customer',value:offer.customer},
+    {label:'Buyer',value:buyerName+' · '+buyerEmail},{label:'Accepted',value:new Date(acceptedAt).toISOString()},
+    {label:'Products',value:offer.lines.map(l=>l.quantity+' '+l.unit+' · '+l.product).join('\n'),multiline:true},
+    {label:'Discount',value:money.format(offer.discountMinor,offer.currency)},{label:'Tax',value:money.format(offer.taxMinor,offer.currency)},
+    {label:'Total',value:money.format(offer.totalMinor,offer.currency)+' '+offer.currency},
+    {label:'Payment terms',value:offer.terms},{label:'Delivery',value:offer.deliveryMethod==='PICKUP'?'Customer pickup':offer.shippingAddress}]};
+ }
+ if(proposal.action_type==='sales_quote.add_companions'){
+  const p=proposal.payload,format=n=>require('../domain/currency').format(n,p.currency);
+  return {summary:proposal.summary,impact:'Saves a private revision with the original quote and its terms in history.',fields:[
+   {label:'Quotation and customer',value:p.quoteNumber+' · '+p.customerName},
+   {label:'Warehouse for the additional stock',value:p.location.name},
+   {label:'Supported additions',multiline:true,value:p.additions.map(l=>l.product+' · '+l.sku+' · '+l.quantity+' '+l.unit+
+    (l.secondaryQuantity!=null?' · '+l.secondaryQuantity+' '+l.secondaryUnit:'')+' · '+format(l.price.totalMinor)+
+    ' including '+format(l.price.taxMinor)+' tax · '+l.sharedOrders+' shared fulfilled orders').join('\n')},
+   {label:'Original total',value:format(p.priorTotalMinor)},{label:'Revised total',value:format(p.totalMinor)},
+   {label:'Valid through',value:p.validUntil}
+  ]};
+ }
  if(proposal.action_type==='transfer.prepare_balance'){const s=proposal.payload.balanceSummary;return {summary:s.title,impact:'Creates a native Requested transfer and holds the proposed stock until separately approved.',fields:[{label:'Stock balancing and exact goods',value:s.text,multiline:true}]};}
  if(proposal.action_type==='customer_return.refund'&&proposal.payload.sourceFingerprint){
   const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);
@@ -89,6 +111,13 @@ function present(proposal){
  if(proposal.action_type==='purchase_order.record_supplier_invoice'){
   const p=proposal.payload,money=require('../domain/currency');
   return {summary:proposal.summary,impact:p.expectedStatus==='DISPUTED'?'Records a disputed supplier document':'Records the supplier invoice owed',fields:[{label:'Supplier invoice',value:p.supplierInvoiceNumber},{label:'Invoice date',value:p.issueDate},{label:'Due date',value:p.dueDate||'Needs confirmation'},...(p.sourceEvidence?[{label:'Original document',value:p.sourceEvidence.filename}]:[]),...(p.lines||[]).map(l=>({label:l.description||'Invoice item',value:l.quantity+' units at '+money.format(l.unitCostMinor,p.currency)+' each'})),...(p.expectedTotalMinor!=null?[{label:'Invoice total',value:money.format(p.expectedTotalMinor,p.currency)}]:[]),...(p.invoiceRoutineHold?[{label:'Needs your review',value:p.invoiceRoutineHold}]:[])]};
+ }
+ if(proposal.action_type==='customer.check_in'){
+  const {message,evidence}=proposal.payload;
+  return {summary:proposal.summary,impact:'Saves one private check-in draft',fields:[
+    {label:'Customer',value:evidence.customer},{label:'Last purchase',value:evidence.lastPurchase},
+    {label:'Prior purchases',value:evidence.purchases.map(p=>p.orderNumber+' · '+p.handedOn).join('\n'),multiline:true},
+    {label:'To',value:message.recipient},{label:'Subject',value:message.subject},{label:'Draft',value:message.body,multiline:true}]};
  }
  if(proposal.action_type==='customer.statement'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one requested customer account statement',fields:[{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'As of',value:p.asOf},{label:'Account balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',multiline:true,value:require('../accounting/agent-customer-statements').compose(p).body}]};

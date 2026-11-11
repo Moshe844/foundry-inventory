@@ -122,7 +122,9 @@ async function createDraft(db,ctx,id,input={}, {automatic=false}={}){return tx(d
  if(r.status==='DRAFTED')return {id,salesOrderId:r.sales_order_id,replayed:true};if(r.status!=='RECEIVED')throw new ValidationError('That customer request was stopped.');
  if(!p.enabled||new Date(p.expires_at).getTime()<=Date.now()||p.authorized_by!==ctx.actorId)throw new ValidationError('This customer page stopped or expired. Review the customer request individually through a current page.');
  const f=await basis(c,ctx,p);if(f.hash!==r.source_hash||p.source_hash!==r.source_hash)throw new ValidationError('Customer, delivery, product, pricing or tax details changed. Obtain a fresh reviewed customer request.');
- const quote=await prices.prepareQuote(c,ctx,r.snapshot.input,{lock:true});if(termsHash(quote)!==r.snapshot.quoteHash||quote.violations.length||quote.totalMinor>Number(p.maximum_minor))throw new ValidationError('The exact accepted customer total or current safeguards changed. Obtain a fresh request.');
+ const quote=await prices.prepareQuote(c,ctx,r.snapshot.input,{lock:true});
+ await require('./agent-customer-pricing').checkOrder(c,ctx,r.snapshot.input,quote,{automatic});
+ if(termsHash(quote)!==r.snapshot.quoteHash||quote.violations.length||quote.totalMinor>Number(p.maximum_minor))throw new ValidationError('The exact accepted customer total or current safeguards changed. Obtain a fresh request.');
  if(f.preorderSources){
   await preorderAuthority(c,ctx,{automatic});
   await preorders.assertCurrentClaim(c,ctx,p,f.preorderSources,id,r.snapshot.input.lines);

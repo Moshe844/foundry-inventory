@@ -11,4 +11,21 @@
   </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save customer</button></div></form>
   <section class="card"><div class="card-head"><h2>Order history</h2></div><div class="card-body"><% if(!orders.length){ %><p class="muted">No orders yet.</p><% } else { %><div class="list-rows"><% orders.forEach(function(order){ %><a class="list-row" href="/orders/<%= order.id %>"><strong><%= order.order_number %></strong><span><%= helpers.shortDate(order.order_date) %> · <%= order.status.replaceAll('_',' ') %></span></a><% }); %></div><% } %></div></section>
 </div>
+<% if(locals.canEditTerms){ const own=terms?.customer_id===customer.id?terms:null; %>
+<section class="card section"><div class="card-head"><h2>Agreed payment terms</h2></div>
+<form class="card-body form-stack" method="post" action="/sales/customers/<%= customer.id %>/payment-terms">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="expectedUpdatedAt" value="<%= own?.updated_at||'' %>">
+  <label>Payment terms <select name="kind">
+    <% for(const [kind,label] of [['ON_ACCOUNT','On account'],['DEPOSIT','Deposit before fulfillment'],['BEFORE_FULFILMENT','Pay before fulfillment']]){ %>
+    <option value="<%= kind %>" <%= (own?.kind||'ON_ACCOUNT')===kind?'selected':'' %>><%= label %></option><% } %>
+  </select></label>
+  <label>Net days <input name="netDays" type="number" min="0" step="1" value="<%= own?.net_days??'' %>"></label>
+  <label>Deposit percentage <input name="depositPercent" type="number" min="0.01" max="100" step="0.01" value="<%= own?.deposit_percent??'' %>"></label>
+  <label>Or fixed deposit <input name="depositAmount" inputmode="decimal" value="<%= own?depositInput:'' %>"></label>
+  <label>Fixed deposit currency <input name="depositCurrency" minlength="3" maxlength="3" value="<%= own?.deposit_currency||currency %>"></label>
+  <label><input name="holdShipping" type="checkbox" value="1" <%= Number(own?.hold_shipping)?'checked':'' %>> Balance due before shipping</label>
+  <label><input name="creditApproved" type="checkbox" value="1" <%= Number(own?.credit_approved)?'checked':'' %>> Credit approved</label>
+  <button class="btn" type="submit">Save agreed terms</button>
+</form></section><% } %>
 <section class="section"><form method="post" action="/sales/customers/<%= customer.id %>/archive"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if(customer.record_state==='ARCHIVED'){ %><input type="hidden" name="restore" value="1"><button class="btn" type="submit">Restore customer</button><% } else { %><p class="muted">Archiving removes this customer from new-order choices. Their history remains. Deleting removes a customer nothing refers to completely.</p><div class="rd-actions rd-actions--start"><button class="btn btn--ghost" type="submit">Archive customer</button><a class="btn btn--ghost rd-delete" href="/delete/customer/<%= encodeURIComponent(customer.id) %>">Delete customer</a></div><% } %></form></section>

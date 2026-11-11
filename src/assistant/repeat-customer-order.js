@@ -36,6 +36,7 @@ async function prepare(db,ctx,customer,args){
     fulfillmentLocationId:order.fulfillment_location_id,taxRateId:order.quote?.taxRate?.id||null,priceListId:order.quote?.priceListId||null,
     lines:items.map(i=>({skuId:i.sku_id,quantity:Number(i.quantity_ordered),...(i.secondary_quantity_ordered!=null?{secondaryQuantity:Number(i.secondary_quantity_ordered)}:{})}))};
   const quote=await pricing.prepareQuote(db,ctx,input);
+  await require('../sales/agent-customer-pricing').checkOrder(db,ctx,input,quote);
   if(quote.violations.length)throw new ValidationError('The current prices require review before repeating this order.');
   const address=input.deliveryMethod==='SHIP'?customer.shipping_address:null;
   const training=require('../autopilot/draft-authority').scope(customer.id,input.currency,quote.totalMinor,

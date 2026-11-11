@@ -1,4 +1,7 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.pricePreparationHold){ %><p><%= result.pricePreparationHold %></p><% } %>
+<% if(result.countSourcePath){ %><p><a class="btn" href="<%= result.countSourcePath %>">Open physical count originals</a></p><% } %>
+<% if(result.customerCheckinLink){ %><p><a href="/autopilot/customer-check-ins">Open saved check-ins and routine settings</a></p><% } %>
 <% if(result.cyclePlan){ %><p><a class="btn" href="/autopilot/daily-cycle-counts">Open daily cycle-count plans</a></p><% } %>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
 <% if(result.lossShifts?.length){ %>
@@ -82,12 +85,13 @@
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= config.requestKey %>">
 <label>Warehouse, zone or bin <select name="locationId" required><% for(const loc of config.locations){ %><option value="<%= loc.id %>" <%= config.selectedLocationId===loc.id?'selected':'' %>><%= loc.name %></option><% } %></select></label>
 <label>Person who counts <select name="counterId" required><% for(const p of config.people){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
+<label>Stock scope <select name="stockScope"><option value="all">All stock, including lots, serials and measures</option><option value="quantity">Quantity-only stock</option></select></label>
 <button class="btn">Assign one count</button>
-<details><summary>Repeat this assignment</summary><p>StockChief assigns the next list when routine work is enabled and the previous worksheet has closed.</p>
+<details><summary>Repeat this assignment</summary><p>StockChief assigns the next list when routine work is enabled and the previous worksheet has closed. Growth uses a completed manual count for the same counter and scope.</p>
 <label>First count <input type="date" name="firstDay" value="<%= config.today %>"></label>
 <label>Days between counts <input type="number" name="days" min="1" max="366" value="7"></label><button class="btn" formaction="/warehouse/count-schedules">Save schedule</button></details></form>
 <% for(const schedule of config.schedules){ %><form method="post" action="/warehouse/count-schedules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= schedule.id %>">
-<p><%= schedule.name %> · <%= schedule.counter %> · every <%= schedule.interval_days %> days · next <%= schedule.due %></p>
+<p><%= schedule.name %> · <%= schedule.counter %> · <%= schedule.includes_tracking?'All stock':'Quantity only' %> · every <%= schedule.interval_days %> days · next <%= schedule.due %></p>
 <% if(schedule.last_issue){ %><p><%= schedule.last_issue %></p><% } %><button class="btn" name="remove" value="1">Stop scheduled count</button></form><% } } %>
 <% if(result.purchaseThreshold){ const rule=result.purchaseThreshold; %><form method="post" action="/autopilot/purchase-approval-threshold">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
@@ -119,6 +123,8 @@
 <label>For a value split, maximum per order <input name="budgetAmount" inputmode="decimal"></label>
 <label>For a date split, enter one line number and date per row <textarea name="lineDates" placeholder="1 2027-02-14"></textarea></label><% } %>
 <button class="btn">Review replacement orders</button></form><% } %>
+<% if(result.freightCombine){ %><%- include('freight-combine-rules',{model:result.freightCombine,trained:result.mode==='trained',csrfToken}) %><% } %>
+<% if(result.purchaseSplits){ %><%- include('purchase-split-rules',{model:result.purchaseSplits,trained:result.mode==='trained',csrfToken}) %><% } %>
 <% if(result.overdueRule!==undefined){ %>
 <% if(result.mode==='alone'||result.overdueRule){ %>
 <form method="post" action="/autopilot/reviews/overdue-customer-orders/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>">

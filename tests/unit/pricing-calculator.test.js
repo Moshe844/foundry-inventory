@@ -48,6 +48,9 @@ test('allocation and historical partial quantities conserve pennies over hundred
 });
 test('invalid prices, unsupported precision, excessive discount and arithmetic overflow fail closed',()=>{
  assert.throws(()=>engine.quote({...base,discountMinor:704}),/exceeds/);assert.throws(()=>engine.quote({...base,lines:[{skuId:'a',quantity:2,unitPriceMinor:Number.MAX_SAFE_INTEGER}]}),/range/);
- assert.throws(()=>engine.validateRule({kind:'guard',name:'Guard',currency:'JPY'}),/precision|supported/);assert.throws(()=>engine.quote({...base,rules:[promotion('bad',{type:'percent',value:10001})]}),/range/);
+ assert.throws(()=>engine.validateRule({kind:'guard',name:'Guard',currency:'ZZZ',minimumMarginBps:0}),/currency|supported/);
+ assert.equal(engine.validateRule({kind:'guard',name:'Guard',currency:'JPY',minimumMarginBps:0}).currency,'JPY');
+ assert.throws(()=>engine.quote({...base,lines:[{skuId:'a',quantity:1,unitPriceMinor:100.5}]}),/minor|integer|range/);
+ assert.throws(()=>engine.quote({...base,rules:[promotion('bad',{type:'percent',value:10001})]}),/range/);
  assert.throws(()=>engine.portion(100,2,1,2),/exceeds/);
 });

@@ -811,7 +811,7 @@ function createPostgresAutopilotRouter(database,options={}){
   // enforce the plan on every read and mutation; only the HTML presentation changes.
   async function agentPage(req,res,view,locals,load,lockedStatus=200){
     try{return res.page(view,{...locals,...(await load())});}
-    catch(error){if(error.code!=='entitlement_required')throw error;
+    catch(error){if(error.code!=='entitlement_required'||req.accepts(['html','json'])==='json')throw error;
       res.status(lockedStatus);
       return res.page('autopilot/locked',{...locals,message:error.message});}
   }
@@ -909,6 +909,23 @@ function createPostgresAutopilotRouter(database,options={}){
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   const landedCosts=require('../../accounting/postgres-landed-costs');
+  const customerCheckins=require('../../sales/agent-customer-checkins');
+  const checkinPath=customerCheckins.path;
+  router.get(checkinPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const page=Number(req.query.page||1);
+    if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid results page.');
+    return agentPage(req,res,'autopilot/customer-check-ins',{title:'Customer check-in drafts',nav:'autopilot'},
+      ()=>customerCheckins.page(database,req.ctx,{customerId:req.query.customer,selectedId:req.query.draft,page}));
+  }));
+  router.post(checkinPath+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this customer check-in.',{action:customerCheckins.ACTION,recordReference:req.body.customerId});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review this exact customer and purchase evidence first.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post(checkinPath+'/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await customerCheckins.configure(database,req.ctx,req.body);
+    return res.redirect(303,checkinPath);
+  }));
   const quoteFollowups=require('../../sales/agent-quote-followups');
   router.get('/autopilot/quote-followups/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/quote-followup',{title:'Customer quote follow-up',nav:'autopilot'},()=>quoteFollowups.page(database,req.ctx,req.params.id),402)));
   router.post('/autopilot/quote-followups/:id/received',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.record(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));
@@ -955,7 +972,13 @@ function createPostgresAutopilotRouter(database,options={}){
         result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});
         result.downloadLabel=packs.downloads[req.params.job].label;
       }
-      if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
+      if(req.params.job==='margin-prices'&&result.mode==='draft'){
+        const pricePolicy=require('../../commercial/agent-plan');
+        const state=await pricePolicy.accountState(database,req.ctx.workspaceId);
+        result.pricePreparationHold=await pricePolicy.stopped(database,req.ctx.workspaceId,state,'catalog.restore_margin',false);
+        result.reviewPrices=!result.pricePreparationHold;
+      }
+      if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
@@ -969,6 +992,8 @@ function createPostgresAutopilotRouter(database,options={}){
       const watch=require('../../autopilot/activity-watches'),job=watch.definitions.find(d=>d.key===req.params.job);
       if(job&&[170,171].includes(job.id))result.watchSettings={job:job.id,...await watch.settings(database,req.ctx.workspaceId,job.id)};
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
+      if(req.params.job==='combine-draft-orders')result.freightCombine=await require('../../purchasing/agent-freight-combine').screen(database,req.ctx);
+      if(req.params.job==='split-draft-orders')result.purchaseSplits=await require('../../purchasing/agent-purchase-splitting').screen(database,req.ctx);
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
@@ -1062,15 +1087,33 @@ function createPostgresAutopilotRouter(database,options={}){
       {action:actions[req.params.job],skuCodes:req.body.skuCodes,location:req.body.location,strategy:req.body.strategy,quantity:req.body.quantity,secondaryQuantities:req.body.secondaryQuantities,comparisonBasis:req.body.comparisonBasis,comparisonCurrency:req.body.comparisonCurrency,goodsOnlyReason:req.body.goodsOnlyReason});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/reviews/combine-draft-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-freight-combine').configure(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Removed the freight-combining rule.':'Saved the freight-combining rule.');
+    return res.redirect(303,'/autopilot/reviews/combine-draft-orders');
+  }));
+  const parseLineDates=value=>JSON.stringify(String(value||'').trim().split(/\r?\n/).map(line=>{
+    const m=/^\s*(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line);
+    if(!m)throw new ValidationError('Enter one line number and date per row, for example 1 2027-02-14.');
+    return {line:Number(m[1]),date:m[2]};
+  }));
+  router.post('/autopilot/reviews/split-draft-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-purchase-splitting').configure(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Removed the purchase split rule.':'Saved the purchase split rule.');
+    return res.redirect(303,'/autopilot/reviews/split-draft-orders');
+  }));
+  router.post('/autopilot/reviews/split-draft-orders/dates',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-purchase-splitting').saveDates(database,req.ctx,{
+      orderNumber:String(req.body.orderNumber||'').trim(),lineDates:parseLineDates(req.body.lineDates)
+    });
+    req.flash('success','Saved the requested delivery dates for the draft lines.');
+    return res.redirect(303,'/autopilot/reviews/split-draft-orders');
+  }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{
     const actions={'combine-draft-orders':'purchase_order.combine_drafts','split-draft-orders':'purchase_order.split_draft'};
     if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a purchase-order grouping.');
     const args={action:actions[req.params.job],sourceOrders:req.body.sourceOrders,splitStrategy:req.body.splitStrategy,budgetAmount:req.body.budgetAmount};
-    if(args.splitStrategy==='delivery-date')args.lineDates=JSON.stringify(String(req.body.lineDates||'').trim().split(/\r?\n/).map(line=>{
-      const match=/^\s*(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line);
-      if(!match)throw new ValidationError('Enter one line number and date per row, for example 1 2027-02-14.');
-      return {line:Number(match[1]),date:match[2]};
-    }));
+    if(args.splitStrategy==='delivery-date')args.lineDates=parseLineDates(req.body.lineDates);
     const prepared=await assistant.prepareAction(database,req.ctx,'Review replacement purchase orders',args);
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));

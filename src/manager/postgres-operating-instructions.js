@@ -476,6 +476,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
   for(const change of changes) apply(ctx.workspaceId,change);
   const configured=await client.query(`WITH owned AS MATERIALIZED (SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
     SELECT (SELECT count(*) FROM stockchief_runtime.agent_draft_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_quote_companion_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_customer_checkin_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_transfer_balance_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_invoice_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_customer_invoice_rules WHERE workspace_id IN(SELECT id FROM owned))
@@ -491,6 +493,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.lot_certificate_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_document_filing_scopes WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_shelf_photo_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_count_source_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_backup_supplier_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_blanket_contracts WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_term_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
@@ -522,6 +525,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.channel_map_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.location_reorder_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.daily_cycle_count_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_freight_combine_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_purchase_split_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.supplier_negotiation_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_overdue_order_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.class_service_levels WHERE workspace_id IN(SELECT id FROM owned)) AS n`,[state.accountId]);

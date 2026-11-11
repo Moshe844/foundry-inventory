@@ -12,7 +12,7 @@ const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const supplierLinks=require('../../purchasing/supplier-order-link');
 const exactQuantity=require('../../domain/exact-quantity');
-const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
+const {requireAuth,requireOwner,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError,NotFoundError,AuthorizationError}=require('../../domain/errors');
 
@@ -197,17 +197,17 @@ async function salesOrderPage(database,workspaceId,id){
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
   const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED' AND r.recognition_stage='ON_REFUND'",[workspaceId,id])).rows[0];const credits=(await database.query('SELECT coalesce(sum(c.revenue_minor+c.tax_minor),0)::bigint credited,coalesce(sum(c.cash_refunded_minor),0)::bigint repaid FROM accounting_return_receipt_credits c JOIN customer_returns r ON r.workspace_id=c.workspace_id AND r.id=c.customer_return_id WHERE c.workspace_id=$1 AND r.sales_order_id=$2',[workspaceId,id])).rows[0];const creditedMinor=Number(refunds.refunded_minor)+Number(credits.credited),refundedMinor=Number(refunds.cash_minor)+Number(credits.repaid),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor)-Number(credits.repaid);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-creditedMinor);order.pricing.creditedMinor=creditedMinor;}
-  const terms=detail.paymentTerms;const termsText=!terms?'Payment due when invoiced':terms.kind==='BEFORE_FULFILMENT'
-    ?'Payment before fulfilment':terms.kind==='DEPOSIT'?'Deposit before fulfilment':`Net ${Number(terms.net_days||0)}`;
-  const held=detail.depositDueMinor>0||terms?.kind==='BEFORE_FULFILMENT'&&paidMinor<detail.orderTotalMinor;
+  const terms=detail.paymentTerms;
+  const termsText=require('../../sales/customer-commercial-terms').describe(terms,detail.order.currency);
+  const held=detail.pickDueMinor>0,shippingHeld=detail.shipDueMinor>0;
   const money={refundedMinor,creditedMinor,invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
     totalMinor:detail.invoices.length?invoiceTotal:detail.orderTotalMinor,paidMinor,
     outstandingMinor:detail.invoices.length?invoiceOutstanding:Math.max(0,detail.orderTotalMinor-paidMinor),
     dueNowMinor:detail.depositDueMinor||0,currency:detail.order.currency,state:invoiceOutstanding===0&&detail.invoices.length?'Paid':
       paidMinor>0?'Partially paid':'Unpaid',terms:terms||{source:'business default'},termsText,
     heldReason:{pick:held?'The agreed payment is still due before this order can be picked.':null,
-      ship:terms?.hold_shipping&&invoiceOutstanding>0?'The remaining balance is due before this order can ship.':null},
-    blocksPicking:held,blocksShipping:Boolean(terms?.hold_shipping&&invoiceOutstanding>0),override:null,dueDate:null};
+      ship:shippingHeld?'The agreed payment is still due before this order can ship.':null},
+    blocksPicking:held,blocksShipping:shippingHeld,override:null,dueDate:detail.invoices[0]?.due_date||null};
   // Money the order can no longer use (it was cancelled, or the customer paid
   // more than it came to) is the customer's to get back.
   if(['CANCELLED','FULFILLED'].includes(detail.order.status)){const deposit=await require('../../sales/postgres-deposit-refunds').forOrder(database,workspaceId,id);
@@ -443,7 +443,7 @@ function createPostgresCommerceRouter(database,options={}){
         GROUP BY so.id,c.name HAVING SUM(a.quantity)>0 ORDER BY COALESCE(so.needed_by,'9999-12-31'),so.created_at`,[req.ctx.workspaceId]),
       database.query(`SELECT cc.*,c.name AS customer_name,so.order_number,sh.shipment_number FROM customer_communications cc
         LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN sales_orders so ON so.id=cc.sales_order_id
-        LEFT JOIN sales_shipments sh ON sh.id=cc.shipment_id WHERE cc.workspace_id=$1 AND cc.status IN ('PREPARED','FAILED')
+        LEFT JOIN sales_shipments sh ON sh.id=cc.shipment_id WHERE cc.workspace_id=$1 AND cc.status IN ('PREPARED','FAILED') AND cc.message_kind<>'customer_check_in'
         ORDER BY cc.created_at`,[req.ctx.workspaceId]),
       database.query('SELECT * FROM customer_communication_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
       database.query(`SELECT id,display_name FROM workspace_connectors WHERE workspace_id=$1
@@ -985,7 +985,70 @@ function createPostgresCommerceRouter(database,options={}){
     let form={};if(req.query.revise){const q=await quotations.get(database,req.ctx.workspaceId,req.query.revise),p=q.input;form={...p,skuId:p.lines.map(l=>l.skuId),quantity:p.lines.map(l=>l.quantity),unitPrice:p.lines.map(l=>l.unitPriceMinor==null?'':require('../../domain/currency').fromMinor(l.unitPriceMinor,p.currency)),priceOverride:p.lines.map(l=>l.priceOverride?'1':'0'),customerShippingAddress:p.shipToAddress,tax:require('../../domain/currency').fromMinor(p.taxMinor,p.currency),discount:require('../../domain/currency').fromMinor(p.discountMinor,p.currency),couponCodes:(p.codes||[]).join(', '),orderDate:entryToday(req),supersedesId:q.id};}return renderEntry(req,res,{quotation:true,form});
   }));
   router.post('/quotes',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),q=await quotations.create(database,req.ctx,{...input,validUntil:req.body.validUntil,requestKey:req.body.idempotencyKey,supersedesId:req.body.supersedesId||null});return res.redirect(303,'/quotes/'+q.id);}catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{quotation:true,form:req.body,formError:error.message,status:400});}}));
-  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quote',{title:'Quotation',nav:'sales',quotation:await quotations.get(database,req.ctx.workspaceId,req.params.id),today:entryToday(req),canEmailQuotation:req.user?.role==='owner'})));
+  const quoteBuyers=require('../../sales/agent-quote-buyers');
+  const buyerUrl=id=>'/quotes/'+encodeURIComponent(id)+'/buyer';
+  router.get('/quotes/:id/buyer',requireOwner,asyncRoute(async(req,res)=>{
+    res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});
+    return res.page('sales/quote-buyer',{title:'Private buyer acceptance',nav:'sales',model:await quoteBuyers.page(database,req.ctx,req.params.id)});
+  }));
+  router.post('/quotes/:id/buyer/publish',requireOwner,asyncRoute(async(req,res)=>{
+    await quoteBuyers.publish(database,req.ctx,req.params.id,req.body);
+    return res.redirect(303,buyerUrl(req.params.id));
+  }));
+  router.post('/quotes/:id/buyer/revoke',requireOwner,asyncRoute(async(req,res)=>{
+    await quoteBuyers.revoke(database,req.ctx,req.params.id,req.body);
+    return res.redirect(303,buyerUrl(req.params.id));
+  }));
+  router.post('/quotes/:id/buyer/review',requireOwner,asyncRoute(async(req,res)=>{
+    const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Review the exact buyer acceptance.',
+      {action:'sales_quote.accept',recordReference:req.params.id});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review the saved buyer acceptance before drafting an order.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  const quoteCompanions=require('../../sales/agent-quote-companions');
+  const companionUrl=id=>'/quotes/'+encodeURIComponent(id)+'/companions';
+  async function companionSelection(req){
+    const ids=(Array.isArray(req.body.companion)?req.body.companion:[req.body.companion]).filter(Boolean).map(String);
+    if(!ids.length||ids.length>500||new Set(ids).size!==ids.length)throw new ValidationError('Choose the exact companion products.');
+    const rows=(await database.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1',
+      [req.ctx.workspaceId,ids])).rows;
+    if(rows.length!==ids.length)throw new ValidationError('Choose active product variants in this inventory.');
+    return ids.map(id=>({sku:rows.find(r=>r.id===id).code,quantity:req.body['quantity_'+id],
+      secondaryQuantity:req.body['secondary_'+id]}));
+  }
+  router.get('/quotes/:id/companions',requireOwner,asyncRoute(async(req,res)=>{
+    const page=Number(req.query.page||1);
+    if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid results page.');
+    const model=await quoteCompanions.page(database,req.ctx,req.params.id,{locationId:req.query.locationId,page});
+    return res.page('sales/quote-companions',{title:'Customers also buy',nav:'sales',model,formKey:newId('quote-companions')});
+  }));
+  router.post('/quotes/:id/companions',requireOwner,asyncRoute(async(req,res)=>{
+    const args=await companionSelection(req);
+    const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Review these exact companion lines.',
+      {action:quoteCompanions.ACTION,recordReference:req.params.id,companionWarehouse:req.body.locationId,companionLines:JSON.stringify(args)});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review the current quote and its companion products.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/quotes/:id/companions/scope',requireOwner,asyncRoute(async(req,res)=>{
+    const input={...req.body,companionLines:req.body.stop==='yes'?[]:await companionSelection(req)};
+    await quoteCompanions.configuration(database,req.ctx,req.params.id,req.body.locationId,input);
+    req.flash('success',req.body.stop==='yes'?'Routine companion additions stopped.':'Saved authority for future matching quotations.');
+    return res.redirect(303,companionUrl(req.params.id)+'?'+new URLSearchParams({locationId:req.body.locationId}));
+  }));
+  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>{
+    const [quotation,successor,buyerLink,agent]=await Promise.all([
+      quotations.get(database,req.ctx.workspaceId,req.params.id),
+      database.query('SELECT id,quote_number FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2 LIMIT 1',
+        [req.ctx.workspaceId,req.params.id]).then(r=>r.rows[0]),
+      quoteBuyers.linked(database,req.ctx.workspaceId,req.params.id),
+      require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId)
+    ]);
+    const policy=require('../../commercial/agent-plan');
+    return res.page('sales/quote',{title:'Quotation',nav:'sales',quotation,successor,today:entryToday(req),
+      buyerManaged:Boolean(buyerLink),canOpenBuyer:req.user?.role==='owner'&&(buyerLink||policy.usesAgentTerms(agent)&&policy.permits(agent.plan,75,'draft')),
+      canEmailQuotation:req.user?.role==='owner',canReviewCompanions:req.user?.role==='owner',
+      agreedPaymentTerms:quotation.pricing.customerTerms?require('../../sales/customer-commercial-terms').describe(quotation.pricing.customerTerms,quotation.pricing.currency):null});
+  }));
   const quotationMail=require('../../sales/quotation-mail');
   router.get('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>res.page('sales/quote-email',{title:'Email saved quotation',nav:'sales',...await quotationMail.page(database,req.ctx,req.params.id,req.query.connectorId)})));
   router.post('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>{
@@ -1002,6 +1065,7 @@ function createPostgresCommerceRouter(database,options={}){
   }));
   router.get('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
     const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);if(!['DRAFT','CONFIRMED','BACKORDERED'].includes(d.order.status))throw new ValidationError('Only an order that has not started shipping can be edited.');
+    if(d.paymentTerms?.quoteBound)throw new ValidationError('The buyer accepted the exact terms on this order. Use a new quotation for changes.');
     const q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
     return renderEntry(req,res,{form:entry.formFromOrder(d.order,d.lines,q),editOrder:d.order});
   }));
@@ -1046,15 +1110,43 @@ function createPostgresCommerceRouter(database,options={}){
     const customer=(await database.query(`SELECT * FROM customers WHERE workspace_id=$1 AND id=$2`,
       [req.ctx.workspaceId,req.params.id])).rows[0];
     if(!customer)throw new ValidationError('That customer was not found in this inventory.');
-    const [orders,balance,settings]=await Promise.all([
+    const [orders,balance,settings,terms]=await Promise.all([
       database.query(`SELECT id,order_number,order_date,status FROM sales_orders
         WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC LIMIT 100`,[req.ctx.workspaceId,customer.id]),
       database.query(`SELECT COALESCE(SUM(balance_minor),0)::bigint AS minor FROM accounting_customer_invoices
         WHERE workspace_id=$1 AND customer_id=$2 AND status IN ('OPEN','PARTIALLY_PAID')`,[req.ctx.workspaceId,customer.id]),
       database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId]),
+      require('../../sales/customer-commercial-terms').current(database,req.ctx.workspaceId,customer.id),
     ]);
     return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,
-      orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD'});
+      orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
+      terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
+      canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
+  }));
+  router.post('/sales/customers/:id/payment-terms',requirePermission(permissions.ADMIN,'save agreed customer terms'),asyncRoute(async(req,res)=>{
+    await database.transaction(async c=>{
+      const owner=(await c.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+        JOIN customers customer ON customer.workspace_id=w.id AND customer.id=$3 AND customer.record_state='ACTIVE'
+        WHERE w.id=$1 AND u.id=$2 AND u.role='owner' AND w.deletion_requested_at IS NULL`,[req.ctx.workspaceId,req.ctx.actorId,req.params.id])).rowCount;
+      if(!owner)throw new ValidationError('Only the current inventory owner can save an active customer’s agreed terms.');
+      const terms=require('../../sales/customer-commercial-terms'),before=await terms.current(c,req.ctx.workspaceId,req.params.id);
+      const fixed=String(req.body.depositAmount||'').trim(),currency=fixed?require('../../domain/currency').code(req.body.depositCurrency):null;
+      const controls=(await c.query(`SELECT credit_limit_minor,auto_request_enabled,auto_request_limit_minor,note
+        FROM customer_payment_terms WHERE workspace_id=$1 AND customer_id=$2`,[req.ctx.workspaceId,req.params.id])).rows[0];
+      await require('../../sales/postgres-payment-terms').saveInTransaction(c,req.ctx,{customerId:req.params.id,
+        kind:req.body.kind,netDays:req.body.netDays,depositPercent:req.body.depositPercent,
+        depositMinor:fixed?require('../../domain/currency').userToMinor(fixed,currency):null,depositCurrency:currency,
+        holdShipping:req.body.holdShipping==='1',creditApproved:req.body.creditApproved==='1',
+        expectedUpdatedAt:String(req.body.expectedUpdatedAt||''),
+        // This form edits the commercial payment agreement. Keep the existing
+        // independently granted credit limit and payment-link authority.
+        creditLimitMinor:controls?.credit_limit_minor==null?null:String(controls.credit_limit_minor),
+        autoRequestEnabled:Boolean(Number(controls?.auto_request_enabled)),autoRequestLimitMinor:controls?.auto_request_limit_minor,note:controls?.note});
+      await require('../../operations/postgres-security-audit').record(c,req.ctx,{action:'Saved customer payment terms',
+        reference:req.params.id,before,after:await terms.current(c,req.ctx.workspaceId,req.params.id)});
+    },{isolation:'SERIALIZABLE',retrySafe:true});
+    req.flash('success','Agreed payment terms saved for new quotes and orders.');
+    return res.redirect(303,`/sales/customers/${req.params.id}`);
   }));
   router.post('/sales/customers/:id',requirePermission(permissions.OPERATE,'change customers'),asyncRoute(async(req,res)=>{
     const name=requireText(req.body.name,'Customer name',{max:160});

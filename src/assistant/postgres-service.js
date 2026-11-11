@@ -42,10 +42,10 @@ function recordHandoff(kind,name,extras={}) {
 async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
   let entries;
   try{entries=JSON.parse(String(raw||''));}catch{return {answer:'I could not safely read all the product lines. Restate the items, quantities, and per-unit prices; nothing was prepared.'};}
-  if(!Array.isArray(entries)||entries.length<2||entries.length>12)return {answer:
-    'A multi-product draft needs two to twelve distinct product lines. Nothing was prepared.'};
-  const quotedAmounts=[...String(message||'').matchAll(/[$€£]\s*(\d[\d,]*(?:\.\d{1,2})?)/g)]
-    .map((match)=>pricing.toMinor(match[1].replaceAll(',',''),'Quoted selling price'));
+  if(!Array.isArray(entries)||!entries.length||entries.length>500)return {answer:
+    'A draft needs between one and 500 distinct product lines. Nothing was prepared.'};
+  const quotedAmounts=[...String(message||'').matchAll(/[$€£¥]\s*(\d[\d,]*(?:\.\d{1,4})?)/g)]
+    .map((match)=>match[1].replaceAll(',',''));
   const seen=new Set(),lines=[],summaries=[];let orderCurrency=currency||null;
   for(const [index,entry] of entries.entries()){
     if(!entry||typeof entry!=='object'||Array.isArray(entry))
@@ -58,9 +58,10 @@ async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
       ?rawProduct.sku||rawProduct.code||rawProduct.name:null;
     const named=trimOrNull(product||rawProduct);
     const quantity=Number(first(['quantity','qty','units','unitcount']));
+    const secondaryQuantity=first(['secondaryquantity']);
     const statedPrice=first(['unitprice','priceperunit','perunitprice','sellingprice','price','amount']);
-    if(!named||!Number.isSafeInteger(quantity)||quantity<1||quantity>100000)
-      return {answer:'Each product line needs an exact product and a positive whole-unit quantity. Nothing was prepared.'};
+    if(!named||!Number.isFinite(quantity)||quantity<=0||quantity>1000000)
+      return {answer:'Each line needs an exact product and a positive recorded quantity. Nothing was prepared.'};
     const found=await resolveRequestedSku(database,ctx.workspaceId,{sku:named});
     if(!found.row)return {answer:`I could not uniquely verify product “${named}”. Give its exact SKU code; nothing was prepared.`};
     if(seen.has(found.row.id))return {answer:`${found.row.code} appears twice. Combine its quantity into one line; nothing was prepared.`};
@@ -68,22 +69,21 @@ async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
     const current=await pricing.currentPrice(database,ctx.workspaceId,found.row.id);
     if(quotedAmounts.length>=entries.length&&statedPrice===undefined)
       return {answer:`Your request quotes prices for every line, but ${found.row.code} has no preserved quoted price. Nothing was prepared.`};
-    if(orderCurrency&&current.currency&&current.currency!==orderCurrency&&statedPrice===undefined)
-      return {answer:'Those products have prices in different currencies. Name one order currency and exact per-unit prices; nothing was prepared.'};
     orderCurrency=orderCurrency||current.currency||'USD';
-    let unitPriceMinor=current.amount_minor;
+    let unitPriceMinor=current.currency===orderCurrency?current.amount_minor:null;
     if(statedPrice!==undefined){
-      try{unitPriceMinor=pricing.toMinor(String(statedPrice),'Selling price');}
+      let quotedMinor;
+      try{unitPriceMinor=pricing.toMinor(String(statedPrice),'Selling price',orderCurrency);
+        quotedMinor=quotedAmounts.map(value=>pricing.toMinor(value,'Quoted selling price',orderCurrency));}
       catch{return {answer:`The per-unit price for ${found.row.code} is invalid. Nothing was prepared.`};}
-      if(!quotedAmounts.includes(unitPriceMinor))return {answer:
+      if(!quotedMinor.includes(unitPriceMinor))return {answer:
         `I could not verify the proposed ${pricing.formatMinor(unitPriceMinor,orderCurrency)} per-unit price for ${found.row.code} in your request. Nothing was prepared.`};
-      if(quotedAmounts.length===entries.length&&quotedAmounts[index]!==unitPriceMinor)return {answer:
+      if(quotedMinor.length===entries.length&&quotedMinor[index]!==unitPriceMinor)return {answer:
         `The proposed per-unit prices do not follow the line order you gave. Restate the items and prices; nothing was prepared.`};
     }
-    if(!Number.isSafeInteger(unitPriceMinor)||unitPriceMinor<=0)return {answer:
-      `What selling price per unit should ${found.row.code} use? Nothing was prepared.`};
-    lines.push({skuId:found.row.id,quantity,unitPriceMinor,priceOverride:statedPrice!==undefined});
-    summaries.push(`${quantity} × ${found.row.code} at ${pricing.formatMinor(unitPriceMinor,orderCurrency)} each`);
+    lines.push({skuId:found.row.id,quantity,unitPriceMinor,priceOverride:statedPrice!==undefined,
+      ...(secondaryQuantity!=null?{secondaryQuantity}:{})});
+    summaries.push(`${quantity} × ${found.row.code}`);
   }
   return {lines,currency:orderCurrency,summary:summaries.join('; ')};
 }
@@ -1687,17 +1687,18 @@ async function prepareAction(database,ctx,message,request,options={}) {
       if(orderLines?.answer)return {status:'CLARIFY',answer:orderLines.answer,carryForward:orderContext};
       const current=multipleLines?null:await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
       const currency=orderLines?.currency||request.currency||current?.currency||'USD';
-      const amountMinor=multipleLines?null:request.amount===null?current.amount_minor:
+      const amountMinor=multipleLines?null:request.amount==null?(current.currency===currency?current.amount_minor:null):
         pricing.toMinor(String(request.amount),'Selling price',currency);
-      if(!multipleLines&&amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const lines=orderLines?.lines||[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor,priceOverride:request.amount!==null&&request.amount!==undefined}];
-      return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
+      try{return await createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
         deliveryMethod,shipToAddress:destination,fulfillmentLocationId,orderDate:request.orderDate,
         neededBy:request.neededBy,
         currency,reference:request.reference,lines,codes:String(request.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean),priceListId:request.priceListId||null},
       `Prepare one draft customer order for ${party.row.name}: ${orderLines?.summary||
         `${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each`}, `+
-        `${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
+        `${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);}
+      catch(error){if(error.code!=='validation_error'||!/needs a selling price in the order currency/.test(error.message))throw error;
+        return {status:'CLARIFY',answer:'What approved selling price per unit should the order use in '+currency+'?',awaitingField:'amount',carryForward:orderContext};}
     }
     const place=await resolvePurchaseDestination(database,ctx.workspaceId,sku.row.id,request.location);
     if(place.missing)return {status:'CLARIFY',answer:'Which inventory location should receive this purchase order?',awaitingField:'location',carryForward:orderContext};
@@ -2125,6 +2126,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
+    if(proposal.action_type==='catalog.restore_margin')await require('../pricing/agent-margin-prices').assertOwner(client,ctx);
     if(proposal.status==='EXECUTED')return {...proposal,replayed:true};
     if(proposal.status!=='PENDING')throw new InvariantError('That prepared change is no longer waiting for approval.',
       'proposal_not_pending');

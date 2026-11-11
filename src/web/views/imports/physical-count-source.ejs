@@ -1,0 +1,95 @@
+<% const path='/imports/count-sources',source=model.source;
+const statuses={QUEUED:'Reading original',REVIEW:'Needs physical confirmation',APPROVED:'Posting approved adjustments',POSTED:'Verified',HELD:'Review needed'};
+const labels={sku:'Exact SKU',location:'Exact location',quantity:'Physical quantity',unit:'Stocking unit',lot:'Lot code',
+  serial:'Serial number',secondary:'Independent measure',secondaryUnit:'Measure unit',cost:'Unit cost for additional stock',currency:'Cost currency'}; %>
+<h1>Physical count originals</h1>
+<% if(!source){ %>
+<section class="card card-body stack">
+  <h2>Read a count sheet or shelf photo</h2>
+  <p>Include the exact SKU and physical quantity. Name the location on each row when the file covers multiple locations. Record lots and serials on separate rows, with an independent measure and its unit when required.</p>
+  <form method="post" action="<%= path %>" enctype="multipart/form-data" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Original file <input name="file" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods,.pdf,image/*" required></label>
+    <label>Preparation <select name="ruleId"><option value="">Review this file individually</option><% for(const r of model.rules){ %><option value="<%= r.id %>"><%= r.label %></option><% } %></select></label>
+    <fieldset><legend>Locations for an individual file</legend><% for(const l of model.locations){ %><label><input type="checkbox" name="locationIds" value="<%= l.id %>"> <%= l.name %></label><% } %></fieldset>
+    <button class="btn">Read original</button>
+  </form>
+</section>
+<section class="card card-body stack">
+  <h2>Saved source routines</h2>
+  <% for(const r of model.rules){ %><form method="post" action="<%= path %>/rule">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= r.id %>">
+    <p><%= r.label %> · Up to <%= r.maximum_rows %> rows</p><button class="btn secondary" name="remove" value="yes">Stop routine</button>
+  </form><% } %>
+  <details><summary>Authorize a routine</summary>
+    <form method="post" action="<%= path %>/rule" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Routine name <input name="label" maxlength="120" required></label>
+      <label>Source type <select name="format"><option value="sheet">Spreadsheet</option><option value="visual">Count sheet image or shelf photo</option></select></label>
+      <fieldset><legend>Exact locations</legend><% for(const l of model.locations){ %><label><input type="checkbox" name="locationIds" value="<%= l.id %>"> <%= l.name %></label><% } %></fieldset>
+      <label>Maximum rows per original <input type="number" name="maximumRows" min="1" required></label>
+      <label>Completed manual example required on Pro <select name="exampleId"><option value="">Choose an example</option><% for(const r of model.examples){ %><option value="<%= r.id %>"><%= r.filename %></option><% } %></select></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> Allow preparation under this exact scope.</label>
+      <button class="btn">Save routine</button>
+    </form>
+  </details>
+</section>
+<section class="card card-body stack"><h2>Recent originals</h2><% for(const r of model.latest){ %>
+  <p><a href="<%= path+'/'+r.id %>"><%= r.filename %></a> · <%= statuses[r.status] %></p>
+<% } %></section>
+<% }else{ %>
+<section class="card card-body stack">
+  <h2><%= source.filename %></h2>
+  <p role="status"><%= statuses[source.status] %> · <%= model.totals.done %> of <%= model.totals.rows %> positions processed</p>
+  <p><a href="<%= path+'/'+source.id %>/original">Download the original</a></p>
+  <% if(source.reading_note){ %><p><%= source.reading_note %></p><% } %>
+  <% if(source.issue){ %><p role="alert"><%= source.issue %></p><% } %>
+  <% if(['QUEUED','APPROVED'].includes(source.status)){ %><p><a href="<%= path+'/'+source.id %>">Check progress</a></p><% } %>
+  <% if(['HELD','REVIEW'].includes(source.status)||source.job_status==='DEAD'){ %><form method="post" action="<%= path+'/'+source.id %>/revise">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= source.revision %>">
+    <button class="btn secondary"><%= model.totals.rows?'Refresh the stock evidence':'Read this saved original individually' %></button>
+  </form><% } %>
+  <% if(source.status==='REVIEW'&&source.reading_note&&model.totals.held){ %><details><summary>Confirm all readings you checked against this original</summary>
+    <form method="post" action="<%= path+'/'+source.id %>/revise" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= source.revision %>">
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked every displayed source reading against the full original.</label>
+      <button class="btn secondary" name="confirmReadings" value="yes">Confirm exact readings</button>
+    </form>
+  </details><% } %>
+  <% if(source.status==='REVIEW'&&!model.totals.held&&model.totals.rows>model.totals.done){ %>
+  <form method="post" action="<%= path+'/'+source.id %>/approve" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= source.revision %>">
+    <input type="hidden" name="evidence" value="<%= source.evidence_hash %>">
+    <% if(model.totals.currency){ %><p>Reviewed stock value change <%= helpers.money(model.totals.value,model.totals.currency) %></p><% } %>
+    <label><input type="checkbox" name="confirmed" value="yes" required> I verified the physical counts, identities, measures and value changes.</label>
+    <button class="btn">Approve the physical adjustments</button>
+  </form><% } %>
+</section>
+<% for(const row of model.rows){ %>
+<article class="card card-body stack">
+  <h3><%= row.observed.sku||'Unidentified SKU' %> · <%= row.raw.sheet %> row <%= row.raw.row %></h3>
+  <% if(row.issue){ %><p><%= row.issue %></p><% } %>
+  <% if(row.preview){ const p=row.preview; %><p><%= p.expected.location %> · <%= row.observed.lot||row.observed.serial||'' %>
+    · Recorded <%= p.before %> · Counted <%= p.quantity %><% if(p.weight!==null){ %> · Recorded measure <%= p.beforeWeight %> · Counted measure <%= p.weight %> <%= row.observed.secondaryUnit %><% } %></p>
+    <% if(p.costDelta!=null&&p.currency){ %><p>Reviewed value change <%= helpers.money(p.costDelta,p.currency) %></p><% } %>
+    <% if(p.reweigh){ %><p>Retain the acquisition cost of the same stock. Reason: <%= row.observed.measureReason %></p><% } %>
+  <% } %>
+  <% if(row.observed.excludeReason){ %><p>Outside the physical count · <%= row.observed.excludeReason %></p><% } %>
+  <% if(row.effect&&!row.effect.excluded){ %><p><%= row.effect.unchanged?'Verified as counted':'Posted and verified' %><% if(row.effect.movementId){ %> · <a href="/inventory/<%= row.preview.expected.itemId %>">Stock record</a><% } %></p><% } %>
+  <details><summary>Original row</summary><dl><% row.raw.headings.forEach((heading,index)=>{ %><dt><%= heading %></dt><dd><%= row.raw.cells[index]||'Blank' %></dd><% }); %></dl></details>
+  <% if(!row.effect&&['REVIEW','HELD'].includes(source.status)){ %><details <%= row.issue?'open':'' %>><summary>Check this physical reading</summary>
+    <form method="post" action="<%= path+'/'+source.id %>/revise" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= source.revision %>">
+      <input type="hidden" name="number" value="<%= row.number %>">
+      <% for(const field of model.fields){ %><label><%= labels[field] %> <input name="<%= field %>" value="<%= row.observed[field]||'' %>"></label><% } %>
+      <% if(row.observed.secondary||row.preview?.weight!=null){ %><label><input type="checkbox" name="measureCorrection" value="yes" <%= row.observed.measureCorrection==='yes'?'checked':'' %>> Correct the recorded measure of the same stock and retain its recorded cost.</label>
+      <label>Reason for correcting only the measure <input name="measureReason" maxlength="500" value="<%= row.observed.measureReason||'' %>"></label><% } %>
+      <% if(row.issue||row.observed.excludeReason){ %><label><input type="checkbox" name="exclude" value="yes" <%= row.observed.excludeReason?'checked':'' %>> This source row is outside the physical count.</label>
+      <label>Reason this row is outside the count <input name="excludeReason" maxlength="500" value="<%= row.observed.excludeReason||'' %>"></label><% } %>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked this row against the original and actual stock.</label>
+      <button class="btn">Save checked reading</button>
+    </form>
+  </details><% } %>
+</article>
+<% } if(model.next){ %><p><a href="?after=<%= model.next %>">Next positions</a></p><% } %>
+<% } %>

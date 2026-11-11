@@ -1,11 +1,31 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My count · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My count · StockChief</title><link rel="stylesheet" href="/app.css"><script src="/phone-count.js" defer></script></head><body><main>
 <header class="page-head"><div><h1><%= assigned.title %></h1><p><%= progress.done %> of <%= progress.total %> positions counted.</p></div></header>
+<% if(locals.countError){ %><p role="alert"><%= countError %></p><% } %>
 <% if(assigned.observed_at){ %><p>Your count has been sent to the owner for review.</p>
 <% }else if(assigned.status!=='DRAFT'){ %><p>This count worksheet is closed.</p>
-<% }else{ for(const line of rows){ %><form class="card card-body" method="post" action="/warehouse/my-counts/<%= assigned.campaign_id %>">
+<% }else{ for(const line of rows){ const serial=line.tracking_mode==='serial'; %><form class="card card-body stack" method="post" action="/warehouse/my-counts/<%= assigned.campaign_id %>">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= line.sku_id %>"><input type="hidden" name="locationId" value="<%= line.location_id %>">
   <h2><%= line.product %></h2><p><%= line.code %> · <%= line.location %></p>
-  <label>Physical quantity <input name="quantity" inputmode="decimal" required autocomplete="off"></label><button class="btn">Save count</button>
+  <% if(line.tracking_mode==='quantity'){ %>
+    <label>Physical quantity <input name="quantity" inputmode="decimal" required autocomplete="off"></label>
+    <% if(line.secondary_unit_label){ %><label>Physical weight (<%= line.secondary_unit_label %>) <input name="secondaryQuantity" inputmode="decimal" required autocomplete="off"></label><% } %>
+    <button class="btn">Save count</button>
+  <% }else{ %>
+    <% if(line.entered){ %><p><%= line.entered %> <%= serial?'serial':'lot' %> <%= line.entered===1?'entry':'entries' %> saved so far.</p><% } %>
+    <div data-count-entries class="stack">
+      <% function fields(index){ %><fieldset data-count-entry>
+        <label><%= serial?'Physical serial number':'Physical lot code' %> <input name="entries[<%= index %>][code]" autocomplete="off"></label>
+        <% if(!serial){ %><label>Lot quantity (<%= line.unit_label %>) <input name="entries[<%= index %>][quantity]" inputmode="decimal" autocomplete="off"></label><% } %>
+        <% if(line.secondary_unit_label){ %><label>Physical weight (<%= line.secondary_unit_label %>) <input name="entries[<%= index %>][secondary]" inputmode="decimal" autocomplete="off"></label><% } %>
+      </fieldset><% } fields(0); %>
+    </div>
+    <template data-count-entry-template><% fields('ENTRY'); %></template>
+    <div class="actions"><button type="button" class="btn secondary" data-count-add>Add <%= serial?'a serial':'a lot' %></button>
+    <button class="btn secondary" name="entryAction" value="add">Save entries and continue</button>
+    <% if(line.entered){ %><button class="btn secondary" name="entryAction" value="reset" formnovalidate>Clear saved entries</button><% } %></div>
+    <% if(!line.entered){ %><label><input type="checkbox" name="noStock" value="yes"> No physical stock found here</label><% } %>
+    <button class="btn" name="entryAction" value="finish">Finish this position</button>
+  <% } %>
 </form><% }} %>
 <p><a href="<%= restricted?'/warehouse/stock':'/needs-you' %>"><%= restricted?'Back to warehouse stock':'Back to Needs you' %></a></p>
 </main></body></html>

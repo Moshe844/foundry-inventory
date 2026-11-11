@@ -427,6 +427,8 @@ async function autopilotEvaluate(job,client){
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
+    await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
+    await require('../purchasing/agent-purchase-splitting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
@@ -616,6 +618,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'erp.cutover.continue':external((job,database)=>require('../onboarding/postgres-cutover-runner').run(job,database),'bulk'),
   'warehouse.count.apply':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
+  'agent.phone-count.apply.v1':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
   'agent.annual-stocktake.apply.v1':external(async(job,database)=>{if(!(await database.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[job.workspaceId,job.payload?.campaignId])).rowCount)throw new (require('../domain/errors').ValidationError)('This job is not an annual stocktake worksheet.');return require('./postgres-count-campaigns').run(job,database);},'bulk'),
   'system.retention':external((job,database)=>require('./postgres-retention').run(database,{now:Number(job.payload?.now)||Date.now()}),'bulk'),
   'records.remove-import':external((job,database)=>require('../domain/postgres-record-removal').runImportRemoval(job,database),'bulk'),
@@ -624,6 +627,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.variant-sheet.v1':external((job,database)=>require('../imports/agent-exact-variant-import').run(job,database),'reading'),
+  'import.physical-count-source.v1':external((job,database)=>require('../imports/physical-count-sources').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),
@@ -718,6 +722,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
   'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'agent.daily-cycle-count.v1':Object.assign((job,c)=>require('./agent-daily-cycle-counts').work(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'agent.combine-freight.v1':Object.assign((job,c)=>require('../purchasing/agent-freight-combine').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'agent.split-purchase.v1':Object.assign((job,c)=>require('../purchasing/agent-purchase-splitting').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.location-reorder.v1':Object.assign((job,c)=>require('../forecasting/location-reorder-rules').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
@@ -777,6 +783,9 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier-credit-source':external((job,database)=>require('../purchasing/agent-supplier-credit-notes').worker(database,job.workspaceId,job.payload.intakeId)),
   'agent.supplier-invoice-dispute':external((job,database)=>require('../purchasing/invoice-dispute-follow-through').worker(database,job.workspaceId,job.payload)),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
+  'agent.customer.check-in.v1':external((job,database)=>require('../sales/agent-customer-checkins').run(database,job.workspaceId,job.payload)),
+  'agent.sales-quote.acceptance.v1':external((job,database)=>require('../sales/agent-quote-buyers').run(database,job.workspaceId,job.payload)),
+  'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);

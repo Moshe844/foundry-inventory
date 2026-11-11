@@ -32,7 +32,7 @@ async function local(db,p){
   LEFT JOIN accounting_inventory_cost_balances cost ON cost.workspace_id=s.workspace_id AND cost.sku_id=s.id AND cost.location_id=loc.id
   WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1`,[p.workspace_id,p.sku_id,p.location_id])).rows[0];
  if(!row)throw new ValidationError('The mapped product or location is no longer active.');
- if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id};}
+ if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id,catalogueOnly:prices.catalogueOnlyPrice(v)};}
  const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
  if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
  const availability=await require('../transfers/postgres-transfer-service').sourceAvailable(db,p.workspace_id,p.sku_id,p.location_id);
@@ -125,13 +125,18 @@ async function configureInTransaction(db,ctx,payload){
    [p.id,ctx.workspaceId,c.id,p.sku_id,p.location_id,p.external_id,p.parent_external_id,p.external_location_id,p.field,p.mode,JSON.stringify(localValue),JSON.stringify(p.remote.value),ctx.actorId]);
   await db.query('UPDATE connection_commerce_positions SET provider_account_id=$3,provider_type=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.id,c.provider_account_id,c.provider_type]);
   const saved=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.id])).rows[0];
-  if(p.mode!=='off'&&payload.source==='stockchief'&&!same(localValue,p.remote.value))await queue(db,c,saved,l,p.remote.value);
+  if(p.mode!=='off'&&payload.source==='stockchief'&&!same(localValue,p.remote.value))await queue(db,c,saved,l,p.remote.value,{explicitPricePublication:p.field==='price'});
   if(p.mode!=='off'&&payload.source==='provider'&&p.field==='quantity'&&!same(localValue,p.remote.value))await issue(db,saved,'The initial provider count differs. Confirm physical stock before accepting a count correction. No inventory or money changed.');
   await audit(db,saved,'connection.commerce_sync.authorized',{mode:p.mode,revision:saved.revision,actorId:ctx.actorId});
  }
  return {connectorId:c.id,positionIds:payload.positions.map(p=>p.id),configured:true,providerDeliveryVerified:false};
 }
 async function queue(db,c,p,l,expected,options={}){
+ if(p.field==='price'&&l.catalogueOnly&&!options.explicitPricePublication){
+  const reason='The owner approved this catalogue price locally. Review this channel before publishing the price.';
+  await issue(db,p,reason);
+  return {held:true,reason};
+ }
  let channelBuffer=null;try{channelBuffer=await require('./agent-channel-buffers').queueAuthority(db,p,l,{...options,expected});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await issue(db,p,error.message);return {held:true,reason:error.message};}
  const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected,...(channelBuffer?{channelBuffer}:{})});
  const queued=await effects.enqueueInTransaction(db,{workspaceId:p.workspace_id,kind:'commerce.position.publish',provider:c.provider_type,aggregateType:'connection_commerce_position',aggregateId:p.id,
@@ -182,6 +187,10 @@ async function reconcile(db,c){
   if(p.field==='quantity'&&r!==null&&(!Number.isSafeInteger(r)||r<0)){await issue(db,p,'The provider supplied a negative, fractional or invalid count. Review it before any quantity change.');result.conflicts++;continue;}
   if(r===null){await issue(db,p,'The provider did not supply an explicit tracked value. A missing count or price was not treated as zero.');result.conflicts++;continue;}
   if(same(l.value,r)){await advance(db,p,l.value,r);continue;}
+  if(p.field==='price'&&l.catalogueOnly){
+   await issue(db,p,'The owner approved this catalogue price locally. Review this channel before changing either price.');
+   result.conflicts++;continue;
+  }
   const lc=!same(l.value,p.baseline_local),rc=!same(r,p.baseline_provider);
   if(!lc&&!rc)continue;
   if(lc&&rc){await issue(db,p,'Both StockChief and the provider changed since their last verified baseline. Neither value was overwritten.');result.conflicts++;continue;}

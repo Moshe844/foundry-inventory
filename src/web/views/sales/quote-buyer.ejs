@@ -1,0 +1,37 @@
+
+<% const {q,link,receipt,offer,problem,canPublish,canReview,automatic,url,publication}=model; const base='/quotes/'+q.id+'/buyer'; %>
+<div class="rm-head"><a href="/quotes/<%= q.id %>">← <%= q.quote_number %></a>
+<h1>Private buyer acceptance</h1><p><%= q.customer_name %> · <%= q.quote_number %></p></div>
+<% if(problem){ %><p class="notice notice--warn"><%= problem %></p><% } %>
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(offer){ %><dl class="kv"><dt>Quoted total</dt><dd><%= helpers.money(offer.totalMinor,offer.currency) %> <%= offer.currency %></dd>
+<dt>Payment terms</dt><dd><%= offer.terms %></dd>
+<dt>Delivery</dt><dd><%= offer.deliveryMethod==='PICKUP'?'Customer pickup':offer.shippingAddress %></dd>
+<dt>Valid through</dt><dd><%= offer.validUntil %></dd></dl><% } %>
+<% if(url){ %><label>Private link<input type="text" readonly value="<%= url %>" size="65" style="max-width:100%"></label>
+<p>Copy this link to the existing customer on the quote. Keep it private.</p>
+<% if(link.routine){ %><p>Routine drafting is authorized for this quote up to <%= helpers.money(link.maximum,offer.currency) %> <%= offer.currency %>.</p><% } %>
+<a class="rm-btn rm-btn--ghost" href="<%= url %>" rel="noreferrer">Open buyer view</a><% } %>
+<% if(receipt){ %><h2>Buyer acceptance receipt</h2>
+<dl class="kv"><dt>Accepted by</dt><dd><%= receipt.buyer_name %> · <%= receipt.buyer_email %></dd>
+<dt>Received</dt><dd><%= helpers.dateTime(receipt.accepted_at) %></dd>
+<dt>Status</dt><dd><%= {RECEIVED:'Awaiting draft',HELD:'Needs review',WITHDRAWN:'Withdrawn',DRAFTED:'Order drafted'}[receipt.state] %></dd></dl>
+<% if(receipt.problem){ %><p class="notice notice--warn"><%= receipt.problem %></p><% } %>
+<% if(receipt.order_id){ %><a class="rm-btn" href="/orders/<%= receipt.order_id %>">Open draft order</a>
+<% }else if(canReview){ %><form method="post" action="<%= base %>/review"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="rm-btn" type="submit">Review exact draft order</button></form><% } %>
+<% } %>
+<% if(canPublish){ %><form method="post" action="<%= base %>/publish">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedQuote" value="<%= q.pricing_hash %>">
+<input type="hidden" name="linkRevision" value="<%= link?.revision||0 %>">
+<input type="hidden" name="expectedOffer" value="<%= publication.hash %>">
+<p>For <strong><%= publication.email %></strong> · <%= publication.terms %> · <%= publication.deliveryMethod==='PICKUP'?'Customer pickup':publication.shippingAddress %></p>
+<label><input type="checkbox" name="confirmed" value="yes" required> I checked this exact revision, delivery and payment terms for the existing customer.</label>
+<% if(automatic){ %><label><input type="checkbox" name="routine" value="yes"> Draft one order when the buyer accepts this exact quote.</label>
+<label>Maximum authorized total (<%= offer.currency %>) <input inputmode="decimal" name="maximum" autocomplete="off"></label><% } %>
+<button class="rm-btn" type="submit"><%= link?.enabled?'Replace private link':'Publish private link' %></button>
+</form><% } %>
+<% if(link?.enabled){ %><form method="post" action="<%= base %>/revoke"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="linkRevision" value="<%= link.revision %>">
+<button class="rm-btn rm-btn--ghost" type="submit">Withdraw private link</button></form><% } %>
+</div></section>

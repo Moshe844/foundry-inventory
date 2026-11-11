@@ -163,7 +163,8 @@ const suggestions={
   44:r=>'Review '+r.Order+' against its delivery record for '+r.SKU+'.',
   79:r=>'Consider '+r.Product+' for this quote. It appeared in '+r['Shared orders']+' shared orders.',
   80:r=>'Review the credit limit for '+r.Customer+' before confirming '+r.Order+'. '+r.Result+'.',
-  77:r=>'Consider a selling price of '+r['Suggested selling price']+' for '+r.SKU+' after its cost rose to '+r['Current cost']+'.',
+  77:r=>'Consider '+r['Suggested selling price']+' '+r.Currency+' per '+r['Pricing unit']+' for '+r.SKU+
+    ' after its cost rose from '+r['Previous cost']+' to '+r['Current cost']+' ('+r['Current cost evidence']+').',
   88:r=>'Review the ordering history for '+r.Customer+'. '+r.Health+'.',
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
   91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',
@@ -220,6 +221,7 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(def.id===78?{customerCheckinLink:true}:{}),
       ...(def.id===105?{supplierCreditLink:true}:{}),
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),

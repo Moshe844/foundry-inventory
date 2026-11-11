@@ -574,5 +574,63 @@ async function adjust(database, rawContext, input) {
     { isolation: 'SERIALIZABLE', retrySafe: Boolean(input.idempotencyKey) });
 }
 
-module.exports = { receive, receiveInTransaction, receiveManyInTransaction, receiveBatchInTransaction, issue, issueInTransaction, transfer, transferInTransaction,
+async function reweighInTransaction(client,rawContext,input){
+  const ctx=context(rawContext);
+  await requirePermission(client,ctx,permissions.ADJUST,'correct a measured count');
+  await require('../operations/postgres-warehouse-access').assertLocations(client,ctx,[input.locationId]);
+  const operation=await beginOperation(client,ctx,'inventory.adjust_measure',input.idempotencyKey);
+  if(operation.replayed)return {...operation.result,replayed:true};
+  const row=await target(client,ctx,input.skuId,input.locationId);
+  if(!row.secondary_unit_label)throw new ValidationError('Choose stock with an independent measure.');
+  const counted=stockQuantity.secondary(row,input.countedSecondaryQuantity,{total:true});
+  const balance=(await client.query(`SELECT on_hand,secondary_on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 FOR UPDATE`,
+    [ctx.workspaceId,row.id,row.location_id])).rows[0];
+  if(!balance||Number(balance.on_hand)<=0||Number(balance.secondary_on_hand)<=0)
+    throw new ValidationError('Record the exact stock and its previous measure before correcting it.');
+  const availability=await require('./postgres-stock-availability').read(client,ctx.workspaceId,row.id,row.location_id);
+  if(availability.committed||availability.reserved)throw new ValidationError('Resolve the existing stock commitments before correcting its independent measure.');
+  const at=nowIso(),groupId=newId('grp');
+  let before=balance.secondary_on_hand,lotId=null,serialId=null;
+  if(row.tracking_mode==='lot'){
+    const batch=(await client.query(`SELECT l.id,b.secondary_quantity FROM lots l JOIN lot_balances b ON b.workspace_id=l.workspace_id AND b.lot_id=l.id
+      WHERE l.workspace_id=$1 AND l.id=$2 AND l.sku_id=$3 AND b.location_id=$4 AND b.quantity>0 FOR UPDATE OF b`,
+      [ctx.workspaceId,input.lotId,row.id,row.location_id])).rows[0];
+    if(!batch?.secondary_quantity)throw new ValidationError('Choose the exact retained lot and its recorded measure.');
+    before=batch.secondary_quantity;lotId=batch.id;
+  }
+  if(row.tracking_mode==='serial'){
+    const serial=(await client.query(`SELECT id,lot_id,secondary_quantity FROM serial_units WHERE workspace_id=$1 AND id=$2
+      AND sku_id=$3 AND location_id=$4 AND status='in_stock' FOR UPDATE`,[ctx.workspaceId,input.serialUnitId,row.id,row.location_id])).rows[0];
+    if(!serial?.secondary_quantity)throw new ValidationError('Choose the exact retained serial and its recorded measure.');
+    before=serial.secondary_quantity;lotId=serial.lot_id;serialId=serial.id;
+  }
+  const delta=stockQuantity.secondary(row,exact.subtract(counted,before),{positive:false,signed:true,total:true});
+  if(!delta)throw new ValidationError('The measured stock no longer has the reviewed difference.');
+  if(serialId){
+    await client.query('UPDATE serial_units SET secondary_quantity=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,serialId,counted,at]);
+    if(lotId){
+      const changed=await client.query(`UPDATE lot_balances SET secondary_quantity=secondary_quantity+$4,updated_at=$5
+        WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3 AND quantity>0 AND secondary_quantity+$4>0 RETURNING lot_id`,
+        [ctx.workspaceId,lotId,row.location_id,delta,at]);
+      if(!changed.rowCount)throw new ValidationError('The serial’s retained lot no longer matches its recorded measure.');
+    }
+  }
+  await balanceDelta(client,ctx,row,0,at);
+  const movementId=await movement(client,ctx,row,{groupId,operation:'adjust',quantityDelta:0,secondaryQuantityDelta:delta,
+    balanceAfter:balance.on_hand,lotId,serialUnitId:serialId,reasonCode:'cycle_count_measure',reference:input.reference,notes:input.notes,occurredAt:at});
+  if(lotId&&!serialId)await client.query('UPDATE lot_balances SET updated_at=$4 WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3',
+    [ctx.workspaceId,lotId,row.location_id,at]);
+  if(serialId)await client.query('INSERT INTO stockchief_runtime.inventory_movement_serial_units(workspace_id,movement_id,serial_unit_id) VALUES($1,$2,$3)',
+    [ctx.workspaceId,movementId,serialId]);
+  const adjustmentId=newId('adj');
+  await client.query(`INSERT INTO adjustments(id,workspace_id,movement_id,sku_id,location_id,expected_qty,counted_qty,
+    reason_code,notes,actor_user_id,created_at,secondary_expected_qty,secondary_counted_qty)
+    VALUES($1,$2,$3,$4,$5,$6,$6,'cycle_count_measure',$7,$8,$9,$10,$11)`,[adjustmentId,ctx.workspaceId,movementId,row.id,row.location_id,
+    balance.on_hand,input.notes,ctx.actorId,at,before,counted]);
+  const result={adjustmentId,movementId,groupId,secondaryBefore:before,secondaryCounted:counted};
+  await completeOperation(client,operation,result);
+  return {...result,replayed:false};
+}
+
+module.exports = { receive, receiveInTransaction, receiveManyInTransaction, receiveBatchInTransaction, issue, issueInTransaction, transfer, transferInTransaction,reweighInTransaction,
   dispatchTransferInTransaction, receiveTransferInTransaction, adjust,adjustInTransaction };

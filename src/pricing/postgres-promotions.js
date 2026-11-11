@@ -5,6 +5,11 @@ const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(valu
 const hash=value=>createHash('sha256').update(canonical(JSON.parse(JSON.stringify(value)))).digest('hex');
 function quoteHash(value){
  const frozen=JSON.parse(JSON.stringify({...value,at:null}));
+ // The exact cost basis is evidence for the read-only order review. The
+ // existing price and safeguard approval fingerprint stays compatible.
+ delete frozen.lineIds;
+ for(const line of frozen.lines)delete line.costEvidence;
+ if(frozen.customerTerms===null)delete frozen.customerTerms;
  // Preserve existing approval fingerprints only when the new contract adds
  // zero economic scope. Recorded provider prices and actual charges always
  // retain their complete new fingerprint.
@@ -95,7 +100,7 @@ async function decide(db,ctx,id,expectedHash,approved){
     return (await c.query(`UPDATE stockchief_runtime.pricing_proposals SET status=$3,approved_by=$4,decided_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING *`,[ctx.workspaceId,id,approved?'APPROVED':'REJECTED',ctx.actorId])).rows[0];
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=null,invoice=false}={}){
+async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=null,invoice=false,quotedCustomerTerms}={}){
   await authorize(c,ctx,invoice?access.MANAGE_ACCOUNTING:access.OPERATE,invoice?'accounting.core':'sales_orders.core');if(lock)await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
   let configured=frozenRules||await rules(c,ctx);const currency=prices.normaliseCurrency(input.currency),lines=[];
   let recorded=false;
@@ -116,10 +121,15 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
   const source=input.pricingInputLines||input.lines;if(!Array.isArray(source)||!source.length||source.length>500||source.some(l=>!l||typeof l!=='object'))throw new ValidationError('Choose between one and 500 valid lines.');
   const skuIds=[...new Set(source.map(l=>l.skuId).filter(Boolean))];
   const catalogue=(await c.query(`WITH costs AS (SELECT sku_id,sum(quantity_units) AS quantity,sum(secondary_quantity_units) AS secondary_quantity,sum(total_cost_minor) AS amount FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id), physical AS (SELECT sku_id,sum(on_hand) AS quantity,sum(secondary_on_hand) AS secondary_quantity FROM balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id)
-    SELECT s.id,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,f.category,p.amount_minor,p.currency,CASE WHEN i.secondary_unit_label IS NOT NULL THEN costs.secondary_quantity ELSE costs.quantity END AS cost_quantity,costs.amount AS cost_amount,coalesce(CASE WHEN i.secondary_unit_label IS NOT NULL THEN physical.secondary_quantity ELSE physical.quantity END,0) AS physical_quantity
+    SELECT s.id,i.unit_label,i.quantity_precision,i.quantity_increment,i.secondary_unit_label,i.secondary_precision,i.secondary_increment,f.category,p.amount_minor,p.currency,
+      stated.id AS stated_cost_id,stated.amount_minor AS stated_cost_minor,stated.currency AS stated_currency,
+      CASE WHEN i.secondary_unit_label IS NOT NULL THEN costs.secondary_quantity ELSE costs.quantity END AS cost_quantity,
+      costs.amount AS cost_amount,coalesce(CASE WHEN i.secondary_unit_label IS NOT NULL THEN physical.secondary_quantity ELSE physical.quantity END,0) AS physical_quantity
     FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id LEFT JOIN catalogue_item_facts f ON f.workspace_id=i.workspace_id AND f.item_id=i.id
     LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1)p ON true
-    LEFT JOIN costs ON costs.sku_id=s.id LEFT JOIN physical ON physical.sku_id=s.id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1`,[ctx.workspaceId,skuIds])).rows;
+    LEFT JOIN LATERAL(SELECT id,amount_minor,currency FROM sku_purchase_costs WHERE workspace_id=s.workspace_id AND sku_id=s.id
+      ORDER BY created_at DESC,id DESC LIMIT 1) stated ON NOT $3::boolean
+    LEFT JOIN costs ON costs.sku_id=s.id LEFT JOIN physical ON physical.sku_id=s.id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1`,[ctx.workspaceId,skuIds,invoice])).rows;
   const base=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency,bySku=new Map(catalogue.map(s=>[s.id,s]));
   for(const [lineIndex,line] of source.entries()){
     const lineLabel='Line '+(lineIndex+1)+': ';if(!Number.isFinite(Number(line.quantity))||Number(line.quantity)<=0)throw new ValidationError(lineLabel+'enter a positive quantity.');
@@ -127,9 +137,19 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
     const sku=bySku.get(line.skuId);if(!sku)throw new ValidationError(lineLabel+'choose an active product from this business.');
     if(!invoice)require('../domain/stock-quantity').validate(sku,line.quantity,{label:lineLabel+'quantity'});
     const priceSet=sku.amount_minor!==null&&sku.amount_minor!==undefined;
-    if(line.unitPriceMinor==null&&(!priceSet||sku.currency!==currency))throw new ValidationError(lineLabel+'this product needs a selling price in the order currency.');
+    const nativePrice=priceSet&&sku.currency===currency?Number(sku.amount_minor):null;
     const measuredQuantity=invoice?null:require('../domain/stock-quantity').secondary(sku,line.secondaryQuantity);
-    lines.push({...line,pricingQuantity:measuredQuantity??undefined,quantity:Number(line.quantity),unitPriceMinor:Number(line.unitPriceMinor??sku.amount_minor),referenceUnitPriceMinor:priceSet&&sku.currency===currency?Number(sku.amount_minor):Number(line.unitPriceMinor),categoryId:sku.category,costUnitMinor:base===currency&&Number(sku.cost_quantity)>0&&Number(sku.cost_quantity)>=Number(sku.physical_quantity)?Math.ceil(Number(sku.cost_amount)/Number(sku.cost_quantity)):null});
+    const costed=base===currency&&Number(sku.cost_quantity)>0&&Number(sku.cost_quantity)>=Number(sku.physical_quantity);
+    const unit=sku.secondary_unit_label||sku.unit_label;
+    let costEvidence;
+    if(!invoice&&costed)costEvidence={basis:'inventory',currency,unit,amountMinor:String(sku.cost_amount),
+      quantity:require('../domain/exact-quantity').canonical(sku.cost_quantity)};
+    else if(!invoice&&!sku.secondary_unit_label&&sku.stated_cost_id&&sku.stated_currency===currency)costEvidence={basis:'catalogue',currency,unit,
+      amountMinor:String(sku.stated_cost_minor),quantity:'1',recordId:sku.stated_cost_id};
+    lines.push({...line,pricingQuantity:measuredQuantity??undefined,quantity:Number(line.quantity),
+      unitPriceMinor:line.unitPriceMinor==null?nativePrice:Number(line.unitPriceMinor),
+      referenceUnitPriceMinor:nativePrice??(line.unitPriceMinor==null?undefined:Number(line.unitPriceMinor)),categoryId:sku.category,
+      costUnitMinor:costed?Math.ceil(Number(sku.cost_amount)/Number(sku.cost_quantity)):null,costEvidence});
   }
   const usage=(await c.query(`SELECT rule_id,count(*)::integer AS total,count(*) FILTER(WHERE customer_id=$2)::integer AS customer FROM (SELECT rule_id,customer_id FROM stockchief_runtime.pricing_redemptions WHERE workspace_id=$1 AND released_at IS NULL AND ($3::text IS NULL OR sales_order_id<>$3) UNION ALL SELECT rule_id,customer_id FROM stockchief_runtime.pricing_invoice_redemptions WHERE workspace_id=$1) uses GROUP BY rule_id`,[ctx.workspaceId,input.customerId,orderId])).rows;
   for(const rule of configured){const count=usage.find(u=>u.rule_id===rule.id);rule.redemptions=count?.total||0;rule.customerRedemptions=count?.customer||0;}
@@ -142,6 +162,11 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
     taxRate={id:rate.id,name:rate.name,rateMillionths:Number(rate.rate_millionths)};
   }
   const result=calculator.quote({...input,taxMinor:taxExempt?0:input.taxMinor,taxRate:taxRate||undefined,recordedAmounts:recorded,allowFractionalQuantities:true,discountMinor:input.pricingInputDiscountMinor??input.discountMinor,currency,lines,rules:configured,at:input.at||new Date().toISOString()});
+  if(!invoice&&!recorded){
+    const terms=require('../sales/customer-commercial-terms');
+    result.customerTerms=quotedCustomerTerms===undefined
+      ?terms.agreement(await terms.current(c,ctx.workspaceId,input.customerId),currency):quotedCustomerTerms;
+  }
   if(taxExempt)result.customerTaxExemption={customerId:customer.id,reference:customer.tax_exempt_reference||null};
   if(recorded&&result.totalMinor!==input.sourceFinancials.totalMinor)throw new ValidationError('Canonical pricing does not reconcile with the recorded provider total.');
   return result;
@@ -151,14 +176,29 @@ async function revisionQuote(c,ctx,orderId,changes,{lock=false}={}){
  const rows=(await c.query('SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY created_at,id',[ctx.workspaceId,orderId])).rows,original=order.pricing_quote_id?(await c.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,order.pricing_quote_id])).rows[0]?.quote:null;
  const frozen=[];for(const policy of original?.policyVersions||[]){const row=(await c.query('SELECT definition FROM stockchief_runtime.pricing_rule_versions WHERE workspace_id=$1 AND rule_id=$2 AND revision=$3',[ctx.workspaceId,policy.id,policy.version])).rows[0];if(!row)throw new ValidationError('The historical pricing policy is unavailable.');if(row.definition.kind!=='guard')frozen.push({...row.definition,id:policy.id,version:policy.version});}
  frozen.push(...(await rules(c,ctx)).filter(r=>r.kind==='guard'));
- const quote=await prepareQuote(c,ctx,{guardAt:new Date().toISOString(),customerId:order.customer_id,currency:order.currency,at:original?.at||new Date(order.created_at).toISOString(),codes:original?.codes||[],priceListId:original?.priceListId,discountMinor:original?.manualDiscountMinor??Number(order.discount_minor),taxMinor:Number(order.tax_minor),lines:rows.map((r,i)=>({skuId:r.sku_id,quantity:r.sku_id===changes.skuId?changes.quantity:Number(r.quantity_ordered),priceOverride:r.sku_id===changes.skuId?(changes.priceOverride??r.pricing_snapshot?.priceOverride??(changes.unitPriceMinor!==undefined)):r.pricing_snapshot?.priceOverride===true,unitPriceMinor:r.sku_id===changes.skuId&&(changes.priceOverride??r.pricing_snapshot?.priceOverride??(changes.unitPriceMinor!==undefined))?(changes.unitPriceMinor??Number(r.unit_price_minor)):r.pricing_snapshot?.baseUnitPriceMinor??Number(r.unit_price_minor)}))},{frozenRules:frozen,lock,orderId});
+ const lines=rows.map(r=>{
+   const revised=r.sku_id===changes.skuId,quantity=revised?Number(changes.quantity):Number(r.quantity_ordered);
+   const secondaryQuantity=r.secondary_quantity_ordered;
+   if(revised&&secondaryQuantity!=null&&quantity!==Number(r.quantity_ordered))
+     throw new ValidationError('Record the independent pricing quantity when changing the number of pieces on this order.');
+   const priceOverride=revised?(changes.priceOverride??r.pricing_snapshot?.priceOverride??(changes.unitPriceMinor!==undefined)):r.pricing_snapshot?.priceOverride===true;
+   return {skuId:r.sku_id,quantity,secondaryQuantity,priceOverride,
+     unitPriceMinor:revised&&priceOverride?(changes.unitPriceMinor??Number(r.unit_price_minor)):
+       r.pricing_snapshot?.baseUnitPriceMinor??Number(r.unit_price_minor)};
+ });
+ const quote=await prepareQuote(c,ctx,{guardAt:new Date().toISOString(),customerId:order.customer_id,currency:order.currency,
+   at:original?.at||new Date(order.created_at).toISOString(),codes:original?.codes||[],priceListId:original?.priceListId,
+   discountMinor:original?.manualDiscountMinor??Number(order.discount_minor),taxMinor:Number(order.tax_minor),lines},{frozenRules:frozen,lock,orderId});
+ if(original&&Object.hasOwn(original,'customerTerms'))quote.customerTerms=original.customerTerms;
  return {quote,lineIds:rows.map(r=>r.id)};
 }
 async function saveQuote(c,ctx,orderId,quote,lineIds){
   await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
   if(lineIds.length!==quote.lines.length||new Set(lineIds).size!==lineIds.length||lineIds.some(id=>!id))throw new ValidationError('Every priced line needs one exact order line.');
   if(quote.violations.length)throw new ValidationError('Pricing requires review: '+[...new Set(quote.violations.map(v=>v.kind.replaceAll('_',' ')))].join(', ')+'. No order was changed.');
-  const id=newId('pricequote');await c.query(`INSERT INTO stockchief_runtime.pricing_order_snapshots(id,workspace_id,sales_order_id,quote,integrity_hash) VALUES($1,$2,$3,$4::jsonb,$5)`,[id,ctx.workspaceId,orderId,JSON.stringify(quote),hash(quote)]);
+  const id=newId('pricequote'),saved={...quote,lineIds};
+  await c.query(`INSERT INTO stockchief_runtime.pricing_order_snapshots(id,workspace_id,sales_order_id,quote,integrity_hash,created_at)
+    VALUES($1,$2,$3,$4::jsonb,$5,clock_timestamp())`,[id,ctx.workspaceId,orderId,JSON.stringify(saved),hash(saved)]);
   for(const [index,line]of quote.lines.entries()){await c.query('UPDATE sales_order_lines SET secondary_quantity_ordered=$4 WHERE workspace_id=$1 AND sales_order_id=$2 AND id=$3',[ctx.workspaceId,orderId,lineIds[index],line.pricingQuantity??null]);await c.query('UPDATE sales_order_lines SET pricing_snapshot=$4::jsonb,unit_price_minor=$5 WHERE workspace_id=$1 AND sales_order_id=$2 AND id=$3',[ctx.workspaceId,orderId,lineIds[index],JSON.stringify(line),line.unitPriceMinor]);}
   await c.query('UPDATE sales_orders SET pricing_quote_id=$3,discount_minor=$4,tax_minor=$5,charges_minor=$6,priced_subtotal_minor=$7,pricing_total_minor=$8 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,orderId,id,quote.discountMinor,quote.taxMinor,quote.chargesMinor||0,quote.subtotalMinor,quote.totalMinor]);
   if(!(await c.query('SELECT 1 FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 AND quantity_fulfilled>0 LIMIT 1',[ctx.workspaceId,orderId])).rows.length)await c.query('UPDATE stockchief_runtime.pricing_redemptions SET released_at=now() WHERE workspace_id=$1 AND sales_order_id=$2 AND released_at IS NULL AND NOT(rule_id=ANY($3::text[]))',[ctx.workspaceId,orderId,quote.applied.map(p=>p.id)]);

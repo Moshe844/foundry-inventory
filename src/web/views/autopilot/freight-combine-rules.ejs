@@ -1,0 +1,38 @@
+<details class="card card-body">
+  <summary>Combine draft orders automatically when freight falls</summary>
+  <p>Authorize one supplier and receiving location. The combined PO stays a draft for your usual approval.</p>
+  <% for(const rule of model.rules){ %>
+    <form method="post" action="/autopilot/reviews/combine-draft-orders/rule" class="inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="id" value="<%= rule.id %>">
+      <input type="hidden" name="revision" value="<%= rule.revision %>">
+      <span><strong><%= rule.supplier %></strong> · <%= rule.location %> · <%= helpers.money(rule.maximum_minor,rule.currency) %> maximum goods value</span>
+      <button class="btn" name="remove" value="yes">Remove rule</button>
+    </form>
+  <% } %>
+  <% if(!model.suppliers.length){ %><p>Record a supplier’s freight terms before enabling automatic combining.</p>
+  <% }else if(trained&&!model.examples.length){ %><p>Approve a matching freight-saving example to teach this rule.</p>
+  <% }else if(model.locations.length){ %>
+    <form method="post" action="/autopilot/reviews/combine-draft-orders/rule" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Supplier
+        <select name="supplierId" required><% for(const supplier of model.suppliers){ %>
+          <option value="<%= supplier.id %>"><%= supplier.name %> · <%= supplier.currency %></option>
+        <% } %></select>
+      </label>
+      <label>Receiving location
+        <select name="locationId" required><% for(const location of model.locations){ %>
+          <option value="<%= location.id %>"><%= location.name %></option>
+        <% } %></select>
+      </label>
+      <label>Maximum combined goods value <input name="maximum" inputmode="decimal" required></label>
+      <% if(trained){ %><label>Completed freight-saving example
+        <select name="trainingProposal" required><% for(const example of model.examples){ %>
+          <option value="<%= example.id %>"><%= example.po_number %> · <%= helpers.money(example.maximum,example.currency) %></option>
+        <% } %></select>
+      </label><% } %>
+      <label><input name="confirmed" type="checkbox" value="yes" required> I authorize this exact supplier, receiving location and limit.</label>
+      <button class="btn" type="submit">Save automatic combining rule</button>
+    </form>
+  <% } %>
+</details>
