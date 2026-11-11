@@ -91,7 +91,8 @@
 
 </aside>
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/chats/<%= encodeURIComponent(currentChat.chat_id) %>/download" download>Download</a><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
-<p class="notice notice--warn" role="status" data-ask-health hidden></p>
+<% const allowanceNotice=locals.codexPilot?.enabled&&!locals.codexPilot.funded?locals.codexPilot.lockMessage:null; %>
+<p class="notice notice--warn" role="status" data-ask-health<% if(!allowanceNotice){ %> hidden<% } %>><% if(allowanceNotice){ %>Model-backed Ask requests are paused. <%= allowanceNotice %> Stock lookups and page navigation are available.<% } %></p>
 <div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
   <% if(locals.showAgentDiagnostics===true&&locals.codexPilot){ %>
     <section class="rm-note" style="display:block" aria-label="Staging agent controls">
@@ -106,7 +107,6 @@
       </form><% } %>
     </section>
   <% } %>
-  <% if(locals.codexPilot?.enabled&&!locals.codexPilot.funded){ %><div class="notice notice--warn" role="status">Complex AI requests are paused. Stock lookups and page navigation remain available; your saved requests are kept.</div><% } %>
   <% if(locals.submissionError){ %><section id="submission-problem" class="notice notice--error" role="alert"><div><strong>Your message could not run</strong><p><%= locals.submissionError.message %></p><p>Your message is still in the box below.</p></div></section><% } %>
 
 
