@@ -17,6 +17,24 @@ function createPostgresAutopilotRouter(database,options={}){
   const owner=require('../middleware').requireOwner;
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
+  const balancing=require('../../transfers/agent-transfer-balancing');
+  router.get('/autopilot/transfer-balancing',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const settings=await balancing.settings(database,req.ctx,{after:String(req.query.after||''),exampleId:String(req.query.example||''),scope:String(req.query.scope||'')});
+    return res.page('autopilot/transfer-balancing',{title:'Stock balancing rules',nav:'autopilot',settings});
+  }));
+  router.post('/autopilot/transfer-balancing/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await balancing.configure(database,req.ctx,req.body);
+    req.flash('success',result.removed?'Balancing rule stopped.':'The exact balancing route and unit limit were saved.');
+    return res.redirect(303,'/autopilot/transfer-balancing');
+  }));
+  router.post('/autopilot/reviews/balance-transfers/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Review this exact stock balancing request',{
+      action:balancing.action,sku:req.body.sku,fromLocation:req.body.fromLocation,toLocation:req.body.toLocation,
+      maximumBalanceQuantity:req.body.maximumBalanceQuantity,
+    });
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact product and balancing route.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
   const chases=require('../../purchasing/agent-supplier-delivery-chases');
   const confirmations=require('../../purchasing/agent-supplier-ship-promises');
   const confirmationPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/supplier-confirmations',{

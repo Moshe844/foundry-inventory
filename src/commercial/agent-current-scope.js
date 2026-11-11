@@ -3,6 +3,11 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 118:{common:'Balances owned locations using their stock targets, usable costed goods, customer commitments, transfer and other holds, and dated incoming. Supports exact lots, serials, measured quantities and independently recorded weights. A native request holds stock for separate approval and physical handling.',
+ starter:'Shows one current balancing suggestion with the product, source, destination and quantity that preserves the source target.',
+ growth:'Can repeat a native Requested transfer after you individually approve and complete a matching draft and teach that exact product, route and stocking-unit limit. Stock and authority are checked again each time.',
+ pro:'Can prepare Requested transfers without training within an owner-saved exact product, route and stocking-unit limit. Transfer approval and physical work have separate authority.',
+ enterprise:'Can prepare Requested transfers without training within each explicitly saved product, route and stocking-unit limit. Missing goods or incoming evidence stays in review. Transfer approval and physical work have separate authority.'},
  137:{common:'Reads complete original bills of lading and customs papers from uploads, saved attachments or earlier filings. Preserves each page and the original file. Exact printed PO numbers link the source to native purchase orders. The review shows page quotations for purchase orders, shipment references, containers, carriers and customs details.',
  growth:'Reviews the complete original and prepares its exact PO links. You approve each batch. If the source does not establish a PO, you confirm the matching record and evidence.',
  pro:'Can file clearly proven PO links from an explicitly authorized original without training after Watch and within current routine authority. Scanned or conflicting references need individual review. Existing paid attachment receipts are reused.',

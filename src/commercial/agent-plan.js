@@ -195,7 +195,7 @@ const actionJobs=new Map([
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
-  ['inventory.transfer',118],['transfer.approve',118],['shipping.label',59],['shipping.batch_purchase',59],
+  ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],
   ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],['supplier_credit.apply_note',105],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
@@ -217,6 +217,7 @@ function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.p
 const newAgentActions=new Set(['customer_invoice.prepare_document','sales_quote.followup','customer.statement','landed_cost.apply','warehouse.prepare_putaway','warehouse.release_orders','supplier_invoice.dispute','sales_order.notify_stock_ready','sales_order.reserve_arrived','customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 newAgentActions.add('purchase_order.reorder_drafts');newAgentActions.add('purchasing.select_supplier');
 newAgentActions.add('sales_order.reserve_rotation');
+newAgentActions.add('transfer.prepare_balance');
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.

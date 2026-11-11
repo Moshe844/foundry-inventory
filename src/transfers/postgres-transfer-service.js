@@ -236,8 +236,8 @@ async function requestInTransaction(client, rawContext, input) {
     }
     const availability=await sourceAvailable(client,ctx.workspaceId,sku.id,from.id,{lotId});
     const total=lotId?await sourceAvailable(client,ctx.workspaceId,sku.id,from.id):availability;
-    const already=prepared.filter(row=>row.sku.id===sku.id).reduce((sum,row)=>sum+row.quantity,0);
-    const available=Math.min(availability.available,Math.max(0,total.available-already));
+    const already=prepared.filter(row=>row.sku.id===sku.id).reduce((sum,row)=>exact.add(sum,row.quantity),'0');
+    const available=Math.min(availability.available,Math.max(0,exact.safeNumber(exact.subtract(total.available,already),{signed:true})));
     if(quantity>available)throw new ValidationError(`${sku.name} only has ${available} available at ${from.name} after customer commitments and other transfer requests.`);
     if(serialUnitIds.length){
       if((await client.query('SELECT 1 FROM stockchief_runtime.sales_rotation_entries WHERE workspace_id=$1 AND serial_unit_id=ANY($2::text[]) LIMIT 1',[ctx.workspaceId,serialUnitIds])).rowCount)throw new ValidationError('One selected serial is reserved by a FIFO/FEFO customer order.');
@@ -317,9 +317,9 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
     [ctx.workspaceId, line.lot_id, transfer.source_location_id]);
   }
   const skuTotals=new Map();
-  for(const line of transfer.lines){const quantity=input.quantities?.[line.id]===undefined?Number(line.requested_quantity):positiveInteger(input.quantities[line.id],'Approved quantity');skuTotals.set(line.sku_id,(skuTotals.get(line.sku_id)||0)+quantity);}
+  for(const line of transfer.lines){const quantity=input.quantities?.[line.id]===undefined?line.requested_quantity:positiveInteger(input.quantities[line.id],'Approved quantity');skuTotals.set(line.sku_id,exact.add(skuTotals.get(line.sku_id)||'0',quantity));}
   for(const [skuId,quantity]of skuTotals){const available=await sourceAvailable(client,ctx.workspaceId,skuId,transfer.source_location_id,{excludeTransferId:transfer.id});
-    if(quantity>available.available)throw new ValidationError(`This transfer only has ${available.available} available at ${transfer.source_name} after customer commitments and other transfer requests.`);}
+    if(exact.safeNumber(quantity)>available.available)throw new ValidationError(`This transfer only has ${available.available} available at ${transfer.source_name} after customer commitments and other transfer requests.`);}
   for (const line of transfer.lines) {
     const quantity = input.quantities?.[line.id] === undefined ? Number(line.requested_quantity)
       : positiveInteger(input.quantities[line.id], 'Approved quantity');

@@ -12,6 +12,7 @@ const definitions=[
   require('../imports/handwritten-table').definition,
   require('../documents/agent-voice-receiving').definition,
   require('../warehouse/agent-stock-rotation').definition,
+  require('../transfers/agent-transfer-balancing').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../purchasing/agent-backup-suppliers').definition,
   require('../catalog/agent-channel-copy').definition,
@@ -132,6 +133,7 @@ function offers(state){
 }
 
 const suggestions={
+  118:r=>r.Quantity?'Request '+r.Quantity+' '+r.Unit+' of '+r.SKU+' from '+r.From+' to '+r.To+' while protecting the source target.':r.SKU+' at '+r.To+' · '+r.Review,
   85:r=>'Order '+r.Order+' has '+r['Posted net sales']+' posted net sales and '+r['Net contribution']+' net contribution after checked costs. '+r.Review,
   40:r=>r.Order?'The open recorded goods on '+r.Order+' are '+r['Open recorded goods']+'. Latest ECB reference estimate: '+r['Reference estimate']+'. '+r.Review:r.Review,
   13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
@@ -193,7 +195,7 @@ async function run(db,ctx,key,options={}){
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
   let rows,summary=def.summary,more=false,paymentRun;
   if(def.readPage){
-    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
+    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change,adviceOnly:mode==='suggest'});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
@@ -219,6 +221,7 @@ async function run(db,ctx,key,options={}){
       ...(result.rotationForm?{rotationForm:true}:{}),
       ...(def.id===196?{lotCertificateLink:true}:{}),
       ...(def.id===137?{shippingDocumentLink:true}:{}),
+      ...(result.balanceForm?{balanceForm:true}:{}),
       ...inputs};
   }
   if(def.read){

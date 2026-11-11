@@ -423,6 +423,7 @@ async function autopilotEvaluate(job,client){
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+    await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
@@ -768,6 +769,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     if(result.more)await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:job.kind,idempotencyKey:'supplier-claims:'+job.payload.cycleId+':'+result.nextAfterId,payload:{cycleId:job.payload.cycleId,afterId:result.nextAfterId},priority:65,maxAttempts:3});return result;
   }),
+  'agent.transfer-balance.v1':external((job,database)=>require('../transfers/agent-transfer-balancing').work(database,job.workspaceId,job.payload),'maintenance'),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),

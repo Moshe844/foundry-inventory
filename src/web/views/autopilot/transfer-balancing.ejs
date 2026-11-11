@@ -1,0 +1,31 @@
+<h1>Stock balancing rules</h1>
+<p><a href="/autopilot/reviews/balance-transfers">Review current balancing suggestions</a></p>
+<p>Each rule prepares a native request for one product and route when the source can spare stock. You choose the maximum in the product’s stocking unit. Approval and physical movement are separate.</p>
+<% const m=settings, e=m.selectedExample, r=m.selectedRule; %>
+<% if(m.rules.length){ %><section><h2>Saved rules</h2>
+  <% for(const row of m.rules){ %><p><strong><%= row.code %> · <%= row.source %> → <%= row.destination %></strong> · up to <%= row.maximum_quantity %> <%= row.unit_label %> · <%= row.taught_proposal_id?'Taught from a completed request':'Explicit owner limit' %></p>
+    <% if(['trained','alone'].includes(m.mode)){ %><p><a href="/autopilot/transfer-balancing?scope=<%= encodeURIComponent(row.scope_key) %>">Edit this limit</a></p><% } %>
+    <form method="post" action="/autopilot/transfer-balancing/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="scope" value="<%= row.scope_key %>"><input type="hidden" name="revision" value="<%= row.revision %>">
+      <button class="btn" name="mode" value="remove">Stop this rule</button>
+    </form>
+  <% } %>
+  <% if(m.more){ %><p><a href="/autopilot/transfer-balancing?after=<%= encodeURIComponent(m.nextAfter) %>">Next saved rules</a></p><% } %>
+</section><% } %>
+<% if(m.mode==='trained'){ %><section><h2>Teach from a completed request</h2>
+  <% if(!m.examples.length){ %><p>Prepare and individually approve a balancing request first.</p><% } %>
+  <% for(const example of m.examples){ %><p><a href="/autopilot/transfer-balancing?example=<%= encodeURIComponent(example.id) %>"><%= example.transfer_number %> · <%= example.code %> · <%= example.source %> → <%= example.destination %></a></p><% } %>
+</section><% } %>
+<% if(m.mode==='alone'||m.mode==='trained'&&(e||r)){ %><section><h2><%= r?'Edit a saved limit':e?'Teach this route':'Authorize an exact route' %></h2>
+  <form method="post" action="/autopilot/transfer-balancing/rule">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+    <% if(e){ %><input type="hidden" name="exampleId" value="<%= e.id %>"><% } %>
+    <label>Exact product or variant code <input name="sku" required value="<%= r?.code||e?.code||'' %>" <%= r||e?'readonly':'' %>></label>
+    <label>Source location <input name="fromLocation" required value="<%= r?.source||e?.source||'' %>" <%= r||e?'readonly':'' %>></label>
+    <label>Destination location <input name="toLocation" required value="<%= r?.destination||e?.destination||'' %>" <%= r||e?'readonly':'' %>></label>
+    <label>Maximum stocking quantity <input name="maximumBalanceQuantity" inputmode="decimal" required value="<%= r?.maximum_quantity||e?.quantity||'' %>"></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> Authorize this exact product, route and stocking quantity limit for balancing requests.</label>
+    <button class="btn" name="mode" value="save">Save balancing rule</button>
+  </form>
+</section><% } %>
