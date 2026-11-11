@@ -119,6 +119,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   // Keep the larger form allowance specific to this owner-only workflow.
   app.post('/autopilot/container-plans',express.urlencoded({extended:true,limit:'1mb'}),express.json({limit:'1mb'}));
   app.post('/autopilot/delivery-checks',express.urlencoded({extended:true,limit:'1mb',parameterLimit:5000}));
+  app.post('/imports/variants/:id/map',express.urlencoded({extended:true,limit:'1mb',parameterLimit:3000}));
   app.post('/supplier/order/:token/amendment',express.urlencoded({extended:true,limit:'256kb',parameterLimit:1100}));
   app.use(express.urlencoded({extended:true,limit:'256kb'}));
   app.use(express.json({limit:'256kb'}));
