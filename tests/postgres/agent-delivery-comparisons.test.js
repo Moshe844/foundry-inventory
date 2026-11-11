@@ -17,6 +17,10 @@ test('actual delivery comparisons preserve exact plan gates, native stock, origi
   const {hash}=require('../../src/pricing/postgres-promotions');
   const input={orderId:po.purchaseOrderId,requestKey:randomUUID(),sourceHash:hash(facts),sourceReference:'Actual delivery note 100',
     physicallyChecked:'yes',observations:[{code:'DELIVERY-SUPPLIER-CODE',quantity:'3'},{code:'WRONG-DELIVERED-CODE',quantity:'2',unit:'carton'}]};
+  const noCurrentAgentTerms=await f.browser.get('/autopilot/reviews/delivery-check').redirects(1).expect(200);
+  assert.match(noCurrentAgentTerms.text,/Detailed delivery comparisons/);
+  assert.doesNotMatch(noCurrentAgentTerms.text,/Check quantities, codes and weights<\/button>/);
+  await assert.rejects(service.save(db,ctx,input),error=>error.code==='entitlement_required');
   await f.subscribe('starter');
   const starter=await service.page(db,ctx);
   assert.equal(starter.allowed,false);
