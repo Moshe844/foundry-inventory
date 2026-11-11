@@ -1147,6 +1147,9 @@ function createPostgresCommerceRouter(database,options={}){
       commerce.locations(database,req.ctx.workspaceId),
     ]);
     const plans=require('../../commercial/agent-plan'),agentState=await plans.accountState(database,req.ctx.workspaceId);
+    const orderCredit=page.order.status==='DRAFT'&&permissions.can(req.user,permissions.VIEW_ACCOUNTING)&&
+      plans.usesAgentTerms(agentState)&&plans.permits(agentState.plan,80,'suggest')
+      ?await require('../../sales/order-credit-exposure').forOrder(database,req.ctx,page.order.id):null;
     const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&require('../../sales/agent-ship-from').eligible(page.order)
       ?{available:plans.permits(agentState.plan,121,'draft')}:null;
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
@@ -1168,7 +1171,8 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      shipFromReview,agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
+      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),
+      agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,
@@ -1202,21 +1206,24 @@ function createPostgresCommerceRouter(database,options={}){
     }));
 
   router.get('/returns/:id',requirePermission(permissions.VIEW_SALES,'see customer returns'),asyncRoute(async(req,res)=>{
-    const [customerReturn,locationRows,refundRequestResult]=await Promise.all([
+    const [customerReturn,locationRows,refundRequestResult,managedRefund,refundAccess]=await Promise.all([
       returns.getCustomerReturn(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
       database.query(`SELECT refund.*,effect.status AS effect_status,effect.error_message AS effect_error_message
         FROM payment_refund_requests refund LEFT JOIN stockchief_runtime.provider_effects effect
           ON effect.workspace_id=refund.workspace_id AND effect.kind='payment.refund.create'
           AND effect.payload->>'refundRequestId'=refund.id
-        WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
+        WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 AND refund.agent_part_id IS NULL ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
+      require('../../operations/agent-return-refunds').view(database,req.ctx.workspaceId,req.params.id),
+      req.user?.role==='owner'?require('../../operations/return-refund-evidence').access(database,req.ctx).then(()=>true,()=>false):false,
     ]);
     const needsReceiptMeasures=['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)&&customerReturn.lines.some(line=>line.secondary_unit_label||line.tracking_mode!=='quantity');
     const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
+      managedRefund,refundAccess,isRefundOwner:req.user?.role==='owner',
       today:dateToday(req),formKey:newId('return-step')});
   }));
 
@@ -1257,6 +1264,22 @@ function createPostgresCommerceRouter(database,options={}){
         ?'Inspection recorded. The exact customer refund is ready for approval.'
         :'Inspection and physical disposition completed.');
       return res.redirect(303,`/returns/${req.params.id}`);
+    }));
+
+  router.post('/returns/:id/prepare-refund',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'prepare customer refunds'),
+    asyncRoute(async(req,res)=>{
+      const prepared=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Prepare the exact credit and any repayment for this inspected return.',{
+        action:'customer_return.refund',recordReference:req.params.id,refundPayments:req.body.refundPayments
+      });
+      if(prepared.status!=='PREPARED')throw new ValidationError(prepared.message||prepared.reason||'Review the invoice and original payments before preparing this refund.');
+      return res.redirect(303,'/actions/'+prepared.proposal.id);
+    }));
+
+  router.post('/returns/:id/refunds/:partId/verify',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'verify customer refunds'),
+    asyncRoute(async(req,res)=>{
+      await require('../../operations/agent-return-refunds').verifyProviderPart(database,req.ctx,req.params.id,req.params.partId);
+      req.flash('success','The original provider refund was confirmed and recorded.');
+      return res.redirect(303,'/returns/'+req.params.id);
     }));
 
   router.post('/returns/:id/refund',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'approve customer refunds'),

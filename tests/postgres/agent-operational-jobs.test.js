@@ -6,6 +6,82 @@ const reviews=require('../../src/autopilot/job-reviews'),policy=require('../../s
 const staffRequests=require('../../src/purchasing/agent-purchase-requests');
 const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
 
+test('the thirteen-week cash forecast reconciles posted and remaining amounts, measured goods and current plan modes',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t);
+  const {db,ctx,subscribe,workflows,browser}=f;
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const days=require('../../src/accounting/customer-money').addDays;
+  const ledger=require('../../src/accounting/postgres-ledger');
+  const sku=f.item.skuIds[0];
+  const base=(await db.query('SELECT id,purchase_order_id FROM purchase_order_lines WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
+  await subscribe('pro');
+  await db.query("UPDATE suppliers SET payment_terms='Cash on delivery' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
+  await ledger.post(db,ctx,{postingDate:today,currency:'USD',sourceKey:randomUUID(),sourceType:'opening_balance',
+    lines:[{accountKey:'CASH',debitMinor:2000},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:2000}]});
+  const commerce=require('../../src/operations/postgres-commerce');
+  const japan=await commerce.createSupplier(db,ctx,{name:'Japan supplier',currency:'JPY',paymentTerms:'Net 0'});
+  const foreign=await workflows.createPurchaseOrder(db,ctx,{supplierId:japan.id,destinationLocationId:f.location.id,
+    currency:'JPY',expectedDate:today,idempotencyKey:randomUUID(),lines:[{skuId:sku,quantityUnits:1,unitCost:'300'}]});
+  await workflows.approvePurchaseOrder(db,ctx,foreign.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.placePurchaseOrder(db,ctx,foreign.purchaseOrderId,{idempotencyKey:randomUUID()});
+  for(const [kind,label,amount] of [['freight','Delivery',300],['tax','Sales tax',100]])await db.query(`
+    INSERT INTO purchase_order_charges(id,workspace_id,purchase_order_id,kind,label,amount_minor,created_at)
+    VALUES($1,$2,$3,$4,$5,$6,now())`,[randomUUID(),ctx.workspaceId,base.purchase_order_id,kind,label,amount]);
+  const first=await workflows.recordSupplierInvoice(db,ctx,{supplierId:'fixture-supplier',purchaseOrderId:base.purchase_order_id,
+    supplierInvoiceNumber:'FORECAST-PARTIAL',issueDate:today,dueDate:today,currency:'USD',idempotencyKey:randomUUID(),taxMinor:50,
+    charges:[{kind:'freight',label:'Delivery',amountMinor:100}],
+    lines:[{purchaseOrderLineId:base.id,skuId:sku,quantity:2,unitCostMinor:100}]});
+  assert.equal(first.status,'OPEN');
+  const measured=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Weight-priced goods',baseCode:'FORECAST-WEIGHT',
+    trackingMode:'quantity',unitLabel:'piece',secondaryUnitLabel:'kg',secondaryPrecision:3});
+  const measuredSku=measured.skuIds[0];
+  const po=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,expectedDate:days(today,21),
+    idempotencyKey:randomUUID(),lines:[{skuId:measuredSku,quantityUnits:2,secondaryQuantity:'2.625',unitCost:'2.00'}]});
+  await workflows.approvePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.placePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.receivePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID(),lines:[
+    {lineId:po.lineIds[0],quantity:2,secondaryQuantity:'2.625',locationId:f.location.id}]});
+  const partial=await workflows.recordSupplierInvoice(db,ctx,{supplierId:'fixture-supplier',purchaseOrderId:po.purchaseOrderId,
+    supplierInvoiceNumber:'FORECAST-WEIGHT-BILL',issueDate:today,dueDate:today,currency:'USD',idempotencyKey:randomUUID(),
+    lines:[{purchaseOrderLineId:po.lineIds[0],skuId:measuredSku,quantity:1,secondaryQuantity:'1.25',unitCostMinor:200}]});
+  assert.equal(partial.status,'OPEN');
+  await require('../../src/accounting/postgres-manual-invoices').createCustomerInvoice(db,ctx,{customerId:'fixture-customer',
+    description:'Recorded customer sale',quantity:1,unitAmount:'6.00',issueDate:today,dueDate:days(today,10),idempotencyKey:randomUUID()});
+  const read=()=>reviews.run(db,ctx,'cash-forecast');
+  const denied=e=>e.code==='entitlement_required';
+  await subscribe('starter');
+  await assert.rejects(read(),denied);
+  await subscribe('growth');
+  assert.deepEqual(Object.keys((await read()).rows[0]),['Suggestion']);
+  await assert.rejects(reviews.run(db,ctx,'cash-forecast',{scheduled:true}),denied);
+  for(const plan of ['pro','enterprise']){
+    await subscribe(plan);
+    const forecast=await reviews.run(db,ctx,'cash-forecast',{scheduled:true});
+    assert.equal(forecast.rows.length,26);
+    const usd=forecast.rows.filter(row=>row.Currency==='USD');
+    assert.deepEqual(usd[0],{'Week beginning':today,Currency:'USD','Customer receipts':'$0.00','Supplier bills':'$6.00',
+      'Unbilled PO goods':'$4.75','Unbilled PO charges':'$2.50','Net flow':'-$13.25','Projected cash':'$6.75'});
+    assert.equal(usd[1]['Customer receipts'],'$6.00');
+    assert.equal(usd[12]['Projected cash'],'$12.75');
+    assert.equal(usd[3]['Unbilled PO goods'],'$0.00','Final receipt takes precedence over the older expected delivery.');
+    const jpy=forecast.rows.find(row=>row.Currency==='JPY');
+    assert.equal(jpy['Unbilled PO goods'],require('../../src/domain/currency').format(300,'JPY'));
+    assert.equal(jpy['Projected cash'],null);
+  }
+  const page=await browser.get('/autopilot/reviews/cash-forecast').expect(200);
+  assert.match(page.text,/Projected cash/);
+  const unknown=await commerce.createSupplier(db,ctx,{name:'Unconfirmed supplier terms'});
+  const open=await workflows.createPurchaseOrder(db,ctx,{supplierId:unknown.id,destinationLocationId:f.location.id,
+    idempotencyKey:randomUUID(),lines:[{skuId:sku,quantityUnits:1,unitCost:'5.00'}]});
+  await workflows.approvePurchaseOrder(db,ctx,open.purchaseOrderId,{idempotencyKey:randomUUID()});
+  await workflows.placePurchaseOrder(db,ctx,open.purchaseOrderId,{idempotencyKey:randomUUID()});
+  const uncertain=await read();
+  assert.match(uncertain.summary,/1 documents need a date or price/);
+  assert(uncertain.summary.includes(open.poNumber));
+  assert.equal(uncertain.rows.find(row=>row.Currency==='USD')['Projected cash'],null);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM accounting_payments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+});
+
 test('supplier payment runs and early discounts respect plan limits, current bills and individual approval',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,workflows,subscribe}=f;
   const cash=require('../../src/accounting/agent-cash-planning');

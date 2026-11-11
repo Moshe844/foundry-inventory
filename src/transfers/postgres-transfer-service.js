@@ -95,12 +95,9 @@ async function get(client, workspaceId, id, { lock = false } = {}) {
   const events = (await client.query(`SELECT e.*,u.name AS actor_name FROM inventory_transfer_events e
     LEFT JOIN users u ON u.id=e.actor_user_id WHERE e.transfer_id=$1 AND e.workspace_id=$2
     ORDER BY e.created_at,e.id`, [id, workspaceId])).rows.map((row) => ({ ...row, detail: parseJson(row.detail) }));
-  const totals = lines.reduce((sum, line) => ({ requested: sum.requested + Number(line.requested_quantity),
-    approved: sum.approved + Number(line.approved_quantity), picked: sum.picked + Number(line.picked_quantity),
-    shipped: sum.shipped + Number(line.shipped_quantity), received: sum.received + Number(line.received_quantity),
-    lost: sum.lost + Number(line.lost_quantity), damaged: sum.damaged + Number(line.damaged_quantity),
-    inTransit: sum.inTransit + Number(line.in_transit_quantity) }),
-  { requested: 0, approved: 0, picked: 0, shipped: 0, received: 0, lost: 0, damaged: 0, inTransit: 0 });
+  const totals = Object.fromEntries(Object.entries({requested:'requested_quantity',approved:'approved_quantity',picked:'picked_quantity',
+    shipped:'shipped_quantity',received:'received_quantity',lost:'lost_quantity',damaged:'damaged_quantity',inTransit:'in_transit_quantity'})
+    .map(([name,field])=>[name,exact.safeNumber(lines.reduce((total,line)=>exact.add(total,line[field]??0),'0'))]));
   return { ...transfer, decision_detail: parseJson(transfer.decision_detail), lines, events, totals };
 }
 

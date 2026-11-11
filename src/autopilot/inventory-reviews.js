@@ -2,24 +2,8 @@
 
 const reports = [
   {id:2,key:'movement-history',label:'Explain stock changes',readPage:require('./stock-reading').movements},
-  {id:4,key:'count-priorities',label:'Plan a cycle count',usesDate:true,summary:'Count negative positions first, then shelves with frequent adjustments, monthly A products, monthly B products and the highest recorded stock value.',sql:`
-    WITH differences AS (SELECT sku_id,location_id,count(*) AS n FROM movements WHERE workspace_id=$1 AND operation='adjust'
-      AND occurred_at::timestamptz>=now()-interval '90 days' GROUP BY sku_id,location_id)
-    SELECT l.name AS "Shelf",s.code AS "SKU",i.name AS "Product",b.on_hand AS "Recorded units",coalesce(d.n,0) AS "Recent adjustments",
-      CASE WHEN b.on_hand<0 THEN 'Negative stock' WHEN d.n IS NOT NULL THEN 'Prior adjustments' WHEN v.total_cost_minor IS NULL THEN 'Missing valuation' ELSE 'Recorded stock value' END AS "Reason"
-    FROM balances b JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=b.location_id
-    LEFT JOIN accounting_inventory_cost_balances v ON v.workspace_id=b.workspace_id AND v.sku_id=b.sku_id AND v.location_id=b.location_id
-    LEFT JOIN differences d ON d.sku_id=b.sku_id AND d.location_id=b.location_id
-    LEFT JOIN stockchief_runtime.product_class_values abc ON abc.workspace_id=b.workspace_id AND abc.item_id=i.id AND abc.month_start=date_trunc('month',$3::date)::date
-    WHERE b.workspace_id=$1 AND ($2='' OR lower(s.code)=lower($2)) AND b.on_hand<>0
-    ORDER BY (b.on_hand<0) DESC,coalesce(d.n,0) DESC,CASE abc.class WHEN 'A' THEN 0 WHEN 'B' THEN 1 ELSE 2 END,v.total_cost_minor DESC NULLS LAST,l.id,s.id`},
-  {id:10,key:'repeat-loss',label:'Find repeated stock losses',summary:'Repeated negative adjustments for the same item and warehouse in the same eight-hour local time band over 90 days. Review the original movements.',sql:`
-    WITH loss AS (SELECT m.*,floor(extract(hour FROM (m.occurred_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC')))/8)::int*8 AS start_hour
-      FROM movements m JOIN workspaces w ON w.id=m.workspace_id JOIN accounts a ON a.id=w.owner_account_id
-      WHERE m.workspace_id=$1 AND m.operation='adjust' AND m.quantity_delta<0 AND m.occurred_at::timestamptz>=now()-interval '90 days')
-    SELECT s.code AS "SKU",l.name AS "Warehouse",m.start_hour AS "Time band starts",count(*) AS "Adjustments",-sum(m.quantity_delta) AS "Units removed"
-    FROM loss m JOIN skus s ON s.id=m.sku_id JOIN locations l ON l.id=m.location_id WHERE ($2='' OR lower(s.code)=lower($2))
-    GROUP BY s.id,s.code,l.id,l.name,m.start_hour HAVING count(*)>1 ORDER BY count(*) DESC,s.id,l.id,m.start_hour`},
+  {id:4,key:'count-priorities',label:'Plan a cycle count',filterLabel:'Exact SKU',readPage:require('../operations/agent-daily-cycle-counts').review},
+  require('./stock-loss-patterns').definition,
   {id:44,key:'delivery-check',label:'Compare deliveries with purchase orders',summary:'Ordered, received and outstanding quantities per item. An over-receipt is shown separately from an incomplete delivery.',sql:`
     SELECT p.po_number AS "Order",v.name AS "Supplier",s.code AS "SKU",l.quantity_units AS "Ordered",l.quantity_received_units AS "Received",
       greatest(l.quantity_units-l.quantity_received_units,0) AS "Still due",greatest(l.quantity_received_units-l.quantity_units,0) AS "Extra units",

@@ -4,7 +4,14 @@ const policy=require('../commercial/agent-plan'),kinds=['other','packing_slip','
 const targets={purchase_order:{table:'purchase_orders',reference:'po_number',party:'supplier_id',path:'/purchasing/orders/'},sales_order:{table:'sales_orders',reference:'order_number',party:'customer_id',path:'/orders/'},item:{table:'items',reference:'name',path:'/inventory/'}};
 const digest=v=>createHash('sha256').update(v).digest('hex');
 function job(kind){return ['bill_of_lading','customs'].includes(kind)?137:142;}
-async function owner(db,ctx){if(!(await db.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner'",[ctx.workspaceId,ctx.actorId])).rowCount)throw new AuthorizationError('Only the inventory owner can file or open these business documents.');}
+async function owner(db,ctx){
+ const member=(await db.query(`SELECT 1 FROM workspaces w JOIN users u ON u.workspace_id=w.id AND u.account_id=w.owner_account_id
+   WHERE w.id=$1 AND u.id=$2 AND u.role='owner' AND w.deletion_requested_at IS NULL
+   AND NOT EXISTS(SELECT 1 FROM platform_account_access x WHERE x.account_id=w.owner_account_id AND x.disabled_at IS NOT NULL)`,
+   [ctx.workspaceId,ctx.actorId])).rowCount;
+ if(!member)throw new AuthorizationError('Only the current inventory owner can file or open these private business documents.');
+ await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
+}
 async function source(db,ctx,id,lock=false){
  const row=(await db.query(`SELECT a.*,m.supplier_id,m.trust_status,CASE WHEN m.classification='customer' THEN
   (SELECT min(c.id) FROM customers c WHERE c.workspace_id=m.workspace_id AND lower(c.email)=lower(m.sender) AND c.record_state='ACTIVE' HAVING count(*)=1) END AS customer_id

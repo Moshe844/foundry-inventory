@@ -1,0 +1,61 @@
+<header class="rm-head">
+  <h1>Supplier invoice <%= bill.supplier_invoice_number %></h1>
+  <p><%= bill.supplier_name %> · <%= money.format(bill.total_minor,bill.currency) %> · <%= bill.po_number %></p>
+</header>
+<section class="card"><div class="card-body">
+  <h2>Dispute</h2>
+  <% if(work?.intake_id){ %><p><a href="/autopilot/supplier-invoices/<%= work.intake_id %>">Original invoice</a></p>
+  <% }else if(bill.source_message_id){ %><p><a href="/mail/<%= bill.source_message_id %>">Original supplier message</a></p><% } %>
+  <% if(bill.status==='DISPUTED'){ %><p><a href="/accounting/payables/<%= bill.id %>/review">Current purchase and receipt comparison</a></p><% } %>
+  <% if(work?.replacement_bill_id){ %>
+    <p><strong>Resolved</strong> · <a href="/money/bills/<%= work.replacement_bill_id %>">Posted corrected invoice</a></p>
+  <% }else if(bill.status==='OPEN'){ %>
+    <p><strong>Resolved</strong> · <a href="/money/bills/<%= bill.id %>">Matched and posted invoice</a></p>
+  <% }else if(message?.verified){ %>
+    <p><a href="/messages/supplier/<%= message.id %>">Sent supplier message</a><% if(!message.external_thread_id){ %> · Conversation identifier unavailable<% } %></p>
+  <% }else if(message){ %>
+    <p><a href="/messages/supplier/<%= message.id %>"><%= message.status==='QUEUED'||message.status==='SENDING'?'Delivery pending':'Delivery needs verification' %></a></p>
+    <% if(message.error_message){ %><p><%= message.error_message %></p><% } %>
+  <% }else if(bill.status==='DISPUTED'){ %>
+    <% if(work?.result?.problem){ %><p><%= work.result.problem %></p><% } %>
+    <% if(mailboxes.length&&!blocked){ %><form method="post" action="/autopilot/supplier-disputes/prepare" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="billNumber" value="<%= bill.bill_number %>">
+      <label>Send from <select name="connectorId" required><% for(const box of mailboxes){ %><option value="<%= box.id %>"><%= box.display_name %></option><% } %></select></label>
+      <button class="btn">Prepare for approval</button>
+    </form><% } %>
+  <% } %>
+  <% if(blocked&&bill.status==='DISPUTED'){ %><p class="notice"><%= blocked %></p><% } %>
+</div></section>
+<% if(message?.verified&&message.external_thread_id){ %>
+<section class="card"><div class="card-body">
+  <h2>Supplier replies</h2>
+  <% if(!replies.length){ %><p>Waiting for the supplier's reply.</p><% } %>
+  <% for(const reply of replies){ %><article>
+    <p><a href="/mail/<%= reply.id %>"><%= reply.subject || 'Supplier reply' %></a> · <%= new Date(reply.received_at).toLocaleDateString() %></p>
+    <% for(const source of sources.filter(s=>s.message_id===reply.id)){ %>
+      <p><a href="/autopilot/supplier-invoices/<%= source.id %>"><%= source.filename %></a>
+      <% if(bill.status==='DISPUTED'&&source.status!=='POSTED'){ %> · <a href="?source=<%= encodeURIComponent(source.id) %>&amp;page=<%= page %>">Compare corrected invoice</a><% } %></p>
+    <% } %>
+  </article><% } %>
+  <% if(page>1){ %><a href="?page=<%= page-1 %>">Previous replies</a><% } %>
+  <% if(more){ %><a href="?page=<%= page+1 %>">More replies</a><% } %>
+</div></section>
+<% } %>
+<% if(selected){ %><section class="card"><div class="card-body">
+  <h2>Corrected invoice</h2>
+  <% if(selected.row){ %>
+    <p><a href="/autopilot/supplier-invoices/<%= selected.row.id %>"><%= selected.input.supplierInvoiceNumber %></a>
+       · <%= money.format(selected.comparison.totalMinor,selected.input.currency) %> · <%= selected.input.issueDate %></p>
+  <% } %>
+  <% if(selected.hold){ %><p class="notice"><%= selected.hold %></p><% } %>
+  <% if(selected.row&&!selected.hold&&!blocked){ %>
+    <form method="post" action="/autopilot/supplier-disputes/<%= bill.id %>/resolve" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sourceId" value="<%= selected.row.id %>">
+      <input type="hidden" name="fingerprint" value="<%= selected.fingerprint %>">
+      <label>Evidence reviewed <input name="reason" maxlength="1000" required></label>
+      <% if(selected.requiresReferenceConfirmation){ %><label><input type="checkbox" name="confirmReplacementReference" value="yes" required> I confirmed this new invoice number replaces <%= bill.supplier_invoice_number %>.</label><% } %>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I approve posting this exact corrected invoice and voiding the unposted original.</label>
+      <button class="btn">Post corrected invoice</button>
+    </form>
+  <% } %>
+</div></section><% } %>

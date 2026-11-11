@@ -68,6 +68,7 @@ const definitions=[
   require('../documents/agent-product-facts').definition,
   ...require('../documents/agent-filing').definitions,
   require('../imports/agent-count-source').definition,
+  require('../imports/agent-exact-variant-import').definition,
   require('../purchasing/agent-receiving-documents').definition,
   require('../sales/agent-customer-pricing').definition,
   require('./agent-work-digest').definition,
@@ -80,6 +81,7 @@ const definitions=[
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
   {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
+  require('../forecasting/location-reorder-rules').definition,
   require('../connections/agent-mail-triage').definition,
   require('../reports/manager-presentation').definition,
   require('../purchasing/dual-approval').definition,
@@ -139,7 +141,8 @@ const suggestions={
   13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
-  17:r=>r.SKU+' at '+r.Location+' · '+r.Review+'.',
+  17:r=>r.SKU+' at '+r.Location+(r['Days since receipt']===null?' has unconfirmed age.':
+    ' has '+r.Units+' recorded units received '+r['Days since receipt']+' days ago.')+' '+r.Review+'.',
   9:r=>r.SKU+' at '+r.Location+' · '+r.Finding+'. '+r['Suggested next step'],
   86:r=>'Review '+r['Clearance units']+' units of '+r.SKU+' at '+r.Location+' for clearance.',
   58:r=>r.Service?'Consider '+r.Service+' at '+r.Price+' for '+r.Shipment+'. Carrier arrival '+r['Carrier arrival']+'.':r.Shipment+' · '+r.Status+'.',
@@ -147,11 +150,12 @@ const suggestions={
   55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
   3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
   64:r=>'Review '+r.Order+' for '+r.Customer+'. '+r['Waiting units']+' units of '+r.SKU+' are still waiting for stock.',
-  116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled units were returned.',
+  116:r=>'Review returns for '+r.Name+'. '+r['Returned units']+' of '+r['Fulfilled units']+' fulfilled '+(r.Unit==='unit'?'units':r.Unit)+
+    ' were returned. '+r.Finding+'.',
   110:r=>'Review the '+r.Month+' purchase budget for '+r.Category+' in '+r.Currency+'.',
   144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
-  4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
+  4:r=>'Count '+r.Shelf+' at '+r.Warehouse+' first. Start with '+r.SKU+'. '+r.Reason+'.',
   21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
   22:r=>'Consider '+r.Supplier+' for '+r['Compared quantity']+' '+r.Unit+' of '+r.SKU+'. Recorded goods total: '+(r['Goods total']||'unknown')+'; delivery days: '+(r['Lead days']??'unknown')+'. '+r.Status+'.',
   23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
@@ -200,6 +204,7 @@ async function run(db,ctx,key,options={}){
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      ...(result.cyclePlan?{cyclePlan:true}:{}),
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
       ...(result.pickReleaseForm?{pickReleaseForm:result.pickReleaseForm}:{}),
       ...(result.putawayForm?{putawayForm:result.putawayForm}:{}),
@@ -222,6 +227,8 @@ async function run(db,ctx,key,options={}){
       ...(def.id===196?{lotCertificateLink:true}:{}),
       ...(def.id===137?{shippingDocumentLink:true}:{}),
       ...(result.balanceForm?{balanceForm:true}:{}),
+      ...(def.id===142?{documentDiscoveryLink:true}:{}),
+      ...(def.id===130?{variantImportLink:true}:{}),
       ...inputs};
   }
   if(def.read){

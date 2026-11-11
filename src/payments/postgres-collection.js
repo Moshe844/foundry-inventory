@@ -250,6 +250,8 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
     if(row.resolution!=='REFUND'||row.status!=='AWAITING_REFUND')throw new ValidationError('This return is not waiting for a refund.');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',
       [`payment-refund:${ctx.workspaceId}:${customerReturnId}`]);
+    if((await client.query('SELECT 1 FROM stockchief_runtime.agent_return_refund_plans WHERE workspace_id=$1 AND customer_return_id=$2',
+      [ctx.workspaceId,customerReturnId])).rows.length)throw new ValidationError('Use the already approved refund and its original payment breakdown.');
     const prior=(await client.query(`SELECT * FROM payment_refund_requests
       WHERE workspace_id=$1 AND customer_return_id=$2 FOR UPDATE`,[ctx.workspaceId,customerReturnId])).rows[0];
     if(prior){const effect=(await client.query(`SELECT id FROM stockchief_runtime.provider_effects
@@ -300,6 +302,8 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
 }
 
 async function executeRefundEffect(database,workspaceId,effectId,options={}){
+  const current=await providerEffects.get(database,workspaceId,effectId);
+  if(current.payload.agentRefundPartId)return require('../operations/agent-return-refunds').executeProviderPart(database,current,options);
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {refundId:claimed.effect.result?.refundId||null,replayed:true};
   const effect=claimed.effect;let providerCalled=false;

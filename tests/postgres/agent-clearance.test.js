@@ -78,7 +78,7 @@ test('clearance and aging use held stock and actual receipt dates, without chang
   }
   const unknown=(await read('clearance-plan','CLEAR-LOT',25)).rows[0];assert.equal(unknown['Gross proceeds if sold'],null);
   await receipt.receive(db,ctx,{skuId:sku,locationId:location.id,quantity:2,idempotencyKey:randomUUID()});
-  assert.equal((await read('stock-age','CLEAR-OLD')).rows[0]['Days since receipt'],null);
+  assert.deepEqual((await read('stock-age','CLEAR-OLD')).rows.map(row=>[row['Days since receipt'],row.Units]),[[210,10],[0,2]]);
   assert.equal((await read('clearance-plan','CLEAR-OLD',100)).rows[0]['Gross proceeds if sold'],'$0.00');
   const order=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'SHIP',fulfillmentLocationId:location.id,
     idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:3,unitPriceMinor:999}]});

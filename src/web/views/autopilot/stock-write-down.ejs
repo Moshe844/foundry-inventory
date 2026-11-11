@@ -1,0 +1,27 @@
+
+<% const p=review.position; %>
+<div class="rm-head">
+  <a class="rm-head__back" href="/autopilot/reviews/stock-age?filter=<%= encodeURIComponent(p.sku) %>">← Stock by age</a>
+  <h1>Review inventory write-down</h1>
+</div>
+<section class="card card-body stack">
+  <h2><%= p.sku %> · <%= p.location %></h2>
+  <dl class="summary-list">
+    <div><dt>Whole position</dt><dd><%= p.quantity %> <%= p.unit %><%= p.weight?' · '+p.weight+' '+p.secondaryUnit:'' %></dd></div>
+    <div><dt>Stock flagged by age</dt><dd><%= p.agedQuantity %> <%= p.unit %> · oldest <%= p.oldestDays %> days</dd></div>
+    <% if(p.unprovenQuantity!=='0'){ %><div><dt>Stock with unknown age</dt><dd><%= p.unprovenQuantity %> <%= p.unit %></dd></div><% } %>
+    <div><dt>Current carrying value</dt><dd><%= helpers.money(p.bookValueMinor,p.currency) %></dd></div>
+  </dl>
+  <p>The accounting records use one weighted-average cost pool for this product at this location. Enter the supported total recovery for every unit shown, after costs to complete and sell. Age tells you when to review the stock. Your valuation evidence determines the amount.</p>
+  <form method="post" action="/autopilot/reviews/stock-age/write-down" class="stack-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="idempotencyKey" value="<%= formKey %>">
+    <input type="hidden" name="position" value="<%= p.reference %>">
+    <input type="hidden" name="currency" value="<%= p.currency %>">
+    <input type="hidden" name="expectedStockFingerprint" value="<%= review.fingerprint %>">
+    <label>Net recoverable value in <%= p.currency %> <input name="amount" inputmode="decimal" required></label>
+    <label>Valuation evidence <textarea name="reference" required minlength="3" maxlength="1200" rows="3"></textarea></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> My evidence covers this whole product and location.</label>
+    <button class="btn btn--primary" type="submit">Prepare exact write-down</button>
+  </form>
+</section>

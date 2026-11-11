@@ -380,20 +380,29 @@ function createPostgresProjectionsRouter(database){
       trimOrNull(req.body.jurisdiction),Math.round(percent*10000),req.body.appliesTo||'SALES',req.body.effectiveFrom,
       trimOrNull(req.body.effectiveTo),req.ctx.actorId,at]);req.flash('success','Dated tax rate saved.');return res.redirect(303,'/accounting/tax');
   }));
-  router.get('/accounting/banking',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view banking and reconciliation'),asyncRoute(async(req,res)=>{const [banks,accounts,transactions,reconciliations,payments,journals]=await Promise.all([
-    database.query(`SELECT b.*,a.code AS ledger_account_code,a.name AS ledger_account_name FROM accounting_bank_accounts b
-      JOIN accounting_accounts a ON a.id=b.ledger_account_id WHERE b.workspace_id=$1 AND b.active=1 ORDER BY b.name`,[req.ctx.workspaceId]),
+  router.get('/accounting/banking',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view banking and reconciliation'),asyncRoute(async(req,res)=>{const [banks,accounts,transactions,reconciliations,payments,journals,statements]=await Promise.all([
+    database.query(`SELECT b.*,a.code AS ledger_account_code,a.name AS ledger_account_name,a.system_key AS ledger_system_key,
+      a.active AS ledger_active,a.account_type AS ledger_type,a.normal_balance AS ledger_normal_balance
+      FROM accounting_bank_accounts b JOIN accounting_accounts a ON a.workspace_id=b.workspace_id AND a.id=b.ledger_account_id WHERE b.workspace_id=$1 AND b.active=1 ORDER BY b.name`,[req.ctx.workspaceId]),
     database.query(`SELECT id,code,name FROM accounting_accounts WHERE workspace_id=$1 AND active=1 AND account_type IN ('ASSET','LIABILITY') ORDER BY code`,[req.ctx.workspaceId]),
-    database.query(`SELECT t.*,b.name AS bank_name FROM accounting_bank_transactions t JOIN accounting_bank_accounts b ON b.id=t.bank_account_id
+    database.query(`SELECT t.*,b.name AS bank_name,b.currency,b.account_kind FROM accounting_bank_transactions t
+      JOIN accounting_bank_accounts b ON b.workspace_id=t.workspace_id AND b.id=t.bank_account_id
       WHERE t.workspace_id=$1 ORDER BY t.transaction_date DESC,t.id DESC LIMIT 200`,[req.ctx.workspaceId]),
     database.query(`SELECT r.*,b.name AS bank_name FROM accounting_reconciliations r JOIN accounting_bank_accounts b ON b.id=r.bank_account_id
       WHERE r.workspace_id=$1 ORDER BY r.statement_end_date DESC,r.id DESC`,[req.ctx.workspaceId]),
     database.query(`SELECT p.*,COALESCE(c.name,s.name,'Unknown') AS counterparty FROM accounting_payments p LEFT JOIN customers c ON c.id=p.customer_id
       LEFT JOIN suppliers s ON s.id=p.supplier_id WHERE p.workspace_id=$1 ORDER BY p.payment_date DESC LIMIT 100`,[req.ctx.workspaceId]),
     database.query(`SELECT id,entry_number,posting_date,description FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
-      ORDER BY posting_date DESC,entry_number DESC LIMIT 100`,[req.ctx.workspaceId])]);
+      ORDER BY posting_date DESC,entry_number DESC LIMIT 100`,[req.ctx.workspaceId]),
+    database.query(`SELECT x.id,x.filename,x.row_count,x.imported_count,x.uploaded_at,b.name bank_name
+      FROM stockchief_runtime.bank_statement_originals x JOIN accounting_bank_accounts b ON b.workspace_id=x.workspace_id AND b.id=x.bank_account_id
+      WHERE x.workspace_id=$1 ORDER BY x.uploaded_at DESC,x.id DESC LIMIT 50`,[req.ctx.workspaceId])]);
+    const receiptPolicy=require('../../commercial/agent-plan');
+    const account=req.user.role==='owner'?await receiptPolicy.accountState(database,req.ctx.workspaceId):null;
+    const canAttachRemittance=Boolean(account&&receiptPolicy.usesAgentTerms(account)&&receiptPolicy.permits(account.plan,103,'draft'));
     return res.page('accounting/banking',{title:'Banking and reconciliation',nav:'accounting',banks:banks.rows,accounts:accounts.rows,
       transactions:transactions.rows,reconciliations:reconciliations.rows,paymentMatches:payments.rows,journalMatches:journals.rows,
+      statements:statements.rows,canImport:permissions.can(req.user,permissions.RECONCILE_ACCOUNTS),canVerify:req.user.role==='owner',canAttachRemittance,
       today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
   }));
   router.post('/accounting/banking/accounts',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'add financial accounts'),asyncRoute(async(req,res)=>{
@@ -412,6 +421,45 @@ function createPostgresProjectionsRouter(database){
       VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$8)`,
     [newId('bank'),req.ctx.workspaceId,name,kind,currency,account.id,req.ctx.actorId,at]);
     req.flash('success','Financial account added. No bank transactions or accounting entries were created.');
+    return res.redirect(303,'/accounting/banking');
+  }));
+  const bankStatements=require('../../accounting/postgres-bank-statements');
+  router.post('/accounting/banking/:id/import-statement',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'import bank evidence'),
+    require('../multipart').multipart({limit:bankStatements.MAX_BYTES,maxFiles:1}),asyncRoute(async(req,res)=>{
+      const file=req.files?.find(f=>f.field==='statement');
+      if(!file)throw new ValidationError('Choose a complete bank statement export.');
+      const result=await bankStatements.importStatement(database,req.ctx,req.params.id,{
+        buffer:file.buffer,filename:file.filename,dateFormat:String(req.body.dateFormat||'ISO'),
+      });
+      req.flash(result.replayed?'warn':'success',result.replayed?'This exact statement was already imported.'
+        :result.imported+' of '+result.rows+' statement lines imported. Existing lines were preserved.');
+      return res.redirect(303,'/accounting/banking');
+    }));
+  router.get('/accounting/banking/statements/:id/original',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'download the original bank statement'),asyncRoute(async(req,res)=>{
+      const file=await bankStatements.original(database,req.ctx.workspaceId,req.params.id);
+      return res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"})
+        .type('application/octet-stream').attachment(file.filename).send(file.original);
+    }));
+  router.post('/accounting/banking/transactions/:id/remittance',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'confirm customer remittance evidence'),
+    require('../multipart').multipart({limit:bankStatements.MAX_BYTES,maxFiles:1}),asyncRoute(async(req,res)=>{
+      const file=req.files?.find(f=>f.field==='remittance');
+      if(!file)throw new ValidationError('Choose the complete customer remittance.');
+      await bankStatements.attachRemittance(database,req.ctx,req.params.id,{buffer:file.buffer,filename:file.filename,confirmed:req.body.confirmed});
+      req.flash('success','Customer remittance saved with the exact bank credit.');
+      return res.redirect(303,'/accounting/banking');
+    }));
+  router.get('/accounting/banking/remittances/:id/original',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'download the original customer remittance'),asyncRoute(async(req,res)=>{
+      const file=await bankStatements.original(database,req.ctx.workspaceId,req.params.id,{remittance:true});
+      return res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"})
+        .type('application/octet-stream').attachment(file.filename).send(file.original);
+    }));
+  router.post('/accounting/banking/:id/verify-cash',requireAuth,asyncRoute(async(req,res)=>{
+    const result=await banking.verifyReceiptAccount(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.verified?'Bank cash account verified for receipt matching.':'Bank cash account verification removed.');
     return res.redirect(303,'/accounting/banking');
   }));
   router.post('/accounting/banking/:id/import',requireAuth,

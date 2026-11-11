@@ -559,6 +559,8 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
     if (row.resolution !== 'REFUND' || row.status !== 'AWAITING_REFUND') {
       throw new ValidationError('This return is not waiting for a refund.');
     }
+    if((await client.query('SELECT 1 FROM stockchief_runtime.agent_return_refund_plans WHERE workspace_id=$1 AND customer_return_id=$2',
+      [ctx.workspaceId,id])).rows.length)throw new ValidationError('Use the already approved refund and its original payment breakdown.');
     if(row.receipt_credit_policy==='RECEIPT_CREDIT_V1'){const result=await require('./postgres-return-credits').settle(client,ctx,row,{...input,destination},operation);await addSalesEvent(client,ctx,row.sales_order_id,'customer_return_refunded',{customerReturnId:id,returnNumber:row.return_number,...result},operation.key+':event');await require('../connections/postgres-return-review').reconcileInTransaction(client,ctx.workspaceId,{salesOrderId:row.sales_order_id});await completeOperation(client,operation,result);return {...result,replayed:false};}
     const refundGroups=require('./return-money').groups(row),amountMinor=refundSummary(row).totalMinor,refundDate=String(input.refundDate||await require('../lib/business-time').today(client,ctx.workspaceId));
     const invoiceResult = await client.query(`SELECT * FROM accounting_customer_invoices
@@ -924,7 +926,7 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
   });
 }
 
-module.exports = { previewReceiptCredit,refundSummary,getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
+module.exports = { readReturn,addSalesEvent,previewReceiptCredit,refundSummary,getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
   receiveCustomerReturn, inspectCustomerReturn, refundCustomerReturn, refundCustomerReturnInTransaction,
   exchangeCustomerReturn,
   getSupplierReturn, listSupplierReturns, requestSupplierReturn, authorizeSupplierReturn,

@@ -89,16 +89,40 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
   if (candidate.currency !== cap.currency || !Number.isFinite(candidate.value) ||
       candidate.value <= 0 || candidate.value > cap.perOrder) return 'This order needs approval under your plan’s per-order limit.';
   if (state.plan === 'growth' && !policy.itemScope.includes(candidate.skuId)) return 'Choose this item as trusted before automatic ordering.';
-  const prior = await database.query(`SELECT po.currency,line.unit_cost,line.units_per_purchase_unit,line.sku_id FROM purchase_orders po
+  const buying=require('../purchasing/agent-order-quantities');
+  if(buying.usesTopUp(candidate)&&!candidate.topUpSignature)return 'Review a fresh order with the current supplier minimum and shipping terms.';
+  if(state.plan==='growth'&&candidate.topUpSignature){
+    const taught=await database.query(`SELECT 1 FROM work_items wi
+      JOIN purchase_orders po ON po.workspace_id=wi.workspace_id AND po.id=wi.purchase_order_id
+      JOIN workspaces w ON w.id=wi.workspace_id
+      JOIN users u ON u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.id=wi.approved_by_user_id AND u.role='owner'
+      WHERE wi.workspace_id=$1 AND wi.source='postgres_autopilot' AND po.id IS DISTINCT FROM $2
+        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND po.supplier_id=$3
+        AND wi.recommended_action::jsonb->>'skuId'=$4 AND wi.recommended_action::jsonb->>'destinationLocationId'=$5
+        AND wi.recommended_action::jsonb->>'topUpSignature'=$6 LIMIT 1`,
+    [workspaceId,committedId,candidate.supplierId,candidate.skuId,candidate.destinationLocationId,candidate.topUpSignature]);
+    if(!taught.rowCount)return 'Approve and send one matching supplier minimum or free-shipping order before this routine repeats.';
+  }
+  const needsPackExample=state.plan==='growth'&&buying.usesPacks(candidate);
+  const prior = await database.query(`SELECT po.currency,line.unit_cost,line.units_per_purchase_unit,line.sku_id,
+      line.purchase_unit,line.quantity_purchase_units FROM purchase_orders po
     JOIN purchase_order_lines line ON line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id
     WHERE po.workspace_id=$1 AND po.supplier_id=$2 AND po.id IS DISTINCT FROM $3
       AND po.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
-      AND (line.sku_id=$4 OR $5=false) ORDER BY (line.sku_id=$4) DESC,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC,line.line_number LIMIT 1`,
-    [workspaceId, candidate.supplierId, committedId, candidate.skuId,state.plan==='growth']);
-  if (!prior.rowCount) return 'A person must approve the first order for this supplier or trusted item.';
+      AND (line.sku_id=$4 OR $5=false)
+      AND (NOT $6 OR EXISTS (
+        SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+        WHERE u.workspace_id=po.workspace_id AND u.id=po.approved_by_user_id AND u.role='owner'
+        AND NOT EXISTS (SELECT 1 FROM work_items wi WHERE wi.workspace_id=po.workspace_id AND wi.purchase_order_id=po.id
+          AND wi.source='postgres_autopilot' AND wi.approved_by_user_id IS NULL)))
+    ORDER BY (line.sku_id=$4) DESC,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC,line.line_number LIMIT 1`,
+    [workspaceId,candidate.supplierId,committedId,candidate.skuId,state.plan==='growth',needsPackExample]);
+  if (!prior.rowCount) return needsPackExample?'Approve and place an example order in these supplier packs before automating this trusted item.':'A person must approve the first order for this supplier or trusted item.';
   const last=prior.rows[0];
   if(last.sku_id===candidate.skuId && (last.currency!==candidate.currency || last.unit_cost==null || Number(last.unit_cost)!==Number(candidate.unitCost) ||
-     Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)))
+     Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)||
+     (needsPackExample&&((candidate.purchaseUnit!=null&&last.purchase_unit!==candidate.purchaseUnit)||
+       Number(last.quantity_purchase_units)%Number(candidate.purchaseMultiple??1)!==0))))
     return 'The latest supplier order used a different currency, price or pack. A person must approve the changed terms.';
   const money = require('../domain/currency');
   const ledger=await automaticPurchaseCommitments(database,state,cap.currency,committedId);
@@ -144,7 +168,7 @@ async function automaticPurchaseCommitments(database,state,currency,exceptId=nul
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
   ['purchasing.supplier_direct',37],
-  ['document.read_contract',143],['document.read_shipping_original',137],['document.link_lot_certificate',196],
+  ['document.read_contract',143],['document.read_shipping_original',137],['document.discover_filing',142],['document.link_lot_certificate',196],
   ['warehouse.read_shelf_photo',140],
   ['sales_order.reserve_rotation',192],['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],['purchasing.switch_backup_supplier',95],
   ['purchasing.prepare_blanket_release',42],
@@ -185,11 +209,12 @@ const actionJobs=new Map([
   ['import.supplier_catalog',127],['import.variants',130],
   ['kit.replenish_parts',13],
   ['sales_quote.create',73],['sales_quote.accept',75],
-  ['planning.safety_stock',150],
+  ['planning.safety_stock',150],['planning.location_reorder',120],['inventory.plan_daily_cycle_count',4],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
+  ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['sales_order.reserve_arrived',48],['sales_order.notify_stock_ready',50],['sales_order.repeat',53],['sales_order.allocation_priority',65],
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
@@ -218,6 +243,7 @@ const newAgentActions=new Set(['customer_invoice.prepare_document','sales_quote.
 newAgentActions.add('purchase_order.reorder_drafts');newAgentActions.add('purchasing.select_supplier');
 newAgentActions.add('sales_order.reserve_rotation');
 newAgentActions.add('transfer.prepare_balance');
+newAgentActions.add('inventory.write_down_aged');
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
@@ -228,14 +254,15 @@ const humanSteps=new Set([
   'purchase_order.receive_from_document',
   'sales_quote.accept',
   'catalog.restore_margin',
-  'inventory.receive','purchase_order.receive','transfer.receive','customer_return.receive',
+  'inventory.write_down_aged',
+  'inventory.receive','purchase_order.receive','transfer.receive','transfer.pick','transfer.dispatch','transfer.depart','transfer.in_transit','customer_return.receive',
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
   'customer_return.refund','supplier_payment.record','sales_order.cancel','catalog.set_price',
   'catalog.set_purchase_cost','pricing.rule.configure','supplier.link_product','supplier.update',
   'customer_return.inspect','manufacturing.start','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
-function needsPerson(capability,payload,state){if(capability==='sales_order.reserve_rotation'&&payload?.needsHistoricalFifoConfirmation)return true;if(['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(capability)&&payload?.needsPurchaseTermsConfirmation!==false)return true;return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='supplier_invoice.dispute'&&payload?.needsDisputeConfirmation!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||(capability==='warehouse.wave.create'&&state&&usesAgentTerms(state)&&payload?.needsWaveConfirmation!==false)||(capability==='warehouse.prepare_putaway'&&payload?.needsPutawayConfirmation!==false)||(capability==='customer.statement'&&payload?.needsStatementConfirmation!==false)||(capability==='landed_cost.apply'&&payload?.needsLandedCostConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
+function needsPerson(capability,payload,state){if(capability==='sales_order.reserve_rotation'&&payload?.needsHistoricalFifoConfirmation)return true;if(['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(capability)&&payload?.needsPurchaseTermsConfirmation!==false)return true;if(['inventory.transfer','transfer.approve'].includes(capability)&&state&&usesAgentTerms(state))return true;return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='supplier_invoice.dispute'&&payload?.needsDisputeConfirmation!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||(capability==='warehouse.wave.create'&&state&&usesAgentTerms(state)&&payload?.needsWaveConfirmation!==false)||(capability==='warehouse.prepare_putaway'&&payload?.needsPutawayConfirmation!==false)||(capability==='customer.statement'&&payload?.needsStatementConfirmation!==false)||(capability==='landed_cost.apply'&&payload?.needsLandedCostConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';

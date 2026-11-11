@@ -94,18 +94,42 @@ function flattenParts(part, out = []) {
 }
 
 function bodyText(payload) {
-  if (payload?.mimeType === 'text/plain' && payload.body?.data) return decode(payload.body.data);
-  for (const part of payload?.parts || []) { const value = bodyText(part); if (value) return value; }
-  return payload?.body?.data ? decode(payload.body.data) : '';
+  const sections={plain:[],html:[],current:[]};
+  function visit(part){
+    if(!part||part.filename)return;
+    if(part.body?.data){
+      if(part.mimeType==='text/html'){
+        const html=decode(part.body.data),source=require('./mailbox-source');
+        sections.html.push(source.visibleHtml(html));
+        sections.current.push(source.visibleHtml(html,{currentOnly:true}));
+      }
+      else if(part.mimeType==='text/plain'||!part.mimeType)sections.plain.push(decode(part.body.data));
+    }
+    for(const child of part.parts||[])visit(child);
+  }
+  visit(payload);
+  if(sections.plain.some(s=>s.trim()))return {bodyText:sections.plain.join('\n')};
+  return {bodyText:sections.html.join('\n'),triageBodyText:sections.current.join('\n')};
 }
 
 async function message(credentials, id) {
-  const row = (await api(credentials, `/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`)).body;
+  const endpoint='/gmail/v1/users/me/messages/'+encodeURIComponent(id),source=require('./mailbox-source');
+  let row,sourceIssue=null;
+  try{row=(await api(credentials,endpoint+'?format=full')).body;}
+  catch(error){
+    if(!source.oversized(error))throw error;
+    row=(await api(credentials,endpoint+'?format=metadata')).body;
+    sourceIssue=source.originalReview;
+  }
+  const providerJunk=(row.labelIds||[]).includes('SPAM');
   const attachments = [];
   for (const part of flattenParts(row.payload)) {
-    let data = part.body?.data;
-    if (!data && part.body?.attachmentId) data = (await api(credentials,
-      `/gmail/v1/users/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(part.body.attachmentId)}`)).body.data;
+    if(Number(part.body?.size)>20*1024*1024)sourceIssue=source.originalReview;
+    let data=providerJunk||sourceIssue?null:part.body?.data;
+    if(!providerJunk&&!sourceIssue&&!data&&part.body?.attachmentId){
+      try{data=(await api(credentials,endpoint+'/attachments/'+encodeURIComponent(part.body.attachmentId))).body.data;}
+      catch(error){if(!source.oversized(error))throw error;sourceIssue=source.originalReview;}
+    }
     attachments.push({ id: part.body?.attachmentId, filename: part.filename,
       mimeType: part.mimeType, contentBase64: data ? base64(data) : undefined });
   }
@@ -113,8 +137,9 @@ async function message(credentials, id) {
   const address = (from.match(/<([^>]+)>/) || [null, from])[1].trim().toLowerCase();
   return { messageId: row.id, threadId: row.threadId, internetMessageId: header(row.payload, 'Message-ID'),
     stockChiefMessageId: header(row.payload, 'X-StockChief-Message'),
-    sender: address, recipients: (header(row.payload, 'To') || '').split(',').map((entry) => entry.trim()).filter(Boolean),
-    subject: header(row.payload, 'Subject'), bodyText: bodyText(row.payload),
+    sender: address||'Sender unavailable',providerJunk,sourceIssue,listMail:Boolean(header(row.payload,'List-Id')||header(row.payload,'List-Unsubscribe')),
+    recipients: (header(row.payload, 'To') || '').split(',').map((entry) => entry.trim()).filter(Boolean),
+    subject: header(row.payload, 'Subject'), ...bodyText(row.payload),
     receivedAt: row.internalDate ? new Date(Number(row.internalDate)).toISOString() : null, attachments };
 }
 
@@ -141,7 +166,7 @@ const OVERLAP_MS = 15 * 60_000;
 async function poll({ credentials, since }) {
   const from = new Date(since || Date.now() - 86400000).getTime() - OVERLAP_MS;
   const query = new URLSearchParams({
-    maxResults: '50',
+    maxResults: '50',includeSpamTrash:'true',
     q: `(in:inbox OR in:spam OR -in:sent) -in:draft -in:trash after:${Math.floor(from / 1000)}`,
   });
   const messages = [];
@@ -165,6 +190,29 @@ async function poll({ credentials, since }) {
   return { messages, cursor: messages[0]?.messageId || null };
 }
 
+async function pollPage({credentials,since,until,cursor=null,accept=null}){
+  const from=Math.floor((Date.parse(since)-OVERLAP_MS)/1000);
+  const before=Math.ceil(Date.parse(until)/1000);
+  const query=new URLSearchParams({maxResults:'50',includeSpamTrash:'true',
+    q:'(in:inbox OR in:spam OR -in:sent) -in:draft -in:trash after:'+from+' before:'+before});
+  if(cursor?.token)query.set('pageToken',cursor.token);
+  const page=(await api(credentials,'/gmail/v1/users/me/messages?'+query)).body;
+  if(page.nextPageToken&&page.nextPageToken===cursor?.token)throw new ValidationError('Gmail returned the same mailbox page. Retry this check.');
+  const messages=[];
+  const ids=[...new Set((page.messages||[]).map(row=>row.id))];
+  for(let n=0;n<ids.length;n+=3){
+    const batch=await Promise.all(ids.slice(n,n+3).map(async id=>{
+      try{return await message(credentials,id);}
+      catch(error){if(error.status===404)return null;throw error;}
+    }));
+    for(const row of batch.filter(row=>row&&(!row.receivedAt||Date.parse(row.receivedAt)<Date.parse(until)))){
+      if(accept){if(await accept(row)===false)return {messages,stopped:true,next:null};}
+      else messages.push(row);
+    }
+  }
+  return {messages,next:page.nextPageToken?{token:page.nextPageToken}:null};
+}
+
 /*
  * One message, asked for by name.
  *
@@ -186,4 +234,4 @@ async function send({ credentials, message: outgoing }) {
 }
 
 module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover,
-  registerWebhooks, renewWebhooks, poll, send, api, message, fetchMessage };
+  registerWebhooks, renewWebhooks, poll, pollPage, send, api, message, fetchMessage };

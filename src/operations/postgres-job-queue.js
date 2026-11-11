@@ -1,6 +1,8 @@
 'use strict';
 
 const documentRecovery = new Map([
+  ['import.discover-filed-document.v1', () => require('../documents/agent-document-discovery')],
+  ['import.variant-sheet.v1', () => require('../imports/agent-exact-variant-import')],
   ['import.read-contract.v1', () => require('../documents/agent-contract-reader')],
   ['import.read-shipping-document.v1', () => require('../documents/agent-shipping-document-reader')],
   ['import.read-shelf-photo.v1', () => require('../warehouse/agent-shelf-photos')],
@@ -315,7 +317,7 @@ async function processOne(database, handlers, options = {}) {
 }
 
 async function reconcileVerifiedEffectWithin(client,workspaceId,effectId){
- const now=Date.now(),result=await client.query("UPDATE stockchief_runtime.jobs job SET status='COMPLETED',result=$3::jsonb,last_error=NULL,completed_at=$4,updated_at=$4 FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.id=$2 AND effect.status='SUCCEEDED' AND job.workspace_id=effect.workspace_id AND job.kind=ANY($5::text[]) AND job.payload->>'effectId'=effect.id AND job.status='DEAD' RETURNING job.id",[workspaceId,effectId,JSON.stringify({verified:true,effectId,readOnlyRecovery:true}),new Date(now).toISOString(),['provider.effect',...require('./agent-mail-protocol').kinds]]);
+ const now=Date.now(),result=await client.query("UPDATE stockchief_runtime.jobs job SET status='COMPLETED',result=$3::jsonb,last_error=NULL,completed_at=$4,updated_at=$4 FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.id=$2 AND effect.status='SUCCEEDED' AND job.workspace_id=effect.workspace_id AND job.kind=ANY($5::text[]) AND job.payload->>'effectId'=effect.id AND job.status='DEAD' RETURNING job.id",[workspaceId,effectId,JSON.stringify({verified:true,effectId,readOnlyRecovery:true}),new Date(now).toISOString(),['provider.effect',require('./agent-return-refund-protocol').JOB,...require('./agent-mail-protocol').kinds]]);
  for(const row of result.rows)await event(client,row.id,'VERIFICATION_RECOVERED',{effectId,readOnlyRecovery:true},now);
  return result.rows.length;
 }

@@ -1,5 +1,7 @@
 'use strict';
 
+const returnRates=require('./return-rates');
+
 // The date is the inventory's business date. A parcel past its promise has
 // a delivery exception, but only carrier evidence can establish a loss.
 const lateParcels = `
@@ -61,21 +63,7 @@ module.exports = [
         allocation_priority AS "Priority",'/orders/'||id AS link FROM waiting WHERE shortage>0
       ORDER BY allocation_priority,needed_by NULLS LAST,order_date,id,code`},
   {id:116, key:'customer-return-rates', salesHistory:true, label:'Compare item and customer return rates',
-    summary:'Ranked by the share of fulfilled units physically returned. Requested or authorized returns enter the figures only when received. Compare the unit counts alongside the percentage.',
-    sql:`WITH line_history AS (
-      SELECT s.code AS sku,c.id AS customer_id,c.name AS customer,l.quantity_fulfilled AS shipped,
-        coalesce(r.units,0) AS returned,s.item_id FROM sales_order_lines l
-      JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
-      JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
-      LEFT JOIN LATERAL (SELECT sum(rl.quantity_received) AS units FROM customer_return_lines rl
-        WHERE rl.workspace_id=l.workspace_id AND rl.sales_order_line_id=l.id) r ON true
-      WHERE l.workspace_id=$1 AND l.quantity_fulfilled>0 AND ($3::text IS NULL OR o.order_date >= $3)),
-    rates AS (SELECT 'SKU' AS kind,sku AS name,sum(shipped) AS shipped,sum(returned) AS returned,'/inventory/'||item_id AS link
-      FROM line_history WHERE ($2='' OR lower(sku)=lower($2)) GROUP BY sku,item_id
-      UNION ALL SELECT 'Customer',customer,sum(shipped),sum(returned),'/sales/customers/'||customer_id
-      FROM line_history WHERE ($2='' OR lower(customer)=lower($2)) GROUP BY customer,customer_id)
-    SELECT kind AS "Group",name AS "Name",shipped AS "Fulfilled units",returned AS "Returned units",
-      round(100.0*returned/shipped,1) AS "Returned %",link FROM rates WHERE returned>0 ORDER BY returned/shipped::numeric DESC,returned DESC,kind,name,link`},
+    summary:returnRates.summary,sql:returnRates.report},
   {id:168, key:'overdue-work', label:'Find late orders, shipments and invoices', usesDate:true,
     summary:'Open purchase orders and unpaid invoices past their due dates, plus shipped parcels past their delivery dates.',
     sql:`WITH late AS (

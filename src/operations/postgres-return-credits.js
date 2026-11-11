@@ -42,6 +42,40 @@ async function settle(client,ctx,row,input,operation){
   lines:[{accountKey:'CUSTOMER_REFUNDS_PAYABLE',debitMinor:cash,customerId:row.customer_id},{accountKey:'CASH',creditMinor:cash,customerId:row.customer_id}]});journalEntryId=posted.entry.id;
   await client.query('UPDATE accounting_return_receipt_credits SET cash_refunded_minor=cash_due_minor WHERE workspace_id=$1 AND customer_return_id=$2',[ctx.workspaceId,row.id]);
  }
+ return finalize(client,ctx,row,{credits,destination:input.destination,refundDate:input.refundDate,
+  amountMinor:cash,creditedMinor:amount,journalEntryId});
+}
+
+async function postPayout(client,ctx,row,part,externalRefundId=null){
+ const credits=await read(client,ctx.workspaceId,row.id);
+ const amount=Number(part.amount_minor);
+ const outstanding=credits.reduce((n,c)=>n+Number(c.cash_due_minor)-Number(c.cash_refunded_minor),0);
+ if(!Number.isSafeInteger(amount)||amount<=0||amount>outstanding){
+  throw new ValidationError('The approved payout no longer agrees with the posted refund balance.');
+ }
+ const posted=await ledger.postInTransaction(client,ctx,{
+  sourceKey:'return-refund-part:'+part.id,description:'Repay credited goods on '+row.return_number,
+  sourceType:'customer_return_credit_payout',sourceRecordType:'customer_return',sourceRecordId:row.id,
+  currency:row.currency,metadata:{customerReturnId:row.id,refundPartId:part.id,originalPaymentId:part.original_payment_id,
+    method:part.method,externalRefundId},
+  lines:[
+   {accountKey:'CUSTOMER_REFUNDS_PAYABLE',debitMinor:amount,customerId:row.customer_id},
+   {accountId:part.cash_account_id,creditMinor:amount,customerId:row.customer_id}
+  ]
+ });
+ let remaining=amount;
+ for(const credit of credits){
+  const apply=Math.min(remaining,Number(credit.cash_due_minor)-Number(credit.cash_refunded_minor));
+  if(apply>0)await client.query('UPDATE accounting_return_receipt_credits SET cash_refunded_minor=cash_refunded_minor+$3 WHERE workspace_id=$1 AND id=$2',
+   [ctx.workspaceId,credit.id,apply]);
+  remaining-=apply;
+  if(remaining===0)break;
+ }
+ return posted.entry.id;
+}
+
+async function finalize(client,ctx,row,input){
+ const {credits,journalEntryId}=input;
  const refundIds=[],refundDate=input.refundDate||await require('../lib/business-time').today(client,ctx.workspaceId);
  for(const credit of credits){
   const inventoryEntry=(await client.query("SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='customer_return_receipt' AND metadata::jsonb->>'movementId'=$2",[ctx.workspaceId,credit.return_movement_id])).rows[0];
@@ -53,7 +87,7 @@ async function settle(client,ctx,row,input,operation){
    credit.journal_entry_id,inventoryEntry?.id||null,'receipt-credit-settlement:'+credit.id,ctx.actorId,new Date().toISOString(),journalEntryId,Number(credit.cash_due_minor)]);refundIds.push(id);
  }
  await client.query("UPDATE customer_returns SET status='COMPLETED',refund_id=$4,completed_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,row.id,new Date().toISOString(),refundIds[0]||null]);
- const result={customerReturnId:row.id,status:'COMPLETED',destination:input.destination,amountMinor:cash,creditedMinor:amount,refundIds,journalEntryId};
+ const result={customerReturnId:row.id,status:'COMPLETED',destination:input.destination,amountMinor:input.amountMinor,creditedMinor:input.creditedMinor,refundIds,journalEntryId};
  return result;
 }
-module.exports={read,receive,settle};
+module.exports={read,receive,settle,postPayout,finalize};

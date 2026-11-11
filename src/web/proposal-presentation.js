@@ -25,7 +25,39 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='inventory.write_down_aged'){
+  const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);
+  return {summary:proposal.summary,impact:'Reduces the inventory asset and records a write-down expense. All physical stock stays in place.',fields:[
+   {label:'Product and location',value:p.sku+' · '+p.location},
+   {label:'Whole valuation position',value:p.quantity+' '+p.unit+(p.weight?' · '+p.weight+' '+p.secondaryUnit:'')},
+   {label:'Old stock with confirmed receipt age',value:p.agedQuantity+' '+p.unit+' · oldest '+p.oldestDays+' days'},
+   {label:'Recorded carrying value',value:format(p.bookValueMinor)},
+   {label:'Supported net recoverable value',value:format(p.recoverableMinor)},
+   {label:'Write-down expense',value:format(p.writeDownMinor)},
+   {label:'Valuation evidence',value:p.valuationReference,multiline:true},
+   {label:'Posting date',value:p.date}
+  ]};
+ }
  if(proposal.action_type==='transfer.prepare_balance'){const s=proposal.payload.balanceSummary;return {summary:s.title,impact:'Creates a native Requested transfer and holds the proposed stock until separately approved.',fields:[{label:'Stock balancing and exact goods',value:s.text,multiline:true}]};}
+ if(proposal.action_type==='customer_return.refund'&&proposal.payload.sourceFingerprint){
+  const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);
+  return {summary:proposal.summary,impact:p.parts.length
+    ?'Approval records offline portions you have already repaid and requests each online portion from the original provider.'
+    :'Approval records the exact receivable result for these returned goods.',
+   fields:[
+    {label:'Return and invoice',value:p.returnNumber+' · '+p.invoice.number},
+    {label:'Original selling amount of returned goods',value:format(p.priceMinor)},
+    {label:'Original discount',value:format(p.discountMinor)},
+    {label:'Original tax',value:format(p.taxMinor)},
+    ...(p.chargesMinor?[{label:'Original allocated charges',value:format(p.chargesMinor)}]:[]),
+    {label:'Total credit for returned goods',value:format(p.totalCreditMinor)},
+    {label:p.creditPosted?'Credit already applied to the invoice':'Credit to apply to the invoice',value:format(p.arMinor)},
+    {label:'Current unpaid balance',value:format(p.invoice.balanceMinor)},
+    ...(!p.creditPosted?[{label:'Unpaid balance after credit',value:format(p.invoice.balanceAfterMinor)}]:[]),
+    ...(p.parts.length?[{label:'Approved original-payment amounts',multiline:true,value:p.parts.map(s=>
+      s.paymentNumber+' · '+s.methodLabel+' · '+format(s.amountMinor)+' · '+s.cashAccountName).join('\n')}]:[])
+   ]};
+ }
  if(proposal.action_type==='sales_order.reserve_rotation'){const s=proposal.payload.rotationSummary;return {summary:'Review '+s.strategy+' reservations for '+s.order,impact:'Binds exact stock identities to existing quantity commitments. Physical picking, dispatch, stock and money remain separate.',fields:[{label:'Order',value:s.order},{label:'Rotation',value:s.strategy},{label:'Exact reserved goods',value:s.selections,multiline:true},...(proposal.payload.needsHistoricalFifoConfirmation?[{label:'Historical fact requiring individual confirmation',value:proposal.payload.historicalEvidence,multiline:true}]:[])]};}
  if(['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(proposal.action_type)){const p=proposal.payload,select=proposal.action_type==='purchasing.select_supplier';return {summary:select?'Review the buying supplier selection':'Review '+p.output.length+' supplier purchase draft'+(p.output.length===1?'':'s'),impact:select?'Changes the saved reorder supplier. Purchase orders, stock and money stay separate.':'Creates unsent purchase drafts. Approval, sending, physical receipt and payments stay separate.',fields:[{label:'Exact supplier and product terms',value:proposal.summary,multiline:true},...(p.needsPurchaseTermsConfirmation?[{label:'Your decision',value:'Individually review these first or changed supplier terms before routine work can use them.'}]:[])]};}
  if(proposal.action_type==='shipping.prepare_export_papers'){const p=proposal.payload.snapshot;return {summary:proposal.summary,impact:'Prepares a private invoice draft and packing list. The owner separately reviews it; no shipment, receivable, payment or customs filing is created.',fields:[{label:'Shipment',value:p.shipmentNumber},{label:'Exporter',value:p.exporter.name},{label:'Dispatch',value:p.from.name+' · '+p.from.country},{label:'Consignee',value:p.to.name+' · '+p.to.country},{label:'Destination',value:p.to.address},{label:'Product lines',value:String(p.lines.length)},{label:'Measured parcels',value:String(p.boxes.length)},{label:'Recorded net goods value',value:require('../domain/currency').format(p.totals.goodsNetMinor,p.currency)},{label:'Agreed delivery terms',value:p.deliveryTerms}]};}
@@ -52,7 +84,7 @@ function present(proposal){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one stock-ready customer update',fields:[{label:'Order',value:p.orderNumber},{label:'To',value:p.recipient},{label:'Message',value:require('../sales/agent-stock-ready').compose(p).body}]};
  }
  if(proposal.action_type==='sales_order.reserve_arrived'){
-  const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.quantity+' units'}))]};
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.detail||q.quantity+' units'}))]};
  }
  if(proposal.action_type==='purchase_order.record_supplier_invoice'){
   const p=proposal.payload,money=require('../domain/currency');
@@ -70,7 +102,16 @@ function present(proposal){
  }
  if(proposal.action_type==='customer_payment.match_bank_line'){
   const p=proposal.payload,money=require('../domain/currency');
-  return {summary:proposal.summary,impact:p.existing?'Reviews an existing bank match':'Records received money against an invoice',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(p.expectedBalanceMinor!=null?[{label:'Invoice balance before matching',value:money.format(p.expectedBalanceMinor,p.currency)},{label:'Invoice balance after matching',value:money.format(p.expectedBalanceMinor-p.amountMinor,p.currency)}]:[])]};
+  const batch=p.allocations?.length>1;
+  const first=p.allocations?.[0];
+  const balance=first?.balanceMinor??p.expectedBalanceMinor;
+  const after=p.alreadyPosted?balance:balance-(first?.amountMinor??p.amountMinor);
+  return {summary:proposal.summary,impact:p.existing||p.alreadyPosted?'Links recorded bank and receipt evidence':'Records and allocates received money',
+    fields:[batch?{label:'Invoices',value:String(p.allocations.length)}:{label:'Invoice',value:p.invoiceNumber},
+      {label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},
+      ...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(!batch&&balance!=null&&!p.existing?[
+        {label:'Invoice balance before matching',value:money.format(balance,p.currency)},
+        {label:'Invoice balance after matching',value:money.format(after,p.currency)}]:[])]};
  }
  if(proposal.action_type==='document.save_product_facts'){
   const p=proposal.payload,labels=require('../documents/agent-product-facts').labels;

@@ -3,7 +3,7 @@
 const express = require('express');
 const permissions = require('../../actions/permissions');
 const planning = require('../../forecasting/postgres-planning-service');
-const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
+const { requireAuth, requireOwner, requirePermission, asyncRoute } = require('../middleware');
 const {requireCapability}=require('../commercial-middleware');
 function selectedPosition(input){
   if(!input.position)return input;
@@ -19,20 +19,41 @@ function createPostgresPlanningRouter(database) {
     const agent=require('../../commercial/agent-plan');
     const [overview,state]=await Promise.all([planning.overview(database,req.ctx.workspaceId,{afterSkuId:req.query.after||null}),agent.accountState(database,req.ctx.workspaceId)]);
     const agentTerms=agent.usesAgentTerms(state),manageRules=agentTerms&&req.user.role==='owner'&&agent.permits(state.plan,120,'automatic',{trained:true});
-    const rules=manageRules?(await database.query('SELECT sku_id,location_id,ceiling FROM stockchief_runtime.location_reorder_rules WHERE workspace_id=$1 AND sku_id=ANY($2::text[])',
+    const rules=req.user.role==='owner'?(await database.query('SELECT sku_id,location_id,ceiling,revision,profile_key FROM stockchief_runtime.location_reorder_rules WHERE workspace_id=$1 AND sku_id=ANY($2::text[])',
       [req.ctx.workspaceId,[...new Set(overview.rows.map(r=>r.sku_id))]])).rows:[];
     const safetyPreview=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,150,'draft');
     const safetyRoutine=safetyPreview&&req.user.role==='owner'&&agent.permits(state.plan,150,'automatic');
     const safetyRules=safetyRoutine?(await database.query(`SELECT r.location_id,r.class,r.service_level,l.name FROM stockchief_runtime.class_service_levels r
       JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id WHERE r.workspace_id=$1 ORDER BY l.name,r.class`,[req.ctx.workspaceId])).rows:[];
-    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,planLocksReorder:agentTerms&&state.plan==='starter',
+    const recommendations=agentTerms?overview.recommendations.filter(r=>r.kind!=='reorder_point'||!r.evidence.locationId):overview.recommendations;
+    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,planLocksReorder:agentTerms&&state.plan==='starter',
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
+  }));
+  router.get('/planning/location-reorder',requireOwner,asyncRoute(async(req,res)=>{
+    const view={title:'Location reorder points',nav:'inventory'};
+    const plan=require('../../commercial/agent-plan'),state=await plan.accountState(database,req.ctx.workspaceId);
+    const included=plan.permits(state.plan,120,'draft');
+    if((!included||!plan.usesAgentTerms(state))&&req.accepts('html')){
+      return res.page('autopilot/agent-plan-locked',{...view,tier:'Growth',
+        reviewTerms:included,backTo:{href:'/planning',label:'Planning'}});
+    }
+    if(included&&plan.usesAgentTerms(state)&&!req.query.position&&!req.query.skuId&&!req.query.locationId)
+      return res.redirect(303,'/planning#location-rules');
+    const model=await require('../../forecasting/location-reorder-rules').page(database,req.ctx,selectedPosition(req.query));
+    return res.page('planning/location-reorder',{...view,model});
+  }));
+  router.post('/planning/location-reorder/approve',asyncRoute(async(req,res)=>{
+    const result=await require('../../forecasting/location-reorder-rules').approve(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'That location reorder example was already recorded.':'Saved the location reorder point and target.');
+    return res.redirect(303,'/planning/location-reorder?skuId='+encodeURIComponent(req.body.skuId)+'&locationId='+encodeURIComponent(req.body.locationId));
   }));
   router.post('/planning/location-reorder-rules',requireAuth,asyncRoute(async(req,res)=>{
     const input=selectedPosition(req.body);
     await require('../../forecasting/location-reorder-rules').configure(database,req.ctx,input);
     req.flash('success',req.body.remove==='1'?'Automatic reorder rule removed.':'Automatic reorder limits saved.');
+    if(input.remove!=='1'&&input.skuId&&input.locationId)
+      return res.redirect(303,'/planning/location-reorder?skuId='+encodeURIComponent(input.skuId)+'&locationId='+encodeURIComponent(input.locationId));
     return res.redirect(303,'/planning#location-rules');
   }));
   router.get('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'review safety stock'),asyncRoute(async(req,res)=>{
@@ -48,7 +69,8 @@ function createPostgresPlanningRouter(database) {
   }));
   router.post('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'approve safety stock'),asyncRoute(async(req,res)=>{
     const result=await require('../../forecasting/agent-safety-stock').approve(database,req.ctx,req.body);
-    req.flash('success','Safety stock saved at '+result.units+' units.');return res.redirect(303,'/planning#safety-stock');
+    const unit=result.unit==='unit'?'units':result.unit;
+    req.flash('success','Safety stock saved at '+result.units+' '+unit+'.');return res.redirect(303,'/planning#safety-stock');
   }));
   router.post('/planning/safety-stock/class',requireAuth,asyncRoute(async(req,res)=>{
     await require('../../forecasting/agent-safety-stock').setClassRule(database,req.ctx,req.body);

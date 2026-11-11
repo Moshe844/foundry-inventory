@@ -475,6 +475,37 @@ function createPostgresAutopilotRouter(database,options={}){
   }
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
+  const daily=require('../../operations/agent-daily-cycle-counts'),dailyPath='/autopilot/daily-cycle-counts';
+  async function dailyPage(req,res,id=null){
+    const view={title:'Daily cycle-count plans',nav:'autopilot',backTo:{href:'/autopilot/reviews/count-priorities',label:'Count priorities'}};
+    try {
+      const model=await daily.page(database,req.ctx,{warehouseId:req.query.warehouseId,id});
+      return res.page('autopilot/daily-cycle-counts',{...view,model,stockValue:daily.displayValue});
+    } catch(error) {
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      const state=await policy.accountState(database,req.ctx.workspaceId);
+      return res.page('autopilot/agent-plan-locked',{...view,tier:'Growth',
+        reviewTerms:policy.permits(state.plan,4,'draft')&&!policy.usesAgentTerms(state),
+        backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+    }
+  }
+  router.get(dailyPath,requireAuth,owner,asyncRoute((req,res)=>dailyPage(req,res)));
+  router.get(dailyPath+'/:id',requireAuth,owner,asyncRoute((req,res)=>dailyPage(req,res,req.params.id)));
+  router.post(dailyPath+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await daily.prepare(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'Opened the existing daily plan.':'Prepared the current daily count draft.');
+    return res.redirect(303,dailyPath+'/'+result.id);
+  }));
+  router.post(dailyPath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await daily.confirm(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Daily count plan confirmed.');
+    return res.redirect(303,dailyPath+'/'+req.params.id);
+  }));
+  router.post(dailyPath+'/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await daily.configure(database,req.ctx,req.body);
+    req.flash('success',result.removed?'Stopped automatic daily cycle-count planning.':'Saved the automatic daily plan limit.');
+    return res.redirect(303,dailyPath+'?warehouseId='+encodeURIComponent(req.body.warehouseId));
+  }));
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));
   router.get('/autopilot/annual-stocktakes/:id',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res,req.params.id)));
   router.post('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await annual.create(database,req.ctx,req.body);req.flash('success','Count plan prepared. Review its exact scope and teams before freezing stock.');res.redirect(303,'/autopilot/annual-stocktakes/'+r.id);}));
@@ -613,6 +644,20 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const disputeFlow=require('../../purchasing/invoice-dispute-follow-through');
+  router.get('/autopilot/supplier-disputes/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/supplier-dispute-detail',{
+    title:'Supplier invoice dispute',nav:'autopilot',backTo:{href:'/autopilot/reviews/supplier-invoice-disputes',label:'Supplier invoice disputes'},
+    ...await disputeFlow.page(database,req.ctx,req.params.id,req.query),money:require('../../domain/currency'),
+  })));
+  router.post('/autopilot/supplier-disputes/source/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await disputeFlow.prepare(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(result.billId));
+  }));
+  router.post('/autopilot/supplier-disputes/:id/resolve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.resolve(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Corrected invoice posted. The disputed original is retained.');
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/autopilot/supplier-disputes/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Ask the supplier to review this invoice difference',{action:'supplier_invoice.dispute',recordReference:req.body.billNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact disputed supplier bill and sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
@@ -644,6 +689,30 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const discovery=require('../../documents/agent-document-discovery');
+  const filingPath='/autopilot/document-filing';
+  const discoveryPage=async(req,res)=>res.set('Cache-Control','no-store').page('autopilot/document-discovery',{
+    title:'Discover and file originals',nav:'autopilot',screen:await discovery.screen(database,req.ctx,{...req.query,id:req.params.id||null})});
+  router.get(filingPath,requireAuth,owner,asyncRoute(discoveryPage));
+  router.post(filingPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await discovery.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,filingPath+'/'+result.id);
+  }));
+  router.post(filingPath+'/scope',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../documents/document-filing-scopes').configure(database,req.ctx,req.body);
+    res.redirect(303,filingPath);
+  }));
+  router.get(filingPath+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await discovery.load(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.get(filingPath+'/:id',requireAuth,owner,asyncRoute(discoveryPage));
+  for(const [operation,run] of [['approve',discovery.approve],['retry',discovery.retry],['dismiss',discovery.dismiss]]){
+    router.post(filingPath+'/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,filingPath+'/'+req.params.id);
+    }));
+  }
   const shippingOriginals=require('../../documents/agent-shipping-document-reader');
   const shippingOriginalPage=async(req,res)=>res.page('autopilot/shipping-document-reading',{title:'Bills of lading and customs papers',nav:'autopilot',
     screen:await shippingOriginals.screen(database,req.ctx,{...req.query,id:req.params.id||null}),shippingProof:require('../../documents/shipping-document-proof')});
@@ -665,7 +734,8 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
     const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
     const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));
-    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
+    const filingEnabled=discovery.available(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId));
+    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,filingEnabled,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
   }));
   router.get('/autopilot/documents/:id/download',requireAuth,owner,asyncRoute(async(req,res)=>{
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);
@@ -870,6 +940,13 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/third-party-stock');
   }));
+  const abcPath=require('../../forecasting/monthly-product-classes').path;
+  router.get(abcPath+'/products/:itemId',requireAuth,owner,starterAgentPage(15,'suggest','ABC count and safety planning',async(req,res)=>{
+    return res.page('autopilot/monthly-abc-planning',{
+      title:'ABC count and safety planning',nav:'autopilot',backTo:{href:abcPath,label:'Monthly ABC product classes'},
+      model:await require('../../forecasting/agent-safety-stock').classPlanning(database,req.ctx,req.params.itemId,req.query),
+    });
+  }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
@@ -881,6 +958,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
+      if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
@@ -938,6 +1016,10 @@ function createPostgresAutopilotRouter(database,options={}){
     const format=packs.downloads[definition.key],file=await format.render(report);
     res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+'.'+format.extension).send(file);
   }));
+  router.post('/autopilot/reviews/repeat-loss/shifts',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/stock-loss-patterns').save(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/repeat-loss');
+  }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);
     res.redirect(303,'/autopilot/reviews/overdue-customer-orders');
@@ -946,6 +1028,25 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Review the selling price after the cost increase',
       {action:'catalog.restore_margin',sku:req.body.sku});
     res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  const writeDown=require('../../accounting/agent-inventory-write-downs');
+  const writeDownRoute=require('../../forecasting/agent-stock-age').route;
+  router.get(writeDownRoute,requireAuth,owner,starterAgentPage(17,'draft','Review inventory write-down',async(req,res)=>{
+    if(!req.query.position)return res.redirect(303,'/autopilot/reviews/stock-age');
+    return res.page('autopilot/stock-write-down',{
+      title:'Review inventory write-down',nav:'autopilot',
+      backTo:{href:'/autopilot/reviews/stock-age',label:'Stock by age'},
+      review:await writeDown.page(database,req.ctx,req.query.position),formKey:newId('stock-write-down')
+    });
+  },'Growth'));
+  router.post(writeDownRoute,requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes'||!req.body.expectedStockFingerprint)throw new ValidationError('Confirm the whole position and its valuation evidence before preparing the write-down.');
+    const result=await assistant.prepareAction(database,req.ctx,'Prepare this stock write-down from the supported net recoverable value.',{
+      action:writeDown.ACTION,recordReference:req.body.position,amount:req.body.amount,currency:req.body.currency,
+      reference:req.body.reference,expectedStockFingerprint:req.body.expectedStockFingerprint
+    });
+    if(!result.proposal?.id)throw new ValidationError(result.answer||'Review the current stock and its valuation evidence.');
+    return res.redirect(303,'/actions/'+result.proposal.id);
   }));
   router.post('/autopilot/reviews/stock-rotation/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Review exact FIFO/FEFO reservations for this order',{action:'sales_order.reserve_rotation',recordReference:req.body.order,strategy:req.body.strategy,historicalFifoEvidence:req.body.historicalFifoEvidence});

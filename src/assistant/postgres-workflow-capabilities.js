@@ -392,7 +392,22 @@ async function returnInspect(database,ctx,customerReturn,args){
     `Record inspection of every unit on ${customerReturn.return_number} as ${disposition}${args.location?` at ${args.location}`:''}. This applies the physical disposition but does not issue a customer refund.`);
 }
 
+async function usesExactRefunds(database,workspaceId){
+  const policy=require('../commercial/agent-plan');
+  return policy.usesAgentTerms(await policy.accountState(database,workspaceId));
+}
+
 async function returnRefund(database,ctx,customerReturn,args){
+  requireState(customerReturn,['AWAITING_REFUND'],'This customer return');
+  if(!await usesExactRefunds(database,ctx.workspaceId)){
+    if(args.refundPayments)throw new ValidationError('Exact original-payment breakdown requires current StockChief plan terms.');
+    return legacyReturnRefund(database,ctx,customerReturn,args);
+  }
+  const destination=args.refundDestination?normalizeRefundDestination(args.refundDestination):null;
+  return require('../operations/agent-return-refunds').prepare(database,ctx,customerReturn.id,destination,args.refundPayments);
+}
+
+async function legacyReturnRefund(database,ctx,customerReturn,args){
   requireState(customerReturn,['AWAITING_REFUND'],'This customer return');
   const destination=normalizeRefundDestination(args.refundDestination);
   const detail=await returns.getCustomerReturn(database,ctx.workspaceId,customerReturn.id);
@@ -735,6 +750,13 @@ const SPECS=Object.freeze([
   {name:'catalog.fill_supplier_specs',description:'Fill missing barcodes, unit weights and dimensions from the exact approved supplier file. Skip unknown units, duplicate barcodes or conflicting evidence. Optionally restrict to a named SKU.',
     fields:['sourceImport','sourcePage','sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
     build:require('../domain/agent-supplier-specs').build,execute:require('../domain/agent-supplier-specs').execute,verify:require('../domain/agent-supplier-specs').verify},
+  {name:'inventory.write_down_aged',agentJob:17,description:'Prepare a valuation write-down for the exact product and location from the stock-age review. Use the owner-checked net recoverable value for all stock in that native weighted-average position and its supporting evidence. An owner approves this financial change individually.',
+    fields:['recordReference','amount','currency','reference','expectedStockFingerprint'],
+    permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,capability:'accounting.core',
+    resultingRecords:['accounting_inventory_write_downs','accounting_inventory_value_adjustments','accounting_journal_entries'],
+    build:require('../accounting/agent-inventory-write-downs').build,
+    execute:require('../accounting/agent-inventory-write-downs').execute,
+    verify:require('../accounting/agent-inventory-write-downs').verify},
   {name:'catalog.restore_margin',description:'Prepare the exact new selling price for a named SKU after its purchase cost increases, preserving the previous margin percentage. A person must approve every price change.',
     fields:['sku'],permission:permissions.ADMIN,ownerOnly:true,capability:'inventory.core',
     build:require('../pricing/agent-margin-prices').build,execute:require('../pricing/agent-margin-prices').execute,verify:require('../pricing/agent-margin-prices').verify},
@@ -1163,10 +1185,12 @@ const SPECS=Object.freeze([
     capability:'returns.core',build:returnInspect,
     execute:(client,ctx,p)=>returns.inspectCustomerReturn(sameClient(client),ctx,p.recordId,p),
     verify:(client,ctx,r,p)=>state(client,ctx,'customer_returns',p.recordId,[r.status])},
-  {name:'customer_return.refund',description:'After return inspection, either reduce the unpaid invoice or refund already-paid money. A provider-paid refund is queued to the original provider and accounting waits for confirmation.',
-    record:'customer_return',fields:['recordReference','refundDestination'],permission:permissions.REFUND_CUSTOMER_RETURN,
+  {name:'customer_return.refund',description:'Prepare the exact return credit and repay the remaining paid amount through each original payment. A person approves the original-payment breakdown.',
+    record:'customer_return',fields:['recordReference','refundDestination','refundPayments'],permission:permissions.REFUND_CUSTOMER_RETURN,
     capability:'returns.core',build:returnRefund,
     execute:async(client,ctx,p)=>{
+      if(p.sourceFingerprint)return require('../operations/agent-return-refunds').approveInTransaction(client,ctx,p);
+      if(await usesExactRefunds(client,ctx.workspaceId))throw new ValidationError('Open the current return and review its exact original-payment amounts before approval.');
       if(p.destination==='AR')return returns.refundCustomerReturn(sameClient(client),ctx,p.recordId,
         {destination:'AR',idempotencyKey:p.idempotencyKey});
       const queued=await payments.queueCustomerReturnRefund(sameClient(client),ctx,p.recordId,{});
@@ -1174,7 +1198,8 @@ const SPECS=Object.freeze([
         {destination:'CASH',idempotencyKey:p.idempotencyKey});
       return queued;
     },
-    verify:async(client,ctx,r,p)=>r.queued?
+    verify:async(client,ctx,r,p)=>p.sourceFingerprint
+      ?require('../operations/agent-return-refunds').verifyApproval(client,ctx,r,p):r.queued?
       Boolean(r.refund?.id&&r.effectId&&(await client.query(`SELECT 1 FROM payment_refund_requests
         WHERE workspace_id=$1 AND id=$2 AND customer_return_id=$3 AND amount_minor=$4 AND status='PENDING'`,
       [ctx.workspaceId,r.refund.id,p.recordId,p.amountMinor])).rows.length):

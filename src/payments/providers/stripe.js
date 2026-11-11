@@ -48,7 +48,7 @@ function form(values) {
   return body;
 }
 
-async function call(ctx, path, { method = 'POST', values = null, idempotencyKey = null } = {}) {
+async function call(ctx, path, { method = 'POST', values = null, idempotencyKey = null, exact = false } = {}) {
   const headers = {
     Authorization: `Bearer ${credentials(ctx)}`,
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -74,10 +74,11 @@ async function call(ctx, path, { method = 'POST', values = null, idempotencyKey 
     method,
     headers,
     body: values ? form(values) : undefined,
-  }, { provider: 'Stripe' });
+  }, { provider: 'Stripe', fetch: ctx.stripeFetch, ...(exact?{retries:0}:{}) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = payload?.error?.message || `Stripe refused the request (${response.status}).`;
+    if(exact)throw Object.assign(new ValidationError('Stripe did not confirm the exact refund.'),{status:response.status});
     if (response.status === 401) throw new AuthenticationError(`Stripe rejected the key: ${message}`);
     throw new ValidationError(message);
   }
@@ -248,14 +249,29 @@ async function readInvoice(ctx, { externalInvoiceId }) {
   return invoice;
 }
 
-async function refundPayment(ctx, { externalPaymentId, amountMinor }) {
+function refundEvidence(refund,identity){
+  const payment=identity.startsWith('pi_')?refund.payment_intent:refund.charge;
+  return {externalRefundId:refund.id,originalPaymentId:typeof payment==='string'?payment:payment?.id,
+    amountMinor:refund.amount,currency:refund.currency,status:refund.status};
+}
+
+async function refundPayment(ctx, { externalPaymentId, amountMinor, idempotencyKey, verifyExact=false }) {
   const identity=paymentIdentity(externalPaymentId);
   if(!identity)throw new ValidationError('The original payment identity needs review before a provider refund.');
   const refund = await call(ctx, '/refunds', {
     values: { [identity.startsWith('pi_')?'payment_intent':'charge']: identity, amount: amountMinor ? Math.round(Number(amountMinor)) : undefined },
-    idempotencyKey: `foundry-refund:${externalPaymentId}:${amountMinor || 'all'}`,
+    idempotencyKey: verifyExact?idempotencyKey:`foundry-refund:${externalPaymentId}:${amountMinor || 'all'}`,
+    exact:verifyExact,
   });
-  return { externalRefundId: refund.id };
+  return verifyExact?refundEvidence(refund,identity):{externalRefundId:refund.id};
+}
+
+async function retrieveRefund(ctx,{externalRefundId,externalPaymentId}){
+  const identity=paymentIdentity(externalPaymentId);
+  if(!identity||!/^re_[A-Za-z0-9]+$/.test(externalRefundId))throw new ValidationError('The original Stripe refund identity needs review.');
+  const refund=await call(ctx,'/refunds/'+encodeURIComponent(externalRefundId),{method:'GET',exact:true});
+  if(refund.id!==externalRefundId)throw new ValidationError('Stripe returned a different refund identity.');
+  return refundEvidence(refund,identity);
 }
 
 /**
@@ -375,7 +391,7 @@ function readEvent(event) {
 
 module.exports = {
   readInvoice, eventFromInvoice,
-  createCustomer, createInvoice, getHostedPaymentUrl, refundPayment, verifyEvent, readEvent,
+  createCustomer, createInvoice, getHostedPaymentUrl, refundPayment, retrieveRefund, verifyEvent, readEvent,
   // Exported for tests; nothing above this file should reach for them.
   __internal: { call, form, credentials },
 };

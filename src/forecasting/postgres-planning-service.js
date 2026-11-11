@@ -150,11 +150,12 @@ async function overview(database, workspaceId, {afterSkuId=null}={}) {
 // evaluation. Inspecting a forecast is a read, including for the agent browser.
 async function refreshRecommendations(database,workspaceId,options={}){
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
+  const policy=require('../commercial/agent-plan'),agentTerms=policy.usesAgentTerms(await policy.accountState(database,workspaceId));
   let afterSkuId=options.afterSkuId||null;
   for(;;){const rows=await position(database,workspaceId,{recommendationsOnly:true,afterSkuId,limitSkus:options.limitSkus??250,cycleId:options.cycleId||null});
-   await ensureRecommendations(database,workspaceId,rows);
+   await ensureRecommendations(database,workspaceId,agentTerms?rows.filter(row=>!row.location_id):rows);
    const selected=[...new Set(rows.map(r=>r.sku_id))];
-   await require('./location-reorder-rules').runPage(database,workspaceId,selected);
+   await require('./location-reorder-rules').queuePage(database,workspaceId,selected,{cycleId:options.cycleId});
    await require('./agent-safety-stock').queuePage(database,workspaceId,selected);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;
@@ -171,6 +172,7 @@ async function decide(database, ctx, id, decision) {
     if(agent.usesAgentTerms(account)&&decision==='accept'){
       const job=row.kind==='safety_stock'?150:object(row.evidence).locationId?120:21;
       agent.requireJob(account.plan,job,'draft');
+      if(job===120&&row.kind==='reorder_point')throw new ValidationError('Open this product’s location reorder review for the current exact threshold and target.');
       const member=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
       const permissions=require('../actions/permissions');permissions.assertCan(member,permissions.MANAGE_REPLENISHMENT,'change reorder thresholds');
       const restriction=await require('../autopilot/job-modes').restriction(client,ctx.workspaceId,job,false);

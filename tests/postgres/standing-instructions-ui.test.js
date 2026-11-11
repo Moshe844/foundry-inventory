@@ -225,6 +225,11 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       FROM automation_policies WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL ORDER BY created_at`,[ctx.workspaceId])).rows;
     assert.equal(automationPolicies.length,2);assert.deepEqual(automationPolicies.map((row)=>json(row.allowed_action_types)),[['transfer'],['approve_purchase_order']]);
     assert.equal(Number(automationPolicies[0].maximum_quantity),5);assert.equal(Number(automationPolicies[1].maximum_value),500);
+    const places=(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1',[identity.workspace_id])).rows;
+    assert.deepEqual(json(automationPolicies[0].thresholds).transferRoute,{
+      sourceLocationId:places.find(place=>place.name==='Main Warehouse').id,
+      destinationLocationId:places.find(place=>place.name==='Overflow Warehouse').id,
+    });
     assert.equal(Number(json(automationPolicies[1].thresholds).maxValuePerWeek),1500);
     assert.equal((await database.query(`SELECT mode FROM workspace_autopilot WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].mode,
       'POLICY_AUTOMATED');

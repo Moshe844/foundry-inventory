@@ -39,8 +39,11 @@ async function configure(db, ctx, input) {
 
 async function evaluate(client, ctx, payload, supplied) {
   const {rows:[rule]} = await client.query(`SELECT r.* FROM stockchief_runtime.agent_count_rules r
-    JOIN users u ON u.id=r.authorized_by AND u.workspace_id=r.workspace_id AND u.role='owner'
-    WHERE r.workspace_id=$1 AND r.currency=$2 FOR SHARE OF r,u`, [ctx.workspaceId,payload.currency]);
+    JOIN workspaces w ON w.id=r.workspace_id AND w.deletion_requested_at IS NULL
+    JOIN users u ON u.id=r.authorized_by AND u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.role='owner'
+    WHERE r.workspace_id=$1 AND r.currency=$2
+      AND NOT EXISTS (SELECT 1 FROM platform_account_access a WHERE a.account_id=u.account_id AND a.disabled_at IS NOT NULL)
+    FOR SHARE OF r,w,u`, [ctx.workspaceId,payload.currency]);
   if (!rule || !payload.lines.some(line => line.delta !== 0)) return null;
   const account = await plan.accountState(client, ctx.workspaceId);
   if (!plan.usesAgentTerms(account) || !plan.permits(account.plan,8,'automatic')) return null;
@@ -48,7 +51,10 @@ async function evaluate(client, ctx, payload, supplied) {
   if (state.paused || state.suspended || state.mode === 'OBSERVE' || account.shadow) return null;
   const exposure = money.sum(payload.lines.map(line => Math.abs(line.costDeltaMinor)));
   const evidence = {owner:rule.authorized_by, currency:rule.currency, limitMinor:Number(rule.limit_minor), exposureMinor:exposure};
-  if (exposure > Number(rule.limit_minor)) return {...evidence, action:'recount'};
+  if (exposure > Number(rule.limit_minor)) {
+    if(await require('./job-modes').restriction(client,ctx.workspaceId,8,true))return null;
+    return {...evidence, action:'recount'};
+  }
   if (!rule.automatic || state.mode !== 'POLICY_AUTOMATED' || !plan.permits(account.plan,6,'automatic')) return null;
   if(await require('./job-modes').restriction(client,ctx.workspaceId,6,true))return null;
   // A counter cannot bring an adjustment below the ceiling by entering a lower price.

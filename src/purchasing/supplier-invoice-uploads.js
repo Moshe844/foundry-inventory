@@ -5,6 +5,17 @@ async function receipt(db,workspaceId,usageKey,{renew=false}={}){
  const scope=await ent.ownerScopeForWorkspace(db,workspaceId),prior=(await db.query("SELECT status FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='agent_documents' AND idempotency_key=$3 FOR UPDATE",[scope.accountId,workspaceId,usageKey])).rows[0];
  if(prior?.status==='COMMITTED')return {scope,usage:{meter:'agent_documents',units:1,idempotencyKey:usageKey},committed:true};
  const usage={meter:'agent_documents',units:1,idempotencyKey:usageKey,retryReversed:true};
+ const sourceHash=/^attachment:[^:]+:([a-f0-9]{64})$/.exec(usageKey)?.[1];
+ if(sourceHash){
+  const receipts=await require('../documents/source-read-receipts').readReceipts(db,scope,sourceHash);
+  const paid=receipts.find(event=>event.status==='COMMITTED');
+  if(paid){
+   if(prior?.status==='RESERVED')await ent.reverseUsage(db,scope,{...usage,reason:'Reused a committed receipt for the exact same original'});
+   return {scope,usage:{...usage,idempotencyKey:paid.idempotency_key},committed:true};
+  }
+  if(receipts.some(event=>event.idempotency_key!==usageKey))
+   throw new ValidationError('This original has another pending document read. Retry after that read finishes.');
+ }
  // Refresh an unread reservation under current plan/add-on funding. This closes
  // queued downgrades and expired purchased-document grants without charging twice.
  if(renew&&prior?.status==='RESERVED')await ent.reverseUsage(db,scope,{...usage,reason:'Recheck current document funding before reading'});

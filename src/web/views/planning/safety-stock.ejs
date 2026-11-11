@@ -1,9 +1,10 @@
 <a href="/planning#safety-stock">Back to planning</a>
 <h1>Review safety stock</h1>
 <p><%= result.code %> · <%= result.location %></p>
-<p>For <%= result.serviceLevel %>% coverage, keep <strong><%= result.units %> units</strong> of safety stock. The current setting is <%= result.current==null?'unset':result.current+' units' %>.</p>
-<p>StockChief measured <%= result.windows %> fully stocked periods of <%= result.lead %> days in the last 180 days. Mean sales were <%= result.mean %> units. Sales at your chosen coverage level were <%= result.percentile %> units. Periods with a stockout are excluded.</p>
+<% const unit=result.unit==='unit'?'units':result.unit; %>
+<p>For <%= result.serviceLevel %>% coverage, keep <strong><%= result.units %> <%= unit %></strong> of safety stock. The current setting is <%= result.current==null?'unset':result.current+' '+unit %>.</p>
+<p>StockChief measured <%= result.windows %> fully stocked periods of <%= result.lead %> days in the last 180 days. Mean sales were <%= result.mean %> <%= unit %>. Sales at your chosen coverage level were <%= result.percentile %> <%= unit %>. Periods with a stockout are excluded.</p>
 <% if(result.assumedLead){ %><p>This estimate uses the default supplier lead time of <%= result.lead %> days.</p><% } %>
 <form method="post" action="/planning/safety-stock"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <% for(const key of ['skuId','locationId','serviceLevel','digest']){ %><input type="hidden" name="<%= key %>" value="<%= result[key] %>"><% } %>
-<button class="rm-btn">Approve <%= result.units %> units</button></form>
+<button class="rm-btn">Approve <%= result.units %> <%= unit %></button></form>

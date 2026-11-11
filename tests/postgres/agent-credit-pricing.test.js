@@ -86,6 +86,10 @@ test('credit reviews reconcile partial billing and price proposals protect margi
   await workflows.confirmSalesOrder(db,ctx,partial.salesOrderId,{idempotencyKey:randomUUID()});
   await workflows.fulfillSalesOrder(db,ctx,partial.salesOrderId,{idempotencyKey:randomUUID(),lines:[{lineId:partial.lineIds[0],locationId:f.location.id,quantity:1}]});
   const pending=await order(1,300);
+  const notices=require('../../src/autopilot/operational-notices');
+  const modes=require('../../src/autopilot/job-modes');
+  const alerts=async()=>(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).filter(n=>n.sourceId==='agent-notice-80');
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   const orderPage=await browser.get('/orders/'+pending.salesOrderId).expect(200);
   assert.match(orderPage.text,/Check customer credit/);
   const code=(await db.query('SELECT code FROM skus WHERE id=$1',[sku])).rows[0].code;
@@ -94,10 +98,19 @@ test('credit reviews reconcile partial billing and price proposals protect margi
   for(const tier of ['starter','growth','pro','enterprise']){
     await subscribe(tier);
     const credit=(await reviews.run(db,ctx,'order-credit-limits',{filter:pending.orderNumber})).rows[0];
-    if(tier==='starter')assert.match(credit.Suggestion,/Over limit/);
+    const page=await browser.get('/orders/'+pending.salesOrderId).expect(200);
+    const panel=page.text.match(/aria-label="Customer credit check"[\s\S]*?<\/section>/)?.[0];
+    assert.match(panel,/Over limit/);
+    await notices.refresh(db,ctx.workspaceId);
+    assert.equal((await alerts()).length,tier==='starter'?0:1);
+    if(tier==='starter'){
+      assert.match(credit.Suggestion,/Over limit/);
+      assert.doesNotMatch(panel,/Exposure with this order/);
+    }
     else{
       assert.equal(credit['Open invoices'],'$0.50');assert.equal(credit['Unbilled orders'],'$4.00');assert.equal(credit['Exposure with this order'],'$4.50');
       assert.equal(credit.Result,'Over limit');
+      assert.match(panel,/Exposure with this order[\s\S]*?\$4\.50/);
     }
     const bad=(await reviews.run(db,ctx,'order-price-exceptions',{filter:partial.orderNumber})).rows;
     assert.ok(bad.some(r=>r.Problem==='Selling below recorded cost'));
@@ -120,9 +133,16 @@ test('credit reviews reconcile partial billing and price proposals protect margi
       }
     }
   }
+  await modes.save(db,ctx,80,{mode:'watch',revision:0});
+  assert.deepEqual(await alerts(),[]);
+  await modes.save(db,ctx,80,{mode:'routine',revision:1});
   const bill=(await db.query('SELECT id,balance_minor FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,partial.salesOrderId])).rows[0];
   await workflows.recordCustomerPayment(db,ctx,{customerId:'fixture-customer',customerInvoiceId:bill.id,amountMinor:Number(bill.balance_minor),method:'cash',paymentDate:await require('../../src/lib/business-time').today(db,ctx.workspaceId),idempotencyKey:randomUUID()});
   assert.equal((await reviews.run(db,ctx,'order-credit-limits',{filter:pending.orderNumber})).rows[0].Result,'Within limit');
+  await notices.refresh(db,ctx.workspaceId);
+  assert.deepEqual(await alerts(),[]);
+  assert.match((await browser.get('/orders/'+pending.salesOrderId).expect(200)).text,/Within limit/);
+  assert.equal((await db.query('SELECT status FROM sales_orders WHERE id=$1',[pending.salesOrderId])).rows[0].status,'DRAFT');
   await db.query('UPDATE sales_orders SET discount_minor=discount_minor+25 WHERE id=$1',[partial.salesOrderId]);
   assert.ok((await reviews.run(db,ctx,'order-price-exceptions',{filter:partial.orderNumber})).rows.some(r=>r.Problem==='Order discount differs from approved quote'));
   const roi=await require('../../src/autopilot/time-saved').report(db,ctx);

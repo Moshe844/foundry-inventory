@@ -114,6 +114,9 @@ test('count rules post small differences once and require a physical recount abo
   assert.equal(await balance(),18);
   const second = await browser.get('/warehouse/counts/reviews/'+large.id).expect(200);
   assert.match(second.text,/Recount required/);
+  assert.doesNotMatch(second.text,/<th>Recorded<\/th>|<th>Counted<\/th>|<th>Stock value change<\/th>/);
+  const inbox=await require('../../src/operations/agent-count-tasks').inbox(db,ctx.workspaceId,ctx.actorId);
+  assert(inbox.some(notice=>notice.sourceId==='count-recount-'+large.id&&notice.actionLabel==='Open blind recount'));
   await browser.post('/warehouse/counts/reviews/'+large.id+'/recount').type('form').send({_csrf:csrf(second.text),quantities:{[sku]:'14'}}).expect(303);
   assert.equal(await balance(),18);
   const approved = await reviews.approve(db,ctx,large.id,pending.integrity_hash);
@@ -142,4 +145,15 @@ test('count rules post small differences once and require a physical recount abo
   assert.deepEqual([counted(await time.report(db,ctx)).count,counted(await time.report(db,ctx)).minutes],[2,null]);
   await time.sample(db,ctx,{activity:'count-adjustment',manualMinutes:4,reviewMinutes:1,requestKey:'count-timing-01'});
   assert.equal(counted(await time.report(db,ctx)).minutes,6);
+  await jobModes.save(db,ctx,8,{mode:'watch',revision:0});
+  const watched=await reviews.get(db,ctx,(await reviews.prepare(db,ctx,input(9))).id);
+  assert.equal(watched.recount_required,false);
+  assert.equal(watched.status,'PENDING');
+  await jobModes.save(db,ctx,8,{mode:'routine',revision:1});
+  const stale=await reviews.prepare(db,ctx,input(9));
+  assert.equal((await reviews.get(db,ctx,stale.id)).recount_required,true);
+  await require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId:sku,locationId:location.id,quantity:1,
+    reasonCode:'sold',idempotencyKey:randomUUID()});
+  await assert.rejects(reviews.recount(db,ctx,stale.id,{[sku]:'9'}),/changed before this recount/);
+  assert.equal(await balance(),12);
 });

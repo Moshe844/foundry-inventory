@@ -98,21 +98,45 @@ async function renewWebhooks({ credentials, webhookUrl }) {
 const SELECT_FIELDS = 'id,conversationId,internetMessageId,internetMessageHeaders,subject,from,toRecipients,receivedDateTime,body,hasAttachments';
 const TEXT_BODY = { Prefer: 'outlook.body-content-type="text"' };
 
-async function mapMessage(credentials, row) {
-  const attachments = row.hasAttachments ? ((await graph(credentials,
-    // `contentBytes` belongs to the derived fileAttachment type, not the
-    // base attachment type. Graph rejects selecting it on `/attachments`
-    // even though it includes the bytes for file attachments in the normal
-    // response. Asking for the attachment normally supports PDFs and sheets
-    // without turning a valid webhook into an HTTP 400.
-    `/me/messages/${encodeURIComponent(row.id)}/attachments`)).body.value || []) : [];
-  return { messageId: row.id, threadId: row.conversationId, internetMessageId: row.internetMessageId,
-    stockChiefMessageId: (row.internetMessageHeaders || [])
-      .find((entry) => String(entry.name || '').toLowerCase() === 'x-stockchief-message')?.value || null,
-    sender: row.from?.emailAddress?.address, recipients: (row.toRecipients || []).map((entry) => entry.emailAddress?.address).filter(Boolean),
-    subject: row.subject, bodyText: row.body?.content, receivedAt: row.receivedDateTime,
-    attachments: attachments.filter((entry) => entry.contentBytes).map((entry) => ({ id: entry.id,
-      filename: entry.name, mimeType: entry.contentType, contentBase64: entry.contentBytes })) };
+function continuation(value,expected){
+  const url=new URL(value);
+  if(url.origin!=='https://graph.microsoft.com'||url.pathname.toLowerCase()!==('/v1.0'+expected).toLowerCase())
+    throw new ValidationError('Microsoft returned a page outside the connected mailbox folder.');
+  return url.pathname.slice('/v1.0'.length)+url.search;
+}
+
+async function allAttachments(credentials,id){
+  const endpoint='/me/messages/'+encodeURIComponent(id)+'/attachments';
+  const rows=[],visited=new Set();
+  for(let path=endpoint;path;){
+    if(visited.has(path))throw new ValidationError('Microsoft returned the same attachment page.');
+    visited.add(path);
+    const page=(await graph(credentials,path)).body;
+    rows.push(...(page.value||[]));
+    path=page['@odata.nextLink']?continuation(page['@odata.nextLink'],endpoint):null;
+  }
+  return rows;
+}
+
+async function mapMessage(credentials,row,folder='inbox'){
+  const headers=row.internetMessageHeaders||[];
+  const providerJunk=folder==='junkemail';
+  let attachments=[],sourceIssue=null;
+  if(row.hasAttachments&&!providerJunk){
+    const source=require('./mailbox-source');
+    try{attachments=await allAttachments(credentials,row.id);}
+    catch(error){if(!source.oversized(error))throw error;sourceIssue=source.originalReview;}
+  }
+  const html=String(row.body?.contentType||'').toLowerCase()==='html',body=row.body?.content;
+  return {messageId:row.id,threadId:row.conversationId,internetMessageId:row.internetMessageId,
+    stockChiefMessageId:headers.find(entry=>String(entry.name||'').toLowerCase()==='x-stockchief-message')?.value||null,
+    sender:row.from?.emailAddress?.address||'Sender unavailable',
+    recipients:(row.toRecipients||[]).map(entry=>entry.emailAddress?.address).filter(Boolean),
+    subject:row.subject,bodyText:html?require('./mailbox-source').visibleHtml(body):body,
+    triageBodyText:html?require('./mailbox-source').visibleHtml(body,{currentOnly:true}):undefined,
+    receivedAt:row.receivedDateTime,providerJunk,sourceIssue,listMail:headers.some(entry=>['list-id','list-unsubscribe'].includes(String(entry.name||'').toLowerCase())),
+    attachments:attachments.filter(entry=>entry.name).map(entry=>({id:entry.id,filename:entry.name,
+      mimeType:entry.contentType,contentBase64:entry.contentBytes||undefined}))};
 }
 
 async function poll({ credentials, since }) {
@@ -144,6 +168,29 @@ async function poll({ credentials, since }) {
   return { messages, cursor: messages[0]?.messageId || null };
 }
 
+const watchedFolders=['inbox','archive','junkemail'];
+async function pollPage({credentials,since,until,cursor=null,accept=null}){
+  const folder=cursor?.folder||watchedFolders[0],index=watchedFolders.indexOf(folder);
+  if(index<0)throw new ValidationError('Choose a connected Microsoft mailbox folder.');
+  const endpoint='/me/mailFolders/'+folder+'/messages';
+  const from=new Date(Date.parse(since)-15*60_000).toISOString();
+  const query=new URLSearchParams({'$top':'50','$orderby':'receivedDateTime desc','$select':SELECT_FIELDS,
+    '$filter':'receivedDateTime ge '+from+' and receivedDateTime lt '+new Date(until).toISOString()});
+  const path=cursor?.url?continuation(cursor.url,endpoint):endpoint+'?'+query;
+  const page=(await graph(credentials,path,{headers:TEXT_BODY})).body;
+  const messages=[],seen=new Set();
+  for(const row of page.value||[]){
+    if(seen.has(row.id))continue;
+    seen.add(row.id);
+    const message=await mapMessage(credentials,row,folder);
+    if(accept){if(await accept(message)===false)return {messages,stopped:true,next:null};}
+    else messages.push(message);
+  }
+  const nextUrl=page['@odata.nextLink'];
+  if(nextUrl&&continuation(nextUrl,endpoint)===path)throw new ValidationError('Microsoft returned the same mailbox page. Retry this check.');
+  return {messages,next:nextUrl?{folder,url:nextUrl}:watchedFolders[index+1]?{folder:watchedFolders[index+1]}:null};
+}
+
 /*
  * One message, asked for by name — see the Gmail adapter. StockChief keeps only
  * the envelope of mail it set aside, so bringing one in goes back to Graph.
@@ -155,6 +202,37 @@ async function fetchMessage({ credentials, messageId }) {
   return row && row.id ? mapMessage(credentials, row) : null;
 }
 
+async function findSent({credentials,id,recipient,since}) {
+  if (!id || !recipient || !Number.isFinite(Date.parse(since))) throw new ValidationError('Use the saved Microsoft dispute identity and send time.');
+  const folder='/me/mailFolders/sentitems/messages';
+  const fields='id,conversationId,sentDateTime,toRecipients,internetMessageHeaders';
+  const query=new URLSearchParams({'$filter':'sentDateTime ge '+new Date(since).toISOString(),
+    '$orderby':'sentDateTime desc','$select':fields,'$top':'100'});
+  const visited=new Set();
+  let path=folder+'?'+query, matched=null;
+  while (path) {
+    if (visited.has(path)) throw new ValidationError('Microsoft repeated a Sent Items page.');
+    visited.add(path);
+    const page=(await graph(credentials,path)).body;
+    for (const row of page?.value||[]) {
+      const marker=(row.internetMessageHeaders||[]).filter(h=>String(h.name).toLowerCase()==='x-stockchief-message');
+      if (!marker.some(h=>h.value===id)) continue;
+      const destinations=(row.toRecipients||[]).map(a=>a.emailAddress?.address?.toLowerCase());
+      if (matched || marker.length!==1 || destinations.length!==1 || destinations[0]!==recipient.toLowerCase()
+          || !row.id || !row.conversationId || !Number.isFinite(Date.parse(row.sentDateTime))) {
+        throw new ValidationError('Microsoft Sent Items has conflicting dispute evidence.');
+      }
+      matched={externalMessageId:row.id,externalThreadId:row.conversationId,sentAt:new Date(row.sentDateTime).toISOString()};
+    }
+    const next=page?.['@odata.nextLink'] ? new URL(page['@odata.nextLink']) : null;
+    if (next && (next.origin!=='https://graph.microsoft.com' || next.pathname.toLowerCase()!==('/v1.0'+folder).toLowerCase())) {
+      throw new ValidationError('Microsoft returned an unexpected Sent Items page.');
+    }
+    path=next?next.pathname.slice('/v1.0'.length)+next.search:null;
+  }
+  return matched;
+}
+
 async function send({ credentials, message }) {
   const attachments=require('./photo-attachments').graph(message.attachments);
   await graph(credentials, '/me/sendMail', { method: 'POST', body: JSON.stringify({ message: {
@@ -163,6 +241,15 @@ async function send({ credentials, message }) {
     toRecipients: [{ emailAddress: { address: message.recipient } }],
     internetMessageHeaders: message.id
       ? [{ name: 'X-StockChief-Message', value: String(message.id) }] : undefined }, saveToSentItems: true }) });
+  if (message.verifySentFrom) {
+    try {
+      const verified=await findSent({credentials,id:message.id,recipient:message.recipient,since:message.verifySentFrom});
+      if (verified) return verified;
+    } catch (error) {
+      throw Object.assign(new Error('Microsoft accepted the request but Sent Items could not verify the dispute.'),{providerOutcomeUncertain:true,cause:error});
+    }
+    throw Object.assign(new Error('Microsoft accepted the request but has not confirmed the dispute in Sent Items.'),{providerOutcomeUncertain:true});
+  }
   return { externalMessageId: `m365:${message.id}` };
 }
 
@@ -173,4 +260,4 @@ function verifyWebhook({ body, credentials }) {
 }
 
 module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover,
-  registerWebhooks, renewWebhooks, poll, fetchMessage, send, verifyWebhook, graph };
+  registerWebhooks, renewWebhooks, poll, pollPage, fetchMessage, send, findSent, verifyWebhook, graph };
