@@ -137,7 +137,7 @@ test('paid subscriptions constrain real standing rules, PO creation and queued w
   const capture=require('../../src/connections/postgres-mail').capture,extract=require('../../src/connections/postgres-attachments').extractMessage;
   async function doc(name) {
     const note=await capture(db,{...connector,workspace_id:ctx.workspaceId,provider_type:'gmail'},{messageId:randomUUID(),sender:'repeat@example.test',
-      subject:'Supplier file',bodyText:'Attached',attachments:[{filename:name,mimeType:'text/plain',contentBase64:Buffer.from('Confirmed units and order reference').toString('base64')}]});
+      subject:'Supplier file',bodyText:'Attached',attachments:[{filename:name,mimeType:'text/plain',contentBase64:Buffer.from('Confirmed units and order reference for '+name).toString('base64')}]});
     return note.messageId;
   }
   assert.equal((await extract(db,ctx.workspaceId,await doc('unsupported.foo'))).attachments[0].status,'NEEDS_REVIEW');

@@ -74,6 +74,8 @@ test('customer orders from email and PDF are priced, reviewed or run under curre
   await assert.rejects(modes.save(db,ctx,52,{mode:'routine',revision:0}),/cannot run/);
   await subscribe('pro');await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');await modes.save(db,ctx,52,{mode:'routine',revision:0});
   const pending=await capture('PO #HOLD-002\n'+code+' qty 2');assert.match((await run(pending)).reason,/first order/);
+  await db.query("UPDATE connection_email_messages SET agent_category='message' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,pending]);
+  assert.match((await run(pending)).reason,/first order/);
   await f.parcel({quantity:1});
   const pdf=new (require('pdfkit'))(),chunks=[];pdf.on('data',b=>chunks.push(b));const finished=new Promise((resolve,reject)=>{pdf.on('end',resolve);pdf.on('error',reject);});
   pdf.text('Purchase order #PDF-8\n'+code+' qty 4');pdf.end();await finished;
