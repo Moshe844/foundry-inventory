@@ -105,7 +105,8 @@ async function inventoryPosition(database,workspaceId){
       SELECT pol.sku_id,SUM(pol.quantity_units-pol.quantity_received_units)::numeric AS incoming
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
       WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
-        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' GROUP BY pol.sku_id
+        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+        AND to_jsonb(pol)->>'supplier_supply_hold_id' IS NULL GROUP BY pol.sku_id
     ), sku_position AS (
       SELECT s.id,s.item_id,COALESCE(b.on_hand,0)::numeric AS on_hand,
         COALESCE(a.committed,0)::numeric AS committed,COALESCE(p.incoming,0)::numeric AS incoming,

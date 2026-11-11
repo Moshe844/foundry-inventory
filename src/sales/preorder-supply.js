@@ -30,7 +30,7 @@ async function current(db,ctx,page,selection,{lock=false,allowReceived=false}={}
   const ids=[...wanted.keys()].sort();
   const rows=(await db.query(`SELECT l.id,l.sku_id,p.id AS purchase_order_id,p.expected_date,p.status,p.ordered_at,
     coalesce(l.destination_location_id,p.destination_location_id) AS location_id,
-    (l.quantity_units-l.quantity_received_units)::text AS incoming
+    (l.quantity_units-l.quantity_received_units)::text AS incoming,to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold
     FROM purchase_order_lines l JOIN purchase_orders p ON p.workspace_id=l.workspace_id AND p.id=l.purchase_order_id
     WHERE l.workspace_id=$1 AND l.id=ANY($2::text[]) ORDER BY l.id${lock?' FOR UPDATE OF l,p':''}`,[ctx.workspaceId,ids])).rows;
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
@@ -40,7 +40,9 @@ async function current(db,ctx,page,selection,{lock=false,allowReceived=false}={}
     row.sku_id!==wanted.get(row.id)||!page.sku_ids.includes(row.sku_id))){
     throw new ValidationError('Each preorder product needs a placed purchase order with a current expected date and the same receiving location.');
   }
-  return rows.map(row=>({...row,today}));
+  if(!allowReceived&&rows.some(row=>row.supply_hold))
+    throw new ValidationError('The supplier reported that these goods are unavailable. New preorders are paused until availability is confirmed.');
+  return rows.map(row=>({...row,incoming:row.supply_hold?'0':row.incoming,today}));
 }
 
 async function incomingCapacity(db,workspaceId,line,{excludeRequestId=null}={}){
@@ -60,6 +62,7 @@ async function incomingCapacity(db,workspaceId,line,{excludeRequestId=null}={}){
     JOIN purchase_orders p ON p.workspace_id=l.workspace_id AND p.id=l.purchase_order_id
     WHERE l.workspace_id=$1 AND l.sku_id=$4 AND coalesce(l.destination_location_id,p.destination_location_id)=$5
       AND p.status IN ('ORDERED','PARTIALLY_RECEIVED') AND p.ordered_at IS NOT NULL AND p.expected_date BETWEEN $8 AND $6
+      AND to_jsonb(l)->>'supplier_supply_hold_id' IS NULL
   ), existing_demand AS (
     SELECT coalesce(sum(greatest(s.quantity_ordered-s.quantity_fulfilled-
       coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=s.workspace_id AND a.sales_order_line_id=s.id),0),0)),0) AS quantity

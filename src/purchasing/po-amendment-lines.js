@@ -65,12 +65,15 @@ async function write(db,workspaceId,order,changes){
       if(nextLineNumber===null)nextLineNumber=Number((await db.query(`SELECT coalesce(max(line_number),0)+1 AS next
         FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2`,[workspaceId,order.id])).rows[0].next);
       replacementLineId=newId('pol');
+      const hasIncomingEvidence=Object.hasOwn(line,'supplier_amendment_parent_line_id');
       await db.query(`INSERT INTO purchase_order_lines(id,workspace_id,purchase_order_id,line_number,
         sku_id,supplier_item_id,supplier_sku,description,purchase_unit,units_per_purchase_unit,quantity_units,
-        quantity_purchase_units,secondary_quantity_ordered,unit_cost,line_total,destination_location_id,notes,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        quantity_purchase_units,secondary_quantity_ordered,unit_cost,line_total,destination_location_id,notes,created_at
+        ${hasIncomingEvidence?',supplier_amendment_parent_line_id':''})
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18${hasIncomingEvidence?',$19':''})`,
       [replacementLineId,workspaceId,order.id,nextLineNumber++,line.sku_id,line.supplier_item_id,line.supplier_sku,line.description,
-        line.purchase_unit,line.units_per_purchase_unit,...values(replacement,order.currency),line.destination_location_id,line.notes,nowIso()]);
+        line.purchase_unit,line.units_per_purchase_unit,...values(replacement,order.currency),line.destination_location_id,line.notes,nowIso(),
+        ...(hasIncomingEvidence?[line.id]:[])]);
     }
     revisions.push({lineId:line.id,sku:line.code,before,retained,replacement,replacementLineId});
   }

@@ -17,12 +17,13 @@ async function reorder(db,ctx,options){
   const {items,more}=await positions(db,ctx,options);
   const ids=[...new Set(items.map(r=>r.sku_id))],usable=await require('../domain/postgres-kit-availability').stock(db,ctx.workspaceId,ids);
   const incoming=(await db.query(`SELECT l.sku_id,coalesce(l.destination_location_id,o.destination_location_id) location_id,o.po_number,o.expected_date,o.status,
-   (l.quantity_units-l.quantity_received_units)::text remaining FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
+   (l.quantity_units-l.quantity_received_units)::text remaining,to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold
+   FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')
    AND coalesce(to_jsonb(o)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
    AND l.quantity_units>l.quantity_received_units
    UNION ALL SELECT l.sku_id,t.destination_location_id,coalesce(t.reference,t.id),t.expected_arrival_date,t.status,
-   (CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity WHEN 'APPROVED' THEN l.approved_quantity WHEN 'PICKED' THEN l.picked_quantity ELSE l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity END)::text
+   (CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity WHEN 'APPROVED' THEN l.approved_quantity WHEN 'PICKED' THEN l.picked_quantity ELSE l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity END)::text,NULL
    FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
    ORDER BY expected_date NULLS LAST,po_number`,[ctx.workspaceId,ids])).rows;
@@ -31,7 +32,7 @@ async function reorder(db,ctx,options){
   const exact=require('../domain/exact-quantity'),key=require('../domain/postgres-stock-availability').key;
   const rows=items.filter(r=>!r.planning_suppressed).map(r=>{
    const pending=incoming.filter(l=>l.sku_id===r.sku_id&&(!r.location_id||r.location_id===l.location_id)),drafts=pending.filter(l=>['DRAFT','AWAITING_APPROVAL'].includes(l.status));
-   const uncertain=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&(!l.expected_date||l.expected_date<options.today));
+   const uncertain=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&(l.supply_hold||!l.expected_date||l.expected_date<options.today));
    const kit=kitCapacity.get(r.sku_id),available=kit?(r.location_id?kit.locations.find(l=>l.locationId===r.location_id)?.buildable||0:kit.buildable):r.location_id?usable.get(key(r.sku_id,r.location_id))||0:items.filter(p=>p.sku_id===r.sku_id&&p.location_id).reduce((n,p)=>n+(usable.get(key(p.sku_id,p.location_id))||0),0);
    const costKnown=r.onHand<=0||cost.filter(v=>v.sku_id===r.sku_id&&(!r.location_id||v.location_id===r.location_id)).reduce((n,v)=>n+Number(v.quantity_units),0)>=r.onHand;
    const target=r.targetStock??r.effectiveReorder,projected=exact.safeNumber(exact.add(String(available),String(r.incoming))),short=r.effectiveReorder!==null&&projected<=r.effectiveReorder;
@@ -39,7 +40,7 @@ async function reorder(db,ctx,options){
     'Issued in 90 days':r.issued,'Daily sales speed':r.dailyRate,'Lead days':r.lead_time_assumed?'Unknown':r.leadTimeDays,'Reorder point':r.effectiveReorder,'Target stock':target,
     'Open drafts':drafts.map(l=>l.po_number).join(', ')||null,'Incoming dates':pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)).map(l=>l.po_number+': '+(l.expected_date||'Unknown')+' ('+l.remaining+')').join('; ')||null,
     'Units to order':!costKnown||uncertain.length||drafts.length||r.lead_time_assumed&&r.reorderPoint===null?null:short?Math.max(0,exact.safeNumber(exact.subtract(String(target??0),String(projected)),{signed:true})):0,
-    Reason:!costKnown?'Complete the recorded stock cost before reordering':uncertain.length?'Confirm overdue or undated incoming before ordering again':drafts.length?'Review existing unsent purchase drafts':r.lead_time_assumed&&r.reorderPoint===null?'Record supplier lead time before deriving a stock target':r.effectiveReorder===null?'Set a reorder point or record more demand':short?'Usable available stock plus incoming is at or below the reorder point':'Usable available stock plus incoming exceeds the reorder point',link:'/inventory/'+r.item_id};
+    Reason:!costKnown?'Complete the recorded stock cost before reordering':uncertain.length?'Confirm overdue or undated incoming and supplier availability before ordering again':drafts.length?'Review existing unsent purchase drafts':r.lead_time_assumed&&r.reorderPoint===null?'Record supplier lead time before deriving a stock target':r.effectiveReorder===null?'Set a reorder point or record more demand':short?'Usable available stock plus incoming is at or below the reorder point':'Usable available stock plus incoming exceeds the reorder point',link:'/inventory/'+r.item_id};
   });
   return {rows,more,reorderForm:true,summary:'Planning shows exact usable stock after commitments, dated incoming, recorded sales speed, supplier lead time and the saved target. Unknown delivery facts or existing unsent drafts hold a new order. Supplier packs, minimums and competitive choice are reviewed separately before native drafts are created.'};
 }

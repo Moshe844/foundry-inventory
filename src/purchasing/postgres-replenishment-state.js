@@ -21,14 +21,18 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
   FROM inventory_transfer_lines line JOIN inventory_transfers t ON t.id=line.transfer_id AND t.workspace_id=line.workspace_id
   WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND t.status IN('REQUESTED','APPROVED','PICKED') GROUP BY line.sku_id,t.source_location_id),
  committed AS(SELECT sku_id,location_id,SUM(quantity) AS quantity FROM(SELECT * FROM sales_committed UNION ALL SELECT * FROM transfer_committed) held GROUP BY sku_id,location_id),
- purchase_incoming AS(SELECT line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id) AS location_id,SUM(line.quantity_units-line.quantity_received_units) AS quantity
+ purchase_incoming AS(SELECT line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id) AS location_id,
+   SUM(line.quantity_units-line.quantity_received_units) FILTER (WHERE to_jsonb(line)->>'supplier_supply_hold_id' IS NULL) AS quantity,
+   bool_or(to_jsonb(line)->>'supplier_supply_hold_id' IS NOT NULL AND line.quantity_units>line.quantity_received_units) AS supplier_hold
   FROM purchase_order_lines line JOIN purchase_orders po ON po.id=line.purchase_order_id AND po.workspace_id=line.workspace_id
   WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND po.status IN('APPROVED','ORDERED','PARTIALLY_RECEIVED')
-   AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' GROUP BY line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id)),
- transfer_incoming AS(SELECT line.sku_id,t.destination_location_id AS location_id,SUM(CASE t.status WHEN 'REQUESTED' THEN line.requested_quantity WHEN 'APPROVED' THEN line.approved_quantity WHEN 'PICKED' THEN line.picked_quantity ELSE line.shipped_quantity-line.received_quantity-line.lost_quantity-line.damaged_quantity END) AS quantity
+   AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+   GROUP BY line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id)),
+ transfer_incoming AS(SELECT line.sku_id,t.destination_location_id AS location_id,SUM(CASE t.status WHEN 'REQUESTED' THEN line.requested_quantity WHEN 'APPROVED' THEN line.approved_quantity WHEN 'PICKED' THEN line.picked_quantity ELSE line.shipped_quantity-line.received_quantity-line.lost_quantity-line.damaged_quantity END) AS quantity,false AS supplier_hold
   FROM inventory_transfer_lines line JOIN inventory_transfers t ON t.id=line.transfer_id AND t.workspace_id=line.workspace_id
   WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND t.status IN('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED') GROUP BY line.sku_id,t.destination_location_id),
- incoming AS(SELECT sku_id,location_id,SUM(quantity) AS quantity FROM(SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming) pending GROUP BY sku_id,location_id),
+ incoming AS(SELECT sku_id,location_id,SUM(quantity) AS quantity,bool_or(supplier_hold) AS supplier_hold
+   FROM(SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming) pending GROUP BY sku_id,location_id),
  demand AS(${cycleId?`SELECT sku_id,location_id,issue_events,issued FROM stockchief_runtime.replenishment_planning_demand
   WHERE workspace_id=$1 AND sku_id IN(SELECT id FROM selected_skus)`:
   `SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(issued) AS issued FROM stockchief_runtime.replenishment_demand_events
@@ -47,6 +51,7 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
   CROSS JOIN(SELECT id FROM active_locations ORDER BY id LIMIT 1)l)
  SELECT s.id AS sku_id,s.code,s.variant_label,s.position AS sku_position,coalesce(source_version.version,0)::text AS source_version,i.id AS item_id,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
   COALESCE(b.on_hand,0)::numeric AS on_hand,COALESCE(c.quantity,0)::numeric AS committed,COALESCE(inc.quantity,0)::numeric AS incoming,
+  inc.supplier_hold AS supplier_supply_held,
   COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::numeric AS issued,rp.id AS policy_id,rp.location_id AS policy_location_id,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,
   (SELECT to_jsonb(global_policy)||jsonb_build_object('effective_lead',coalesce((
     SELECT coalesce(lead.observed_lead,global_policy.lead_time_days,lead.configured_lead) FROM stockchief_runtime.supplier_planning_leads lead
@@ -65,12 +70,15 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
  WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id
  ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds,...(cycleId?[cycleId]:[])]);
+ for(const row of result.rows)if(!row.supplier_supply_held)delete row.supplier_supply_held;
  const receivingOptions=result.rows.some(row=>row.global_policy)?(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL ORDER BY id',[workspaceId])).rows:[];
  const availability=require('../domain/postgres-stock-availability'),current=await availability.readMany(database,workspaceId,result.rows.map(row=>({skuId:row.sku_id,locationId:row.location_id}))),bySku=new Map();
  for(const row of result.rows){if(row.saved_cover_days!==null&&row.saved_cover_days!==undefined){let saved;try{saved=JSON.parse(row.saved_cover_days);}catch{throw new(require('../domain/errors').ValidationError)('Review the saved target days of stock before replenishment can continue.');}const days=Number(saved&&typeof saved==='object'?saved.value:saved);if(!Number.isSafeInteger(days)||days<1)throw new(require('../domain/errors').ValidationError)('Target days of stock must be a positive whole number.');row.cover_days=days;}const stock=current.get(availability.key(row.sku_id,row.location_id));if(stock){row.committed=stock.committed+stock.reserved;row.rental_reserved=stock.rentalReserved;}if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
  const rows=[];for(const positions of bySku.values()){
   const global=positions[0].global_policy;
-  if(global){const total={...positions[0],...global,lead_time_days:global.effective_lead,policy_id:global.id,policy_location_id:null,scope:'workspace',location_id:null,location_name:'All locations',receivingOptions};for(const key of ['on_hand','committed','incoming','issue_events','issued'])total[key]=require('../domain/exact-quantity').safeNumber(positions.reduce((sum,p)=>require('../domain/exact-quantity').add(sum,String(p[key]||0)),'0'),{signed:true});rows.push(total);
+  if(global){const total={...positions[0],...global,lead_time_days:global.effective_lead,policy_id:global.id,policy_location_id:null,scope:'workspace',location_id:null,location_name:'All locations',receivingOptions};for(const key of ['on_hand','committed','incoming','issue_events','issued'])total[key]=require('../domain/exact-quantity').safeNumber(positions.reduce((sum,p)=>require('../domain/exact-quantity').add(sum,String(p[key]||0)),'0'),{signed:true});
+   if(positions.some(row=>row.supplier_supply_held))total.supplier_supply_held=true;
+   rows.push(total);
    for(const row of positions){if(row.policy_location_id===null){row.planning_suppressed=true;row.scope='position';}rows.push(row);}
   }else rows.push(...positions);
  }

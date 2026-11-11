@@ -64,8 +64,15 @@ async function submit(db,token,kind,value){
 }
 
 async function responses(db,workspaceId,orderId){
-  return (await db.query(`SELECT r.id,r.kind,r.expected_date::text,r.created_at FROM stockchief_runtime.supplier_link_submissions r
+  const rows=(await db.query(`SELECT r.id,r.kind,r.expected_date::text,r.created_at FROM stockchief_runtime.supplier_link_submissions r
     JOIN stockchief_runtime.supplier_order_links l USING(token_hash)
     WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY r.created_at DESC,r.id`,[workspaceId,orderId])).rows;
+  const unavailable=rows.filter(row=>row.kind==='unavailable').map(row=>row.id);
+  if(!unavailable.length)return rows;
+  const evidence=(await db.query(`SELECT id AS notice_id,supplier_reply_id,evidence,valid_through::text,revoked_at
+    FROM stockchief_runtime.agent_backup_supplier_notices WHERE workspace_id=$1 AND purchase_order_id=$2
+      AND supplier_reply_id=ANY($3::text[])`,[workspaceId,orderId,unavailable])).rows;
+  const byId=new Map(evidence.map(row=>[row.supplier_reply_id,row]));
+  return rows.map(row=>({...row,...byId.get(row.id)}));
 }
 module.exports={issue,lookup,submit,responses};

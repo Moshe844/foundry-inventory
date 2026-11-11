@@ -154,10 +154,14 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
       GROUP BY so.id,so.order_number,so.needed_by,so.created_at,c.name
       HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled-coalesce((to_jsonb(sol)->>'direct_committed_quantity')::numeric,0))>COALESCE(SUM(a.allocated),0)
       ORDER BY so.needed_by NULLS LAST,so.created_at`,[workspaceId]),
-    database.query(`SELECT po.id,po.po_number,po.expected_date,po.created_at,s.name AS supplier_name
+    database.query(`SELECT po.id,po.po_number,po.expected_date,po.created_at,s.name AS supplier_name,
+      EXISTS(SELECT 1 FROM purchase_order_lines line WHERE line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id
+        AND line.quantity_units>line.quantity_received_units AND to_jsonb(line)->>'supplier_supply_hold_id' IS NOT NULL) AS unavailable
       FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
       WHERE po.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
-      AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text
+      AND (po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text OR
+        EXISTS(SELECT 1 FROM purchase_order_lines line WHERE line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id
+          AND line.quantity_units>line.quantity_received_units AND to_jsonb(line)->>'supplier_supply_hold_id' IS NOT NULL))
       ORDER BY po.expected_date`,[workspaceId]),
     database.query(`SELECT id,symptom,failed_invariant,status,materiality,confidence,error_message,created_at,updated_at
       FROM repair_cases WHERE workspace_id=$1
@@ -258,8 +262,8 @@ async function needsUncached(database,workspaceId,actorId,actor){
     priority:92,title:`${row.order_number} can’t be filled yet`,happened:`${row.customer_name} needs ${number(row.remaining)} ${number(row.remaining)===1?'unit':'units'}; only ${number(row.allocated)} ${number(row.allocated)===1?'is':'are'} set aside for this order.`,
     why:'Until more stock is available, this order can only go out in part.',recommendation:'Move stock from another location or buy more.',
     href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
-  for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
-    happened:`${row.supplier_name} was expected on ${new Date(row.expected_date+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'})}.`,why:'StockChief has no complete receipt for this purchase order.',
+  for(const row of purchases.rows.filter(r=>!ownedRecords.has(r.id)))items.push({kind:'purchase',importance:'Important',priority:75,title:row.unavailable?`Confirm supplier availability for ${row.po_number}`:`${row.po_number} is late`,
+    happened:row.unavailable?`${row.supplier_name} reported unavailable goods on this order.`:`${row.supplier_name} was expected on ${new Date(row.expected_date+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'})}.`,why:row.unavailable?'Those remaining units are excluded from dependable incoming until supplier availability is confirmed.':'StockChief has no complete receipt for this purchase order.',
     recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,timeLabel:'Purchase order created',dueDate:row.expected_date,at:row.expected_date});
   for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Needs You',
     priority:row.materiality==='high'?97:86,title:row.symptom,happened:row.failed_invariant,
@@ -309,7 +313,8 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
         AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
-        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE') AS incoming FROM sku_stats`,[workspaceId]),
+        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+        AND to_jsonb(pol)->>'supplier_supply_hold_id' IS NULL) AS incoming FROM sku_stats`,[workspaceId]),
     includeLocationStock?database.query(`SELECT l.id,l.name,${require('../domain/stock-totals').totalsSql('l.workspace_id','l.id')} AS stock FROM locations l
       WHERE l.workspace_id=$1 AND l.is_active=1 ORDER BY l.name`,[workspaceId]):{rows:[]},
     database.query(`WITH recent_movements AS MATERIALIZED(

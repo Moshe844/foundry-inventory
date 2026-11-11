@@ -148,19 +148,27 @@ async function recordUnavailable(db,ctx,id,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function withdrawNotice(db,ctx,id){
-  await owner(db,ctx);
-  await db.query(`UPDATE ${notices} SET revoked_at=now() WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL`,[ctx.workspaceId,id]);
+async function withdrawNotice(db,ctx,id,orderId=null){
+  return db.transaction(async tx=>{
+    await owner(tx,ctx);
+    const updated=await tx.query(`UPDATE ${notices} SET revoked_at=now()
+      WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL AND ($3::text IS NULL OR purchase_order_id=$3)
+      RETURNING purchase_order_id`,[ctx.workspaceId,id,orderId]);
+    if(updated.rowCount)await require('../operations/postgres-security-audit').record(tx,ctx,{
+      action:'Supplier availability report withdrawn',reference:updated.rows[0].purchase_order_id||id,after:{noticeId:id}});
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function linkLines(db,order){
+  if(order.delivery_kind==='CUSTOMER_DIRECT')return [];
   const plan=await policy.accountState(db,order.workspace_id);
-  if(!policy.usesAgentTerms(plan)||!policy.permits(plan.plan,95,'draft'))return [];
-  return (await db.query(`SELECT l.id,l.sku_id,p.supplier_id,r.id AS rule_id,r.location_id,s.code,i.name,
+  if(!policy.usesAgentTerms(plan)||!policy.permits(plan.plan,32,'draft'))return [];
+  return (await db.query(`SELECT l.id,l.sku_id,p.supplier_id,r.id AS rule_id,
+    coalesce(l.destination_location_id,p.destination_location_id) AS location_id,s.code,i.name,
     (l.quantity_units-l.quantity_received_units)::text AS remaining
     FROM purchase_order_lines l JOIN purchase_orders p ON p.id=l.purchase_order_id AND p.workspace_id=l.workspace_id
     JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-    JOIN ${rules} r ON r.workspace_id=l.workspace_id AND r.sku_id=l.sku_id
+    LEFT JOIN ${rules} r ON r.workspace_id=l.workspace_id AND r.sku_id=l.sku_id
       AND r.location_id=coalesce(l.destination_location_id,p.destination_location_id) AND r.primary_supplier_id=p.supplier_id AND r.enabled
     WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND l.quantity_units>l.quantity_received_units ORDER BY l.line_number,l.id`,
   [order.workspace_id,order.id])).rows;

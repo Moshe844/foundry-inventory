@@ -23,7 +23,8 @@ async function inventoryFacts(db,ctx,scope,{jobId,incomingBy}){
  const positions=products.flatMap(p=>locationIds.map(locationId=>({skuId:p.sku_id,locationId}))),availability=require('../domain/postgres-stock-availability'),stock=await availability.readMany(db,ctx.workspaceId,positions);
  const demand=(await db.query(`SELECT sku_id,count(*)::int issue_events,sum(issued)::text issued FROM stockchief_runtime.replenishment_demand_events
   WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND location_id=ANY($3::text[]) AND occurred_at>=$4::timestamptz AND occurred_at<$5::timestamptz GROUP BY sku_id`,[ctx.workspaceId,scope.skuIds,locationIds,require('../lib/business-time').dayBoundary(from,clock.timeZone),require('../lib/business-time').dayBoundary(clock.calendarDate,clock.timeZone)])).rows;
- const incoming=(await db.query(`SELECT l.id,l.sku_id,p.id AS purchase_order_id,p.po_number,p.status,p.expected_date,(l.quantity_units-l.quantity_received_units)::text remaining
+ const incoming=(await db.query(`SELECT l.id,l.sku_id,p.id AS purchase_order_id,p.po_number,p.status,p.expected_date,
+   to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold,(l.quantity_units-l.quantity_received_units)::text remaining
   FROM purchase_order_lines l JOIN purchase_orders p ON p.workspace_id=l.workspace_id AND p.id=l.purchase_order_id
   WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND coalesce(l.destination_location_id,p.destination_location_id)=ANY($3::text[])
    AND p.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')
@@ -37,12 +38,13 @@ async function inventoryFacts(db,ctx,scope,{jobId,incomingBy}){
   const positions=locationIds.map(id=>stock.get(availability.key(p.sku_id,id))).filter(Boolean);
   if(positions.some(s=>s.onHand<0))throw new ValidationError('Resolve negative stock for '+p.code+' before preparing a stock plan.');
   const sum=key=>positions.reduce((n,s)=>exact.add(n,String(s[key]||0)),'0'),d=demand.find(d=>d.sku_id===p.sku_id),open=incoming.filter(l=>l.sku_id===p.sku_id);
-  const timely=open.filter(l=>['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(l.status)&&l.expected_date&&l.expected_date>=clock.calendarDate&&l.expected_date<=incomingBy);
-  const unresolved=open.filter(l=>['DRAFT','AWAITING_APPROVAL'].includes(l.status)||!l.expected_date||l.expected_date<clock.calendarDate);
-  if(unresolved.length)warnings.push({skuId:p.sku_id,sku:p.code,reason:'Review existing drafts, missing delivery dates or overdue supplier orders before making another purchase.'});
+  const timely=open.filter(l=>!l.supply_hold&&['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(l.status)&&l.expected_date&&l.expected_date>=clock.calendarDate&&l.expected_date<=incomingBy);
+  const unresolved=open.filter(l=>l.supply_hold||['DRAFT','AWAITING_APPROVAL'].includes(l.status)||!l.expected_date||l.expected_date<clock.calendarDate);
+  if(unresolved.length)warnings.push({skuId:p.sku_id,sku:p.code,reason:'Review supplier availability, existing drafts, missing delivery dates or overdue orders before making another purchase.'});
   if(transfer.some(t=>t.sku_id===p.sku_id))warnings.push({skuId:p.sku_id,sku:p.code,reason:'An incoming internal transfer needs separate review. It is not counted as a supplier delivery.'});
   return {skuId:p.sku_id,issued:d?.issued||'0',issueEvents:d?.issue_events||0,onHand:sum('onHand'),committed:exact.add(sum('committed'),sum('reserved')),incoming:timely.reduce((n,l)=>exact.add(n,l.remaining),'0'),unitsPerPurchaseUnit:String(p.units_per_purchase_unit),orderMultiple:String(p.order_multiple),minimumOrderQuantity:String(p.minimum_order_quantity),unitCostMinor:money.toMinor(String(p.last_unit_cost),supplier.currency)};
  });
- return {scope,supplier,location,locationIds,today:clock.calendarDate,historyFrom:from,products,rows,incoming,transfer,warnings};
+ const sourceOrders=incoming.map(({supply_hold,...line})=>supply_hold?{...line,supply_hold}:line);
+ return {scope,supplier,location,locationIds,today:clock.calendarDate,historyFrom:from,products,rows,incoming:sourceOrders,transfer,warnings};
 }
 module.exports={inventoryFacts,owner};
