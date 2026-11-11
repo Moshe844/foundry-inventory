@@ -28,7 +28,7 @@ jobs:
         timeout-minutes: 8
         run: |
           printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -50,10 +50,17 @@ jobs:
           # Avoid an unresponsive runner-image mirror holding the test gate.
           # Packages retain Ubuntu signature verification and HTTPS transport.
           printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
             sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
-          npx playwright install --with-deps chromium firefox
+          npx playwright install chromium firefox
+          probe_browsers() {
+            node -e 'const {chromium,firefox}=require("playwright"); (async()=>{for(const engine of [chromium,firefox]){const browser=await engine.launch(); await browser.close();}})().catch(error=>{console.error(error); process.exitCode=1;});'
+          }
+          if ! probe_browsers; then
+            npx playwright install-deps chromium firefox
+            probe_browsers
+          fi
           mkdir -p output/customer-navigation-ci
       - name: Agent plan permissions and operational workflows
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'agent-plans' }}

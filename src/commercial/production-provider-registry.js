@@ -13,6 +13,8 @@ const classification=Object.freeze({
  'documents/agent-voice-receiving.js':'METERED',
  // The data-only Ask interpreter rejects providers that are not host-branded
  // by the native relay, which owns reservations and exact cost settlement.
+ 'assistant/ask-language.js':'METERED',
+ 'assistant/ask-voice.js':'METERED',
  'assistant/bounded-business-read.js':'METERED',
  'assistant/calls.js':'NOT_PG_ENABLED',
  'assistant/mail-draft.js':'NOT_PG_ENABLED',

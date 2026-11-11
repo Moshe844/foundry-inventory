@@ -13,6 +13,7 @@ const expected={
  'documents/agent-voice-receiving.js':1,'ai/providers/openai-transcription.js':1,
  'warehouse/agent-shelf-photos.js':1,
  'actions/second-read.js':1,'ai/deadline.js':1,'ai/providers/anthropic.js':1,
+ 'assistant/ask-language.js':1,'assistant/ask-voice.js':1,
  'assistant/bounded-business-read.js':1,'assistant/postgres-answer-preferences.js':1,
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,
  'assistant/postgres-control-plane.js':3,'assistant/postgres-service.js':1,
@@ -65,6 +66,8 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  assert.match(read('ai/providers/anthropic.js'),/commercial_meter_required/);
  assert.match(read('assistant/postgres-service.js'),/const provider=fundedAskProvider\([^\n]+direct-language[^\n]*\n[\s\S]*?localizeRecorded\(provider,/);
  assert.match(read('documents/agent-voice-receiving.js'),/reserveTranscription[\s\S]*?transcriber\.transcribe\(wave,\{hold:bound\}\)/);
+ assert.match(read('assistant/ask-voice.js'),/reserveTranscription[\s\S]*?transcriber\.transcribe\(wave,\{hold,prompt:PROMPT\}\)/);
+ assert.match(read('assistant/postgres-service.js'),/toEnglish\(fundedAskProvider\(/);
  assert.match(read('ai/providers/openai-transcription.js'),/useTranscriptionHold\(hold\)/);
  assert.match(read('lib/provider-http.js'),/no commercial operation scope/);
  assert.match(read('operations/postgres-runtime-handlers.js'),/provider:'resend',operation:'system_email'/);

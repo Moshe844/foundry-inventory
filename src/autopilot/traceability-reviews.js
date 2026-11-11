@@ -11,18 +11,44 @@ module.exports=[
       AND o.status IN ('CONFIRMED','PARTIALLY_FULFILLED') AND o.needed_by::date<=lot.expires_at::date ORDER BY o.needed_by,o.id LIMIT 1)d ON true
     WHERE lot.workspace_id=$1 AND b.quantity>0 AND lot.expires_at::date<=$3::date+30 AND ($2='' OR lower(lot.code)=lower($2) OR lower(s.code)=lower($2))
     ORDER BY lot.expires_at,lot.id,l.id`},
-  {id:193,key:'recall-trace',label:'Trace customers who received a lot',requiresFilter:true,prompt:'lot number',summary:'Affected sales are linked by the posted stock issue and its order. Units include tracked components consumed when fulfilling a kit.',sql:`
-    WITH affected AS (
-      SELECT m.id,m.sku_id,lot.code,-m.quantity_delta AS units FROM movements m JOIN lots lot ON lot.id=m.lot_id AND lot.workspace_id=m.workspace_id
-      WHERE m.workspace_id=$1 AND m.operation='issue' AND lower(lot.code)=lower($2)
-      UNION ALL SELECT m.id,m.sku_id,lot.code,count(*) FROM movements m JOIN stockchief_runtime.inventory_movement_serial_units x ON x.workspace_id=m.workspace_id AND x.movement_id=m.id
-      JOIN serial_units u ON u.id=x.serial_unit_id JOIN lots lot ON lot.id=u.lot_id
-      WHERE m.workspace_id=$1 AND m.operation='issue' AND m.lot_id IS NULL AND lower(lot.code)=lower($2) GROUP BY m.id,m.sku_id,lot.code)
-    SELECT c.name AS "Customer",o.order_number AS "Order",s.code AS "SKU",a.code AS "Lot",sum(a.units) AS "Units issued",c.email AS "Contact",
-      '/orders/'||o.id AS link FROM affected a JOIN accounting_inventory_cost_movements v ON v.inventory_movement_id=a.id AND v.workspace_id=$1
-      JOIN sales_orders o ON o.workspace_id=v.workspace_id AND o.id=v.cost_source_record_id JOIN customers c ON c.id=o.customer_id JOIN skus s ON s.id=a.sku_id
-    WHERE v.cost_source_type IN ('sales_order_fulfillment','sales_order_kit_fulfillment') GROUP BY c.id,c.name,o.id,o.order_number,s.code,a.code
-    ORDER BY c.name,o.order_number,s.code,a.code`},
+  {id:193,key:'recall-trace',label:'Trace customers who received a lot',requiresFilter:true,prompt:'lot number',summary:'Shows customers who received this lot through sales, rentals or consignment. The totals record original handoffs, including units that were later returned.',sql:`
+    WITH matching_lots AS (
+      SELECT id,code FROM lots WHERE workspace_id=$1 AND lower(code)=lower($2)
+    ), serial_movements AS (
+      SELECT x.movement_id,u.id AS serial_id,l.code FROM matching_lots l
+      JOIN serial_units u ON u.workspace_id=$1 AND u.lot_id=l.id
+      JOIN stockchief_runtime.inventory_movement_serial_units x ON x.workspace_id=u.workspace_id AND x.serial_unit_id=u.id
+      UNION
+      SELECT m.id,u.id,l.code FROM matching_lots l
+      JOIN serial_units u ON u.workspace_id=$1 AND u.lot_id=l.id
+      JOIN movements m ON m.workspace_id=u.workspace_id AND m.serial_unit_id=u.id
+    ), affected AS (
+      SELECT m.id,m.sku_id,l.code,-m.quantity_delta AS units FROM matching_lots l
+      JOIN movements m ON m.workspace_id=$1 AND m.lot_id=l.id
+      WHERE m.operation='issue' OR (m.operation='transfer' AND m.leg='out')
+      UNION ALL
+      SELECT m.id,m.sku_id,x.code,count(*) FROM serial_movements x
+      JOIN movements m ON m.workspace_id=$1 AND m.id=x.movement_id
+      WHERE m.lot_id IS NULL AND (m.operation='issue' OR (m.operation='transfer' AND m.leg='out'))
+      GROUP BY m.id,m.sku_id,x.code
+    ), handoffs AS (
+      SELECT a.sku_id,a.code,a.units,o.customer_id,o.order_number AS reference,'Sale' AS kind,'/orders/'||o.id AS link
+      FROM affected a JOIN accounting_inventory_cost_movements v ON v.workspace_id=$1 AND v.inventory_movement_id=a.id
+      JOIN sales_orders o ON o.workspace_id=v.workspace_id AND o.id=v.cost_source_record_id
+      WHERE v.cost_source_type IN ('sales_order_fulfillment','sales_order_kit_fulfillment')
+      UNION ALL
+      SELECT a.sku_id,a.code,a.units,g.customer_id,g.agreement_number,
+        CASE g.kind WHEN 'RENTAL' THEN 'Rental' ELSE 'Consignment' END,'/custody/'||g.id
+      FROM affected a JOIN accounting_inventory_cost_movements v ON v.workspace_id=$1 AND v.inventory_movement_id=a.id
+      JOIN custody_agreements g ON g.workspace_id=v.workspace_id AND g.id=v.cost_source_record_id
+      WHERE v.cost_source_type='custody_dispatch' AND g.kind IN ('RENTAL','CONSIGN_OUT')
+    )
+    SELECT c.name AS "Customer",h.reference AS "Order",h.kind AS "Type",s.code AS "SKU",h.code AS "Lot",
+      sum(h.units) AS "Units issued",c.email AS "Contact",h.link
+    FROM handoffs h JOIN customers c ON c.workspace_id=$1 AND c.id=h.customer_id
+    JOIN skus s ON s.workspace_id=$1 AND s.id=h.sku_id
+    GROUP BY c.id,c.name,h.reference,h.kind,s.code,h.code,h.link
+    ORDER BY c.name,h.reference,s.code,h.code,h.link`},
   {id:196,key:'lot-documents',label:'Check lot certificates',usesDate:true,summary:'Required certificates for each SKU and lot with stock. Missing and expired documents appear first.',sql:`
     SELECT s.code AS "SKU",l.code AS "Lot",r.kind AS "Document",c.expires_on::text AS "Expires",CASE WHEN c.lot_id IS NULL THEN 'Missing'
       WHEN c.expires_on<$3::date THEN 'Expired' ELSE 'On file' END AS "Status"

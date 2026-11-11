@@ -14,9 +14,23 @@ async function sweep(db,{now=Date.now()}={}){
  return {checked:pilots.length,unavailable};
 }
 async function read(db,ctx){
- const {pilot}=await require('./postgres-codex-pilot').access(db,ctx);
+ const {pilot,commercialAccess}=await require('./postgres-codex-pilot').access(db,ctx);
  const hosted=(await db.query("SELECT max(last_seen_at) AS hosted_seen_at FROM stockchief_runtime.assistant_worker_health WHERE kind='database-read'")).rows[0];
- if(pilot.unprovisioned){const heartbeat=(await db.query("SELECT max(worker_seen_at) AS worker_seen_at FROM stockchief_runtime.codex_pilots WHERE admission_kind='COMMERCIAL'")).rows[0];return state({...pilot,...hosted,worker_seen_at:heartbeat?.worker_seen_at});}
- return state({...pilot,...hosted});
+ const health={...pilot,...hosted};
+ if(pilot.admission_kind!=='COMMERCIAL'||!commercialAccess.period)return state(health);
+ if(pilot.unprovisioned){
+  const heartbeat=(await db.query("SELECT max(worker_seen_at) AS worker_seen_at FROM stockchief_runtime.codex_pilots WHERE admission_kind='COMMERCIAL'")).rows[0];
+  health.worker_seen_at=heartbeat?.worker_seen_at;
+ }
+ // The paid subscription establishes the current credit period. The stored
+ // execution record is renewed on submission and can still show the prior month.
+ const periodEnd=commercialAccess.period.end.toISOString();
+ const readiness=state({...health,period_ends_at:periodEnd,ceiling_micro_usd:commercialAccess.ceiling});
+ if(!readiness.allowanceAvailable)return readiness;
+ const credits=await require('../commercial/entitlements').meterState(db,commercialAccess.scope,'ai_work_credits',
+  {subscription:commercialAccess.subscription});
+ if(credits.remaining!==null&&credits.remaining<=0)return {...readiness,ok:false,allowanceAvailable:false,
+  reason:'credits_exhausted',periodEnd,message:'AI credits are used up. See your renewal date and available credit add-ons in Plan & billing.'};
+ return {...readiness,periodEnd};
 }
 module.exports={state,sweep,read};

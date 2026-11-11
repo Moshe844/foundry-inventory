@@ -22,7 +22,9 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
   const pilot=row.pilot||{admission_kind:'COMMERCIAL',enabled:true,unprovisioned:true,ceiling_micro_usd:checked.ceiling,
    period_ends_at:checked.period.end.toISOString(),approval_reference:'commercial-plan:'+checked.subscription.id,stopped:false};
   if(enabled&&!pilot.enabled)throw new AuthorizationError('The business agent is disabled in this inventory.');
-  return {actor,pilot,commercialAccess:{scope:checked.scope,entitlement:checked.entitlement},environment:{business:{name:row.business_name},actor:{role:actor.role},clock:{utc:new Date().toISOString()}}};
+  return {actor,pilot,commercialAccess:{scope:checked.scope,entitlement:checked.entitlement,
+   subscription:checked.subscription,period:checked.period,ceiling:checked.ceiling},
+   environment:{business:{name:row.business_name},actor:{role:actor.role},clock:{utc:new Date().toISOString()}}};
  }
  if(!actor||!list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(s=>s.toLowerCase()).includes(actor.email.toLowerCase())||owner&&actor.role!=='owner')
   throw new AuthorizationError('This account is not authorized for the Staging pilot.');
