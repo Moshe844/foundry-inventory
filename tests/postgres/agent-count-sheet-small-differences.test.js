@@ -74,6 +74,9 @@ test('exact count sheets post small differences on their own under the owner lim
   assert.match(page.source.reading_note,/^Posted on its own: the differences come to \$4\.00, within your \$5\.00 count limit\.$/);
   assert.deepEqual([await onHand(lot),await onHand(plain)],['4','18']);
   assert.equal(await audits(),1);
+  const shown=(await f.browser.get(sources.path+'/'+small.id).expect(200)).text;
+  assert.match(shown,/Posted on its own: the differences come to \$4\.00, within your \$5\.00 count limit\./);
+  assert.match(shown,/Verified/);
   assert.equal((await sources.enqueue(db,ctx,{ruleId:routine,filename:'Tuesday again.csv',buffer:csv(counts('4','18'))})).id,small.id,'the same original replays');
   await idle();
   assert.deepEqual([await onHand(lot),await onHand(plain)],['4','18']);
@@ -103,4 +106,52 @@ test('exact count sheets post small differences on their own under the owner lim
   assert.deepEqual([await onHand(lot),await onHand(plain)],['3','17']);
   assert.equal(await audits(),2);
   assert.equal(await onHand(serial),'2','no serial ever left without a person');
+});
+
+// Job 6 for staff phone counts (job 7): once the counter finishes, small differences post
+// through the owner's own review and approval. Lots seen on the phone that differ from the
+// records, differences over the limit, and plans without job 6 leave the count for the owner.
+test('finished phone counts post small plain differences on their own; lot changes and large differences go to the owner',{timeout:300000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,subscribe}=f;
+  const tasks=require('../../src/operations/agent-count-tasks'),campaigns=require('../../src/operations/postgres-count-campaigns'),rights=require('../../src/actions/permissions');
+  const account=await require('../../src/domain/postgres-auth-service').createBusiness(db,{email:randomUUID()+'@example.test',password:f.password,name:'Counter',businessName:'Separate counter inventory'});
+  const counter={workspaceId:ctx.workspaceId,actorId:randomUUID()};
+  await db.query(`INSERT INTO users(id,name,workspace_id,account_id,role,permissions,warehouse_location_ids,created_at)
+    VALUES($1,'Warehouse counter',$2,$3,'staff',$4,$5::jsonb,now()::text)`,[counter.actorId,ctx.workspaceId,account.accountId,rights.encodeGrant([rights.VIEW,rights.COUNT_STOCK]),JSON.stringify([f.location.id])]);
+  const plain=f.item.skuIds[0],lot=(await catalog.createItem(db,ctx,{name:'PHONELOT',baseCode:'PHONELOT',trackingMode:'lot'})).skuIds[0];
+  await receipt.receive(db,ctx,{skuId:lot,locationId:f.location.id,quantity:6,unitCost:'2',lotCode:'L-1',idempotencyKey:randomUUID()});
+  const onHand=async skuId=>exact.canonical((await db.query('SELECT coalesce(sum(on_hand),0) q FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].q);
+  const status=async id=>(await db.query('SELECT status FROM warehouse_count_campaigns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0].status;
+  const audits=async()=>Number((await db.query("SELECT count(*) n FROM security_event_history WHERE workspace_id=$1 AND action='Phone count posted under the count limit'",[ctx.workspaceId])).rows[0].n);
+  const apply=async id=>{const job={workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,campaignId:id}};
+    for(let step=0;step<5;step++)if((await campaigns.run(job,db)).status==='COMPLETED')return;assert.fail('The approved count did not finish.');};
+  const count=async(plainQ,lotQ)=>{
+    const id=await tasks.assign(db,ctx,{locationId:f.location.id,counterId:counter.actorId,stockScope:'all',requestKey:randomUUID()});
+    await tasks.record(db,counter,id,{locationId:f.location.id,skuId:plain,quantity:plainQ});
+    await tasks.record(db,counter,id,{locationId:f.location.id,skuId:lot,entries:[{code:'L-1',quantity:lotQ}]});
+    return id;
+  };
+
+  await subscribe('pro');
+  await db.query("UPDATE accounts SET created_at=(now()-interval '25 days')::text WHERE id=$1",[f.owner.accountId]);
+  await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  await rules.configure(db,ctx,{mode:'automatic',limit:'5.00'});
+
+  const small=await count('18','6');
+  assert.equal(await status(small),'APPLYING','the counter’s last entry approved the small count');
+  assert.equal(await onHand(plain),'20','nothing posts before the apply job runs');
+  await apply(small);
+  assert.equal(await onHand(plain),'18');
+  assert.equal(await audits(),1);
+
+  const large=await count('10','6');
+  assert.equal(await status(large),'DRAFT');
+  assert.equal((await tasks.inbox(db,ctx.workspaceId,ctx.actorId)).some(n=>n.href?.includes(large)||n.sourceId?.includes?.(large)||n.actionLabel==='Review counted quantities'),true);
+  const lotChanged=await count('18','5');
+  assert.equal(await status(lotChanged),'DRAFT','a lot that differs on the phone needs the owner');
+
+  await subscribe('growth');
+  assert.equal(await status(await count('17','6')),'DRAFT','Growth does not post count differences on its own');
+  assert.deepEqual([await onHand(plain),await onHand(lot)],['18','6']);
+  assert.equal(await audits(),1);
 });
