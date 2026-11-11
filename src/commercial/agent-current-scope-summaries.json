@@ -86,7 +86,7 @@
   "116": "Calculates product and customer return rates from physically received returns and fulfilled goods.",
   "117": "Shows posted stock quantities across owned locations, including completed physical transfers.",
   "118": "Balances owned locations using their stock targets, usable costed goods, customer commitments, transfer and other holds, and dated incoming. Supports exact lots, serials, measured stock and recorded independent weights. An authorized request holds stock for separate approval and physical handling.",
-  "119": "Requests and approves whole-unit transfers within the owner’s chosen locations and unit limit. Staff still confirm physical dispatch and receipt; tracked goods and broader transfer cases remain open.",
+  "119": "Requests and approves costed transfers within the owner’s chosen routes and exact stocking-unit limit. Checks protected targets, commitments, incoming supply, lots, serials and actual weights. Moves stocked kit components where the recipe and targets call for them. Staff confirm picking, dispatch and receipt.",
   "120": "Calculates and updates the named product's location-specific reorder point and target within current authority and saved limits. Covers quantity-tracked stock.",
   "121": "Reviews whole-order warehouse availability and saved warehouse pick sequence. Split-warehouse optimization remains separate.",
   "122": "Prepares a same-warehouse move list using recent picks, available quantities and measured distance from packing. Physical bin moves remain separate.",

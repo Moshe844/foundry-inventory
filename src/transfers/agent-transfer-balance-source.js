@@ -44,14 +44,15 @@ async function locations(db,ctx,source,destination) {
 async function inbound(db, workspaceId, ids) {
   return (await db.query(`SELECT l.sku_id,coalesce(l.destination_location_id,p.destination_location_id) location_id,
     p.id,p.po_number reference,p.status,p.expected_date due,(l.quantity_units-l.quantity_received_units)::text quantity,
-    l.supplier_supply_hold_id IS NOT NULL held, NULL::text source_location_id, false balance_draft
+    l.supplier_supply_hold_id IS NOT NULL held, NULL::text source_location_id, false balance_draft, false routine_transfer
     FROM purchase_order_lines l JOIN purchase_orders p ON p.workspace_id=l.workspace_id AND p.id=l.purchase_order_id
     WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND l.quantity_units>l.quantity_received_units
     AND p.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') AND p.delivery_kind='WAREHOUSE'
     UNION ALL SELECT l.sku_id,t.destination_location_id,t.id,t.transfer_number,t.status,t.expected_arrival_date,
       (CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity WHEN 'APPROVED' THEN l.approved_quantity
        WHEN 'PICKED' THEN l.picked_quantity ELSE l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity END)::text,
-       false,t.source_location_id,t.status='REQUESTED' AND t.decision_detail::jsonb->>'kind'='agent_balance_request'
+       false,t.source_location_id,t.status='REQUESTED' AND t.decision_detail::jsonb->>'kind'='agent_balance_request',
+       t.decision_detail::jsonb->>'kind'='agent_routine_transfer'
     FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
     WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
     ORDER BY sku_id,location_id,id`,[workspaceId,ids])).rows.filter(r=>cmp(r.quantity,'0')>0);
@@ -62,8 +63,8 @@ async function snapshot(db,ctx,profiles) {
   if(!ids.length)return {today,bySku:new Map(),componentKits:new Set()};
   const positionRows = await require('../forecasting/postgres-planning-service').position(db,ctx.workspaceId,{onlySkuIds:ids});
   const incoming = await inbound(db,ctx.workspaceId,ids);
-  const stockRows = await db.query(`SELECT b.sku_id,b.location_id,b.on_hand::text,b.secondary_on_hand::text,
-      coalesce(c.quantity_units,0)::text AS costed, c.total_cost_minor,
+  const stockRows = await db.query(`SELECT b.sku_id,b.location_id,b.on_hand::text,b.secondary_on_hand::text,b.quality_held::text,
+      coalesce(c.quantity_units,0)::text AS costed, c.total_cost_minor,c.secondary_quantity_units::text AS costed_secondary,
       CASE i.tracking_mode WHEN 'lot' THEN coalesce((SELECT sum(lb.quantity) FROM lot_balances lb
         JOIN lots l ON l.workspace_id=lb.workspace_id AND l.id=lb.lot_id
         WHERE lb.workspace_id=b.workspace_id AND lb.location_id=b.location_id AND l.sku_id=b.sku_id
@@ -94,7 +95,8 @@ async function snapshot(db,ctx,profiles) {
     const target=p.planning_suppressed||!evidencedTarget?null:p.targetStock;
     const reserve=max('0',canonical(p.safetyStock),canonical(p.effectiveReorder),canonical(target));
     const position={id:p.location_id,name:p.location_name,stock,committed:canonical(holds?.committed),held:canonical(holds?.reserved),
-      free:currentFree,reserve,spare:stock&&cmp(stock.costed,stock.on_hand)===0?max('0',sub(currentFree,reserve)):'0',
+      free:currentFree,reserve,rentalHeld:canonical(holds?.rentalReserved),returnHeld:canonical(holds?.returnHeld),
+      spare:stock&&cmp(stock.costed,stock.on_hand)===0?max('0',sub(currentFree,reserve)):'0',
       target:target==null?null:canonical(target),sourceVersion:p.source_version,policyId:p.policy_id,daysOfSupply:p.daysOfSupply,
       incoming:records,datedIncoming:timely,projected:add(currentFree,timely),drafts,draftUnits,
       openProjection:add(add(currentFree,timely),draftUnits),uncertainty:records.filter(r=>!r.balance_draft&&!trustworthy(r))};
@@ -142,6 +144,9 @@ async function tracked(db,ctx,profile,from,today,maximum,previous) {
 
 async function selection(db,ctx,profile,from,maximum,today,previous=[]) {
   const skuId=profile.sku_id,weighted=Boolean(profile.secondary_unit_label);
+  if((profile.tracking_mode!=='quantity'||weighted)&&(cmp(from.stock.quality_held,'0')>0||cmp(from.rentalHeld,'0')>0))return [];
+  if(profile.tracking_mode==='serial'&&cmp(from.returnHeld,'0')>0)return [];
+  if(weighted&&cmp(from.stock.costed_secondary,from.stock.secondary_on_hand)!==0)return [];
   if(profile.tracking_mode==='quantity'){
     if(!weighted)return [{skuId,quantity:maximum}];
     // Aggregate weight describes a whole known position, not a partial pick.
@@ -174,13 +179,20 @@ function scopeKey(profile,from,to) {
   return hash([profile.sku_id,from.id,to.id,profile.tracking_mode,units.profile({},profile)]);
 }
 
-async function exactRoute(db,ctx,profile,from,to,maximum=null,provided=null,previous=[]) {
+async function exactRoute(db,ctx,profile,from,to,maximum=null,provided=null,previous=[],{routine=false,target=null}={}) {
   const f=provided||await snapshot(db,ctx,[profile]),positions=f.bySku.get(profile.sku_id)||[];
   if(f.componentKits.has(profile.sku_id))throw new ValidationError('This kit is built from components. Balance the actual stock components between locations.');
-  const source=positions.find(p=>p.id===from.id),destination=positions.find(p=>p.id===to.id);
+  const source=positions.find(p=>p.id===from.id),recorded=positions.find(p=>p.id===to.id);
+  const outstanding=routine&&recorded?recorded.uncertainty.filter(r=>r.routine_transfer&&!r.due):[];
+  const destination=recorded&&{...recorded,target:target??recorded.target,
+    openProjection:add(recorded.openProjection,sum(outstanding.map(r=>r.quantity))),
+    uncertainty:recorded.uncertainty.filter(r=>!outstanding.includes(r))};
   if(!source||!destination||destination.target===null)throw new ValidationError('Record a destination stock target and source stock before balancing this route.');
   const shortage=max('0',sub(destination.target,destination.openProjection));
-  if(destination.drafts.some(d=>d.source_location_id===from.id))throw new ValidationError('Review the existing draft for this balancing route before requesting more.');
+  if(destination.drafts.some(d=>d.source_location_id===from.id))
+    throw new ValidationError('Review the existing draft for this balancing route before requesting more.');
+  if(routine&&destination.incoming.some(d=>d.routine_transfer&&d.source_location_id===from.id))
+    throw new ValidationError('Review the existing open transfer for this route before requesting more.');
   if(destination.uncertainty.length)throw new ValidationError('Check the existing draft, held, undated or overdue incoming stock: '+destination.uncertainty.map(r=>r.reference).join(', ')+'.');
   if(cmp(shortage,'0')<=0)throw new ValidationError('Current stock, dated incoming and already prepared balancing requests cover this target.');
   if(!source.stock||cmp(source.stock.costed,source.stock.on_hand)!==0)throw new ValidationError('Reconcile the source inventory cost quantities before balancing this product.');

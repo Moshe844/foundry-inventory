@@ -38,6 +38,9 @@ const EXECUTORS=Object.freeze({
     const requested=await transfers.requestInTransaction(client,ctx,{fromLocationId:payload.sourceLocationId,
       toLocationId:payload.destinationLocationId,reference:payload.reference,idempotencyKey:payload.idempotencyKey,
       lines:[{skuId:payload.skuId,quantity:payload.quantity}]});
+    const policy=require('../commercial/agent-plan'),account=await policy.accountState(client,ctx.workspaceId);
+    if(policy.usesAgentTerms(account)&&account.plan==='growth')return {transferId:requested.id,transferNumber:requested.transfer_number,
+      status:requested.status,quantity:requested.totals.requested,physicalState:'The request holds stock for a separate approval.'};
     const approved=await transfers.approveInTransaction(client,ctx,requested.id,
       {idempotencyKey:`${payload.idempotencyKey}:approve`});
     return {transferId:approved.id,transferNumber:approved.transfer_number,status:approved.status,

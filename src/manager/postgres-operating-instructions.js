@@ -19,7 +19,7 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   supplier:{type:'string'},location:{type:'string',description:'Optional canonical location name. Omit it or use an empty string for a rule across the entire business. An omitted location is not missing information; ask only when the owner explicitly names an ambiguous location.'},sourceLocation:{type:'string'},reorderPoint:{type:'integer'},
   targetStock:{type:'integer'},safetyStock:{type:'integer'},leadTimeDays:{type:'integer'},
   unitsPerPurchaseUnit:{type:'integer'},minimumOrderQuantity:{type:'integer'},orderMultiple:{type:'integer'},
-  maximumQuantity:{type:'integer'},maximumValue:{type:'number'},weeklyValue:{type:'number'},daysOfStock:{type:'integer'},
+  maximumQuantity:{type:'number'},maximumValue:{type:'number'},weeklyValue:{type:'number'},daysOfStock:{type:'integer'},
   preferTransferBeforePurchasing:{type:'boolean'},guardMode:{type:'string',enum:['','block','warn']},
   guardComparator:{type:'string',enum:['','below','at_or_below']},guardThreshold:{type:'integer'},
   guardReleaseCondition:{type:'string',enum:['','on_order','stock_recovered','manual']},
@@ -413,11 +413,11 @@ async function applyChange(client,ctx,change){const at=nowIso();
     const id=await autonomy.replacePolicy(client,ctx,{enabled,action:transfer?autonomy.ACTIONS.TRANSFER:autonomy.ACTIONS.PURCHASE,
       name:transfer?'Taught automatic transfers':`Taught purchasing — ${change.supplierName}`,
       description:`Approved through Ask StockChief: ${change.statedAs}`,itemScope:change.skuId?[change.skuId]:[],locationScope:
-        [change.sourceLocationId,change.locationId].filter(Boolean),supplierScope:change.supplierId?[change.supplierId]:[],
+        transfer?[]:[change.sourceLocationId,change.locationId].filter(Boolean),supplierScope:change.supplierId?[change.supplierId]:[],
       conditions:transfer?['destination_stockout_risk','source_above_safety','no_conflicting_transfer']:
         ['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],
       maximumQuantity:transfer?change.maximumQuantity:null,maximumValue:transfer?null:change.maximumValue,
-      thresholds:transfer?{}:{maxValuePerWeek:change.weeklyValue}});
+      thresholds:transfer?{transferRoute:{sourceLocationId:change.sourceLocationId||null,destinationLocationId:change.locationId||null}}:{maxValuePerWeek:change.weeklyValue}});
     if(enabled)await client.query(`UPDATE workspace_autopilot SET mode='POLICY_AUTOMATED',updated_at=$2 WHERE workspace_id=$1`,
       [ctx.workspaceId,at]);return {kind:'automation_policy',id,domain:change.domain,removed:!enabled};}
   if(change.domain==='operating_preference'){const key=number(change.daysOfStock,{positive:true})!==null?'target_days_of_stock':'prefer_transfer_before_purchasing';

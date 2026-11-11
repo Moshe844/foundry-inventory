@@ -8,6 +8,7 @@ const agentPlan = require('../commercial/agent-plan');
 const { AuthorizationError } = require('../domain/errors');
 const capabilityDefinitions = require('./capabilities');
 const transfers = require('../transfers/postgres-transfer-service');
+const routineTransfers = require('../transfers/agent-routine-transfer');
 const workflows = require('../operations/postgres-business-workflows');
 const outboundMail=require('../connections/postgres-outbound-mail');
 const commercial=require('../commercial/service');
@@ -104,13 +105,16 @@ const scopeReviewSql=`EXISTS(SELECT 1 FROM operating_instruction_proposals instr
  CROSS JOIN LATERAL jsonb_array_elements(instruction.resolved_changes::jsonb) change
  WHERE instruction.workspace_id=policy.workspace_id AND applied->>'id'=policy.id
   AND change->>'domain'=applied->>'domain' AND change->>'domain' IN('purchase_authority','transfer_authority')
-  AND length(trim(COALESCE(change->>'sku','')))>0
-  AND(change->>'skuId' IS NULL OR NOT(policy.item_scope::jsonb ? (change->>'skuId'))))`;
+ AND ((length(trim(COALESCE(change->>'sku','')))>0
+   AND (change->>'skuId' IS NULL OR NOT(policy.item_scope::jsonb ? (change->>'skuId'))))
+  OR (change->>'domain'='transfer_authority' AND
+   ((change->>'sourceLocationId' IS NOT NULL AND change->>'sourceLocationId' IS DISTINCT FROM policy.thresholds::jsonb#>>'{transferRoute,sourceLocationId}')
+    OR (change->>'locationId' IS NOT NULL AND change->>'locationId' IS DISTINCT FROM policy.thresholds::jsonb#>>'{transferRoute,destinationLocationId}')))))`;
 function policyFrom(row){return {id:row.id,name:row.name,description:row.description,enabled:Boolean(Number(row.enabled)),scopeNeedsReview:Boolean(row.scope_needs_review),
   actions:parse(row.allowed_action_types,[]),itemScope:parse(row.item_scope,[]),locationScope:parse(row.location_scope,[]),supplierScope:parse(row.supplier_scope,[]),
   conditions:parse(row.conditions,[]),thresholds:parse(row.thresholds,{}),maximumQuantity:row.maximum_quantity===null?null:Number(row.maximum_quantity),
   maximumValue:row.maximum_value===null?null:Number(row.maximum_value),dailyLimit:row.daily_limit===null?null:Number(row.daily_limit),
-  version:Number(row.version),integrityHash:row.integrity_hash,approvedAt:row.approved_at,disabledAt:row.disabled_at,
+  version:Number(row.version),integrityHash:row.integrity_hash,approvedBy:row.approved_by_user_id,approvedAt:row.approved_at,disabledAt:row.disabled_at,
   active:!row.scope_needs_review&&Boolean(Number(row.enabled))&&Boolean(row.approved_at)&&!row.disabled_at&&(!parse(row.thresholds,{}).expiresAt||Date.parse(parse(row.thresholds,{}).expiresAt)>Date.now())};}
 async function listPolicies(database,workspaceId){return (await database.query(`SELECT policy.*,${scopeReviewSql} AS scope_needs_review FROM automation_policies policy WHERE workspace_id=$1
   ORDER BY created_at DESC,id`,[workspaceId])).rows.map(policyFrom);}
@@ -151,7 +155,9 @@ async function capabilityMay(database,workspaceId,capability){if(!capabilityDefi
   if(state.mode==='OBSERVE')return {allowed:false,because:'StockChief is set to watch only.'};
   if(!capabilityDefinitions.modeAllows(capability,state.mode))return {allowed:false,because:'StockChief is set to ask before acting.'};
   const row=(await database.query(`SELECT granted FROM autopilot_capabilities
-    WHERE workspace_id=$1 AND capability=$2`,[workspaceId,capability])).rows[0];
+    WHERE workspace_id=$1 AND capability=$2 AND ($3::boolean=false OR EXISTS(SELECT 1 FROM users u JOIN workspaces w
+      ON w.id=u.workspace_id AND w.owner_account_id=u.account_id WHERE u.workspace_id=$1 AND u.id=autopilot_capabilities.granted_by_user_id
+      AND u.role='owner' AND w.deletion_requested_at IS NULL))`,[workspaceId,capability,state.agentTerms&&capability==='inventory_transfers'])).rows[0];
   return Number(row?.granted)===1?{allowed:true,because:null}:{allowed:false,
     because:`Nobody has authorised StockChief to ${capabilityDefinitions.CAPABILITIES[capability].label.toLowerCase()} on its own.`};}
 
@@ -170,6 +176,10 @@ async function supplierDeliveryReadiness(database,workspaceId,supplierId){
 }
 
 async function replacePolicy(client,ctx,input){
+  if(input.action===ACTIONS.TRANSFER){
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('routine-transfer:'||$1,0))",[ctx.workspaceId]);
+    if(input.enabled)await routineTransfers.lockAuthority(client,ctx,null);
+  }
   if(input.enabled) {
     const state=await agentPlan.accountState(client,ctx.workspaceId);
     if (agentPlan.usesAgentTerms(state) || !state.plan && (state.subscribed || require('../config').commercial.requirePaidWorkspace)) {
@@ -192,7 +202,7 @@ async function replacePolicy(client,ctx,input){
     updated_at=$2 WHERE workspace_id=$1 AND id=$4`,[ctx.workspaceId,at,ctx.actorId,prior.id]);
   if(!input.enabled)return null;
   const body={allowedActionTypes:[input.action],itemScope:input.itemScope||[],locationScope:input.locationScope||[],supplierScope:input.supplierScope||[],
-    conditions:input.conditions||[],thresholds:input.thresholds||{},maximumQuantity:input.maximumQuantity??null,
+    conditions:input.conditions||[],thresholds:input.thresholds||{},maximumQuantity:input.enabled&&input.action===ACTIONS.TRANSFER?routineTransfers.unitLimit(input.maximumQuantity):input.maximumQuantity??null,
     maximumValue:input.maximumValue??null,dailyLimit:input.dailyLimit??null};const id=newId('apol');
   await client.query(`INSERT INTO automation_policies(id,workspace_id,name,description,enabled,allowed_action_types,scope,item_scope,
     location_scope,supplier_scope,exclusions,conditions,thresholds,maximum_quantity,maximum_value,daily_limit,approval_rules,version,
@@ -207,14 +217,18 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
   if(transferEnabled||purchaseEnabled)await require('../commercial/enforcement').workspace(database,ctx.workspaceId,await autonomousCapability(database,ctx.workspaceId));
   const locationScope=[...new Set((Array.isArray(input.locationIds)?input.locationIds:input.locationIds?[input.locationIds]:[]).map(String))];
   const supplierScope=[...new Set((Array.isArray(input.supplierIds)?input.supplierIds:input.supplierIds?[input.supplierIds]:[]).map(String))];
-  const maximumQuantity=transferEnabled?integer(input.maximumQuantity,'Transfer limit',{minimum:1,maximum:100000}):null;
+  const maximumQuantity=transferEnabled?routineTransfers.unitLimit(input.maximumQuantity):null;
   const maximumValue=purchaseEnabled?money(input.maximumValue,'Purchase-order limit'):null;
   const weeklyValue=purchaseEnabled?money(input.weeklyValue,'Seven-day purchasing limit'):null;
   const followUpsEnabled=purchaseEnabled&&['1','on',true].includes(input.supplierFollowUpsEnabled);
   const supplierFollowUps=followUpsEnabled?{version:1,maximum:integer(input.maximumSupplierFollowUps,'Follow-ups per order',{minimum:1,maximum:5}),intervalHours:integer(input.supplierFollowUpHours,'Hours between follow-ups',{minimum:24,maximum:720})}:null;
   if(purchaseEnabled&&!supplierScope.length)throw new ValidationError('Choose at least one usual supplier for automatic purchasing.');
-  return database.transaction(async(client)=>{if(locationScope.length){const found=await client.query(`SELECT id FROM locations
-      WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1`,[ctx.workspaceId,locationScope]);
+  return database.transaction(async(client)=>{
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('routine-transfer:'||$1,0))",[ctx.workspaceId]);
+    const previousTransfer=transferEnabled?await activePolicy(client,ctx.workspaceId,ACTIONS.TRANSFER):null;
+    const keepTransferScope=input.allowBroaderTransferRoutes!=='yes';
+    if(locationScope.length){const found=await client.query(`SELECT id FROM locations
+      WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1 AND ($3::boolean=false OR custody_agreement_id IS NULL)`,[ctx.workspaceId,locationScope,transferEnabled]);
       if(found.rows.length!==locationScope.length)throw new ValidationError('One selected location is unavailable.');}
     if(supplierScope.length){const found=await client.query(`SELECT id FROM suppliers WHERE workspace_id=$1
       AND id=ANY($2::text[]) AND status='active'`,[ctx.workspaceId,supplierScope]);
@@ -233,7 +247,10 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(expiresAt&&expiresAt<=clock.instant)throw new ValidationError('Authority must expire after today.');
     const transferId=await replacePolicy(client,ctx,{enabled:transferEnabled,action:ACTIONS.TRANSFER,name:'Routine stock balancing',
       description:'Move stock between approved locations when one can safely spare what another needs.',locationScope,
-      conditions:['destination_stockout_risk','source_above_safety','no_conflicting_transfer'],thresholds:{expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone},maximumQuantity});
+      itemScope:keepTransferScope?previousTransfer?.itemScope:[],
+      conditions:['destination_stockout_risk','source_above_safety','no_conflicting_transfer'],
+      thresholds:{expiresAt,expiresOn:input.authorityExpiresDate||null,authorityTimeZone:clock.timeZone,
+        ...(keepTransferScope&&previousTransfer?.thresholds.transferRoute?{transferRoute:previousTransfer.thresholds.transferRoute}:{})},maximumQuantity});
     const purchaseId=await replacePolicy(client,ctx,{enabled:purchaseEnabled,action:ACTIONS.PURCHASE,name:'Routine replenishment',
       description:'Approve supplier orders inside supplier, per-order and rolling seven-day limits.',supplierScope,itemScope,
       conditions:['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],
@@ -285,7 +302,7 @@ function decisionEvidence(candidate){
     return {level:'high',reason:'The supplier price, receiving location, available stock and reorder quantity are recorded.'};
   }
   if(!candidate.sourceLocationId||!candidate.destinationLocationId||![candidate.sourceAvailable,candidate.sourceSafety].every(measured)
-    ||Number(candidate.sourceAvailable)-Number(candidate.sourceSafety)<Number(candidate.quantity))
+    ||require('../transfers/agent-transfer-balance-source').cmp(require('../domain/exact-quantity').subtract(candidate.sourceAvailable,candidate.sourceSafety),candidate.quantity)<0)
     return {level:'low',reason:'Verify the source, destination and stock the source needs to keep.'};
   return {level:'high',reason:'The source and destination are known and the available stock covers the transfer and protected quantity.'};
 }
@@ -307,8 +324,13 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   const action=candidate.type==='transfer'?ACTIONS.TRANSFER:ACTIONS.PURCHASE;const policy=await activePolicy(database,workspaceId,action);
   const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
   if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
-  if(!policy){const review=(await listPolicies(database,workspaceId)).some(p=>p.enabled&&p.scopeNeedsReview&&p.actions.includes(action));return {decision:'needs_approval',reason:review?'An earlier standing rule needs review because its product restriction was not retained. No automatic action is authorized.':'No approved standing authority covers this action.',policy:null};}
-  if(policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing or transfer scope.',policy};
+  if(!policy){
+    const review=(await listPolicies(database,workspaceId)).some(p=>p.enabled&&p.scopeNeedsReview&&p.actions.includes(action));
+    const missingScope=action===ACTIONS.TRANSFER?'Review the product or route restriction on the earlier standing rule before enabling automatic work.'
+      :'An earlier standing rule needs review because its product restriction was not retained. No automatic action is authorized.';
+    return {decision:'needs_approval',reason:review?missingScope:'No approved standing authority covers this action.',policy:null};
+  }
+  if(candidate.type!=='transfer'&&policy.itemScope.length&&!policy.itemScope.includes(candidate.skuId))return {decision:'needs_approval',reason:'This product is outside the approved purchasing scope.',policy};
   if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
   if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy};
@@ -328,8 +350,11 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
     }
   }
   if(candidate.type==='transfer'){
-    if(policy.locationScope.length&&(!policy.locationScope.includes(candidate.sourceLocationId)||!policy.locationScope.includes(candidate.destinationLocationId)))
-      return {decision:'needs_approval',reason:'The transfer uses a location outside the approved scope.',policy};
+    if(!routineTransfers.inScope(policy,candidate.skuId,candidate.sourceLocationId,candidate.destinationLocationId,candidate.kitSkuId))
+      return {decision:'needs_approval',reason:'The product or directed transfer route is outside the approved scope.',policy};
+    if(agentPlan.usesAgentTerms(account)&&!candidate.exactSource)
+      return {decision:'needs_approval',reason:'Refresh the costed stock, stock units and exact physical identities for this transfer.',policy};
+    if(!Number.isFinite(policy.maximumQuantity)||policy.maximumQuantity<=0)return {decision:'needs_approval',reason:'The owner must save a positive stocking-unit limit.',policy};
     if(candidate.quantity>policy.maximumQuantity)return {decision:'needs_approval',reason:`The transfer needs ${candidate.quantity} units; the approved limit is ${policy.maximumQuantity}.`,policy};
   }else{if(!policy.supplierScope.includes(candidate.supplierId))return {decision:'needs_approval',reason:'The selected supplier is outside the approved scope.',policy};
     const supplierEmail=await capabilityMay(database,workspaceId,'supplier_emails');
@@ -365,7 +390,8 @@ async function persistPlannedWork(database,workspaceId,entries){
    priority:candidate.priority,urgency:candidate.urgency,confidence:decisionEvidence(candidate)?.level||'low',policy_id:evaluation.policy?.id||null,
    policy_evaluation:{decision:evaluation.decision,reason:evaluation.reason,policyVersion:evaluation.policy?.version||null,policyHash:evaluation.policy?.integrityHash||null},
    approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
-   idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming}).slice(0,40),
+   idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming,
+    ...(candidate.exactSource?{authorized:automatic,policyId:evaluation.policy?.id||null}:{})}).slice(0,40),
    event_detail:{automatic,reason:evaluation.reason}};});
   const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query(`INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version)
    SELECT $1,id,0 FROM unnest($2::text[]) id ORDER BY id ON CONFLICT DO NOTHING`,[workspaceId,ids]);
@@ -397,11 +423,16 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
-  const transferChoices=new Map(require('../purchasing/replenishment-decision').transferPlan(selected.flatMap(([,locations])=>locations)).map(entry=>[entry.skuId+':'+entry.destination.location_id,entry]));
+  const selectedPositions=selected.flatMap(([,locations])=>locations);
+  const exactChoices=state.agentTerms?await routineTransfers.choices(database,workspaceId,
+    selectedPositions.filter(row=>row.location_id&&row.shortage),await activePolicy(database,workspaceId,ACTIONS.TRANSFER)):null;
+  const transferChoices=exactChoices||new Map(require('../purchasing/replenishment-decision').transferPlan(selectedPositions).map(entry=>[entry.skuId+':'+entry.destination.location_id,entry]));
   for(const [,locations] of selected){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
     const needed=require('../purchasing/replenishment-decision').requiredUnits(shortage);if(!needed&&!shortage.default_order_quantity){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'replenishment_quantity_required'});continue;}
     const transfer=transferChoices.get(shortage.sku_id+':'+shortage.location_id),source=transfer?.source;let candidate;
-    if(transfer){const quantity=transfer.quantity;
+    if(transfer?.reason){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:transfer.reason});continue;}
+    if(exactChoices&&transfer)candidate=transfer;
+    else if(transfer){const quantity=transfer.quantity;
       candidate={type:'transfer',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity,sourceLocationId:source.location_id,sourceLocationName:source.location_name,
         destinationLocationId:shortage.location_id,destinationLocationName:shortage.location_name,destinationAvailable:shortage.available,
@@ -494,20 +525,26 @@ async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped
     subject:`Purchase order ${purchase.poNumber}`,body},`work:${item.id}:supplier-order`);
 }
 
-async function execute(database,ctx,workId,{approvedBy=null}={}){
+async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
   return database.transaction(async(client)=>{const scoped=scopedDatabase(client);
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended('account-purchase:'||owner_account_id,0)) FROM workspaces WHERE id=$1",[ctx.workspaceId]);
   await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId);
   await client.query('SELECT id FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,workId]);
   const item=await getWork(scoped,ctx.workspaceId,workId);
-  if(item.execution_status===STATUSES.COMPLETED)return item;if(![STATUSES.AUTHORIZED,STATUSES.WAITING].includes(item.execution_status))
+  if(item.execution_status===STATUSES.COMPLETED||worker&&item.execution_status!==STATUSES.AUTHORIZED)return item;
+  if(![STATUSES.AUTHORIZED,STATUSES.WAITING].includes(item.execution_status))
     throw new ValidationError('That work is not ready to execute.');if(item.approval_requirement!=='NONE'&&!approvedBy)
     throw new ValidationError('This work needs a person to approve it.');
   if(item.approval_requirement==='NONE'){
+    if(item.recommendedAction.type==='transfer'){
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('routine-transfer:'||$1,0))",[ctx.workspaceId]);
+      await routineTransfers.lockAuthority(client,ctx,item.policy_id);
+    }
     await require('./circuit-breaker').refresh(client,ctx.workspaceId);
     const currentState=await getState(scoped,ctx.workspaceId);const currentEvaluation=await evaluate(scoped,ctx.workspaceId,item.recommendedAction,currentState);
     if(currentEvaluation.decision!=='authorized'||currentEvaluation.policy?.id!==item.policy_id||
-      currentEvaluation.policy?.integrityHash!==item.policyEvaluation.policyHash){
+      currentEvaluation.policy?.integrityHash!==item.policyEvaluation.policyHash||
+      item.recommendedAction.type==='transfer'&&currentEvaluation.policy?.approvedBy!==ctx.actorId){
       await client.query(`UPDATE work_items SET approval_requirement='REQUIRED',execution_status='WAITING_FOR_APPROVAL',
         policy_evaluation=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,item.id,JSON.stringify(currentEvaluation)]);
       return getWork(scoped,ctx.workspaceId,item.id);
@@ -529,19 +566,37 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       account.plan==='growth' && account.terms.offerId==='agent-v3'?'automation.trusted_purchasing':'automation.purchasing');
     if(chargeAutomatic)await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
       detail:{operation:'autopilot_action',workId:item.id}});}
-  await revalidate(scoped,ctx.workspaceId,item.recommendedAction);const at=nowIso();
+  const action=item.recommendedAction;
+  let exactTransfer=null;
+  if(action.type==='transfer'&&action.exactSource){
+    try{exactTransfer=await routineTransfers.currentPlan(client,ctx,action);}
+    catch(error){
+      if(!(error instanceof ValidationError)||!automatic)throw error;
+      await client.query(`UPDATE work_items SET approval_requirement='REQUIRED',execution_status='WAITING_FOR_APPROVAL',error_message=$3
+        WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,item.id,error.message]);
+      return getWork(scoped,ctx.workspaceId,item.id);
+    }
+  }else await revalidate(scoped,ctx.workspaceId,action);
+  const at=nowIso();
   await client.query(`UPDATE work_items SET execution_status='EXECUTING',approved_by_user_id=COALESCE(approved_by_user_id,$3),
     approved_at=COALESCE(approved_at,$4),attempts=attempts+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,workId,approvedBy,at]);
-  const action=item.recommendedAction;let result;if(action.type==='transfer'){
+  let result;if(action.type==='transfer'){
       const requested=await transfers.requestInTransaction(client,ctx,{fromLocationId:action.sourceLocationId,
         toLocationId:action.destinationLocationId,reference:`AUTO-${item.id}`,
         notes:`StockChief: ${item.policyEvaluation.reason}`,idempotencyKey:`work:${item.id}:transfer-request`,
-        decisionDetail:{workItemId:item.id,policyEvaluation:item.policyEvaluation},
-        lines:[{skuId:action.skuId,quantity:action.quantity}]});
+        decisionDetail:{workItemId:item.id,policyEvaluation:item.policyEvaluation,
+          ...(exactTransfer?{kind:automatic?'agent_routine_transfer':'agent_reviewed_transfer',sourceFingerprint:exactTransfer.fingerprint,
+            quantity:exactTransfer.quantity,unit:exactTransfer.unit,kitSkuId:exactTransfer.kitSkuId||null}: {})},
+        lines:exactTransfer?.lines||[{skuId:action.skuId,quantity:action.quantity}]});
+      if(effectState.agentTerms&&effectState.plan==='growth'){
+        result={kind:'transfer',transferId:requested.id,transferNumber:requested.transfer_number,
+          status:requested.status,quantity:action.quantity,verified:true,physicalExecutionPending:true};
+      }else{
       const approved=await transfers.approveInTransaction(client,ctx,requested.id,
         {idempotencyKey:`work:${item.id}:transfer-approve`});
       result={kind:'transfer',transferId:approved.id,transferNumber:approved.transfer_number,
         status:approved.status,quantity:action.quantity,verified:true,physicalExecutionPending:true};
+      }
     }else{const purchase=await workflows.createPurchaseOrder(scoped,ctx,{supplierId:action.supplierId,
       destinationLocationId:action.destinationLocationId,currency:action.currency,source:'foundry_recommendation',
       sourceDetail:{workItemId:item.id,evidence:item.sourceEvidence},lines:[{skuId:action.skuId,quantityUnits:action.quantity,
@@ -618,7 +673,22 @@ async function reconcileSupplierFollowThrough(database,workspaceId,{actorId=null
 async function run(database,ctx,options={}){const followThrough=await reconcileSupplierFollowThrough(database,ctx.workspaceId,{actorId:ctx.actorId});
   const planned=await plan(database,ctx.workspaceId,options);let executed=0;
   for(const item of planned.created.filter((entry)=>entry.approval_requirement==='NONE')){
-    const completed=await execute(database,ctx,item.id);if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
+    const completed=item.recommendedAction.exactSource?await database.transaction(async c=>{
+      await c.query('SAVEPOINT routine_transfer');
+      try {
+        const done=await execute(scopedDatabase(c),ctx,item.id,{worker:true});
+        await c.query('RELEASE SAVEPOINT routine_transfer');
+        return done;
+      } catch(error) {
+        if(!['validation_error','entitlement_required','forbidden','not_found'].includes(error.code))throw error;
+        await c.query('ROLLBACK TO SAVEPOINT routine_transfer');
+        await c.query('RELEASE SAVEPOINT routine_transfer');
+        await c.query(`UPDATE work_items SET approval_requirement='REQUIRED',execution_status='WAITING_FOR_APPROVAL',error_message=$3
+          WHERE workspace_id=$1 AND id=$2 AND execution_status='AUTHORIZED'`,[ctx.workspaceId,item.id,error.message]);
+        return getWork(c,ctx.workspaceId,item.id);
+      }
+    },{isolation:'SERIALIZABLE',retrySafe:true}):await execute(database,ctx,item.id);
+    if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
   }
   // A large catalogue is planned in many SKU pages. Receipt work has its own
   // bounded batch and runs once per evaluation, rather than on every SKU page.
