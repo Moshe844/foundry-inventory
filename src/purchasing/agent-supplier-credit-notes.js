@@ -43,10 +43,13 @@ async function readNote(db, ctx, row) {
       || original.supplier_id !== row.supplier_id || original.trust_status !== 'TRUSTED') {
     throw new ValidationError('The original note or its verified supplier changed. Recheck the saved source.');
   }
-  const key = row.source_upload_id ? require('./supplier-invoice-uploads').key(original)
-    : 'attachment:' + original.id + ':' + original.content_hash;
-  const paid = (await db.query(`SELECT 1 FROM commercial_usage_events WHERE workspace_id=$1 AND meter='agent_documents'
-    AND idempotency_key=$2 AND status='COMMITTED'`, [ctx.workspaceId, key])).rows[0];
+  const scope = await require('../commercial/entitlements').ownerScopeForWorkspace(db, ctx.workspaceId);
+  const paid = row.source_upload_id
+    ? (await db.query(`SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2
+        AND meter='agent_documents' AND idempotency_key=$3 AND status='COMMITTED' AND units>=1`,
+      [scope.accountId, ctx.workspaceId, require('./supplier-invoice-uploads').key(original)])).rowCount
+    : (await require('../documents/source-read-receipts').readReceipts(db, scope, original.content_hash, { lock:false }))
+      .some(receipt=>receipt.status==='COMMITTED');
   if (!paid) throw new ValidationError('This original has no completed document reading. Recheck it in Supplier invoices.');
   const confirmed = row.reviewed_by === ctx.actorId && row.document?.ownerConfirmedSource === row.source_hash;
   const parser = require('./supplier-invoice-source-parser');
