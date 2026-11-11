@@ -297,9 +297,14 @@
   </dialog>
   <% } %>
 </div>
-<% if(locals.linkResponses?.length){ %><section class="card"><h2>Supplier responses</h2><ul>
+<% if(locals.linkResponses?.length){ const dates=locals.shipDates||[]; const savedShipDates=new Set(dates.map(entry=>entry.source_id)); %><section class="card"><h2>Supplier responses</h2>
+<% if(dates.length){ %><p>Supplier-confirmed ship date <strong><%= helpers.shortDate(dates[0].ship_date) %></strong>.</p><% } %><ul>
 <% linkResponses.forEach(reply=>{ %><li><%= helpers.dateTime(reply.created_at) %> ·
-<% if(reply.kind==='confirm'){ %>Order confirmed<% }else if(reply.kind==='date'){ %>Delivery date proposed<% }else if(reply.kind==='amendment'){ %>
+<% if(reply.kind==='confirm'){ %>Order confirmed<% if(reply.ship_date){ %> · Planned ship date <%= helpers.shortDate(reply.ship_date) %>
+  <% if(permissions.supplierConfirmations){ %> · <% if(savedShipDates.has(reply.id)){ %><a href="/autopilot/supplier-confirmations?sourceId=<%= reply.id %>">Review confirmation authority</a>
+    <% }else{ %><a href="/autopilot/supplier-confirmations/source/<%= reply.id %>">Review ship date</a><% } %>
+  <% }else if(!savedShipDates.has(reply.id)){ %> · <span class="badge">Growth</span> Ship-date recording <a href="/billing">Upgrade</a><% } %>
+<% } %><% }else if(reply.kind==='date'){ %>Delivery date proposed<% }else if(reply.kind==='amendment'){ %>
   <% if(permissions.supplierAmendments){ %><a href="/autopilot/po-delivery-dates/<%= reply.id %>">Review supplier purchase changes</a><% }else{ %>Supplier purchase changes received<% } %>
 <% }else if(reply.kind==='unavailable'){ %>Supplier reported unavailable
   <% const reported=reply.notices||[]; const originalEmail=reported.find(notice=>notice.original_email_id)?.original_email_id; if(originalEmail){ %> · <a href="/mail/<%= originalEmail %>">Open original supplier email</a><% } %>

@@ -1,0 +1,15 @@
+<div class="page-head"><div class="titles"><h1>Review supplier ship date</h1>
+  <p><%= source.supplier_name %> confirmed purchase <strong><%= source.po_number %></strong>.</p>
+</div></div>
+<section class="card section">
+  <p>Original supplier confirmation received <%= helpers.dateTime(source.created_at) %>.</p>
+  <p>Supplier’s planned ship date <strong><%= helpers.shortDate(source.ship_date) %></strong>.</p>
+  <p>Recorded warehouse arrival <strong><%= source.arrival_date?helpers.shortDate(source.arrival_date):'No arrival date recorded' %></strong>.</p>
+  <% if(source.arrival_date&&source.ship_date>source.arrival_date){ %><p class="notice">The ship date is later than the recorded warehouse arrival. Review the delivery promise separately.</p><% } %>
+  <form method="post" action="/autopilot/supplier-confirmations/source/<%= source.id %>" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="fingerprint" value="<%= source.reviewFingerprint %>">
+    <label><input type="checkbox" name="confirmed" value="yes" required> I checked the exact supplier ship date on this original confirmation.</label>
+    <button class="btn btn--primary" type="submit">Record supplier ship date</button>
+  </form>
+</section>

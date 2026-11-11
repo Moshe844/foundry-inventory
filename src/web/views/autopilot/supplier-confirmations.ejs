@@ -1,0 +1,41 @@
+<div class="page-head"><div class="titles"><h1>Supplier confirmations</h1>
+  <p>Request an outstanding purchase confirmation and record the planned ship date separately from warehouse arrival.</p>
+</div></div>
+<% if(!allowed){ %><section class="notice"><span class="badge">Growth</span> Supplier confirmation routines require Growth, Pro or Custom. <a class="btn" href="/billing">Upgrade</a></section><% } %>
+<% if(shadow){ %><p class="notice">Routine reminders start after the initial watch period and your authorization.</p><% } %>
+<% if(allowed){ %>
+  <% if(problem){ %><p class="notice"><%= problem %></p><% } %>
+  <% if(!supplier&&!selected){ %><section class="card section"><h2>Choose a supplier</h2><form method="get" action="<%= path %>" class="form-stack">
+    <label>Exact supplier name <input name="supplierName" maxlength="240" required></label><button class="btn">Review supplier</button>
+  </form></section><% } %>
+  <% if(supplier){ %><section class="card section"><h2><%= supplier.name %></h2>
+    <% if(!supplier.email||!mailboxes.length){ %><p>Record the supplier’s purchase email and connect a sending mailbox first.</p><% }else{ %>
+    <p>Send confirmation requests to <strong><%= supplier.email %></strong>.</p>
+    <% if(plan==='growth'&&!examples.length){ %><p class="notice">Record one original confirmation for a purchase sent through your selected mailbox. Then return here to approve it as the matching example.</p><% } %>
+    <form method="post" action="<%= path %><%= selected?'/rules/'+selected.id:'' %>" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="supplierId" value="<%= supplier.id %>">
+      <input type="hidden" name="expectedRecipient" value="<%= supplier.email %>">
+      <% if(selected){ %><input type="hidden" name="revision" value="<%= selected.revision %>"><% } %>
+      <label>Sending mailbox <select name="connectorId" required><option value="">Choose the mailbox</option><% for(const box of mailboxes){ %>
+        <option value="<%= box.id %>" <%= selected?.connector_id===box.id?'selected':'' %>><%= [box.display_name,box.provider_account_name].filter(Boolean).join(' · ') %></option><% } %></select></label>
+      <% if(plan==='growth'){ %><label>Matching recorded example <select name="exampleId" required><option value="">Choose one confirmed purchase</option><% for(const example of examples){ %>
+        <option value="<%= example.source_id %>" <%= exampleId===example.source_id?'selected':'' %>><%= example.po_number %> · <%= example.ship_date %> · <%= example.display_name %></option><% } %></select></label><% } %>
+      <label>Maximum confirmation requests per purchase <input type="number" name="maximumMessages" min="1" max="5" step="1" value="<%= selected?.maximum_messages??'' %>" required></label>
+      <label>Minimum hours between requests <input type="number" name="intervalHours" min="24" max="720" step="1" value="<%= selected?.interval_hours??'' %>" required></label>
+      <label>Maximum days ahead for a routine ship date <input type="number" name="maximumShipDays" min="0" max="365" step="1" value="<%= selected?.maximum_ship_days??'' %>" required></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I authorize confirmation requests and ship-date recording for this supplier within these limits.</label>
+      <button class="btn btn--primary" <%= plan==='growth'&&!examples.length?'disabled':'' %>>Authorize supplier confirmations</button>
+    </form><% } %>
+  </section><% } %>
+<% } %>
+<section class="card section"><h2>Saved rules</h2>
+  <% if(!rules.length){ %><p>No supplier confirmation rules yet.</p><% } %>
+  <% for(const rule of rules){ %><article class="section"><h3><a href="<%= path %>/rules/<%= rule.id %>"><%= rule.supplier_name %></a></h3>
+    <p><%= rule.enabled?'Authorized':'Stopped' %> · <%= rule.recipient %> · <%= rule.mailbox_name %> · <%= rule.maximum_messages %> requests per purchase.</p>
+    <% if(rule.enabled){ %><form method="post" action="<%= path %>/rules/<%= rule.id %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+      <button class="btn" type="submit" name="stop" value="yes">Stop future confirmations</button></form><% } %>
+  </article><% } %>
+  <% if(pageNumber>1){ %><a class="btn" href="<%= path %>?page=<%= pageNumber-1 %>">Previous</a><% } %>
+  <% if(more){ %><a class="btn" href="<%= path %>?page=<%= pageNumber+1 %>">Next</a><% } %>
+</section>

@@ -1,7 +1,7 @@
 'use strict';
-const {createHash}=require('node:crypto'),{hash}=require('../pricing/postgres-promotions'),policy=require('../commercial/agent-plan'),{ValidationError,NotFoundError}=require('../domain/errors');
+const {hash}=require('../pricing/postgres-promotions'),policy=require('../commercial/agent-plan'),{ValidationError,NotFoundError}=require('../domain/errors');
 const owner=require('./supplier-email-terms-source').owner;
-const sha=value=>createHash('sha256').update(value).digest('hex'),instant=value=>new Date(value).getTime();
+const instant=value=>new Date(value).getTime();
 const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
 async function currentSnapshot(db,workspaceId,orderId){
  return (await db.query(`SELECT po.expected_date,po.status,${orderSnapshotSql} AS snapshot
@@ -16,6 +16,7 @@ function scope(p){return {supplierId:p.supplierId,supplierEmail:p.supplierEmail,
 async function facts(db,ctx,id){
  await owner(db,ctx);await policy.requireWorkspaceJob(db,ctx.workspaceId,31,'draft');
  const r=(await db.query(`SELECT r.id,r.kind,r.expected_date::text AS proposed_date,r.fingerprint,r.amendment,r.created_at,r.created_at::text AS received_text,l.token_hash,l.recipient,l.expires_at,
+  to_jsonb(r)->>'ship_date' AS ship_date,to_jsonb(r)->>'availability_generation' AS availability_generation,
   po.id AS order_id,po.po_number,po.supplier_id,po.destination_location_id,loc.name AS destination_name,po.currency,po.expected_date::text AS current_date,po.status,po.updated_at,
   to_jsonb(po)-'updated_at'-'expected_date' AS order_profile,${orderSnapshotSql} AS order_snapshot_hash,v.captured_expected_date,v.captured_order_profile_hash,
   v.processed_at,v.source_snapshot,v.instruction_hash,s.name AS supplier_name,s.email AS supplier_email,s.status AS supplier_status
@@ -28,7 +29,7 @@ async function facts(db,ctx,id){
  const commercial=r.kind==='amendment';
  const valid=commercial
   ?r.amendment?.changes?.length&&r.fingerprint===require('./po-amendment-link').tokenFingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision,r.amendment.mail)
-  :['date','confirm'].includes(r.kind)&&r.proposed_date&&r.fingerprint===sha(r.kind+'|'+r.proposed_date);
+  :['date','confirm'].includes(r.kind)&&r.proposed_date&&r.fingerprint===require('./supplier-order-link').responseFingerprint(r.kind,r.proposed_date,r.ship_date,r.availability_generation);
  if(!valid)throw new ValidationError('Review the original supplier response. Its exact submitted terms could not be verified.');
  const instructionHash=hash({token:r.token_hash,fingerprint:r.fingerprint,kind:r.kind,date:r.proposed_date,receivedAt:r.received_text});
  if(commercial&&r.processed_at){

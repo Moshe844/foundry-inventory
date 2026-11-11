@@ -40,7 +40,7 @@ function router(db){
     res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment?saved=1');
   }));
   router.post('/supplier/order/:token/respond',asyncRoute(async(req,res)=>{
-    await link.submit(db,req.params.token,req.body.kind,req.body.date);
+    await link.submit(db,req.params.token,req.body.kind,req.body.date,{shipDate:req.body.shipDate||null});
     res.redirect(303,'/supplier/order/'+req.params.token+'?saved=1');
   }));
   router.post('/supplier/order/:token/unavailable',asyncRoute(async(req,res)=>{

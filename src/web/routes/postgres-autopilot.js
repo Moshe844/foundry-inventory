@@ -18,6 +18,30 @@ function createPostgresAutopilotRouter(database,options={}){
   const reviews=require('../../autopilot/job-reviews');
   const policy=require('../../commercial/agent-plan');
   const chases=require('../../purchasing/agent-supplier-delivery-chases');
+  const confirmations=require('../../purchasing/agent-supplier-ship-promises');
+  const confirmationPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/supplier-confirmations',{
+    title:'Supplier confirmations',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},
+    ...await confirmations.page(database,req.ctx,{...req.query,id:req.params.id})});
+  router.get('/autopilot/reviews/supplier-confirmations',requireAuth,owner,(_req,res)=>res.redirect(303,confirmations.path));
+  router.get(confirmations.path,requireAuth,owner,asyncRoute(confirmationPage));
+  router.get(confirmations.path+'/rules/:id',requireAuth,owner,asyncRoute(confirmationPage));
+  for(const route of [confirmations.path,confirmations.path+'/rules/:id'])router.post(route,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await confirmations.configure(database,req.ctx,{...req.body,id:req.params.id});
+    req.flash('success',result.stopped?'Future supplier confirmations are stopped.':'Supplier confirmation authority saved.');
+    res.redirect(303,confirmations.path+'/rules/'+result.id);
+  }));
+  router.get(confirmations.path+'/source/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await confirmations.review(database,req.ctx,req.params.id);
+    if(source.replayed)return res.redirect(303,'/purchasing/orders/'+source.purchase_order_id);
+    res.set('Cache-Control','private, no-store').page('autopilot/supplier-ship-date',{title:'Review supplier ship date',nav:'purchasing',source,
+      backTo:{href:'/purchasing/orders/'+source.purchase_order_id,label:'Purchase order'}});
+  }));
+  router.post(confirmations.path+'/source/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes')throw new ValidationError('Confirm the exact supplier ship date before saving it.');
+    const saved=await confirmations.record(database,req.ctx.workspaceId,req.params.id,{ctx:req.ctx,expectedFingerprint:req.body.fingerprint});
+    req.flash('success','The supplier ship date is recorded.');
+    res.redirect(303,'/purchasing/orders/'+saved.purchaseOrderId);
+  }));
   const chasePage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/supplier-delivery-chases',{
     title:'Late supplier delivery reminders',nav:'autopilot',backTo:req.params.id?{href:chases.path,label:'Supplier reminders'}:{href:'/autopilot/reviews',label:'Agent reviews'},
     ...await chases.page(database,req.ctx,{...req.query,id:req.params.id})});

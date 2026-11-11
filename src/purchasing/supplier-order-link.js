@@ -4,6 +4,8 @@ const crypto=require('node:crypto');
 const {ValidationError,NotFoundError}=require('../domain/errors');
 const {newId,nowIso}=require('../lib/util');
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
+const responseFingerprint=(kind,date,shipDate=null,generation=null)=>hash(kind+'|'+(date||'')+
+  (shipDate?'|ship:'+shipDate:'')+(generation?'|'+generation:''));
 
 async function issue(client,workspaceId,orderId,recipient,origin) {
   if(!origin) throw new ValidationError('Set the public StockChief address before emailing a supplier order.');
@@ -34,7 +36,7 @@ async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=
   return order;
 }
 
-async function submit(db,token,kind,value){
+async function submit(db,token,kind,value,{shipDate=null}={}){
   if(!['confirm','date','invoice','ship-notice'].includes(kind)) throw new ValidationError('Choose a valid response.');
   const file=['invoice','ship-notice'].includes(kind), date=file?null:value||null;
   if(file && (!Buffer.isBuffer(value) || value.length>4*1024*1024 || value.subarray(0,5).toString()!=='%PDF-'))
@@ -42,19 +44,21 @@ async function submit(db,token,kind,value){
   if(kind==='date' && !date) throw new ValidationError('Enter the proposed delivery date.');
   if(date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date))
     throw new ValidationError('Enter a valid delivery date.');
+  if(shipDate&&(kind!=='confirm'||!require('./supplier-unavailability-mail-parser').validDate(shipDate)))
+    throw new ValidationError('Use Confirm this order to send a valid planned ship date.');
   return db.transaction(async client=>{
     const order=await lookup(client,token,true,{includeCompleted:true});
-    const unavailable=kind==='confirm'&&!date?(await client.query(`SELECT r.id FROM stockchief_runtime.supplier_link_submissions r
+    const unavailable=kind==='confirm'&&(!date||shipDate)?(await client.query(`SELECT r.id FROM stockchief_runtime.supplier_link_submissions r
       JOIN stockchief_runtime.supplier_order_links l ON l.workspace_id=r.workspace_id AND l.token_hash=r.token_hash
       WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind='unavailable' ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,
     [order.workspace_id,order.id])).rows[0]:null;
-    const digest=hash(kind+'|'+(file?hash(value):date||'')+(unavailable?'|'+unavailable.id:'')),id=newId('supplierreply');
+    const digest=responseFingerprint(kind,file?hash(value):date,shipDate,unavailable?.id),id=newId('supplierreply');
     const existing=await client.query('SELECT 1 FROM stockchief_runtime.supplier_link_submissions WHERE token_hash=$1 AND fingerprint=$2',[order.token_hash,digest]);
     if(existing.rowCount) return {saved:true};
     if(file) await require('../commercial/storage-capacity').reserve(client,order.workspace_id,'supplier-file:'+id,value.length,{finished:true});
-    const saved=await client.query(`INSERT INTO stockchief_runtime.supplier_link_submissions(id,token_hash,kind,expected_date,contents,fingerprint,workspace_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(token_hash,fingerprint) DO NOTHING RETURNING id`,
-      [id,order.token_hash,kind,date,file?value:null,digest,order.workspace_id]);
+    const saved=await client.query(`INSERT INTO stockchief_runtime.supplier_link_submissions(id,token_hash,kind,expected_date,contents,fingerprint,workspace_id${shipDate?',ship_date,availability_generation':''})
+      VALUES($1,$2,$3,$4,$5,$6,$7${shipDate?',$8,$9':''}) ON CONFLICT(token_hash,fingerprint) DO NOTHING RETURNING id`,
+      [id,order.token_hash,kind,date,file?value:null,digest,order.workspace_id,...(shipDate?[shipDate,unavailable?.id||null]:[])]);
     if(!saved.rowCount) return {saved:true};
     if(file) {
       const count=await client.query('SELECT count(*) AS n FROM stockchief_runtime.supplier_link_submissions WHERE token_hash=$1 AND contents IS NOT NULL',[order.token_hash]);
@@ -62,14 +66,15 @@ async function submit(db,token,kind,value){
 
     }
     await client.query(`INSERT INTO purchase_order_events(id,workspace_id,purchase_order_id,event,detail,created_at)
-      VALUES($1,$2,$3,$4,$5,$6)`,[newId('poevt'),order.workspace_id,order.id,'supplier_link_'+kind,JSON.stringify({submission:id,expectedDate:date}),nowIso()]);
+      VALUES($1,$2,$3,$4,$5,$6)`,[newId('poevt'),order.workspace_id,order.id,'supplier_link_'+kind,JSON.stringify({submission:id,expectedDate:date,...(shipDate?{shipDate}:{})}),nowIso()]);
     if(!file&&date)await require('./agent-po-delivery-dates').enqueue(client,order.workspace_id,id);
+    if(shipDate)await require('./agent-supplier-ship-promises').enqueue(client,order.workspace_id,id);
     return {saved:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function responses(db,workspaceId,orderId){
-  const rows=(await db.query(`SELECT r.id,r.kind,r.expected_date::text,r.created_at FROM stockchief_runtime.supplier_link_submissions r
+  const rows=(await db.query(`SELECT r.id,r.kind,r.expected_date::text,to_jsonb(r)->>'ship_date' AS ship_date,r.created_at FROM stockchief_runtime.supplier_link_submissions r
     JOIN stockchief_runtime.supplier_order_links l USING(token_hash)
     WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY r.created_at DESC,r.id`,[workspaceId,orderId])).rows;
   const unavailable=rows.filter(row=>row.kind==='unavailable').map(row=>row.id);
@@ -86,4 +91,4 @@ async function responses(db,workspaceId,orderId){
   }
   return rows.map(row=>({...row,notices:byId.get(row.id)||[]}));
 }
-module.exports={issue,lookup,submit,responses};
+module.exports={issue,lookup,submit,responses,responseFingerprint};
