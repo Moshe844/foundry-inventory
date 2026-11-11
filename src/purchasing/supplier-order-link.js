@@ -5,7 +5,6 @@ const {ValidationError,NotFoundError}=require('../domain/errors');
 const {newId,nowIso}=require('../lib/util');
 const policy=require('../commercial/agent-plan');
 const shareStatuses=['APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED'];
-const hasEmail=email=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email||'');
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const responseFingerprint=(kind,date,shipDate=null,generation=null)=>hash(kind+'|'+(date||'')+
   (shipDate?'|ship:'+shipDate:'')+(generation?'|'+generation:''));
@@ -17,12 +16,12 @@ async function issue(client,workspaceId,orderId,recipient,origin) {
     throw new ValidationError('Configure a secure public address for supplier links.');
   const token=crypto.randomBytes(32).toString('base64url');
   await client.query(`INSERT INTO stockchief_runtime.supplier_order_links(token_hash,workspace_id,purchase_order_id,recipient,expires_at)
-    VALUES($1,$2,$3,$4,now()+interval '90 days')`,[hash(token),workspaceId,orderId,recipient.toLowerCase()]);
+    VALUES($1,$2,$3,$4,now()+interval '90 days')`,[hash(token),workspaceId,orderId,(recipient||'').toLowerCase()]);
   return new URL('/supplier/order/'+token,base.origin).href;
 }
 
-function canShare(state,status,email,origin){
-  return Boolean(origin&&hasEmail(email)&&shareStatuses.includes(status)&&
+function canShare(state,status,origin){
+  return Boolean(origin&&shareStatuses.includes(status)&&
     policy.usesAgentTerms(state)&&policy.permits(state.plan,35,'draft'));
 }
 
@@ -36,7 +35,6 @@ async function share(db,ctx,orderId,origin){
       FOR UPDATE OF po,s`,[ctx.workspaceId,orderId])).rows[0];
     if(!order)throw new NotFoundError('This purchase order or its active supplier was not found.');
     if(!shareStatuses.includes(order.status))throw new ValidationError('Approve the purchase order before sharing its supplier response link.');
-    if(!hasEmail(order.email))throw new ValidationError('Add the supplier’s email address before sharing its response link.');
     await require('./dual-approval').guardOrderMessage(client,ctx.workspaceId,order.id);
     const url=await issue(client,ctx.workspaceId,order.id,order.email,origin);
     return {orderNumber:order.po_number,supplierName:order.supplier_name,supplierEmail:order.email,url};
@@ -51,7 +49,7 @@ async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=
     JOIN purchase_orders po ON po.id=l.purchase_order_id AND po.workspace_id=l.workspace_id
     JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
     JOIN workspaces w ON w.id=po.workspace_id
-    WHERE l.token_hash=$1 AND l.expires_at>now() AND lower(s.email)=l.recipient
+    WHERE l.token_hash=$1 AND l.expires_at>now() AND coalesce(lower(s.email),'')=l.recipient
       AND s.status='active' AND w.deletion_requested_at IS NULL
       AND (po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') OR
         $2::boolean AND po.status='RECEIVED' AND to_jsonb(po)->>'delivery_kind'='CUSTOMER_DIRECT' OR

@@ -44,10 +44,13 @@ test('the supplier portal routes the original PDF into exact invoice matching on
   const phone=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
   const errors=[];
   phone.on('pageerror',error=>errors.push(error.message));
+  let uploadCsrf;
   async function upload(path,bytes,kind='invoice'){
-    const page=await supplier.get(path).expect(200);
-    const token=/data-csrf="([^"]+)"/.exec(page.text)[1];
-    return supplier.post(path+'/file/'+kind).set('X-CSRF-Token',token).set('Content-Type','application/pdf').send(bytes).expect(200);
+    if(!uploadCsrf){
+      const page=await supplier.get(path).expect(200);
+      uploadCsrf=/data-csrf="([^"]+)"/.exec(page.text)[1];
+    }
+    return supplier.post(path+'/file/'+kind).set('X-CSRF-Token',uploadCsrf).set('Content-Type','application/pdf').send(bytes).expect(200);
   }
   for(const plan of ['starter','growth','pro','enterprise']){
     await f.subscribe(plan);
@@ -56,10 +59,13 @@ test('the supplier portal routes the original PDF into exact invoice matching on
     const path=await share(order);
     if(plan==='starter')await db.query('UPDATE workspace_connectors SET paused_at=NULL WHERE id=$1',[f.connector]);
     const open=await supplier.get(path).expect(200);
-    const reply=(kind,date)=>supplier.post(path+'/respond').type('form').send({_csrf:f.csrf(open.text),kind,date});
+    const reply=(kind,date,shipDate)=>supplier.post(path+'/respond').type('form').send({_csrf:f.csrf(open.text),kind,date,shipDate});
     await reply('confirm','').expect(303);
-    await reply('date','2040-01-14').expect(303);
-    assert.deepEqual((await links.responses(db,ctx.workspaceId,order.purchaseOrderId)).map(response=>response.kind).sort(),['confirm','date']);
+    await reply('date','2040-01-14','2040-01-10').expect(303);
+    const responses=await links.responses(db,ctx.workspaceId,order.purchaseOrderId);
+    assert.deepEqual(responses.map(response=>response.kind).sort(),['confirm','date']);
+    assert.equal(responses.find(response=>response.kind==='date').expected_date,'2040-01-14');
+    assert.equal(responses.find(response=>response.kind==='date').ship_date,null);
     await f.workflows.receivePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID(),
       lines:[{lineId:order.lineIds[0],quantity:2,locationId:f.location.id}]});
     await reply('date','2040-01-15').set('Accept','application/json').expect(404);
@@ -99,6 +105,14 @@ test('the supplier portal routes the original PDF into exact invoice matching on
     assert.match(page.text,/Open invoice match/);
     const downloaded=await f.browser.get('/autopilot/supplier-invoice-uploads/'+uploadId+'/original').expect(200);
     assert.deepEqual(downloaded.body,buffer);
+    const notice=await pdf('Ship notice for '+order.poNumber);
+    await upload(path,notice,'ship-notice');
+    await upload(path,notice,'ship-notice');
+    const notices=(await links.responses(db,ctx.workspaceId,order.purchaseOrderId)).filter(response=>response.kind==='ship-notice');
+    assert.equal(notices.length,1);
+    const originalNotice=await f.browser.get('/purchasing/orders/'+order.purchaseOrderId+'/supplier-files/'+notices[0].id).expect(200);
+    assert.deepEqual(originalNotice.body,notice);
+    assert.equal(await work(portal.kind),null);
     const usage=(await db.query(`SELECT status,units FROM commercial_usage_events WHERE workspace_id=$1 AND meter='agent_documents' AND idempotency_key LIKE $2`,
       [ctx.workspaceId,'supplier-invoice-upload:'+uploadId+':%'])).rows;
     assert.deepEqual(usage.map(event=>[event.status,Number(event.units)]),[['COMMITTED',1]]);
@@ -122,6 +136,18 @@ test('the supplier portal routes the original PDF into exact invoice matching on
   assert.match(held.result.reason,/different purchase order/);
   const source=(await links.responses(db,ctx.workspaceId,intended.purchaseOrderId)).find(r=>r.kind==='invoice');
   await assert.rejects(portal.prepare(db,ctx.workspaceId,source.id,{actorId:ctx.actorId,purchaseOrderId:wrong.purchaseOrderId}),/not on this purchase/);
+
+  await f.subscribe('starter');
+  await db.query("UPDATE suppliers SET email=NULL WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
+  const sharedWithoutEmail=await f.po(lines,false),privatePath=await share(sharedWithoutEmail);
+  const privatePage=await supplier.get(privatePath).expect(200);
+  await supplier.post(privatePath+'/respond').type('form').send({_csrf:f.csrf(privatePage.text),kind:'confirm'}).expect(303);
+  const withoutEmailInvoice=await pdf(f.text(sharedWithoutEmail,{rows}));
+  await upload(privatePath,withoutEmailInvoice);
+  const withoutEmailJob=await work(portal.kind);
+  assert(withoutEmailJob.result.uploadId,JSON.stringify(withoutEmailJob.result));
+  await db.query("UPDATE suppliers SET email=$2 WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId,f.sender]);
+  await supplier.get(privatePath).expect(404);
 
   const previousEnv=process.env.STOCKCHIEF_RUNTIME_ENV;
   process.env.STOCKCHIEF_RUNTIME_ENV='staging';

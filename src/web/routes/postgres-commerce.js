@@ -706,7 +706,7 @@ function createPostgresCommerceRouter(database,options={}){
     const deliveryState=req.user.role==='owner'||can.approve?await deliveryPlan.accountState(database,req.ctx.workspaceId):null;
     const origin=require('../../config').connections.publicOrigin;
     can.shareSupplierLink=can.approve&&!page.order.directDeliveryId&&page.supplier?.status==='active'&&
-      supplierLinks.canShare(deliveryState,page.order.status,page.supplier.email,origin);
+      supplierLinks.canShare(deliveryState,page.order.status,origin);
     if(req.user.role==='owner'){
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');

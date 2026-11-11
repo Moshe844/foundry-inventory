@@ -19,7 +19,7 @@ function router(db){
       JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
       WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.line_number`,[order.workspace_id,order.id])).rows;
     const backupLines=await backup.linkLines(db,order);
-    const canAmend=['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)&&await amendments.canAccept(db,order.workspace_id);
+    const canAmend=Boolean(order.recipient)&&['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)&&await amendments.canAccept(db,order.workspace_id);
     return res.render('public/supplier-order-link',{order,lines,backupLines,canAmend,received:req.query.saved==='1'});
   }));
   router.get('/supplier/order/:token/amendment',asyncRoute(async(req,res)=>{
@@ -40,7 +40,7 @@ function router(db){
     res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment?saved=1');
   }));
   router.post('/supplier/order/:token/respond',asyncRoute(async(req,res)=>{
-    await link.submit(db,req.params.token,req.body.kind,req.body.date,{shipDate:req.body.shipDate||null});
+    await link.submit(db,req.params.token,req.body.kind,req.body.date,{shipDate:req.body.kind==='confirm'?req.body.shipDate||null:null});
     res.redirect(303,'/supplier/order/'+req.params.token+'?saved=1');
   }));
   router.post('/supplier/order/:token/unavailable',asyncRoute(async(req,res)=>{
