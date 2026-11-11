@@ -1,9 +1,11 @@
 'use strict';
 
 const policy=require('../commercial/agent-plan');
+const {hasVerifiedMigration}=require('../db/migrate-postgres');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
+const migratedInboxDatabases=new WeakSet();
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,t.expected_arrival_date::date AS due,src.name AS source,dst.name AS destination,
       sum(l.shipped_quantity) AS shipped,sum(l.received_quantity) AS received,sum(l.lost_quantity+l.damaged_quantity) AS exceptions,
@@ -76,10 +78,15 @@ async function refresh(db,workspaceId){
 }
 
 async function inbox(db,workspaceId,actorId=null){
-  const installed=(await db.query(`SELECT
+  // These tables are permanent once migrated. Keep checking older schemas
+  // during an upgrade, then reuse the result on subsequent page requests.
+  const migrated=migratedInboxDatabases.has(db)||(hasVerifiedMigration(db,'355-agent-stock-discrepancy-checks.sql')&&
+    hasVerifiedMigration(db,'356-agent-supplier-payment-runs.sql'));
+  const installed=migrated?{stock_checks:true,payment_checks:true}:(await db.query(`SELECT
     to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks,
     to_regclass('stockchief_runtime.agent_supplier_payment_checks') IS NOT NULL
       AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
+  if(!migrated&&installed.stock_checks&&installed.payment_checks)migratedInboxDatabases.add(db);
   const stockChecks=installed.stock_checks?`UNION ALL
     SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
     WHERE workspace_id=$1 AND findings>0`:'';
