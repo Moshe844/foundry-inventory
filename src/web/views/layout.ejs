@@ -112,6 +112,7 @@
 <script src="/show-batch.js?v=<%= assetVersion %>" defer></script>
 <script src="/live-search.js?v=<%= assetVersion %>" defer></script>
 <script src="/app.js?v=<%= assetVersion %>" defer></script>
+<script src="/number-tiles.js?v=<%= assetVersion %>" defer></script>
 <% if(locals.globalImportActivity?.length||nav==='imports'){ %><script src="/import-progress.js?v=<%= assetVersion %>" defer></script><% } %>
 <% if(locals.agentArrival){ %>
 <div hidden data-agent-arrival data-token="<%= agentArrival.token %>" data-csrf="<%= csrfToken %>"></div>

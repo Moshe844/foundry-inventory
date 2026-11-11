@@ -1,10 +1,11 @@
 'use strict';
-// Home's numbers count up to their value as the page opens. The real number stays in the
-// page the whole time (for screen readers, copying and search); only a painted copy over
-// it counts. A number written in a form this cannot read again exactly is left still.
+// The numbers in the boxes at the top of Home, Orders, Buy, Stock and Money count up to
+// their value as the page opens. The real number stays in the page the whole time (for
+// screen readers, copying and search); only a painted copy over it counts. A number
+// written in a form this cannot read back exactly is left still.
 (function () {
   if (!window.requestAnimationFrame || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
-  document.querySelectorAll('.hm-tile > [data-home-number]').forEach(function (number) {
+  document.querySelectorAll('[data-count-up],.hm-tile > [data-home-number]').forEach(function (number) {
     var text = number.textContent.trim(), parts = /^([^\d-]*)(-?\d{1,3}(?:,\d{3})*|-?\d+)(\.\d+)?([^\d]*)$/.exec(text);
     if (!parts) return;
     var target = Number(parts[2].replace(/,/g, '') + (parts[3] || '')), places = parts[3] ? parts[3].length - 1 : 0;

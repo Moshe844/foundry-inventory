@@ -136,6 +136,8 @@ async function ordersList(database, workspaceId, result, query = {}) {
     unpaid: { count: unpaid.length, minor: unpaid.reduce((sum, row) => sum + row.balanceMinor, 0) },
     month: await require('../accounting/posted-sales').thisMonth(database, workspaceId),
   };
+  // The same sales, one bar per day of the month, as on Home.
+  kpis.month.days = await require('../accounting/posted-sales').monthByDay(database, workspaceId, kpis.month);
   return { tab, q, counts, rows, page, pages, shown: rows.length, matching: filtered.length, kpis,
     currency: (result.orders[0] && result.orders[0].currency) || 'USD' };
 }

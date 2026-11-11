@@ -26,4 +26,8 @@ async function byDay(db,workspaceId,{from,to}){
  const days=[];for(let at=Date.parse(from+'T00:00:00Z'),end=Date.parse(to+'T00:00:00Z');at<=end;at+=86400000){const day=new Date(at).toISOString().slice(0,10);days.push({day,minor:posted.get(day)||0});}
  return days;
 }
-module.exports={forPeriod,thisMonth,byDay};
+// A month's sales as one bar per day: the days posted so far, and how many days the
+// month has so the days still ahead can be drawn too.
+async function monthByDay(db,workspaceId,{from,to}){const days=await byDay(db,workspaceId,{from,to});if(!days)return null;
+ const year=Number(to.slice(0,4)),month=Number(to.slice(5,7));return {days,monthDays:new Date(Date.UTC(year,month,0)).getUTCDate()};}
+module.exports={forPeriod,thisMonth,byDay,monthByDay};
