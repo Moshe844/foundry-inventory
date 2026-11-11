@@ -68,7 +68,7 @@ async function currentQuote(db,ctx,q,{lockPricing=false}={}){
     if(!(await db.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',
       [ctx.workspaceId,warehouse])).rowCount)throw new ValidationError('The quotation fulfillment location is unavailable.');
   }
-  const live=await pricing.prepareQuote(db,ctx,q.input,{lock:lockPricing});
+  const live=await pricing.prepareQuote(db,ctx,q.input,{lock:lockPricing,quotedCustomerTerms:q.pricing.customerTerms??null});
   if(live.violations.length||termsHash(live)!==termsHash(q.pricing)){
     throw new ValidationError('The quote’s prices, discounts, taxes or safeguards changed. Prepare a fresh revision.');
   }

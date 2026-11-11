@@ -120,7 +120,7 @@ const FIELDS=Object.freeze({
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},
   poNumber:{type:'string',description:'Exact identifier for a new draft purchase order when explicitly supplied; otherwise omit for canonical numbering.'},
   supplierBill:{type:'string',entity:'supplier_bill',description:'Supplier bill identity or number.'},
-  orderLines:{type:'string',description:'For a customer order with multiple products: a JSON array of distinct line objects, each with exact sku/product name, integer quantity, and optional unitPrice decimal from the owner. Preserve every requested line in ONE order; never invent a price.'},
+  orderLines:{type:'string',description:'JSON array of customer order or quote lines. Each line has an exact SKU, quantity in its recorded stocking unit, optional independent secondaryQuantity for measured pricing, and optional unitPrice decimal explicitly supplied by the owner. Preserve every line in one order or quote.'},
   receiptReference:{type:'string',description:'Delivery note or receipt reference.'},
   paymentMethod:{type:'string',description:'Actual method of a recorded payment.'},
   paymentDate:{type:'string',description:'Payment date in YYYY-MM-DD format.'},

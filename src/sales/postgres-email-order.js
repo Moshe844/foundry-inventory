@@ -72,6 +72,7 @@ async function review(c,ctx,id,{lock=false}={}){
   const currency=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
   const input={customerId:customer.id,reference:parsed.reference,currency,deliveryMethod:parsed.pickup?'PICKUP':'SHIP',lines,idempotencyKey:'customer-order-email:'+id};
   const quote=await promotions.prepareQuote(c,ctx,input,{lock});
+  await require('./agent-customer-pricing').checkOrder(c,ctx,input,quote);
   if(quote.violations.length)throw new ValidationError('Review the current selling prices and pricing safeguards before creating this order.');
   input.pricingQuoteHash=promotions.quoteHash(quote);
   const digest=promotions.hash({input,address:parsed.pickup?null:customer.shipping_address,sender:m.sender,body:m.body_text,documents:documents.map(d=>d.content_hash)});

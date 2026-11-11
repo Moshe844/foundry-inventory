@@ -259,7 +259,8 @@ async function salesOrder(database, workspaceId, id) {
     FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
     WHERE so.workspace_id=$1 AND so.id=$2`,[workspaceId,id]);
   if(!header.rows.length)throw new NotFoundError('That sales order was not found.');
-  const [lines,invoices,shipments,events,paymentRequests,paymentTerms,orderReceipts]=await Promise.all([
+  const agreements=require('../sales/customer-commercial-terms');
+  const [lines,invoices,shipments,events,paymentRequests,agreement]=await Promise.all([
     database.query(`SELECT sol.*,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_increment,i.secondary_unit_label,s.code,s.variant_label,
       COALESCE((SELECT SUM(quantity) FROM sales_order_allocations a WHERE a.sales_order_line_id=sol.id),0)::numeric AS allocated
       ,COALESCE((SELECT SUM(rl.quantity_authorized) FROM customer_return_lines rl
@@ -277,10 +278,7 @@ async function salesOrder(database, workspaceId, id) {
         ON effect.workspace_id=request.workspace_id AND effect.kind='payment.request.create'
         AND effect.payload->>'requestId'=request.id
       WHERE request.workspace_id=$1 AND request.sales_order_id=$2 ORDER BY request.created_at DESC,request.id DESC`,[workspaceId,id]),
-    require('../sales/postgres-payment-terms').forOrder(database,workspaceId,id,header.rows[0].customer_id),
-    database.query(`SELECT COALESCE(SUM(amount_minor),0)::bigint AS received_minor
-      FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2
-        AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,[workspaceId,id]),
+    agreements.forOrder(database,workspaceId,header.rows[0]),
   ]);
   const allocations=(await database.query(`SELECT a.*,l.name AS location_name FROM sales_order_allocations a
     JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id JOIN locations l ON l.id=a.location_id
@@ -290,15 +288,14 @@ async function salesOrder(database, workspaceId, id) {
   const mappedLines=lines.rows.map((row)=>{const kitComponents=kitParts.get(row.id)||[],kitReady=kitView.ready(kitComponents);return {...row,allocated:Number(row.allocated)+kitReady,
     physicalAllocated:Number(row.allocated),kitReady,isKit:kitComponents.length>0,kitComponents,
     quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]};});
-  const terms=paymentTerms;
+  const terms=agreement.terms;
   const orderTotalMinor=require('../sales/order-total').orderTotalMinor(header.rows[0],mappedLines);
-  const requiredDepositMinor=terms?.kind==='DEPOSIT'?(terms.deposit_minor==null
-    ?Math.round(orderTotalMinor*Number(terms.deposit_percent||0)/100):Math.min(orderTotalMinor,Number(terms.deposit_minor))):0;
+  const pay=await agreements.position(database,workspaceId,header.rows[0],orderTotalMinor,terms);
   return {order:header.rows[0],lines:mappedLines,
     invoices:invoices.rows.map((row)=>({...row,total_minor:Number(row.total_minor),balance_minor:Number(row.balance_minor),
       paid_minor:Number(row.paid_minor)})),shipments:shipments.rows,events:events.rows,
-    paymentTerms:terms,orderTotalMinor,requiredDepositMinor,
-    depositDueMinor:Math.max(0,requiredDepositMinor-Number(orderReceipts.rows[0].received_minor)),
+    paymentTerms:terms,orderTotalMinor,requiredDepositMinor:pay.deposit,
+    depositDueMinor:pay.depositDue,pickDueMinor:pay.pickDue,shipDueMinor:pay.shipDue,
     paymentRequests:paymentRequests.rows.map((row)=>({...row,amount_minor:Number(row.amount_minor),paid_minor:Number(row.paid_minor)}))};
 }
 

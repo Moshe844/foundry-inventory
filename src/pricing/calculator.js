@@ -47,7 +47,7 @@ function validateRule(rule){
   if(rule.scope!==undefined&&(!rule.scope||typeof rule.scope!=='object'||Array.isArray(rule.scope)))invalid('Pricing scope must contain product, category or customer selections.');
   if(typeof rule.name!=='string'||!rule.name.trim()||rule.name.length>160)invalid('Give this pricing rule a name.');
   if(typeof rule.currency!=='string'||!/^[A-Z]{3}$/.test(rule.currency))invalid('Choose a recorded three-letter currency.');
-  try{if(new Intl.NumberFormat('en',{style:'currency',currency:rule.currency}).resolvedOptions().maximumFractionDigits!==2)invalid('This currency needs precision that the current accounting engine does not support.');}catch{invalid('Choose a supported accounting currency.');}
+  require('../domain/currency').code(rule.currency);
   if(rule.priority!==undefined)integer(rule.priority,'Priority',{min:-100000,max:100000});
   for(const key of ['startsAt','endsAt'])if(rule[key]&&(typeof rule[key]!=='string'||!/T/.test(rule[key])||!/(Z|[+-]\d{2}:\d{2})$/.test(rule[key])||!Number.isFinite(Date.parse(rule[key]))))invalid('Use explicit UTC start and end dates.');
   if(rule.startsAt&&rule.endsAt&&Date.parse(rule.startsAt)>=Date.parse(rule.endsAt))invalid('The promotion must end after it starts.');
@@ -55,7 +55,7 @@ function validateRule(rule){
   for(const [field,values]of Object.entries(rule.scope||{})){if(!['customerIds','skuIds','categoryIds'].includes(field)||!Array.isArray(values)||values.length>500||values.some(v=>typeof v!=='string'||!v))invalid('Choose valid product, category and customer scopes.');}
   if(rule.kind==='price_list'){
     if(!Array.isArray(rule.entries)||!rule.entries.length||rule.entries.length>500)invalid('Add at least one price-list entry.');
-    const seen=new Set();for(const entry of rule.entries){if(!entry||typeof entry.skuId!=='string'||!entry.skuId||Object.keys(entry).some(k=>!['skuId','minQuantity','unitPriceMinor'].includes(k)))invalid('Each price needs an exact product and supported tier fields.');integer(entry.minQuantity,'Price tier quantity',{min:1});integer(entry.unitPriceMinor,'Tier price');const key=entry.skuId+':'+entry.minQuantity;if(seen.has(key))invalid('A product cannot repeat the same quantity tier.');seen.add(key);}
+    const seen=new Set();for(const entry of rule.entries){if(!entry||typeof entry.skuId!=='string'||!entry.skuId||Object.keys(entry).some(k=>!['skuId','minQuantity','unitPriceMinor'].includes(k)))invalid('Each price needs an exact product and supported tier fields.');const minimum=quantityScaled(entry.minQuantity,true);integer(entry.unitPriceMinor,'Tier price');const key=entry.skuId+':'+minimum;if(seen.has(key))invalid('A product cannot repeat the same quantity tier.');seen.add(key);}
   }
   if(rule.kind==='promotion'){
     if(!['percent','fixed_order','fixed_line','fixed_unit','bundle'].includes(rule.discount?.type))invalid('Choose a supported discount type.');
@@ -65,7 +65,7 @@ function validateRule(rule){
     if(rule.code!==undefined&&(typeof rule.code!=='string'||!rule.code.trim()||rule.code.length>80))invalid('Enter a valid discount code.');
     if(rule.stackGroup!==undefined&&(typeof rule.stackGroup!=='string'||!rule.stackGroup.trim()||rule.stackGroup.length>80))invalid('Enter a valid offer group.');
     if(rule.minimumOrderMinor!==undefined)integer(rule.minimumOrderMinor,'Minimum order');
-    if(rule.minimumQuantity!==undefined)integer(rule.minimumQuantity,'Minimum quantity',{min:1});
+    if(rule.minimumQuantity!==undefined)quantityScaled(rule.minimumQuantity,true);
     for(const key of ['maxRedemptions','maxPerCustomer'])if(rule[key]!==undefined)integer(rule[key],key,{min:1});
     if(rule.excludes!==undefined&&(!Array.isArray(rule.excludes)||rule.excludes.length>500||rule.excludes.some(v=>typeof v!=='string'||!v)))invalid('Choose valid excluded promotions.');
     if(rule.discount.type==='bundle'){
@@ -90,20 +90,21 @@ function quote(input){
   const scaled=input.lines.map(line=>quantityScaled(line.pricingQuantity??line.quantity,input.allowFractionalQuantities===true));
   const quantities=new Map();input.lines.forEach((line,i)=>quantities.set(line.skuId,sum([quantities.get(line.skuId)||0,scaled[i]])));
   const lines=input.lines.map((line,index)=>{
-    const quantity=Number(line.quantity),base=integer(line.unitPriceMinor,'Unit price');
+    const quantity=Number(line.quantity),base=line.unitPriceMinor==null?null:integer(line.unitPriceMinor,'Unit price');
     let selected=null,unitPriceMinor=base;const candidates=[];
     for(const list of lists){if(line.priceOverride===true||input.priceListId&&list.id!==input.priceListId||!eligible(list.scope,line,input.customerId))continue;
-      const tier=list.entries.filter(e=>e.skuId===line.skuId&&e.minQuantity*QUANTITY_SCALE<=quantities.get(line.skuId)).sort((a,b)=>b.minQuantity-a.minQuantity)[0];
+      const tier=list.entries.filter(e=>e.skuId===line.skuId&&quantityScaled(e.minQuantity,true)<=quantities.get(line.skuId)).sort((a,b)=>b.minQuantity-a.minQuantity)[0];
       if(tier)candidates.push({list,tier,specificity:(list.scope?.customerIds?.length?4:0)+(list.scope?.skuIds?.length?2:0)+(list.scope?.categoryIds?.length?1:0)});}
     candidates.sort((a,b)=>(b.list.priority||0)-(a.list.priority||0)||b.specificity-a.specificity||b.tier.minQuantity-a.tier.minQuantity||a.tier.unitPriceMinor-b.tier.unitPriceMinor||String(a.list.id).localeCompare(String(b.list.id),'en'));
     if(candidates.length){selected=candidates[0].list;unitPriceMinor=candidates[0].tier.unitPriceMinor;}
+    if(unitPriceMinor===null)invalid('This product needs a selling price in the order currency.');
     const grossMinor=recorded?integer(line.grossMinor,'Recorded line gross'):extended(unitPriceMinor,scaled[index]);
     const discountMinor=recorded?integer(line.discountMinor??0,'Recorded line discount'):0;
     if(discountMinor>grossMinor)invalid('Recorded discount exceeds its line value.');
     return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,
       ...(line.pricingQuantity!=null?{pricingQuantity:Number(line.pricingQuantity)}:{}),
       ...(line.costEvidence?{costEvidence:line.costEvidence}:{}),
-      priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,
+      priceOverride:line.priceOverride===true,baseUnitPriceMinor:base??unitPriceMinor,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,
       grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
   });
   if(input.priceListId&&!lists.some(r=>r.id===input.priceListId&&lines.some(l=>l.priceSource?.id===r.id)))invalid('The selected price list is not applicable to this customer, currency or quantity.');
@@ -115,7 +116,8 @@ function quote(input){
   for(const rule of discounts){
     if(exclusive||rule.code&&!codes.has(rule.code.trim().toUpperCase())||originalSubtotal<(rule.minimumOrderMinor||0)||rule.stackGroup&&groups.has(rule.stackGroup)||applied.some(p=>rule.excludes?.includes(p.id)||p.excludes?.includes(rule.id))||((rule.stacking||'exclusive')==='exclusive'&&applied.length))continue;
     if(rule.maxRedemptions!==undefined&&(rule.redemptions||0)>=rule.maxRedemptions||rule.maxPerCustomer!==undefined&&(rule.customerRedemptions||0)>=rule.maxPerCustomer)continue;
-    const indices=lines.filter(l=>eligible(rule.scope,l,input.customerId)&&l.quantity>=(rule.minimumQuantity||0)).map(l=>l.index);if(!indices.length)continue;
+    const minimum=rule.minimumQuantity?quantityScaled(rule.minimumQuantity,true):0;
+    const indices=lines.filter(l=>eligible(rule.scope,l,input.customerId)&&scaled[l.index]>=minimum).map(l=>l.index);if(!indices.length)continue;
     let amount=0;
     if(rule.discount.type==='percent')for(const i of indices)amount+=apply(rule,[i],ratio(lines[i].netMinor,rule.discount.value,10000));
     else if(rule.discount.type==='fixed_unit')for(const i of indices)amount+=apply(rule,[i],extended(rule.discount.value,scaled[i]));

@@ -600,13 +600,13 @@ async function salesOrderDefaults(client,ctx,input){
     return {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone};
 }
 
-async function createSalesOrderInTransaction(client, rawContext, input) {
+async function createSalesOrderInTransaction(client, rawContext, input, {quotedCustomerTerms} = {}) {
   const ctx = requireContext(rawContext);
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A sales order needs at least one line.');
     await requirePermission(client, ctx, access.OPERATE, 'create sales orders');
     const operation = await beginOperation(client, ctx, 'sales_order.create', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
-    const promotions=require('../pricing/postgres-promotions'),quote=await promotions.prepareQuote(client,ctx,input,{lock:true});
+    const promotions=require('../pricing/postgres-promotions'),quote=await promotions.prepareQuote(client,ctx,input,{lock:true,quotedCustomerTerms});
     if(input.pricingQuoteHash&&promotions.quoteHash(quote)!==input.pricingQuoteHash)
       throw new ValidationError('The exact order pricing changed after review. Review the current totals before continuing.');
     if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost before continuing.');
@@ -831,6 +831,8 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       throw new ValidationError('Confirm and allocate the sales order before fulfilling it.');
     }
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
+    const customerTerms=require('../sales/customer-commercial-terms');
+    await customerTerms.assertRelease(client,ctx.workspaceId,order,{shipping:true});
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
     const directFulfillment=await require('../purchasing/direct-shipment-fulfillment').prepare(client,ctx,order,input);
@@ -938,7 +940,9 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         VALUES($1,$2,$3,$4,$5,$6,'OPEN',$7,0,0,0,0,0,$8,$9,$10,$10,$10)`,
       [invoiceId, ctx.workspaceId, invoiceNumber, order.customer_id, salesOrderId, await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)), order.currency,
         `sales-order:${salesOrderId}`, ctx.actorId, nowIso()]);
-      await client.query('UPDATE accounting_customer_invoices SET due_date=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,await require('../accounting/customer-terms').dueDate(client,ctx.workspaceId,order.customer_id,await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),{orderId:order.id})]);
+      const {terms}=await customerTerms.forOrder(client,ctx.workspaceId,order);
+      const due=customerTerms.dueFrom(terms,await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)));
+      await client.query('UPDATE accounting_customer_invoices SET due_date=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,due]);
       invoice = { id: invoiceId, invoice_number: invoiceNumber };
     }
     const revenueAccount = await accountId(client, ctx.workspaceId, 'SALES_REVENUE');
@@ -1303,6 +1307,7 @@ async function recordCustomerDeposit(database, rawContext, input) {
     const order = await requireRow(client, `SELECT * FROM sales_orders
       WHERE id=$1 AND workspace_id=$2 AND customer_id=$3 FOR UPDATE`,
     [input.salesOrderId, ctx.workspaceId, input.customerId], 'That sales order was not found for this customer.');
+    if(input.currency&&input.currency!==order.currency)throw new ValidationError('The recorded deposit currency must match the customer order.');
     // Money a payment provider already took is recorded whatever it was for; if
     // the order cannot use it, it shows as owed back. Anyone typing a payment in
     // is held to what the order still owes.

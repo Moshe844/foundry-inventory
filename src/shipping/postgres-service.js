@@ -50,6 +50,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
     if(!order)throw new NotFoundError('That sales order was not found.');
     if(order.delivery_method!=='SHIP')throw new ValidationError('Only orders marked for shipping need a carrier parcel.');
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
+    await require('../sales/customer-commercial-terms').assertRelease(client,ctx.workspaceId,order);
     const destination=input.shipToAddress||order.ship_to_address;
     const destinationFields=input.shipToAddressFields||(destination===order.customer_shipping_address?order.customer_shipping_address_fields:null);
     if(!addresses.parse(destination,destinationFields).complete)throw new ValidationError(addresses.why(addresses.parse(destination,destinationFields)));

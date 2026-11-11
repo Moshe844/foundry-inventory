@@ -7,6 +7,7 @@ const {ValidationError}=require('../domain/errors');
 const quotes=require('./postgres-quotes'),source=require('./quote-buyer-source');
 const policy=require('../commercial/agent-plan'),pricing=require('../pricing/postgres-promotions');
 const paymentTerms=require('./postgres-payment-terms'),credentials=require('../connections/credentials');
+const commercialTerms=require('./customer-commercial-terms');
 const storage=require('../commercial/storage-capacity'),audit=require('../operations/postgres-security-audit');
 const KIND='agent.sales-quote.acceptance.v1';
 const links='stockchief_runtime.quote_buyer_links',receipts='stockchief_runtime.quote_buyer_acceptances';
@@ -15,6 +16,11 @@ const scoped=db=>({query:(...args)=>db.query(...args),transaction:fn=>fn(db)});
 const tokenHash=token=>createHash('sha256').update(token).digest('hex');
 const expectedError=error=>[400,402,403,404,409,422].includes(error.status);
 const acceptanceHash=(link,name,email)=>pricing.hash({link:link.id,revision:link.revision,offer:link.offer_hash,name,email});
+async function quoteTerms(db,ctx,q){
+  const terms=Object.hasOwn(q.pricing,'customerTerms')?q.pricing.customerTerms
+    :commercialTerms.agreement(await commercialTerms.current(db,ctx.workspaceId,q.customer_id),q.pricing.currency);
+  return paymentTerms.forQuote(terms);
+}
 
 async function linked(db,workspaceId,quoteId,{lock=false}={}){
   if(!await paymentTerms.hasBuyerAcceptances(db))return undefined;
@@ -53,7 +59,7 @@ async function publish(database,ctx,id,input){
       }
     }
     const current=await source.currentQuote(db,ctx,q,{lockPricing:true});
-    const terms=paymentTerms.forQuote(await paymentTerms.forCustomer(db,ctx.workspaceId,q.customer_id));
+    const terms=await quoteTerms(db,ctx,q);
     const offer={source:current.source,paymentTerms:terms},fingerprint=pricing.hash(offer);
     if(input.expectedOffer!==fingerprint)throw new ValidationError('The customer, payment terms or delivery changed. Reload and review before sharing.');
     const token=randomBytes(32).toString('base64url'),encrypted=credentials.encrypt(token);
@@ -177,10 +183,11 @@ async function apply(db,ctx,q,link,receipt,{automatic=false,expected=null}={}){
     throw new ValidationError('The owner’s routine scope no longer covers the accepted quotation.');
   }
   const {source:current,live}=await exact(db,ctx,q,link,{lockPricing:true});
+  await require('./agent-customer-pricing').checkOrder(db,ctx,q.input,live,{automatic});
   const input={...q.input,currency:q.pricing.currency,deliveryMethod:current.deliveryMethod,shipToAddress:current.shippingAddress,
     customerEmail:current.email,customerPhone:current.phone};
   await storage.reserve(db,ctx.workspaceId,'accepted-quote-order:'+receipt.id,Buffer.byteLength(JSON.stringify(q.pricing))*4+16384,{finished:true});
-  const result=await quotes.completeAcceptance(db,ctx,q,input,pricing.quoteHash(live));
+  const result=await quotes.completeAcceptance(db,ctx,q,input,pricing.quoteHash(live),{quotedCustomerTerms:q.pricing.customerTerms??null});
   await db.query(`UPDATE ${receipts} SET state='DRAFTED',order_id=$3,authorized_by=$4,approved_mode=$5,problem=NULL,processed_at=now()
     WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,receipt.id,result.salesOrderId,ctx.actorId,automatic?'ROUTINE':'INDIVIDUAL']);
   await audit.record(db,ctx,{action:'Drafted an order from a buyer acceptance',reference:q.id,
@@ -229,7 +236,7 @@ async function page(db,ctx,id){
       current=receipt?await exact(db,ctx,q,link):await source.currentQuote(db,ctx,q);
     }catch(error){if(!expectedError(error))throw error;problem=error.message;}
   }
-  const preview=!receipt&&current&&{source:current.source,paymentTerms:paymentTerms.forQuote(await paymentTerms.forCustomer(db,ctx.workspaceId,q.customer_id))};
+  const preview=!receipt&&current&&{source:current.source,paymentTerms:await quoteTerms(db,ctx,q)};
   const offer=link?.offer||preview;
   const visible=link?.enabled&&!receipt&&current&&pricing.hash(current.source)===pricing.hash(link.offer.source);
   const token=visible?credentials.decrypt(link.token_cipher):null;

@@ -8,9 +8,14 @@ async function load(db,workspaceId,id){const work=async c=>{
  const labels=(await c.query('SELECT l.id,i.name,s.variant_label FROM accounting_customer_invoice_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE l.workspace_id=$1 AND l.invoice_id=$2',[workspaceId,id])).rows;
  detail.lines=detail.lines.map(line=>{const label=labels.find(l=>l.id===line.id),snapshot=typeof line.pricing_snapshot==='string'?JSON.parse(line.pricing_snapshot):line.pricing_snapshot||{};return {...line,...(label&&/^Fulfillment on /.test(line.description)?{description:label.name+(label.variant_label?' — '+label.variant_label:'')}:{}),document_amount_minor:snapshot.grossMinor??line.line_total_minor,document_quantity:snapshot.secondaryQuantity!=null?String(snapshot.secondaryQuantity)+' '+(snapshot.priceUnitLabel||''):String(line.quantity)};});
  const customer=(await c.query('SELECT name,company,email,shipping_address FROM customers WHERE workspace_id=$1 AND id=$2',[workspaceId,row.customer_id])).rows[0],company=await require('../operations/postgres-company-profile').get(c,workspaceId);if(!customer)throw new NotFoundError('That invoice is unavailable.');
- const terms=await require('../sales/postgres-payment-terms').forOrder(c,workspaceId,row.sales_order_id,row.customer_id);
- const dueDate=row.due_date||require('./customer-money').addDays(row.issue_date,terms&&terms.kind!=='ON_ACCOUNT'?0:Number(terms?.net_days??30));
- const value={...detail,issuer:company.legalName,issuerAddress:require('../operations/postgres-company-profile').address(company),customer,dueDate,dueInferred:!row.due_date,terms:terms?.kind==='ON_ACCOUNT'?'Net '+Number(terms.net_days||0)+' days':terms?'Payment due when invoiced':'Due '+dueDate};return {...value,hash:fingerprint(value)};
+ const agreements=require('../sales/customer-commercial-terms');
+ const order=row.sales_order_id?(await c.query('SELECT id,customer_id,pricing_quote_id,currency FROM sales_orders WHERE workspace_id=$1 AND id=$2',[workspaceId,row.sales_order_id])).rows[0]:null;
+ const saved=order?await agreements.forOrder(c,workspaceId,order):null;
+ const terms=saved?saved.terms:await agreements.current(c,workspaceId,row.customer_id);
+ const dueDate=row.due_date||agreements.dueFrom(terms,row.issue_date);
+ const termsText=saved?.frozen&&terms?agreements.describe(terms,row.currency):
+   row.due_date?'Due '+dueDate:terms?agreements.describe(terms,row.currency):'Due '+dueDate;
+ const value={...detail,issuer:company.legalName,issuerAddress:require('../operations/postgres-company-profile').address(company),customer,dueDate,dueInferred:!row.due_date,terms:termsText};return {...value,hash:fingerprint(value)};
  };return db.transaction?db.transaction(work,{isolation:'REPEATABLE READ',readOnly:true,retrySafe:true}):work(db);}
 function filename(document){return 'Invoice-'+document.row.invoice_number.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,100)+'.pdf';}
 async function pdf(document){

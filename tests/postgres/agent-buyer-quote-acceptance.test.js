@@ -133,8 +133,8 @@ test('a real buyer accepts one exact quote revision through its private link',{t
     const id=await verifyOrder(q,'INDIVIDUAL');
     individuallyApproved=id;
     assert.equal(await orders(),1);
-    assert.equal((await paymentTerms.forOrder(db,workspaceId,id,customerId)).net_days,21);
-    assert.equal(await require('../../src/accounting/customer-terms').dueDate(db,workspaceId,customerId,today,{orderId:id}),addDays(today,21));
+    const nativeOrder=await require('../../src/operations/postgres-commerce').salesOrder(db,workspaceId,id);
+    assert.equal(nativeOrder.paymentTerms.net_days,21);
     await assert.rejects(workflows.editDraftSalesOrder(db,ctx,id,{...q.input,expectedVersion:1}),/accepted the exact terms/);
   });
 

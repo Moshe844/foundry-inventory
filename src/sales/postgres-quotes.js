@@ -23,20 +23,21 @@ async function create(db,ctx,input){return db.transaction(async c=>{
  if(!supersedesId)await require('./agent-quote-companions').queueForNewQuote(c,ctx,saved);
  return saved;
  },{isolation:'SERIALIZABLE',retrySafe:true});}
-async function decide(db,ctx,id,{accept,expectedHash,today}){return db.transaction(async c=>{
+async function decide(db,ctx,id,{accept,expectedHash,today,agent=false}){return db.transaction(async c=>{
  await actor(c,ctx,access.OPERATE);const q=await get(c,ctx.workspaceId,id,{lock:true});if(q.pricing_hash!==expectedHash)throw new ValidationError('Review this exact quotation before continuing.');
  if(q.status==='ACCEPTED'&&accept)return {salesOrderId:q.sales_order_id,replayed:true};if(q.status!=='OPEN')throw new ValidationError('This quotation has already been decided.');
  if(accept){if(await require('./agent-quote-buyers').linked(c,ctx.workspaceId,id))throw new ValidationError('Open the private buyer acceptance and review its recorded receipt.');if(q.valid_until<(today||new Date().toISOString().slice(0,10)))throw new ValidationError('This quotation expired. Prepare a current revision for review.');
   if((await c.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2',[ctx.workspaceId,id])).rows.length)throw new ValidationError('A newer quotation replaces this one. Review that revision.');
+  if(agent)await require('./agent-customer-pricing').checkOrder(c,ctx,q.input);
   // Reuse the canonical pricing/approval calculation. A changed promotion,
   // customer exemption, redemption limit or price requires renewed review.
   return completeAcceptance(c,ctx,q,q.input,q.pricing_hash);
  }
  await c.query("UPDATE sales_quotations SET status='DECLINED',decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);await require('./agent-quote-buyers').revokeInTransaction(c,ctx,id);return {declined:true};
  },{isolation:'SERIALIZABLE',retrySafe:true});}
-async function completeAcceptance(db,ctx,q,input,pricingHash){
+async function completeAcceptance(db,ctx,q,input,pricingHash,{quotedCustomerTerms}={}){
   const result=await require('../operations/postgres-business-workflows').createSalesOrderInTransaction(db,ctx,{
-    ...input,orderNumber:null,pricingQuoteHash:pricingHash,idempotencyKey:'quotation:'+q.id});
+    ...input,orderNumber:null,pricingQuoteHash:pricingHash,idempotencyKey:'quotation:'+q.id},{quotedCustomerTerms});
   await db.query("UPDATE sales_quotations SET status='ACCEPTED',sales_order_id=$3,decided_at=now() WHERE workspace_id=$1 AND id=$2",
     [ctx.workspaceId,q.id,result.salesOrderId]);
   return result;

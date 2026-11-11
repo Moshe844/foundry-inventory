@@ -83,26 +83,13 @@ async function queueRequest(database,ctx,orderId,input={}){
       return {request:hydrate(prior),effectId:effect?.id||null,queued:prior.status==='PENDING',replayed:true};}
     let amountMinor=Number(invoice?.balance_minor||0);let currency=invoice?.currency||order.currency;
     if(purpose==='DEPOSIT'){
-      const terms=await require('../sales/postgres-payment-terms').forOrder(client,ctx.workspaceId,orderId,order.customer_id,{lock:true});
+      const agreements=require('../sales/customer-commercial-terms');
+      const {terms}=await agreements.forOrder(client,ctx.workspaceId,order);
       if(!terms||terms.kind!=='DEPOSIT')throw new ValidationError('This customer has no agreed deposit terms. Set the terms before requesting money.');
-      let orderTotal;
-      if(terms.quoteBound){
-        orderTotal=Number(order.pricing_total_minor);
-        if(order.pricing_total_minor==null||!Number.isSafeInteger(orderTotal)||orderTotal<0){
-          throw new ValidationError('The accepted order needs its exact saved total before requesting the deposit.');
-        }
-      }else{
-        const total=(await client.query(`SELECT COALESCE(SUM(quantity_ordered*unit_price_minor),0)::bigint AS subtotal
-          FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,orderId])).rows[0];
-        orderTotal=Math.max(0,Number(total.subtotal)-Number(order.discount_minor||0)+Number(order.tax_minor||0));
-      }
-      const required=terms.deposit_minor==null
-        ?Math.round(orderTotal*Number(terms.deposit_percent||0)/100)
-        :Math.min(orderTotal,Number(terms.deposit_minor));
-      const received=(await client.query(`SELECT COALESCE(SUM(amount_minor),0)::bigint AS amount
-        FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2
-          AND direction='CUSTOMER_RECEIPT' AND status='POSTED'`,[ctx.workspaceId,orderId])).rows[0];
-      amountMinor=Math.max(0,required-Number(received.amount));
+      const lines=order.pricing_total_minor==null?(await client.query(`SELECT quantity_ordered,unit_price_minor FROM sales_order_lines
+        WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,orderId])).rows:[];
+      const total=require('../sales/order-total').orderTotalMinor(order,lines);
+      amountMinor=(await agreements.position(client,ctx.workspaceId,order,total,terms)).depositDue;
       if(amountMinor===0)throw new ValidationError('The agreed deposit has already been received for this order.');
     }
     if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError('This invoice has no positive balance to collect.');

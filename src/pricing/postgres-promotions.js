@@ -9,6 +9,7 @@ function quoteHash(value){
  // existing price and safeguard approval fingerprint stays compatible.
  delete frozen.lineIds;
  for(const line of frozen.lines)delete line.costEvidence;
+ if(frozen.customerTerms===null)delete frozen.customerTerms;
  // Preserve existing approval fingerprints only when the new contract adds
  // zero economic scope. Recorded provider prices and actual charges always
  // retain their complete new fingerprint.
@@ -99,7 +100,7 @@ async function decide(db,ctx,id,expectedHash,approved){
     return (await c.query(`UPDATE stockchief_runtime.pricing_proposals SET status=$3,approved_by=$4,decided_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING *`,[ctx.workspaceId,id,approved?'APPROVED':'REJECTED',ctx.actorId])).rows[0];
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=null,invoice=false}={}){
+async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=null,invoice=false,quotedCustomerTerms}={}){
   await authorize(c,ctx,invoice?access.MANAGE_ACCOUNTING:access.OPERATE,invoice?'accounting.core':'sales_orders.core');if(lock)await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
   let configured=frozenRules||await rules(c,ctx);const currency=prices.normaliseCurrency(input.currency),lines=[];
   let recorded=false;
@@ -136,7 +137,7 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
     const sku=bySku.get(line.skuId);if(!sku)throw new ValidationError(lineLabel+'choose an active product from this business.');
     if(!invoice)require('../domain/stock-quantity').validate(sku,line.quantity,{label:lineLabel+'quantity'});
     const priceSet=sku.amount_minor!==null&&sku.amount_minor!==undefined;
-    if(line.unitPriceMinor==null&&(!priceSet||sku.currency!==currency))throw new ValidationError(lineLabel+'this product needs a selling price in the order currency.');
+    const nativePrice=priceSet&&sku.currency===currency?Number(sku.amount_minor):null;
     const measuredQuantity=invoice?null:require('../domain/stock-quantity').secondary(sku,line.secondaryQuantity);
     const costed=base===currency&&Number(sku.cost_quantity)>0&&Number(sku.cost_quantity)>=Number(sku.physical_quantity);
     const unit=sku.secondary_unit_label||sku.unit_label;
@@ -145,8 +146,9 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
       quantity:require('../domain/exact-quantity').canonical(sku.cost_quantity)};
     else if(!invoice&&!sku.secondary_unit_label&&sku.stated_cost_id&&sku.stated_currency===currency)costEvidence={basis:'catalogue',currency,unit,
       amountMinor:String(sku.stated_cost_minor),quantity:'1',recordId:sku.stated_cost_id};
-    lines.push({...line,pricingQuantity:measuredQuantity??undefined,quantity:Number(line.quantity),unitPriceMinor:Number(line.unitPriceMinor??sku.amount_minor),
-      referenceUnitPriceMinor:priceSet&&sku.currency===currency?Number(sku.amount_minor):Number(line.unitPriceMinor),categoryId:sku.category,
+    lines.push({...line,pricingQuantity:measuredQuantity??undefined,quantity:Number(line.quantity),
+      unitPriceMinor:line.unitPriceMinor==null?nativePrice:Number(line.unitPriceMinor),
+      referenceUnitPriceMinor:nativePrice??(line.unitPriceMinor==null?undefined:Number(line.unitPriceMinor)),categoryId:sku.category,
       costUnitMinor:costed?Math.ceil(Number(sku.cost_amount)/Number(sku.cost_quantity)):null,costEvidence});
   }
   const usage=(await c.query(`SELECT rule_id,count(*)::integer AS total,count(*) FILTER(WHERE customer_id=$2)::integer AS customer FROM (SELECT rule_id,customer_id FROM stockchief_runtime.pricing_redemptions WHERE workspace_id=$1 AND released_at IS NULL AND ($3::text IS NULL OR sales_order_id<>$3) UNION ALL SELECT rule_id,customer_id FROM stockchief_runtime.pricing_invoice_redemptions WHERE workspace_id=$1) uses GROUP BY rule_id`,[ctx.workspaceId,input.customerId,orderId])).rows;
@@ -160,6 +162,11 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
     taxRate={id:rate.id,name:rate.name,rateMillionths:Number(rate.rate_millionths)};
   }
   const result=calculator.quote({...input,taxMinor:taxExempt?0:input.taxMinor,taxRate:taxRate||undefined,recordedAmounts:recorded,allowFractionalQuantities:true,discountMinor:input.pricingInputDiscountMinor??input.discountMinor,currency,lines,rules:configured,at:input.at||new Date().toISOString()});
+  if(!invoice&&!recorded){
+    const terms=require('../sales/customer-commercial-terms');
+    result.customerTerms=quotedCustomerTerms===undefined
+      ?terms.agreement(await terms.current(c,ctx.workspaceId,input.customerId),currency):quotedCustomerTerms;
+  }
   if(taxExempt)result.customerTaxExemption={customerId:customer.id,reference:customer.tax_exempt_reference||null};
   if(recorded&&result.totalMinor!==input.sourceFinancials.totalMinor)throw new ValidationError('Canonical pricing does not reconcile with the recorded provider total.');
   return result;
@@ -182,6 +189,7 @@ async function revisionQuote(c,ctx,orderId,changes,{lock=false}={}){
  const quote=await prepareQuote(c,ctx,{guardAt:new Date().toISOString(),customerId:order.customer_id,currency:order.currency,
    at:original?.at||new Date(order.created_at).toISOString(),codes:original?.codes||[],priceListId:original?.priceListId,
    discountMinor:original?.manualDiscountMinor??Number(order.discount_minor),taxMinor:Number(order.tax_minor),lines},{frozenRules:frozen,lock,orderId});
+ if(original&&Object.hasOwn(original,'customerTerms'))quote.customerTerms=original.customerTerms;
  return {quote,lineIds:rows.map(r=>r.id)};
 }
 async function saveQuote(c,ctx,orderId,quote,lineIds){

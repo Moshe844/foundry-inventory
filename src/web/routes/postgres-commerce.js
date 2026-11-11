@@ -197,17 +197,17 @@ async function salesOrderPage(database,workspaceId,id){
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
   const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED' AND r.recognition_stage='ON_REFUND'",[workspaceId,id])).rows[0];const credits=(await database.query('SELECT coalesce(sum(c.revenue_minor+c.tax_minor),0)::bigint credited,coalesce(sum(c.cash_refunded_minor),0)::bigint repaid FROM accounting_return_receipt_credits c JOIN customer_returns r ON r.workspace_id=c.workspace_id AND r.id=c.customer_return_id WHERE c.workspace_id=$1 AND r.sales_order_id=$2',[workspaceId,id])).rows[0];const creditedMinor=Number(refunds.refunded_minor)+Number(credits.credited),refundedMinor=Number(refunds.cash_minor)+Number(credits.repaid),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor)-Number(credits.repaid);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-creditedMinor);order.pricing.creditedMinor=creditedMinor;}
-  const terms=detail.paymentTerms;const termsText=!terms?'Payment due when invoiced':terms.kind==='BEFORE_FULFILMENT'
-    ?'Payment before fulfilment':terms.kind==='DEPOSIT'?'Deposit before fulfilment':`Net ${Number(terms.net_days||0)}`;
-  const held=detail.depositDueMinor>0||terms?.kind==='BEFORE_FULFILMENT'&&paidMinor<detail.orderTotalMinor;
+  const terms=detail.paymentTerms;
+  const termsText=require('../../sales/customer-commercial-terms').describe(terms,detail.order.currency);
+  const held=detail.pickDueMinor>0,shippingHeld=detail.shipDueMinor>0;
   const money={refundedMinor,creditedMinor,invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
     totalMinor:detail.invoices.length?invoiceTotal:detail.orderTotalMinor,paidMinor,
     outstandingMinor:detail.invoices.length?invoiceOutstanding:Math.max(0,detail.orderTotalMinor-paidMinor),
     dueNowMinor:detail.depositDueMinor||0,currency:detail.order.currency,state:invoiceOutstanding===0&&detail.invoices.length?'Paid':
       paidMinor>0?'Partially paid':'Unpaid',terms:terms||{source:'business default'},termsText,
     heldReason:{pick:held?'The agreed payment is still due before this order can be picked.':null,
-      ship:terms?.hold_shipping&&invoiceOutstanding>0?'The remaining balance is due before this order can ship.':null},
-    blocksPicking:held,blocksShipping:Boolean(terms?.hold_shipping&&invoiceOutstanding>0),override:null,dueDate:null};
+      ship:shippingHeld?'The agreed payment is still due before this order can ship.':null},
+    blocksPicking:held,blocksShipping:shippingHeld,override:null,dueDate:detail.invoices[0]?.due_date||null};
   // Money the order can no longer use (it was cancelled, or the customer paid
   // more than it came to) is the customer's to get back.
   if(['CANCELLED','FULFILLED'].includes(detail.order.status)){const deposit=await require('../../sales/postgres-deposit-refunds').forOrder(database,workspaceId,id);
@@ -1046,7 +1046,8 @@ function createPostgresCommerceRouter(database,options={}){
     const policy=require('../../commercial/agent-plan');
     return res.page('sales/quote',{title:'Quotation',nav:'sales',quotation,successor,today:entryToday(req),
       buyerManaged:Boolean(buyerLink),canOpenBuyer:req.user?.role==='owner'&&(buyerLink||policy.usesAgentTerms(agent)&&policy.permits(agent.plan,75,'draft')),
-      canEmailQuotation:req.user?.role==='owner',canReviewCompanions:req.user?.role==='owner'});
+      canEmailQuotation:req.user?.role==='owner',canReviewCompanions:req.user?.role==='owner',
+      agreedPaymentTerms:quotation.pricing.customerTerms?require('../../sales/customer-commercial-terms').describe(quotation.pricing.customerTerms,quotation.pricing.currency):null});
   }));
   const quotationMail=require('../../sales/quotation-mail');
   router.get('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>res.page('sales/quote-email',{title:'Email saved quotation',nav:'sales',...await quotationMail.page(database,req.ctx,req.params.id,req.query.connectorId)})));
@@ -1109,15 +1110,43 @@ function createPostgresCommerceRouter(database,options={}){
     const customer=(await database.query(`SELECT * FROM customers WHERE workspace_id=$1 AND id=$2`,
       [req.ctx.workspaceId,req.params.id])).rows[0];
     if(!customer)throw new ValidationError('That customer was not found in this inventory.');
-    const [orders,balance,settings]=await Promise.all([
+    const [orders,balance,settings,terms]=await Promise.all([
       database.query(`SELECT id,order_number,order_date,status FROM sales_orders
         WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC LIMIT 100`,[req.ctx.workspaceId,customer.id]),
       database.query(`SELECT COALESCE(SUM(balance_minor),0)::bigint AS minor FROM accounting_customer_invoices
         WHERE workspace_id=$1 AND customer_id=$2 AND status IN ('OPEN','PARTIALLY_PAID')`,[req.ctx.workspaceId,customer.id]),
       database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId]),
+      require('../../sales/customer-commercial-terms').current(database,req.ctx.workspaceId,customer.id),
     ]);
     return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,
-      orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD'});
+      orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
+      terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
+      canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
+  }));
+  router.post('/sales/customers/:id/payment-terms',requirePermission(permissions.ADMIN,'save agreed customer terms'),asyncRoute(async(req,res)=>{
+    await database.transaction(async c=>{
+      const owner=(await c.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+        JOIN customers customer ON customer.workspace_id=w.id AND customer.id=$3 AND customer.record_state='ACTIVE'
+        WHERE w.id=$1 AND u.id=$2 AND u.role='owner' AND w.deletion_requested_at IS NULL`,[req.ctx.workspaceId,req.ctx.actorId,req.params.id])).rowCount;
+      if(!owner)throw new ValidationError('Only the current inventory owner can save an active customer’s agreed terms.');
+      const terms=require('../../sales/customer-commercial-terms'),before=await terms.current(c,req.ctx.workspaceId,req.params.id);
+      const fixed=String(req.body.depositAmount||'').trim(),currency=fixed?require('../../domain/currency').code(req.body.depositCurrency):null;
+      const controls=(await c.query(`SELECT credit_limit_minor,auto_request_enabled,auto_request_limit_minor,note
+        FROM customer_payment_terms WHERE workspace_id=$1 AND customer_id=$2`,[req.ctx.workspaceId,req.params.id])).rows[0];
+      await require('../../sales/postgres-payment-terms').saveInTransaction(c,req.ctx,{customerId:req.params.id,
+        kind:req.body.kind,netDays:req.body.netDays,depositPercent:req.body.depositPercent,
+        depositMinor:fixed?require('../../domain/currency').userToMinor(fixed,currency):null,depositCurrency:currency,
+        holdShipping:req.body.holdShipping==='1',creditApproved:req.body.creditApproved==='1',
+        expectedUpdatedAt:String(req.body.expectedUpdatedAt||''),
+        // This form edits the commercial payment agreement. Keep the existing
+        // independently granted credit limit and payment-link authority.
+        creditLimitMinor:controls?.credit_limit_minor==null?null:String(controls.credit_limit_minor),
+        autoRequestEnabled:Boolean(Number(controls?.auto_request_enabled)),autoRequestLimitMinor:controls?.auto_request_limit_minor,note:controls?.note});
+      await require('../../operations/postgres-security-audit').record(c,req.ctx,{action:'Saved customer payment terms',
+        reference:req.params.id,before,after:await terms.current(c,req.ctx.workspaceId,req.params.id)});
+    },{isolation:'SERIALIZABLE',retrySafe:true});
+    req.flash('success','Agreed payment terms saved for new quotes and orders.');
+    return res.redirect(303,`/sales/customers/${req.params.id}`);
   }));
   router.post('/sales/customers/:id',requirePermission(permissions.OPERATE,'change customers'),asyncRoute(async(req,res)=>{
     const name=requireText(req.body.name,'Customer name',{max:160});
