@@ -3,6 +3,7 @@
 const policy=require('../commercial/agent-plan');
 const {hasVerifiedMigration}=require('../db/migrate-postgres');
 const transferArrivals=require('../transfers/agent-transfer-arrivals');
+const purchaseBudgets=require('../purchasing/agent-budgets');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
@@ -50,6 +51,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
   const {calendarDate:today,timeZone}=await require('../lib/business-time').forWorkspace(db,workspaceId,now);
   const includeTransfers=await transferArrivals.enabled(db,workspaceId,account,{lock:true});
+  const includeBudget=await purchaseBudgets.monitoringEnabled(db,workspaceId,account);
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   const watched=require('./activity-watches').spec;
@@ -75,7 +77,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
         WHERE NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=p.workspace_id
           AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
-    (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+watchQueries;
+    (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
+    (includeBudget?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
     INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded)
     SELECT $1,job,kind,ref,link,due,$3::date FROM current
@@ -124,6 +127,8 @@ async function inbox(db,workspaceId,actorId=null){
   const visible=rows.filter(r=>Number(r.job_id)!==124&&policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
   const suppressed=new Set();
   for(const {job_id:job} of visible)if([104,108].includes(Number(job))&&await require('./job-modes').restriction(db,workspaceId,Number(job),true))suppressed.add(job);
+  const budgetNotice=visible.find(r=>Number(r.job_id)===110);
+  if(budgetNotice&&!await purchaseBudgets.monitoringEnabled(db,workspaceId,state))suppressed.add(budgetNotice.job_id);
   return visible.filter(r=>!suppressed.has(r.job_id)).map(r=>{
     if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
       happened:'The '+r.due+' stock check found '+r.n+' '+(r.n===1?'issue.':'issues.'),why:stockDiscrepancies.summary,
@@ -136,6 +141,10 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' supplier '+(r.n===1?'bill had':'bills had')+' an early-payment opportunity at the '+r.due+' check.',
       why:'The recorded supplier terms identify the deadline and possible saving.',href:'/autopilot/reviews/early-discounts',
       actionLabel:'Review supplier discounts',sourceId:'agent-notice-108'};
+    if(Number(r.job_id)===110)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Monthly purchases over budget',
+      happened:r.n+' '+(r.n===1?'category budget is':'category budgets are')+' below billed purchases.',
+      why:'StockChief compared posted supplier bills with each saved category budget in the same currency.',
+      href:'/autopilot/reviews/purchase-budget?filter='+encodeURIComponent(r.due.slice(0,7)),actionLabel:'Review purchase budgets',sourceId:'agent-notice-110'};
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
