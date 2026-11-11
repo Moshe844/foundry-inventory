@@ -69,7 +69,8 @@ function createPostgresPlanningRouter(database) {
   }));
   router.post('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'approve safety stock'),asyncRoute(async(req,res)=>{
     const result=await require('../../forecasting/agent-safety-stock').approve(database,req.ctx,req.body);
-    req.flash('success','Safety stock saved at '+result.units+' units.');return res.redirect(303,'/planning#safety-stock');
+    const unit=result.unit==='unit'?'units':result.unit;
+    req.flash('success','Safety stock saved at '+result.units+' '+unit+'.');return res.redirect(303,'/planning#safety-stock');
   }));
   router.post('/planning/safety-stock/class',requireAuth,asyncRoute(async(req,res)=>{
     await require('../../forecasting/agent-safety-stock').setClassRule(database,req.ctx,req.body);

@@ -4,6 +4,7 @@ const time = require('../lib/business-time');
 const { addDays } = require('../accounting/customer-money');
 const { hash } = require('../pricing/postgres-promotions');
 const { ValidationError } = require('../domain/errors');
+const abc = require('../forecasting/monthly-product-classes');
 
 async function warehouses(db, workspaceId) {
   return (await db.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND parent_location_id IS NULL
@@ -48,7 +49,7 @@ async function shelves(db, workspaceId, { clock, warehouseId = null, filter = ''
     SELECT b.sku_id,b.location_id,b.on_hand,b.secondary_on_hand,b.updated_at,s.code,i.name product,i.unit_label,
       t.warehouse_id,t.warehouse_name,coalesce(t.shelf_id,t.id) shelf_id,b.on_hand<0 negative,
       coalesce(d.n,0) adjustments,d.last_adjustment,coalesce(o.n,0) pending,o.digest observed,
-      abc.class,books.base_currency,v.updated_at cost_updated_at,
+      ${abc.category} class,books.base_currency,v.updated_at cost_updated_at,
       CASE WHEN b.on_hand>0 AND books.base_currency IS NOT NULL AND v.quantity_units=b.on_hand
         AND (i.secondary_unit_label IS NULL OR v.secondary_quantity_units=b.secondary_on_hand)
         THEN v.total_cost_minor END value
@@ -59,9 +60,7 @@ async function shelves(db, workspaceId, { clock, warehouseId = null, filter = ''
     LEFT JOIN accounting_inventory_cost_balances v ON v.workspace_id=b.workspace_id AND v.sku_id=b.sku_id AND v.location_id=b.location_id
     LEFT JOIN differences d ON d.sku_id=b.sku_id AND d.location_id=b.location_id
     LEFT JOIN observed o ON o.sku_id=b.sku_id AND o.location_id=b.location_id
-    LEFT JOIN stockchief_runtime.product_class_months month ON month.workspace_id=b.workspace_id
-      AND month.month_start=date_trunc('month',$3::date)::date AND month.currency=books.base_currency
-    LEFT JOIN stockchief_runtime.product_class_values abc ON abc.workspace_id=month.workspace_id AND abc.item_id=i.id AND abc.month_start=month.month_start
+    ${abc.currentJoins('i.id',"date_trunc('month',$3::date)::date")}
     WHERE ($6='' OR lower(s.code)=lower($6)) AND (b.on_hand<>0 OR d.n>0 OR o.n>0)
   ), ranked AS (
     SELECT p.*,row_number() OVER(PARTITION BY shelf_id ORDER BY ${rank}) spot,

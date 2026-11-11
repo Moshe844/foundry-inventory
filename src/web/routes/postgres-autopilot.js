@@ -940,6 +940,14 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/third-party-stock');
   }));
+  const abcPath=require('../../forecasting/monthly-product-classes').path;
+  router.get(abcPath+'/products/:itemId',requireAuth,owner,asyncRoute(async(req,res)=>{
+    return agentPage(req,res,'autopilot/monthly-abc-planning',{
+      title:'ABC count and safety planning',nav:'autopilot',backTo:{href:abcPath,label:'Monthly ABC product classes'},
+    },async()=>({
+      model:await require('../../forecasting/agent-safety-stock').classPlanning(database,req.ctx,req.params.itemId,req.query),
+    }),402);
+  }));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
