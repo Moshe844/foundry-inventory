@@ -744,6 +744,36 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/shipbob/:order/refresh',requireAuth,owner,asyncRoute(async(req,res)=>{
     await shipbob.refresh(database,req.ctx,req.params.order);res.redirect(303,'/autopilot/shipbob');
   }));
+  const lotCertificates=require('../../autopilot/lot-certificate-evidence');
+  const certificateCoverage=require('../../autopilot/lot-certificate-coverage');
+  const lotCertificatePage=async(req,res)=>res.page('autopilot/lot-certificates',{title:'Lot certificate evidence',nav:'autopilot',
+    screen:await certificateCoverage.screen(database,req.ctx,{...req.query,id:req.params.id||null})});
+  router.get('/autopilot/lot-certificates',requireAuth,owner,asyncRoute(lotCertificatePage));
+  router.post('/autopilot/lot-certificates',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await lotCertificates.prepare(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,'/autopilot/lot-certificates/'+result.id);
+  }));
+  router.get('/autopilot/lot-certificates/source/:sourceId',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await lotCertificates.load(database,req.ctx,req.params.sourceId);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.post('/autopilot/lot-certificates/source/:sourceId/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await lotCertificates.dismiss(database,req.ctx,req.params.sourceId);res.redirect(303,'/autopilot/lot-certificates');
+  }));
+  router.post('/autopilot/lot-certificates/requirement',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await lotCertificates.requirement(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/lots?'+new URLSearchParams({sku:req.body.sku,lot:req.body.lot}));
+  }));
+  router.post('/autopilot/lot-certificates/scope',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await lotCertificates.configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/lot-certificates'+(req.body.sku&&req.body.lot?'?'+new URLSearchParams({sku:req.body.sku,lot:req.body.lot}):''));
+  }));
+  router.get('/autopilot/lot-certificates/:id',requireAuth,owner,asyncRoute(lotCertificatePage));
+  for(const [operation,run] of [['approve',lotCertificates.approve],['revoke',lotCertificates.revoke]]){
+    router.post('/autopilot/lot-certificates/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/lot-certificates/'+req.params.id);
+    }));
+  }
   router.get('/autopilot/lots',requireAuth,owner,asyncRoute(async(req,res)=>{
     const detail=req.query.lot||req.query.sku?await lots.details(database,req.ctx,req.query):null;
     res.page('autopilot/lot-controls',{title:'Lot controls',nav:'autopilot',detail});
