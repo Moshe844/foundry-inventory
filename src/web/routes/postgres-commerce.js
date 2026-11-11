@@ -833,8 +833,13 @@ function createPostgresCommerceRouter(database,options={}){
     asyncRoute(async(req,res)=>{
       const supplierReturn=await returns.getSupplierReturn(database,req.ctx.workspaceId,req.params.id);
       const buyView=require('../buy-view');
+      const creditPolicy=require('../../commercial/agent-plan');
+      const creditState=supplierReturn.trackedCredit?.intake_id&&req.user.role==='owner'?
+        await creditPolicy.accountState(database,req.ctx.workspaceId):null;
+      const canApplyTrackedCredit=Boolean(creditState&&creditPolicy.usesAgentTerms(creditState)&&creditPolicy.permits(creditState.plan,105,'draft'));
       return res.page('buy/return',{title:supplierReturn.return_number,nav:'purchasing',supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step'),
-        badge:buyView.returnBadge(supplierReturn.status),steps:buyView.supplierReturnSteps(supplierReturn),shortDate:buyView.shortDay,ownSectionTabs:true,suppressBack:true,screenGuide:null});
+        badge:buyView.returnBadge(supplierReturn.status),steps:buyView.supplierReturnSteps(supplierReturn),shortDate:buyView.shortDay,
+        canApplyTrackedCredit,canReviewCreditPlans:req.user.role==='owner',ownSectionTabs:true,suppressBack:true,screenGuide:null});
     }));
 
   router.post('/supplier-returns/:id/authorize',

@@ -206,12 +206,12 @@ function createPostgresAutopilotRouter(database,options={}){
     const result=await voice.confirm(database,req.ctx,req.params.id,req.body);
     res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
   }));
-  function starterAgentPage(job,mode,title,render){
+  function starterAgentPage(job,mode,title,render,tier='Starter'){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);
       const planIncludes=policy.permits(state.plan,job,mode);
-      if(planIncludes&&policy.usesAgentTerms(state))return render(req,res);
-      return res.page('autopilot/agent-plan-locked',{title,nav:'autopilot',tier:'Starter',
+      if(planIncludes&&policy.usesAgentTerms(state))return render(req,res,state);
+      return res.page('autopilot/agent-plan-locked',{title,nav:'autopilot',tier,
         reviewTerms:planIncludes&&!policy.usesAgentTerms(state),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
     });
   }
@@ -226,19 +226,19 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/contracts/:id',requireAuth,owner,contractsPage);
   router.post('/autopilot/contracts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/contracts/'+req.params.id);}));
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
-  const supplierCreditPage = async (req,res) => res.page('autopilot/supplier-credits', {
+  const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},
     ...await supplierCredits.page(database,req.ctx,{...req.query,id:req.params.id}),
-  });
-  router.get('/autopilot/supplier-credits', requireAuth, owner, asyncRoute(supplierCreditPage));
-  router.get('/autopilot/supplier-credits/:id', requireAuth, owner, asyncRoute(supplierCreditPage));
+  }),'Growth');
+  router.get('/autopilot/supplier-credits', requireAuth, owner, supplierCreditPage);
+  router.get('/autopilot/supplier-credits/:id', requireAuth, owner, supplierCreditPage);
   router.post('/autopilot/supplier-credits/:id/approve', requireAuth, owner, asyncRoute(async(req,res)=>{
     const result = await supplierCredits.approve(database,req.ctx,req.params.id,req.body);
     req.flash('success',result.replayed?'This exact credit application was already recorded.':'Supplier credit recorded against the reviewed bill.');
     return res.redirect(303,supplierCredits.detailHref(req.params.id));
   }));
   const supplierInvoices=require('../../purchasing/agent-supplier-invoice-intake');
-  const supplierInvoicePage=starterAgentPage(98,'draft','Supplier invoices',async(req,res)=>res.page('autopilot/supplier-invoices',{title:'Supplier invoices: originals, matches and exceptions',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await supplierInvoices.page(database,req.ctx,{...req.query,id:req.params.id}),invoiceCurrency:require('../../domain/currency'),differenceLabel:require('../../purchasing/postgres-invoice-review').differenceLabel}));
+  const supplierInvoicePage=starterAgentPage(98,'draft','Supplier invoices',async(req,res,state)=>res.page('autopilot/supplier-invoices',{title:'Supplier invoices: originals, matches and exceptions',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await supplierInvoices.page(database,req.ctx,{...req.query,id:req.params.id}),canTrackCredit:policy.permits(state.plan,105,'suggest'),invoiceCurrency:require('../../domain/currency'),differenceLabel:require('../../purchasing/postgres-invoice-review').differenceLabel}));
   router.get('/autopilot/supplier-invoices',requireAuth,owner,supplierInvoicePage);
   router.post('/autopilot/supplier-invoices/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.configure(database,req.ctx,req.body);req.flash('success',req.body.stop==='yes'?'Mailbox invoice matching stopped. Originals are retained.':'Source mailboxes enabled. Clear matches still require the current plan and invoice job authority.');res.redirect(303,'/autopilot/supplier-invoices');}));
   router.post('/autopilot/supplier-invoices/upload',requireAuth,owner,require('../multipart').multipart({limit:21*1024*1024,maxFiles:1}),asyncRoute(async(req,res)=>{const files=(req.files||[]).filter(f=>f.field==='invoiceFile');if(files.length!==1)throw new ValidationError('Choose one complete supplier invoice original.');const orders=(await database.query("SELECT id FROM purchase_orders WHERE workspace_id=$1 AND (id=$2 OR lower(po_number)=lower($2)) ORDER BY id LIMIT 2",[req.ctx.workspaceId,String(req.body.purchaseOrderReference||'').trim()])).rows;if(orders.length!==1)throw new ValidationError('Choose the exact placed purchase order number.');await require('../../purchasing/supplier-invoice-uploads').enqueue(database,req.ctx,{buffer:files[0].buffer,filename:files[0].filename,purchaseOrderId:orders[0].id});req.flash('success','Original saved and queued for reading. Rechecks reuse its single document receipt.');res.redirect(303,'/autopilot/supplier-invoices');}));
