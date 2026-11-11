@@ -2280,6 +2280,21 @@ async function cancelProposal(database,ctx,id) {
   return result.rows[0];
 }
 
+// A question written mostly in another alphabet, read in English with its
+// numbers kept, or null (English, no model available, or the reading failed).
+async function readQuestionInEnglish(database,ctx,message,options={}){
+  if(!require('./ask-language').needsReading(message))return null;
+  const raw=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  if(!raw)return null;
+  try{
+    const english=await require('./ask-language').toEnglish(fundedAskProvider(database,ctx,raw,`${options.usageKey||newId('askusage')}:read-language`),message);
+    return english&&english!==message?english:null;
+  }catch(error){
+    if(!['entitlement_required','rate_limited','validation_error'].includes(error.code))console.warn('[stockchief] question reading failed',error.code||error.message||error.name);
+    return null;
+  }
+}
+
 async function ask(database,ctx,message,options={}){
   ctx={...ctx,conversationId:options.conversationId||null};
   const directStarted=Date.now();
@@ -2287,12 +2302,9 @@ async function ask(database,ctx,message,options={}){
   // English only to find an exact answer; the answer goes back in its language.
   // When none matches, the agent below gets the person's own words.
   let readAs=message,readInEnglish=false;
-  if(!options.continueInteractionId&&require('./ask-language').needsReading(message)){
-    const raw=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-    if(raw){
-      try{readAs=await require('./ask-language').toEnglish(fundedAskProvider(database,ctx,raw,`${options.usageKey||newId('askusage')}:read-language`),message)||message;readInEnglish=readAs!==message;}
-      catch(error){if(!['entitlement_required','rate_limited','validation_error'].includes(error.code))console.warn('[stockchief] question reading failed',error.code||error.name);}
-    }
+  if(!options.continueInteractionId){
+    const english=options.englishReading!==undefined?options.englishReading:await readQuestionInEnglish(database,ctx,message,options);
+    if(english){readAs=english;readInEnglish=true;}
   }
   const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
@@ -2318,9 +2330,10 @@ async function ask(database,ctx,message,options={}){
     // Preserve the existing zero-model page command. This is only a shortcut:
     // unknown destinations and compound requests still reach the native agent.
     const plane=require('./postgres-control-plane');
-    if(!options.continueInteractionId&&plane.explicitPageNavigation(message,require('./postgres-capability-registry').registry)){
+    // "Take me to …" in any language opens the page at once (readAs is the English reading).
+    if(!options.continueInteractionId&&plane.explicitPageNavigation(readAs,require('./postgres-capability-registry').registry)){
       const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
-      const contract=plane.explicitPageNavigation(message,await plane.planningCatalogue(database,ctx,actor));
+      const contract=plane.explicitPageNavigation(readAs,await plane.planningCatalogue(database,ctx,actor));
       if(contract){const step={contract,args:{},dependsOn:[],continuesPending:false};
         const outcome=await plane.executeStep(capabilityService(),database,ctx,step,{actor,sourceMessage:message});
         return recordCapabilityOutcome(database,ctx,message,{step,...outcome});}
@@ -2332,6 +2345,6 @@ async function ask(database,ctx,message,options={}){
   return askCapabilities(database,ctx,message,options);
 }
 
-module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
+module.exports={lookup,prepareAction,createProposal,ask,readQuestionInEnglish,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

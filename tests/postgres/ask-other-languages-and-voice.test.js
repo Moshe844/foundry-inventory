@@ -73,3 +73,22 @@ test('when the web service has no transcription key, the worker reads the voice 
  const [silent]=await Promise.all([voice.read(db,ctx,wav(),{usageKey:'worker-silent',waitMs:20000,pollMs:100}).catch(error=>error),work('')]);
  assert.match(silent.message,/No words were heard/,'the worker\'s reason reaches the person');
 });
+
+test('"take me to …" written in Yiddish opens the page at once, through its English reading',{timeout:180000},async t=>{
+ const {randomUUID}=require('node:crypto');
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner}=f;
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS'],old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ t.after(()=>{for(const k of keys)if(old[k]===undefined)delete process.env[k];else process.env[k]=old[k];});
+ process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Shipping operation fixture',emails:[f.email]})).environment);
+ await require('../../src/assistant/postgres-codex-pilot').toggle(db,ctx,true);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET stopped=false,approval_reference='OFFLINE UI ONLY',ceiling_micro_usd=1000000,period_ends_at=now()+interval '1 hour' WHERE workspace_id=$1",[ctx.workspaceId]);
+ await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) VALUES($1,$2,'pro','plan-services-2026-10-27:pro','COMP','CUSTOM','ISOLATED_TEST') ON CONFLICT(account_id) DO NOTHING",[randomUUID(),owner.accountId]);
+ const {pricedUsage}=require('../helpers/postgres-model-fixture'),seen=[];
+ const provider={name:'anthropic',model:'claude-haiku-4-5-20251001',async complete(request){seen.push(request.schemaName);
+  assert.equal(request.schemaName,'stockchief_question_in_english');return {data:{english:'Take me to the stock tab'},usage:pricedUsage()};}};
+ const result=await require('../../src/assistant/postgres-service').ask(db,ctx,'נעם מיר צו די סטאק טעב',{provider,usageKey:'yiddish-navigation'});
+ assert.deepEqual(seen,['stockchief_question_in_english'],'one reading, no agent run');
+ assert.equal(result.goalId,undefined,'no agent goal was started');
+ assert.match(String(result.navigation?.href||result.answer||''),/inventory|Stock/i,'the Stock page is opened: '+JSON.stringify({navigation:result.navigation,answer:result.answer}));
+});

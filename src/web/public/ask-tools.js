@@ -78,13 +78,18 @@
     note.addEventListener('click', function () {
       // Without the transcription service the button stays, and says why it cannot record yet.
       if (!ready) { tell('Voice notes are not available yet. Use Speak, or type your question.'); return; }
-      if (active) { var current = active; active = null; current.stop().then(read, function (error) { tell(error.message); idle(); }); return; }
+      // Pressing again stops early; otherwise it stops by itself when you finish speaking.
+      if (active) { active.stop(); return; }
       note.disabled = true;
       noteRecorder.start().then(function (recording) {
         active = recording; note.disabled = false; note.setAttribute('aria-pressed', 'true'); noteLabel.textContent = 'Stop';
-        tell('Recording. Speak in any language, then press Stop. Up to two minutes.');
-        // At two minutes the recording stops by itself and is read.
-        recording.done.then(function (file) { if (active === recording) { active = null; read(file); } }, function (error) { if (active === recording) { tell(error.message); idle(); } });
+        tell('Listening. Speak in any language; it stops by itself when you finish.');
+        recording.done.then(function (result) {
+          active = null;
+          // Nothing said: nothing is sent and nothing is charged.
+          if (!result.heard) { tell('No speech was heard. Check that the microphone is allowed, speak a little closer, and try again.'); idle(); return; }
+          read(result.file);
+        }, function (error) { active = null; tell(error.message); idle(); });
       }, function () { idle(); tell('The microphone is not available. Allow it in the browser, or type the question.'); });
     });
   }
