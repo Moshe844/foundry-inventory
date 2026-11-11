@@ -263,6 +263,8 @@ async function runtimeSweep(job,client,options={}){
       [effect.workspace_id,effect.payload.requestId,at]);
     }
     if(effect.kind==='payment.refund.create'&&effect.payload?.refundRequestId){
+      if(effect.payload.agentRefundPartId)await client.query(`UPDATE stockchief_runtime.agent_return_refund_parts SET status='REVIEW'
+        WHERE workspace_id=$1 AND id=$2 AND status='APPROVED'`,[effect.workspace_id,effect.payload.agentRefundPartId]);
       await client.query(`UPDATE payment_refund_requests SET status='REVIEW',
         last_error='The worker stopped before the refund outcome was verified. StockChief did not refund again.',
         updated_at=$3 WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,
@@ -455,6 +457,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   if(!job.workspaceId||!effectId)throw Object.assign(new Error('A provider job needs workspace and effect identity.'),
     {code:'invalid_provider_effect',retryable:false});
   const effect=await providerEffects.get(database,job.workspaceId,effectId);
+  require('./agent-return-refund-protocol').assertJob(effect,job.kind);
   const capability={'shipping.label.purchase':'shipping.labels','mail.reply.send':'communications.send_approved',
     'mail.outbound.send':'communications.send_approved','payment.request.create':'payments.customer',
     'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
@@ -745,6 +748,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
     providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
+  [require('./agent-return-refund-protocol').JOB]:external((job,database)=>providerEffect(job,database,options,providers)),
   ...Object.fromEntries(require('./agent-mail-protocol').kinds.map(kind=>[kind,external(async(job,database)=>{require('./agent-mail-protocol').assertJob(await providerEffects.get(database,job.workspaceId,job.payload?.effectId),job.kind);return providerEffect(job,database,options,providers);})])),
   'agent.mail.supplier_direct_purchase.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);

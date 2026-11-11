@@ -1401,6 +1401,10 @@ async function voidPayment(database, rawContext, paymentId, input = {}) {
     const payment = await requireRow(client, 'SELECT * FROM accounting_payments WHERE id=$1 AND workspace_id=$2 FOR UPDATE',
       [paymentId, ctx.workspaceId], 'That payment was not found.');
     if (payment.status !== 'POSTED') throw new ValidationError(`${payment.payment_number} is already void.`);
+    if((await client.query(`SELECT 1 FROM stockchief_runtime.agent_return_refund_parts WHERE workspace_id=$1 AND original_payment_id=$2
+      AND status IN('APPROVED','REVIEW','SETTLED') LIMIT 1`,[ctx.workspaceId,paymentId])).rows.length){
+      throw new ValidationError('A customer refund already uses this original receipt. Reconcile the refund before changing its payment.');
+    }
     if (require('../payments/postgres-collection').isProviderReceipt(payment.source_key)) {
       throw new ValidationError('This payment was taken online through your payment provider. Refund it there; it cannot be voided here.');
     }

@@ -1202,21 +1202,24 @@ function createPostgresCommerceRouter(database,options={}){
     }));
 
   router.get('/returns/:id',requirePermission(permissions.VIEW_SALES,'see customer returns'),asyncRoute(async(req,res)=>{
-    const [customerReturn,locationRows,refundRequestResult]=await Promise.all([
+    const [customerReturn,locationRows,refundRequestResult,managedRefund,refundAccess]=await Promise.all([
       returns.getCustomerReturn(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
       database.query(`SELECT refund.*,effect.status AS effect_status,effect.error_message AS effect_error_message
         FROM payment_refund_requests refund LEFT JOIN stockchief_runtime.provider_effects effect
           ON effect.workspace_id=refund.workspace_id AND effect.kind='payment.refund.create'
           AND effect.payload->>'refundRequestId'=refund.id
-        WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
+        WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 AND refund.agent_part_id IS NULL ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
+      require('../../operations/agent-return-refunds').view(database,req.ctx.workspaceId,req.params.id),
+      req.user?.role==='owner'?require('../../operations/return-refund-evidence').access(database,req.ctx).then(()=>true,()=>false):false,
     ]);
     const needsReceiptMeasures=['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)&&customerReturn.lines.some(line=>line.secondary_unit_label||line.tracking_mode!=='quantity');
     const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
+      managedRefund,refundAccess,isRefundOwner:req.user?.role==='owner',
       today:dateToday(req),formKey:newId('return-step')});
   }));
 
@@ -1257,6 +1260,22 @@ function createPostgresCommerceRouter(database,options={}){
         ?'Inspection recorded. The exact customer refund is ready for approval.'
         :'Inspection and physical disposition completed.');
       return res.redirect(303,`/returns/${req.params.id}`);
+    }));
+
+  router.post('/returns/:id/prepare-refund',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'prepare customer refunds'),
+    asyncRoute(async(req,res)=>{
+      const prepared=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Prepare the exact credit and any repayment for this inspected return.',{
+        action:'customer_return.refund',recordReference:req.params.id,refundPayments:req.body.refundPayments
+      });
+      if(prepared.status!=='PREPARED')throw new ValidationError(prepared.message||prepared.reason||'Review the invoice and original payments before preparing this refund.');
+      return res.redirect(303,'/actions/'+prepared.proposal.id);
+    }));
+
+  router.post('/returns/:id/refunds/:partId/verify',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'verify customer refunds'),
+    asyncRoute(async(req,res)=>{
+      await require('../../operations/agent-return-refunds').verifyProviderPart(database,req.ctx,req.params.id,req.params.partId);
+      req.flash('success','The original provider refund was confirmed and recorded.');
+      return res.redirect(303,'/returns/'+req.params.id);
     }));
 
   router.post('/returns/:id/refund',requirePermission(permissions.REFUND_CUSTOMER_RETURN,'approve customer refunds'),

@@ -26,8 +26,22 @@ async function sale(ctx,input){
 async function createCustomer(ctx,{email}){return {externalCustomerId:'local:'+crypto.createHash('sha256').update(ctx.workspaceId+':'+email).digest('hex')};}
 async function createInvoice(ctx,input){return require('../postgres-cardknox').createSession(ctx.database,ctx.workspaceId,input.attemptId,{origin:ctx.publicOrigin});}
 async function getHostedPaymentUrl(ctx,{externalInvoiceId}){return (await ctx.database.query('SELECT hosted_url FROM payment_requests WHERE workspace_id=$1 AND provider=$2 AND external_invoice_id=$3',[ctx.workspaceId,'cardknox',externalInvoiceId])).rows[0]?.hosted_url||null;}
-async function refundPayment(ctx,{externalPaymentId,amountMinor}){
- const r=await call(ctx.cardknoxApiKey,'cc:refund',{xRefNum:externalPaymentId,xAmount:money.fromMinor(amountMinor,'USD'),xCustReceipt:'FALSE'},ctx.cardknoxOptions);
+async function refundPayment(ctx,{externalPaymentId,amountMinor,currency,idempotencyKey,verifyExact=false}){
+ if(verifyExact&&currency!=='USD')throw new ValidationError('This original Sola payment requires a USD refund.');
+ const request={xRefNum:externalPaymentId,xAmount:money.fromMinor(amountMinor,'USD'),xCustReceipt:'FALSE'};
+ if(verifyExact)Object.assign(request,{xCurrency:'USD',xAllowDuplicate:'FALSE',xDescription:idempotencyKey});
+ const r=await call(ctx.cardknoxApiKey,'cc:refund',request,ctx.cardknoxOptions);
+ if(verifyExact){
+  if(r.xResult==='D')throw Object.assign(new ValidationError('Sola declined the exact refund.'),{status:422});
+  const verifiedAmount=/^\d+(?:\.\d{1,2})?$/.test(String(r.xAuthAmount))?money.toMinor(r.xAuthAmount,'USD'):null;
+  // The documented Refund response names the new refund in xRefNum.
+  // Some follow-up responses instead echo the original and name the new
+  // transaction in xRefNumCurrent. Tie either reply to the actual request.
+  const refundId=r.xRefNumCurrent&&String(r.xRefNum)===request.xRefNum?r.xRefNumCurrent:
+    !r.xRefNumCurrent&&String(r.xRefNum)!==request.xRefNum?r.xRefNum:null;
+  return {externalRefundId:refundId?String(refundId):null,originalPaymentId:request.xRefNum,
+   amountMinor:verifiedAmount,currency:r.xCurrency,status:r.xResult==='A'&&r.xStatus==='Approved'?'succeeded':'pending'};
+ }
  if(r.xResult!=='A'||!r.xRefNum)throw Object.assign(new ValidationError('Sola did not confirm the refund. Review the original attempt before retrying.'),{providerOutcomeUncertain:r.xResult!=='D'});
  return {externalRefundId:String(r.xRefNum)};
 }
