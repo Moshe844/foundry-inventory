@@ -2,7 +2,7 @@
 const {createHash}=require('node:crypto'),{hash}=require('../pricing/postgres-promotions'),policy=require('../commercial/agent-plan'),{ValidationError,NotFoundError}=require('../domain/errors');
 const owner=require('./supplier-email-terms-source').owner;
 const sha=value=>createHash('sha256').update(value).digest('hex'),instant=value=>new Date(value).getTime();
-const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg(to_jsonb(captured_line)::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
+const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
 async function currentSnapshot(db,workspaceId,orderId){
  return (await db.query(`SELECT po.expected_date,po.status,${orderSnapshotSql} AS snapshot
    FROM purchase_orders po WHERE po.workspace_id=$1 AND po.id=$2`,[workspaceId,orderId])).rows[0];
@@ -55,7 +55,8 @@ async function facts(db,ctx,id){
   p.amendmentInput=r.amendment.changes;
   p.amendments=changes.map(({line,amendment})=>({lineId:line.id,number:line.line_number,code:line.code,name:line.name,
     unit:line.unit_label,weightUnit:line.secondary_unit_label,locationId:line.receiving_location,
-    skuId:line.sku_id,pack:line.purchase_unit,packSize:line.units_per_purchase_unit,...amendment}));
+    skuId:line.sku_id,pack:line.purchase_unit,packSize:line.units_per_purchase_unit,
+    ...(line.supplier_supply_hold_id?{supplyHold:line.supplier_supply_hold_id,supplyHoldAt:line.supplier_supply_hold_at}:{}),...amendment}));
  }
  p.scope=scope(p);p.sourceFingerprint=hash(p);return p;
 }

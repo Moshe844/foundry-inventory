@@ -248,7 +248,9 @@ async function listItemsUncached(database, workspaceId, input = {}) {
     LEFT JOIN LATERAL (SELECT SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM skus s
       JOIN purchase_order_lines pol ON pol.sku_id=s.id AND pol.workspace_id=s.workspace_id
       JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
-      WHERE s.workspace_id=$1 AND s.item_id=i.id AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) purchase_incoming ON TRUE
+      WHERE s.workspace_id=$1 AND s.item_id=i.id AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+      AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+      AND to_jsonb(pol)->>'supplier_supply_hold_id' IS NULL) purchase_incoming ON TRUE
     WHERE ($9::text IS NULL OR ($9='shortage' AND COALESCE(committed_item.quantity,0)>COALESCE(stock.on_hand,0))
         OR ($9='empty' AND COALESCE(stock.on_hand,0)<=0)
         OR ($9='incoming' AND COALESCE(purchase_incoming.quantity,0)>0)
@@ -301,7 +303,9 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     ), purchase_incoming AS (
       SELECT pol.sku_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
-      WHERE pol.workspace_id=$1 AND pol.sku_id IN (SELECT id FROM selected_skus) AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
+      WHERE pol.workspace_id=$1 AND pol.sku_id IN (SELECT id FROM selected_skus) AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+      AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+      AND to_jsonb(pol)->>'supplier_supply_hold_id' IS NULL GROUP BY pol.sku_id
     ), stock AS (
       SELECT sku_id,COALESCE(SUM(on_hand),0) AS on_hand FROM balances WHERE workspace_id=$1 AND sku_id IN (SELECT id FROM selected_skus) GROUP BY sku_id
     )
@@ -349,7 +353,9 @@ async function getItem(database, workspaceId, itemId, input = {}) {
         JOIN skus s ON s.id=a.sku_id AND s.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND s.item_id=$2),0) AS committed,
       COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id JOIN skus s ON s.id=pol.sku_id
-        WHERE pol.workspace_id=$1 AND s.item_id=$2 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)
+        WHERE pol.workspace_id=$1 AND s.item_id=$2 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+        AND to_jsonb(pol)->>'supplier_supply_hold_id' IS NULL),0)
       AS on_order`,
   [workspaceId,itemId])).rows[0];
   const committedTotal = Number(positionTotal.committed || 0);

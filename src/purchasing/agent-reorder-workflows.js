@@ -99,9 +99,16 @@ async function facts(c,ctx,args,selection){
  AND o.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED') ORDER BY coalesce(o.approved_at,o.ordered_at,o.created_at)::timestamptz DESC,o.id DESC,l.line_number DESC LIMIT 1) prior ON true
  WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND prior.currency=v.currency AND prior.unit_cost=si.last_unit_cost AND prior.units_per_purchase_unit=si.units_per_purchase_unit ORDER BY si.id`,[ctx.workspaceId,ids])).rows.map(o=>o.id);
  const open=(await c.query(`SELECT l.id,l.sku_id,coalesce(l.destination_location_id,o.destination_location_id) location_id,o.id order_id,o.po_number,o.status,o.expected_date,o.source,
- (l.quantity_units-l.quantity_received_units)::text remaining FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
+ (l.quantity_units-l.quantity_received_units)::text remaining,to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold
+ FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
  WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND l.quantity_units>l.quantity_received_units
+ AND coalesce(to_jsonb(o)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
  AND o.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED') ORDER BY o.id,l.id`,[ctx.workspaceId,ids])).rows;
+ const heldNotices=[...new Set(open.map(line=>line.supply_hold).filter(Boolean))];
+ const reviewedBackups=heldNotices.length?(await c.query(`SELECT trigger_key,facts->'terms'->>'skuId' AS sku_id,
+  facts->'terms'->>'locationId' AS location_id,facts->'terms'->>'backupSupplierId' AS supplier_id
+  FROM stockchief_runtime.agent_backup_supplier_runs WHERE workspace_id=$1 AND trigger_key=ANY($2::text[])
+  ORDER BY id`,[ctx.workspaceId,heldNotices.map(id=>'notice:'+id)])).rows:[];
  const transfers=(await c.query(`SELECT l.id,l.sku_id,t.destination_location_id location_id,t.id order_id,t.reference po_number,t.status,t.expected_arrival_date expected_date,
  (CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity WHEN 'APPROVED' THEN l.approved_quantity WHEN 'PICKED' THEN l.picked_quantity ELSE l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity END)::text remaining
  FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[])
@@ -113,8 +120,8 @@ async function facts(c,ctx,args,selection){
  for(const p of source){
   const profile=byId.get(p.sku_id),scope=p.location_id?[p.location_id]:p.receivingOptions.map(l=>l.id);
   const pending=[...open.filter(l=>l.sku_id===p.sku_id&&scope.includes(l.location_id)),...transfers.filter(l=>l.sku_id===p.sku_id&&scope.includes(l.location_id))];
-  const drafts=pending.filter(l=>['DRAFT','AWAITING_APPROVAL'].includes(l.status)),uncertain=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&(!l.expected_date||l.expected_date<today));
-  const timely=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&l.expected_date&&l.expected_date>=today);
+  const drafts=pending.filter(l=>['DRAFT','AWAITING_APPROVAL'].includes(l.status)),uncertain=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&(l.supply_hold||!l.expected_date||l.expected_date<today));
+  const timely=pending.filter(l=>!l.supply_hold&&!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&l.expected_date&&l.expected_date>=today);
   const incoming=timely.reduce((n,l)=>exact.add(n,l.remaining),'0');
   const datedIncoming=incoming;
   const rawAvailable=p.location_id?String(usable.get(stock.key(p.sku_id,p.location_id))||0):scope.reduce((n,l)=>exact.add(n,String(usable.get(stock.key(p.sku_id,l))||0)),'0');
@@ -148,7 +155,9 @@ async function facts(c,ctx,args,selection){
   if(!chosen||chosen.blocked)throw new ValidationError(chosen?.blocked||'Choose one saved supplier for '+p.code+' or use the eligible supplier selection job first.');
   if(components.some(k=>k.kit_sku_id===p.sku_id))throw new ValidationError('Use the kit’s missing-parts reorder workflow for '+p.code+'; a component kit cannot be purchased as an ordinary finished-stock reorder.');
   if(drafts.length)throw new ValidationError('Review existing unsent purchase '+drafts.map(l=>l.po_number).join(', ')+' for '+p.code+' before creating another draft.');
-  if(uncertain.length)throw new ValidationError('Confirm the overdue or undated incoming '+uncertain.map(l=>l.po_number).join(', ')+' for '+p.code+' before making another purchase.');
+  const unresolved=uncertain.filter(line=>!line.supply_hold||!reviewedBackups.some(run=>
+   run.trigger_key==='notice:'+line.supply_hold&&run.sku_id===line.sku_id&&run.location_id===line.location_id&&run.supplier_id===chosen.supplier_id));
+  if(unresolved.length)throw new ValidationError('Check supplier availability for '+unresolved.map(l=>l.po_number).join(', ')+' before making another purchase for '+p.code+'.');
   if(!p.location_id&&scope.length!==1)throw new ValidationError('Choose a receiving location for the inventory-wide reorder of '+p.code+'.');
   if(p.onHand<0)throw new ValidationError('Resolve negative stock before reordering '+p.code+'.');
   const uncosted=valuation.filter(v=>v.sku_id===p.sku_id&&scope.includes(v.location_id));
@@ -156,7 +165,8 @@ async function facts(c,ctx,args,selection){
   rows.push({position:p,profile,available:rawAvailable,incoming:datedIncoming,needed,candidates,chosen,knownTerms:knownOffers.includes(chosen.id),locationId:p.location_id||scope[0]});
  }
  if(!rows.length)throw new ValidationError('Available and dated incoming stock already cover the selected reorder targets.');
- return {rows,today,costEvidence,source:{today,requested,recipes,positions:source,profiles,offers,knownOffers,open,transfers,valuation,usable:[...usable],components,...(selection?{comparisonBasis:args.comparisonBasis,goodsOnlyReason:args.goodsOnlyReason,costEvidence}:{})}};
+ const sourceOrders=open.map(({supply_hold,...line})=>supply_hold?{...line,supply_hold}:line);
+ return {rows,today,costEvidence,source:{today,requested,recipes,positions:source,profiles,offers,knownOffers,open:sourceOrders,...(reviewedBackups.length?{reviewedBackups}:{}),transfers,valuation,usable:[...usable],components,...(selection?{comparisonBasis:args.comparisonBasis,goodsOnlyReason:args.goodsOnlyReason,costEvidence}:{})}};
 }
 function lineSummary(l,rows,currency){
  const row=rows.find(r=>r.position.sku_id===l.skuId&&r.locationId===l.destinationLocationId),profile=row.profile;

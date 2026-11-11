@@ -28,10 +28,16 @@ async function build(db,ctx,_row,args){
   const orders=new Map(),evidence=[];
   for(const part of parts){
     const available=stock.get(JSON.stringify([part.skuId,locations[0].id]))||0;
-    const incoming=Number((await db.query(`SELECT coalesce(sum(greatest(l.quantity_units-l.quantity_received_units,0)),0) AS units
+    const supply=(await db.query(`SELECT coalesce(sum(greatest(l.quantity_units-l.quantity_received_units,0))
+        FILTER (WHERE to_jsonb(l)->>'supplier_supply_hold_id' IS NULL),0) AS units,
+      min(o.po_number) FILTER (WHERE to_jsonb(l)->>'supplier_supply_hold_id' IS NOT NULL
+        AND l.quantity_units>l.quantity_received_units) AS held_order
       FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
-      WHERE l.workspace_id=$1 AND l.sku_id=$2 AND l.destination_location_id=$3 AND (o.status IN ('ORDERED','PARTIALLY_RECEIVED') OR
-        o.status IN ('DRAFT','AWAITING_APPROVAL') AND o.source='foundry_recommendation' AND o.source_detail::jsonb->>'kit'=$4)`,[ctx.workspaceId,part.skuId,locations[0].id,kit[0].code])).rows[0].units);
+      WHERE l.workspace_id=$1 AND l.sku_id=$2 AND l.destination_location_id=$3
+      AND coalesce(to_jsonb(o)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+      AND (o.status IN ('ORDERED','PARTIALLY_RECEIVED') OR o.status IN ('DRAFT','AWAITING_APPROVAL')
+        AND o.source='foundry_recommendation' AND o.source_detail::jsonb->>'kit'=$4)`,[ctx.workspaceId,part.skuId,locations[0].id,kit[0].code])).rows[0];
+    const incoming=Number(supply.units);
     const required=exact.convert(target,{numerator:part.quantity}),short=Math.max(0,exact.safeNumber(exact.subtract(exact.subtract(required,available),incoming),{signed:true}));
     const offers=(await db.query(`SELECT si.*,v.name,v.currency,v.minimum_order_amount,v.freight_terms_currency,v.free_freight_threshold_minor,v.ordinary_freight_minor,s.code
       FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id JOIN skus s ON s.workspace_id=si.workspace_id AND s.id=si.sku_id
@@ -39,6 +45,7 @@ async function build(db,ctx,_row,args){
       ORDER BY si.is_preferred DESC,si.id LIMIT 2`,[ctx.workspaceId,part.skuId])).rows;
     evidence.push({part,available,incoming,offers});
     if(!short)continue;
+    if(supply.held_order)throw new ValidationError('Review supplier availability on '+supply.held_order+' before buying this kit component again.');
     if(!offers.length||offers.length>1&&Number(offers[0].is_preferred)===Number(offers[1].is_preferred)||offers[0].last_unit_cost==null)
       throw new ValidationError('Save one preferred supplier and its current cost for each missing component.');
     const offer=offers[0],quantity=require('./agent-order-quantities').quantities(offer,short,true);

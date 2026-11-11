@@ -707,6 +707,7 @@ function createPostgresCommerceRouter(database,options={}){
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
       can.supplierAmendments=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,31,'draft');
+      can.withdrawSupplierAvailability=true;
     }
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
@@ -716,6 +717,12 @@ function createPostgresCommerceRouter(database,options={}){
       permissions:can,dualApproval,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
+  }));
+
+  router.post('/purchasing/orders/:id/supplier-availability/:noticeId/withdraw',requirePermission(permissions.APPROVE_PO,'correct a supplier availability report'),asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes')throw new ValidationError('Confirm that this supplier report was entered in error before withdrawing it.');
+    await require('../../purchasing/agent-backup-suppliers').withdrawNotice(database,req.ctx,req.params.noticeId,req.params.id);
+    res.redirect(303,'/purchasing/orders/'+req.params.id);
   }));
 
   router.get('/purchasing/orders/:id/supplier-files/:file',requirePermission(permissions.VIEW_PURCHASING,'review supplier documents'),asyncRoute(async(req,res)=>{

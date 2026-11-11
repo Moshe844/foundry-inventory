@@ -41,6 +41,9 @@ function requireTerms(p,authorization,lines=p.amendments,{checkSource=true}={}){
   if(checkSource&&!sameSource(p,authorization))
     throw new ValidationError('Individually review this supplier response source before authorizing its mailbox or private link for routine changes.');
   for(const line of lines.filter(row=>row.changed)){
+    if(line.supplyHold&&(new Date(p.receivedAt)<=new Date(line.supplyHoldAt)||
+      !p.amendmentInput.some(change=>change.lineId===line.lineId&&change.quantity!=null)))
+      throw new ValidationError('Review the supplier’s current availability before changing this purchase automatically.');
     if(!authorization?.profiles.includes(profile(line)))
       throw new ValidationError('Authorize this exact supplier product, warehouse and measurement before making routine purchase changes.');
     const old=line.originalRemaining,proposed=line.remaining;
