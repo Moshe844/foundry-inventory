@@ -140,8 +140,18 @@ async function report(db,ctx,window='week') {
     SELECT 'customer-receipt',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
       JOIN accounting_bank_transactions t ON t.workspace_id=a.workspace_id AND t.id=a.result->>'bankTransactionId' AND t.status IN ('MATCHED','RECONCILED')
       JOIN accounting_payments p ON p.workspace_id=t.workspace_id AND p.id=t.matched_payment_id AND p.id=a.result->>'paymentId'
-        AND p.source_key='agent-bank-receipt:'||t.id AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED'
-      JOIN accounting_payment_allocations l ON l.workspace_id=p.workspace_id AND l.payment_id=p.id AND l.customer_invoice_id=a.payload->>'recordId' AND l.amount_minor=t.amount_minor
+        AND (p.source_key='agent-bank-receipt:'||t.id OR a.result->>'linkedExisting'='true')
+        AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED' AND p.amount_minor=t.amount_minor
+      JOIN accounting_bank_accounts bank ON bank.workspace_id=t.workspace_id AND bank.id=t.bank_account_id
+        AND bank.ledger_account_id=p.cash_account_id AND bank.currency=p.currency
+      JOIN LATERAL (
+        SELECT count(*) n,coalesce(sum(l.amount_minor),0) amount,bool_and(
+          CASE WHEN a.payload ? 'allocations' THEN a.payload->'allocations' @>
+            jsonb_build_array(jsonb_build_object('invoiceId',l.customer_invoice_id,'amountMinor',l.amount_minor))
+          ELSE l.customer_invoice_id=a.payload->>'recordId' AND l.amount_minor=t.amount_minor END) proven
+        FROM accounting_payment_allocations l WHERE l.workspace_id=p.workspace_id AND l.payment_id=p.id
+      ) allocations ON allocations.proven AND allocations.amount=t.amount_minor
+        AND allocations.n=coalesce(jsonb_array_length(a.payload->'allocations'),1)
       JOIN accounting_journal_entries j ON j.workspace_id=p.workspace_id AND j.id=p.journal_entry_id AND j.status='POSTED'
       WHERE a.workspace_id=$1 AND a.action_type='customer_payment.match_bank_line' AND a.status='EXECUTED' AND a.result->>'replayed' IS DISTINCT FROM 'true'
         AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED')

@@ -3,6 +3,6 @@
  <% }else if(!result.bankMatchForm.entries.length){ %><p>No unmatched credits have an exact invoice reference. Review other remittances in <a href="/accounting/banking">Money</a>.</p>
  <% }else{ %><% for(const entry of result.bankMatchForm.entries){ %><form method="post" action="/autopilot/customer-payments/prepare" class="section">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="invoiceNumber" value="<%= entry.invoiceNumber %>"><input type="hidden" name="bankTransaction" value="<%= entry.bankTransaction %>">
-  <p><strong><%= entry.invoiceNumber %></strong> · <%= entry.customerName %><br><%= entry.amount %> recorded at <%= entry.bankName %></p><button class="btn">Prepare match</button>
+  <p><strong><%= entry.invoiceNumber %></strong><% if(entry.allocationCount>1){ %> and <%= entry.allocationCount-1 %> other invoice<%= entry.allocationCount===2?'':'s' %><% } %> · <%= entry.customerName %><br><%= entry.amount %> recorded at <%= entry.bankName %></p><button class="btn">Prepare match</button>
  </form><% } %><% } %>
 </section>

@@ -31,6 +31,14 @@ async function history(db,ctx,action,bound,amount){
         AND e.payload->'standingAuthority'->>'automatic'='false' AND e.payload->'standingAuthority'->>'sourceFingerprint'=p.payload->>'sourceFingerprint')))
       AND ($2<>'customer_return.send_label' OR (result->>'automatic'='false' AND EXISTS(SELECT 1 FROM customer_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED' WHERE m.workspace_id=p.workspace_id AND m.id=p.result->>'communicationId' AND m.customer_id=p.payload->>'customerId' AND m.status='SENT' AND m.external_message_id IS NOT NULL AND e.payload->'standingAuthority'->>'kind'='return_label' AND e.payload->'standingAuthority'->>'automatic'='false' AND e.payload->'standingAuthority'->>'sourceFingerprint'=p.payload->>'sourceFingerprint')))
       AND ($2<>'warehouse.release_partial_order' OR (result->>'automatic'='false' AND ${require('../warehouse/partial-shipment-evidence').completionSql('p')}))
+      AND ($2<>'customer_payment.match_bank_line' OR (p.result->>'automatic' IS DISTINCT FROM 'true' AND EXISTS(
+        SELECT 1 FROM accounting_bank_transactions t JOIN accounting_payments payment
+          ON payment.workspace_id=t.workspace_id AND payment.id=t.matched_payment_id AND payment.status='POSTED'
+          AND payment.direction='CUSTOMER_RECEIPT' AND payment.amount_minor=t.amount_minor
+        JOIN accounting_journal_entries j ON j.workspace_id=payment.workspace_id AND j.id=payment.journal_entry_id AND j.status='POSTED'
+        WHERE t.workspace_id=p.workspace_id AND t.id=p.result->>'bankTransactionId' AND payment.id=p.result->>'paymentId'
+          AND t.status IN('MATCHED','RECONCILED') AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries r
+            WHERE r.workspace_id=j.workspace_id AND r.reversal_of_entry_id=j.id AND r.status='POSTED'))))
       AND ($2<>'landed_cost.apply' OR (result->>'automatic' IS DISTINCT FROM 'true' AND payload->>'needsLandedCostConfirmation'='false'))
       AND ($2<>'supplier_invoice.dispute' OR (payload->>'needsDisputeConfirmation'='false' AND EXISTS(
         SELECT 1 FROM supplier_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
@@ -60,6 +68,7 @@ async function settings(db,ctx,id,maximum){
       (p.action_type!=='sales_quote.followup'||await require('../sales/agent-quote-followups').confirmedExample(db,ctx.workspaceId,p))&&
       (p.action_type!=='customer_return.send_label'||await require('../shipping/agent-return-instructions').confirmedExample(db,ctx.workspaceId,p))&&
       (p.action_type!=='customer.statement'||await require('../accounting/agent-customer-statements').confirmedExample(db,ctx.workspaceId,p))&&
+      (p.action_type!=='customer_payment.match_bank_line'||await require('../accounting/agent-customer-payment-matches').confirmedExample(db,ctx,p))&&
       (p.action_type!=='supplier_invoice.dispute'||await require('../purchasing/agent-invoice-disputes').confirmedExample(db,ctx.workspaceId,p))};
 }
 async function save(db,ctx,id,input){

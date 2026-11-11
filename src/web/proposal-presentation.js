@@ -70,7 +70,16 @@ function present(proposal){
  }
  if(proposal.action_type==='customer_payment.match_bank_line'){
   const p=proposal.payload,money=require('../domain/currency');
-  return {summary:proposal.summary,impact:p.existing?'Reviews an existing bank match':'Records received money against an invoice',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(p.expectedBalanceMinor!=null?[{label:'Invoice balance before matching',value:money.format(p.expectedBalanceMinor,p.currency)},{label:'Invoice balance after matching',value:money.format(p.expectedBalanceMinor-p.amountMinor,p.currency)}]:[])]};
+  const batch=p.allocations?.length>1;
+  const first=p.allocations?.[0];
+  const balance=first?.balanceMinor??p.expectedBalanceMinor;
+  const after=p.alreadyPosted?balance:balance-(first?.amountMinor??p.amountMinor);
+  return {summary:proposal.summary,impact:p.existing||p.alreadyPosted?'Links recorded bank and receipt evidence':'Records and allocates received money',
+    fields:[batch?{label:'Invoices',value:String(p.allocations.length)}:{label:'Invoice',value:p.invoiceNumber},
+      {label:'Customer',value:p.customerName},{label:'Bank account',value:p.bankName},{label:'Bank credit',value:money.format(p.amountMinor,p.currency)},
+      ...(p.paymentDate?[{label:'Received on',value:p.paymentDate}]:[]),...(!batch&&balance!=null&&!p.existing?[
+        {label:'Invoice balance before matching',value:money.format(balance,p.currency)},
+        {label:'Invoice balance after matching',value:money.format(after,p.currency)}]:[])]};
  }
  if(proposal.action_type==='document.save_product_facts'){
   const p=proposal.payload,labels=require('../documents/agent-product-facts').labels;
