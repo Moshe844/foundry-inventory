@@ -51,6 +51,9 @@ function back(req){return samePlace(req,req.get('referer'))||'/';}
 
 function create(database){
   return async(req,res,next)=>{
+    // The live report preview serializes the same form as Save. It only reads
+    // results and must not claim or replay the key of a persistent save.
+    if(req.path==='/reports/preview')return next();
     const key=req.method==='POST'?String(req.body?.idempotencyKey||''):'';
     const workspaceId=req.ctx?.workspaceId;
     if(!workspaceId||!FORM_KEY.test(key))return next();
