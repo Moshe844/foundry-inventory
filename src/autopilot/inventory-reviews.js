@@ -13,16 +13,8 @@ const reports = [
     ORDER BY p.order_date DESC,p.id,l.line_number`},
   {id:90,key:'supplier-scorecard',label:'Review supplier performance',filterLabel:'Exact supplier name',
     readPage:require('../purchasing/agent-supplier-scorecard').review},
-  {id:92,key:'compare-quotes',label:'Compare supplier quotations',summary:'Latest documented quotation per supplier, SKU and currency. Unit prices use the stocking unit. Open the originating order to check quantities and terms.',sql:`
-    WITH latest AS (SELECT DISTINCT ON (d.supplier_id,line->>'skuId',d.facts::jsonb->>'currency') d.supplier_id,d.purchase_order_id,d.status,line,
-      d.document_reference AS ref,d.facts::jsonb->>'currency' AS currency,d.processed_at FROM supplier_documents d
-      CROSS JOIN LATERAL jsonb_array_elements(d.facts::jsonb->'lines') line
-      WHERE d.workspace_id=$1 AND d.document_type='quotation' AND d.status IN ('MATCHED','RECORDED','NEEDS_REVIEW') AND line->>'unitCostMinor' IS NOT NULL
-      ORDER BY d.supplier_id,line->>'skuId',d.facts::jsonb->>'currency',d.processed_at::timestamptz DESC,d.id DESC)
-    SELECT s.code AS "SKU",v.name AS "Supplier",q.currency AS "Currency",(q.line->>'unitCostMinor')::bigint AS price_minor,q.ref AS "Quote reference",
-      q.status AS "Review status",q.processed_at AS "Recorded",'/purchasing/orders/'||q.purchase_order_id AS link
-    FROM latest q JOIN skus s ON s.workspace_id=$1 AND s.id=q.line->>'skuId' JOIN suppliers v ON v.id=q.supplier_id
-    WHERE ($2='' OR lower(s.code)=lower($2)) ORDER BY s.code,q.currency,price_minor,v.id`},
+  {id:92,key:'compare-quotes',label:'Compare supplier quotations',filterLabel:'Exact product code',
+    readPage:require('../purchasing/agent-supplier-quote-comparison').review},
   {id:117,key:'stock-by-location',label:'Show stock across locations',summary:'Current recorded balances by item and location.',sql:`
     SELECT s.code AS "SKU",i.name AS "Product",l.name AS "Location",b.on_hand AS "Units",'/inventory/'||i.id AS link
     FROM balances b JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id JOIN locations l ON l.id=b.location_id

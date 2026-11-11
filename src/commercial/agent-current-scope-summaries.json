@@ -67,7 +67,7 @@
   "89": "Prepares scoped supplier messages about orders and follow-ups with fresh send authority. Live mailbox acceptance remains unverified.",
   "90": "Scores suppliers from actual warehouse deliveries, due-line fill, recorded price changes and invoice errors. Starter receives one suggestion. Growth, Pro and Custom can schedule the scorecard without training.",
   "91": "Compares verified supplier invoices and uploaded price lists with the approved PO or earlier trusted supplier price. Starter gets one suggestion. Growth, Pro and Custom surface higher comparable prices in owner review without training.",
-  "92": "Compares supplier quotation prices for the same exact product and links each result to its captured source message.",
+  "92": "Compares current original supplier quotes for the same product, receiving site, quantity and currency. Shows goods rank, exact quoted delivery costs where recorded and links to the original. Growth reviews a draft. Pro and Custom can schedule comparisons without training.",
   "94": "Drafts a negotiation message from completed, dated supplier deliveries. Pro reviews each draft; Custom can use a taught scope. Sending remains separate.",
   "98": "Reads original invoices from a connected mailbox, an owner upload or the private purchase link. Matches current purchase terms and actual receipts. Starter and Growth approve each bill. Pro and Custom can post clear matches within authorized rules without training.",
   "99": "Flags quantity, price and duplicate-invoice differences and keeps a disputed invoice out of the payment run.",

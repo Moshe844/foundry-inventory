@@ -3,6 +3,22 @@ const crypto=require('node:crypto'),{newId}=require('../lib/util'),{ValidationEr
 const TYPES=new Set(['order_acknowledgement','shipment_notice','backorder_notice','quotation','price_update','capacity_notice','substitution_offer','dispute']);
 const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function date(value){if(!value)return null;const text=String(value),stamp=Date.parse(text);if(!/^\d{4}-\d{2}-\d{2}$/.test(text)||!Number.isFinite(stamp)||new Date(stamp).toISOString().slice(0,10)!==text)throw new ValidationError('Use a real expected delivery date.');return text;}
+function quotationTerms(input,source,currency,lineCount){
+ if(!input)return null;
+ const money=require('../domain/currency'),evidence=String(input.evidence||'').trim();
+ if(evidence.length<5||evidence.length>1000||!source.toLowerCase().includes(evidence.toLowerCase()))
+  throw new ValidationError('Copy the exact validity or delivery terms from the saved supplier original.');
+ const validThrough=date(input.validThrough),deliveryMinor=input.deliveryMinor==null?null:money.integer(input.deliveryMinor,'Quoted delivery');
+ if(validThrough&&!evidence.includes(validThrough))throw new ValidationError('The validity date must appear in the quoted supplier terms.');
+ if(deliveryMinor!==null){
+  if(lineCount!==1)throw new ValidationError('Record delivery separately when the quotation covers several products.');
+  const explicit=evidence.split(/\r?\n/).find(line=>/\b(?:freight|shipping|delivery)\b/i.test(line)&&
+    (line.includes(currency+' '+money.fromMinor(deliveryMinor,currency))||line.includes(money.format(deliveryMinor,currency))||
+    deliveryMinor===0&&/\bfree (?:shipping|freight|delivery)\b/i.test(line)));
+  if(!explicit)throw new ValidationError('The exact delivery amount and currency must appear in the quoted supplier terms.');
+ }
+ return {validThrough,deliveryMinor,evidence};
+}
 async function assess(db,ctx,order,document){
  if(!document||typeof document!=='object'||Array.isArray(document)||!TYPES.has(document.documentType)||!Array.isArray(document.lines)||document.lines.length>500)throw new ValidationError('Read a complete supported supplier confirmation, shipment notice, quote or exception before recording its evidence.');
  const message=(await db.query("SELECT * FROM connection_email_messages WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3 AND trust_status='TRUSTED' AND classification='supplier'",[ctx.workspaceId,document.sourceMessageId,order.supplier_id])).rows[0];if(!message)throw new ValidationError('Use a trusted message from this purchase order’s supplier in this business.');
@@ -19,14 +35,18 @@ async function assess(db,ctx,order,document){
   const expected=Number(line.quantity_units),cost=require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Approved unit cost'});
   if(document.documentType==='order_acknowledgement'&&quantity!==expected)differences.push({kind:'quantity_changed',lineId:line.id,ordered:expected,confirmed:quantity});
   if(unitCostMinor!==null&&unitCostMinor!==cost)differences.push({kind:'price_changed',lineId:line.id,approvedMinor:cost,quotedMinor:unitCostMinor});
-  matched.push({lineId:line.id,skuId:line.sku_id,quantity,unitCostMinor});
+  matched.push({lineId:line.id,skuId:line.sku_id,quantity,unitCostMinor,
+    ...(document.documentType==='quotation'&&document.quotationTerms?{receivingSiteId:line.destination_location_id||order.destination_location_id}: {})});
  }
  if(document.currency&&document.currency!==order.currency)differences.push({kind:'currency_changed',approved:order.currency,quoted:document.currency});
  if(document.documentType==='order_acknowledgement'&&seen.size!==lines.length)differences.push({kind:'partial_confirmation',orderedLines:lines.length,confirmedLines:seen.size});
  const expectedArrivalDate=date(document.expectedArrivalDate);if(expectedArrivalDate&&order.expected_date&&expectedArrivalDate!==order.expected_date)differences.push({kind:'delivery_date_changed',requested:order.expected_date,offered:expectedArrivalDate});
  if(['backorder_notice','capacity_notice','substitution_offer','dispute','price_update'].includes(document.documentType))differences.push({kind:document.documentType,detail:String(document.exceptionDetail||quote).slice(0,1000)});
  const prior=(await db.query("SELECT id,facts FROM supplier_documents WHERE workspace_id=$1 AND purchase_order_id=$2 AND document_type=$3 AND status<>'IGNORED' ORDER BY processed_at DESC,id DESC LIMIT 1",[ctx.workspaceId,order.id,document.documentType])).rows[0];
- const facts={purchaseOrderId:order.id,poNumber:order.po_number,sourceMessageId:message.id,sourceAttachmentHash:document.sourceAttachmentHash||null,evidenceQuote:quote,expectedArrivalDate,currency:document.currency||order.currency,lines:matched};
+ const currency=document.currency||order.currency;
+ const quotedTerms=document.documentType==='quotation'?quotationTerms(document.quotationTerms,source,currency,matched.length):null;
+ const facts={purchaseOrderId:order.id,poNumber:order.po_number,sourceMessageId:message.id,sourceAttachmentHash:document.sourceAttachmentHash||null,evidenceQuote:quote,expectedArrivalDate,currency,lines:matched,
+  ...(quotedTerms?{quotationTerms:quotedTerms}:{})};
  const contentHash=digest({messageId:message.id,contentHash:message.content_hash,attachments:attachments.map(a=>a.content_hash)}),revision=digest({order:order.integrity_hash,priorDocumentId:prior?.id||null,lines:lines.map(l=>({id:l.id,quantity:l.quantity_units,unitCost:l.unit_cost})),facts});
  if(prior){const previous=typeof prior.facts==='string'?JSON.parse(prior.facts):prior.facts;if(previous&&digest({...previous,sourceMessageId:null,evidenceQuote:null,sourceAttachmentHash:null})!==digest({...facts,sourceMessageId:null,evidenceQuote:null,sourceAttachmentHash:null}))differences.push({kind:'conflicting_document_version',previousDocumentId:prior.id});}
  return {payload:{recordId:order.id,documentType:document.documentType,documentReference:document.documentReference||order.po_number,messageId:message.id,connectorId:message.connector_id,supplierId:order.supplier_id,attachmentId:attachments.find(a=>a.content_hash===document.sourceAttachmentHash)?.id||null,contentHash,facts,differences,expectedRevision:revision,document},summary:`Record ${document.documentType.replaceAll('_',' ')} for ${order.po_number}: ${matched.length} product lines; ${differences.length?'review '+differences.map(d=>d.kind.replaceAll('_',' ')).join(', '):'ordered quantities and supplied prices agree'}. ${expectedArrivalDate?'Supplier delivery date '+expectedArrivalDate+'. ':''}This records supplier evidence only. No goods, bill, payment or outgoing email is created.`};
