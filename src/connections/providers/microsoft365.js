@@ -155,6 +155,37 @@ async function fetchMessage({ credentials, messageId }) {
   return row && row.id ? mapMessage(credentials, row) : null;
 }
 
+async function findSent({credentials,id,recipient,since}) {
+  if (!id || !recipient || !Number.isFinite(Date.parse(since))) throw new ValidationError('Use the saved Microsoft dispute identity and send time.');
+  const folder='/me/mailFolders/sentitems/messages';
+  const fields='id,conversationId,sentDateTime,toRecipients,internetMessageHeaders';
+  const query=new URLSearchParams({'$filter':'sentDateTime ge '+new Date(since).toISOString(),
+    '$orderby':'sentDateTime desc','$select':fields,'$top':'100'});
+  const visited=new Set();
+  let path=folder+'?'+query, matched=null;
+  while (path) {
+    if (visited.has(path)) throw new ValidationError('Microsoft repeated a Sent Items page.');
+    visited.add(path);
+    const page=(await graph(credentials,path)).body;
+    for (const row of page?.value||[]) {
+      const marker=(row.internetMessageHeaders||[]).filter(h=>String(h.name).toLowerCase()==='x-stockchief-message');
+      if (!marker.some(h=>h.value===id)) continue;
+      const destinations=(row.toRecipients||[]).map(a=>a.emailAddress?.address?.toLowerCase());
+      if (matched || marker.length!==1 || destinations.length!==1 || destinations[0]!==recipient.toLowerCase()
+          || !row.id || !row.conversationId || !Number.isFinite(Date.parse(row.sentDateTime))) {
+        throw new ValidationError('Microsoft Sent Items has conflicting dispute evidence.');
+      }
+      matched={externalMessageId:row.id,externalThreadId:row.conversationId,sentAt:new Date(row.sentDateTime).toISOString()};
+    }
+    const next=page?.['@odata.nextLink'] ? new URL(page['@odata.nextLink']) : null;
+    if (next && (next.origin!=='https://graph.microsoft.com' || next.pathname.toLowerCase()!==('/v1.0'+folder).toLowerCase())) {
+      throw new ValidationError('Microsoft returned an unexpected Sent Items page.');
+    }
+    path=next?next.pathname.slice('/v1.0'.length)+next.search:null;
+  }
+  return matched;
+}
+
 async function send({ credentials, message }) {
   const attachments=require('./photo-attachments').graph(message.attachments);
   await graph(credentials, '/me/sendMail', { method: 'POST', body: JSON.stringify({ message: {
@@ -163,6 +194,15 @@ async function send({ credentials, message }) {
     toRecipients: [{ emailAddress: { address: message.recipient } }],
     internetMessageHeaders: message.id
       ? [{ name: 'X-StockChief-Message', value: String(message.id) }] : undefined }, saveToSentItems: true }) });
+  if (message.verifySentFrom) {
+    try {
+      const verified=await findSent({credentials,id:message.id,recipient:message.recipient,since:message.verifySentFrom});
+      if (verified) return verified;
+    } catch (error) {
+      throw Object.assign(new Error('Microsoft accepted the request but Sent Items could not verify the dispute.'),{providerOutcomeUncertain:true,cause:error});
+    }
+    throw Object.assign(new Error('Microsoft accepted the request but has not confirmed the dispute in Sent Items.'),{providerOutcomeUncertain:true});
+  }
   return { externalMessageId: `m365:${message.id}` };
 }
 
@@ -173,4 +213,4 @@ function verifyWebhook({ body, credentials }) {
 }
 
 module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover,
-  registerWebhooks, renewWebhooks, poll, fetchMessage, send, verifyWebhook, graph };
+  registerWebhooks, renewWebhooks, poll, fetchMessage, send, findSent, verifyWebhook, graph };

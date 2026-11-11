@@ -241,13 +241,20 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
         if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         if(input.standingAuthority?.kind==='return_label')await database.query("UPDATE stockchief_runtime.provider_effects SET result=result-'providerNotCalled' WHERE workspace_id=$1 AND id=$2 AND claim_token=$3",[workspaceId,effectId,effect.claimToken]);
+        const invoiceDispute=input.standingAuthority?.kind==='invoice_dispute';
+        const verifySentFrom=invoiceDispute&&effect.provider==='microsoft365'?new Date(Date.now()-60000).toISOString():null;
+        if (verifySentFrom) await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,
+          {externalId:loaded.message.id,lookupFrom:verifySentFrom});
         const send=async()=>{providerCalled=true;return provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
-          recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body,...(attachments?.length?{attachments}:{})},idempotencyKey:effect.idempotencyKey});};
+          recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body,
+          ...(verifySentFrom?{verifySentFrom}:{}),...(attachments?.length?{attachments}:{})},idempotencyKey:effect.idempotencyKey});};
         const accepted=input.standingAuthority?.kind==='supplier_direct_purchase'?await database.transaction(async c=>{
           await require('../purchasing/direct-shipment-mail').authority(c,workspaceId,input.standingAuthority,{lock:true});
           return send();
         },{isolation:'READ COMMITTED'}):await send();
-        if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;
+        if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim()
+          ||invoiceDispute&&!require('../purchasing/invoice-dispute-delivery').confirmedIdentity(accepted)
+          ||verifySentFrom&&!accepted.externalThreadId)throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;
       });
     if(!result||typeof result.externalMessageId!=='string'||!result.externalMessageId.trim())
       throw Object.assign(new Error('The mailbox provider did not return a verifiable message ID.'),
@@ -256,7 +263,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{
         const at=nowIso();await client.query(`UPDATE ${table} SET status='SENT',external_message_id=$3,
           external_thread_id=$4,error_message=NULL,sent_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
-        [workspaceId,input.communicationId,result.externalMessageId||null,result.externalThreadId||null,at]);
+        [workspaceId,input.communicationId,result.externalMessageId||null,result.externalThreadId||null,
+          input.standingAuthority?.kind==='invoice_dispute'&&result.sentAt?result.sentAt:at]);
         if(input.standingAuthority?.kind==='supplier_direct_purchase')await require('../purchasing/direct-shipment-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
         if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
       }});

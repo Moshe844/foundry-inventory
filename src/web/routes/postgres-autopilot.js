@@ -613,6 +613,20 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const disputeFlow=require('../../purchasing/invoice-dispute-follow-through');
+  router.get('/autopilot/supplier-disputes/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/supplier-dispute-detail',{
+    title:'Supplier invoice dispute',nav:'autopilot',backTo:{href:'/autopilot/reviews/supplier-invoice-disputes',label:'Supplier invoice disputes'},
+    ...await disputeFlow.page(database,req.ctx,req.params.id,req.query),money:require('../../domain/currency'),
+  })));
+  router.post('/autopilot/supplier-disputes/source/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await disputeFlow.prepare(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(result.billId));
+  }));
+  router.post('/autopilot/supplier-disputes/:id/resolve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.resolve(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Corrected invoice posted. The disputed original is retained.');
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/autopilot/supplier-disputes/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Ask the supplier to review this invoice difference',{action:'supplier_invoice.dispute',recordReference:req.body.billNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact disputed supplier bill and sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);

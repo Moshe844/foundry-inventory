@@ -1,4 +1,15 @@
 <% const f=result.invoiceDisputeForm; %>
+<% if(f.intakes?.length){ %>
+<section class="card"><h2>Saved invoices with differences</h2>
+<ul><% for(const source of f.intakes){ %><li>
+  <a href="/autopilot/supplier-invoices/<%= source.id %>"><%= source.invoice_number %></a> · <%= source.supplier %>
+  <% if(source.problem){ %><p><%= source.problem %></p><% } %>
+  <% if(!f.blocked){ %><form method="post" action="/autopilot/supplier-disputes/source/<%= source.id %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+    <input type="hidden" name="revision" value="<%= source.revision %>"><button class="btn secondary">Open dispute review</button>
+  </form><% } %>
+</li><% } %></ul></section>
+<% } %>
 <section class="card"><h2>Review a supplier message</h2>
 <% if(f.blocked){ %><p class="notice"><%= f.blocked %></p><% } %>
 <% if(!f.mailboxes.length){ %><p><a href="/settings/connections">Connect a sending mailbox</a> to prepare supplier messages.</p><% }else{ %>

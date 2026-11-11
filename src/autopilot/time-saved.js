@@ -241,7 +241,7 @@ async function report(db,ctx,window='week') {
         AND e.payload->'standingAuthority'->>'recordId'=r.id AND e.payload->'standingAuthority'->>'sourceFingerprint'=r.source_fingerprint GROUP BY m.id UNION ALL
     SELECT 'invoice-dispute',min(m.sent_at::timestamptz) FROM supplier_communications m
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
-      WHERE m.workspace_id=$1 AND m.invoice_dispute_bill_id IS NOT NULL AND m.status='SENT' AND m.external_message_id IS NOT NULL
+      WHERE m.workspace_id=$1 AND m.invoice_dispute_bill_id IS NOT NULL AND ${require('../purchasing/invoice-dispute-delivery').confirmedSql()}
         AND e.payload->'standingAuthority'->>'kind'='invoice_dispute' GROUP BY m.id UNION ALL
     SELECT 'customer-statement',min(m.sent_at::timestamptz) FROM customer_communications m
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'

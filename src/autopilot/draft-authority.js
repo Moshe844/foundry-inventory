@@ -35,7 +35,7 @@ async function history(db,ctx,action,bound,amount){
       AND ($2<>'supplier_invoice.dispute' OR (payload->>'needsDisputeConfirmation'='false' AND EXISTS(
         SELECT 1 FROM supplier_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
         WHERE m.workspace_id=p.workspace_id AND m.id=p.result->>'communicationId' AND m.invoice_dispute_bill_id=p.payload->>'recordId'
-         AND m.status='SENT' AND m.external_message_id IS NOT NULL AND e.payload->'standingAuthority'->>'kind'='invoice_dispute'
+         AND ${require('../purchasing/invoice-dispute-delivery').confirmedSql()} AND e.payload->'standingAuthority'->>'kind'='invoice_dispute'
          AND e.payload->'standingAuthority'->>'automatic'='false' AND e.payload->'standingAuthority'->>'sourceFingerprint'=p.payload->>'sourceFingerprint')))` ,[ctx.workspaceId,action,bound.key,bound.currency,amount]);
   return {total:Number(row.total),covered:Number(row.covered)};
 }

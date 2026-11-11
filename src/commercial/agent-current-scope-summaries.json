@@ -71,7 +71,7 @@
   "94": "Drafts a negotiation message from completed, dated supplier deliveries. Pro reviews each draft; Custom can use a taught scope. Sending remains separate.",
   "98": "Reads original invoices from a connected mailbox, an owner upload or the private purchase link. Matches current purchase terms and actual receipts. Starter and Growth approve each bill. Pro and Custom can post clear matches within authorized rules without training.",
   "99": "Flags quantity, price and duplicate-invoice differences and keeps a disputed invoice out of the payment run.",
-  "100": "Prepares a factual supplier invoice dispute from the original document and current PO/receipt match. Pro needs a confirmed taught example; live delivery and response resolution remain open.",
+  "100": "Finds invoice differences, sends within current mailbox authority, and tracks verified supplier replies through an owner-approved corrected invoice.",
   "102": "Schedules invoice reminders from current balances and due dates with customer, mailbox and value limits. Only confirmed delivery counts as completed work; live mailbox qualification remains open.",
   "103": "Matches supported same-currency bank credits to issued invoices and records receipt and allocation together. Live bank ingestion, other cash accounts and batch remittances remain open.",
   "104": "Prepares the upcoming supplier payment review from posted bills and documented discount deadlines. Growth prepares a draft for you to approve. Pro and Custom prepare it automatically. You approve the review and pay each supplier.",
