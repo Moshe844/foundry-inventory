@@ -1,0 +1,47 @@
+<details class="card card-body">
+  <summary>Automatically split qualifying draft purchases</summary>
+  <p>StockChief creates replacement drafts for usual purchase approval. Review charges separately before splitting a draft that contains them.</p>
+  <% const labels={warehouse:'Receiving warehouse','delivery-date':'Requested delivery dates',budget:'Goods budget'}; %>
+  <% for(const rule of model.rules){ %>
+    <form method="post" action="/autopilot/reviews/split-draft-orders/rule" class="inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="id" value="<%= rule.id %>">
+      <input type="hidden" name="revision" value="<%= rule.revision %>">
+      <span><%= rule.supplier %> · <%= labels[rule.strategy] %> · <%= helpers.money(rule.maximum_source_minor,rule.currency) %> maximum</span>
+      <button name="remove" value="yes" class="btn">Remove rule</button>
+    </form>
+  <% } %>
+  <% if(trained&&!model.examples.length){ %><p>Approve an exact split to teach this method and supplier.</p>
+  <% }else if(model.suppliers.length&&model.locations.length){ %>
+    <form method="post" action="/autopilot/reviews/split-draft-orders/rule" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Supplier <select name="supplierId" required><% for(const supplier of model.suppliers){ %>
+        <option value="<%= supplier.id %>"><%= supplier.name %> · <%= supplier.currency %></option>
+      <% } %></select></label>
+      <label>Split by <select name="strategy"><% for(const [value,label] of Object.entries(labels)){ %>
+        <option value="<%= value %>"><%= label %></option>
+      <% } %></select></label>
+      <fieldset><legend>Allowed receiving locations</legend><% for(const location of model.locations){ %>
+        <label><input type="checkbox" name="locationIds" value="<%= location.id %>"> <%= location.name %></label>
+      <% } %></fieldset>
+      <label>Maximum original goods value <input name="maximum" inputmode="decimal" required></label>
+      <label>For budget splits, maximum goods value per replacement <input name="budget" inputmode="decimal"></label>
+      <% if(trained){ %><label>Completed split example <select name="trainingProposal" required><% for(const example of model.examples){ %>
+        <option value="<%= example.id %>"><%= example.po_number %> · <%= labels[example.strategy] %></option>
+      <% } %></select></label><% } %>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I authorize this supplier, method and the selected locations and limits.</label>
+      <button class="btn">Save automatic split rule</button>
+    </form>
+  <% } %>
+</details>
+<details class="card card-body">
+  <summary>Save requested delivery dates for a draft</summary>
+  <form method="post" action="/autopilot/reviews/split-draft-orders/dates" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Draft PO number <input name="orderNumber" required></label>
+    <label>Original line number and requested delivery date, one per line
+      <textarea name="lineDates" required placeholder="1 2027-02-14"></textarea>
+    </label>
+    <button class="btn">Save line dates</button>
+  </form>
+</details>

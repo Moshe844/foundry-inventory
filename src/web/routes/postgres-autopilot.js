@@ -975,6 +975,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(job&&[170,171].includes(job.id))result.watchSettings={job:job.id,...await watch.settings(database,req.ctx.workspaceId,job.id)};
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
       if(req.params.job==='combine-draft-orders')result.freightCombine=await require('../../purchasing/agent-freight-combine').screen(database,req.ctx);
+      if(req.params.job==='split-draft-orders')result.purchaseSplits=await require('../../purchasing/agent-purchase-splitting').screen(database,req.ctx);
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
@@ -1073,15 +1074,28 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',req.body.remove==='yes'?'Removed the freight-combining rule.':'Saved the freight-combining rule.');
     return res.redirect(303,'/autopilot/reviews/combine-draft-orders');
   }));
+  const parseLineDates=value=>JSON.stringify(String(value||'').trim().split(/\r?\n/).map(line=>{
+    const m=/^\s*(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line);
+    if(!m)throw new ValidationError('Enter one line number and date per row, for example 1 2027-02-14.');
+    return {line:Number(m[1]),date:m[2]};
+  }));
+  router.post('/autopilot/reviews/split-draft-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-purchase-splitting').configure(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Removed the purchase split rule.':'Saved the purchase split rule.');
+    return res.redirect(303,'/autopilot/reviews/split-draft-orders');
+  }));
+  router.post('/autopilot/reviews/split-draft-orders/dates',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-purchase-splitting').saveDates(database,req.ctx,{
+      orderNumber:String(req.body.orderNumber||'').trim(),lineDates:parseLineDates(req.body.lineDates)
+    });
+    req.flash('success','Saved the requested delivery dates for the draft lines.');
+    return res.redirect(303,'/autopilot/reviews/split-draft-orders');
+  }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{
     const actions={'combine-draft-orders':'purchase_order.combine_drafts','split-draft-orders':'purchase_order.split_draft'};
     if(!Object.hasOwn(actions,req.params.job))throw new ValidationError('Choose a purchase-order grouping.');
     const args={action:actions[req.params.job],sourceOrders:req.body.sourceOrders,splitStrategy:req.body.splitStrategy,budgetAmount:req.body.budgetAmount};
-    if(args.splitStrategy==='delivery-date')args.lineDates=JSON.stringify(String(req.body.lineDates||'').trim().split(/\r?\n/).map(line=>{
-      const match=/^\s*(\d+)\s+(\d{4}-\d{2}-\d{2})\s*$/.exec(line);
-      if(!match)throw new ValidationError('Enter one line number and date per row, for example 1 2027-02-14.');
-      return {line:Number(match[1]),date:match[2]};
-    }));
+    if(args.splitStrategy==='delivery-date')args.lineDates=parseLineDates(req.body.lineDates);
     const prepared=await assistant.prepareAction(database,req.ctx,'Review replacement purchase orders',args);
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));

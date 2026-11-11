@@ -13,7 +13,7 @@ async function sources(db,ctx,refs,lock){
     [ctx.workspaceId,refs]);
   if(result.rowCount!==refs.length||result.rows.some(o=>o.status!=='DRAFT'))throw new ValidationError('Choose only current, unsent draft purchase orders in this inventory.');
   const orders=result.rows,ids=orders.map(o=>o.id);
-  const {rows:lines}=await db.query(`SELECT l.*,s.code AS sku_code,d.name AS destination_name,si.order_multiple,si.minimum_order_quantity FROM purchase_order_lines l
+  const {rows:lines}=await db.query(`SELECT l.*,l.requested_delivery_date::text AS requested_delivery_date,s.code AS sku_code,d.name AS destination_name,si.order_multiple,si.minimum_order_quantity FROM purchase_order_lines l
     LEFT JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id LEFT JOIN locations d ON d.workspace_id=l.workspace_id AND d.id=l.destination_location_id
     LEFT JOIN supplier_items si ON si.workspace_id=l.workspace_id AND si.id=l.supplier_item_id
     WHERE l.workspace_id=$1 AND l.purchase_order_id=ANY($2::text[])
@@ -32,7 +32,8 @@ function lineInput(l){
   return {skuId:l.sku_id,supplierSku:l.supplier_sku,description:l.description,purchaseUnit:l.purchase_unit,unitsPerPurchaseUnit:l.units_per_purchase_unit,
     quantityPurchaseUnits:l.quantity_purchase_units,quantityUnits:l.quantity_units,unitCost:l.unit_cost,secondaryQuantity:l.secondary_quantity_ordered,
     destinationLocationId:l.destination_location_id,skuCode:l.sku_code,destinationName:l.destination_name,notes:l.notes,
-    orderMultiple:Number(l.order_multiple||1),supplierMinimum:Number(l.minimum_order_quantity||0)};
+    orderMultiple:Number(l.order_multiple||1),supplierMinimum:Number(l.minimum_order_quantity||0),
+    ...(l.requested_delivery_date?{requestedDeliveryDate:l.requested_delivery_date}:{})};
 }
 function cost(line,currency){
   return exact.costMinor(line.secondaryQuantity??line.quantityUnits,money.toMinor(String(line.unitCost),currency));
@@ -83,7 +84,7 @@ function dates(input,lines){
   }
   return assigned;
 }
-async function build(db,ctx,args,job,lock=false){
+async function build(db,ctx,args,job,lock=false,{useSavedDates=false}={}){
   const state=await policy.accountState(db,ctx.workspaceId);
   policy.requireJob(policy.usesAgentTerms(state)?state.plan:null,job,'draft');
   const refs=String(args.sourceOrders||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -100,8 +101,11 @@ async function build(db,ctx,args,job,lock=false){
   }else if(args.splitStrategy==='budget'){
     groups=splitBudget(items,o.currency,args.budgetAmount);
   }else if(args.splitStrategy==='delivery-date'){
-    const assignments=dates(args.lineDates,lines);
-    groups=grouped(lines,l=>assignments.get(Number(l.line_number))).map(g=>({lines:g.lines.map(lineInput),date:g.value}));
+    const raw=useSavedDates?JSON.stringify(lines.map(line=>({line:Number(line.line_number),date:line.requested_delivery_date}))):args.lineDates;
+    const assignments=dates(raw,lines);
+    groups=grouped(lines,l=>assignments.get(Number(l.line_number))).map(g=>({
+      lines:g.lines.map(line=>({...lineInput(line),requestedDeliveryDate:g.value})),date:g.value
+    }));
   }else throw new ValidationError('Choose a split by warehouse, delivery date or budget.');
   if(job===25&&(groups.length<2||groups.length>50))throw new ValidationError('Choose a split that produces two to fifty distinct purchase orders.');
   const total=money.sum(lines.map(l=>money.toMinor(String(l.line_total),o.currency)));
@@ -127,7 +131,8 @@ async function build(db,ctx,args,job,lock=false){
     notes:orders.map(x=>[x.po_number,x.reference,x.notes].filter(Boolean).join(' · ')).join('\n'),lines:g.lines}));
   const original={orders:orders.map(x=>[x.id,x.updated_at,x.reference,x.notes,x.expected_date]),output};
   const key=hash({...original,charges,shipping:shipping?{...shipping,terms:vendor}:null});
-  const legacyKey=!charges.length&&shipping?.before==null?hash(original):null;
+  const legacyKey=!charges.length&&shipping?.before==null&&lines.every(l=>!l.requested_delivery_date)?hash({...original,
+    output:output.map(order=>({...order,lines:order.lines.map(({requestedDeliveryDate,...line})=>line)}))}):null;
   const request={sourceOrders:refs.join(','),...(job===25?{splitStrategy:args.splitStrategy}:{}),
     ...(args.splitStrategy==='budget'?{budgetAmount:args.budgetAmount}:{}),...(args.splitStrategy==='delivery-date'?{lineDates:args.lineDates}:{})};
   const training=require('../autopilot/draft-authority').scope(o.supplier_id,o.currency,total,
@@ -150,6 +155,10 @@ async function apply(client,ctx,current,key,{automatic=false}={}){
     const created=await workflows.createPurchaseOrderInTransaction(client,ctx,{...input,source:'foundry_recommendation',
       sourceDetail:{sourcePurchaseOrderIds:current.ids,...(savedFreight?{freightConsolidation:savedFreight}:{})},
       idempotencyKey:key+':draft:'+index});
+    for(const [position,line] of input.lines.entries()){
+      if(line.requestedDeliveryDate)await client.query('UPDATE purchase_order_lines SET requested_delivery_date=$3 WHERE workspace_id=$1 AND id=$2',
+        [ctx.workspaceId,created.lineIds[position],line.requestedDeliveryDate]);
+    }
     for(const charge of shipping?.charges||[]){
       await client.query(`INSERT INTO purchase_order_charges(id,workspace_id,purchase_order_id,label,kind,amount_minor,source,created_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[newId('poch'),ctx.workspaceId,created.purchaseOrderId,
@@ -183,4 +192,4 @@ function spec(job){
       });
     }};
 }
-module.exports={spec,build,apply};
+module.exports={spec,build,apply,dates};

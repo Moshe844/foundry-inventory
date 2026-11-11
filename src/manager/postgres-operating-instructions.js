@@ -524,6 +524,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.location_reorder_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.daily_cycle_count_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_freight_combine_rules WHERE workspace_id IN(SELECT id FROM owned))
+      +(SELECT count(*) FROM stockchief_runtime.agent_purchase_split_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.supplier_negotiation_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_overdue_order_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.class_service_levels WHERE workspace_id IN(SELECT id FROM owned)) AS n`,[state.accountId]);

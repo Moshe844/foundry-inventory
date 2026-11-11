@@ -122,6 +122,7 @@
 <label>For a date split, enter one line number and date per row <textarea name="lineDates" placeholder="1 2027-02-14"></textarea></label><% } %>
 <button class="btn">Review replacement orders</button></form><% } %>
 <% if(result.freightCombine){ %><%- include('freight-combine-rules',{model:result.freightCombine,trained:result.mode==='trained',csrfToken}) %><% } %>
+<% if(result.purchaseSplits){ %><%- include('purchase-split-rules',{model:result.purchaseSplits,trained:result.mode==='trained',csrfToken}) %><% } %>
 <% if(result.overdueRule!==undefined){ %>
 <% if(result.mode==='alone'||result.overdueRule){ %>
 <form method="post" action="/autopilot/reviews/overdue-customer-orders/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
