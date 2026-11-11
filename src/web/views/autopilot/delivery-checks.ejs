@@ -17,6 +17,23 @@
       <p><%= row.expected %> <%= row.unit %> due at comparison · <strong><%= row.observed %> <%= row.unit %> reported</strong>.</p>
       <% if(row.weightUnit){ %><p><%= row.expectedWeight %> <%= row.weightUnit %> due · <%= row.observedWeight===null?'Actual weight missing':row.observedWeight+' '+row.weightUnit+' reported' %>.</p><% } %>
       <% if(row.findings.length){ %><ul><% row.findings.forEach(finding=>{ %><li><%= finding %></li><% }) %></ul><% }else{ %><p>Quantity agrees.</p><% } %>
+      <% if(shortageLines.includes(row.lineId)){ %>
+        <% if(canClaimShortages){ %><details><summary>Prepare supplier shortage claim</summary>
+          <p>Book any goods you received with this same delivery reference first. Prepare a claim only when these goods were due in this delivery.</p>
+          <p>An active matching claim rule can send the saved shortage to this supplier. Other claims wait for your review.</p>
+          <% if(!claimMailboxes.length){ %><p>Connect a sending mailbox in <a href="/settings/connections">Connections</a> to prepare the claim.</p><% }else{ %>
+          <form method="post" action="/autopilot/supplier-claims/preview" class="form-stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="comparisonId" value="<%= record.id %>">
+            <input type="hidden" name="lineId" value="<%= row.lineId %>">
+            <label>Connected sending mailbox <select name="connectorId" required><option value="">Choose mailbox</option>
+              <% claimMailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %>
+            </select></label>
+            <label><input type="checkbox" name="shortageConfirmed" value="yes" required> These goods were due in this delivery and I confirmed the shortage.</label>
+            <button class="btn" type="submit">Save confirmed shortage</button>
+          </form><% } %>
+        </details><% }else{ %><p><span class="badge">Pro</span> Supplier shortage claims require Pro or Custom. <a class="btn" href="/settings/billing">Upgrade</a></p><% } %>
+      <% } %>
     </div></section><% }) %>
     <% if(result.unexpected.length){ %><h3>Check these product codes</h3>
       <% result.unexpected.forEach(row=>{ %><section class="panel"><div class="card-body">

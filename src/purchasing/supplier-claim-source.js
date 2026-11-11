@@ -14,8 +14,35 @@ async function access(c,ctx,{automatic=false,trained=false,readOnly=false,withPh
  if(withPhotos){await policy.requireWorkspaceJob(c,ctx.workspaceId,46,automatic?'automatic':'draft');const stopped=await policy.stopped(c,ctx.workspaceId,account,'supplier.attach_damage_photos',automatic);if(stopped)throw new ValidationError(stopped);}
  if(automatic&&!(await require('../autopilot/postgres-service').getState(c,ctx.workspaceId)).canAutomate)throw new ValidationError('Routine supplier claims are paused.');return account;
 }
-async function facts(c,ctx,{holdId,connectorId,photoIds=[],reference},{readOnly=false,automatic=false}={}){
+async function deliveryContext(c,ctx,row,connectorId,receivedAt){
+ await require('../operations/postgres-warehouse-access').assertLocations(c,ctx,[row.location_id]);
+ if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email||''))throw new ValidationError('Record the exact known supplier claim email address before preparing this message.');
+ const box=await require('../shipping/agent-shipping-notices').mailbox(c,ctx.workspaceId,connectorId);if(!box?.provider_account_id)throw new ValidationError('Choose a connected sending mailbox with its verified account identity.');
+ const clock=await require('../lib/business-time').forWorkspace(c,ctx.workspaceId),received=new Date(receivedAt);
+ if(!Number.isFinite(received.getTime())||received.getTime()>Date.parse(clock.instant))throw new ValidationError('Check the actual delivery date before preparing a claim.');
+ const day=new Intl.DateTimeFormat('en-CA',{timeZone:clock.timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(received),ageDays=Math.round((Date.parse(clock.calendarDate+'T12:00:00Z')-Date.parse(day+'T12:00:00Z'))/86400000);
+ return {box,clock,ageDays};
+}
+
+async function shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference}){
+ if(photoIds.length)throw new ValidationError('Use the exact delivery and receipt records for a shortage claim. Inspection photos belong to physical damage claims.');
+ const {row,check,receipts,actual,missingUnits,missingWeight,currency,unitCostMinor,totalMinor,receivedAt}=
+  await require('./supplier-shortage-source').facts(c,ctx,{comparisonId,lineId});
+ const {box,clock,ageDays}=await deliveryContext(c,ctx,row,connectorId,receivedAt);
+ const p={claimKind:'shortage',comparisonId,lineId,reference,connectorId,mailboxAccount:box.provider_account_id,providerType:box.provider_type,
+  supplierId:row.supplier_id,supplierName:row.supplier_name,recipient:row.email,currency,skuId:row.sku_id,sku:row.code,product:actual.name,unit:row.unit_label,
+  locationId:row.location_id,location:row.location_name,purchaseOrderId:row.purchase_order_id,poNumber:row.po_number,
+  deliveryReference:check.source_reference,checkedBy:check.recorded_by,checkedAt:new Date(check.recorded_at).toISOString(),receivedAt,
+  missingUnits,missingWeight,weightUnit:row.secondary_unit_label,trackingMode:row.tracking_mode,quantityPrecision:Number(row.quantity_precision),
+  weightPrecision:row.secondary_precision==null?null:Number(row.secondary_precision),
+  expectedUnits:actual.expected,observedUnits:actual.observed,receiptLines:receipts,
+  unitCostMinor,totalMinor,photos:[],preparedAt:clock.instant,timeZone:clock.timeZone};
+ return {...p,ageDays,sourceFingerprint:hash(p)};
+}
+
+async function facts(c,ctx,{holdId,comparisonId,lineId,connectorId,photoIds=[],reference},{readOnly=false,automatic=false}={}){
  await owner(c,ctx,{lock:!readOnly});
+ if(comparisonId)return shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference});
  const row=(await c.query(`SELECT h.*,s.code,i.name,i.unit_label,i.tracking_mode,i.quantity_precision,i.secondary_unit_label,
   l.name location_name,v.id supplier_id,v.name supplier_name,v.email,v.currency,o.id purchase_order_id,o.po_number,
   p.unit_cost,r.id receipt_id,r.received_at FROM stockchief_runtime.agent_quality_holds h
@@ -29,14 +56,9 @@ async function facts(c,ctx,{holdId,connectorId,photoIds=[],reference},{readOnly=
   WHERE h.workspace_id=$1 AND h.id=$2 AND s.is_active=1 AND i.is_active=1`,[ctx.workspaceId,holdId])).rows[0];
  const damaged=Number(row?.inspection?.damagedQuantity);
  if(!row||row.status!=='FAILED'||row.inspection?.decision!=='FAIL'||!row.inspected_by||!row.inspected_at||!Number.isSafeInteger(damaged)||damaged<1||damaged>row.quantity)throw new ValidationError('Record the actual damaged-unit count in a failed physical delivery inspection before preparing a supplier claim.');
- await require('../operations/postgres-warehouse-access').assertLocations(c,ctx,[row.location_id]);
  if(row.tracking_mode!=='quantity'||Number(row.quantity_precision)!==0||row.secondary_unit_label)throw new ValidationError('This claim workflow covers whole-unit quantity stock. Review lots, serials and measured goods separately.');
- if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email||''))throw new ValidationError('Record the exact known supplier claim email address before preparing this message.');
- const box=await require('../shipping/agent-shipping-notices').mailbox(c,ctx.workspaceId,connectorId);if(!box?.provider_account_id)throw new ValidationError('Choose a connected sending mailbox with its verified account identity.');
+ const {box,clock,ageDays}=await deliveryContext(c,ctx,row,connectorId,row.received_at);
  const currency=money.code(row.currency),unitCostMinor=money.userToMinor(String(row.unit_cost),currency,{label:'Recorded supplier unit cost'}),totalMinor=require('../domain/exact-quantity').costMinor(damaged,unitCostMinor);
- const clock=await require('../lib/business-time').forWorkspace(c,ctx.workspaceId),received=new Date(row.received_at);
- if(!Number.isFinite(received.getTime())||received.getTime()>Date.parse(clock.instant))throw new ValidationError('Check the actual delivery date before preparing a claim.');
- const day=new Intl.DateTimeFormat('en-CA',{timeZone:clock.timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(received),ageDays=Math.round((Date.parse(clock.calendarDate+'T12:00:00Z')-Date.parse(day+'T12:00:00Z'))/86400000);
  const evidence=photoIds.length?await photos.selected(c,ctx,holdId,photoIds,{automatic}):[];
  const p={holdId,qualityRevision:row.revision,reference,connectorId,mailboxAccount:box.provider_account_id,providerType:box.provider_type,
   supplierId:row.supplier_id,supplierName:row.supplier_name,recipient:row.email,currency,skuId:row.sku_id,sku:row.code,product:row.name,unit:row.unit_label,
@@ -45,9 +67,19 @@ async function facts(c,ctx,{holdId,connectorId,photoIds=[],reference},{readOnly=
   inspectionNote:row.inspection.note,photos:evidence,preparedAt:clock.instant,timeZone:clock.timeZone};
  return {...p,ageDays,sourceFingerprint:hash(p)};
 }
-function profile(p){return {supplierId:p.supplierId,supplierName:p.supplierName,recipient:p.recipient,currency:p.currency,skuId:p.skuId,sku:p.sku,product:p.product,unit:p.unit,locationId:p.locationId,location:p.location,connectorId:p.connectorId,mailboxAccount:p.mailboxAccount,providerType:p.providerType,timeZone:p.timeZone};}
+function profile(p){return {supplierId:p.supplierId,supplierName:p.supplierName,recipient:p.recipient,currency:p.currency,skuId:p.skuId,sku:p.sku,product:p.product,unit:p.unit,locationId:p.locationId,location:p.location,connectorId:p.connectorId,mailboxAccount:p.mailboxAccount,providerType:p.providerType,timeZone:p.timeZone,
+ ...(p.claimKind==='shortage'?{claimKind:p.claimKind,trackingMode:p.trackingMode,weightUnit:p.weightUnit,quantityPrecision:p.quantityPrecision,weightPrecision:p.weightPrecision}:{})};}
+function units(p){return p.claimKind==='shortage'?p.missingUnits:p.damagedQuantity;}
 function stable(p){const {preparedAt,ageDays,sourceFingerprint,...rest}=p;return rest;}
 function compose(p){
+ if(p.claimKind==='shortage')return {subject:'Short delivery claim '+p.reference+' · '+p.poNumber,body:[
+  'Hello '+p.supplierName+',','','Please open a shortage claim for purchase order '+p.poNumber+' under our reference '+p.reference+'.',
+  'Delivery reference: '+p.deliveryReference,'Product: '+p.sku+' · '+p.product,
+  p.expectedUnits+' '+p.unit+' due, '+p.observedUnits+' checked and received, '+p.missingUnits+' missing.',
+  ...(p.missingWeight===null?[]:['Missing measured quantity: '+p.missingWeight+' '+p.weightUnit+'.']),
+  'Recorded goods cost for the shortage: '+money.format(p.totalMinor,p.currency)+' (freight and tax are separate).','',
+  'Please confirm this case and propose a replacement or credit note for review. We will review any settlement separately.','','Thank you.'
+ ].join('\n')};
  return {subject:'Damaged delivery claim '+p.reference+' · '+p.poNumber,body:'Hello '+p.supplierName+',\n\nPlease open a damage claim for purchase order '+p.poNumber+' under our reference '+p.reference+'.\n\nProduct: '+p.sku+' · '+p.product+'\nPhysically inspected damaged quantity: '+p.damagedQuantity+' '+p.unit+'\nDelivery recorded: '+new Intl.DateTimeFormat('en-US',{timeZone:p.timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(p.receivedAt))+' ('+p.timeZone+')\nRecorded goods cost for these damaged units: '+money.format(p.totalMinor,p.currency)+' (freight and tax are separate).\n\nRecorded physical findings:\n'+p.inspectionNote+'\n\n'+(p.photos.length?'Attached: '+p.photos.length+' resized copies of the inspection photos. The original files remain preserved.\n\n':'')+'Please acknowledge this claim and propose replacement goods, collection or a credit note for review. This request does not accept a settlement or change payment, tax, stock or accounting records. Any credit, write-off or other disposition needs separate approval.\n\nThank you.'};
 }
-module.exports={owner,access,facts,profile,stable,compose};
+module.exports={owner,access,facts,profile,units,stable,compose};

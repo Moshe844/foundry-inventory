@@ -4,7 +4,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const {newId,requireText}=require('../lib/util');
 const {hash}=require('../pricing/postgres-promotions');
 const policy=require('../commercial/agent-plan');
-const {compare}=require('./delivery-comparison');
+const {compare,hasShortage}=require('./delivery-comparison');
 const path='/autopilot/delivery-checks';
 const table='stockchief_runtime.agent_delivery_comparisons';
 
@@ -85,8 +85,13 @@ async function page(db,ctx,{orderId=null,id=null,page=1}={}){
     FROM ${table} c JOIN purchase_orders p ON p.workspace_id=c.workspace_id AND p.id=c.purchase_order_id
     WHERE c.workspace_id=$1 ORDER BY c.recorded_at DESC,c.id DESC LIMIT 101 OFFSET $2`,[ctx.workspaceId,(page-1)*100])).rows:[];
   const suggestion=canSuggest&&!allowed?(await require('../autopilot/job-reviews').run(db,ctx,'delivery-check')).rows[0]?.Suggestion:null;
+  const canClaimShortages=allowed&&policy.permits(state.plan,45,'draft');
+  const shortageLines=record?record.result.rows.filter(hasShortage)
+    .filter(row=>record.result.original.some(original=>original.lineId===row.lineId)).map(row=>row.lineId):[];
+  const claimMailboxes=canClaimShortages&&shortageLines.length
+    ?await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId):[];
   return {allowed,record,snapshot,suggestion,sourceHash:snapshot?hash(snapshot):null,orders:orders.slice(0,100),history:history.slice(0,100),
-    more:orders.length>100||history.length>100,pageNumber:page,requestKey:newId('delivery-check')};
+    more:orders.length>100||history.length>100,pageNumber:page,requestKey:newId('delivery-check'),canClaimShortages,claimMailboxes,shortageLines};
 }
 
 function fromForm(body){
