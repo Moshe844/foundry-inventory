@@ -29,13 +29,21 @@ test('a supplier-direct draft uses the exact customer order and supplier terms, 
   await assert.rejects(direct.prepare(db,ctx,{}),error=>error.code==='entitlement_required'&&/Growth/.test(error.message));
   for(const plan of ['growth','pro','enterprise']){
     await f.subscribe(plan);
-    const saved=await direct.prepare(db,ctx,{...input,requestKey:randomUUID()});
+    const createInput={...input,requestKey:randomUUID()};
+    const attempts=await Promise.all([direct.prepare(db,ctx,createInput),direct.prepare(db,ctx,createInput)]);
+    assert.equal(attempts[0].id,attempts[1].id);
+    const saved=attempts[0];
     assert.equal(saved.purchase_status,'DRAFT');
     assert.equal(saved.delivery_kind,'CUSTOMER_DIRECT');
     assert.equal(saved.facts.customer.address,'10 Jobsite Rd, Albany, NY 12207');
     assert.equal(saved.facts.products[0].quantity,6);
     assert.equal(saved.facts.products[0].purchaseUnits,'3');
     assert.equal(saved.facts.products[0].unitCostMinor,750);
+    assert.equal((await db.query('SELECT has_supplier_direct_orders FROM workspaces WHERE id=$1',[ctx.workspaceId])).rows[0].has_supplier_direct_orders,true);
+    let inboxQueries=0;
+    const decisions=await direct.inbox({query:(...args)=>{inboxQueries++;return db.query(...args);}},ctx.workspaceId,{installed:true});
+    assert.equal(inboxQueries,1);
+    assert(decisions.some(decision=>decision.href===direct.path+'/'+saved.id));
     await assert.rejects(db.query("UPDATE purchase_orders SET status='APPROVED' WHERE workspace_id=$1 AND id=$2",
       [ctx.workspaceId,saved.purchase_order_id]),error=>error.code==='23514'&&/supplier-direct/.test(error.message));
     const detail=await f.browser.get(direct.path+'/'+saved.id);

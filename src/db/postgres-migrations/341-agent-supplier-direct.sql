@@ -1,3 +1,5 @@
+ALTER TABLE workspaces ADD COLUMN has_supplier_direct_orders boolean NOT NULL DEFAULT false;
+
 ALTER TABLE purchase_orders
   ADD COLUMN delivery_kind text NOT NULL DEFAULT 'WAREHOUSE' CHECK(delivery_kind IN ('WAREHOUSE','CUSTOMER_DIRECT')),
   ADD COLUMN direct_sales_order_id text REFERENCES sales_orders(id),
@@ -42,6 +44,20 @@ CREATE TABLE stockchief_runtime.agent_direct_orders (
 );
 CREATE INDEX agent_direct_orders_customer ON stockchief_runtime.agent_direct_orders(workspace_id,sales_order_id,id);
 CREATE INDEX agent_direct_orders_list ON stockchief_runtime.agent_direct_orders(workspace_id,created_at DESC,id DESC);
+
+CREATE FUNCTION stockchief_runtime.refresh_direct_order_presence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  UPDATE workspaces SET has_supplier_direct_orders=true WHERE id=NEW.workspace_id AND NOT has_supplier_direct_orders;
+ ELSE
+  UPDATE workspaces SET has_supplier_direct_orders=EXISTS(
+   SELECT 1 FROM stockchief_runtime.agent_direct_orders d WHERE d.workspace_id=OLD.workspace_id)
+   WHERE id=OLD.workspace_id;
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE TRIGGER direct_order_presence AFTER INSERT OR DELETE ON stockchief_runtime.agent_direct_orders
+ FOR EACH ROW EXECUTE FUNCTION stockchief_runtime.refresh_direct_order_presence();
 
 CREATE TABLE stockchief_runtime.agent_direct_rules (
   workspace_id text NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

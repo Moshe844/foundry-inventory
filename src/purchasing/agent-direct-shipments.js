@@ -102,11 +102,11 @@ async function orderLine(db,ctx,orderId,id,supplierId){
 async function prepare(db,ctx,input){
   return db.transaction(async c=>{
     const tx=scoped(c);
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['supplier-direct:'+ctx.workspaceId]);
     await authorize(tx,ctx,{lock:true});
     const selection=selected(input),requestKey=requireText(input.requestKey,'Supplier-direct request key',{max:140});
     const requestHash=hash([input.salesOrderId,input.supplierId,selection]);
     if(input.confirmed!=='yes')throw new ValidationError('Confirm that this supplier should deliver these exact goods directly to the customer.');
-    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['supplier-direct:'+ctx.workspaceId]);
     const previous=(await c.query(`SELECT id,request_hash FROM ${orders} WHERE workspace_id=$1 AND request_key=$2`,
       [ctx.workspaceId,requestKey])).rows[0];
     if(previous){
@@ -585,10 +585,13 @@ const definition={id:37,key:'direct-shipments',label:'Supplier-direct customer d
   summary:'Turn a checked customer order into an exact supplier purchase, record actual supplier dispatches and tracking, and post its customer invoice and supplier cost. Growth requires individual approvals. Review the exact current delivery before placing its purchase.',
   rows:[{Action:'Open supplier-direct deliveries',link:path}],more:false})};
 
-async function inbox(db,workspaceId){
-  const installed=(await db.query("SELECT to_regclass('stockchief_runtime.agent_direct_orders') IS NOT NULL AS installed")).rows[0];
-  if(!installed?.installed)return [];
-  const rows=(await db.query(`SELECT d.id,d.created_at,p.po_number,s.order_number,
+async function inbox(db,workspaceId,{installed=false}={}){
+  if(!installed){
+    const schema=(await db.query("SELECT to_regclass('stockchief_runtime.agent_direct_orders') IS NOT NULL AS installed")).rows[0];
+    if(!schema?.installed)return [];
+  }
+  const rows=(await db.query(`WITH purchases AS(
+    SELECT d.id,d.created_at,p.po_number,s.order_number,
     (SELECT x.last_issue FROM stockchief_runtime.agent_direct_dispatches x WHERE x.workspace_id=d.workspace_id
       AND x.direct_order_id=d.id AND x.state='REVIEW' ORDER BY x.created_at,x.id LIMIT 1) AS issue
     FROM ${orders} d JOIN purchase_orders p ON p.workspace_id=d.workspace_id AND p.id=d.purchase_order_id
@@ -597,11 +600,14 @@ async function inbox(db,workspaceId){
         WHERE m.workspace_id=d.workspace_id AND m.purchase_order_id=p.id AND m.status IN ('QUEUED','SENDING'))
       OR EXISTS(SELECT 1 FROM stockchief_runtime.agent_direct_dispatches x
         WHERE x.workspace_id=d.workspace_id AND x.direct_order_id=d.id AND x.state='REVIEW'))
-    ORDER BY d.created_at,d.id LIMIT 50`,[workspaceId])).rows;
-  const rules=(await db.query(`SELECT reference_order_id AS id,last_issue,created_at FROM stockchief_runtime.agent_direct_rules
-    WHERE workspace_id=$1 AND enabled AND last_issue IS NOT NULL ORDER BY next_check_at,id LIMIT 50`,[workspaceId])).rows;
+    ORDER BY d.created_at,d.id LIMIT 50),rules AS(
+    SELECT d.id,d.created_at,p.po_number,s.order_number,r.last_issue AS issue FROM stockchief_runtime.agent_direct_rules r
+    JOIN ${orders} d ON d.workspace_id=r.workspace_id AND d.id=r.reference_order_id
+    JOIN purchase_orders p ON p.workspace_id=d.workspace_id AND p.id=d.purchase_order_id
+    JOIN sales_orders s ON s.workspace_id=d.workspace_id AND s.id=d.sales_order_id
+    WHERE r.workspace_id=$1 AND r.enabled AND r.last_issue IS NOT NULL ORDER BY r.next_check_at,r.id LIMIT 50)
+    SELECT * FROM purchases UNION ALL SELECT * FROM rules`,[workspaceId])).rows;
   const unique=new Map(rows.map(row=>[row.id,row]));
-  for(const rule of rules)unique.set(rule.id,{...unique.get(rule.id),...rule,issue:rule.last_issue});
   return [...unique.values()].map(row=>({kind:'purchase',importance:'Needs You',priority:70,
     title:row.po_number?'Review direct delivery '+row.po_number+' for '+row.order_number:'Review supplier-direct purchasing rule',
     happened:row.issue||'A supplier purchase or actual dispatch needs your review.',

@@ -13,6 +13,8 @@ function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=n
  return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
 async function membership(database,workspaceId,actorId){return actorId?(await database.query(`SELECT role,permissions,
+ coalesce((SELECT (to_jsonb(w)->>'has_supplier_direct_orders')::boolean FROM workspaces w
+   WHERE w.id=users.workspace_id AND w.owner_account_id=users.account_id),false) AS has_supplier_direct_orders,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.frozen_at))
  FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='FROZEN'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS annual_stocktake_summary,
@@ -93,7 +95,8 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../catalog/agent-channel-copy').notices(actor.channel_copy_summary):[],
       actor?.role==='owner'?require('../purchasing/agent-blanket-releases').notices(actor.blanket_contract_summary):[],
       actor?.role==='owner'?require('../documents/agent-product-source').notices(actor.product_source_summary):[],
-      actor?.role==='owner'?require('../purchasing/agent-direct-shipments').inbox(database,workspaceId):[],
+      actor?.role==='owner'&&actor.has_supplier_direct_orders?
+        require('../purchasing/agent-direct-shipments').inbox(database,workspaceId,{installed:true}):[],
     ]);
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
