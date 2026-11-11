@@ -539,7 +539,12 @@ function createPostgresAskRouter(database,options={}){
       return {navigation:{href:`/imports/${plan.id}`}};
     }
     // The composer promises the next message becomes the email being written, so only an agent reply can be redirected by its wording.
-    if(require('../../assistant/direct-business-reads').standalone(req.body.message))req.body.continueGoalId='';
+    // A message in another alphabet (Yiddish, Hebrew, ...) is read in English once, so a new
+    // request such as "take me to …" starts fresh instead of becoming a reply to the agent.
+    const usageKey=String(req.body.usageKey||newId('askusage'));
+    const englishReading=await assistant.readQuestionInEnglish(database,req.ctx,req.body.message,{provider:options.provider,usageKey});
+    const standalone=require('../../assistant/direct-business-reads').standalone(englishReading||req.body.message);
+    if(standalone)req.body.continueGoalId='';
     if(req.body.continueGoalId){
       const id=String(req.body.continueGoalId),existing=await goalStore.get(database,req.ctx,id);
       if(!['codex-staging','hosted-business'].includes(existing?.checkpoint.runtime))throw new ValidationError('That agent question is no longer available.');
@@ -562,9 +567,9 @@ function createPostgresAskRouter(database,options={}){
       // The native pilot always enqueues its own durable job. Runtime selection
       // and its fresh permission check belong to assistant.ask, once here.
       background:goalStore.enabled(req.ctx),
-      usageKey:String(req.body.usageKey||newId('askusage')),
+      usageKey,englishReading,
       page,conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null,
-      newRequest:!req.body.continueInteractionId&&require('../../assistant/direct-business-reads').standalone(req.body.message),continueInteractionId:String(req.body.continueInteractionId||'')});
+      newRequest:!req.body.continueInteractionId&&standalone,continueInteractionId:String(req.body.continueInteractionId||'')});
     req.session.postgresAskNavigationGoal=result.goalId||null;
     return result;
   }

@@ -12,6 +12,9 @@ const {ValidationError}=require('../domain/errors');
 
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
 const MAX_TEXT=2000; // the question box holds 2,000 characters
+// What to expect: questions to an inventory app, spoken in Yiddish, English or
+// Hebrew, often mixed. Yiddish and Hebrew are written in Hebrew letters.
+const PROMPT='A question to StockChief, an inventory app: stock, orders, customers, suppliers, products, reports, settings. It may be spoken in Yiddish, English or Hebrew, often mixed. ווייז מיר די אָרדערס. נעם מיר צו סטאק. How many do we have in stock?';
 
 function available(){return Boolean(process.env.OPENAI_API_KEY);}
 
@@ -32,7 +35,7 @@ async function transcribe(db,ctx,buffer,{transcriber,usageKey}={}){
   try{
     const hold=await cost.reserveTranscription(db,scope,transcriber,seconds,key);held=true;
     started=true;
-    const read=await transcriber.transcribe(wave,{hold});
+    const read=await transcriber.transcribe(wave,{hold,prompt:PROMPT});
     if(Number.isFinite(read.seconds)&&read.seconds>=0){
       await require('../commercial/control-service').recordCost(db,scope,{provider:transcriber.name,model:transcriber.model,
         providerVersion:transcriber.providerVersion,operation:'audio_transcription',unit:'second',quantity:read.seconds,

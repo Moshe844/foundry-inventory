@@ -8,13 +8,15 @@ const endpoint='https://api.openai.com/v1/audio/transcriptions';
 
 function create({apiKey=process.env.OPENAI_API_KEY,fetcher:transcriptionFetch=fetch}={}){
   if(!apiKey)throw new ProviderError('Voice note transcription is unavailable.',{code:'transcription_unavailable'});
-  return {name:'openai',model,providerVersion:version,async transcribe(wave,{hold}={}){
+  return {name:'openai',model,providerVersion:version,async transcribe(wave,{hold,prompt}={}){
     if(!require('../../commercial/model-cost-budget').useTranscriptionHold(hold)){
       throw new ProviderError('Voice transcription needs a funded usage reservation.',{code:'commercial_meter_required',status:503});
     }
     const form=new FormData();
     form.set('model',model);
     form.set('file',new Blob([wave],{type:'audio/wav'}),'voice-note.wav');
+    // Optional context: the words and languages to expect. It never changes what was said.
+    if(typeof prompt==='string'&&prompt.trim())form.set('prompt',prompt.trim().slice(0,800));
     let response;
     try{
       response=await transcriptionFetch(endpoint,{
