@@ -208,7 +208,7 @@ const actionJobs=new Map([
   ['sales_order.recurring',67],
   ['import.supplier_catalog',127],['import.variants',130],
   ['kit.replenish_parts',13],
-  ['sales_quote.create',73],['sales_quote.accept',75],
+  ['sales_quote.create',73],['sales_quote.accept',75],['sales_quote.add_companions',79],
   ['planning.safety_stock',150],['planning.location_reorder',120],['inventory.plan_daily_cycle_count',4],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
@@ -242,6 +242,7 @@ function usesAgentTerms(state){return state.terms?.offerId==='agent-v3'||state.p
 const newAgentActions=new Set(['customer_invoice.prepare_document','sales_quote.followup','customer.statement','landed_cost.apply','warehouse.prepare_putaway','warehouse.release_orders','supplier_invoice.dispute','sales_order.notify_stock_ready','sales_order.reserve_arrived','customer_invoice.remind','customer_payment.match_bank_line','document.save_product_facts','document.file_to_purchase_order','document.file_to_sales_order','document.file_to_item','import.count_sheet','purchase_order.receive_from_document','catalog.supplier_price_list','sales_order.recurring','import.supplier_catalog','import.variants','kit.replenish_parts','sales_quote.create','sales_quote.accept','purchase_order.combine_drafts','purchase_order.split_draft','sales_order.repeat','catalog.restore_margin','catalog.fill_supplier_specs']);
 newAgentActions.add('purchase_order.reorder_drafts');newAgentActions.add('purchasing.select_supplier');
 newAgentActions.add('sales_order.reserve_rotation');
+newAgentActions.add('sales_quote.add_companions');
 newAgentActions.add('transfer.prepare_balance');
 newAgentActions.add('inventory.write_down_aged');
 function actionPlan(state,name){
@@ -253,6 +254,7 @@ const humanSteps=new Set([
   'import.count_sheet',
   'purchase_order.receive_from_document',
   'sales_quote.accept',
+  'sales_quote.add_companions',
   'catalog.restore_margin',
   'inventory.write_down_aged',
   'inventory.receive','purchase_order.receive','transfer.receive','transfer.pick','transfer.dispatch','transfer.depart','transfer.in_transit','customer_return.receive',

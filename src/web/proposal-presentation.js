@@ -38,6 +38,18 @@ function present(proposal){
    {label:'Posting date',value:p.date}
   ]};
  }
+ if(proposal.action_type==='sales_quote.add_companions'){
+  const p=proposal.payload,format=n=>require('../domain/currency').format(n,p.currency);
+  return {summary:proposal.summary,impact:'Saves a private revision with the original quote and its terms in history.',fields:[
+   {label:'Quotation and customer',value:p.quoteNumber+' · '+p.customerName},
+   {label:'Warehouse for the additional stock',value:p.location.name},
+   {label:'Supported additions',multiline:true,value:p.additions.map(l=>l.product+' · '+l.sku+' · '+l.quantity+' '+l.unit+
+    (l.secondaryQuantity!=null?' · '+l.secondaryQuantity+' '+l.secondaryUnit:'')+' · '+format(l.price.totalMinor)+
+    ' including '+format(l.price.taxMinor)+' tax · '+l.sharedOrders+' shared fulfilled orders').join('\n')},
+   {label:'Original total',value:format(p.priorTotalMinor)},{label:'Revised total',value:format(p.totalMinor)},
+   {label:'Valid through',value:p.validUntil}
+  ]};
+ }
  if(proposal.action_type==='transfer.prepare_balance'){const s=proposal.payload.balanceSummary;return {summary:s.title,impact:'Creates a native Requested transfer and holds the proposed stock until separately approved.',fields:[{label:'Stock balancing and exact goods',value:s.text,multiline:true}]};}
  if(proposal.action_type==='customer_return.refund'&&proposal.payload.sourceFingerprint){
   const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);

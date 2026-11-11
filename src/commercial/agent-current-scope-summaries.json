@@ -57,7 +57,7 @@
   "76": "Applies saved customer quantity prices, discounts and payment terms to orders and shipment invoices. Other currencies and deposit variations still need qualification.",
   "77": "Flags comparable cost increases from saved costs, posted receipts and matched supplier bills. Starter and Growth get one price suggestion. Pro and Custom can prepare an exact local catalogue price for individual owner approval.",
   "78": "Prepares a check-in draft for a customer with older fulfilled orders and no recent shipment. Sending it is separate.",
-  "79": "Suggests companion products from recorded items bought together. Adding the suggestion to a quotation still needs workflow verification.",
+  "79": "Finds companions in orders that actually shipped both products. Starter gets one suggestion. Growth prepares a private quote revision for individual approval. Pro and Custom can add eligible companions without training to new matching quotes within the owner’s customer, warehouse, currency, products, quantities and added-value limit. StockChief uses current stock and native customer pricing, tax and selling units. The original quote stays in history.",
   "80": "Checks credit on the draft order before confirmation. Starter shows one suggestion. Growth, Pro and Custom automatically surface over-limit or incomplete checks and show the draft, unbilled commitments and open invoices against the saved credit limit.",
   "81": "Prepares a reconciled customer account statement with current-month entries and outstanding invoices, separately by currency. Large statements, PDF attachments and live delivery remain open.",
   "82": "Flags orders below recorded cost and discounts that differ from the saved quotation.",

@@ -1,0 +1,58 @@
+
+<% const m=model,q=m.q,base='/quotes/'+encodeURIComponent(q.id)+'/companions'; %>
+<div class="rm-head">
+  <a class="rm-head__back" href="/quotes/<%= q.id %>">← <%= q.quote_number %></a>
+  <h1>Customers also buy</h1>
+  <p><%= q.customer_name %> · <%= q.pricing.currency %></p>
+</div>
+<% if(m.outcome?.state==='COMPLETED'){ %><p><a class="btn btn--primary" href="/quotes/<%= m.outcome.revision_id %>">Open revised quotation</a></p>
+<% }else if(m.outcome?.state==='QUEUED'){ %><p>Routine companion review is queued.</p>
+<% }else if(m.outcome?.state==='HELD'){ %><p><%= m.outcome.issue %></p><% } %>
+<% if(m.problem){ %><p><%= m.problem %></p>
+<% }else if(m.mode==='suggest'){ %><p><%= m.suggestion||'No fulfilled combinations support a suggestion for this quote.' %></p>
+<% }else{ %>
+  <% if(!q.input.fulfillmentLocationId){ %><form method="get" action="<%= base %>" class="inline-form">
+    <label>Companion stock warehouse<select name="locationId" required>
+      <option value="">Choose warehouse</option><% m.locations.forEach(l=>{ %><option value="<%= l.id %>" <%= m.chosen===l.id?'selected':'' %>><%= l.name %></option><% }) %>
+    </select></label><button class="btn">Find companions</button>
+  </form><% } %>
+  <% if(m.chosen){ %>
+    <% if(m.rule?.enabled){ %><section class="card card-body">
+      <h2>Saved routine scope</h2>
+      <p>Maximum added value <%= helpers.money(Number(m.rule.maximum_added_minor),m.rule.currency) %> for new matching quotes.</p>
+      <% if(m.mode!=='alone'){ %><p>Automatic quote additions require Pro or Custom.</p><% } %>
+      <form method="post" action="<%= base %>/scope">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="idempotencyKey" value="<%= formKey %>-stop">
+        <input type="hidden" name="locationId" value="<%= m.chosen %>">
+        <input type="hidden" name="revision" value="<%= m.rule.revision %>">
+        <button class="btn" name="stop" value="yes">Stop routine additions</button>
+      </form>
+    </section><% } %>
+    <% if(m.candidates.length){ %>
+      <section class="card card-body stack"><h2>Companion products</h2>
+      <form method="post" action="<%= base %>" class="stack-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="idempotencyKey" value="<%= formKey %>">
+        <input type="hidden" name="locationId" value="<%= m.chosen %>">
+        <input type="hidden" name="revision" value="<%= m.rule?.revision||0 %>">
+        <% for(const row of m.candidates){ %><fieldset>
+          <legend><%= row.name %><%= row.variant_label?' / '+row.variant_label:'' %> · <%= row.code %></legend>
+          <label><input type="checkbox" name="companion" value="<%= row.sku_id %>"> Include <%= row.code %></label>
+          <p><%= row.shared_orders %> shared fulfilled <%= row.shared_orders===1?'order':'orders' %></p>
+          <label>Quantity for <%= row.code %> (<%= row.unit_label %>) <input name="quantity_<%= row.sku_id %>" inputmode="decimal" value="<%= row.quantity_increment %>"></label>
+          <% if(row.secondary_unit_label){ %><label>Actual <%= row.secondary_unit_label %> for <%= row.code %> <input name="secondary_<%= row.sku_id %>" inputmode="decimal"></label><% } %>
+        </fieldset><% } %>
+        <button class="btn btn--primary" type="submit">Prepare quote revision</button>
+        <% if(m.mode==='alone'){ %><details><summary>Authorize routine additions on future matching quotes</summary>
+          <label>Anchor product <select name="anchorSku"><% m.anchors.forEach(a=>{ %><option value="<%= a.code %>"><%= a.code %></option><% }) %></select></label>
+          <label>Maximum added total in <%= q.pricing.currency %> <input name="maximum" inputmode="decimal"></label>
+          <label><input type="checkbox" name="confirmed" value="yes"> Authorize the selected companion SKUs and quantities for this customer, currency and warehouse.</label>
+          <button class="btn" type="submit" formaction="<%= base %>/scope">Save routine authority</button>
+        </details><% } %>
+      </form></section>
+    <% }else{ %><p>No fulfilled combinations support additions at this warehouse.</p><% } %>
+    <% if(m.page>1){ %><a href="<%= base %>?locationId=<%= encodeURIComponent(m.chosen) %>&amp;page=<%= m.page-1 %>">Previous page</a><% } %>
+    <% if(m.more){ %><a href="<%= base %>?locationId=<%= encodeURIComponent(m.chosen) %>&amp;page=<%= m.page+1 %>">Next page</a><% } %>
+  <% } %>
+<% } %>

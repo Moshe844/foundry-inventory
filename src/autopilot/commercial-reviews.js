@@ -55,14 +55,8 @@ module.exports=[
       'Hello '||c.name||', our last shipment to you was on '||s.last_sale::text||'. Would you like an updated stock list or help planning your next order?' AS "Draft"
     FROM sales s JOIN customers c ON c.id=s.customer_id AND c.record_state='ACTIVE'
     WHERE s.n>=2 AND s.last_sale<($3::date-90) AND ($2='' OR lower(c.name)=lower($2)) ORDER BY s.last_sale,c.id`,usesDate:true},
-  {id:79,key:'bought-together',salesHistory:true,label:'Find items commonly bought together',requiresFilter:true,summary:'Companion items from other completed or partly fulfilled orders containing the selected SKU. Review these before adding them to a quote.',sql:`
-    WITH orders AS (SELECT DISTINCT l.sales_order_id,l.sku_id FROM sales_order_lines l JOIN skus s ON s.id=l.sku_id
-      JOIN sales_orders so ON so.workspace_id=l.workspace_id AND so.id=l.sales_order_id
-      WHERE l.workspace_id=$1 AND lower(s.code)=lower($2) AND l.quantity_fulfilled>0 AND ($3::text IS NULL OR so.order_date >= $3))
-    SELECT s.code AS "SKU",i.name AS "Product",count(DISTINCT l.sales_order_id) AS "Shared orders"
-    FROM orders o JOIN sales_order_lines l ON l.workspace_id=$1 AND l.sales_order_id=o.sales_order_id AND l.sku_id<>o.sku_id AND l.quantity_fulfilled>0
-    JOIN skus s ON s.id=l.sku_id AND s.is_active=1 JOIN items i ON i.id=s.item_id AND i.is_active=1
-    GROUP BY s.id,s.code,i.name ORDER BY count(DISTINCT l.sales_order_id) DESC,s.id`},
+  {id:79,key:'bought-together',label:'Find items commonly bought together',requiresFilter:true,
+    readPage:require('../sales/quote-companion-evidence').readReport},
   {id:88,key:'customer-health',label:'Flag customers buying less',summary:'Compare distinct shipped orders in the last 30 days with the preceding 30 days.',sql:`
     WITH history AS (SELECT o.customer_id,count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '30 days') AS recent,
       count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '30 days') AS prior

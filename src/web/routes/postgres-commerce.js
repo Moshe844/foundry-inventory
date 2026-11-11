@@ -12,7 +12,7 @@ const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const supplierLinks=require('../../purchasing/supplier-order-link');
 const exactQuantity=require('../../domain/exact-quantity');
-const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
+const {requireAuth,requireOwner,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError,NotFoundError,AuthorizationError}=require('../../domain/errors');
 
@@ -985,7 +985,45 @@ function createPostgresCommerceRouter(database,options={}){
     let form={};if(req.query.revise){const q=await quotations.get(database,req.ctx.workspaceId,req.query.revise),p=q.input;form={...p,skuId:p.lines.map(l=>l.skuId),quantity:p.lines.map(l=>l.quantity),unitPrice:p.lines.map(l=>l.unitPriceMinor==null?'':require('../../domain/currency').fromMinor(l.unitPriceMinor,p.currency)),priceOverride:p.lines.map(l=>l.priceOverride?'1':'0'),customerShippingAddress:p.shipToAddress,tax:require('../../domain/currency').fromMinor(p.taxMinor,p.currency),discount:require('../../domain/currency').fromMinor(p.discountMinor,p.currency),couponCodes:(p.codes||[]).join(', '),orderDate:entryToday(req),supersedesId:q.id};}return renderEntry(req,res,{quotation:true,form});
   }));
   router.post('/quotes',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),q=await quotations.create(database,req.ctx,{...input,validUntil:req.body.validUntil,requestKey:req.body.idempotencyKey,supersedesId:req.body.supersedesId||null});return res.redirect(303,'/quotes/'+q.id);}catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{quotation:true,form:req.body,formError:error.message,status:400});}}));
-  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quote',{title:'Quotation',nav:'sales',quotation:await quotations.get(database,req.ctx.workspaceId,req.params.id),today:entryToday(req),canEmailQuotation:req.user?.role==='owner'})));
+  const quoteCompanions=require('../../sales/agent-quote-companions');
+  const companionUrl=id=>'/quotes/'+encodeURIComponent(id)+'/companions';
+  async function companionSelection(req){
+    const ids=(Array.isArray(req.body.companion)?req.body.companion:[req.body.companion]).filter(Boolean).map(String);
+    if(!ids.length||ids.length>500||new Set(ids).size!==ids.length)throw new ValidationError('Choose the exact companion products.');
+    const rows=(await database.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) AND is_active=1',
+      [req.ctx.workspaceId,ids])).rows;
+    if(rows.length!==ids.length)throw new ValidationError('Choose active product variants in this inventory.');
+    return ids.map(id=>({sku:rows.find(r=>r.id===id).code,quantity:req.body['quantity_'+id],
+      secondaryQuantity:req.body['secondary_'+id]}));
+  }
+  router.get('/quotes/:id/companions',requireOwner,asyncRoute(async(req,res)=>{
+    const page=Number(req.query.page||1);
+    if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid results page.');
+    const model=await quoteCompanions.page(database,req.ctx,req.params.id,{locationId:req.query.locationId,page});
+    return res.page('sales/quote-companions',{title:'Customers also buy',nav:'sales',model,formKey:newId('quote-companions')});
+  }));
+  router.post('/quotes/:id/companions',requireOwner,asyncRoute(async(req,res)=>{
+    const args=await companionSelection(req);
+    const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Review these exact companion lines.',
+      {action:quoteCompanions.ACTION,recordReference:req.params.id,companionWarehouse:req.body.locationId,companionLines:JSON.stringify(args)});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review the current quote and its companion products.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post('/quotes/:id/companions/scope',requireOwner,asyncRoute(async(req,res)=>{
+    const input={...req.body,companionLines:req.body.stop==='yes'?[]:await companionSelection(req)};
+    await quoteCompanions.configuration(database,req.ctx,req.params.id,req.body.locationId,input);
+    req.flash('success',req.body.stop==='yes'?'Routine companion additions stopped.':'Saved authority for future matching quotations.');
+    return res.redirect(303,companionUrl(req.params.id)+'?'+new URLSearchParams({locationId:req.body.locationId}));
+  }));
+  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>{
+    const [quotation,successor]=await Promise.all([
+      quotations.get(database,req.ctx.workspaceId,req.params.id),
+      database.query('SELECT id,quote_number FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2 LIMIT 1',
+        [req.ctx.workspaceId,req.params.id]).then(r=>r.rows[0])
+    ]);
+    return res.page('sales/quote',{title:'Quotation',nav:'sales',quotation,successor,today:entryToday(req),
+      canEmailQuotation:req.user?.role==='owner',canReviewCompanions:req.user?.role==='owner'});
+  }));
   const quotationMail=require('../../sales/quotation-mail');
   router.get('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>res.page('sales/quote-email',{title:'Email saved quotation',nav:'sales',...await quotationMail.page(database,req.ctx,req.params.id,req.query.connectorId)})));
   router.post('/quotes/:id/email',requirePermission(permissions.MANAGE_SALES,'email saved quotations'),asyncRoute(async(req,res)=>{

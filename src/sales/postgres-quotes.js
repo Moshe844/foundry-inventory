@@ -3,6 +3,11 @@ const {newId}=require('../lib/util'),{ValidationError,NotFoundError}=require('..
 async function actor(db,ctx,permission){access.assertCan((await db.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0],permission,'manage quotations');}
 async function get(db,workspaceId,id,{lock=false}={}){const r=(await db.query(`SELECT q.*,to_char(q.valid_until,'YYYY-MM-DD') valid_until,c.name customer_name FROM sales_quotations q JOIN customers c ON c.workspace_id=q.workspace_id AND c.id=q.customer_id WHERE q.workspace_id=$1 AND q.id=$2${lock?' FOR UPDATE OF q':''}`,[workspaceId,id])).rows[0];if(!r)throw new NotFoundError('That quotation is not in this inventory.');return r;}
 async function list(db,ctx,{limit=100,offset=0}={}){await actor(db,ctx,access.VIEW_SALES);return (await db.query("SELECT q.*,to_char(q.valid_until,'YYYY-MM-DD') valid_until,c.name customer_name FROM sales_quotations q JOIN customers c ON c.workspace_id=q.workspace_id AND c.id=q.customer_id WHERE q.workspace_id=$1 ORDER BY q.created_at DESC,q.id DESC LIMIT $2 OFFSET $3",[ctx.workspaceId,limit,offset])).rows;}
+async function describeLines(db,workspaceId,lines){
+ const products=(await db.query("SELECT s.id,i.unit_label,i.secondary_unit_label,i.name||CASE WHEN coalesce(s.variant_label,'')='' THEN '' ELSE ' / '||s.variant_label END||' · '||s.code label FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])",[workspaceId,lines.map(l=>l.skuId)])).rows;
+ return {labels:Object.fromEntries(products.map(r=>[r.id,r.label])),
+  units:Object.fromEntries(products.map(r=>[r.id,{quantity:r.unit_label,price:r.secondary_unit_label||r.unit_label}]))};
+}
 async function create(db,ctx,input){return db.transaction(async c=>{
  await actor(c,ctx,access.OPERATE);await require('../commercial/enforcement').workspace(c,ctx.workspaceId,'sales_orders.core');
  if(!String(input.requestKey||'').trim())throw new ValidationError('A quotation request key is required.');
@@ -13,8 +18,10 @@ async function create(db,ctx,input){return db.transaction(async c=>{
  if(supersedesId){const previous=await get(c,ctx.workspaceId,supersedesId,{lock:true});if(previous.status==='ACCEPTED')throw new ValidationError('An accepted quotation cannot be revised.');if((await c.query('SELECT 1 FROM sales_quotations WHERE workspace_id=$1 AND supersedes_id=$2',[ctx.workspaceId,supersedesId])).rows.length)throw new ValidationError('A newer revision already exists. Revise that quotation.');}
  const quote=await pricing.prepareQuote(c,ctx,terms,{lock:true});if(quote.violations.length)throw new ValidationError('Resolve the pricing safeguards before saving this quotation.');
  const count=Number((await c.query('SELECT count(*) n FROM sales_quotations WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),id=newId('quote'),number='QT-'+String(count+1).padStart(5,'0');
- const products=(await c.query("SELECT s.id,i.unit_label,i.secondary_unit_label,i.name||CASE WHEN coalesce(s.variant_label,'')='' THEN '' ELSE ' / '||s.variant_label END||' · '||s.code label FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])",[ctx.workspaceId,terms.lines.map(l=>l.skuId)])).rows,labels=Object.fromEntries(products.map(r=>[r.id,r.label])),units=Object.fromEntries(products.map(r=>[r.id,{quantity:r.unit_label,price:r.secondary_unit_label||r.unit_label}]));
- return (await c.query(`INSERT INTO sales_quotations(id,workspace_id,customer_id,quote_number,input,pricing,pricing_hash,valid_until,request_key,created_by_user_id,supersedes_id,line_labels,line_units) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb) RETURNING *,to_char(valid_until,'YYYY-MM-DD') valid_until`,[id,ctx.workspaceId,terms.customerId,number,JSON.stringify(terms),JSON.stringify(quote),pricing.quoteHash(quote),valid,requestKey,ctx.actorId,supersedesId||null,JSON.stringify(labels),JSON.stringify(units)])).rows[0];
+ const {labels,units}=await describeLines(c,ctx.workspaceId,terms.lines);
+ const saved=(await c.query(`INSERT INTO sales_quotations(id,workspace_id,customer_id,quote_number,input,pricing,pricing_hash,valid_until,request_key,created_by_user_id,supersedes_id,line_labels,line_units) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb) RETURNING *,to_char(valid_until,'YYYY-MM-DD') valid_until`,[id,ctx.workspaceId,terms.customerId,number,JSON.stringify(terms),JSON.stringify(quote),pricing.quoteHash(quote),valid,requestKey,ctx.actorId,supersedesId||null,JSON.stringify(labels),JSON.stringify(units)])).rows[0];
+ if(!supersedesId)await require('./agent-quote-companions').queueForNewQuote(c,ctx,saved);
+ return saved;
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function decide(db,ctx,id,{accept,expectedHash,today}){return db.transaction(async c=>{
  await actor(c,ctx,access.OPERATE);const q=await get(c,ctx.workspaceId,id,{lock:true});if(q.pricing_hash!==expectedHash)throw new ValidationError('Review this exact quotation before continuing.');
@@ -27,4 +34,4 @@ async function decide(db,ctx,id,{accept,expectedHash,today}){return db.transacti
  }
  await c.query("UPDATE sales_quotations SET status='DECLINED',decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);return {declined:true};
  },{isolation:'SERIALIZABLE',retrySafe:true});}
-module.exports={get,list,create,decide};
+module.exports={get,list,create,decide,describeLines};
