@@ -17,10 +17,12 @@ const expectedError=error=>[400,402,403,404,409,422].includes(error.status);
 const acceptanceHash=(link,name,email)=>pricing.hash({link:link.id,revision:link.revision,offer:link.offer_hash,name,email});
 
 async function linked(db,workspaceId,quoteId,{lock=false}={}){
+  if(!await paymentTerms.hasBuyerAcceptances(db))return undefined;
   return (await db.query('SELECT * FROM '+links+' WHERE workspace_id=$1 AND quote_id=$2'+(lock?' FOR UPDATE':''),
     [workspaceId,quoteId])).rows[0];
 }
 async function accepted(db,workspaceId,quoteId,{lock=false}={}){
+  if(!await paymentTerms.hasBuyerAcceptances(db))return undefined;
   return (await db.query('SELECT * FROM '+receipts+' WHERE workspace_id=$1 AND quote_id=$2'+(lock?' FOR UPDATE':''),
     [workspaceId,quoteId])).rows[0];
 }
@@ -72,6 +74,7 @@ async function publish(database,ctx,id,input){
 }
 
 async function revokeInTransaction(db,ctx,id){
+  if(!await paymentTerms.hasBuyerAcceptances(db))return;
   await db.query(`UPDATE ${links} SET enabled=false WHERE workspace_id=$1 AND quote_id=$2 AND enabled`,[ctx.workspaceId,id]);
   await db.query(`UPDATE ${receipts} SET state='WITHDRAWN',problem='The business withdrew the quotation.',processed_at=now()
     WHERE workspace_id=$1 AND quote_id=$2 AND state IN('RECEIVED','HELD')`,[ctx.workspaceId,id]);

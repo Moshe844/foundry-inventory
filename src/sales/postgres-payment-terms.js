@@ -14,8 +14,11 @@ function forQuote(terms){
   return {kind:terms?.kind||'ON_ACCOUNT',net_days:Number(terms?.net_days??30),
     deposit_percent:terms?.deposit_percent??null,deposit_minor:terms?.deposit_minor??null,hold_shipping:terms?.hold_shipping?1:0};
 }
+async function hasBuyerAcceptances(db){
+  return (await db.query("SELECT to_regclass('stockchief_runtime.quote_buyer_acceptances') IS NOT NULL AS installed")).rows[0].installed;
+}
 async function forOrder(db,workspaceId,orderId,customerId,options){
-  if(orderId){
+  if(orderId&&await hasBuyerAcceptances(db)){
     const saved=(await db.query(`SELECT a.payment_terms FROM stockchief_runtime.quote_buyer_acceptances a
       JOIN sales_orders o ON o.workspace_id=a.workspace_id AND o.id=a.order_id
       WHERE a.workspace_id=$1 AND a.order_id=$2 AND o.customer_id=$3 AND a.state='DRAFTED'`,[workspaceId,orderId,customerId])).rows[0];
@@ -24,7 +27,7 @@ async function forOrder(db,workspaceId,orderId,customerId,options){
   return forCustomer(db,workspaceId,customerId,options);
 }
 async function assertEditableOrder(db,workspaceId,orderId){
-  if((await db.query('SELECT 1 FROM stockchief_runtime.quote_buyer_acceptances WHERE workspace_id=$1 AND order_id=$2',
+  if(await hasBuyerAcceptances(db)&&(await db.query('SELECT 1 FROM stockchief_runtime.quote_buyer_acceptances WHERE workspace_id=$1 AND order_id=$2',
     [workspaceId,orderId])).rowCount)throw new ValidationError('The buyer accepted the exact terms on this order. Use a new quotation for changes.');
 }
-module.exports={saveInTransaction,forCustomer,forOrder,forQuote,assertEditableOrder};
+module.exports={saveInTransaction,forCustomer,forOrder,forQuote,assertEditableOrder,hasBuyerAcceptances};
