@@ -89,7 +89,8 @@ test('all four plans use real shelf risks, exact stock valuation, current owner 
   assert.equal(suggestion.rows.length, 1);
   assert.match(suggestion.rows[0].Suggestion, /Variance shelf/);
   assert(!suggestion.cyclePlan);
-  await f.browser.get('/autopilot/daily-cycle-counts').expect(402);
+  await f.browser.get('/autopilot/daily-cycle-counts').expect(200).expect(/available on Growth/);
+  await f.browser.get('/autopilot/daily-cycle-counts').set('Accept','application/json').expect(402);
   await assert.rejects(daily.prepare(db, ctx, { warehouseId: location.id, maximumShelves: 4, revision: 0 }), e => e.code === 'entitlement_required');
   assert.deepEqual(await plans(), []);
 
@@ -172,6 +173,6 @@ test('all four plans use real shelf risks, exact stock valuation, current owner 
   assert.deepEqual(await effects(), beforePlanning);
   assert.equal(await daily.enqueue(db, ctx.workspaceId, randomUUID()), 0);
   await f.subscribe('starter');
-  await f.browser.get('/autopilot/daily-cycle-counts/' + final.at(-1).id).expect(402);
+  await f.browser.get('/autopilot/daily-cycle-counts/' + final.at(-1).id).expect(200).expect(/available on Growth/);
   assert.equal((await reviews.run(db,ctx,'count-priorities')).rows.length,1);
 });

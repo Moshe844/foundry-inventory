@@ -483,8 +483,10 @@ function createPostgresAutopilotRouter(database,options={}){
       return res.page('autopilot/daily-cycle-counts',{...view,model,stockValue:daily.displayValue});
     } catch(error) {
       if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
-      res.status(402);
-      return res.page('autopilot/locked',{...view,message:error.message});
+      const state=await policy.accountState(database,req.ctx.workspaceId);
+      return res.page('autopilot/agent-plan-locked',{...view,tier:'Growth',
+        reviewTerms:policy.permits(state.plan,4,'draft')&&!policy.usesAgentTerms(state),
+        backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
     }
   }
   router.get(dailyPath,requireAuth,owner,asyncRoute((req,res)=>dailyPage(req,res)));
