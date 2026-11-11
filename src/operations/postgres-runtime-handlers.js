@@ -627,6 +627,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'qualification.staging-million':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'bulk'),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.variant-sheet.v1':external((job,database)=>require('../imports/agent-exact-variant-import').run(job,database),'reading'),
+  'import.physical-count-source.v1':external((job,database)=>require('../imports/physical-count-sources').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),

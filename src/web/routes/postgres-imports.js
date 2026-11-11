@@ -46,6 +46,40 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
+  const countSources=require('../../imports/physical-count-sources'),countPath=countSources.path;
+  const countPage=async(req,res)=>{
+    const view={title:'Physical count originals',nav:'imports',backTo:{href:req.params.id?countPath:'/imports',
+      label:req.params.id?'Physical count originals':'File imports'}};
+    try{
+      const model=await countSources.page(database,req.ctx,{id:req.params.id,after:req.query.after});
+      return res.set('Cache-Control','private, no-store').page('imports/physical-count-source',{...view,model});
+    }catch(error){
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      return res.status(402).page('autopilot/locked',{...view,message:error.message});
+    }
+  };
+  router.get(countPath,requireOwner,asyncRoute(countPage));
+  router.post(countPath,requireOwner,asyncRoute(async(req,res)=>{
+    const files=(req.files||[]).filter(file=>file.field==='file');
+    if(files.length!==1)throw new ValidationError('Choose one original count file.');
+    const result=await countSources.enqueue(database,req.ctx,{...req.body,buffer:files[0].buffer,filename:files[0].filename});
+    return res.redirect(303,countPath+'/'+result.id);
+  }));
+  router.post(countPath+'/rule',requireOwner,asyncRoute(async(req,res)=>{
+    await countSources.configure(database,req.ctx,req.body);
+    return res.redirect(303,countPath);
+  }));
+  router.get(countPath+'/:id/original',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../commercial/agent-plan').requireWorkspaceJob(database,req.ctx.workspaceId,5,'draft');
+    const source=await countSources.load(database,req.ctx,req.params.id,{original:true});
+    return res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).type('application/octet-stream')
+      .attachment(source.filename).send(source.content);
+  }));
+  router.get(countPath+'/:id',requireOwner,asyncRoute(countPage));
+  for(const step of ['revise','approve'])router.post(countPath+'/:id/'+step,requireOwner,asyncRoute(async(req,res)=>{
+    await countSources[step](database,req.ctx,req.params.id,req.body);
+    return res.redirect(303,countPath+'/'+req.params.id);
+  }));
   const variantImports=require('../../imports/agent-exact-variant-import'),variantPath='/imports/variants';
   async function variantsPage(req,res){
     const screen=await variantImports.screen(database,req.ctx,{...req.query,id:req.params.id||null});

@@ -56,13 +56,22 @@ async function* pages(buffer){
   for(const frame of decoded.frames){const png=await sharp(Buffer.from(frame.pixels),{raw:{width:frame.width,height:frame.height,channels:4}}).toColourspace('srgb').withMetadata({orientation:frame.orientation}).png().toBuffer();yield {page:++n,total:decoded.frames.length,block:await imageInput.prepare(png)};}
  }else{yield {page:1,total:1,block:await imageInput.prepare(buffer)};}
 }
-async function parse(buffer,{purpose,providerForPage,onProgress,authorize}={}){
+async function parse(buffer,{purpose,providerForPage,onProgress,authorize,additionalFields=[]}={}){
  if(!['count','delivery'].includes(purpose))throw new ValidationError('Choose a handwritten count sheet or delivery note.');
+ const fieldIds=[...FIELD_IDS,...additionalFields];
+ const schema=additionalFields.length?{
+  ...SCHEMA,properties:{...SCHEMA.properties,
+    columns:{...SCHEMA.properties.columns,maxItems:fieldIds.length,items:{...SCHEMA.properties.columns.items,
+      properties:{...SCHEMA.properties.columns.items.properties,field:{type:'string',enum:fieldIds}}}},
+    rows:{...SCHEMA.properties.rows,items:{...SCHEMA.properties.rows.items,
+      properties:{...SCHEMA.properties.rows.items.properties,cells:{...SCHEMA.properties.rows.items.properties.cells,maxItems:fieldIds.length}}}},
+  },
+ }:SCHEMA;
  const sheets=[];let mappings=null,observations=[],pagesRead=0;const variantAxes=new Map();
  for await(const p of pages(buffer)){
   await authorize?.();await onProgress?.({stage:'understanding',page:p.page,pages:p.total});
   const provider=await providerForPage(p.page);
-  const result=await provider.complete({system:SYSTEM,prompt:[p.block,{type:'text',text:'Read page '+p.page+' of '+p.total+' of this '+purpose+' document. Native fields: '+FIELD_IDS.join(', ')+'. Keep the same canonical heading for variant dimensions already read: '+JSON.stringify([...variantAxes.values()])+'. Preserve all source rows, including uncertain readings. No physical stock is confirmed by this reading.'}],schema:SCHEMA,schemaName:'stockchief_handwritten_source',maxOutputTokens:8000,onValidated:async data=>{await authorize?.();return checked(data,purpose);}});
+  const result=await provider.complete({system:SYSTEM,prompt:[p.block,{type:'text',text:'Read page '+p.page+' of '+p.total+' of this '+purpose+' document. Native fields: '+fieldIds.join(', ')+'. Keep the same canonical heading for variant dimensions already read: '+JSON.stringify([...variantAxes.values()])+'. Preserve all source rows, including uncertain readings. No physical stock is confirmed by this reading.'}],schema,schemaName:'stockchief_handwritten_source',maxOutputTokens:8000,onValidated:async data=>{await authorize?.();return checked(data,purpose);}});
   const data=checked(result.data,purpose);pagesRead++;observations.push({page:p.page,pageKind:data.pageKind||'table',pageNote:data.pageNote||'',document:data.document||{},columns:data.columns,rows:data.rows});if(data.pageKind==='no_stock_rows')continue;const cols=data.columns.map(c=>{if(!/^variant\d+$/.test(c.field))return c.field;const key=c.heading.trim().normalize('NFKC').toLowerCase();if(!variantAxes.has(key)){if(variantAxes.size>=32)throw new ValidationError('This source exceeds the 32 variant dimensions supported by the inventory.');variantAxes.set(key,{field:'variant'+(variantAxes.size+1),heading:c.heading});}return variantAxes.get(key).field;}),header=data.document||{},extra=[['PO',header.purchaseOrder],['Document reference',header.reference],['Document date',header.date],['Document supplier',header.supplier],...(!cols.includes('currency')?[['currency',header.currency]]:[]),...(!cols.includes('location')?[['location',header.location]]:[])].filter(([,v])=>typeof v==='string'&&v.trim());const table=parser.tabulate([[...cols,...extra.map(([key])=>key)],...data.rows.map(r=>[...r.cells,...extra.map(([,value])=>value)])]);
   for(const [n,row] of table.rows.entries()){const source=data.rows[n];row.problems=source.uncertain?[{code:'image_identity_uncertain',message:'Compare this uncertain reading with original page '+p.page+': '+source.note}]:[];}
   sheets.push({name:'Original page '+p.page,...table});
@@ -74,7 +83,7 @@ async function parse(buffer,{purpose,providerForPage,onProgress,authorize}={}){
  const columns=[...new Set(sheets.flatMap(s=>s.columns.map(c=>c.name)))],grid=[columns],problems=[];
  for(const sheet of sheets)for(const row of sheet.rows){const values=new Map(sheet.columns.map((c,i)=>[c.name,row.cells[i]]));grid.push(columns.map(c=>values.get(c)||''));problems.push(row.problems||[]);}
  const table=parser.tabulate(grid);for(const [n,r]of table.rows.entries())r.problems=problems[n];for(const axis of variantAxes.values()){const column=table.columns.find(c=>c.name===axis.field);if(column)column.name=axis.heading;}
- return {format:buffer.subarray(0,5).toString()==='%PDF-'?'pdf':'image',visualSource:true,sheets:[{name:'All original pages',...table}],primarySheet:0,handwriting:{purpose,pages:pagesRead,observations},mappings:Object.fromEntries(columns.map((field,index)=>[field,index]).filter(([field])=>FIELD_IDS.includes(field)))};
+ return {format:buffer.subarray(0,5).toString()==='%PDF-'?'pdf':'image',visualSource:true,sheets:[{name:'All original pages',...table}],primarySheet:0,handwriting:{purpose,pages:pagesRead,observations},mappings:Object.fromEntries(columns.map((field,index)=>[field,index]).filter(([field])=>fieldIds.includes(field)))};
 }
 async function readPage(db,ctx,{page=1}={}){
  await require('../commercial/agent-plan').requireWorkspaceJob(db,ctx.workspaceId,139,'draft');

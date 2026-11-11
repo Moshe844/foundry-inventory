@@ -961,6 +961,7 @@ function createPostgresAutopilotRouter(database,options={}){
         result.pricePreparationHold=await pricePolicy.stopped(database,req.ctx.workspaceId,state,'catalog.restore_margin',false);
         result.reviewPrices=!result.pricePreparationHold;
       }
+      if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);

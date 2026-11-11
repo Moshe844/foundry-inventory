@@ -13,9 +13,15 @@ async function check(db,ctx,plan){
 }
 async function review(db,ctx,{page=1}){
  const history=await require('../commercial/agent-history').access(db,ctx.workspaceId);
- const rows=(await db.query(`SELECT p.source_name AS "Count source",p.records_valid AS "Reviewed positions",CASE WHEN p.status='SUCCEEDED' THEN 'Verified' WHEN p.approval_status='APPROVED' THEN 'Approved; check progress' ELSE 'Needs physical confirmation' END AS "Status",'/imports/'||p.id AS link
-  FROM import_plans p WHERE p.workspace_id=$1 AND p.transformations::jsonb->>'agentJob'='5' AND ($2::timestamptz IS NULL OR p.created_at::timestamptz>=$2::timestamptz)
-  ORDER BY p.created_at DESC,p.id LIMIT 101 OFFSET $3`,[ctx.workspaceId,history.activityAfter,(page-1)*100])).rows;
- return {rows:rows.slice(0,100),more:rows.length>100,summary:'Saved count sources and their import results. Image readings and physical counts require your confirmation. Blank quantities never mean zero.'};
+ const rows=(await db.query(`SELECT filename AS "Count source",state AS "Status",link FROM (
+  SELECT p.source_name filename,CASE WHEN p.status='SUCCEEDED' THEN 'Verified' WHEN p.approval_status='APPROVED'
+  THEN 'Approved; check progress' ELSE 'Needs physical confirmation' END state,'/imports/'||p.id link,p.created_at::timestamptz created
+  FROM import_plans p WHERE p.workspace_id=$1 AND p.transformations::jsonb->>'agentJob'='5'
+  UNION ALL SELECT s.filename,CASE s.status WHEN 'POSTED' THEN 'Verified' WHEN 'HELD' THEN 'Review needed'
+    WHEN 'APPROVED' THEN 'Approved; check progress' WHEN 'QUEUED' THEN 'Reading' ELSE 'Needs physical confirmation' END,
+    '/imports/count-sources/'||s.id,s.created_at FROM stockchief_runtime.agent_count_sources s WHERE s.workspace_id=$1
+  ) sources WHERE ($2::timestamptz IS NULL OR created>=$2::timestamptz)
+  ORDER BY created DESC,link LIMIT 101 OFFSET $3`,[ctx.workspaceId,history.activityAfter,(page-1)*100])).rows;
+ return {rows:rows.slice(0,100),more:rows.length>100,summary:'Saved count originals and their verified results. Check physical values against the source before approval. Blank quantities need review.'};
 }
 module.exports={check,definition:{id:5,key:'count-sources',label:'Count sheets and reviewed shelf labels',readPage:review}};

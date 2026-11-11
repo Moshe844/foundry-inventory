@@ -133,4 +133,20 @@ async function transferInTransaction(client,ctx,input){
     destinationBalance:received.balance};
 }
 
-module.exports={receiveInTransaction,receiveManyInTransaction,prepareIssueInTransaction,prepareIssuesInTransaction,commitIssueInTransaction,transferInTransaction};
+async function correctMeasureInTransaction(client,ctx,{movementId,sourceId}){
+  const {row,prior}=await movement(client,ctx,movementId);
+  if(prior)return;
+  if(row.operation!=='adjust'||row.reason_code!=='cycle_count_measure'||Number(row.quantity_delta)!==0||!Number(row.secondary_quantity_delta))
+    throw new ValidationError('An exact weight-only count movement is required.');
+  const before=await lockState(client,ctx,row.sku_id,row.location_id);
+  const weight=exact.add(before.secondary_quantity_units??'0',row.secondary_quantity_delta);
+  if(exact.canonical(before.quantity_units)!==exact.canonical(row.balance_after)||before.secondary_quantity_units==null||
+    exact.canonical(weight)!==exact.canonical(row.secondary_balance_after)||Number(weight)<=0)
+    throw new ValidationError('The costed pieces and independent measure no longer agree with the stock position.');
+  await client.query('UPDATE accounting_inventory_cost_balances SET secondary_quantity_units=$4,updated_at=$5 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
+    [ctx.workspaceId,row.sku_id,row.location_id,weight,nowIso()]);
+  await append(client,ctx,row,{sourceType:'physical_count_measure_correction',sourceRecordId:sourceId},0,0,
+    {quantity:before.quantity_units,secondaryQuantity:weight,cost:before.total_cost_minor});
+}
+
+module.exports={receiveInTransaction,receiveManyInTransaction,prepareIssueInTransaction,prepareIssuesInTransaction,commitIssueInTransaction,transferInTransaction,correctMeasureInTransaction};
