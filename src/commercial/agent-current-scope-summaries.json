@@ -18,7 +18,7 @@
   "20": "Handles reorders inside approved supplier, product and purchasing limits. Live supplier-mail delivery still needs verification.",
   "21": "Calculates location-level reorder points and targets from recorded sales, excluding damage removals and respecting the owner's ceilings.",
   "22": "Compares saved eligible suppliers by rounded goods totals and recorded delivery time, keeping currencies separate. Chooses the cheapest or fastest supplier through a native reorder preference change. First supplier or changed price/terms require individual review; unclear facts hold selection.",
-  "23": "Rounds purchases to supplier packs and minimums and evaluates a recorded freight threshold. Changed purchase facts require a fresh review.",
+  "23": "Applies recorded minimum orders and adds goods for free shipping when they cost no more than the saved freight charge. Starter suggests. Growth learns from a matching owner-approved purchase. Pro and Custom use current purchase limits without training.",
   "24": "Combines matching unsent supplier drafts while preserving total goods and value, retaining the originals as cancelled records.",
   "25": "Splits an unsent purchase draft by warehouse, line delivery date or goods-value limit. The resulting orders remain unsent drafts.",
   "26": "Shows monthly open-to-buy after posted purchases and unbilled commitments, separately by currency. Automatic purchase-budget allocation remains open.",

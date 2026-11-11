@@ -89,7 +89,21 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
   if (candidate.currency !== cap.currency || !Number.isFinite(candidate.value) ||
       candidate.value <= 0 || candidate.value > cap.perOrder) return 'This order needs approval under your plan’s per-order limit.';
   if (state.plan === 'growth' && !policy.itemScope.includes(candidate.skuId)) return 'Choose this item as trusted before automatic ordering.';
-  const needsPackExample=state.plan==='growth'&&require('../purchasing/agent-order-quantities').usesPacks(candidate);
+  const buying=require('../purchasing/agent-order-quantities');
+  if(buying.usesTopUp(candidate)&&!candidate.topUpSignature)return 'Review a fresh order with the current supplier minimum and shipping terms.';
+  if(state.plan==='growth'&&candidate.topUpSignature){
+    const taught=await database.query(`SELECT 1 FROM work_items wi
+      JOIN purchase_orders po ON po.workspace_id=wi.workspace_id AND po.id=wi.purchase_order_id
+      JOIN workspaces w ON w.id=wi.workspace_id
+      JOIN users u ON u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.id=wi.approved_by_user_id AND u.role='owner'
+      WHERE wi.workspace_id=$1 AND wi.source='postgres_autopilot' AND po.id IS DISTINCT FROM $2
+        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND po.supplier_id=$3
+        AND wi.recommended_action::jsonb->>'skuId'=$4 AND wi.recommended_action::jsonb->>'destinationLocationId'=$5
+        AND wi.recommended_action::jsonb->>'topUpSignature'=$6 LIMIT 1`,
+    [workspaceId,committedId,candidate.supplierId,candidate.skuId,candidate.destinationLocationId,candidate.topUpSignature]);
+    if(!taught.rowCount)return 'Approve and send one matching supplier minimum or free-shipping order before this routine repeats.';
+  }
+  const needsPackExample=state.plan==='growth'&&buying.usesPacks(candidate);
   const prior = await database.query(`SELECT po.currency,line.unit_cost,line.units_per_purchase_unit,line.sku_id,
       line.purchase_unit,line.quantity_purchase_units FROM purchase_orders po
     JOIN purchase_order_lines line ON line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id

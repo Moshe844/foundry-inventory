@@ -269,7 +269,7 @@ async function supplierChoice(database,workspaceId,shortage,state,cached=null){c
   [workspaceId,shortage.sku_id,shortage.preferred_supplier_id]);const selected=result.rows[0];if(!selected)return null;
   const buying=require('../purchasing/agent-order-quantities');
   const resultQty=buying.quantities(selected,Math.max(shortage.default_order_quantity??0,shortage.needed),state.agentTerms);
-  return {...selected,...resultQty,restriction:buying.restriction(state,resultQty)};}
+  return {...selected,...resultQty,restriction:buying.restriction(state,resultQty),topUpSignature:buying.topUpSignature(selected,resultQty.topUp)};}
 
 function decisionEvidence(candidate){
   if(!candidate||!['purchase','transfer'].includes(candidate.type))return null;
@@ -289,6 +289,15 @@ function decisionEvidence(candidate){
     return {level:'low',reason:'Verify the source, destination and stock the source needs to keep.'};
   return {level:'high',reason:'The source and destination are known and the available stock covers the transfer and protected quantity.'};
 }
+async function purchasingJobRestriction(db,workspaceId,candidate,automatic){
+  const buying=require('../purchasing/agent-order-quantities'),jobs=require('./job-modes');
+  if(buying.usesPacks(candidate)){
+    const restricted=await jobs.restriction(db,workspaceId,27,automatic);
+    if(restricted)return restricted;
+  }
+  return buying.usesTopUp(candidate)?jobs.restriction(db,workspaceId,23,automatic):null;
+}
+
 async function evaluate(database,workspaceId,candidate,state,{committedPurchaseOrderId=null}={}){if(state.mode===MODES.OBSERVE)
   return {decision:'needs_approval',reason:'StockChief is set to watch only.',policy:null};
   if(state.paused)return {decision:'refused',reason:state.pausedReason||'StockChief is paused.',policy:null};
@@ -312,10 +321,8 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
     const ruleRestriction=Object.hasOwn(state,planningRuleQuota)?state[planningRuleQuota]:await require('../commercial/agent-rule-quota').restriction(database,account);
     if(ruleRestriction)return {decision:'needs_approval',reason:ruleRestriction,policy};
     if(candidate.type==='purchase'){
-      if(require('../purchasing/agent-order-quantities').usesPacks(candidate)){
-        const packRestriction=await require('./job-modes').restriction(database,workspaceId,27,true);
-        if(packRestriction)return {decision:'needs_approval',reason:packRestriction,policy};
-      }
+      const restricted=await purchasingJobRestriction(database,workspaceId,candidate,true);
+      if(restricted)return {decision:'needs_approval',reason:restricted,policy};
       const reason=await agentPlan.purchaseReview(database,workspaceId,candidate,policy,account,committedPurchaseOrderId);
       if(reason) return {decision:'needs_approval',reason,policy};
     }
@@ -410,7 +417,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
       const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},state,suppliers);if(!supplier||supplier.restriction){considered.push({skuId:shortage.sku_id,reason:supplier?.restriction||'no_supplier'});continue;}
       candidate={type:'purchase',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
-        purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,
+        purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,topUpSignature:supplier.topUpSignature,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
@@ -447,7 +454,8 @@ async function revalidate(database,workspaceId,action){
  if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency||
   supplier.purchaseUnits!==action.purchaseUnits||supplier.unitsPer!==action.unitsPerPurchaseUnit||
   (action.purchaseUnit!=null&&supplier.purchase_unit!==action.purchaseUnit)||
-  (action.purchaseMultiple!=null&&supplier.purchaseMultiple!==action.purchaseMultiple))
+  (action.purchaseMultiple!=null&&supplier.purchaseMultiple!==action.purchaseMultiple)||
+  (action.topUpSignature??null)!==supplier.topUpSignature)
   throw new ValidationError('Supplier terms, price or the required quantity changed after this decision. Review a fresh recommendation.');
 }
 
@@ -508,9 +516,9 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
   const effectState=await getState(scoped,ctx.workspaceId);
   if(effectState.shadowEndsAt) throw new ValidationError('During the first 14 days StockChief only watches. You can enter the transaction manually.');
   if(effectState.agentTerms && item.recommendedAction.type==='transfer' && effectState.plan==='starter') throw new ValidationError('Starter can suggest a transfer. Record the transfer manually.');
-  if(effectState.agentTerms&&item.recommendedAction.type==='purchase'&&require('../purchasing/agent-order-quantities').usesPacks(item.recommendedAction)){
-    const packRestriction=await require('./job-modes').restriction(scoped,ctx.workspaceId,27,item.approval_requirement==='NONE');
-    if(packRestriction)throw new ValidationError(packRestriction);
+  if(effectState.agentTerms&&item.recommendedAction.type==='purchase'){
+    const restricted=await purchasingJobRestriction(scoped,ctx.workspaceId,item.recommendedAction,item.approval_requirement==='NONE');
+    if(restricted)throw new ValidationError(restricted);
   }
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');

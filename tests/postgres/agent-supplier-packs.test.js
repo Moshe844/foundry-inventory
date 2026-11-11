@@ -7,6 +7,63 @@ const autonomy=require('../../src/autopilot/postgres-service');
 const terms=require('../../src/purchasing/agent-order-quantities');
 const reviews=require('../../src/autopilot/job-reviews');
 
+test('automatic supplier top-ups require Growth teaching and recheck changed terms, modes and plans',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,workflows}=f;
+  const sku=f.item.skuIds[0],supplierId='fixture-supplier',locationId=f.location.id,owner={role:'owner'};
+  const code=(await db.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,sku])).rows[0].code;
+  await subscribe('growth');
+  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+  await db.query("UPDATE suppliers SET email='minimum@example.test',minimum_order_amount=10 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,supplierId]);
+  await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{supplierId,skuId:sku,
+    purchaseUnit:'unit',unitsPerPurchaseUnit:1,lastUnitCost:1,orderMultiple:1,minimumOrderQuantity:1,isPreferred:true});
+  await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,created_at,updated_at)
+    VALUES($1,$2,$1,'Supplier purchase mailbox','gmail','[]','{}','connected','[]',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId]);
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,5,11,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,locationId]);
+  await autonomy.configureRoutine(db,ctx,owner,{purchaseEnabled:true,supplierIds:[supplierId],trustedItemCodes:code,maximumValue:100,weeklyValue:400});
+  await autonomy.setCapability(db,ctx,owner,'supplier_emails',true);
+  const plan=()=>autonomy.plan(db,ctx.workspaceId,{onlySkuIds:[sku]});
+  const first=(await plan()).created[0];
+  assert.equal(first.recommendedAction.quantity,10);
+  assert.equal(first.approval_requirement,'REQUIRED');
+  assert.match(first.policyEvaluation.reason,/matching supplier minimum or free-shipping order/);
+  const exact=await autonomy.approve(db,ctx,owner,first.id);
+  await db.query("UPDATE stockchief_runtime.provider_effects SET status='SUCCEEDED',completed_at=now() WHERE workspace_id=$1 AND id=$2",
+    [ctx.workspaceId,exact.outcome.effectId]);
+  await db.query("UPDATE supplier_communications SET status='SENT',external_message_id='minimum-fixture',sent_at=now()::text WHERE workspace_id=$1 AND id=$2",
+    [ctx.workspaceId,exact.outcome.communicationId]);
+  await autonomy.reconcileSupplierFollowThrough(db,ctx.workspaceId,{actorId:ctx.actorId});
+  const saved=(await db.query('SELECT id,quantity_units FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2',
+    [ctx.workspaceId,exact.purchase_order_id])).rows[0];
+  assert.equal(Number(saved.quantity_units),10);
+  await workflows.receivePurchaseOrder(db,ctx,exact.purchase_order_id,{idempotencyKey:randomUUID(),
+    lines:[{lineId:saved.id,quantity:10,locationId}]});
+  await require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId:sku,locationId,quantity:10,reasonCode:'sold',idempotencyKey:randomUUID()});
+  const repeat=(await plan()).created[0];
+  assert.equal(repeat.approval_requirement,'NONE',repeat.policyEvaluation.reason);
+  const modes=require('../../src/autopilot/job-modes');
+  await modes.save(db,ctx,23,{mode:'watch',revision:0});
+  assert.equal((await autonomy.execute(db,ctx,repeat.id)).execution_status,'WAITING_FOR_APPROVAL');
+  await assert.rejects(autonomy.approve(db,ctx,owner,repeat.id),/Watch only/);
+  await modes.save(db,ctx,23,{mode:'routine',revision:1});
+  await db.query('UPDATE suppliers SET minimum_order_amount=11 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,supplierId]);
+  await assert.rejects(autonomy.approve(db,ctx,owner,repeat.id),/terms, price or the required quantity changed/);
+  const next=(await plan()).created[0];
+  assert.equal(next.recommendedAction.quantity,11);
+  assert.equal(next.approval_requirement,'REQUIRED');
+  const evaluate=async()=>autonomy.evaluate(db,ctx.workspaceId,next.recommendedAction,await autonomy.getState(db,ctx.workspaceId));
+  await subscribe('starter');
+  assert.match((await plan()).considered[0].reason,/Growth/);
+  await assert.rejects(autonomy.approve(db,ctx,owner,next.id),/Growth/);
+  await subscribe('pro');
+  assert.equal((await evaluate()).decision,'authorized');
+  await subscribe('enterprise');
+  await db.query(`UPDATE commercial_plan_versions SET configuration=jsonb_set(configuration,'{agentPurchaseLimits}',
+    '{"currency":"USD","perOrder":500,"perWeek":2000}'::jsonb)
+    WHERE id=(SELECT plan_version_id FROM account_subscriptions WHERE account_id=$1)`,[f.owner.accountId]);
+  assert.equal((await evaluate()).decision,'authorized');
+});
+
 test('native case and pallet orders enforce Growth teaching, current job modes and exact saved pack terms',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t);
   const {db,ctx,subscribe,workflows}=f;

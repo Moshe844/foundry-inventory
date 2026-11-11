@@ -38,6 +38,15 @@ function restriction(state,offer){
 function usesPacks(candidate){
   return Number(candidate.unitsPerPurchaseUnit??1)!==1||Number(candidate.purchaseMultiple??1)!==1;
 }
+function topUpSignature(offer,reason){
+  if(!reason)return null;
+  return require('../pricing/postgres-promotions').hash([reason,offer.supplier_id,offer.sku_id,offer.currency,
+    offer.purchase_unit,offer.units_per_purchase_unit,offer.order_multiple,offer.minimum_order_quantity,
+    offer.last_unit_cost,offer.minimum_order_amount,offer.freight_terms_currency,offer.free_freight_threshold_minor,offer.ordinary_freight_minor]);
+}
+function usesTopUp(candidate){
+  return Boolean(candidate.topUpSignature||candidate.evidence?.some(entry=>entry.fact==='supplier_top_up'));
+}
 async function saveFreight(db,ctx,input){
   return db.transaction(async client=>{
     const state=await require('../autopilot/job-reviews').ownerState(client,ctx);
@@ -75,4 +84,4 @@ async function supplierMinimums(db,ctx,{filter,page}){
     'Shipping charge':s.freight_terms_currency===s.currency?money.format(s.ordinary_freight_minor,s.currency):null,link:'/purchasing/freight/'+s.id})),
     more:rows.length>100,summary:'Replenishment applies the saved minimum amount and pack requirements. It adds goods to reach free shipping only if their cost is no greater than the saved shipping charge. The normal purchase limits still apply.'};
 }
-module.exports={quantities,restriction,usesPacks,saveFreight,freightSettings,supplierMinimums};
+module.exports={quantities,restriction,usesPacks,topUpSignature,usesTopUp,saveFreight,freightSettings,supplierMinimums};
