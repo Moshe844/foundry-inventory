@@ -75,12 +75,14 @@ async function refresh(db,workspaceId){
 }
 
 async function inbox(db,workspaceId,actorId=null){
+  const installed=(await db.query("SELECT to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks")).rows[0];
+  const stockChecks=installed.stock_checks?`UNION ALL
+    SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
+    WHERE workspace_id=$1 AND findings>0`:'';
   const {rows}=await db.query(`SELECT job_id,n,due FROM (
     SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
     FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
-    UNION ALL
-    SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
-    WHERE workspace_id=$1 AND findings>0
+    ${stockChecks}
     ) current WHERE ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u
       WHERE u.workspace_id=$1 AND u.id=$2 AND u.role='owner'))`,[workspaceId,actorId]);
   if(!rows.length)return [];
