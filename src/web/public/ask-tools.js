@@ -26,8 +26,20 @@
       var copy = document.createElement('input'); copy.type = 'hidden'; copy.name = name; copy.value = from.value; event.target.appendChild(copy);
     });
   }, true);
-  function grow() { box.style.height = 'auto'; box.style.height = Math.min(220, box.scrollHeight + 2) + 'px'; }
-  box.addEventListener('input', grow); if (box.value) grow();
+  // The box fits its words, or the hint when empty, so a narrow window never shows a
+  // scrollbar in an empty box; one appears only past the box's tallest size.
+  function grow() {
+    var tallest = parseFloat(getComputedStyle(box).maxHeight) || 220;
+    box.style.height = '0px'; var needed = box.scrollHeight + 2;
+    box.style.height = Math.min(tallest, needed) + 'px'; box.style.overflowY = needed > tallest ? 'auto' : 'hidden';
+  }
+  box.addEventListener('input', grow); grow();
+  // Buttons that appear after load (Speak, Voice note), fonts and window size all change the
+  // box's width, and so how its words wrap: measure again whenever the width changes.
+  var width = box.clientWidth;
+  if (window.ResizeObserver) new ResizeObserver(function () { if (box.clientWidth !== width) { width = box.clientWidth; grow(); } }).observe(box);
+  else window.addEventListener('resize', grow);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(grow);
   // A file dropped anywhere on the box is attached the same way as the Attach button.
   var file = form.querySelector('input[type=file]');
   if (file && window.DataTransfer) {
