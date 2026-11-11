@@ -126,7 +126,8 @@ async function report(db,ctx,{filter='',page=1}={}){
   WHERE p.workspace_id=$1 AND p.purchase_created_at>=$2::timestamptz AND p.purchase_created_at<$3::timestamptz
    AND ($5::text IS NULL OR p.purchase_created_at>=$5::timestamptz) ORDER BY p.purchase_created_at,p.id LIMIT $7
  ), supplier_claims AS (
-  SELECT 'supplier-claim' AS origin,c.id,'supplier.open_damage_claim' AS action_type,'Sent supplier damage claim: '||c.reference AS summary,
+  SELECT 'supplier-claim' AS origin,c.id,'supplier.open_damage_claim' AS action_type,
+   CASE WHEN c.snapshot->>'claimKind'='shortage' THEN 'Sent supplier shortage claim ' ELSE 'Sent supplier damage claim ' END||c.reference AS summary,
    jsonb_build_object('communicationId',m.id) AS result,m.sent_at::timestamptz AS executed_at,'{}'::jsonb AS payload,false AS undone
   FROM stockchief_runtime.agent_supplier_claims c JOIN supplier_communications m ON m.workspace_id=c.workspace_id AND m.id=c.communication_id
   WHERE c.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL AND m.sent_at::timestamptz>=$2::timestamptz AND m.sent_at::timestamptz<$3::timestamptz

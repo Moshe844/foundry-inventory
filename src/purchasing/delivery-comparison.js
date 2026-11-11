@@ -68,4 +68,9 @@ function compare(lines,observations){
   return {version:1,original,rows,unexpected,agrees:unexpected.length===0&&rows.every(row=>row.agrees)};
 }
 
-module.exports={compare};
+function hasShortage(row){
+  return row.short>0||row.expectedWeight!=null&&row.observedWeight!=null&&
+    Number(exact.subtract(row.expectedWeight,row.observedWeight))>0;
+}
+
+module.exports={compare,hasShortage};
