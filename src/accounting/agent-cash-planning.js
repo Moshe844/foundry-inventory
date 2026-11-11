@@ -65,12 +65,14 @@ async function payments(db,ctx,{today,discountsOnly=false}) {
   const facts=await paymentFacts(db,ctx.workspaceId,today);
   if(discountsOnly)return {summary:'Unpaid posted bills within documented early-payment terms. Confirm the discount basis with the supplier.',
     rows:facts.discounts.map(paymentRow)};
+  const result={summary:'Bills due through '+facts.end+', discount deadlines this week and bills needing a due date. Review each bill before paying.',
+    rows:facts.dueThisRun.map(paymentRow)};
+  const installed=(await db.query("SELECT to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS ready")).rows[0].ready;
+  if(!installed)return result;
   const approved=facts.digest&&(await db.query(`SELECT approved_at FROM stockchief_runtime.agent_supplier_payment_approvals
     WHERE workspace_id=$1 AND week_start=$2 AND digest=$3`,[ctx.workspaceId,facts.week,facts.digest])).rows[0];
   const approvalHold=facts.digest&&await require('../autopilot/job-modes').restriction(db,ctx.workspaceId,104,false);
-  return {summary:'Bills due through '+facts.end+', discount deadlines this week and bills needing a due date. Review each bill before paying.',
-    rows:facts.dueThisRun.map(paymentRow),paymentRun:{digest:facts.digest,approvedAt:approved?.approved_at||null,
-      count:facts.dueThisRun.length,approvalHold}};
+  return {...result,paymentRun:{digest:facts.digest,approvedAt:approved?.approved_at||null,count:facts.dueThisRun.length,approvalHold}};
 }
 
 async function approvePaymentRun(db,ctx,{digest,confirmed}){

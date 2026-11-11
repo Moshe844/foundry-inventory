@@ -76,20 +76,26 @@ async function refresh(db,workspaceId){
 }
 
 async function inbox(db,workspaceId,actorId=null){
-  const {rows}=await db.query(`SELECT job_id,n,due FROM (
-    SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
-    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
-    UNION ALL
+  const installed=(await db.query(`SELECT
+    to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks,
+    to_regclass('stockchief_runtime.agent_supplier_payment_checks') IS NOT NULL
+      AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
+  const stockChecks=installed.stock_checks?`UNION ALL
     SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
-    WHERE workspace_id=$1 AND findings>0
-    UNION ALL
+    WHERE workspace_id=$1 AND findings>0`:'';
+  const paymentChecks=installed.payment_checks?`UNION ALL
     SELECT 104,p.bill_count,p.checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks p
     WHERE p.workspace_id=$1 AND p.bill_count>0 AND NOT EXISTS (
       SELECT 1 FROM stockchief_runtime.agent_supplier_payment_approvals a WHERE a.workspace_id=p.workspace_id
         AND a.week_start=date_trunc('week',p.checked_on::timestamp)::date AND a.digest=p.run_digest)
     UNION ALL
     SELECT 108,discount_count,checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks
-    WHERE workspace_id=$1 AND discount_count>0
+    WHERE workspace_id=$1 AND discount_count>0`:'';
+  const {rows}=await db.query(`SELECT job_id,n,due FROM (
+    SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
+    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
+    ${stockChecks}
+    ${paymentChecks}
     ) current WHERE ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u
       WHERE u.workspace_id=$1 AND u.id=$2 AND u.role='owner'))`,[workspaceId,actorId]);
   if(!rows.length)return [];
