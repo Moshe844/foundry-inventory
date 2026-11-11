@@ -3,6 +3,7 @@
 </div></div>
 <section class="card section">
   <p>Original supplier confirmation received <%= helpers.dateTime(source.created_at) %>.</p>
+  <% if(source.ship_date_email){ %><p><a href="/mail/<%= source.ship_date_email.id %>">Open original supplier email</a></p><% } %>
   <p>Supplier’s planned ship date <strong><%= helpers.shortDate(source.ship_date) %></strong>.</p>
   <p>Recorded warehouse arrival <strong><%= source.arrival_date?helpers.shortDate(source.arrival_date):'No arrival date recorded' %></strong>.</p>
   <% if(source.arrival_date&&source.ship_date>source.arrival_date){ %><p class="notice">The ship date is later than the recorded warehouse arrival. Review the delivery promise separately.</p><% } %>

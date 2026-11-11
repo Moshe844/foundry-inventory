@@ -76,12 +76,19 @@ function createPostgresMailRouter(database,options={}){
     const supplierAvailabilityMail=req.user?.role==='owner'&&message.classification==='supplier'&&Boolean(message.external_thread_id);
     const canReviewAvailability=supplierAvailabilityMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&
       require('../../commercial/agent-plan').permits(plan.plan,32,'draft');
+    const supplierShipDateMail=supplierAvailabilityMail&&require('../../purchasing/supplier-ship-date-mail-parser')
+      .mayContainShipDate(message.subject,message.body_text);
+    const canReviewShipDate=supplierShipDateMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&
+      require('../../commercial/agent-plan').permits(plan.plan,29,'draft');
+    const supplierShipDateSource=canReviewShipDate?await require('../../purchasing/supplier-ship-date-mail')
+      .savedSource(database,req.ctx.workspaceId,message.id):null;
     const canImproveDraft=agentDrafts&&(await entitlements.capabilityState(database,commercialScope(req),
       'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured||require('../../assistant/postgres-codex-pilot').configured(req.ctx))
       &&!['READY','RUNNING'].includes(message.preparation_goal_status)&&!['PENDING','RETRY','RUNNING'].includes(message.draft_job_status);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
       canImproveDraft,agentDrafts,customerOrderMail,canReviewOrder,customerReturnMail,canReviewReturn,supplierDetailsMail,canReviewSupplierDetails,
-      supplierPurchaseMail,canReviewSupplierPurchase,supplierAvailabilityMail,canReviewAvailability,canWriteReply:permissions.can(req.user,permissions.OPERATE),
+      supplierPurchaseMail,canReviewSupplierPurchase,supplierAvailabilityMail,canReviewAvailability,
+      supplierShipDateMail,canReviewShipDate,supplierShipDateSource,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentState.attachments,attachmentReading:attachmentState,drawers:DRAWERS});
   }));
