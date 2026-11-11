@@ -2283,20 +2283,31 @@ async function cancelProposal(database,ctx,id) {
 async function ask(database,ctx,message,options={}){
   ctx={...ctx,conversationId:options.conversationId||null};
   const directStarted=Date.now();
-  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,message,options);
+  // A question in another script (Yiddish, Hebrew, Russian, ...) is read in
+  // English only to find an exact answer; the answer goes back in its language.
+  // When none matches, the agent below gets the person's own words.
+  let readAs=message,readInEnglish=false;
+  if(!options.continueInteractionId&&require('./ask-language').needsReading(message)){
+    const raw=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+    if(raw){
+      try{readAs=await require('./ask-language').toEnglish(fundedAskProvider(database,ctx,raw,`${options.usageKey||newId('askusage')}:read-language`),message)||message;readInEnglish=readAs!==message;}
+      catch(error){if(!['entitlement_required','rate_limited','validation_error'].includes(error.code))console.warn('[stockchief] question reading failed',error.code||error.name);}
+    }
+  }
+  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
-    const preferences=direct.answerPreferences;
-    const localize=preferences&&(preferences.answerStyle||preferences.answerLanguage&&!/^en(?:-|$)/i.test(preferences.answerLanguage));
+    const preferences=direct.answerPreferences||{};
+    const localize=readInEnglish||preferences.answerStyle||preferences.answerLanguage&&!/^en(?:-|$)/i.test(preferences.answerLanguage);
     if(localize&&direct.result.status==='ANSWERED'&&direct.step.contract.kind==='read'){
       const raw=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
       if(raw){
         const provider=fundedAskProvider(database,ctx,raw,`${options.usageKey||newId('askusage')}:direct-language`);
         try{
           const localized=await require('./postgres-answer-preferences').localizeRecorded(provider,message,direct.result,preferences);
-          direct.provenance.modelCalls=1;
+          direct.provenance.modelCalls=readInEnglish?2:1;
           direct.result.answer=localized;
         }catch(error){
-          if(error.modelStarted)direct.provenance.modelCalls=1;
+          if(error.modelStarted||readInEnglish)direct.provenance.modelCalls=(readInEnglish?1:0)+(error.modelStarted?1:0);
           if(!['entitlement_required','rate_limited'].includes(error.code))console.warn('[stockchief] recorded answer translation failed',error.code||error.name);
         }
       }

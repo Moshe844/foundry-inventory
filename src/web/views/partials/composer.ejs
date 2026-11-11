@@ -39,14 +39,14 @@
     <% if (locals.actionClarification.goalId) { %><input type="hidden" name="assistantGoal" value="<%= locals.actionClarification.goalId %>"><% } %>
   <% } %>
   <label class="visually-hidden" for="ask-question">Tell StockChief what happened, or ask it something</label>
-  <textarea class="rm-composer__input" id="ask-question" data-ask-input name="<%= locals.actionClarification ? 'answer' : 'message' %>" rows="2"
+  <textarea class="rm-composer__input" id="ask-question" dir="auto" data-ask-input name="<%= locals.actionClarification ? 'answer' : 'message' %>" rows="2"
     maxlength="2000" aria-label="Ask StockChief" placeholder="<%= prompt %>"><%= prefill %></textarea>
   <div class="rm-composer__foot">
   <% if (!locals.hideAttachment) { %><label class="rm-composer__attach" title="<%= locals.postgresAsk ? 'Attach an inventory table (CSV, Excel, PDF or image)' : 'Attach a file or a photo of a document' %>">
       <input type="file" name="file" accept="<%= locals.postgresAsk ? helpers.importSourceFormats.accept : '.csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*' %>" data-operator-attachment>
       <%- helpers.icon('paperclip', { size: 16 }) %><span>Attach</span>
     </label><% } %>
-    <% if (locals.chatComposer) { %><button class="rm-composer__voice" type="button" data-voice-input hidden aria-pressed="false" title="Speak your question"><%- helpers.icon('chat', { size: 16 }) %><span>Speak</span></button><% } %>
+    <% if (locals.chatComposer) { %><button class="rm-composer__voice" type="button" data-voice-input<%- locals.voiceNotes ? ' data-voice-note' : '' %> hidden aria-pressed="false" title="<%= locals.voiceNotes ? 'Record a voice note in any language' : 'Speak your question' %>"><%- helpers.icon('chat', { size: 16 }) %><span>Speak</span></button><span class="rm-composer__voice-status" data-voice-status role="status" aria-live="polite" hidden></span><% } %>
     <span class="right"><button class="rm-btn rm-btn--sm rm-composer__send" type="submit" aria-label="Continue" data-ask-submit><span>Send</span><%- helpers.icon('send', { size: 16 }) %></button></span>
   </div>
   <p class="rm-composer__pending" data-ask-pending role="status" aria-live="polite" hidden>

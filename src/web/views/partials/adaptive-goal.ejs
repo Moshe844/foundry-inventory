@@ -18,7 +18,7 @@
       <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop</button></form>
     <% } %>
   </div>
-  <div class="rm-agent__answer" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
+  <div class="rm-agent__answer" dir="auto" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
     <form data-goal-resume method="post" action="/ask/goals/<%= goal.id %>/resume" <%= goal.status==='BLOCKED'&&goal.continuation?.eligible===true?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Continue this request</button></form>
     <p data-goal-recovery-reason class="rm-agent__hint" <%= goal.status==='BLOCKED'&&goal.continuation?.eligible===false?'':'hidden' %>><%= goal.continuation?.eligible===false?goal.continuation.reason:'' %></p>

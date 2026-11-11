@@ -168,8 +168,8 @@
         /* Several parts: how many are settled, so a half-done message never reads as done. */
         if (!turn.agentGoal && turn.goals.length > 1) { var waitingStates = turn.coveragePendingStatuses || ['pending']; var settledParts = turn.goals.filter(function (g) { return !waitingStates.includes(g.status); }).length; %> · <span class="rm-turn__coverage<%= settledParts === turn.goals.length ? '' : ' rm-turn__coverage--open' %>"><%= settledParts === turn.goals.length ? 'all ' + turn.goals.length + ' parts settled' : settledParts + ' of ' + turn.goals.length + ' parts settled' %></span><% } %></p>
       <% if (turn.message.length > 400) { %>
-        <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
-      <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>
+        <details class="rm-turn__said" dir="auto"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
+      <% } else { %><p class="rm-turn__said" dir="auto"><%= turn.message %></p><% } %>
     </div>
     <% if(turn.agentGoal){ %><%- include('../partials/adaptive-goal',{goal:turn.agentGoal,codexApprovals:turn.agentGoal.approvalCards||[],isLatest:locals.focusedGoalId?turn.agentGoal.id===locals.focusedGoalId:turnIndex===latestIndex}) %><% } %>
     <% if(turn.agentGoal&&turn.agentGoal.status==='COMPLETED'&&turn.agentGoal.answer){ %><%- include('answer-actions',{answerText:turn.agentGoal.answer,question:turn.message}) %><% } %>
@@ -179,7 +179,7 @@
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief<% if (turn.goals.length > 1) { %> · part <%= goal.position + 1 %> of <%= turn.goals.length %><% } %></p>
       <div class="rm-said rm-said--problem">
-        <p class="rm-said__text"><%= error %></p>
+        <p class="rm-said__text" dir="auto"><%= error %></p>
         <p class="rm-said__meta"><% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %><span>Nothing changed. Your message is still in the box below.</span></p>
       </div>
     </div>
@@ -204,7 +204,7 @@
         var hasRows = result.rows && result.rows.length && !(result.columns || []).includes('grossProfit');
       %>
       <div class="rm-said">
-        <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said, locals.protectedNames || []) %></p>
+        <p class="rm-said__text" dir="auto" style="white-space:pre-line"><%= helpers.figures(said, locals.protectedNames || []) %></p>
         <p class="rm-said__meta"><% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify' && !result.emailFlow) { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
         <% if (result.emailFlow && result.needsClarification) { %>
           <form method="post" action="/ask/email/continue" class="rm-email-flow" data-busy>
@@ -404,8 +404,8 @@
         <% var saidText = goal.said || (goal.status === 'pending' ? 'Not started yet — it is waiting behind the part before it.' : ''); %>
         <% if (turn.goals.length > 1) { %><p class="rm-said__goal">“<%= goal.text.length > 160 ? goal.text.slice(0, 160) + '…' : goal.text %>”</p><% } %>
         <% if (saidText.length > 600) { %>
-          <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
-        <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
+          <details class="rm-said__text" dir="auto"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
+        <% } else if (saidText) { %><p class="rm-said__text" dir="auto" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
         <%- include('answer-actions',{answerText:saidText,question:turn.message,interactionId:goal.id,downloadable:(locals.downloadableAnswers||[]).includes(goal.id)}) %>
         <p class="rm-said__meta">
           <% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %>
@@ -430,7 +430,7 @@
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief</p>
       <div class="rm-said">
-        <p class="rm-said__text">I read that as a standing rule. Is this right?</p>
+        <p class="rm-said__text" dir="auto">I read that as a standing rule. Is this right?</p>
         <div class="rm-rule">
           <p class="rm-rule__k">Waiting for you · not in force yet</p>
           <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
@@ -491,4 +491,5 @@
 
 
 <script src="/ask-health.js?v=<%= locals.assetVersion || '' %>" defer></script>
+<script src="/voice-note.js?v=<%= locals.assetVersion || '' %>" defer></script>
 <script src="/ask-tools.js?v=<%= locals.assetVersion || '' %>" defer></script>

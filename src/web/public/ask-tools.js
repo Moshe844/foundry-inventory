@@ -41,9 +41,49 @@
       file.dispatchEvent(new Event('change', { bubbles: true }));
     });
   }
-  // Speaking, where the browser can do it. The words land in the box to check before sending.
+  // A voice note in any language (Yiddish, English, Hebrew and others): recorded
+  // here, read into text by StockChief, and placed in the box to check before
+  // sending. Where voice notes are unavailable, the browser's own dictation is used.
   var Speech = window.SpeechRecognition || window.webkitSpeechRecognition, voice = form.querySelector('[data-voice-input]');
-  if (Speech && voice) {
+  var voiceStatus = form.querySelector('[data-voice-status]');
+  var noteRecorder = window.StockChiefVoiceNote;
+  if (voice && voice.hasAttribute('data-voice-note') && noteRecorder && noteRecorder.supported()) {
+    voice.hidden = false;
+    var noteLabel = voice.querySelector('span'), active = null;
+    var tell = function (text) { if (voiceStatus) { voiceStatus.textContent = text || ''; voiceStatus.hidden = !text; } };
+    var idle = function () { active = null; voice.disabled = false; voice.setAttribute('aria-pressed', 'false'); noteLabel.textContent = 'Speak'; };
+    var read = function (file) {
+      voice.disabled = true; noteLabel.textContent = 'Reading…'; tell('Reading your voice note…');
+      var data = new FormData(), csrf = form.querySelector('input[name=_csrf]');
+      data.append('_csrf', csrf ? csrf.value : '');
+      data.append('usageKey', 'voice-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+      data.append('recording', file);
+      return fetch('/ask/voice', { method: 'POST', body: data, credentials: 'same-origin', headers: { accept: 'application/json' } })
+        .then(function (response) {
+          return response.json().catch(function () { return {}; }).then(function (body) {
+            if (!response.ok || typeof body.text !== 'string') throw new Error((body.error && body.error.message) || 'The voice note could not be read. Try again or type the question.');
+            return body;
+          });
+        })
+        .then(function (body) {
+          var start = box.value ? box.value.replace(/\s*$/, ' ') : '';
+          box.value = (start + body.text).slice(0, box.maxLength > 0 ? box.maxLength : 2000); grow(); box.focus();
+          tell(body.truncated ? 'Only the first 2,000 characters fit in the box. Check the words, then send.' : 'Check the words, then send.');
+        })
+        .catch(function (error) { tell(error.message); })
+        .then(idle);
+    };
+    voice.addEventListener('click', function () {
+      if (active) { var current = active; active = null; current.stop().then(read, function (error) { tell(error.message); idle(); }); return; }
+      voice.disabled = true;
+      noteRecorder.start().then(function (recording) {
+        active = recording; voice.disabled = false; voice.setAttribute('aria-pressed', 'true'); noteLabel.textContent = 'Stop';
+        tell('Recording. Speak in any language, then press Stop. Up to two minutes.');
+        // At two minutes the recording stops by itself and is read.
+        recording.done.then(function (file) { if (active === recording) { active = null; read(file); } }, function (error) { if (active === recording) { tell(error.message); idle(); } });
+      }, function () { idle(); tell('The microphone is not available. Allow it in the browser, or type the question.'); });
+    });
+  } else if (Speech && voice) {
     voice.hidden = false;
     var listening = null, label = voice.querySelector('span');
     voice.addEventListener('click', function () {
