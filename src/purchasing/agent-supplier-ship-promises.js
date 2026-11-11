@@ -18,6 +18,7 @@ async function owner(db,ctx){
 
 async function source(db,workspaceId,id,{lock=false}={}){
   const result=(await db.query(`SELECT r.id,r.expected_date::text,r.ship_date::text,r.availability_generation,r.fingerprint,r.created_at,
+    to_jsonb(r)->'ship_date_email' AS ship_date_email,
     l.recipient,l.expires_at,p.id AS purchase_order_id,p.po_number,p.supplier_id,p.status,p.expected_date AS arrival_date,
     s.name AS supplier_name,s.email
     FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l
@@ -27,8 +28,11 @@ async function source(db,workspaceId,id,{lock=false}={}){
     WHERE r.workspace_id=$1 AND r.id=$2 AND r.kind='confirm' AND r.ship_date IS NOT NULL AND p.delivery_kind='WAREHOUSE'
       ${lock?'FOR UPDATE OF p':''}`,[workspaceId,id])).rows[0];
   if(!result)throw new NotFoundError('Choose an original supplier confirmation with a ship date.');
-  const expected=require('./supplier-order-link').responseFingerprint('confirm',result.expected_date,result.ship_date,result.availability_generation);
+  const email=result.ship_date_email;
+  const verified=email?await require('./supplier-ship-date-mail').verified(db,workspaceId,email.id):null;
+  const expected=verified?verified.fingerprint:require('./supplier-order-link').responseFingerprint('confirm',result.expected_date,result.ship_date,result.availability_generation);
   if(result.fingerprint!==expected||result.recipient!==String(result.email||'').toLowerCase()||new Date(result.expires_at)<=new Date(result.created_at)||
+    verified&&(verified.order.id!==result.purchase_order_id||verified.shipDate!==result.ship_date||hash(email)!==hash(verified.proof))||
     !['APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED'].includes(result.status))
     throw new ValidationError('The supplier, signed response or purchase changed. Review the current original evidence.');
   const newest=(await db.query(`SELECT r.id FROM stockchief_runtime.supplier_link_submissions r
@@ -97,11 +101,17 @@ async function record(db,workspaceId,id,{ctx=null,expectedFingerprint=null}={}){
     let actor=ctx,training=null;
     if(!ctx){
       if(!rule)throw new ValidationError('Review and record this exact original ship date, or authorize a routine for this supplier.');
-      actor=(await assertRule(tx,workspaceId,rule)).ctx;
+      const authority=await assertRule(tx,workspaceId,rule);
+      actor=authority.ctx;
+      if(current.ship_date_email&&(current.ship_date_email.connectorId!==authority.delivery.mailbox.id||
+        current.ship_date_email.providerAccountId!==authority.delivery.mailbox.provider_account_id))
+        throw new ValidationError('The original confirmation arrived through a different mailbox. Review it individually.');
       const today=await require('../lib/business-time').today(tx,workspaceId);
       const end=require('../accounting/customer-money').addDays(today,rule.maximum_ship_days);
       if(current.ship_date<today||current.ship_date>end||current.arrival_date&&current.ship_date>current.arrival_date)
         throw new ValidationError('Review the ship date against the current delivery promise and the dates you authorized.');
+    }else if(current.ship_date_email){
+      training={connector_id:current.ship_date_email.connectorId,provider_account_id:current.ship_date_email.providerAccountId};
     }else{
       const senders=(await tx.query(`SELECT DISTINCT m.connector_id,b.provider_account_id FROM supplier_communications m
         JOIN workspace_connectors b ON b.workspace_id=m.workspace_id AND b.id=m.connector_id
@@ -118,6 +128,8 @@ async function record(db,workspaceId,id,{ctx=null,expectedFingerprint=null}={}){
     [id,workspaceId,current.purchase_order_id,current.supplier_id,actor.actorId,current.ship_date,current.created_at,current.reviewFingerprint,Boolean(rule),
       training?.connector_id||null,training?.provider_account_id||null]);
     if(!inserted.rowCount)return {purchaseOrderId:current.purchase_order_id,replayed:true};
+    if(current.ship_date_email)await tx.query(`UPDATE connection_email_messages SET native_review_state='RECORDED',native_review_reason=$3
+      WHERE workspace_id=$1 AND id=$2 AND native_review_goal_id IS NULL`,[workspaceId,current.ship_date_email.id,'Supplier ship date recorded on the original purchase order.']);
     await require('../operations/postgres-security-audit').record(tx,actor,{action:'Original supplier ship date recorded',reference:current.po_number,
       after:{sourceId:id,shipDate:current.ship_date,arrivalDate:current.arrival_date,automatic:Boolean(rule)}});
     return {purchaseOrderId:current.purchase_order_id,shipDate:current.ship_date,replayed:false};
@@ -173,7 +185,14 @@ async function enqueue(client,workspaceId,id){
 
 async function work(db,workspaceId,id){
   try{return await record(db,workspaceId,id);}
-  catch(error){if(![400,402,403,404,422].includes(error.status))throw error;return {held:true,reason:error.message};}
+  catch(error){
+    if(![400,402,403,404,422].includes(error.status))throw error;
+    await db.query(`UPDATE connection_email_messages m SET native_review_state='NEEDS_REVIEW',native_review_reason=$3
+      FROM stockchief_runtime.supplier_link_submissions r WHERE r.workspace_id=$1 AND r.id=$2
+        AND m.workspace_id=r.workspace_id AND m.id=to_jsonb(r)->'ship_date_email'->>'id'
+        AND m.native_review_goal_id IS NULL AND m.native_review_state IS DISTINCT FROM 'RECORDED'`,[workspaceId,id,error.message]);
+    return {held:true,reason:error.message};
+  }
 }
 
 async function recorded(db,workspaceId,orderId){

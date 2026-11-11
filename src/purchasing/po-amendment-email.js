@@ -11,7 +11,7 @@ const {tokenFingerprint}=require('./po-amendment-link');
 const kind='mail.supplier-po-amendment.v1';
 const same=(a,b)=>String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase();
 
-async function original(db,workspaceId,id,{lock=false,orderSubject=parser.subject,allowAttachments=false,requireLink=true}={}){
+async function original(db,workspaceId,id,{lock=false,orderSubject=parser.subject,allowAttachments=false,requireLink=true,confirmationFollowUp=false}={}){
   const message=(await db.query(`SELECT m.id,m.connector_id,m.sender,m.subject,m.body_text,m.received_at,
     m.content_hash,m.external_thread_id,m.supplier_id,c.provider_type,c.provider_account_id,
     EXISTS(SELECT 1 FROM connection_email_attachments a WHERE a.workspace_id=m.workspace_id AND a.message_id=m.id) AS has_attachments
@@ -33,11 +33,18 @@ async function original(db,workspaceId,id,{lock=false,orderSubject=parser.subjec
       AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
       AND EXISTS(SELECT 1 FROM supplier_communications sent WHERE sent.workspace_id=p.workspace_id AND sent.purchase_order_id=p.id
         AND sent.supplier_id=p.supplier_id AND sent.status='SENT' AND sent.external_message_id IS NOT NULL
-        AND sent.message_kind='purchase_order'
+        AND (sent.message_kind='purchase_order' OR $8::boolean AND EXISTS(
+          SELECT 1 FROM stockchief_runtime.provider_effects e JOIN work_items w ON w.workspace_id=e.workspace_id
+            AND w.id=e.payload->'standingAuthority'->>'workId'
+          JOIN LATERAL jsonb_array_elements(coalesce(w.outcome::jsonb->'followUps','[]'::jsonb)) follow ON true
+          WHERE e.workspace_id=sent.workspace_id AND e.aggregate_id=sent.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+            AND e.payload->'standingAuthority'->>'kind'='purchase_followup'
+            AND e.payload->'standingAuthority'->>'purchaseOrderId'=p.id
+            AND follow->>'key'=e.payload->'standingAuthority'->>'key' AND follow->>'phase'='supplier_confirmation_due'))
         AND sent.connector_id=$5 AND sent.external_thread_id=$6 AND lower(sent.recipient)=lower($4)
         AND sent.sent_at::timestamptz<=$7::timestamptz)
     ORDER BY p.id LIMIT 2 ${lock?'FOR UPDATE OF p':''}`,
-  [workspaceId,message.supplier_id,requestedOrder,message.sender,message.connector_id,message.external_thread_id,message.received_at])).rows;
+  [workspaceId,message.supplier_id,requestedOrder,message.sender,message.connector_id,message.external_thread_id,message.received_at,confirmationFollowUp])).rows;
   if(orders.length!==1)throw new ValidationError('The original mail thread and exact purchase number must match one placed purchase order.');
   const time=new Date(message.received_at);
   if(!Number.isFinite(+time)||+time>Date.now()+300000)

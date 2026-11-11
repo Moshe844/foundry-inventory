@@ -153,7 +153,7 @@ const notes={
  pro:'Can attach up to three exact recorded photo copies within your current damage-claim authority without photo training. The claim itself still requires Pro teaching; more photos require individual selection.',
  enterprise:'Can attach up to three exact recorded photo copies within your explicitly authorized damage-claim scope without training. More photos require individual selection; original evidence stays unchanged.'},
  11:{common:'Records scanned, physically confirmed moves between bins in the same warehouse.'},
-  29:{common:'Follows up on placed warehouse purchases that lack confirmation. The supplier can enter a planned ship date through the private order link. StockChief saves the original date and keeps expected warehouse arrival separate. Unclear dates wait for review.',
+  29:{common:'Follows up on placed warehouse purchases that lack confirmation. Saves a planned ship date from the private order link or a clearly labeled reply on the original connected purchase or confirmation thread. Expected warehouse arrival stays separate. Unclear dates wait for review.',
   growth:'Review each exact supplier ship date, or teach a routine with a matching confirmation you recorded from that supplier and sending mailbox. Then StockChief follows the authorized message count, interval and date limits.',
   pro:'After the watch period, authorize a supplier, sending mailbox, reminder count, interval and date limits. StockChief can request and record confirmations within those limits without training.',
   enterprise:'After the watch period, authorize a supplier, sending mailbox, reminder count, interval and date limits. StockChief can request and record confirmations within those limits without training.'},

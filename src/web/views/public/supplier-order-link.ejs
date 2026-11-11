@@ -4,6 +4,7 @@
 <% if(received){ %><p role="status">Your response was saved.</p><% } %>
 <table><thead><tr><th>Item</th><th>Code</th><th>Units ordered</th></tr></thead><tbody>
 <% lines.forEach(line=>{ %><tr><td><%= line.name %></td><td><%= line.code %></td><td><%= line.quantity_units %></td></tr><% }); %></tbody></table>
+<% if(order.status!=='RECEIVED'){ %>
 <form method="post" action="<%= currentPath %>/respond"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <p><label>Expected delivery date <input type="date" name="date"></label></p>
 <p><label>Planned ship date when confirming <input type="date" name="shipDate"></label></p>
@@ -20,6 +21,7 @@
     <p><label><input type="checkbox" name="confirmed" value="yes" required> I confirm this item is unavailable through the date entered.</label></p>
     <button>Save availability statement</button>
   </form>
+<% } %>
 <% } %>
 <h2>Send a document</h2><form id="supplier-document" data-url="<%= currentPath %>/file/" data-csrf="<%= csrfToken %>">
 <label>Document type <select name="kind"><option value="invoice">Invoice</option><option value="ship-notice">Ship notice</option></select></label>

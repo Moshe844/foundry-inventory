@@ -111,8 +111,13 @@ async function prepare(client,workspaceId,work,snapshot,prior,clock){
  if(standalone&&(delivery.supplier.email!==standalone.recipient||delivery.mailbox.provider_account_id!==standalone.mailbox_account))
   return {snapshot:{...snapshot,nextAction:'Review the changed supplier contact or sending mailbox before sending a follow-up.'},followUps};
  const lines=(await client.query('SELECT l.quantity_units,l.quantity_received_units,l.supplier_sku,s.code FROM purchase_order_lines l JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.line_number,l.id',[workspaceId,po.id])).rows;
- const subject=(late?'Delivery update for ':'Please confirm ')+po.po_number,
- body=[`Hello ${po.supplier_name},`,'',late?`Please confirm the delivery status of ${po.po_number}. Our recorded expected date is ${po.expected_date}.`:`Please confirm acceptance of ${po.po_number}, its planned ship date and expected delivery date.`,...lines.map(l=>`${l.supplier_sku||l.code}: ${l.quantity_units} ordered, ${l.quantity_received_units} received.`),'','Please identify any change to quantities, prices or delivery terms so we can review it.'].join('\n');
+ const subject=(late?'Delivery update for ':'Please confirm ')+po.po_number;
+ const request=late?[`Please confirm the delivery status of ${po.po_number}. Our recorded expected date is ${po.expected_date}.`]:[
+   `Please confirm acceptance of ${po.po_number}, its planned ship date and expected delivery date.`,
+   ...(agent.usesAgentTerms(account)?['Use the private link below, or reply with Confirmed on one line and Planned ship date: YYYY-MM-DD on the next.']:[])];
+ const body=[`Hello ${po.supplier_name},`,'',...request,
+   ...lines.map(l=>`${l.supplier_sku||l.code}: ${l.quantity_units} ordered, ${l.quantity_received_units} received.`),'',
+   'Please identify any change to quantities, prices or delivery terms so we can review it.'].join('\n');
  const key='supplier-follow-up:'+work.id+':'+snapshot.decision.code+':'+followUps.length,payload={recipientKind:'supplier',recipientId:po.supplier_id,recipientEmail:delivery.supplier.email,recipientName:po.supplier_name,connectorId:delivery.mailbox.id,mailboxName:delivery.mailbox.display_name||delivery.mailbox.provider_account_id,purchaseOrderId:po.id,followUpPhase:snapshot.decision.code,subject,body};
  const grant=standalone?{allowed:true}:await autonomy.capabilityMay(client,workspaceId,'supplier_emails');
  const automaticStop=agent.usesAgentTerms(account)?await agent.stopped(client,workspaceId,account,'communication.send_email',true,payload):null;

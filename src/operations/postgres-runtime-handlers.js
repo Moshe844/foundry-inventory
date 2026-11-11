@@ -691,6 +691,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),
+  'mail.supplier-ship-date.v1':external((job,database)=>require('../purchasing/supplier-ship-date-mail').onArrival(database,job.workspaceId,job.payload)),
   'supplier.record-ship-promise.v1':external((job,database)=>require('../purchasing/agent-supplier-ship-promises').work(database,job.workspaceId,job.payload.sourceId)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
   'purchasing.container-plan.v1':external((job,database)=>require('../purchasing/agent-container-plans').onProject(database,job.workspaceId,job.payload.projectId)),
@@ -755,6 +756,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
   }),
   'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
+  'import.supplier-portal-invoice.v1':external((job,database)=>require('../purchasing/supplier-portal-invoices').work(database,job.workspaceId,job.payload.sourceId),'bulk'),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
