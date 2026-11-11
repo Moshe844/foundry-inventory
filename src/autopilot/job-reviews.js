@@ -66,6 +66,7 @@ const definitions=[
   require('../documents/agent-product-facts').definition,
   ...require('../documents/agent-filing').definitions,
   require('../imports/agent-count-source').definition,
+  require('../imports/agent-exact-variant-import').definition,
   require('../purchasing/agent-receiving-documents').definition,
   require('../sales/agent-customer-pricing').definition,
   require('./agent-work-digest').definition,
@@ -214,6 +215,7 @@ async function run(db,ctx,key,options={}){
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...(result.rotationForm?{rotationForm:true}:{}),
+      ...(def.id===130?{variantImportLink:true}:{}),
       ...inputs};
   }
   if(def.read){

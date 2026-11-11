@@ -24,8 +24,8 @@ test('supplier catalogues and variant sheets keep their plan restrictions throug
   await subscribe('growth');const imported=await handler(input,db);assert(imported.verified);
   assert.equal((await db.query("SELECT amount_minor::int FROM sku_purchase_costs p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id WHERE s.workspace_id=$1 AND s.code='CATALOG-NEW'",[ctx.workspaceId])).rows[0].amount_minor,750);
   assert((await handler(input,db)).execution.status==='SUCCEEDED');assert.equal(await f.balance(),4);
-  const variants=await plan('Product,SKU,Color,Size,Unit cost\nCotton tee,TEE,Red,S,3\nCotton tee,TEE,Blue,M,4',
-    {mappings:{name:0,code:1,variant1:2,variant2:3,unitCost:4}});
+  const variants=await plan('Product,SKU,Color,Size\nCotton tee,TEE-RED-S,Red,S\nCotton tee,TEE-BLUE-M,Blue,M',
+    {mappings:{name:0,code:1,variant1:2,variant2:3}});
   const request={action:'import.variants',recordReference:variants.id};
   await subscribe('starter');await assert.rejects(assistant.prepareAction(db,ctx,'Build tee variants',request),e=>e.code==='entitlement_required');
   await subscribe('growth');const proposed=await assistant.prepareAction(db,ctx,'Build tee variants',request);await assistant.executeProposal(db,ctx,proposed.proposal.id);
@@ -34,4 +34,7 @@ test('supplier catalogues and variant sheets keep their plan restrictions throug
   const rows=(await db.query("SELECT s.item_id,s.variant_label FROM skus s WHERE s.workspace_id=$1 AND s.code LIKE 'TEE%' ORDER BY s.variant_label",[ctx.workspaceId])).rows;
   assert.equal(rows.length,2);assert.equal(new Set(rows.map(r=>r.item_id)).size,1);assert(rows.some(r=>/Red/.test(r.variant_label)));assert(rows.some(r=>/Blue/.test(r.variant_label)));
   assert.equal(await f.balance(),4);
+  const inferred=await plan('Product,SKU,Color,Size\nInferred family,NO-INFER,Red,S\nInferred family,NO-INFER,Blue,M',
+    {mappings:{name:0,code:1,variant1:2,variant2:3}});
+  await assert.rejects(assistant.prepareAction(db,ctx,'Build the supplied variants',{action:'import.variants',recordReference:inferred.id}),/exact supplied SKUs/);
 });

@@ -18,6 +18,15 @@ async function check(db,ctx,plan,job=plan.transformations.agentJob){
   if(job===5)return require('./agent-count-source').check(db,ctx,plan);
   if(job===130&&!(plan.transformations.variantColumns?.length||require('./fields').VARIANT_FIELDS.some(field=>plan.fieldMappings[field]!==undefined)))
     throw new ValidationError('Map the actual size, color or other variant columns before preparing variants.');
+  if(job===130){
+    if(plan.recordsInvalid)throw new ValidationError('Correct every source variant row before preparing the exact import.');
+    const inferred=await db.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status IN('VALID','NEEDS_REVIEW')
+      AND (NULLIF(btrim(parsed::jsonb->>'code'),'') IS NULL OR parsed::jsonb?'sourceCode' OR quantity IS NOT NULL
+        OR parsed::jsonb->>'unitCostMinor' IS NOT NULL OR parsed::jsonb->>'sellingPriceMinor' IS NOT NULL
+        OR parsed::jsonb->>'supplierName' IS NOT NULL OR parsed::jsonb?'catalogueUpdate'
+        OR COALESCE(parsed::jsonb->'reorder','{}'::jsonb)<>'{}'::jsonb) LIMIT 1`,[ctx.workspaceId,plan.id]);
+    if(inferred.rowCount)throw new ValidationError('Variant imports need exact supplied SKUs and a catalogue-only variant review. Open Spreadsheet variants for this original.');
+  }
   const stock=await db.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status IN ('VALID','NEEDS_REVIEW') AND quantity>0 LIMIT 1`,[ctx.workspaceId,plan.id]);
   if(stock.rowCount)throw new ValidationError('This task creates product and price records. Review physical stock through the stock import workflow.');
 }
@@ -42,7 +51,7 @@ const specs=[...tasks].map(([job,name])=>({name,
     const plan=await require('./postgres-service').get(db,ctx.workspaceId,row.id);
     await policy.requireWorkspaceJob(db,ctx.workspaceId,job,'draft');
     if(plan.status!=='READY')throw new ValidationError(job===5?'Choose a current count preview.':'Choose a current catalogue preview.');
-    if(job===5)await check(db,ctx,plan,job);
+    if(job===5||job===130)await check(db,ctx,plan,job);
     return {payload:{recordId:plan.id,integrityHash:plan.integrityHash},summary:job===5?'Confirm the physical counts for '+plan.recordsValid+' existing stock positions from '+plan.sourceName+'. The reviewed differences change stock and its recorded value; later movements are preserved.': 'Review and queue '+plan.recordsValid+' catalogue rows from '+plan.sourceName+'. Follow the import progress for the verified product result.'};
   },execute:(db,ctx,p)=>queue({query:(...a)=>db.query(...a),transaction:fn=>fn(db)},ctx,p.recordId,p.integrityHash,job),
   verify:async(db,ctx,result,p)=>Boolean(result.job?.id&&(await db.query(`SELECT 1 FROM stockchief_runtime.jobs
