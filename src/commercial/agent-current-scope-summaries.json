@@ -6,7 +6,7 @@
   "5": "Prepares quantity-count adjustments from CSV or a readable image after individual physical confirmation. Tracked counts, unlabelled box counting and unattended source processing remain open.",
   "6": "Posts physically confirmed small quantity-count differences within an owner-set value limit, with matching stock and accounting entries.",
   "7": "Assigns blind quantity-count lists in the app, records staff progress and supports taught weekly assignments. Physical counts, posting approval and hardware delivery remain separate.",
-  "8": "Requires an independent matching recount for differences above the owner's limit before a person may approve posting.",
+  "8": "Shows a blind recount in Needs You when a recorded count difference exceeds your limit. A matching physical recount comes before separate owner approval.",
   "9": "Reviews slow and dead stock using recorded sales and stocked days, while separating commitments and transfer needs. Price changes and supplier returns need separate decisions.",
   "10": "Flags repeated quantity losses for the same product, warehouse and local time band. A flag calls for investigation; it does not establish theft.",
   "13": "Shows buildable kits from available components and prepares missing-part purchase drafts at one warehouse using saved supplier packs. Sending orders needs separate purchasing authority.",

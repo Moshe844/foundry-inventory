@@ -122,14 +122,33 @@ async function record(db,ctx,id,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function inbox(db,workspaceId,actorId){
-  const rows=(await db.query(`SELECT t.campaign_id,t.observed_at,s.title,s.scope,s.created_at FROM stockchief_runtime.agent_count_tasks t JOIN warehouse_count_campaigns s ON s.workspace_id=t.workspace_id AND s.id=t.campaign_id
+  const rows=(await db.query(`SELECT t.campaign_id,t.observed_at::text,s.title,s.scope,s.created_at::text,'assigned' type,
+    NULL::text location_id,NULL::text role,NULL::text permissions
+    FROM stockchief_runtime.agent_count_tasks t JOIN warehouse_count_campaigns s ON s.workspace_id=t.workspace_id AND s.id=t.campaign_id
     WHERE t.workspace_id=$1 AND s.status='DRAFT' AND ((t.counter_id=$2 AND t.observed_at IS NULL) OR
-      (t.observed_at IS NOT NULL AND EXISTS(SELECT 1 FROM users u WHERE u.workspace_id=t.workspace_id AND u.id=$2 AND u.role='owner')))`,[workspaceId,actorId])).rows;
+      (t.observed_at IS NOT NULL AND EXISTS(SELECT 1 FROM users u WHERE u.workspace_id=t.workspace_id AND u.id=$2 AND u.role='owner')))
+    UNION ALL
+    SELECT p.id,p.recounted_at::text,p.payload#>>'{location,name}',NULL,p.created_at::text,'recount',p.payload#>>'{location,id}',
+      u.role,u.permissions
+    FROM physical_count_reviews p JOIN users u ON u.workspace_id=p.workspace_id AND u.id=$2
+    WHERE p.workspace_id=$1 AND p.status='PENDING' AND p.recount_required
+      AND (u.role='owner' OR (p.created_by_user_id=u.id AND p.recounted_at IS NULL))`,[workspaceId,actorId])).rows;
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
-  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,7,'draft'))return [];
+  if(!policy.usesAgentTerms(state))return [];
   const visible=[];
   for(const r of rows){
+    if(r.type==='recount'){
+      if(!policy.permits(state.plan,8,'automatic')||!permissions.can(r,permissions.ADJUST))continue;
+      try{await access.assertLocations(db,{workspaceId,actorId},[r.location_id]);}catch(e){if(e instanceof AuthorizationError)continue;throw e;}
+      visible.push({kind:'approval',importance:'Important',priority:75,
+        title:r.observed_at?'Review the recount at '+r.title:'Recount stock at '+r.title,
+        happened:r.observed_at?'The physical recount is ready for the owner.':'A recorded difference exceeds the owner’s stock count limit.',
+        actionLabel:r.observed_at?'Review physical count':'Open blind recount',
+        sourceId:'count-recount-'+r.campaign_id,href:'/warehouse/counts/reviews/'+r.campaign_id,createdAt:r.created_at,at:r.observed_at||r.created_at});
+      continue;
+    }
+    if(!policy.permits(state.plan,7,'draft'))continue;
     if(r.observed_at){
       visible.push({kind:'approval',importance:'Important',priority:75,title:'Review '+r.title,happened:'Your counter recorded every stock position.',actionLabel:'Review counted quantities',
         sourceId:'count-check-'+r.campaign_id,href:'/warehouse/counts/campaigns/'+r.campaign_id,createdAt:r.observed_at,at:r.observed_at});continue;

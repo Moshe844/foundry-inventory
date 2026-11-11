@@ -62,13 +62,17 @@ async function prepare(db,ctx,input){return db.transaction(async c=>{
  return {id};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');await require('./postgres-warehouse-access').assertLocations(db,ctx,[row.payload.location.id]);return row;}
+async function assertUnchanged(db,ctx,review,message){
+ const current=await positions(db,ctx,review.payload.location.id,review.payload.lines.map(line=>line.skuId));
+ const byId=new Map(current.map(row=>[row.id,row]));
+ if(review.payload.lines.some(line=>digest(byId.get(line.skuId))!==digest(line.before)))throw new ValidationError(message);
+}
 async function post(c,ctx,id,integrityHash){
  await authorize(c,ctx,true);const review=(await c.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
  if(!review||review.integrity_hash!==integrityHash||digest(review.payload)!==integrityHash)throw new ValidationError('Open the current count review before approving.');
  if(review.status==='COMPLETED')return {replayed:true,...review.result};if(review.status!=='PENDING')throw new ValidationError('This count is no longer awaiting approval.');
  if(review.recount_required&&!review.recounted_at)throw new ValidationError('Count these items again before approving this difference.');
- const current=await positions(c,ctx,review.payload.location.id,review.payload.lines.map(l=>l.skuId));
- for(const line of review.payload.lines)if(digest(current.find(r=>r.id===line.skuId))!==digest(line.before))throw new ValidationError('Stock or cost changed after this count was reviewed. Enter a new count before approving.');
+ await assertUnchanged(c,ctx,review,'Stock or cost changed after this count was reviewed. Enter a new count before approving.');
  const results=[];for(const line of review.payload.lines)results.push(await require('../accounting/postgres-physical-count').applyInTransaction(c,ctx,{skuId:line.skuId,locationId:review.payload.location.id,countedQuantity:line.quantity,unitCostMinor:line.unitCostMinor,expectedBefore:{physical:Number(line.before.physical),costed:Number(line.before.costed),value:Number(line.before.value)},expectedCostDeltaMinor:line.costDeltaMinor,reasonCode:'cycle_count',reference:review.payload.reference,sourceType:'physical_count_review',sourceRecordId:id,idempotencyKey:'count-review:'+id+':'+line.skuId,currency:review.payload.currency}));
  const result={lines:results.length,changed:results.filter(r=>!r.unchanged).length};
  await c.query("UPDATE physical_count_reviews SET status='COMPLETED',approved_at=now(),approved_by_user_id=$3,result=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,ctx.actorId,result]);return {replayed:false,...result};
@@ -84,6 +88,7 @@ async function recount(db,ctx,id,quantities){
   await require('./postgres-warehouse-access').assertLocations(c,ctx,[review.payload.location.id]);
   if(review.status!=='PENDING'||!review.recount_required)throw new ValidationError('This count does not need a recount.');
   if(review.recounted_at)return;
+  await assertUnchanged(c,ctx,review,'Stock or cost changed before this recount. Start a new physical count.');
   for(const line of review.payload.lines.filter(line=>line.delta!==0)){
    const value=quantities?.[line.skuId];
    if(value==null||String(value).trim()===''||exact.canonical(value)!==exact.canonical(line.quantity))
