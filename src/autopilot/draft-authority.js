@@ -17,6 +17,7 @@ async function history(db,ctx,action,bound,amount){
     FROM stockchief_runtime.assistant_action_proposals p WHERE workspace_id=$1 AND action_type=$2 AND status='EXECUTED'
       AND payload#>>'{training,key}'=$3 AND payload#>>'{training,currency}'=$4 AND result->>'replayed' IS DISTINCT FROM 'true'
       AND result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule'
+      AND ($2<>'sales_order.reserve_arrived' OR result->>'automatic' IS DISTINCT FROM 'true')
       AND ($2 NOT IN('sales_order.reserve_all','sales_order.allocation_priority') OR result->>'automatic'='false')
       AND ($2<>'sales_order.reserve_all' OR jsonb_array_length(coalesce(result->'allocations','[]'::jsonb))>0)
       AND ($2<>'sales_quote.followup' OR (result->>'automatic' IS DISTINCT FROM 'true' AND EXISTS(
@@ -52,6 +53,7 @@ async function settings(db,ctx,id,maximum){
     preview:amount>0?{...(await history(db,ctx,p.action_type,bound,amount)),maximum:money.fromMinor(amount,bound.currency)}:null,
     rule:rule?{revision:rule.revision,amount:money.fromMinor(rule.maximum_minor,bound.currency)}:null,
     canTeach:allowed&&(!['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(p.action_type)||p.result?.automatic!==true)&&p.status==='EXECUTED'&&!state.shadow&&p.result?.replayed!==true&&p.result?.executionAuthority?.kind!=='standing_job_rule'&&
+      (p.action_type!=='sales_order.reserve_arrived'||p.result?.automatic!==true)&&
       (!['sales_order.reserve_all','sales_order.allocation_priority'].includes(p.action_type)||await require('../sales/agent-order-reservations').completedExample(db,ctx,p))&&
       (p.action_type!=='warehouse.release_partial_order'||await require('../warehouse/agent-partial-shipments').completedExample(db,ctx,p))&&
       (p.action_type!=='landed_cost.apply'||(p.result?.automatic!==true&&p.payload.needsLandedCostConfirmation===false))&&
@@ -90,7 +92,7 @@ async function trained(db,workspaceId,name,payload,proposalId){
   if(!jobs.has(name))return false;
   if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
   const bound=payload?.training;
-  if(!bound?.key||!Number.isSafeInteger(bound.amountMinor)||bound.amountMinor<=0)return false;
+  if(!bound?.key||!Number.isSafeInteger(bound.amountMinor)||bound.amountMinor<0||(bound.amountMinor===0&&name!=='sales_order.reserve_arrived'))return false;
   const state=await require('./postgres-service').getState(db,workspaceId);
   if(!state.canAutomate)return false;
   return Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.agent_draft_rules r JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner'

@@ -52,7 +52,7 @@ function present(proposal){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one stock-ready customer update',fields:[{label:'Order',value:p.orderNumber},{label:'To',value:p.recipient},{label:'Message',value:require('../sales/agent-stock-ready').compose(p).body}]};
  }
  if(proposal.action_type==='sales_order.reserve_arrived'){
-  const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.quantity+' units'}))]};
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Sets aside arrived stock for a waiting order',fields:[{label:'Order',value:p.orderNumber},{label:'Customer',value:p.customerName},{label:'Dispatch from',value:p.locationName},...p.quantities.map(q=>({label:q.code,value:q.detail||q.quantity+' units'}))]};
  }
  if(proposal.action_type==='purchase_order.record_supplier_invoice'){
   const p=proposal.payload,money=require('../domain/currency');

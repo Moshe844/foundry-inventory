@@ -153,7 +153,8 @@ async function report(db,ctx,window='week') {
     SELECT 'arrived-stock',min(a.executed_at) FROM stockchief_runtime.assistant_action_proposals a
       JOIN stockchief_runtime.business_operations op ON op.workspace_id=a.workspace_id AND op.idempotency_key=a.idempotency_key AND op.kind='sales_order.confirm' AND op.status='COMPLETED'
       WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.action_type='sales_order.reserve_arrived' AND a.result->>'replayed' IS DISTINCT FROM 'true'
-        AND jsonb_array_length(a.result->'allocations')>0 AND op.result->'allocations'=a.result->'allocations'
+        AND ((jsonb_array_length(a.result->'receiptReservations')>0 AND op.result->'receiptReservations'=a.result->'receiptReservations')
+          OR (a.result->'receiptReservations' IS NULL AND jsonb_array_length(a.result->'allocations')>0 AND op.result->'allocations'=a.result->'allocations'))
         AND op.result->>'salesOrderId'=a.payload->>'recordId' GROUP BY op.id UNION ALL
     SELECT 'stock-ready',min(m.sent_at::timestamptz) FROM customer_communications m
       JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'

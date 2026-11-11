@@ -733,6 +733,17 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [salesOrderId, ctx.workspaceId], 'That sales order was not found.');
     if (!['DRAFT', 'CONFIRMED', 'BACKORDERED',...(input.resumeRemaining===true?['PARTIALLY_FULFILLED']:[])].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
+    const arrived = await require('../sales/postgres-arrived-stock-reservations').apply(client,ctx,order,input);
+    if(arrived){
+      const status=order.status==='PARTIALLY_FULFILLED'?order.status:arrived.shortage?'BACKORDERED':'CONFIRMED';
+      const at=nowIso(),result={salesOrderId,status,...arrived};
+      await client.query('UPDATE sales_orders SET status=$3,updated_at=$4,version=version+1 WHERE id=$1 AND workspace_id=$2',
+        [salesOrderId,ctx.workspaceId,status,at]);
+      await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,type:'confirmed',
+        detail:{status,...arrived},actorId:ctx.actorId,key:input.idempotencyKey+':event',at});
+      await completeOperation(client,operation,result);
+      return {...result,replayed:false};
+    }
     const lines = await client.query(`SELECT * FROM sales_order_lines
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const kitComponents=(await client.query('SELECT c.component_sku_id,c.sales_order_line_id FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE c.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows,kitLines=new Set(kitComponents.map(c=>c.sales_order_line_id));
@@ -767,8 +778,14 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
           (id,workspace_id,sales_order_line_id,location_id,quantity,created_at,updated_at)
           VALUES($1,$2,$3,$4,$5,$6,$6)
           ON CONFLICT(sales_order_line_id,location_id) DO UPDATE SET quantity=sales_order_allocations.quantity+EXCLUDED.quantity,
+            rotation_selection=CASE WHEN sales_order_allocations.rotation_selection IS NOT NULL
+              AND EXISTS(SELECT 1 FROM jsonb_array_elements(sales_order_allocations.rotation_selection) selection WHERE selection ? 'arrivals')
+              AND EXISTS(SELECT 1 FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+                WHERE s.workspace_id=$2 AND s.id=$7 AND i.tracking_mode='quantity' AND i.secondary_unit_label IS NULL)
+              THEN sales_order_allocations.rotation_selection||jsonb_build_array(jsonb_build_object('quantity',EXCLUDED.quantity,'arrivals','[]'::jsonb))
+              ELSE sales_order_allocations.rotation_selection END,
             updated_at=EXCLUDED.updated_at`,
-        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso()]);
+        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso(),line.sku_id]);
         allocations.push({ lineId: line.id, locationId: balance.location_id, quantity });
         needed = exact.safeNumber(exact.subtract(needed,quantity));
       }

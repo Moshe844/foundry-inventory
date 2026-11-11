@@ -34,7 +34,7 @@
   "43": "Fills a physical-receipt review from a supported packing CSV or readable PDF using the actual PO packs, costs and warehouse. A person confirms receipt; no bill or payment is posted.",
   "44": "Shows the quantity still due after a partial purchase receipt. Wrong-item and over-delivery reviews still need complete workflow verification.",
   "47": "Prepares product and bin labels and put-away instructions from confirmed whole-unit receipts. Physical put-away, hardware printers and tracked or measured goods remain open.",
-  "48": "Reserves available quantity stock for confirmed backorders in warehouse priority order. Part shipments, kits, lots, serials and multiple dispatch warehouses remain open.",
+  "48": "Routes posted, costed receipts and transfer arrivals to confirmed waiting orders by priority, including the remainder of partial shipments. Uses eligible dispatch warehouses, exact batches and serials, recorded stock units and actual weights, and the order’s captured kit components. Physical picking and dispatch need separate confirmation.",
   "49": "Allocates separately posted freight, duty or fee bills to recorded, unconsumed deliveries by quantity, original value or recorded weight. A person approves the stock-value change.",
   "50": "Prepares or sends scoped stock-ready updates for previously backordered quantity orders. Live mailbox delivery and separate staff-role routing remain open.",
   "52": "Creates customer-order drafts from supported original email or PDF requests with exact item codes and quantities. Unknown terms, new addresses and changed prices need review.",
