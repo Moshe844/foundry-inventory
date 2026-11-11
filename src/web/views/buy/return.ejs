@@ -24,7 +24,8 @@
       <% } else if (r.status === 'AUTHORIZED') { %>
         <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-ship-back">Mark shipped back</button>
       <% } else if (r.status === 'AWAITING_CREDIT' && r.trackedCredit?.intake_id) { %>
-        <a class="ox-btn ox-btn--primary" href="/autopilot/supplier-credits/<%= encodeURIComponent(r.trackedCredit.intake_id) %>">Review remaining credit</a>
+        <% if(locals.canApplyTrackedCredit){ %><a class="ox-btn ox-btn--primary" href="/autopilot/supplier-credits/<%= encodeURIComponent(r.trackedCredit.intake_id) %>">Review remaining credit</a>
+        <% } else if(locals.canReviewCreditPlans){ %><span class="ox-badge">Pro</span> <a class="ox-btn ox-btn--ghost" href="/settings/billing">Review plans</a><% } %>
       <% } else if (r.status === 'AWAITING_CREDIT' && !r.trackedCredit) { %>
         <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-credit">Record credit</button>
       <% } %>
