@@ -153,7 +153,7 @@ const suggestions={
   110:r=>'Review the '+r.Month+' purchase budget for '+r.Category+' in '+r.Currency+'.',
   144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
   146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
-  4:r=>'Count '+r.SKU+' at '+r.Shelf+' first. '+r.Reason+'.',
+  4:r=>'Count '+r.Shelf+' at '+r.Warehouse+' first. Start with '+r.SKU+'. '+r.Reason+'.',
   21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
   22:r=>'Consider '+r.Supplier+' for '+r['Compared quantity']+' '+r.Unit+' of '+r.SKU+'. Recorded goods total: '+(r['Goods total']||'unknown')+'; delivery days: '+(r['Lead days']??'unknown')+'. '+r.Status+'.',
   23:r=>'Review the minimum order and freight terms with '+r.Supplier+' before placing the purchase order.',
@@ -202,6 +202,7 @@ async function run(db,ctx,key,options={}){
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      ...(result.cyclePlan?{cyclePlan:true}:{}),
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
       ...(result.pickReleaseForm?{pickReleaseForm:result.pickReleaseForm}:{}),
       ...(result.putawayForm?{putawayForm:result.putawayForm}:{}),

@@ -45,7 +45,7 @@ test('every operationally qualified duty explains its current scope while permis
  assert.equal(balance.plans.find(p=>p.tier==='growth').mode,'trained');assert.match(balance.plans.find(p=>p.tier==='growth').currentScope,/complete a matching draft/);
  for(const tier of ['pro','enterprise']){assert.equal(balance.plans.find(p=>p.tier===tier).mode,'alone');assert.match(balance.plans.find(p=>p.tier===tier).currentScope,/without training/);}
  assert.deepEqual(rows.filter(r=>r.status==='complete').map(r=>r.id),require('../../src/commercial/agent-plan-progress.json').complete,'Only verified complete duties qualify');
- for(const id of [1,2,18,19,22,48,120,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
+ for(const id of [1,2,4,18,19,22,48,117,120,130,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
  const localReorder=rows.find(r=>r.id===120);
  assert.equal(localReorder.plans.find(p=>p.tier==='starter').mode,'excluded');
  assert.equal(localReorder.plans.find(p=>p.tier==='growth').mode,'trained');
@@ -56,6 +56,16 @@ test('every operationally qualified duty explains its current scope while permis
   assert.match(current.currentScope,/without training/);
  }
  assert.match(localReorder.currentScope,/exact stocking increments/);
+ const daily=rows.find(r=>r.id===4);
+ assert.equal(daily.plans.find(p=>p.tier==='starter').mode,'suggest');
+ assert.match(daily.plans.find(p=>p.tier==='starter').currentScope,/one read-only shelf suggestion/);
+ assert.equal(daily.plans.find(p=>p.tier==='growth').mode,'draft');
+ assert.match(daily.plans.find(p=>p.tier==='growth').currentScope,/owner confirms the current draft/);
+ for(const tier of ['pro','enterprise']){
+  const current=daily.plans.find(p=>p.tier===tier);
+  assert.equal(current.mode,'alone');
+  assert.match(current.currentScope,/without training/);
+ }
 });
 
 test('Channel-buffer plan scopes distinguish individually reviewed quantities from routines without training',()=>{const row=comparison.comparison().find(r=>r.id===183);assert.equal(row.status,'partial');assert.match(row.currentScope,/Shopify and WooCommerce/);assert.match(row.currentScope,/remain open/);assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/individual approval/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}});

@@ -1,0 +1,51 @@
+<% const {day,place,warehouses,current,history,currentRule,automatic,blocked}=model;
+   const today=current?.business_day===day; %>
+<h1>Daily cycle-count plans</h1>
+<p>Review the shelves to count. Create assignments and record physical counts in the separate warehouse workflow.</p>
+<% if(warehouses.length){ %><form method="get" action="/autopilot/daily-cycle-counts" class="form-stack">
+  <label>Warehouse <select name="warehouseId"><% for(const option of warehouses){ %>
+    <option value="<%= option.id %>" <%= option.id===place?.id?'selected':'' %>><%= option.name %></option>
+  <% } %></select></label><button class="btn">Open today’s plan</button>
+</form><% }else{ %><p>Add an owned stock location to prepare a plan.</p><% } %>
+<% if(blocked){ %><p class="notice"><%= blocked %></p><% } %>
+<% if(place&&(!current||today&&current.status==='DRAFT')){ %>
+<section class="card"><div class="card-head"><h2>Prepare for <%= day %></h2></div><div class="card-body">
+  <form method="post" action="/autopilot/daily-cycle-counts/prepare" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= place.id %>">
+    <input type="hidden" name="revision" value="<%= current?.revision||0 %>">
+    <label>Maximum shelves <input type="number" name="maximumShelves" min="1" max="100" required value="<%= current?.snapshot.maximumShelves||currentRule?.maximum_shelves||10 %>"></label>
+    <button class="btn btn--primary" <%= blocked?'disabled':'' %>><%= current?'Refresh the draft':'Prepare a draft' %></button>
+  </form>
+</div></section><% } %>
+<% if(current){ const snapshot=current.snapshot; %>
+<section class="card"><div class="card-head"><h2><%= snapshot.warehouse %> · <%= current.business_day %></h2></div><div class="card-body">
+  <p><%= current.status==='DRAFT'?'Draft':current.automatic?'Ready · automatic':'Ready · owner confirmed' %> · <%= snapshot.shelves.length %> of <%= snapshot.eligibleShelves %> eligible shelves</p>
+  <ol><% for(const shelf of snapshot.shelves){ %><li style="overflow-wrap:anywhere">
+    <p><strong><%= shelf.path %></strong> · <%= shelf.positions %> stock <%= shelf.positions===1?'position':'positions' %></p>
+    <p><%= shelf.reason %><% if(stockValue(shelf)){ %> · <%= stockValue(shelf) %> verified stock value<% } %>.</p>
+    <p>Start with <%= shelf.sku %> · <%= helpers.unitCount(Number(shelf.quantity),shelf.unit) %> recorded.</p>
+  </li><% } %></ol>
+  <% if(current.status==='DRAFT'&&today&&place){ %><form method="post" action="/autopilot/daily-cycle-counts/<%= current.id %>/confirm" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= current.revision %>">
+    <input type="hidden" name="fingerprint" value="<%= current.source_fingerprint %>">
+    <label class="choice"><input type="checkbox" name="confirmed" value="yes" required> I confirm this list for today.</label>
+    <button class="btn btn--primary" <%= blocked?'disabled':'' %>>Confirm today’s draft</button>
+  </form><% } %>
+</div></section><% } %>
+<% if(place&&(automatic||currentRule)){ %>
+<section class="card"><div class="card-head"><h2>Automatic planning at <%= place.name %></h2></div><div class="card-body">
+  <% if(automatic){ %><form method="post" action="/autopilot/daily-cycle-counts/rule" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= place.id %>">
+    <input type="hidden" name="revision" value="<%= currentRule?.revision||0 %>">
+    <label>Maximum shelves per day <input name="maximumShelves" type="number" min="1" max="100" required value="<%= currentRule?.maximum_shelves||10 %>"></label>
+    <label class="choice"><input type="checkbox" name="confirmed" value="yes" required> I authorize this warehouse and shelf limit.</label>
+    <button class="btn">Save daily planning limit</button>
+  </form><% } %>
+  <% if(currentRule){ %><form method="post" action="/autopilot/daily-cycle-counts/rule">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= place.id %>">
+    <input type="hidden" name="revision" value="<%= currentRule.revision %>"><button class="btn" name="remove" value="yes">Stop automatic planning</button>
+  </form><% } %>
+</div></section><% } %>
+<% if(history.length){ %><section class="card"><div class="card-head"><h2>Saved plans</h2></div><div class="card-body">
+  <ul><% for(const entry of history){ %><li><a href="/autopilot/daily-cycle-counts/<%= entry.id %>"><%= entry.business_day %> · <%= entry.warehouse %></a> · <%= entry.status==='READY'?'Ready':'Draft' %></li><% } %></ul>
+</div></section><% } %>

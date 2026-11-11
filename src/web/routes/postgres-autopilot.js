@@ -475,6 +475,35 @@ function createPostgresAutopilotRouter(database,options={}){
   }
   const annual=require('../../operations/agent-annual-stocktakes');
   const annualPage=async(req,res,id=null)=>res.page('autopilot/annual-stocktakes',{title:'Annual stocktakes',nav:'autopilot',backTo:{href:id?'/autopilot/annual-stocktakes':'/autopilot/reviews',label:id?'Annual stocktakes':'Agent reviews'},...await annual.page(database,req.ctx,{...req.query,id})});
+  const daily=require('../../operations/agent-daily-cycle-counts'),dailyPath='/autopilot/daily-cycle-counts';
+  async function dailyPage(req,res,id=null){
+    const view={title:'Daily cycle-count plans',nav:'autopilot',backTo:{href:'/autopilot/reviews/count-priorities',label:'Count priorities'}};
+    try {
+      const model=await daily.page(database,req.ctx,{warehouseId:req.query.warehouseId,id});
+      return res.page('autopilot/daily-cycle-counts',{...view,model,stockValue:daily.displayValue});
+    } catch(error) {
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      res.status(402);
+      return res.page('autopilot/locked',{...view,message:error.message});
+    }
+  }
+  router.get(dailyPath,requireAuth,owner,asyncRoute((req,res)=>dailyPage(req,res)));
+  router.get(dailyPath+'/:id',requireAuth,owner,asyncRoute((req,res)=>dailyPage(req,res,req.params.id)));
+  router.post(dailyPath+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await daily.prepare(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'Opened the existing daily plan.':'Prepared the current daily count draft.');
+    return res.redirect(303,dailyPath+'/'+result.id);
+  }));
+  router.post(dailyPath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await daily.confirm(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Daily count plan confirmed.');
+    return res.redirect(303,dailyPath+'/'+req.params.id);
+  }));
+  router.post(dailyPath+'/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await daily.configure(database,req.ctx,req.body);
+    req.flash('success',result.removed?'Stopped automatic daily cycle-count planning.':'Saved the automatic daily plan limit.');
+    return res.redirect(303,dailyPath+'?warehouseId='+encodeURIComponent(req.body.warehouseId));
+  }));
   router.get('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res)));
   router.get('/autopilot/annual-stocktakes/:id',requireAuth,owner,asyncRoute((req,res)=>annualPage(req,res,req.params.id)));
   router.post('/autopilot/annual-stocktakes',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await annual.create(database,req.ctx,req.body);req.flash('success','Count plan prepared. Review its exact scope and teams before freezing stock.');res.redirect(303,'/autopilot/annual-stocktakes/'+r.id);}));
