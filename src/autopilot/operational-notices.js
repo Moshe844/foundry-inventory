@@ -5,10 +5,13 @@ const {hasVerifiedMigration}=require('../db/migrate-postgres');
 const transferArrivals=require('../transfers/agent-transfer-arrivals');
 const purchaseBudgets=require('../purchasing/agent-budgets');
 const stockLoss=require('./stock-loss-patterns');
+const returnRates=require('./return-rates');
+const history=require('../commercial/agent-history');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
+const monitoredJobs=[10,110,116];
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
       CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
@@ -68,7 +71,12 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
   const {calendarDate:today,timeZone}=await require('../lib/business-time').forWorkspace(db,workspaceId,now);
   const includeTransfers=await transferArrivals.enabled(db,workspaceId,account,{lock:true});
-  const monitors=await enabledMonitors(db,workspaceId,account,[10,110]);
+  const monitors=await enabledMonitors(db,workspaceId,account,monitoredJobs);
+  const includeReturnRates=monitors.has(116);
+  const args=[workspaceId,'',today];
+  if(includeTransfers)args.push(timeZone);
+  if(includeReturnRates)args.push((await history.access(db,workspaceId)).salesFrom);
+  const cutoff=includeReturnRates?'$'+args.length:'NULL';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   const watched=require('./activity-watches').spec;
@@ -96,17 +104,20 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
+    (includeReturnRates?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
     (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
-    INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded)
-    SELECT $1,job,kind,ref,link,due,$3::date FROM current
+    INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded,history_from)
+    SELECT $1,job,kind,ref,link,due,$3::date,CASE WHEN job=116 THEN ${cutoff}::text::date END FROM current
     ON CONFLICT(workspace_id,job_id,kind,reference,link) DO UPDATE SET due=excluded.due,last_reminded=excluded.last_reminded,
-      reminders=n.reminders+CASE WHEN n.last_reminded<excluded.last_reminded OR (n.resolved AND n.job_id<>124) THEN 1 ELSE 0 END,resolved=false
+      reminders=n.reminders+CASE WHEN n.last_reminded<excluded.last_reminded OR (n.resolved AND n.job_id<>124) THEN 1 ELSE 0 END,
+      resolved=false,history_from=excluded.history_from
     WHERE n.resolved OR (n.job_id IN (124,168) AND (n.last_reminded<excluded.last_reminded OR n.due<>excluded.due))
+      OR (n.job_id=116 AND n.history_from IS DISTINCT FROM excluded.history_from)
     RETURNING job_id)
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
-  includeTransfers?[workspaceId,'',today,timeZone]:[workspaceId,'',today]);
+  args);
 }
 
 async function inbox(db,workspaceId,actorId=null){
@@ -120,19 +131,20 @@ async function inbox(db,workspaceId,actorId=null){
       AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
   if(!migrated&&installed.stock_checks&&installed.payment_checks)migratedInboxDatabases.add(db);
   const stockChecks=installed.stock_checks?`UNION ALL
-    SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
+    SELECT 3,findings,checked_on::text,NULL::text FROM stockchief_runtime.agent_stock_discrepancy_checks
     WHERE workspace_id=$1 AND findings>0`:'';
   const paymentChecks=installed.payment_checks?`UNION ALL
-    SELECT 104,p.bill_count,p.checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks p
+    SELECT 104,p.bill_count,p.checked_on::text,NULL::text FROM stockchief_runtime.agent_supplier_payment_checks p
     WHERE p.workspace_id=$1 AND p.bill_count>0 AND NOT EXISTS (
       SELECT 1 FROM stockchief_runtime.agent_supplier_payment_approvals a WHERE a.workspace_id=p.workspace_id
         AND a.week_start=date_trunc('week',p.checked_on::timestamp)::date AND a.digest=p.run_digest)
     UNION ALL
-    SELECT 108,discount_count,checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks
+    SELECT 108,discount_count,checked_on::text,NULL::text FROM stockchief_runtime.agent_supplier_payment_checks
     WHERE workspace_id=$1 AND discount_count>0`:'';
-  const {rows}=await db.query(`SELECT job_id,n,due FROM (
-    SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
-    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
+  const {rows}=await db.query(`SELECT job_id,n,due,history_from FROM (
+    SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due,
+      CASE WHEN n.job_id=116 THEN to_jsonb(n)->>'history_from' END AS history_from
+    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id,4
     ${stockChecks}
     ${paymentChecks}
     ) current WHERE (current.job_id=124 OR $2::text IS NULL OR EXISTS(SELECT 1 FROM users u
@@ -145,12 +157,15 @@ async function inbox(db,workspaceId,actorId=null){
   const visible=rows.filter(r=>Number(r.job_id)!==124&&policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
   const suppressed=new Set();
   for(const {job_id:job} of visible)if([104,108].includes(Number(job))&&await require('./job-modes').restriction(db,workspaceId,Number(job),true))suppressed.add(job);
-  const monitorJobs=visible.map(r=>Number(r.job_id)).filter(job=>job===10||job===110);
+  const monitorJobs=visible.map(r=>Number(r.job_id)).filter(job=>monitoredJobs.includes(job));
+  let returnHistoryFrom;
   if(monitorJobs.length){
     const active=await enabledMonitors(db,workspaceId,state,monitorJobs);
     for(const {job_id:job} of visible)if(monitorJobs.includes(Number(job))&&!active.has(Number(job)))suppressed.add(job);
+    if(active.has(116))returnHistoryFrom=(await history.access(db,workspaceId)).salesFrom;
   }
-  return visible.filter(r=>!suppressed.has(r.job_id)).map(r=>{
+  // A prior run may have compared sales outside the plan's current window.
+  return visible.filter(r=>!suppressed.has(r.job_id)&&(Number(r.job_id)!==116||r.history_from===returnHistoryFrom)).map(r=>{
     if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
       happened:'The '+r.due+' stock check found '+r.n+' '+(r.n===1?'issue.':'issues.'),why:stockDiscrepancies.summary,
       recommendation:'Review the current stock records.',href:'/autopilot/reviews/stock-exceptions',actionLabel:'Review stock discrepancies',sourceId:'agent-notice-3'};
@@ -166,6 +181,9 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' '+(r.n===1?'category budget is':'category budgets are')+' below billed purchases.',
       why:'StockChief compared posted supplier bills with each saved category budget in the same currency.',
       href:'/autopilot/reviews/purchase-budget?filter='+encodeURIComponent(r.due.slice(0,7)),actionLabel:'Review purchase budgets',sourceId:'agent-notice-110'};
+    if(Number(r.job_id)===116)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'High return rates need review',
+      happened:r.n+' '+(r.n===1?'SKU or customer rate is above its peer rate.':'SKU or customer rates are above their peer rates.'),
+      why:returnRates.summary,href:'/autopilot/reviews/customer-return-rates',actionLabel:'Review return rates',sourceId:'agent-notice-116'};
     if(Number(r.job_id)===10)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Repeated stock losses need review',
       happened:r.n+' '+(r.n===1?'product and shift combination shows':'product and shift combinations show')+' repeated stock corrections.',
       why:'Recorded stock was reduced more than once for the same product, warehouse and local shift.',
