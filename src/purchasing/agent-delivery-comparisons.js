@@ -17,7 +17,7 @@ async function access(db,ctx,{record=false,lock=false}={}){
   await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
   if(lock)await db.query(`SELECT s.id FROM account_subscriptions s JOIN workspaces w ON w.owner_account_id=s.account_id
     WHERE w.id=$1 FOR SHARE OF s`,[ctx.workspaceId]);
-  return policy.requireWorkspaceJob(db,ctx.workspaceId,44,record?'draft':'suggest');
+  return record?policy.requireWorkspaceJob(db,ctx.workspaceId,44,'draft'):policy.accountState(db,ctx.workspaceId);
 }
 
 async function source(db,ctx,orderId){
@@ -67,7 +67,8 @@ async function save(db,ctx,input){
 
 async function page(db,ctx,{orderId=null,id=null,page=1}={}){
   const state=await access(db,ctx);
-  const allowed=policy.permits(state.plan,44,'draft');
+  const canSuggest=policy.usesAgentTerms(state)&&policy.permits(state.plan,44,'suggest');
+  const allowed=canSuggest&&policy.permits(state.plan,44,'draft');
   page=Number(page);
   if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid delivery-check page.');
   let record=null,snapshot=null;
@@ -83,7 +84,7 @@ async function page(db,ctx,{orderId=null,id=null,page=1}={}){
   const history=allowed?(await db.query(`SELECT c.id,c.source_reference,c.recorded_at,p.po_number,c.result->>'agrees' AS agrees
     FROM ${table} c JOIN purchase_orders p ON p.workspace_id=c.workspace_id AND p.id=c.purchase_order_id
     WHERE c.workspace_id=$1 ORDER BY c.recorded_at DESC,c.id DESC LIMIT 101 OFFSET $2`,[ctx.workspaceId,(page-1)*100])).rows:[];
-  const suggestion=allowed?null:(await require('../autopilot/job-reviews').run(db,ctx,'delivery-check')).rows[0]?.Suggestion;
+  const suggestion=canSuggest&&!allowed?(await require('../autopilot/job-reviews').run(db,ctx,'delivery-check')).rows[0]?.Suggestion:null;
   return {allowed,record,snapshot,suggestion,sourceHash:snapshot?hash(snapshot):null,orders:orders.slice(0,100),history:history.slice(0,100),
     more:orders.length>100||history.length>100,pageNumber:page,requestKey:newId('delivery-check')};
 }
