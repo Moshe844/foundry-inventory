@@ -86,7 +86,15 @@ test('supplier credit notes use exact original amounts and actual posted bill ap
     const booked=results.find(x=>!x.replayed);assert.equal(await balance(one.billId),840);
     assert.deepEqual(await journal(booked.journalEntryId),{ACCOUNTS_PAYABLE:360,PURCHASE_PRICE_VARIANCE:-300,SALES_TAX_RECOVERABLE:-60});
     const applied=await preview(received.id);assert.equal(applied.facts.status,'APPLIED');assert.equal(applied.facts.postings[0].journalId,booked.journalEntryId);
-    const duplicate=await arrive(original);assert.equal((await drain()).find(j=>j.id===duplicate.id)?.status,'DUPLICATE');
+    const duplicate=await arrive(original);
+    const duplicateWork=(await drain()).find(j=>j.id===duplicate.id);
+    const work=(await db.query('SELECT result FROM stockchief_runtime.agent_supplier_credit_work WHERE workspace_id=$1 AND intake_id=$2',
+      [ctx.workspaceId,duplicate.id])).rows[0]?.result;
+    assert.equal(duplicateWork?.status,'DUPLICATE',work?.problem);
+    const sourceHash=(await f.service.get(db,ctx,received.id)).source_hash;
+    const scope=await require('../../src/commercial/entitlements').ownerScopeForWorkspace(db,ctx.workspaceId);
+    const receipts=await require('../../src/documents/source-read-receipts').readReceipts(db,scope,sourceHash,{lock:false});
+    assert.equal(receipts.filter(receipt=>receipt.status==='COMMITTED').length,1);
     assert.equal((await preview(duplicate.id)).facts.originId,received.id);
     assert.equal(await creditCount('CM-EXACT-ONE'),1);
     const browser=await f.browser.get('/autopilot/supplier-credits/'+received.id).expect(200);assert.match(browser.text,/Fully applied/);assert.match(browser.text,/Posted applications/);

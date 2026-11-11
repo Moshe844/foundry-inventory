@@ -30,19 +30,53 @@ test('every operationally qualified duty explains its current scope while permis
   for(const cell of row.plans){assert.equal(Boolean(cell.currentScope),cell.mode!=='excluded','Scope availability must match the plan cell for duty '+row.id+' '+cell.tier);}
  }
  for(const id of [12,65]){const row=rows.find(r=>r.id===id);assert.equal(row.status,'partial','Positive native customer-reservation scenarios qualify only their bounded supported scope');assert.equal(row.plans.find(p=>p.tier==='pro').mode,'trained');assert.equal(row.plans.find(p=>p.tier==='enterprise').mode,'alone');assert.match(row.currentScope,/open/);}
- assert.equal(rows.find(r=>r.id===119).status,'partial','Automatic transfer approval remains a separate bounded scope');
+ const approval=rows.find(r=>r.id===119);
+ assert.equal(approval.status,'complete');
+ assert.match(approval.currentScope,/exact stocking-unit limit/);
+ assert.match(approval.currentScope,/Staff confirm picking, dispatch and receipt/);
+ for(const tier of ['starter','growth'])assert.equal(approval.plans.find(p=>p.tier===tier).mode,'excluded');
+ for(const tier of ['pro','enterprise']){
+  const current=approval.plans.find(p=>p.tier===tier);
+  assert.equal(current.mode,'alone');
+  assert.match(current.currentScope,/without training/);
+ }
  const balance=rows.find(r=>r.id===118);assert.equal(balance.status,'complete');
  assert.equal(balance.plans.find(p=>p.tier==='starter').mode,'suggest');
  assert.equal(balance.plans.find(p=>p.tier==='growth').mode,'trained');assert.match(balance.plans.find(p=>p.tier==='growth').currentScope,/complete a matching draft/);
  for(const tier of ['pro','enterprise']){assert.equal(balance.plans.find(p=>p.tier===tier).mode,'alone');assert.match(balance.plans.find(p=>p.tier===tier).currentScope,/without training/);}
  assert.deepEqual(rows.filter(r=>r.status==='complete').map(r=>r.id),require('../../src/commercial/agent-plan-progress.json').complete,'Only verified complete duties qualify');
- for(const id of [1,2,18,19,22,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
+ for(const id of [1,2,18,19,22,48,120,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
+ const localReorder=rows.find(r=>r.id===120);
+ assert.equal(localReorder.plans.find(p=>p.tier==='starter').mode,'excluded');
+ assert.equal(localReorder.plans.find(p=>p.tier==='growth').mode,'trained');
+ assert.match(localReorder.plans.find(p=>p.tier==='growth').currentScope,/individually approved and completed/);
+ for(const tier of ['pro','enterprise']){
+  const current=localReorder.plans.find(p=>p.tier===tier);
+  assert.equal(current.mode,'alone');
+  assert.match(current.currentScope,/without training/);
+ }
+ assert.match(localReorder.currentScope,/exact stocking increments/);
 });
 
 test('Channel-buffer plan scopes distinguish individually reviewed quantities from routines without training',()=>{const row=comparison.comparison().find(r=>r.id===183);assert.equal(row.status,'partial');assert.match(row.currentScope,/Shopify and WooCommerce/);assert.match(row.currentScope,/remain open/);assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/individual approval/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}});
 
 test('Annual stocktake scopes preserve physical approvals and no-training private planning',()=>{const row=comparison.comparison().find(r=>r.id===16);assert.equal(row.status,'partial');assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/individual approval/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);assert.match(row.plans.find(p=>p.tier===tier).currentScope,/10,000/);}});
 
+test('Receipt routing preserves plan authority and separately confirmed dispatch',()=>{
+ const row=comparison.comparison().find(r=>r.id===48);
+ assert.equal(row.status,'complete');
+ assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');
+ const growth=row.plans.find(p=>p.tier==='growth');
+ assert.equal(growth.mode,'trained');
+ assert.match(growth.currentScope,/individually approved and completed/);
+ for(const tier of ['pro','enterprise']){
+  const plan=row.plans.find(p=>p.tier===tier);
+  assert.equal(plan.mode,'alone');
+  assert.match(plan.currentScope,/without training/);
+ }
+ assert.match(row.currentScope,/partial shipments/);
+ assert.match(row.currentScope,/separately confirms physical picking and dispatch/);
+});
 test('Partial shipments keep physical handoff and taught Pro authority separate from no-training Custom preparation',()=>{const row=comparison.comparison().find(r=>r.id===61);assert.equal(row.status,'partial');for(const tier of ['starter','growth'])assert.equal(row.plans.find(p=>p.tier===tier).mode,'excluded');assert.equal(row.plans.find(p=>p.tier==='pro').mode,'trained');assert.match(row.plans.find(p=>p.tier==='pro').currentScope,/physically completed/);assert.equal(row.plans.find(p=>p.tier==='enterprise').mode,'alone');assert.match(row.plans.find(p=>p.tier==='enterprise').currentScope,/without training/);assert.match(row.currentScope,/remain open/);});
 
 test('Purchased return-label instructions require Growth teaching and allow known-customer Pro and Custom requests without training',()=>{const row=comparison.comparison().find(r=>r.id===112);assert.equal(row.status,'partial');assert.equal(row.plans.find(p=>p.tier==='starter').mode,'excluded');assert.equal(row.plans.find(p=>p.tier==='growth').mode,'trained');assert.match(row.plans.find(p=>p.tier==='growth').currentScope,/provider-confirmed/);for(const tier of ['pro','enterprise']){assert.equal(row.plans.find(p=>p.tier===tier).mode,'alone');assert.match(row.plans.find(p=>p.tier===tier).currentScope,/without training/);}assert.match(row.currentScope,/purchase postage separately/);});

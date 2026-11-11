@@ -1,0 +1,38 @@
+<% const {profile,estimate,problem,saved,completed,tier,blocked}=model;
+   const quantity=value=>value==null?'Unset':helpers.unitCount(Number(value),profile.unit_label); %>
+<div class="rm-head"><div class="rm-title"><div>
+  <p><a href="/planning#location-rules">Back to planning</a></p>
+  <h1>Location reorder point</h1><p class="rm-prose"><%= profile.code %> · <%= profile.location_name %></p>
+</div></div></div>
+<% if(problem){ %><p class="notice"><%= problem %></p><% } %>
+<% if(blocked){ %><p class="notice"><%= blocked %></p><% } %>
+<% if(estimate){ %>
+<section class="card"><div class="card-head"><h2>Local sales and lead time</h2></div><div class="card-body">
+  <p><%= quantity(estimate.issued) %> sold across <%= estimate.events %> records in 90 days<% if(estimate.soldWeight){ %> · <%= helpers.unitCount(Number(estimate.soldWeight),profile.secondary_unit_label) %> actual weight<% } %>.</p>
+  <p><%= estimate.lead %> lead days · <%= estimate.cover %> target days · <%= quantity(estimate.safety) %> safety stock</p>
+  <dl><dt>Reorder point</dt><dd><%= quantity(estimate.minimum) %> · current <%= quantity(estimate.current.minimum) %></dd>
+  <dt>Target</dt><dd><%= quantity(estimate.maximum) %> · current <%= quantity(estimate.current.maximum) %></dd></dl>
+  <% if(estimate.changed){ %><form method="post" action="/planning/location-reorder/approve">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= profile.sku_id %>">
+    <input type="hidden" name="locationId" value="<%= profile.location_id %>"><input type="hidden" name="digest" value="<%= estimate.digest %>">
+    <button class="btn btn--primary" <%= blocked?'disabled':'' %>>Approve this reorder point and target</button>
+  </form><% } %>
+</div></section><% } %>
+<section class="card"><div class="card-head"><h2>Routine limit</h2></div><div class="card-body">
+  <% if(tier==='growth'&&!completed.length){ %><p>Approve and complete a matching example above before teaching routine changes at this location.</p><% }else{ %>
+  <form method="post" action="/planning/location-reorder-rules" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= profile.sku_id %>">
+    <input type="hidden" name="locationId" value="<%= profile.location_id %>"><input type="hidden" name="revision" value="<%= saved?.revision||0 %>">
+    <% if(tier==='growth'){ %><label>Completed example <select name="exampleId" required><% for(const example of completed){ %>
+      <option value="<%= example.id %>" <%= example.id===saved?.taught_recommendation_id?'selected':'' %>>Point <%= quantity(example.evidence.minimum) %> · target <%= quantity(example.evidence.maximum) %></option>
+    <% } %></select></label><% } %>
+    <label>Maximum target in <%= profile.unit_label %> <input name="ceiling" inputmode="decimal" value="<%= saved?.ceiling||'' %>" required></label>
+    <label class="choice"><input type="checkbox" name="confirmed" value="yes" required> I authorize this product and location up to the stated target.</label>
+    <button class="btn btn--primary">Save reorder rule</button>
+  </form><% } %>
+  <% if(saved){ %><form method="post" action="/planning/location-reorder-rules">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= profile.sku_id %>">
+    <input type="hidden" name="locationId" value="<%= profile.location_id %>"><input type="hidden" name="revision" value="<%= saved.revision %>">
+    <button class="btn" name="remove" value="1">Remove rule</button>
+  </form><% } %>
+</div></section>

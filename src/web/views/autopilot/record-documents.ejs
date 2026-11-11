@@ -1,4 +1,5 @@
 <section class="card card-body section"><h2>Documents for <%= documents.reference %></h2>
+ <p><a href="/autopilot/document-filing"><%= filingEnabled?'Discover and file originals':'Original filing history' %></a></p>
  <% if(!documents.rows.length){ %><p>No documents have been filed on this record.</p><% } %>
  <% for(const document of documents.rows){ %><p style="overflow-wrap:anywhere"><a href="/autopilot/documents/<%= document.id %>"><%= document.filename %></a> · <%= document.document_kind.replace(/_/g,' ') %><% if(document.targetHref){ %> · <a href="<%= document.targetHref %>"><%= document.target_reference %></a><% } %><% if(document.fact_count){ %> · <a href="/autopilot/documents/<%= document.id %>#product-facts"><%= document.fact_count %> saved product facts</a><% } %></p><% } %>
  <% if(documents.next){ %><p><a class="btn" href="/autopilot/documents?<%= documentQuery %>&amp;after=<%= documents.next %>">Next documents</a></p><% } %>

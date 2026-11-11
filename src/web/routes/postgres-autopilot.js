@@ -613,6 +613,20 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const disputeFlow=require('../../purchasing/invoice-dispute-follow-through');
+  router.get('/autopilot/supplier-disputes/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/supplier-dispute-detail',{
+    title:'Supplier invoice dispute',nav:'autopilot',backTo:{href:'/autopilot/reviews/supplier-invoice-disputes',label:'Supplier invoice disputes'},
+    ...await disputeFlow.page(database,req.ctx,req.params.id,req.query),money:require('../../domain/currency'),
+  })));
+  router.post('/autopilot/supplier-disputes/source/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await disputeFlow.prepare(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(result.billId));
+  }));
+  router.post('/autopilot/supplier-disputes/:id/resolve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.resolve(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Corrected invoice posted. The disputed original is retained.');
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/autopilot/supplier-disputes/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Ask the supplier to review this invoice difference',{action:'supplier_invoice.dispute',recordReference:req.body.billNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact disputed supplier bill and sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
@@ -644,6 +658,30 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Review the current bank credit and invoice before preparing a match.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const discovery=require('../../documents/agent-document-discovery');
+  const filingPath='/autopilot/document-filing';
+  const discoveryPage=async(req,res)=>res.set('Cache-Control','no-store').page('autopilot/document-discovery',{
+    title:'Discover and file originals',nav:'autopilot',screen:await discovery.screen(database,req.ctx,{...req.query,id:req.params.id||null})});
+  router.get(filingPath,requireAuth,owner,asyncRoute(discoveryPage));
+  router.post(filingPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await discovery.enqueue(database,req.ctx,{...req.body,buffer:req.file?.buffer,filename:req.file?.filename});
+    res.redirect(303,filingPath+'/'+result.id);
+  }));
+  router.post(filingPath+'/scope',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../documents/document-filing-scopes').configure(database,req.ctx,req.body);
+    res.redirect(303,filingPath);
+  }));
+  router.get(filingPath+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const source=await discovery.load(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').type('application/octet-stream').attachment(source.filename).send(source.content);
+  }));
+  router.get(filingPath+'/:id',requireAuth,owner,asyncRoute(discoveryPage));
+  for(const [operation,run] of [['approve',discovery.approve],['retry',discovery.retry],['dismiss',discovery.dismiss]]){
+    router.post(filingPath+'/:id/'+operation,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await run(database,req.ctx,req.params.id,req.body);
+      res.redirect(303,filingPath+'/'+req.params.id);
+    }));
+  }
   const shippingOriginals=require('../../documents/agent-shipping-document-reader');
   const shippingOriginalPage=async(req,res)=>res.page('autopilot/shipping-document-reading',{title:'Bills of lading and customs papers',nav:'autopilot',
     screen:await shippingOriginals.screen(database,req.ctx,{...req.query,id:req.params.id||null}),shippingProof:require('../../documents/shipping-document-proof')});
@@ -665,7 +703,8 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/documents',requireAuth,owner,asyncRoute(async(req,res)=>{
     const filing=require('../../documents/agent-filing'),scoped=Boolean(req.query.kind||req.query.record);
     const documents=await (scoped?filing.forRecord(database,req.ctx,req.query.kind,req.query.record,req.query.after):filing.directory(database,req.ctx,req.query.after));
-    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
+    const filingEnabled=discovery.available(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId));
+    res.page('autopilot/record-documents',{title:'Documents · '+documents.reference,nav:'autopilot',documents,filingEnabled,documentQuery:scoped?new URLSearchParams({kind:req.query.kind,record:req.query.record}).toString():'',backTo:{href:documents.targetHref,label:scoped?documents.reference:'Inventory'}});
   }));
   router.get('/autopilot/documents/:id/download',requireAuth,owner,asyncRoute(async(req,res)=>{
     const document=await require('../../documents/agent-filing').load(database,req.ctx,req.params.id);
@@ -881,6 +920,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
+      if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
@@ -937,6 +977,10 @@ function createPostgresAutopilotRouter(database,options={}){
     const report=await database.transaction(async c=>definition.readPage(c,req.ctx,{download:true,filter:req.query.filter,today:await require('../../lib/business-time').today(c,req.ctx.workspaceId)}),{isolation:'REPEATABLE READ'});
     const format=packs.downloads[definition.key],file=await format.render(report);
     res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+'.'+format.extension).send(file);
+  }));
+  router.post('/autopilot/reviews/repeat-loss/shifts',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/stock-loss-patterns').save(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/repeat-loss');
   }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);

@@ -28,17 +28,36 @@ function createPostgresMailRouter(database,options={}){
   const router=express.Router();router.use('/mail',requireAuth);
   router.get('/mail',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const drawer=DRAWERS.find((entry)=>entry.key===trimOrNull(req.query.show))||DRAWERS[0];
-    const [counts,messages,asideCount]=await Promise.all([mail.counts(database,req.ctx.workspaceId),
+    const sorter=require('../../connections/agent-mail-triage'),plan=require('../../commercial/agent-plan');
+    const [counts,messages,asideCount,sortEnabled]=await Promise.all([mail.counts(database,req.ctx.workspaceId),
       mail.list(database,req.ctx.workspaceId,drawer.state),
-      req.user.role==='owner'?mail.setAsideCount(database,req.ctx.workspaceId):Promise.resolve(0)]);
+      req.user.role==='owner'?mail.setAsideCount(database,req.ctx.workspaceId):Promise.resolve(0),
+      req.user.role==='owner'?plan.accountState(database,req.ctx.workspaceId).then(sorter.available):false]);
     return res.page('mail/inbox',{title:'Mail',nav:'mail',drawers:DRAWERS,drawer,
-      counts,messages:messages.map(inboxMessage),asideCount,canReviewAside:req.user.role==='owner',
+      counts,messages:messages.map(inboxMessage),asideCount,sortEnabled,canReviewAside:req.user.role==='owner',
       canWriteReply:permissions.can(req.user,permissions.OPERATE)});
   }));
+  router.get('/mail/sorted',requireOwner,asyncRoute(async(req,res)=>{
+    const plan=require('../../commercial/agent-plan'),sorter=require('../../connections/agent-mail-triage');
+    const state=await plan.accountState(database,req.ctx.workspaceId);
+    const included=plan.permits(state.plan,138,'automatic');
+    if(!sorter.available(state)&&req.accepts('html')){
+      return res.page('autopilot/agent-plan-locked',{title:'Sorted mail',nav:'mail',tier:'Growth',
+        reviewTerms:included,backTo:{href:'/mail',label:'Mail'}});
+    }
+    plan.requireJob(plan.usesAgentTerms(state)?state.plan:null,138,'automatic');
+    const page=Number(req.query.page||1),filter=String(req.query.filter||'').trim().slice(0,254);
+    if(!Number.isSafeInteger(page)||page<1||page>1000000)
+      throw new(require('../../domain/errors').ValidationError)('Choose a valid mailbox page.');
+    const result=await sorter.readPage(database,req.ctx,{page,filter});
+    return res.set('Cache-Control','private, no-store').page('mail/sorted',{
+      title:'Sorted mail',nav:'mail',result,labels:sorter.labels,page,filter,backTo:{href:'/mail',label:'Mail'}});
+  }));
   router.get('/mail/set-aside',requireOwner,asyncRoute(async(req,res)=>{
-    const [messages,count]=await Promise.all([mail.listSetAside(database,req.ctx.workspaceId),
+    const focus=trimOrNull(req.query.focus);
+    const [messages,count]=await Promise.all([mail.listSetAside(database,req.ctx.workspaceId,focus),
       mail.setAsideCount(database,req.ctx.workspaceId)]);
-    return res.page('mail/postgres-set-aside',{title:'Set-aside mail',nav:'mail',messages,count,
+    return res.page('mail/postgres-set-aside',{title:'Set-aside mail',nav:'mail',messages,count,focus,
       backTo:{href:'/mail',label:'Mail'}});
   }));
   router.post('/mail/set-aside/:id/bring-in',requireOwner,asyncRoute(async(req,res)=>{
@@ -140,7 +159,9 @@ function createPostgresMailRouter(database,options={}){
   }));
   router.get('/mail/:id/attachments/:attachmentId/text',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const document=await require('../../connections/postgres-attachments').textPage(database,req.ctx.workspaceId,req.params.id,req.params.attachmentId,Number(req.query.offset||0));
-    return res.page('mail/attachment-text',{title:document.filename,nav:'mail',document,messageId:req.params.id});
+    const filingEnabled=res.locals.currentUser?.role==='owner'&&require('../../documents/agent-document-discovery')
+      .available(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId));
+    return res.page('mail/attachment-text',{title:document.filename,nav:'mail',document,messageId:req.params.id,filingEnabled});
   }));
   router.post('/mail/:id/state',requirePermission(permissions.OPERATE,'sort the mailbox'),asyncRoute(async(req,res)=>{
     const state=req.body.state==='RETHINK'?'NEEDS_REPLY':req.body.state;

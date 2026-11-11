@@ -8,6 +8,7 @@ const {ValidationError} = require('../domain/errors');
 
 function terms(text) {
   const value=String(text||'').trim();
+  if(/^(?:due on receipt|cash on delivery|cod)$/i.test(value))return {net:0};
   const net=/^net\s*(\d{1,3})\s*(?:days?)?$/i.exec(value);
   if(net) return {net:Number(net[1])};
   const match=/^(\d{1,2}(?:\.\d{1,2})?)\s*%?\s*\/\s*(\d{1,3})\s*[,;]?\s*(?:net|n)\s*\/?\s*(\d{1,3})$/i.exec(value)||
@@ -111,49 +112,116 @@ async function preparePaymentChecks(db,workspaceId,state,today){
     [workspaceId,today,modes,prepareRun?facts.digest:null,prepareRun?facts.dueThisRun.length:0,findDiscounts?facts.discounts.length:0]);
 }
 
-async function forecast(db,ctx,{today,adviceOnly=false}) {
+async function forecast(db,ctx,options) {
+  return db.transaction(client=>forecastSnapshot(client,ctx,options),{
+    isolation:'REPEATABLE READ',readOnly:true,statementTimeoutMs:10000
+  });
+}
+
+async function forecastSnapshot(db,ctx,{today,adviceOnly=false}) {
+  const {timeZone}=await require('../lib/business-time').forWorkspace(db,ctx.workspaceId);
   const books=await documents(db,ctx.workspaceId,'bills',today);
   const invoices=await documents(db,ctx.workspaceId,'invoices',today);
-  const lines=(await db.query(`WITH billed AS (
-    SELECT bl.purchase_order_line_id,sum(bl.quantity) AS units FROM accounting_supplier_bill_lines bl
-    JOIN accounting_supplier_bills b ON b.workspace_id=bl.workspace_id AND b.id=bl.bill_id
-    WHERE bl.workspace_id=$1 AND b.status IN ('OPEN','PARTIALLY_PAID','PAID') GROUP BY bl.purchase_order_line_id)
-    SELECT p.po_number,p.currency,p.expected_date,s.payment_terms,l.unit_cost,l.secondary_quantity_ordered,
-      greatest(l.quantity_units-coalesce(b.units,0),0) AS unbilled
+  const lines=(await db.query(`WITH orders AS MATERIALIZED (
+    SELECT p.id,p.po_number,p.currency,p.expected_date,s.payment_terms,p.status
     FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
-    JOIN purchase_order_lines l ON l.workspace_id=p.workspace_id AND l.purchase_order_id=p.id
-    LEFT JOIN billed b ON b.purchase_order_line_id=l.id WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
-    AND l.quantity_units>coalesce(b.units,0)`,[ctx.workspaceId])).rows;
-  const currencies=new Map(),undated=new Set();
+    WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
+  ), posted_bills AS MATERIALIZED (
+    SELECT b.* FROM accounting_supplier_bills b
+    JOIN orders p ON p.id=b.purchase_order_id AND p.currency=b.currency
+    JOIN accounting_journal_entries e ON e.workspace_id=b.workspace_id AND e.id=b.journal_entry_id AND e.status='POSTED'
+    WHERE b.workspace_id=$1 AND b.status IN ('OPEN','PARTIALLY_PAID','PAID')
+  ), billed AS (
+    SELECT l.purchase_order_line_id,sum(l.quantity) AS units,sum(l.secondary_quantity) AS measured,
+      bool_or(l.secondary_quantity IS NULL) AS missing_measure
+    FROM accounting_supplier_bill_lines l JOIN posted_bills b ON b.workspace_id=l.workspace_id AND b.id=l.bill_id
+    WHERE l.workspace_id=$1 GROUP BY l.purchase_order_line_id
+  ), final_receipt AS (
+    SELECT r.purchase_order_id,max(r.received_at::timestamptz) AS received_at FROM purchase_order_receipts r
+    JOIN orders p ON p.id=r.purchase_order_id AND p.status='RECEIVED'
+    WHERE r.workspace_id=$1 GROUP BY r.purchase_order_id
+  ), charge_budget AS (
+    SELECT c.purchase_order_id,c.kind,lower(btrim(c.label)) label,sum(c.amount_minor) amount
+    FROM purchase_order_charges c JOIN orders p ON p.id=c.purchase_order_id
+    WHERE c.workspace_id=$1 AND c.kind<>'deposit' GROUP BY 1,2,3
+  ), billed_charges AS (
+    SELECT b.purchase_order_id,c->>'kind' kind,lower(btrim(c->>'label')) label,sum((c->>'amountMinor')::bigint) amount
+    FROM posted_bills b CROSS JOIN LATERAL jsonb_array_elements(b.charges) c GROUP BY 1,2,3
+    UNION ALL SELECT purchase_order_id,'tax','',sum(tax_minor) FROM posted_bills GROUP BY purchase_order_id
+  ), unbilled_charges AS (
+    SELECT c.purchase_order_id,sum(CASE WHEN c.amount>=0 THEN greatest(c.amount-coalesce(b.amount,0),0)
+      ELSE least(c.amount-coalesce(b.amount,0),0) END) amount
+    FROM (SELECT purchase_order_id,kind,CASE WHEN kind='tax' THEN '' ELSE label END label,sum(amount) amount
+      FROM charge_budget GROUP BY 1,2,3) c
+    LEFT JOIN billed_charges b USING(purchase_order_id,kind,label) GROUP BY 1
+  )
+  SELECT p.id,p.po_number,p.currency,p.expected_date,p.payment_terms,
+    to_char(f.received_at AT TIME ZONE $2,'YYYY-MM-DD') AS receipt_date,l.unit_cost,
+    CASE WHEN l.secondary_quantity_ordered IS NOT NULL THEN
+      CASE WHEN b.missing_measure THEN NULL ELSE
+        CASE WHEN l.quantity_received_units>=l.quantity_units THEN l.secondary_quantity_received
+          ELSE l.secondary_quantity_ordered END-coalesce(b.measured,0) END
+    ELSE greatest(l.quantity_units,l.quantity_received_units)-coalesce(b.units,0) END AS price_quantity,
+    NULL::numeric AS charges
+  FROM orders p JOIN purchase_order_lines l ON l.workspace_id=$1 AND l.purchase_order_id=p.id
+  LEFT JOIN billed b ON b.purchase_order_line_id=l.id LEFT JOIN final_receipt f ON f.purchase_order_id=p.id
+  WHERE greatest(l.quantity_units,l.quantity_received_units)>coalesce(b.units,0)
+  UNION ALL SELECT p.id,p.po_number,p.currency,p.expected_date,p.payment_terms,
+    to_char(f.received_at AT TIME ZONE $2,'YYYY-MM-DD'),NULL,NULL,c.amount
+  FROM orders p JOIN unbilled_charges c ON c.purchase_order_id=p.id AND c.amount<>0
+  LEFT JOIN final_receipt f ON f.purchase_order_id=p.id`,[ctx.workspaceId,timeZone])).rows;
+  const cash=(await db.query(`SELECT l.currency,sum(l.debit_minor-l.credit_minor) AS balance
+    FROM accounting_journal_lines l JOIN accounting_accounts a ON a.workspace_id=l.workspace_id AND a.id=l.account_id
+    JOIN accounting_journal_entries e ON e.workspace_id=l.workspace_id AND e.id=l.entry_id AND e.status='POSTED'
+    WHERE l.workspace_id=$1 AND a.subtype='CASH' AND e.posting_date<=$2 GROUP BY l.currency`,
+  [ctx.workspaceId,today])).rows;
+  const opening=new Map(cash.map(row=>[row.currency,money.integer(row.balance,'Cash balance',{signed:true})]));
+  const currencies=new Map(),undated=new Map();
+  function weeksFor(currency){
+    if(!currencies.has(currency))currencies.set(currency,Array.from({length:13},()=>({incoming:0,bills:0,purchases:0,charges:0})));
+    return currencies.get(currency);
+  }
   function add(currency,date,amount,kind,reference){
-    if(!currencies.has(currency)) currencies.set(currency,Array.from({length:13},()=>({incoming:0,bills:0,purchases:0})));
-    if(!date || amount===null){undated.add(reference);return;}
+    const weeks=weeksFor(currency);
+    if(!date || amount===null){undated.set(kind==='charges'?'purchases:'+reference:kind+':'+reference,{currency,reference});return;}
     const days=Math.round((Date.parse(date)-Date.parse(today))/86400000),index=Math.max(0,Math.floor(days/7));
-    if(index<13) {const week=currencies.get(currency)[index];week[kind]=money.sum([week[kind],amount]);}
+    if(index<13) {const week=weeks[index];week[kind]=money.sum([week[kind],amount]);}
   }
   for(const b of books)add(b.currency,b.due_date,b.balance_minor,'bills',b.number);
   for(const i of invoices)add(i.currency,i.due_date,i.balance_minor,'incoming',i.number);
   for(const l of lines){
     const net=terms(l.payment_terms).net;
-    const amount=l.unit_cost==null || l.secondary_quantity_ordered!=null ? null :
-      require('../domain/exact-quantity').costMinor(l.unbilled,money.toMinor(l.unit_cost,l.currency));
-    add(l.currency,l.expected_date && net!=null ? addDays(l.expected_date,net) : null,amount,'purchases',l.po_number);
+    const baseDate=l.receipt_date||l.expected_date;
+    const due=baseDate&&net!=null?addDays(baseDate,net):null;
+    const amount=l.charges!=null?money.integer(l.charges,'Purchase charges',{signed:true}):
+      l.unit_cost==null||l.price_quantity==null||Number(l.price_quantity)<=0?null:
+        require('../domain/exact-quantity').costMinor(l.price_quantity,money.toMinor(l.unit_cost,l.currency));
+    add(l.currency,due,amount,l.charges!=null?'charges':'purchases',l.po_number);
   }
+  for(const currency of opening.keys())weeksFor(currency);
+  const incomplete=new Set([...undated.values()].map(row=>row.currency));
   const rows=[];
   for(const [currency,weeks] of [...currencies].sort(([a],[b])=>a.localeCompare(b))){
+    let balance=incomplete.has(currency)?null:opening.get(currency)??null;
     let suggested=false;
     weeks.forEach((w,index)=>{
-      const week=addDays(today,index*7),net=money.sum([w.incoming,-w.bills,-w.purchases]);
+      const week=addDays(today,index*7),net=money.sum([w.incoming,-w.bills,-w.purchases,-w.charges]);
+      if(balance!==null)balance=money.sum([balance,net]);
       if(adviceOnly){
-        if(!suggested && net<0){rows.push({Currency:currency,'Week beginning':week,Review:'Expected payments exceed expected receipts.'});suggested=true;}
+        if(!suggested&&(balance===null?net<0:balance<0)){
+          rows.push({Currency:currency,'Week beginning':week,Review:balance===null?'Expected payments exceed expected receipts.':'Recorded cash plus expected flows falls below zero.'});suggested=true;
+        }
         return;
       }
       rows.push({'Week beginning':week,Currency:currency,'Customer receipts':money.format(w.incoming,currency),
-        'Supplier bills':money.format(w.bills,currency),'Unbilled PO goods':money.format(w.purchases,currency),'Net flow':money.format(net,currency)});
+        'Supplier bills':money.format(w.bills,currency),'Unbilled PO goods':money.format(w.purchases,currency),
+        'Unbilled PO charges':money.format(w.charges,currency),'Net flow':money.format(net,currency),
+        'Projected cash':balance===null?null:money.format(balance,currency)});
     });
-    if(adviceOnly && !suggested)rows.push({Currency:currency,'Week beginning':today,Review:'No negative week among dated records.'});
+    if(adviceOnly && !suggested)rows.push({Currency:currency,'Week beginning':today,
+      Review:incomplete.has(currency)?'Confirm missing prices or dates before relying on expected flows.':'No cash shortfall among dated records.'});
   }
-  return {summary:'Overdue amounts enter week one. Unbilled goods use expected delivery plus supplier terms. Unbilled freight, tax, deposits and opening bank balances are excluded. '+undated.size+' documents need a date or price.'+
-    (undated.size?' Review '+[...undated].slice(0,8).join(', ')+'.':''),rows};
+  return {summary:'Overdue amounts enter week one. Unbilled PO goods and approved charges use recorded supplier terms and actual final receipt or expected delivery. Posted bills include recorded deposits. Projected cash starts with posted cash balances. '+undated.size+' documents need a date or price.'+
+    (undated.size?' Review '+[...undated.values()].slice(0,8).map(row=>row.reference).join(', ')+'.':''),rows};
 }
 module.exports={payments,approvePaymentRun,preparePaymentChecks,forecast,terms};

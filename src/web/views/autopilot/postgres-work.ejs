@@ -3,6 +3,9 @@
 <div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">StockChief is following this work</p><h1><%= outcome.reference||item.recommendedAction.displayName||'Business workflow' %></h1><p class="rm-prose"><%= outcome.requestedOutcome||item.recommendedAction.title||'Follow the linked business record through completion.' %></p></div></div></div>
 <section class="card"><div class="card-head"><h2><%= item.execution_status==='COMPLETED'?'Outcome verified':item.execution_status==='CANCELLED'?'Cancelled':item.execution_status==='FAILED'?'Needs a delivery check':'In progress' %></h2></div><div class="card-body">
 <p><strong><%= item.error_message||outcome.nextAction||'Checking the saved business records.' %></strong></p>
+<% if(outcome.transferId&&item.recommendedAction.selections?.length){ %>
+  <h3>Reserved stock</h3><ul><% for(const selection of item.recommendedAction.selections){ %><li style="overflow-wrap:anywhere"><%= selection %></li><% } %></ul>
+<% } %>
 <% if(outcome.lastCheckedAt){ %><p>Last checked <time data-local-time datetime="<%= outcome.lastCheckedAt %>"><%= helpers.dateTime(outcome.lastCheckedAt) %></time>.</p><% } %>
 <% if(outcome.nextCheckAt){ %><p>Next check <time data-local-time datetime="<%= outcome.nextCheckAt %>"><%= helpers.dateTime(outcome.nextCheckAt) %></time>.</p><% } %>
 <% if(outcome.deadline){ %><p>Decision or expected event due <time data-local-time datetime="<%= outcome.deadline %>"><%= helpers.dateTime(outcome.deadline) %></time>.</p><% } %>
@@ -13,8 +16,9 @@
 <% } else { const action=item.recommendedAction,transfer=action.type==='transfer',waiting=item.execution_status==='WAITING_FOR_APPROVAL',statusWord=String(item.execution_status).replaceAll('_',' ').toLowerCase().replace(/^./,c=>c.toUpperCase()),chooseWhere=action.quantityScope==='workspace'&&!action.destinationLocationId,facts=item.sourceEvidence||[],fact=name=>facts.find(e=>e.fact===name)?.value,available=fact('available'),incoming=fact('incoming')??action.incoming,reorderPoint=fact('reorder_point')??action.reorderPoint,priced=action.value!==null&&action.value!==undefined; %>
 <div class="aw">
 <header class="aw-head"><p class="aw-kicker"><span class="level-label" data-tone="<%= item.urgency==='immediate'?'urgent':'normal' %>"><%= item.approval_requirement==='NONE'?'Automatic decision':statusWord %></span></p>
-  <h1><%= transfer?'Move':'Order' %> <%= helpers.unitCount(action.quantity,'unit') %> of <%= action.displayName %></h1>
-  <p><%= transfer?'Move '+helpers.unitCount(action.quantity,'unit')+' from '+action.sourceLocationName+' to '+action.destinationLocationName+'.':'From '+action.supplierName+'.' %></p></header>
+  <h1><%= transfer?'Move':'Order' %> <%= helpers.unitCount(action.quantity,action.unit||'unit') %> of <%= action.displayName %></h1>
+  <p><%= transfer?'Move '+helpers.unitCount(action.quantity,action.unit||'unit')+' from '+action.sourceLocationName+' to '+action.destinationLocationName+'.':'From '+action.supplierName+'.' %></p>
+  <% if(action.kitCode){ %><p>Stocked component for <%= action.kitCode %>.</p><% } %></header>
 <div class="aw-cols"><div class="aw-main">
   <section class="card aw-card"><h2>Why StockChief suggests this</h2>
     <% if(item.evidenceQuality){ %><p><strong>Confidence: <%= item.evidenceQuality.level %>.</strong> <%= item.evidenceQuality.reason %></p><% } %>
@@ -22,7 +26,7 @@
     <% if(facts.length){ %><div class="aw-facts"><% for(const entry of facts){ %><div><span><%= helpers.columnLabel(entry.fact) %></span><strong><%= entry.value %></strong></div><% } %></div><% } %>
   </section>
   <section class="card aw-card"><h2>What happens when you approve</h2>
-    <dl class="aw-list"><% if(transfer){ %><div><dt>Move</dt><dd><%= helpers.unitCount(action.quantity,'unit') %></dd></div><div><dt>From</dt><dd><%= action.sourceLocationName %></dd></div><div><dt>To</dt><dd><%= action.destinationLocationName %></dd></div><div><dt>Stock</dt><dd>Stays at the source until the warehouse confirms it left.</dd></div>
+    <dl class="aw-list"><% if(transfer){ %><div><dt>Move</dt><dd><%= helpers.unitCount(action.quantity,action.unit||'unit') %></dd></div><div><dt>From</dt><dd><%= action.sourceLocationName %></dd></div><div><dt>To</dt><dd><%= action.destinationLocationName %></dd></div><% if(action.selections?.length){ %><div><dt>Reserved stock</dt><dd><% for(const selection of action.selections){ %><div><%= selection %></div><% } %></dd></div><% } %><div><dt>Stock</dt><dd>Stays at the source until the warehouse confirms it left.</dd></div>
     <% }else{ %><div><dt>Supplier</dt><dd><%= action.supplierName %></dd></div><div><dt>Quantity</dt><dd><%= helpers.unitCount(action.quantity,'unit') %><% if(Number(action.unitsPerPurchaseUnit)>1){ %> (<%= action.purchaseUnits %> packs of <%= action.unitsPerPurchaseUnit %>)<% } %></dd></div><div><dt>Deliver to</dt><dd><%= chooseWhere?'The location you choose':action.destinationLocationName %></dd></div><div><dt>Cost</dt><dd><% if(priced){ %><%= helpers.money(Math.round(action.value*100),action.currency) %><% }else{ %><span class="aw-warn">No confirmed price yet.</span> Record the supplier’s price before sending.<% } %></dd></div><div><dt>Result</dt><dd>A purchase order is created and tracked. Stock changes only when it is received.</dd></div><% } %></dl>
     <% if(item.outcome?.verified){ %><div class="notice notice--success"><div><strong><%= item.outcome.kind==='transfer'?'Prepared, authorized, and reserved.':'Executed and verified.' %></strong><p><%= item.outcome.kind==='transfer'?'The stock remains at the source until the warehouse confirms physical dispatch.':item.outcome.poNumber+' is approved and traceable to this decision.' %></p><% if(item.outcome.transferId){ %><p><a class="btn btn--primary" href="/transfers/<%= item.outcome.transferId %>">Continue <%= item.outcome.transferNumber %></a></p><% } %></div></div><% } %>
   </section>

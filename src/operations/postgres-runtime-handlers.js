@@ -38,6 +38,7 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   const provider=providers.get(connection.provider_type);
   if(!provider?.poll)throw Object.assign(new Error('This mailbox provider has no polling implementation.'),
     {code:'mailbox_poll_unavailable',retryable:false});
+  if(provider.pollPage&&client.withSessionLock)return require('../connections/postgres-mailbox-poll').run(client,job,connection,provider);
   const database=scopedDatabase(client);
   const pollScope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId),incoming=await require('../commercial/usage-categories').incomingMeter(database,pollScope);
   if(incoming==='incoming_emails'&&(await entitlements.meterState(database,pollScope,incoming)).remaining<=0)throw new entitlements.EntitlementError('Incoming email processing has reached the current allowance. Add a pack or upgrade to resume processing.',{meter:incoming});
@@ -330,7 +331,7 @@ async function runtimeSweep(job,client,options={}){
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
       const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
-        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
+        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY','PAUSED') LIMIT 1`,
       [connector.workspace_id,connector.id]);
       if(due&&!active.rows.length){
         const bucket=Math.floor(now/intervalMs);
@@ -620,6 +621,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),
   'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -690,6 +692,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
   'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
+  'sales_order.route-receipt.v1':external((job,database)=>require('../sales/agent-arrived-stock').onArrival(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),
@@ -709,12 +712,14 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
   'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'planning.location-reorder.v1':Object.assign((job,c)=>require('../forecasting/location-reorder-rules').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
     const certificate=await require('../autopilot/lot-certificate-evidence').queueMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
-    return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order})};
+    const filing=await require('../documents/document-filing-scopes').queueMessage(database,job.workspaceId,job.payload.messageId);
+    return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
@@ -763,6 +768,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
   'import.supplier-portal-invoice.v1':external((job,database)=>require('../purchasing/supplier-portal-invoices').work(database,job.workspaceId,job.payload.sourceId),'bulk'),
   'agent.supplier-credit-source':external((job,database)=>require('../purchasing/agent-supplier-credit-notes').worker(database,job.workspaceId,job.payload.intakeId)),
+  'agent.supplier-invoice-dispute':external((job,database)=>require('../purchasing/invoice-dispute-follow-through').worker(database,job.workspaceId,job.payload)),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{

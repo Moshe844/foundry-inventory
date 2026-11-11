@@ -462,7 +462,7 @@ async function receivePurchaseOrder(database, rawContext, purchaseOrderId, input
   return transaction(database, (client) => receivePurchaseOrderInTransaction(client, rawContext, purchaseOrderId, input));
 }
 
-async function recordSupplierInvoice(database, rawContext, input, {preview=false,recheckId=null}={}) {
+async function recordSupplierInvoice(database, rawContext, input, {preview=false,recheckId=null,unpostedOnly=false,replacementForId=null}={}) {
   const ctx = requireContext(rawContext);
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A supplier invoice needs its complete product lines.');
   return transaction(database, async (client) => {
@@ -489,7 +489,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     if(input.sourceUploadId){const upload=(await client.query("SELECT purchase_order_id,status,extracted_text FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND id=$2 FOR SHARE",[ctx.workspaceId,input.sourceUploadId])).rows[0];if(!upload||upload.status!=='READABLE'||upload.purchase_order_id!==purchaseOrder?.id)throw new ValidationError('The original uploaded invoice must belong to this purchase order and be completely readable.');if(require('../purchasing/supplier-invoice-match').isCreditSource(upload.extracted_text))throw new ValidationError('A supplier credit note cannot become another invoice. Review and approve its separate credit application.');}
     const documentFingerprint=require('../pricing/postgres-promotions').hash({supplierId:supplier.id,purchaseOrderId:input.purchaseOrderId||null,invoiceNumber,issueDate,dueDate,currency,lines:input.lines,charges:input.charges||[],taxMinor:input.taxMinor||0,documentTotalMinor:input.documentTotalMinor??null,sourceMessageId:input.sourceMessageId||null,sourceAttachmentHash:input.sourceAttachmentHash||null,...(input.sourceUploadId?{sourceUploadId:input.sourceUploadId}:{}),...(input.sourcePaymentTerms?{sourcePaymentTerms:input.sourcePaymentTerms}:{})});
     if(reviewed&&reviewed.document_fingerprint!==documentFingerprint)throw new ValidationError('The original invoice evidence changed. A recheck cannot rewrite the supplier document.');
-    if(invoiceNumber){const prior=(await client.query("SELECT id,bill_number,status,match_status,total_minor,balance_minor,journal_entry_id,document_fingerprint FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2 AND lower(supplier_invoice_number)=lower($3) AND status<>'VOID'",[ctx.workspaceId,supplier.id,invoiceNumber])).rows[0];if(prior&&prior.id!==reviewed?.id){if(prior.document_fingerprint!==documentFingerprint)throw new ValidationError('That supplier invoice number already exists with different evidence. Review the recorded bill rather than creating a duplicate.');const result={billId:prior.id,billNumber:prior.bill_number,status:prior.status,matchStatus:prior.match_status,totalMinor:Number(prior.total_minor),balanceMinor:Number(prior.balance_minor),journalEntryId:prior.journal_entry_id};if(operation)await completeOperation(client,operation,result);return {...result,replayed:true};}}
+    if(invoiceNumber){const prior=(await client.query("SELECT id,bill_number,status,match_status,total_minor,balance_minor,journal_entry_id,document_fingerprint FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2 AND lower(supplier_invoice_number)=lower($3) AND status<>'VOID'",[ctx.workspaceId,supplier.id,invoiceNumber])).rows[0];if(prior&&prior.id!==reviewed?.id&&!(preview&&prior.id===replacementForId)){if(prior.document_fingerprint!==documentFingerprint)throw new ValidationError('That supplier invoice number already exists with different evidence. Review the recorded bill rather than creating a duplicate.');const result={billId:prior.id,billNumber:prior.bill_number,status:prior.status,matchStatus:prior.match_status,totalMinor:Number(prior.total_minor),balanceMinor:Number(prior.balance_minor),journalEntryId:prior.journal_entry_id};if(operation)await completeOperation(client,operation,result);return {...result,replayed:true};}}
     const prepared = [];
     let subtotal = 0;
     let matchStatus = purchaseOrder ? 'MATCHED' : 'NOT_MATCHED';
@@ -530,6 +530,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     const previewResult={preview:true,status:matchStatus==='EXCEPTION'?'DISPUTED':'OPEN',matchStatus,differences,subtotalMinor:subtotal,chargesMinor,taxMinor,totalMinor,currency,issueDate,dueDate,documentFingerprint,routineAdjustmentsProven:adjustmentAuthority.approved,routineTermsProven:termsAuthority.approved,
       matchFingerprint:require('../pricing/postgres-promotions').hash({documentFingerprint,differences,received:prepared.map(l=>({lineId:l.purchaseLine?.id||null,received:l.purchaseLine?.quantity_received_units||0,cost:l.purchaseLine?.unit_cost||null,billed:l.billedUnits,secondaryReceived:l.purchaseLine?.secondary_quantity_received||0,secondaryQuantity:l.secondaryQuantity,priceQuantity:l.priceQuantity,receipt:receipts.get(l.purchaseLine?.id),adjustmentAuthority,termsAuthority})),matchStatus}),lines:prepared.map(l=>({skuId:l.skuId||l.purchaseLine?.sku_id||null,description:l.description,quantity:l.quantity,secondaryQuantity:l.secondaryQuantity,priceQuantity:l.priceQuantity,unitCostMinor:l.unitCostMinor,lineTotalMinor:l.lineTotalMinor}))};
     if(preview)return previewResult;
+    if(unpostedOnly&&previewResult.status!=='DISPUTED')throw new ValidationError('This invoice no longer has a dispute. Recheck its source through supplier invoice matching.');
     if(input.expectedMatchFingerprint&&input.expectedMatchFingerprint!==previewResult.matchFingerprint)throw new ValidationError('The invoice, purchase order or matched business state changed after approval. Review it again.');
     if(reviewed&&Number(reviewed.total_minor)!==totalMinor)throw new ValidationError('The rechecked invoice total does not match its original recorded amount.');
     const posted = matchStatus === 'EXCEPTION' ? null : await ledger.postInTransaction(client, ctx, {
@@ -733,6 +734,17 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [salesOrderId, ctx.workspaceId], 'That sales order was not found.');
     if (!['DRAFT', 'CONFIRMED', 'BACKORDERED',...(input.resumeRemaining===true?['PARTIALLY_FULFILLED']:[])].includes(order.status)) throw new ValidationError('That sales order cannot be confirmed.');
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
+    const arrived = await require('../sales/postgres-arrived-stock-reservations').apply(client,ctx,order,input);
+    if(arrived){
+      const status=order.status==='PARTIALLY_FULFILLED'?order.status:arrived.shortage?'BACKORDERED':'CONFIRMED';
+      const at=nowIso(),result={salesOrderId,status,...arrived};
+      await client.query('UPDATE sales_orders SET status=$3,updated_at=$4,version=version+1 WHERE id=$1 AND workspace_id=$2',
+        [salesOrderId,ctx.workspaceId,status,at]);
+      await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,type:'confirmed',
+        detail:{status,...arrived},actorId:ctx.actorId,key:input.idempotencyKey+':event',at});
+      await completeOperation(client,operation,result);
+      return {...result,replayed:false};
+    }
     const lines = await client.query(`SELECT * FROM sales_order_lines
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const kitComponents=(await client.query('SELECT c.component_sku_id,c.sales_order_line_id FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE c.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows,kitLines=new Set(kitComponents.map(c=>c.sales_order_line_id));
@@ -767,8 +779,14 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
           (id,workspace_id,sales_order_line_id,location_id,quantity,created_at,updated_at)
           VALUES($1,$2,$3,$4,$5,$6,$6)
           ON CONFLICT(sales_order_line_id,location_id) DO UPDATE SET quantity=sales_order_allocations.quantity+EXCLUDED.quantity,
+            rotation_selection=CASE WHEN sales_order_allocations.rotation_selection IS NOT NULL
+              AND EXISTS(SELECT 1 FROM jsonb_array_elements(sales_order_allocations.rotation_selection) selection WHERE selection ? 'arrivals')
+              AND EXISTS(SELECT 1 FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+                WHERE s.workspace_id=$2 AND s.id=$7 AND i.tracking_mode='quantity' AND i.secondary_unit_label IS NULL)
+              THEN sales_order_allocations.rotation_selection||jsonb_build_array(jsonb_build_object('quantity',EXCLUDED.quantity,'arrivals','[]'::jsonb))
+              ELSE sales_order_allocations.rotation_selection END,
             updated_at=EXCLUDED.updated_at`,
-        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso()]);
+        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso(),line.sku_id]);
         allocations.push({ lineId: line.id, locationId: balance.location_id, quantity });
         needed = exact.safeNumber(exact.subtract(needed,quantity));
       }
@@ -1148,7 +1166,7 @@ async function applyDepositToInvoice(client, ctx, { payment, invoiceState, custo
     deposit_journal_entry_id: depositPosted.entry.id } };
 }
 
-async function recordPaymentInTransaction(client, rawContext, input) {
+async function recordPaymentInTransaction(client, rawContext, input, bankReceipt = null) {
   const providerSystem=rawContext?.systemSource==='payment_provider';
   const ctx=providerSystem
     ?{workspaceId:rawContext.workspaceId,actorId:null}
@@ -1176,30 +1194,52 @@ async function recordPaymentInTransaction(client, rawContext, input) {
     const supplier = direction === 'SUPPLIER_PAYMENT'
       ? await requireRow(client, 'SELECT id FROM suppliers WHERE id=$1 AND workspace_id=$2',
         [input.supplierId, ctx.workspaceId], 'That supplier was not found.') : null;
-    const target = direction === 'CUSTOMER_RECEIPT'
+    let targets;
+    if(bankReceipt){
+      const requested=new Map(bankReceipt.allocations.map(row=>[row.invoiceId,positiveInteger(row.amountMinor,'Allocation amount')]));
+      if(requested.size!==bankReceipt.allocations.length||require('../domain/currency').sum([...requested.values()])!==amountMinor) {
+        throw new ValidationError('The exact invoice allocations must use the whole bank credit once.');
+      }
+      const rows=(await client.query(`SELECT * FROM accounting_customer_invoices
+        WHERE workspace_id=$1 AND customer_id=$2 AND id=ANY($3::text[]) ORDER BY id FOR UPDATE`,
+      [ctx.workspaceId,customer.id,[...requested.keys()]])).rows;
+      if(rows.length!==requested.size)throw new ValidationError('All allocations must use this customer’s exact invoices.');
+      targets=rows.map(row=>({row,amount:requested.get(row.id)}));
+    }else{
+      const row = direction === 'CUSTOMER_RECEIPT'
       ? await requireRow(client, `SELECT * FROM accounting_customer_invoices
         WHERE id=$1 AND workspace_id=$2 AND customer_id=$3 FOR UPDATE`,
       [input.customerInvoiceId, ctx.workspaceId, customer.id], 'That customer invoice was not found.')
       : await requireRow(client, `SELECT * FROM accounting_supplier_bills
         WHERE id=$1 AND workspace_id=$2 AND supplier_id=$3 FOR UPDATE`,
       [input.supplierBillId, ctx.workspaceId, supplier.id], 'That supplier bill was not found.');
-    if (!['OPEN', 'PARTIALLY_PAID'].includes(target.status)) throw new ValidationError('That document is not open for payment.');
-    if (amountMinor > Number(target.balance_minor)) throw new ValidationError('Payment exceeds the outstanding balance.');
+      targets=[{row,amount:amountMinor}];
+    }
+    const target=targets[0].row;
+    const currency=input.currency||target.currency;
+    for(const {row,amount} of targets){
+      if(!['OPEN','PARTIALLY_PAID'].includes(row.status))throw new ValidationError('That document is not open for payment.');
+      if(amount>Number(row.balance_minor))throw new ValidationError('Payment exceeds the outstanding balance.');
+      if(bankReceipt&&(row.currency!==currency||row.issue_date>paymentDate))throw new ValidationError('Bank allocations need current invoices of the same currency dated on or before the receipt.');
+    }
     const sourceKey = input.sourceKey || `${direction.toLowerCase()}:${input.idempotencyKey}`;
     const posted = await ledger.postInTransaction(client, ctx, { postingDate: paymentDate,
       sourceKey: `journal:${sourceKey}`, description: direction === 'CUSTOMER_RECEIPT' ? 'Customer payment' : 'Supplier payment',
       sourceType: direction === 'CUSTOMER_RECEIPT' ? 'customer_payment' : 'supplier_payment',
-      sourceRecordType: direction === 'CUSTOMER_RECEIPT' ? 'customer_invoice' : 'supplier_bill',
-      sourceRecordId: target.id, currency: input.currency || target.currency,
+      sourceRecordType: bankReceipt&&targets.length>1?'bank_transaction':direction === 'CUSTOMER_RECEIPT' ? 'customer_invoice' : 'supplier_bill',
+      sourceRecordId: bankReceipt&&targets.length>1?bankReceipt.id:target.id, currency,
+      ...(bankReceipt?{metadata:{bankTransactionId:bankReceipt.id,bankAccountId:bankReceipt.bank_account_id}}:{}),
       lines: direction === 'CUSTOMER_RECEIPT' ? [
-        { accountKey: 'CASH', debitMinor: amountMinor, customerId: customer.id },
+        { ...(bankReceipt?{accountId:bankReceipt.ledger_account_id}:{accountKey:'CASH'}), debitMinor: amountMinor, customerId: customer.id },
         { accountKey: 'ACCOUNTS_RECEIVABLE', creditMinor: amountMinor, customerId: customer.id },
       ] : [
         { accountKey: 'ACCOUNTS_PAYABLE', debitMinor: amountMinor, supplierId: supplier.id },
         { accountKey: 'CASH', creditMinor: amountMinor, supplierId: supplier.id },
       ],
     });
-    const cashAccountId = await accountId(client, ctx.workspaceId, 'CASH');
+    const cashAccountId=bankReceipt?.ledger_account_id||await accountId(client,ctx.workspaceId,'CASH');
+    const salesOrderId=bankReceipt&&targets.some(t=>t.row.sales_order_id!==target.sales_order_id)
+      ?null:bankReceipt?target.sales_order_id:input.salesOrderId||null;
     const id = newId('payment');
     const paymentNumber = await numbered(client, ctx.workspaceId, 'accounting_payments', direction === 'CUSTOMER_RECEIPT' ? 'RCPT' : 'PAY');
     const at = nowIso();
@@ -1208,20 +1248,27 @@ async function recordPaymentInTransaction(client, rawContext, input) {
        reference,sales_order_id,status,cash_account_id,journal_entry_id,source_key,created_by_user_id,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'POSTED',$13,$14,$15,$16,$17)`,
     [id, ctx.workspaceId, paymentNumber, direction, customer?.id || null, supplier?.id || null,
-      paymentDate, amountMinor, input.currency || target.currency, input.method || null, input.reference || null,
-      input.salesOrderId || null, cashAccountId, posted.entry.id, sourceKey, ctx.actorId, at]);
+      paymentDate, amountMinor, currency, input.method || null, input.reference || null,
+      salesOrderId, cashAccountId, posted.entry.id, sourceKey, ctx.actorId, at]);
+    const allocations=targets.map(({row,amount})=>{
+      const balanceMinor=Number(row.balance_minor)-amount;
+      return {id:newId('payalloc'),recordId:row.id,amountMinor:amount,balanceMinor,status:balanceMinor===0?'PAID':'PARTIALLY_PAID'};
+    });
+    const customerReceipt=direction==='CUSTOMER_RECEIPT';
+    const table=customerReceipt?'accounting_customer_invoices':'accounting_supplier_bills';
+    const allocationColumn=customerReceipt?'customer_invoice_id':'supplier_bill_id';
+    const records=JSON.stringify(allocations);
     await client.query(`INSERT INTO accounting_payment_allocations
-      (id,workspace_id,payment_id,customer_invoice_id,supplier_bill_id,amount_minor,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7)`,
-    [newId('payalloc'), ctx.workspaceId, id, direction === 'CUSTOMER_RECEIPT' ? target.id : null,
-      direction === 'SUPPLIER_PAYMENT' ? target.id : null, amountMinor, at]);
-    const balanceMinor = Number(target.balance_minor) - amountMinor;
-    const status = balanceMinor === 0 ? 'PAID' : 'PARTIALLY_PAID';
-    const table = direction === 'CUSTOMER_RECEIPT' ? 'accounting_customer_invoices' : 'accounting_supplier_bills';
-    await client.query(`UPDATE ${table} SET balance_minor=$2::bigint,status=$3,updated_at=$4,
-      paid_at=CASE WHEN $2::bigint=0::bigint THEN $4 ELSE paid_at END WHERE id=$1`,
-    [target.id, balanceMinor, status, at]);
+      (id,workspace_id,payment_id,${allocationColumn},amount_minor,created_at)
+      SELECT x.id,$1,$2,x."recordId",x."amountMinor",$3
+      FROM jsonb_to_recordset($4::jsonb) AS x(id text,"recordId" text,"amountMinor" bigint)`,[ctx.workspaceId,id,at,records]);
+    await client.query(`UPDATE ${table} t SET balance_minor=x."balanceMinor",status=x.status,updated_at=$2,
+      paid_at=CASE WHEN x."balanceMinor"=0 THEN $2 ELSE t.paid_at END
+      FROM jsonb_to_recordset($3::jsonb) AS x("recordId" text,"balanceMinor" bigint,status text)
+      WHERE t.workspace_id=$1 AND t.id=x."recordId"`,[ctx.workspaceId,at,records]);
+    const {balanceMinor,status}=allocations[0];
     const result = { paymentId: id, paymentNumber, direction, amountMinor, balanceMinor, status,
+      ...(bankReceipt?{allocations:allocations.map(a=>({invoiceId:a.recordId,amountMinor:a.amountMinor,balanceMinor:a.balanceMinor,status:a.status}))}:{}),
       journalEntryId: posted.entry.id };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
@@ -1427,6 +1474,16 @@ async function voidPayment(database, rawContext, paymentId, input = {}) {
   });
 }
 
+async function recordCustomerBankReceiptInTransaction(client,ctx,input){
+  const bank=await require('../accounting/postgres-banking').receiptAccount(client,ctx.workspaceId,input.bankTransactionId,{lock:true});
+  if(bank.status!=='UNMATCHED'||!Array.isArray(input.allocations)||!input.allocations.length){
+    throw new ValidationError('Use the exact allocations of a current unmatched bank credit.');
+  }
+  const key='agent-bank-receipt:'+bank.id;
+  return recordPaymentInTransaction(client,ctx,{direction:'CUSTOMER_RECEIPT',customerId:input.customerId,
+    amountMinor:Number(bank.amount_minor),currency:bank.currency,paymentDate:bank.transaction_date,method:'BANK_TRANSFER',
+    reference:input.reference,sourceKey:key,idempotencyKey:key},{...bank,allocations:input.allocations});
+}
 function recordCustomerPayment(database, ctx, input) {
   return recordPayment(database, ctx, { ...input, direction: 'CUSTOMER_RECEIPT' });
 }
@@ -1468,6 +1525,7 @@ module.exports = {
   reviseDraftSalesOrderLine,
   reviseDraftSalesOrderLineInTransaction,
   recordCustomerPayment,
+  recordCustomerBankReceiptInTransaction,
   recordCustomerDeposit,refundCustomerDeposit,voidPayment,
   recordSupplierPayment,
   recordSupplierPaymentInTransaction,

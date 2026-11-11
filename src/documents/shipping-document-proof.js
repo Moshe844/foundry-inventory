@@ -70,4 +70,5 @@ function inspect(pages){
   return {kind,headings,referenceEvidence:references,references:[...unique.values()],fields,issues,unrelated:!types.length&&other.length>0};
 }
 
-module.exports={kinds,labels,inspect,normalized,poToken};
+const hasPoLabel=line=>poLabel.test(line);
+module.exports={kinds,labels,inspect,normalized,poToken,hasPoLabel};

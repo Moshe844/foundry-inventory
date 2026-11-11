@@ -812,7 +812,9 @@ router.get('/accounting/banking', permit(permissions.VIEW_ACCOUNTING, 'view bank
     FROM accounting_journal_entries e WHERE e.workspace_id = ? AND e.status = 'POSTED'
     ORDER BY e.posting_date DESC, e.entry_number DESC LIMIT 100`).all(req.ctx.workspaceId);
   res.page('accounting/banking', { title: 'Banking and reconciliation', nav: 'accounting', banks,
-    transactions, reconciliations, paymentMatches, journalMatches, today: today(), accounts: ledger.listAccounts(req.db, req.ctx.workspaceId, { activeOnly: true })
+    transactions, reconciliations, paymentMatches, journalMatches, statements:[],
+    canImport:false, canVerify:false, canAttachRemittance:false,
+    today: today(), accounts: ledger.listAccounts(req.db, req.ctx.workspaceId, { activeOnly: true })
       .filter((account) => ['ASSET', 'LIABILITY'].includes(account.account_type)) });
 }));
 

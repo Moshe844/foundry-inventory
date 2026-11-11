@@ -1,5 +1,21 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
+<% if(result.lossShifts?.length){ %>
+  <details><summary>Set local warehouse shifts</summary>
+    <% for(const warehouse of result.lossShifts){ %>
+      <form method="post" action="/autopilot/reviews/repeat-loss/shifts" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="locationId" value="<%= warehouse.id %>">
+        <input type="hidden" name="revision" value="<%= warehouse.revision %>">
+        <label><%= warehouse.name %> shift start times
+          <input name="starts" value="<%= warehouse.starts %>" maxlength="64" required>
+        </label>
+        <small>Separate local times in 24-hour format with commas.</small>
+        <button class="btn">Save <%= warehouse.name %> shifts</button>
+      </form>
+    <% } %>
+  </details>
+<% } %>
 <% if(result.balanceForm){ %>
   <p><a href="/autopilot/transfer-balancing">Manage saved balancing rules</a></p>
   <details><summary>Prepare a stock balancing request</summary>
@@ -27,6 +43,7 @@
 </form></details><% } %>
 <% if(result.lotCertificateLink){ %><p><a class="btn" href="/autopilot/lot-certificates">Review and link certificate originals</a> <a href="/autopilot/lots">Find a recorded lot</a></p><% } %>
 <% if(result.supplierCreditLink){ %><p><a class="btn" href="/autopilot/supplier-credits">Open credit notes and applications</a></p><% } %>
+<% if(result.documentDiscoveryLink){ %><p><a class="btn" href="/autopilot/document-filing">Discover and file originals</a></p><% } %>
 <% if(result.shippingDocumentLink){ %><p><a class="btn" href="/autopilot/shipping-documents">Read shipping originals</a></p><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
