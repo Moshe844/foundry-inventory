@@ -690,6 +690,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
   'purchasing.container-plan.v1':external((job,database)=>require('../purchasing/agent-container-plans').onProject(database,job.workspaceId,job.payload.projectId)),
   'purchasing.promotion-stock-plan.v1':external((job,database)=>require('../purchasing/agent-promotion-stock').onProject(database,job.workspaceId,job.payload.promotionId)),

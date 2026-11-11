@@ -1,0 +1,26 @@
+<div class="page-head"><div class="titles"><h1>Review supplier availability</h1>
+  <p>Record the supplier’s actual statement on purchase <strong><%= review.order.po_number %></strong>.</p>
+</div></div>
+<section class="card section"><h2>Original email</h2>
+  <p><%= review.message.sender %> · <%= helpers.dateTime(review.message.received_at) %></p>
+  <p><strong><%= review.message.subject %></strong></p>
+  <p style="white-space:pre-wrap;overflow-wrap:anywhere"><%= review.message.body_text %></p>
+</section>
+<section class="card section"><h2>Which remaining goods are unavailable?</h2>
+  <form method="post" action="/mail/<%= messageId %>/supplier-availability" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="fingerprint" value="<%= review.fingerprint %>">
+    <fieldset><legend>Exact purchase lines</legend>
+      <% review.lines.forEach(line=>{ %><label class="choice">
+        <input type="checkbox" name="lineIds" value="<%= line.id %>">
+        <span><strong><%= line.code %></strong> · line <%= line.line_number %> · <%= line.remaining %> <%= line.unit_label %> still due at <%= line.location_name %>
+          <% if(line.secondary_unit_label&&Number(line.remaining_weight)>0){ %> · <%= line.remaining_weight %> <%= line.secondary_unit_label %><% } %></span>
+      </label><% }) %>
+    </fieldset>
+    <label>Copy the supplier’s exact statement from the email above <textarea name="quote" required maxlength="1000" rows="3"></textarea></label>
+    <label>Recheck the statement by <input type="date" name="validThrough" required></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> I checked that the supplier said these exact remaining goods are unavailable.</label>
+    <p>These goods stay out of dependable incoming until the supplier confirms availability or the evidence is corrected. The purchase order stays in its history.</p>
+    <button class="btn btn--primary" type="submit">Record supplier availability</button>
+  </form>
+</section>

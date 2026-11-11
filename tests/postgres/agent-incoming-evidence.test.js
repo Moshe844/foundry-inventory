@@ -145,7 +145,8 @@ test('the incoming-evidence upgrade preserves previous migration identities, sto
   const previous=(await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows;
   const cost=(await db.query('SELECT * FROM accounting_inventory_cost_balances WHERE workspace_id=$1 ORDER BY sku_id,location_id',[ctx.workspaceId])).rows;
   const migrate=require('../../src/db/migrate-postgres').migratePostgres;
-  assert.deepEqual(await migrate(db),['347-agent-incoming-evidence.sql']);
+  const upgrade={through:'347-agent-incoming-evidence.sql'};
+  assert.deepEqual(await migrate(db,upgrade),[upgrade.through]);
   assert.deepEqual((await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows.slice(0,previous.length),previous);
   await storage.refresh(db,ctx.workspaceId);
   assert.equal(await storage.state(db,f.owner.accountId),bytes);
@@ -165,7 +166,7 @@ test('the incoming-evidence upgrade preserves previous migration identities, sto
       assert.equal(Number(actual.unit_cost),1.10);
     }
   }
-  assert.deepEqual(await migrate(db),[]);
+  assert.deepEqual(await migrate(db,upgrade),[]);
 });
 
 test('unavailable incoming stops new preorders while actual receipts can finish existing customer requests',{timeout:300000},async t=>{

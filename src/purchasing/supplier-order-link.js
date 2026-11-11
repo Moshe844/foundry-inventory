@@ -43,7 +43,12 @@ async function submit(db,token,kind,value){
   if(date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date))
     throw new ValidationError('Enter a valid delivery date.');
   return db.transaction(async client=>{
-    const order=await lookup(client,token,true,{includeCompleted:true}),digest=hash(kind+'|'+(file?hash(value):date||'')),id=newId('supplierreply');
+    const order=await lookup(client,token,true,{includeCompleted:true});
+    const unavailable=kind==='confirm'&&!date?(await client.query(`SELECT r.id FROM stockchief_runtime.supplier_link_submissions r
+      JOIN stockchief_runtime.supplier_order_links l ON l.workspace_id=r.workspace_id AND l.token_hash=r.token_hash
+      WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind='unavailable' ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,
+    [order.workspace_id,order.id])).rows[0]:null;
+    const digest=hash(kind+'|'+(file?hash(value):date||'')+(unavailable?'|'+unavailable.id:'')),id=newId('supplierreply');
     const existing=await client.query('SELECT 1 FROM stockchief_runtime.supplier_link_submissions WHERE token_hash=$1 AND fingerprint=$2',[order.token_hash,digest]);
     if(existing.rowCount) return {saved:true};
     if(file) await require('../commercial/storage-capacity').reserve(client,order.workspace_id,'supplier-file:'+id,value.length,{finished:true});
@@ -69,10 +74,16 @@ async function responses(db,workspaceId,orderId){
     WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY r.created_at DESC,r.id`,[workspaceId,orderId])).rows;
   const unavailable=rows.filter(row=>row.kind==='unavailable').map(row=>row.id);
   if(!unavailable.length)return rows;
-  const evidence=(await db.query(`SELECT id AS notice_id,supplier_reply_id,evidence,valid_through::text,revoked_at
-    FROM stockchief_runtime.agent_backup_supplier_notices WHERE workspace_id=$1 AND purchase_order_id=$2
-      AND supplier_reply_id=ANY($3::text[])`,[workspaceId,orderId,unavailable])).rows;
-  const byId=new Map(evidence.map(row=>[row.supplier_reply_id,row]));
-  return rows.map(row=>({...row,...byId.get(row.id)}));
+  const evidence=(await db.query(`SELECT n.id,n.supplier_reply_id,n.evidence,n.valid_through::text,n.revoked_at,s.code,
+    to_jsonb(n)->>'original_email_message_id' AS original_email_id
+    FROM stockchief_runtime.agent_backup_supplier_notices n JOIN skus s ON s.workspace_id=n.workspace_id AND s.id=n.sku_id
+    WHERE n.workspace_id=$1 AND n.purchase_order_id=$2 AND n.supplier_reply_id=ANY($3::text[])
+    ORDER BY n.supplier_reply_id,s.code,n.id`,[workspaceId,orderId,unavailable])).rows;
+  const byId=new Map();
+  for(const notice of evidence){
+    if(!byId.has(notice.supplier_reply_id))byId.set(notice.supplier_reply_id,[]);
+    byId.get(notice.supplier_reply_id).push(notice);
+  }
+  return rows.map(row=>({...row,notices:byId.get(row.id)||[]}));
 }
 module.exports={issue,lookup,submit,responses};
