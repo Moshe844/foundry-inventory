@@ -18,16 +18,17 @@ function contentHash(message){return crypto.createHash('sha256').update(JSON.str
   attachments:(message.attachments||[]).map(a=>({filename:a.filename,contentHash:crypto.createHash('sha256').update(a.contentBase64?Buffer.from(a.contentBase64,'base64'):Buffer.from(a.extractedText||'')).digest('hex')}))})).digest('hex');}
 
 function attachmentsForCapture(message){
+  const bounds=message=>new ValidationError(message,{source:'mailbox_attachment_bounds'});
   const input=message.attachments||[];
-  if(!Array.isArray(input)||input.length>50)throw new ValidationError('A message may contain at most 50 attachments.');
+  if(!Array.isArray(input)||input.length>50)throw bounds('A message may contain at most 50 attachments.');
   let total=0;
   return input.map(a=>{
-    if(!a||typeof a!=='object'||Array.isArray(a))throw new ValidationError('Each attachment needs valid document metadata.');
-    const filename=String(a.filename||'').trim();if(!filename||filename.length>240)throw new ValidationError('An attachment needs a valid filename.');
-    if(a.contentBase64!==undefined&&(typeof a.contentBase64!=='string'||a.contentBase64.length>Math.ceil(20*1024*1024/3)*4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.contentBase64)))throw new ValidationError('The attachment could not be decoded safely.');
+    if(!a||typeof a!=='object'||Array.isArray(a))throw bounds('Each attachment needs valid document metadata.');
+    const filename=String(a.filename||'').trim();if(!filename||filename.length>240)throw bounds('An attachment needs a valid filename.');
+    if(a.contentBase64!==undefined&&(typeof a.contentBase64!=='string'||a.contentBase64.length>Math.ceil(20*1024*1024/3)*4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.contentBase64)))throw bounds('The attachment could not be decoded safely.');
     const content=a.contentBase64?Buffer.from(a.contentBase64,'base64'):null;total+=content?.length||0;
-    if((content?.length||0)>20*1024*1024||total>40*1024*1024)throw new ValidationError('Split attachments larger than the mailbox processing limit.');
-    const extractedText=trimOrNull(a.extractedText);if(extractedText&&extractedText.length>180000)throw new ValidationError('The attachment text is too large to process safely.');
+    if((content?.length||0)>20*1024*1024||total>40*1024*1024)throw bounds('Split attachments larger than the mailbox processing limit.');
+    const extractedText=trimOrNull(a.extractedText);if(extractedText&&extractedText.length>180000)throw bounds('The attachment text is too large to process safely.');
     return {filename,content,extractedText,mimeType:trimOrNull(a.mimeType),externalId:trimOrNull(a.id),hash:crypto.createHash('sha256').update(content||Buffer.from(extractedText||'')).digest('hex')};
   });
 }
@@ -45,13 +46,20 @@ async function saveAttachments(client,workspaceId,messageId,attachments,at,{back
   return added;
 }
 
-async function capture(database,connection,message){
-  const attachments=attachmentsForCapture(message);
+async function capture(database,connection,message,{metadataOnlyReason=message.sourceIssue||null}={}){
+  const attachments=metadataOnlyReason?[]:attachmentsForCapture(message);
   const sender=trimOrNull(message.sender)?.toLowerCase();
   if(!sender)throw new ValidationError('A mailbox message needs a sender.');
   const externalId=trimOrNull(message.externalMessageId||message.messageId||message.id);
   if(!externalId)throw new ValidationError('A mailbox message needs a provider message id.');
   return database.transaction(async(client)=>{
+    await client.query('SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+      [connection.workspace_id,connection.id]);
+    const previousAside=(await client.query(`SELECT id,sender FROM connection_email_set_aside
+      WHERE workspace_id=$1 AND connector_id=$2 AND external_message_id=$3 FOR UPDATE`,
+      [connection.workspace_id,connection.id,externalId])).rows[0];
+    if(previousAside&&previousAside.sender.toLowerCase()!==sender)
+      throw new ValidationError('The saved set-aside email has a different sender from this provider message.');
     const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[connection.workspace_id])).rows[0];
     if(owner?.owner_account_id)await commercialUsage.assertCapability(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},'email.auto_extract');
@@ -68,22 +76,39 @@ async function capture(database,connection,message){
       SELECT id,'customer' AS kind FROM customer_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
         AND lower(recipient)=lower($3) AND external_thread_id=$4
     ) sent LIMIT 1`,[connection.workspace_id,connection.id,sender,threadId])).rows[0]:null;
-    if(matches.length!==1&&!sentThread){
+    const match=matches.length===1?matches[0]:sentThread?{id:null,name:sender,kind:'business_reply'}:null;
+    const sorting=await require('./agent-mail-triage').forCapture(client,connection.workspace_id,
+      {...message,sender,bodyText:message.bodyText||message.body},match?.kind);
+    const junk=message.providerJunk===true;
+    if(!match||junk||metadataOnlyReason){
+      const saved=(await client.query(`SELECT id,sender FROM connection_email_messages WHERE workspace_id=$1 AND connector_id=$2 AND external_message_id=$3`,
+        [connection.workspace_id,connection.id,externalId])).rows[0];
+      if(saved){
+        if(saved.sender.toLowerCase()!==sender)throw new ValidationError('The saved email identity does not match this provider message.');
+        return {accepted:true,replayed:true,messageId:saved.id};
+      }
       const id=newId('emailaside');const at=nowIso();
-      const category=await require('./agent-mail-triage').forCapture(client,connection.workspace_id,{...message,sender,bodyText:message.bodyText||message.body},null);
       const inserted=await client.query(`INSERT INTO connection_email_set_aside
-        (id,workspace_id,connector_id,external_message_id,sender,subject,received_at,reason,created_at,agent_category)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        (id,workspace_id,connector_id,external_message_id,sender,subject,received_at,reason,created_at,agent_category,agent_category_reason)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
       [id,connection.workspace_id,connection.id,externalId,sender,trimOrNull(message.subject),
-        message.receivedAt||at,matches.length?'Sender matches more than one business contact.':'Sender is not a customer or supplier.',at,category]);
+        message.receivedAt||at,metadataOnlyReason||(junk?'The provider placed this message in junk.':matches.length?'Sender matches more than one business contact.':'Sender is not a customer or supplier.'),
+        at,sorting?.category||null,sorting?.reason||null]);
       if(inserted.rows.length)return {accepted:false,setAside:true,replayed:false,id};
       const existing=(await client.query(`SELECT id FROM connection_email_set_aside WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:false,setAside:true,replayed:true,id:existing.id};
     }
-    const match=matches.length===1?matches[0]:{id:null,name:sender,kind:'business_reply'};
-    const category=await require('./agent-mail-triage').forCapture(client,connection.workspace_id,{...message,sender,bodyText:message.bodyText||message.body},match.kind);
+    const category=sorting?.category||null,sourceHash=contentHash(message);
+    const internetId=trimOrNull(message.internetMessageId);
+    if(connection.provider_type==='microsoft365'&&internetId){
+      // Outlook may give the same original a new provider ID after a folder move.
+      const moved=(await client.query(`SELECT id FROM connection_email_messages WHERE workspace_id=$1 AND connector_id=$2
+        AND internet_message_id=$3 AND lower(sender)=$4 AND content_hash=$5 AND external_message_id<>$6 ORDER BY id LIMIT 1`,
+        [connection.workspace_id,connection.id,internetId,sender,sourceHash,externalId])).rows[0];
+      if(moved)return {accepted:true,replayed:true,messageId:moved.id};
+    }
     const id=newId('emailmsg');const at=nowIso();
     const triage=replyTriage.judge({sender,subject:message.subject,
       bodyText:message.bodyText||message.body,attachmentCount:(message.attachments||[]).length,
@@ -91,13 +116,13 @@ async function capture(database,connection,message){
     const inserted=await client.query(`INSERT INTO connection_email_messages
       (id,workspace_id,connector_id,external_message_id,sender,recipients,subject,body_text,received_at,
        supplier_id,trust_status,classification,external_thread_id,internet_message_id,content_hash,
-       processing_status,reply_state,reply_reason,reply_state_at,created_at,agent_category)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17,$18)
+       processing_status,reply_state,reply_reason,reply_state_at,created_at,agent_category,agent_category_reason)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17,$18,$19)
       ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
     [id,connection.workspace_id,connection.id,externalId,sender,JSON.stringify(message.recipients||[]),
       trimOrNull(message.subject),trimOrNull(message.bodyText||message.body),message.receivedAt||at,
-      match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
-      contentHash(message),triage.state,triage.reason,at,category]);
+      match.kind==='supplier'?match.id:null,match.kind,threadId,internetId,
+      sourceHash,triage.state,triage.reason,at,category,sorting?.reason||null]);
     if(!inserted.rows.length){
       const existing=(await client.query(`SELECT id,sender FROM connection_email_messages WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3 FOR UPDATE`,[connection.workspace_id,connection.id,externalId])).rows[0];
@@ -112,6 +137,8 @@ async function capture(database,connection,message){
       }
       return {accepted:true,replayed:true,messageId:existing.id,attachmentsBackfilled};
     }
+    if(previousAside)await client.query(`UPDATE connection_email_set_aside SET brought_in_message_id=$3,brought_in_at=$4
+      WHERE workspace_id=$1 AND id=$2`,[connection.workspace_id,previousAside.id,id,at]);
     await saveAttachments(client,connection.workspace_id,id,attachments,at);
     if(match.kind==='supplier'&&!attachments.length)await require('../purchasing/agent-supplier-invoice-intake').queueEmailBody(client,connection.workspace_id,id,message.bodyText||message.body);
     if(category==='order'&&match.kind==='customer'&&!attachments.length){
@@ -235,13 +262,13 @@ async function setAsideCount(database,workspaceId){
   return Number(row?.count||0);
 }
 
-async function listSetAside(database,workspaceId){
-  return (await database.query(`SELECT aside.id,aside.sender,aside.subject,aside.received_at,aside.reason,
+async function listSetAside(database,workspaceId,focus=null){
+  return (await database.query(`SELECT aside.id,aside.sender,aside.subject,aside.received_at,aside.reason,aside.agent_category,aside.agent_category_reason,
       connector.display_name AS connector_name
     FROM connection_email_set_aside aside JOIN workspace_connectors connector
       ON connector.workspace_id=aside.workspace_id AND connector.id=aside.connector_id
-    WHERE aside.workspace_id=$1 AND aside.brought_in_at IS NULL
-    ORDER BY aside.received_at DESC,aside.id DESC LIMIT 100`,[workspaceId])).rows;
+    WHERE aside.workspace_id=$1 AND aside.brought_in_at IS NULL AND ($2::text IS NULL OR aside.id=$2)
+    ORDER BY aside.received_at DESC,aside.id DESC LIMIT 100`,[workspaceId,focus])).rows;
 }
 
 async function adoptSetAside(database,ctx,id,input,options={}){
@@ -272,6 +299,10 @@ async function adoptSetAside(database,ctx,id,input,options={}){
     String(fetched.sender||'').toLowerCase()!==String(aside.sender).toLowerCase())
     throw new ValidationError('The provider did not return the exact set-aside message and sender. Nothing was added.');
   return database.transaction(async(client)=>{
+    const active=(await client.query(`SELECT provider_account_id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2
+      AND status='connected' AND paused_at IS NULL FOR UPDATE`,[ctx.workspaceId,connection.id])).rows[0];
+    if(!active||active.provider_account_id!==connection.provider_account_id)
+      throw new ValidationError('The connected mailbox changed while this original was being read.');
     const locked=(await client.query(`SELECT * FROM connection_email_set_aside
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
     if(!locked)throw new NotFoundError('That set-aside email was not found.');
