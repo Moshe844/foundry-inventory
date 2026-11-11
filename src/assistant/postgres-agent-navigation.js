@@ -18,7 +18,8 @@ async function begin(db,ctx,id,{automatic=false}={}){
   if(!n||new Date(goal.expires_at)<=new Date())throw new ValidationError('This page handoff is no longer available.');
   if(automatic&&n.state!=='PENDING')return null;
   const href=localPath(goal.checkpoint.navigation.href);if(!href)throw new ValidationError('Invalid page handoff.');
-  await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,goal.checkpoint.harness);
+  // Hosted business goals carry no native harness; they still need current authority.
+  await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,goal.checkpoint.harness||{});
   const token=randomBytes(32).toString('hex');
   goal.checkpoint.navigation={...goal.checkpoint.navigation,state:'DELIVERING',tokenHash:hash(token)};
   await client.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb,updated_at=now()
@@ -37,9 +38,9 @@ async function acknowledge(db,ctx,pending,token){
   if(!n||n.id!==pending.navigationId||n.href!==pending.href||n.tokenHash!==hash(token))throw new ValidationError('The page handoff changed.');
   if(n.state==='DELIVERED'&&goal.status==='COMPLETED')return goal;
   if(goal.status!=='WAITING_EVENT'||n.state!=='DELIVERING')throw new ValidationError('This request is no longer waiting for a page.');
-  await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,goal.checkpoint.harness);
+  await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,goal.checkpoint.harness||{});
   n.state='DELIVERED';n.deliveredAt=new Date().toISOString();
-  goal.checkpoint.harness.completionSource='user_browser_arrival';
+  if(goal.checkpoint.harness)goal.checkpoint.harness.completionSource='user_browser_arrival';
   return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',checkpoint=$4::jsonb,
    answer=$5,updated_at=now() WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,
    [ctx.workspaceId,ctx.actorId,pending.goalId,JSON.stringify(goal.checkpoint),
