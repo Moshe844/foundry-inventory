@@ -22,7 +22,7 @@
   "24": "Combines matching unsent supplier drafts while preserving total goods and value, retaining the originals as cancelled records.",
   "25": "Splits an unsent purchase draft by warehouse, line delivery date or goods-value limit. The resulting orders remain unsent drafts.",
   "26": "Shows monthly open-to-buy after posted purchases and unbilled commitments, separately by currency. Automatic purchase-budget allocation remains open.",
-  "27": "Uses saved supplier purchase units, case sizes and order multiples when preparing an eligible agent purchase draft.",
+  "27": "Orders in whole saved cases, packs or pallets and keeps the supplier's order multiple. Growth needs a matching owner-approved example and trusted item authority. Pro and Custom can use current limits without training.",
   "28": "Queues an approved purchase order and its supplier message. Delivery through a live connected mailbox still needs verification.",
   "29": "Prepares scoped supplier confirmation requests for reorders and stops queued requests when a reply arrives. Live mailbox delivery remains open.",
   "30": "Prepares a delivery chase for a late supplier order and rechecks authority before sending. Live mailbox acceptance remains open.",

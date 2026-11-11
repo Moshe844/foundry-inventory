@@ -89,16 +89,26 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
   if (candidate.currency !== cap.currency || !Number.isFinite(candidate.value) ||
       candidate.value <= 0 || candidate.value > cap.perOrder) return 'This order needs approval under your plan’s per-order limit.';
   if (state.plan === 'growth' && !policy.itemScope.includes(candidate.skuId)) return 'Choose this item as trusted before automatic ordering.';
-  const prior = await database.query(`SELECT po.currency,line.unit_cost,line.units_per_purchase_unit,line.sku_id FROM purchase_orders po
+  const needsPackExample=state.plan==='growth'&&require('../purchasing/agent-order-quantities').usesPacks(candidate);
+  const prior = await database.query(`SELECT po.currency,line.unit_cost,line.units_per_purchase_unit,line.sku_id,
+      line.purchase_unit,line.quantity_purchase_units FROM purchase_orders po
     JOIN purchase_order_lines line ON line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id
     WHERE po.workspace_id=$1 AND po.supplier_id=$2 AND po.id IS DISTINCT FROM $3
       AND po.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
-      AND (line.sku_id=$4 OR $5=false) ORDER BY (line.sku_id=$4) DESC,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC,line.line_number LIMIT 1`,
-    [workspaceId, candidate.supplierId, committedId, candidate.skuId,state.plan==='growth']);
-  if (!prior.rowCount) return 'A person must approve the first order for this supplier or trusted item.';
+      AND (line.sku_id=$4 OR $5=false)
+      AND (NOT $6 OR EXISTS (
+        SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+        WHERE u.workspace_id=po.workspace_id AND u.id=po.approved_by_user_id AND u.role='owner'
+        AND NOT EXISTS (SELECT 1 FROM work_items wi WHERE wi.workspace_id=po.workspace_id AND wi.purchase_order_id=po.id
+          AND wi.source='postgres_autopilot' AND wi.approved_by_user_id IS NULL)))
+    ORDER BY (line.sku_id=$4) DESC,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC,line.line_number LIMIT 1`,
+    [workspaceId,candidate.supplierId,committedId,candidate.skuId,state.plan==='growth',needsPackExample]);
+  if (!prior.rowCount) return needsPackExample?'Approve and place an example order in these supplier packs before automating this trusted item.':'A person must approve the first order for this supplier or trusted item.';
   const last=prior.rows[0];
   if(last.sku_id===candidate.skuId && (last.currency!==candidate.currency || last.unit_cost==null || Number(last.unit_cost)!==Number(candidate.unitCost) ||
-     Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)))
+     Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)||
+     (needsPackExample&&((candidate.purchaseUnit!=null&&last.purchase_unit!==candidate.purchaseUnit)||
+       Number(last.quantity_purchase_units)%Number(candidate.purchaseMultiple??1)!==0))))
     return 'The latest supplier order used a different currency, price or pack. A person must approve the changed terms.';
   const money = require('../domain/currency');
   const ledger=await automaticPurchaseCommitments(database,state,cap.currency,committedId);

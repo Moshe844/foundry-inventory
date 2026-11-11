@@ -25,7 +25,7 @@ function quantities(offer,needed,useAgentTerms){
   }
   const quantity=packs*pack;
   const total=price===null?null:money.integer(quantity*price,'Supplier order value');
-  return {unitsPer:pack,purchaseUnits:packs,quantity,unitCost:price===null?null:Number(offer.last_unit_cost),
+  return {unitsPer:pack,purchaseUnits:packs,purchaseMultiple:multiple,quantity,unitCost:price===null?null:Number(offer.last_unit_cost),
     value:total===null?null:Number(money.fromMinor(total,offer.currency)),topUp,packJob:pack!==1||multiple!==1};
 }
 function restriction(state,offer){
@@ -34,6 +34,9 @@ function restriction(state,offer){
   if(offer.packJob&&!policy.permits(state.plan,27,'draft'))return 'Ordering in supplier packs requires Growth. Enter the supplier order manually.';
   if(offer.topUp&&!policy.permits(state.plan,23,'draft'))return 'Growth can top up this order. Review the supplier minimum and enter the quantity manually.';
   return null;
+}
+function usesPacks(candidate){
+  return Number(candidate.unitsPerPurchaseUnit??1)!==1||Number(candidate.purchaseMultiple??1)!==1;
 }
 async function saveFreight(db,ctx,input){
   return db.transaction(async client=>{
@@ -72,4 +75,4 @@ async function supplierMinimums(db,ctx,{filter,page}){
     'Shipping charge':s.freight_terms_currency===s.currency?money.format(s.ordinary_freight_minor,s.currency):null,link:'/purchasing/freight/'+s.id})),
     more:rows.length>100,summary:'Replenishment applies the saved minimum amount and pack requirements. It adds goods to reach free shipping only if their cost is no greater than the saved shipping charge. The normal purchase limits still apply.'};
 }
-module.exports={quantities,restriction,saveFreight,freightSettings,supplierMinimums};
+module.exports={quantities,restriction,usesPacks,saveFreight,freightSettings,supplierMinimums};

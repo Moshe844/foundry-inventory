@@ -312,6 +312,10 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
     const ruleRestriction=Object.hasOwn(state,planningRuleQuota)?state[planningRuleQuota]:await require('../commercial/agent-rule-quota').restriction(database,account);
     if(ruleRestriction)return {decision:'needs_approval',reason:ruleRestriction,policy};
     if(candidate.type==='purchase'){
+      if(require('../purchasing/agent-order-quantities').usesPacks(candidate)){
+        const packRestriction=await require('./job-modes').restriction(database,workspaceId,27,true);
+        if(packRestriction)return {decision:'needs_approval',reason:packRestriction,policy};
+      }
       const reason=await agentPlan.purchaseReview(database,workspaceId,candidate,policy,account,committedPurchaseOrderId);
       if(reason) return {decision:'needs_approval',reason,policy};
     }
@@ -406,6 +410,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
       const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},state,suppliers);if(!supplier||supplier.restriction){considered.push({skuId:shortage.sku_id,reason:supplier?.restriction||'no_supplier'});continue;}
       candidate={type:'purchase',skuId:shortage.sku_id,sourceVersion:shortage.source_version||'0',displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
+        purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
@@ -439,7 +444,10 @@ async function revalidate(database,workspaceId,action){
  const state=await getState(database,workspaceId);
  const supplier=await supplierChoice(database,workspaceId,{...destination,needed:require('../purchasing/replenishment-decision').requiredUnits(destination)},state);
  if(supplier?.restriction)throw new ValidationError(supplier.restriction);
- if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency)
+ if(!supplier||supplier.supplier_id!==action.supplierId||supplier.quantity!==action.quantity||supplier.unitCost!==action.unitCost||supplier.currency!==action.currency||
+  supplier.purchaseUnits!==action.purchaseUnits||supplier.unitsPer!==action.unitsPerPurchaseUnit||
+  (action.purchaseUnit!=null&&supplier.purchase_unit!==action.purchaseUnit)||
+  (action.purchaseMultiple!=null&&supplier.purchaseMultiple!==action.purchaseMultiple))
   throw new ValidationError('Supplier terms, price or the required quantity changed after this decision. Review a fresh recommendation.');
 }
 
@@ -500,6 +508,10 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
   const effectState=await getState(scoped,ctx.workspaceId);
   if(effectState.shadowEndsAt) throw new ValidationError('During the first 14 days StockChief only watches. You can enter the transaction manually.');
   if(effectState.agentTerms && item.recommendedAction.type==='transfer' && effectState.plan==='starter') throw new ValidationError('Starter can suggest a transfer. Record the transfer manually.');
+  if(effectState.agentTerms&&item.recommendedAction.type==='purchase'&&require('../purchasing/agent-order-quantities').usesPacks(item.recommendedAction)){
+    const packRestriction=await require('./job-modes').restriction(scoped,ctx.workspaceId,27,item.approval_requirement==='NONE');
+    if(packRestriction)throw new ValidationError(packRestriction);
+  }
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
   const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
@@ -525,7 +537,7 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     }else{const purchase=await workflows.createPurchaseOrder(scoped,ctx,{supplierId:action.supplierId,
       destinationLocationId:action.destinationLocationId,currency:action.currency,source:'foundry_recommendation',
       sourceDetail:{workItemId:item.id,evidence:item.sourceEvidence},lines:[{skuId:action.skuId,quantityUnits:action.quantity,
-        quantityPurchaseUnits:action.purchaseUnits,unitsPerPurchaseUnit:action.unitsPerPurchaseUnit,unitCost:action.unitCost,
+        quantityPurchaseUnits:action.purchaseUnits,unitsPerPurchaseUnit:action.unitsPerPurchaseUnit,purchaseUnit:action.purchaseUnit,unitCost:action.unitCost,
         destinationLocationId:action.destinationLocationId,supplierSku:action.supplierSku}],idempotencyKey:`work:${item.id}:po`});
       const approved=await workflows.approvePurchaseOrder(scoped,ctx,purchase.purchaseOrderId,{idempotencyKey:`work:${item.id}:approve-po`});
       const delivery=await queueSupplierPurchaseOrder(client,ctx,item,purchase);
