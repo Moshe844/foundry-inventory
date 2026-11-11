@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 196:{common:'Preserves original certificates of analysis and safety sheets and links them to exact native SKUs and lots. Required evidence is checked against business-local expiry dates for recorded warehouse, serialized and supplier-direct lots. Missing or expired certificates appear in Needs You. Original bytes and link history stay available after downgrade.',
+ growth:'Prepares an exact link from an uploaded, filed or mailbox original. You approve each link and confirm its expiry. A scoped supplier mailbox can prepare matching documents for review.',
+ pro:'Can link clear originals from an explicitly approved supplier, mailbox, SKU and certificate scope without training after Watch. Conflicting, unconfirmed or scanned identities and dates need your review. Coverage alerts stay separate from physical stock decisions.',
+ enterprise:'Can link clear original documents inside your approved supplier and lot evidence scope without training after Watch. Current authority is checked at dispatch. Unclear evidence needs your review.'},
  43:{common:'Fills one physical receiving review from a saved packing slip. Matches exact supplier codes, PO lines, purchase packs and warehouses. Keeps the actual batches, expiry dates, serials, individual weights and fractional quantities. Uses approved purchase costs. Completed forms count in the time-saved report when you record comparable timings.',
   growth:'Fills the receiving form for your review. Confirm the actual delivery once to book the goods and their approved costs.',
   pro:'Fills the receiving form without training from the original source and the placed purchase order. You confirm the actual physical receipt.',

@@ -1,0 +1,51 @@
+<style>.lot-certificates{max-width:1040px}.lot-certificates section{margin:20px 0}.lot-certificates p,.lot-certificates li,.lot-certificates dd{overflow-wrap:anywhere}.lot-certificates label{display:block;margin:12px 0}.lot-certificates input:not([type=checkbox]),.lot-certificates select{max-width:100%;box-sizing:border-box}.lot-certificates dl{margin:12px 0}.lot-certificates dt{font-weight:600}.lot-certificates dd{margin:0 0 10px}.lot-certificates .btn{white-space:normal}</style>
+<div class="lot-certificates"><h1>Lot certificate evidence</h1>
+<% if(screen.allowed){ %><p><a href="/autopilot/reviews/lot-documents">Check missing or expired certificates</a></p><% }else{ %><p class="notice" data-lot-cert-plan-locked>Growth, Pro or Custom is required for new links and coverage checks. Saved originals and link history are still available. <a href="/billing">Review plans</a></p><% } %>
+<% if(screen.stop){ %><p class="notice"><%= screen.stop %></p><% } %>
+<% if(screen.selected){ const d=screen.selected; %><section class="card card-body"><h2><%= d.kind %> · <%= d.sku %> · <%= d.lot %></h2>
+<p data-lot-certificate-state><%= {DRAFT:'Awaiting approval',LINKED:'Linked to the exact lot',REVOKED:'Link withdrawn'}[d.state] %></p>
+<p><a class="btn" href="/autopilot/lot-certificates/source/<%= d.source_id %>">Download original <%= d.filename %></a></p>
+<p><a href="/autopilot/lots?<%= new URLSearchParams({sku:d.sku,lot:d.lot}) %>">Open recorded lot</a></p>
+<% if(d.proof.title){ %><dl><dt>Certificate title · page <%= d.proof.titlePage||d.proof.page %></dt><dd><%= d.proof.title %></dd><dt>Product evidence · page <%= d.proof.skuPage||d.proof.page %></dt><dd><%= d.proof.skuQuote %></dd><dt>Lot evidence · page <%= d.proof.lotPage||d.proof.page %></dt><dd><%= d.proof.lotQuote %></dd><dt>Expiry evidence · page <%= d.proof.expiryPage||d.proof.page %></dt><dd><%= d.proof.expiryQuote %></dd></dl><% } %>
+<% if(d.state==='LINKED'){ %><p><%= d.expiry?'Expires '+d.expiry:'No stated expiry was recorded.' %> <%= d.automatic?'Linked under your approved mailbox scope.':'' %></p><% } %>
+<% if(d.revoke_reason){ %><p>Withdrawal reason: <%= d.revoke_reason %></p><% } %>
+<% if(d.state==='DRAFT'&&screen.allowed&&!screen.stop){ %><form method="post" action="/autopilot/lot-certificates/<%= d.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= d.reviewHash %>">
+<label>Expiry shown on the original <select name="expiryMode" aria-label="Expiry shown on the original" required><option value="">Choose after checking the original</option><option value="dated">A printed expiry date</option><option value="none">No expiry is stated</option></select></label>
+<label>Exact printed expiry date <input type="date" name="expiresOn" value="<%= d.expiry||'' %>"></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> I checked this original belongs to the displayed SKU and lot and confirmed its printed expiry.</label>
+<button class="btn btn--primary">Approve original certificate link</button></form><% } %>
+<% if(d.state!=='REVOKED'){ %><form method="post" action="/autopilot/lot-certificates/<%= d.id %>/revoke"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= d.reviewHash %>">
+<label>Reason for withdrawing this link <input name="reason" minlength="3" maxlength="500" required></label><button class="btn">Withdraw link</button></form><% } %>
+</section><% } %>
+<% if(screen.allowed&&!screen.stop&&!screen.selected){ %><section class="card card-body"><h2>Prepare an original certificate link</h2>
+<form method="post" action="/autopilot/lot-certificates" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Exact SKU <input name="sku" required value="<%= screen.lot?.sku||'' %>"></label><label>Exact lot number <input name="lot" required value="<%= screen.lot?.code||'' %>"></label>
+<label>Certificate type <select name="kind" aria-label="Certificate type"><option>CoA</option><option>Safety sheet</option></select></label>
+<% if(screen.original){ %><input type="hidden" name="sourceId" value="<%= screen.original.id %>"><p><a href="/autopilot/lot-certificates/source/<%= screen.original.id %>"><%= screen.original.filename %></a></p><p><%= screen.original.reason %></p>
+<% }else{ %><label>Original file, up to 20 MB <input type="file" name="source"></label>
+<label>Or saved mailbox attachment ID <input name="fileAttachment"></label><label>Or filed document ID <input name="filedDocument"></label><% } %>
+<button class="btn btn--primary">Prepare exact lot link</button></form></section><% } %>
+<% if(screen.held.length){ %><section class="card card-body"><h2>Originals that need a match</h2><ul><% screen.held.forEach(source=>{ %><li><strong><%= source.filename %></strong> · <%= source.review_reason %>
+<a href="/autopilot/lot-certificates/source/<%= source.id %>">Download original</a>
+<% if(screen.allowed&&!screen.stop){ %> · <a href="/autopilot/lot-certificates?sourceId=<%= source.id %>">Choose exact lot</a><% } %>
+<form method="post" action="/autopilot/lot-certificates/source/<%= source.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Dismiss review notice</button></form></li><% }); %></ul></section><% } %>
+<section class="card card-body"><h2>Certificate link history</h2>
+<% if(!screen.list.length){ %><p>No original links have been recorded.</p><% }else{ %><ul><% screen.list.forEach(d=>{ %><li><a href="/autopilot/lot-certificates/<%= d.id %>"><%= d.filename %></a> · <%= d.sku %> · <%= d.lot %> · <%= d.kind %> · <%= {DRAFT:'Awaiting approval',LINKED:'Linked',REVOKED:'Withdrawn'}[d.state] %><%= d.expires_on?' · expires '+d.expires_on:'' %></li><% }); %></ul><% } %>
+</section>
+<% if(screen.rules.length||screen.allowed&&screen.lot){ %><section class="card card-body"><h2>Supplier mailbox scopes</h2>
+<% screen.rules.forEach(r=>{ %><form method="post" action="/autopilot/lot-certificates/scope"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= r.id %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<p><%= r.sku %> · <%= r.supplier %> · <%= r.mailbox %> · <%= r.kinds.join(', ') %> · <%= r.mode==='automatic'?'Automatically link exact matches':'Prepare for approval' %></p><button class="btn" name="stop" value="yes">Stop this mailbox scope</button></form><% }); %>
+<% if(screen.allowed&&!screen.stop&&screen.lot&&screen.suppliers.length&&screen.mailboxes.length){ %><form method="post" action="/autopilot/lot-certificates/scope"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= screen.lot.sku %>"><input type="hidden" name="lot" value="<%= screen.lot.code %>">
+<p>New certificates for <strong><%= screen.lot.sku %></strong> can be matched when the original identifies the exact lot, document type and expiry.</p>
+<label>Existing linked supplier <select name="supplierId" aria-label="Existing linked supplier" required><option value="">Choose supplier</option><% screen.suppliers.forEach(s=>{ %><option value="<%= s.id %>"><%= s.name %></option><% }); %></select></label>
+<label>Connected mailbox <select name="connectorId" aria-label="Connected mailbox" required><option value="">Choose mailbox</option><% screen.mailboxes.forEach(m=>{ %><option value="<%= m.id %>"><%= m.display_name %></option><% }); %></select></label>
+<label><input type="checkbox" name="kinds" value="CoA"> Certificates of analysis</label><label><input type="checkbox" name="kinds" value="Safety sheet"> Safety sheets</label>
+<label>Handling <select name="mode" aria-label="Handling"><option value="draft">Prepare each link for approval</option><% if(screen.automatic){ %><option value="automatic">Automatically link exact originals</option><% } %></select></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> I authorize this exact supplier, mailbox, SKU and selected document types.</label><button class="btn btn--primary">Save mailbox scope</button></form>
+<% }else if(screen.allowed&&screen.lot&&!screen.stop){ %><p>Connect a mailbox and record a supplier for this SKU to prepare new certificate links from incoming originals.</p><% } %>
+</section><% } %>
+<% const pages=new URLSearchParams(screen.lot?{sku:screen.lot.sku,lot:screen.lot.code}:{}); %>
+<% if(screen.page>1){ pages.set('page',screen.page-1); %><a href="/autopilot/lot-certificates?<%= pages %>">Previous page</a><% } %>
+<% if(screen.more){ pages.set('page',screen.page+1); %><a href="/autopilot/lot-certificates?<%= pages %>">Next page</a><% } %>
+</div>

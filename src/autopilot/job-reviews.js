@@ -215,6 +215,7 @@ async function run(db,ctx,key,options={}){
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...(result.rotationForm?{rotationForm:true}:{}),
+      ...(def.id===196?{lotCertificateLink:true}:{}),
       ...inputs};
   }
   if(def.read){
@@ -240,7 +241,6 @@ async function run(db,ctx,key,options={}){
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
   if(def.id===105)for(const row of rows){row.Amount=row.Amount!=null&&row.Currency?money.format(row.Amount,row.Currency):null;}
-  if(def.id===196)for(const row of rows) row.link='/autopilot/lots?'+new URLSearchParams({sku:row.SKU,lot:row.Lot});
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }
