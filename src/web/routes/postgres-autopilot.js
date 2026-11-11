@@ -324,6 +324,35 @@ function createPostgresAutopilotRouter(database,options={}){
     }));
   }
   const slack=require('../../connections/agent-slack');
+  const direct=require('../../purchasing/agent-direct-shipments');
+  const directPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/direct-shipments',{
+    title:'Supplier-direct deliveries',nav:'autopilot',backTo:{href:req.params.id?direct.path:'/autopilot/reviews',label:req.params.id?'Direct deliveries':'Agent reviews'},
+    ...await direct.page(database,req.ctx,{...req.query,id:req.params.id})});
+  router.get(direct.path,requireAuth,owner,asyncRoute(directPage));
+  router.get(direct.path+'/:id',requireAuth,owner,asyncRoute(directPage));
+  router.post(direct.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await direct.prepare(database,req.ctx,direct.fromForm(req.body));
+    res.redirect(303,direct.path+'/'+result.id);
+  }));
+  for(const step of ['approve','place','stop','capture'])router.post(direct.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    await direct[step](database,req.ctx,req.params.id,step==='capture'?direct.fromForm(req.body):req.body);
+    res.redirect(303,direct.path+'/'+req.params.id);
+  }));
+  router.post(direct.path+'/:id/dispatch/:dispatch/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const selected=await direct.page(database,req.ctx,{id:req.params.id});
+    if(!selected.dispatches.some(dispatch=>dispatch.id===req.params.dispatch))throw new ValidationError('Choose a dispatch belonging to this direct purchase.');
+    await direct.applyDispatch(database,req.ctx,req.params.dispatch,req.body);
+    res.redirect(303,direct.path+'/'+req.params.id);
+  }));
+  router.post(direct.path+'/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/direct-shipment-mail').send(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The exact supplier purchase is queued. Its sent status follows the mailbox provider’s confirmation.');
+    res.redirect(303,direct.path+'/'+req.params.id);
+  }));
+  router.post(direct.path+'/:id/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/direct-shipment-routines').configure(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,direct.path+'/'+req.params.id);
+  }));
   const slackPage=async(req,res,issuedCode=null)=>{
     const data=await slack.page(database,req.ctx);
     const origin=require('../../config').connections.publicOrigin;

@@ -1185,7 +1185,8 @@ async function lookupRecords(database,ctx,request,options={}) {
     ), purchase_incoming AS (
       SELECT pol.sku_id,SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM purchase_order_lines pol
       JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
-      AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
+      AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+      AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' GROUP BY pol.sku_id
     ), transfer_incoming AS (
       SELECT tl.sku_id,
         SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity

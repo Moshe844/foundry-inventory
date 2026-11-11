@@ -3,6 +3,11 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 37:{common:'Turns a checked customer order into an exact supplier purchase for delivery to that customer. Sends a private supplier link for actual dispatch quantities, batches, serials, weights, carrier and tracking. Posts each confirmed dispatch to the customer invoice and supplier cost together. Partial deliveries, supplier invoices and customer returns preserve their original evidence.',
+  starter:'Owners can manually finish supplier-direct purchases approved before a downgrade, including the actual dispatch and customer invoice.',
+  growth:'You approve each exact supplier purchase, purchase email and supplier dispatch before it is posted.',
+  pro:'Handles confirmed customer orders without training after the watch period, within your explicitly authorized supplier, products, customer scope, mailbox and purchase limits. Changed terms and over-limit work wait for review.',
+  enterprise:'Handles confirmed customer orders without training within your explicitly authorized supplier, products, customers, mailbox and agreed purchase limits. Changed terms and over-limit work wait for review.'},
  188:{common:'Answers read-only business questions privately in your connected Slack team. Members link their own Slack users with a one-use code, and StockChief rechecks their current permissions, plan and job mode before delivery. Each answer shows its AI credits. Teams and WhatsApp connections still need implementation.',
   pro:'Answers without training after the watch period, within the current owner-enabled connection and each member’s StockChief permissions.',
   enterprise:'Answers without training after the watch period, within the current owner-enabled connection and each member’s StockChief permissions.'},

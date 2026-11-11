@@ -170,6 +170,7 @@ async function state(database,workspaceId,shipmentId){
   const account=shippingAccounts[0]||null;
   const blocked=[];
   if(shipment.customer_return_id)try{await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);}catch(error){blocked.push(error.message);}
+  if(shipment.delivery_kind!=='CUSTOMER_DIRECT'){
   if(!to.complete)blocked.push(addresses.why(to));
   if(!from.complete)blocked.push(`Add an address to ${shipment.location_name||'the dispatch warehouse'} (ship-from). ${addresses.why(from,'The dispatch address')}`);
   if(to.country!==from.country)blocked.push('International postage needs separately reviewed carrier customs data. Use your carrier’s international workflow; StockChief can prepare the recorded export paperwork.');
@@ -178,6 +179,7 @@ async function state(database,workspaceId,shipmentId){
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
   if(boxes.some(box=>box.estimated))blocked.push('Confirm the actual weight of every package. Saved package defaults are not a fresh measurement.');
   if(!account)blocked.push('Connect this inventory’s own postage account before requesting live rates.');
+  }
   const rates=await ratesFor(database,workspaceId,shipmentId);
   const quoteProblems=Array.isArray(shipment.shipping_quote_problems)?shipment.shipping_quote_problems:[];
   const events=(await database.query(`SELECT * FROM shipment_tracking_events
@@ -190,7 +192,7 @@ async function state(database,workspaceId,shipmentId){
       AND effect.payload->>'transactionId'=transaction.id
     WHERE transaction.workspace_id=$1 AND transaction.shipment_id=$2
     ORDER BY transaction.requested_at DESC,transaction.id DESC LIMIT 1`,[workspaceId,shipmentId])).rows[0]||null;
-  return {shipment,to,from,boxes,account,shippingAccounts,blocked,ready:blocked.length===0,rates,events,labelOperation,quoteProblems};
+  return {shipment,to,from,boxes,account,shippingAccounts,blocked,ready:shipment.delivery_kind!=='CUSTOMER_DIRECT'&&blocked.length===0,rates,events,labelOperation,quoteProblems};
 }
 
 function accountFingerprint(account){return crypto.createHash('sha256').update(JSON.stringify([

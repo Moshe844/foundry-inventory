@@ -52,7 +52,7 @@ async function check(db,ctx,{filter,page,today},overdueOnly=false){
       coalesce(sum(balance_minor) FILTER(WHERE currency=o.currency),0) same_currency_debt,bool_or(currency<>o.currency) other_currency
       FROM bills WHERE customer_id=o.customer_id)a
     CROSS JOIN LATERAL (SELECT count(*) FILTER(WHERE l.unit_price_minor IS NULL) no_price,
-      sum(greatest(l.quantity_ordered-l.quantity_fulfilled-coalesce(reserved.units,0)-coalesce(kits.units,0),0)) unreserved FROM sales_order_lines l
+      sum(greatest(l.quantity_ordered-l.quantity_fulfilled-coalesce((to_jsonb(l)->>'direct_committed_quantity')::numeric,0)-coalesce(reserved.units,0)-coalesce(kits.units,0),0)) unreserved FROM sales_order_lines l
       LEFT JOIN LATERAL (SELECT sum(quantity) units FROM sales_order_allocations sa WHERE sa.workspace_id=l.workspace_id AND sa.sales_order_line_id=l.id) reserved ON true
       LEFT JOIN LATERAL (SELECT min(floor(coalesce(held.units,0)/k.quantity_per_kit)) units FROM sales_order_kit_components k
         LEFT JOIN LATERAL(SELECT sum(quantity) units FROM sales_order_kit_allocations WHERE workspace_id=k.workspace_id AND kit_component_id=k.id) held ON true

@@ -1,0 +1,169 @@
+<h1>Supplier-direct deliveries</h1>
+<p>Buy the exact customer goods from a supplier who delivers to the customer. Review the customer destination, purchase price and actual supplier tracking in one place.</p>
+<% if(!allowed){ %>
+  <p class="notice"><span class="badge">Growth</span> New supplier-direct purchases require Growth or above. <a class="btn" href="/billing">Upgrade</a></p>
+<% } %>
+<% if(shadow&&allowed){ %><p class="notice">StockChief is in the first 14 days of watching. Review and approve each step individually.</p><% } %>
+<% if(selected){ const record=selected; %>
+  <% if(canComplete&&!allowed){ %><p class="notice">This purchase was already approved. You can manually record its existing supplier delivery and finish its customer invoice.</p><% } %>
+  <section class="card"><div class="card-body">
+    <h2><%= record.po_number %> for <%= record.order_number %></h2>
+    <p><strong><%= record.facts.supplier.name %></strong> delivers to <strong><%= record.facts.customer.name %></strong></p>
+    <p><%= record.facts.customer.address %></p>
+    <p>Purchase status <%= record.purchase_status.toLowerCase().replaceAll('_',' ') %></p>
+    <% if(purchaseMail){ %><p>Purchase email <%= purchaseMail.status.toLowerCase() %><% if(purchaseMail.error_message){ %> · <%= purchaseMail.error_message %><% } %></p><% } %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Product</th><th>Customer goods</th><th>Supplier packs</th><th>Unit cost</th><th>Goods total</th></tr></thead>
+      <tbody><% record.facts.products.forEach(product=>{ %><tr>
+        <td><%= product.name %> · <%= product.code %></td>
+        <td><%= product.quantity %> <%= product.unit %><% if(product.secondaryQuantity!==null){ %> · <%= product.secondaryQuantity %> <%= product.weightUnit %><% } %></td>
+        <td><%= product.purchaseUnits %> <%= product.purchaseUnit %></td>
+        <td><%= helpers.money(product.unitCostMinor,record.currency) %><% if(product.weightUnit){ %> per <%= product.weightUnit %><% } %></td>
+        <td><%= helpers.money(product.totalMinor,record.currency) %></td>
+      </tr><% }) %></tbody>
+    </table></div>
+    <p><a href="/sales/orders/<%= record.sales_order_id %>">Customer order</a> · <a href="/purchasing/orders/<%= record.purchase_order_id %>/document">Purchase document</a></p>
+    <% if(allowed&&record.purchase_status==='DRAFT'){ %>
+      <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/approve">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= record.revision %>">
+        <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+        <label><input type="checkbox" name="releaseReserved" value="yes"> Release this purchase’s selected local reservations and reserve any remaining local quantities again</label>
+        <% if(canAutomate){ %><label><input type="checkbox" name="routine" value="yes"> Allow StockChief to record exact dispatches submitted through this supplier’s private link</label><% } %>
+        <button class="btn btn--primary" name="confirmed" value="yes">Approve this exact purchase and destination</button>
+      </form>
+    <% } %>
+    <% if(canComplete&&record.purchase_status==='APPROVED'){ %>
+      <% if(allowed&&mailboxes.length){ %>
+        <details><summary>Review the exact purchase email</summary><h3><%= emailPreview.subject %></h3><pre style="white-space:pre-wrap"><%= emailPreview.body %></pre></details>
+        <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/send">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= record.revision %>">
+          <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+          <p>Send to <%= record.facts.supplier.email||'Add the supplier email first' %> with the goods, approved prices, customer delivery address and private dispatch link shown above.</p>
+          <label>Sending mailbox <select name="connectorId" required><% mailboxes.forEach(mailbox=>{ %><option value="<%= mailbox.id %>"><%= mailbox.display_name %></option><% }) %></select></label>
+          <button class="btn btn--primary" name="confirmed" value="yes">Send exact supplier purchase and dispatch link</button>
+        </form>
+      <% }else if(allowed){ %><p><a href="/connections">Connect a mailbox</a> to send this purchase and its private supplier dispatch link.</p><% }else{ %><p>Connected purchase email · <span class="badge">Growth</span> <a href="/billing">Upgrade</a></p><% } %>
+      <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/place">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= record.revision %>">
+        <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+        <label>Supplier acceptance or sent-message reference <input name="externalReference" required maxlength="500"></label>
+        <label><input type="checkbox" name="sentExternally" value="yes" required> I sent this exact purchase and customer address to the supplier outside StockChief</label>
+        <button class="btn btn--primary" name="confirmed" value="yes">Record purchase placed with supplier</button>
+      </form>
+    <% } %>
+  </div></section>
+  <% if(canAutomate||routine?.enabled){ %>
+    <section class="card"><div class="card-body"><h2>Future confirmed customer orders</h2>
+      <p>Pro and Custom can prepare, approve and email these supplier purchases without training, after the first 14 days and within your current purchasing limits. The first purchase from a new supplier needs individual approval.</p>
+      <% if(routine?.last_issue){ %><p class="notice"><%= routine.last_issue %></p><% } %>
+      <% if(canAutomate&&mailboxes.length){ %>
+        <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/routine">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= routine?.revision||0 %>">
+          <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+          <p>Applies to <%= record.facts.supplier.name %>, the products and supplier terms above, and future matching confirmed customer orders in this inventory. Changed terms need review.</p>
+          <label><input type="checkbox" name="allCustomers" value="yes" <%= routine&&routine.customer_id===null?'checked':'' %>> Include all confirmed customer destinations. Otherwise only <%= record.facts.customer.name %></label>
+          <label>Maximum total per supplier purchase, including known charges <input type="number" name="maximum" step="0.01" min="0.01" required value="<%= routine?(Number(routine.maximum_minor)/10**helpers.currencyExponent(record.currency)).toFixed(helpers.currencyExponent(record.currency)):'' %>"> <%= record.currency %></label>
+          <label>Purchasing mailbox <select name="connectorId" required><% mailboxes.forEach(mailbox=>{ %><option value="<%= mailbox.id %>" <%= routine?.connector_id===mailbox.id?'selected':'' %>><%= mailbox.display_name %></option><% }) %></select></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Allow StockChief to commit supplier purchases, send the exact orders and record verified supplier dispatches within this scope and my current plan’s account-wide spending limits</label>
+          <button class="btn btn--primary">Save routine direct-purchasing permission</button>
+        </form>
+      <% } %>
+      <% if(routine?.enabled){ %><form method="post" action="/autopilot/direct-shipments/<%= record.id %>/routine">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= routine.revision %>">
+        <button class="btn" name="stop" value="yes">Stop future routine direct purchases</button>
+      </form><% } %>
+    </div></section>
+  <% } %>
+  <% if(canComplete&&['ORDERED','PARTIALLY_RECEIVED'].includes(record.purchase_status)){ %>
+    <section class="card"><div class="card-body">
+      <h2>Record the supplier’s actual dispatch</h2>
+      <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/capture">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>Supplier dispatch reference <input name="supplierReference" required maxlength="240"></label>
+        <label>Actual shipping time, including time zone <input name="shippedAt" placeholder="2026-11-10T15:30:00-05:00" required></label>
+        <label>Carrier <input name="carrier" required maxlength="200"></label>
+        <label>Tracking number <input name="trackingNumber" required maxlength="240"></label>
+        <% selectedLines.forEach((line,index)=>{ const open=Number(line.quantity)-Number(line.dispatched_quantity); if(open<=0)return; %>
+          <fieldset><legend><%= line.name %> · <%= line.code %></legend>
+            <input type="hidden" name="lines[<%= index %>][lineId]" value="<%= line.id %>">
+            <label>Actually shipped <input type="number" name="lines[<%= index %>][quantity]" min="0" max="<%= open %>" step="any" placeholder="0"> <%= line.unit_label %> · <%= open %> remaining</label>
+            <% if(line.secondary_unit_label){ %><label>Actual <%= line.secondary_unit_label %> <input type="number" name="lines[<%= index %>][secondaryQuantity]" min="0" step="any"></label><% } %>
+            <% const product=record.facts.products.find(product=>product.salesOrderLineId===line.sales_order_line_id); %>
+            <% if(product.trackingMode==='lot'){ %><label>Actual batches, one per line. Use batch | quantity | expiry date | actual weight <textarea name="lines[<%= index %>][lotsText]" rows="3"></textarea></label><% } %>
+            <% if(product.trackingMode==='serial'){ %><label>Actual serials, one per line. Use serial | actual weight | batch | expiry date <textarea name="lines[<%= index %>][serialsText]" rows="3"></textarea></label><% } %>
+          </fieldset>
+        <% }) %>
+        <label><input type="checkbox" name="actualShipment" value="yes" required> The supplier has actually shipped these goods to the confirmed customer destination</label>
+        <button class="btn" type="submit">Prepare dispatch review</button>
+      </form>
+    </div></section>
+  <% } %>
+  <% dispatches.forEach(dispatch=>{ %>
+    <section class="card"><div class="card-body">
+      <h2>Dispatch <%= dispatch.supplier_reference %></h2>
+      <% if(dispatch.last_issue){ %><p class="notice"><%= dispatch.last_issue %></p><% } %>
+      <p><%= dispatch.original.carrier %> · <%= dispatch.original.trackingNumber %> · <%= dispatch.original.shippedAt %></p>
+      <% dispatch.original.lines.forEach(line=>{ const product=selectedLines.find(product=>product.id===line.lineId); %>
+        <p><%= product?.name||'Product' %> · <%= line.quantity %> <%= product?.unit_label||'' %><% if(line.secondaryQuantity!==null){ %> · <%= line.secondaryQuantity %> <%= product?.secondary_unit_label||'' %><% } %> · <%= helpers.money(line.costMinor,record.currency) %></p>
+        <% line.lots.forEach(lot=>{ %><p>Batch <%= lot.lotCode %> · <%= lot.quantity %><% if(lot.expiresAt){ %> · expires <%= lot.expiresAt %><% } %></p><% }) %>
+        <% line.serials.forEach(serial=>{ %><p>Serial <%= serial.serial %><% if(serial.weight!==null){ %> · <%= serial.weight %> <%= product?.secondary_unit_label||'' %><% } %></p><% }) %>
+      <% }) %>
+      <% if(dispatch.state==='REVIEW'&&canComplete){ %>
+        <form method="post" action="/autopilot/direct-shipments/<%= record.id %>/dispatch/<%= dispatch.id %>/approve">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="revision" value="<%= dispatch.revision %>">
+          <input type="hidden" name="evidenceHash" value="<%= evidenceHash(dispatch.original) %>">
+          <button class="btn btn--primary" name="confirmed" value="yes">Record this shipment, customer invoice and supplier cost</button>
+        </form>
+      <% } %>
+      <% if(dispatch.shipment_id){ %><p><a href="/fulfilment/<%= dispatch.shipment_id %>"><%= dispatch.shipment_number %></a><% if(dispatch.invoice_id){ %> · <a href="/sales/orders/<%= record.sales_order_id %>"><%= dispatch.invoice_number %></a><% } %></p><% } %>
+    </div></section>
+  <% }) %>
+  <% if(!['RECEIVED','CANCELLED'].includes(record.purchase_status)){ %>
+    <section class="card"><div class="card-body"><h2>Stop remaining supplier delivery</h2>
+      <form class="form-stack" method="post" action="/autopilot/direct-shipments/<%= record.id %>/stop">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= record.revision %>">
+        <label>Supplier cancellation reference or evidence <input name="reason" required maxlength="1000"></label>
+        <% if(record.committed_at){ %><label><input type="checkbox" name="supplierStopped" value="yes" required> The supplier confirmed stopping the remaining direct delivery</label><% } %>
+        <button class="btn" name="confirmed" value="yes">Stop remaining purchase and release customer promises</button>
+      </form>
+    </div></section>
+  <% } %>
+<% }else{ %>
+  <% if(allowed){ %>
+    <section class="card"><div class="card-body"><h2>Choose customer order and supplier</h2>
+      <form class="form-stack" method="get" action="/autopilot/direct-shipments">
+        <label>Customer order <select name="orderId" required><option value="">Choose order</option><% choices.forEach(order=>{ %><option value="<%= order.id %>" <%= order.id===orderId?'selected':'' %>><%= order.order_number %> · <%= order.name %></option><% }) %></select></label>
+        <label>Supplier <select name="supplierId" required><option value="">Choose supplier</option><% suppliers.forEach(supplier=>{ %><option value="<%= supplier.id %>" <%= supplier.id===supplierId?'selected':'' %>><%= supplier.name %></option><% }) %></select></label>
+        <button class="btn" type="submit">Review exact customer goods</button>
+      </form>
+      <% if(moreOrders||moreSuppliers){ %><p>Showing the first 200 choices. Open this page from the exact customer order to choose an older order.</p><% } %>
+    </div></section>
+    <% if(customer&&supplierId){ %>
+      <section class="card"><div class="card-body"><h2><%= customer.order_number %> · <%= customer.customer_name %></h2>
+        <p><%= customer.ship_to_address %></p>
+        <% if(!products.length){ %><p>Link the required products to this supplier, or choose goods that are still unpromised.</p><% }else{ %>
+          <form class="form-stack" method="post" action="/autopilot/direct-shipments">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>">
+            <input type="hidden" name="salesOrderId" value="<%= customer.id %>"><input type="hidden" name="supplierId" value="<%= supplierId %>">
+            <% products.forEach((product,index)=>{ %><fieldset><legend><%= product.name %> · <%= product.code %></legend>
+              <input type="hidden" name="lines[<%= index %>][lineId]" value="<%= product.id %>">
+              <p><%= product.purchase_unit %> of <%= product.units_per_purchase_unit %> <%= product.unit_label %> · <%= product.last_unit_cost==null?'Add supplier cost first':helpers.money(Math.round(Number(product.last_unit_cost)*10**helpers.currencyExponent(product.currency)),product.currency) %> per <%= product.secondary_unit_label||product.unit_label %></p>
+              <label>Direct quantity <input type="number" name="lines[<%= index %>][quantity]" min="0" step="any" placeholder="0"> <%= product.unit_label %></label>
+              <% if(product.secondary_unit_label){ %><label>Agreed <%= product.secondary_unit_label %> <input type="number" name="lines[<%= index %>][secondaryQuantity]" min="0" step="any"></label><% } %>
+            </fieldset><% }) %>
+            <button class="btn btn--primary" name="confirmed" value="yes">Prepare exact supplier purchase draft</button>
+          </form>
+        <% } %>
+      </div></section>
+    <% } %>
+  <% } %>
+  <section class="card"><div class="card-body"><h2>Direct deliveries</h2>
+    <% if(!rows.length){ %><p>No supplier-direct purchases yet.</p><% } %>
+    <% rows.forEach(row=>{ %><p><a href="/autopilot/direct-shipments/<%= row.id %>"><%= row.po_number %> · <%= row.order_number %></a> · <%= row.supplier_name %> to <%= row.customer_name %> · <%= row.status.toLowerCase().replaceAll('_',' ') %></p><% }) %>
+    <% if(page>1){ %><a class="btn" href="?page=<%= page-1 %>">Previous</a><% } %>
+    <% if(more){ %><a class="btn" href="?page=<%= page+1 %>">Next</a><% } %>
+  </div></section>
+<% } %>

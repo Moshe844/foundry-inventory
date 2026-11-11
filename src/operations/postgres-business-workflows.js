@@ -208,6 +208,8 @@ async function reviseDraftPurchaseOrderLineInTransaction(client, rawContext, pur
   const order = await requireRow(client, `SELECT id,status,updated_at,integrity_hash FROM purchase_orders
     WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, [purchaseOrderId, ctx.workspaceId],
   'That purchase order was not found.');
+  const directOrder=await client.query("SELECT 1 FROM purchase_orders p WHERE p.workspace_id=$1 AND p.id=$2 AND to_jsonb(p)->>'delivery_kind'='CUSTOMER_DIRECT'",[ctx.workspaceId,purchaseOrderId]);
+  if(directOrder.rowCount)throw new ValidationError('Prepare a new supplier-direct draft to change its exact customer quantities.');
   if (!['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) throw new ValidationError(
     'Only an unapproved draft purchase order can be revised; nothing changed.');
   if (input.expectedUpdatedAt && new Date(order.updated_at).toISOString() !== input.expectedUpdatedAt)
@@ -279,6 +281,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
     if (!['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'].includes(order.status)) {
       throw new ValidationError('Only a draft purchase order can be approved.');
     }
+    require('../purchasing/direct-shipment-authority').requireAction(ctx,order,'approve');
     const missing = await client.query(`SELECT COUNT(*) AS count FROM purchase_order_lines
       WHERE purchase_order_id=$1 AND workspace_id=$2 AND unit_cost IS NULL`, [purchaseOrderId, ctx.workspaceId]);
     if (Number(missing.rows[0].count)) throw new ValidationError('Every purchase-order line needs an approved cost.');
@@ -305,6 +308,7 @@ async function placePurchaseOrder(database, rawContext, purchaseOrderId, input) 
     const order = await requireRow(client, `SELECT * FROM purchase_orders
       WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, [purchaseOrderId, ctx.workspaceId], 'That purchase order was not found.');
     if (!['APPROVED', 'ORDERED'].includes(order.status)) throw new ValidationError('Approve the purchase order before placing it.');
+    require('../purchasing/direct-shipment-authority').requireAction(ctx,order,'place');
     if(order.status==='APPROVED')await require('../purchasing/dual-approval').assertApproved(client,order);
     const at = nowIso();
     await client.query(`UPDATE purchase_orders SET status='ORDERED',ordered_at=COALESCE(ordered_at,$3),updated_at=$3
@@ -325,6 +329,7 @@ async function cancelPurchaseOrderInTransaction(client,rawContext,purchaseOrderI
   const order=await requireRow(client,`SELECT * FROM purchase_orders
     WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,[purchaseOrderId,ctx.workspaceId],
   'That purchase order was not found.');
+  require('../purchasing/direct-shipment-authority').requireAction(ctx,order,'cancel');
   if(['RECEIVED','CANCELLED'].includes(order.status))throw new ValidationError(
     'That purchase order can no longer be cancelled.');
   const at=nowIso(),reason=trimOrNull(input.reason);
@@ -352,6 +357,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
     if (!['ORDERED', 'PARTIALLY_RECEIVED'].includes(order.status)) {
       throw new ValidationError('Only a placed purchase order can be received.');
     }
+    if(order.delivery_kind==='CUSTOMER_DIRECT')throw new ValidationError('Record this supplier’s direct dispatch in Supplier-direct deliveries. These goods do not arrive at your warehouse.');
     const at = input.receivedAt || nowIso();
     const receiptId = newId('poreceipt');
     const movementGroupIds = [];
@@ -653,6 +659,7 @@ async function editOpenSalesOrder(database,ctx,id,input){
   const order=await requireRow(client,'SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id],'That order is not in this inventory.');
   if(!['CONFIRMED','BACKORDERED'].includes(order.status))throw new ValidationError('Only an order that has not started shipping can be edited.');
   if(Number(input.expectedVersion)!==Number(order.version))throw new ValidationError('This order changed in another tab. Reload it before editing.');
+  await require('../purchasing/direct-shipment-authority').assertCustomerEditable(client,ctx,id);
   const history=(await client.query(`SELECT
     EXISTS(SELECT 1 FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'VOID') AS invoiced,
     EXISTS(SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'CANCELLED') AS shipping,
@@ -717,7 +724,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const allocations = [];
     let short = false;
     for (const line of lines.rows) {
-      let needed = exact.safeNumber(exact.subtract(line.quantity_ordered,line.quantity_fulfilled));
+      let needed = exact.safeNumber(exact.subtract(exact.subtract(line.quantity_ordered,line.quantity_fulfilled),line.direct_committed_quantity||0));
       const existing = await client.query(`SELECT COALESCE(SUM(quantity),0) AS quantity FROM sales_order_allocations
         WHERE sales_order_line_id=$1 AND workspace_id=$2`, [line.id, ctx.workspaceId]);
       needed = exact.safeNumber(exact.subtract(needed,existing.rows[0].quantity),{signed:true});
@@ -757,6 +764,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       key: `${input.idempotencyKey}:event`, at });
     const result = { salesOrderId, status, allocations,kitAllocations:kitReservations.allocations, shortage: short };
     await completeOperation(client, operation, result);
+    if(Object.hasOwn(lines.rows[0]||{},'direct_committed_quantity'))
+      await require('../purchasing/direct-shipment-routines').queueForOrder(client,ctx.workspaceId,salesOrderId);
     return { ...result, replayed: false };
 }
 
@@ -780,26 +789,30 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,salesOrderId);
     const at = input.fulfilledAt || nowIso();
     const fulfilled = [];
-    const trackedLines=await require('./postgres-tracked-sales').expand(client,ctx,salesOrderId,input.lines,at);
+    const directFulfillment=await require('../purchasing/direct-shipment-fulfillment').prepare(client,ctx,order,input);
+    const trackedLines=directFulfillment?input.lines:await require('./postgres-tracked-sales').expand(client,ctx,salesOrderId,input.lines,at);
     for (const [index, requested] of trackedLines.entries()) {
       const line = await requireRow(client, `SELECT sol.*,s.item_id,s.variant_label,i.name AS item_name FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id AND s.workspace_id=sol.workspace_id JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE sol.id=$1 AND sol.sales_order_id=$2 AND sol.workspace_id=$3 FOR UPDATE`,
       [requested.lineId, salesOrderId, ctx.workspaceId], `Fulfillment line ${index + 1} is not on this sales order.`);
       const quantity = await physicalQuantity(client,ctx,line.sku_id,requested.quantity,`Fulfillment line ${index + 1} quantity`);
       const remaining = exact.safeNumber(exact.subtract(line.quantity_ordered,line.quantity_fulfilled));
-      if (quantity > remaining) throw new ValidationError(`Fulfillment line ${index + 1} exceeds the quantity still open.`);
-      const allocation = requested.kit===true?null:await requireRow(client, `SELECT * FROM sales_order_allocations
+      const direct=directFulfillment?.get(line.id);
+      const available=direct?Number(line.direct_committed_quantity):exact.safeNumber(exact.subtract(remaining,line.direct_committed_quantity||0));
+      if (quantity > available) throw new ValidationError(`Fulfillment line ${index + 1} exceeds the quantity available for this delivery method.`);
+      const allocation = direct||requested.kit===true?null:await requireRow(client, `SELECT * FROM sales_order_allocations
         WHERE sales_order_line_id=$1 AND location_id=$2 AND workspace_id=$3 FOR UPDATE`,
       [line.id, requested.locationId, ctx.workspaceId], `Fulfillment line ${index + 1} is not allocated at that location.`);
       if (allocation&&quantity > Number(allocation.quantity)) throw new ValidationError(`Fulfillment line ${index + 1} exceeds its allocation.`);
-      const kitCost=requested.kit===true?await require('./postgres-kit-fulfillment').consume(client,ctx,line,{...requested,orderNumber:order.order_number},{quantity,at,key:input.idempotencyKey+':'+line.id}):null;
-      const physical = kitCost?{movementId:kitCost.movementId}:await require('./postgres-stock-rotation').issue(client,ctx,allocation,{
+      const kitCost=!direct&&requested.kit===true?await require('./postgres-kit-fulfillment').consume(client,ctx,line,{...requested,orderNumber:order.order_number},{quantity,at,key:input.idempotencyKey+':'+line.id}):null;
+      const physical = direct?{movementId:null}:kitCost?{movementId:kitCost.movementId}:await require('./postgres-stock-rotation').issue(client,ctx,allocation,{
         skuId: line.sku_id, locationId: requested.locationId, quantity,secondaryQuantity:requested.secondaryQuantity,
         lotId: requested.lotId, serialUnitIds: requested.serialUnitIds,
         reasonCode: 'sale', reference: order.order_number, occurredAt: at,
         idempotencyKey: `${input.idempotencyKey}:line:${line.id}:${requested.locationId}${requested.lotId?':lot:'+requested.lotId:''}`,
       });
-      const preparedCost = kitCost||await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
+      const preparedCost = direct?{totalCostMinor:direct.costMinor}:kitCost||await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
+      if(direct)direct.trackingIdentity=await require('../purchasing/direct-shipment-tracking').record(client,ctx,line.sku_id,direct,at);
       let snapshot=line.pricing_snapshot;
       if(!snapshot){
         const original=(await client.query('SELECT id,sku_id,quantity_ordered,unit_price_minor,quantity_fulfilled FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY created_at,id',[ctx.workspaceId,salesOrderId])).rows;
@@ -811,6 +824,12 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       if(snapshot.quantity!==Number(line.quantity_ordered)||snapshot.unitPriceMinor!==Number(line.unit_price_minor))throw new ValidationError('The order pricing snapshot no longer matches its line. Review pricing before fulfillment.');
       const stockProfile=await stockQuantity.forSku(client,ctx,line.sku_id),actualWeight=stockQuantity.secondary(stockProfile,requested.secondaryQuantity);
       if(actualWeight!==null){const remainingWeight=exact.safeNumber(exact.subtract(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled));if(actualWeight>remainingWeight||(quantity===remaining)!==(actualWeight===remainingWeight))throw new ValidationError('The fulfilled pieces and actual weight must match the confirmed remaining order. Review an order amendment if its weight changed.');}
+      if(actualWeight!==null){
+        const weightAvailable=direct?Number(line.direct_committed_secondary_quantity):exact.safeNumber(exact.subtract(
+          exact.subtract(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled),line.direct_committed_secondary_quantity||0));
+        if(actualWeight>weightAvailable||(quantity===available)!==(actualWeight===weightAvailable))
+          throw new ValidationError('The delivered pieces and measured weight must match the remaining promise for this delivery method.');
+      }
       const before=actualWeight===null?Number(line.quantity_fulfilled):Number(line.secondary_quantity_fulfilled),allocationQuantity=actualWeight??quantity,orderedMeasure=snapshot.pricingQuantity??snapshot.quantity;
       if(before&&snapshot.allocationVersion!==2){
         const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax,coalesce(sum((metadata::jsonb->>'revenueMinor')::bigint),0) AS revenue FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,line.id])).rows[0],expected=priceCalculator.monetaryPortion(snapshot,orderedMeasure,0,before);
@@ -822,6 +841,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         description: `Fulfill ${quantity} units on ${order.order_number}`, sourceType: 'sale_fulfillment',
         sourceRecordType: 'sales_order', sourceRecordId: salesOrderId, currency: order.currency,
         metadata: { movementId: physical.movementId, salesOrderId, salesOrderLineId: line.id,
+          ...(direct?{supplierDirect:direct}:{}),
           ...(kitCost?{kitComponents:kitCost.effects.map(e=>({componentId:e.componentId,movementId:e.physical.movementId,skuId:e.skuId,locationId:e.locationId,quantity:e.quantity,costMinor:e.cost.totalCostMinor,lotId:e.physical.lotId,serialUnitIds:e.physical.serialUnitIds}))}:{}),allocationVersion:2,revenueMinor, grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,quantity,cogsMinor: preparedCost.totalCostMinor },
         lines: [
           { accountKey: 'ACCOUNTS_RECEIVABLE', debitMinor: totalMinor, customerId: order.customer_id,
@@ -831,11 +851,12 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
           { accountKey:'SALES_TAX_PAYABLE',creditMinor:taxMinor,customerId:order.customer_id },
           { accountKey: 'COST_OF_GOODS_SOLD', debitMinor: preparedCost.totalCostMinor, customerId: order.customer_id,
             itemId: line.item_id, skuId: line.sku_id, locationId: requested.locationId },
-          ...(kitCost?kitCost.effects.map(e=>({accountKey:'INVENTORY_ASSET',creditMinor:e.cost.totalCostMinor,customerId:order.customer_id,itemId:e.cost.evidence.row.item_id,skuId:e.skuId,locationId:e.locationId})):[{ accountKey: 'INVENTORY_ASSET', creditMinor: preparedCost.totalCostMinor, customerId: order.customer_id,
+          ...(kitCost?kitCost.effects.map(e=>({accountKey:'INVENTORY_ASSET',creditMinor:e.cost.totalCostMinor,customerId:order.customer_id,itemId:e.cost.evidence.row.item_id,skuId:e.skuId,locationId:e.locationId})):[{ accountKey: direct?'RECEIVED_NOT_INVOICED':'INVENTORY_ASSET', creditMinor: preparedCost.totalCostMinor, customerId: order.customer_id,
+            ...(direct?{supplierId:direct.supplierId}:{}),
             itemId: line.item_id, skuId: line.sku_id, locationId: requested.locationId }]),
         ].filter(line=>Number(line.debitMinor||0)!==0||Number(line.creditMinor||0)!==0),
       });
-      if(kitCost)await require('./postgres-kit-fulfillment').commit(client,ctx,kitCost,posted.entry.id,salesOrderId);else await costing.commitIssueInTransaction(client, ctx, preparedCost, { journalEntryId: posted.entry.id,
+      if(kitCost)await require('./postgres-kit-fulfillment').commit(client,ctx,kitCost,posted.entry.id,salesOrderId);else if(!direct)await costing.commitIssueInTransaction(client, ctx, preparedCost, { journalEntryId: posted.entry.id,
         sourceType: 'sales_order_fulfillment', sourceRecordId: salesOrderId });
       if (allocation&&quantity === Number(allocation.quantity)) {
         await client.query('DELETE FROM sales_order_allocations WHERE id=$1', [allocation.id]);
@@ -843,11 +864,17 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         await client.query(`UPDATE sales_order_allocations SET quantity=quantity-$2,updated_at=$3 WHERE id=$1`,
           [allocation.id, quantity, nowIso()]);
       }
-      await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3,secondary_quantity_fulfilled=secondary_quantity_fulfilled+$4 WHERE id=$1`,
+      if(direct){
+        await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3,
+          secondary_quantity_fulfilled=secondary_quantity_fulfilled+$4,direct_committed_quantity=direct_committed_quantity-$2,
+          direct_committed_secondary_quantity=direct_committed_secondary_quantity-$4 WHERE id=$1`,[line.id,quantity,nowIso(),actualWeight??0]);
+        await client.query(`UPDATE stockchief_runtime.agent_direct_dispatch_lines SET journal_entry_id=$3
+          WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,direct.dispatchLineId,posted.entry.id]);
+      }else await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3,secondary_quantity_fulfilled=secondary_quantity_fulfilled+$4 WHERE id=$1`,
         [line.id, quantity, nowIso(),actualWeight??0]);
       fulfilled.push({ lineId: line.id, skuId:line.sku_id,description:line.item_name+(line.variant_label?' — '+line.variant_label:'')+(actualWeight===null?'':' ('+quantity+' '+stockProfile.unit_label+')'),quantity,secondaryQuantity:actualWeight,priceUnitLabel:stockProfile.secondary_unit_label||stockProfile.unit_label,locationId: requested.locationId,
         movementId: physical.movementId, revenueMinor,grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,unitPriceMinor:Number(line.unit_price_minor),costMinor: preparedCost.totalCostMinor,
-        journalEntryId: posted.entry.id,...(kitCost?{kitComponents:kitCost.effects.map(e=>({componentId:e.componentId,skuId:e.skuId,locationId:e.locationId,quantity:e.quantity,movementId:e.physical.movementId}))}:{}) });
+        journalEntryId: posted.entry.id,...(direct?{supplierDirect:direct}:{}),...(kitCost?{kitComponents:kitCost.effects.map(e=>({componentId:e.componentId,skuId:e.skuId,locationId:e.locationId,quantity:e.quantity,movementId:e.physical.movementId}))}:{}) });
     }
     const outstanding = await client.query(`SELECT COUNT(*) FILTER (WHERE quantity_fulfilled < quantity_ordered) AS open
       FROM sales_order_lines WHERE sales_order_id=$1 AND workspace_id=$2`, [salesOrderId, ctx.workspaceId]);
@@ -923,6 +950,7 @@ async function cancelSalesOrderInTransaction(client,rawContext,salesOrderId,inpu
   const order=await requireRow(client,`SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
     [salesOrderId,ctx.workspaceId],'That sales order was not found.');
   if(order.status==='FULFILLED')throw new ValidationError('A fully fulfilled sales order cannot be cancelled. Process a return instead.');
+  await require('../purchasing/direct-shipment-authority').assertCustomerEditable(client,ctx,salesOrderId);
   if(order.status!=='CANCELLED'){
     if(!(await client.query('SELECT 1 FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 AND quantity_fulfilled>0 LIMIT 1',[ctx.workspaceId,salesOrderId])).rows.length){
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
@@ -965,6 +993,7 @@ async function synchronizeSalesOrderInTransaction(client,rawContext,salesOrderId
   const order=await requireRow(client,`SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,
     [salesOrderId,ctx.workspaceId],'That sales order was not found.');
   if(['FULFILLED','CANCELLED'].includes(order.status))throw new ValidationError('A completed sales order cannot be rewritten from a provider snapshot.');
+  await require('../purchasing/direct-shipment-authority').assertCustomerEditable(client,ctx,salesOrderId);
   if((await client.query('SELECT 1 FROM sales_order_kit_components c JOIN sales_order_lines l ON l.workspace_id=c.workspace_id AND l.id=c.sales_order_line_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2 LIMIT 1',[ctx.workspaceId,salesOrderId])).rows.length)throw new ValidationError('This order has an accepted kit recipe. Review its channel amendment manually so component commitments and fulfilled costs remain intact.');
   const current=(await client.query(`SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2
     ORDER BY created_at,id FOR UPDATE`,[ctx.workspaceId,salesOrderId])).rows;

@@ -100,21 +100,24 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
   if(last.sku_id===candidate.skuId && (last.currency!==candidate.currency || last.unit_cost==null || Number(last.unit_cost)!==Number(candidate.unitCost) ||
      Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)))
     return 'The latest supplier order used a different currency, price or pack. A person must approve the changed terms.';
-  const ledger = await database.query(`SELECT po.currency, sum(l.quantity_units*l.unit_cost::numeric) AS amount,
-      bool_or(l.unit_cost IS NULL) AS missing_cost
-    FROM work_items wi JOIN workspaces w ON w.id=wi.workspace_id
-    JOIN purchase_orders po ON po.id=wi.purchase_order_id AND po.workspace_id=w.id
-    JOIN purchase_order_lines l ON l.purchase_order_id=po.id AND l.workspace_id=w.id
-    WHERE w.owner_account_id=$1 AND wi.source='postgres_autopilot' AND wi.approval_requirement='NONE'
-      AND po.id IS DISTINCT FROM $2 AND po.approved_at::timestamptz>=CURRENT_TIMESTAMP-interval '168 hours'
-    GROUP BY po.currency`, [state.accountId, committedId]);
-  let committed = 0;
   const money = require('../domain/currency');
+  const totalsSql = require('../operations/postgres-team-access').purchaseTotalsSql('po.workspace_id','po.id','$3::numeric');
+  const ledger = await database.query(`SELECT po.currency, totals.lines, totals.charges, totals.priced
+    FROM purchase_orders po JOIN workspaces w ON w.id=po.workspace_id
+    CROSS JOIN LATERAL (${totalsSql}) totals
+    WHERE w.owner_account_id=$1 AND po.id IS DISTINCT FROM $2
+      AND po.approved_at::timestamptz>=CURRENT_TIMESTAMP-interval '168 hours'
+      AND EXISTS(SELECT 1 FROM work_items wi WHERE wi.workspace_id=po.workspace_id AND wi.purchase_order_id=po.id
+        AND wi.source='postgres_autopilot' AND wi.approval_requirement='NONE')`,
+    [state.accountId, committedId, 10**money.exponent(cap.currency)]);
+  let committed = 0;
   for (const row of ledger.rows) {
-    if (row.currency !== cap.currency || row.missing_cost) return 'Review the account’s automatic purchase commitments before spending more.';
-    committed += money.toMinor(String(row.amount), cap.currency);
+    if (row.currency !== cap.currency || !row.priced) return 'Review the account’s automatic purchase commitments before spending more.';
+    const amount = money.sum([money.integer(row.lines), money.integer(row.charges,'Purchase charges',{signed:true})]);
+    if (amount < 0) return 'Review the account’s automatic purchase commitments before spending more.';
+    committed = money.sum([committed, amount]);
   }
-  if (committed + money.toMinor(String(candidate.value), cap.currency) > money.toMinor(String(cap.perWeek), cap.currency))
+  if (money.sum([committed, money.toMinor(String(candidate.value), cap.currency)]) > money.toMinor(String(cap.perWeek), cap.currency))
     return 'This order would exceed the weekly automatic purchasing limit across your inventories.';
   return null;
 }
@@ -124,6 +127,7 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
 // A broad mission has no trusted supplier, SKU, price or rolling spend proof.
 const separateApproval=new Set(['sales_order.notify_stock_ready','customer_invoice.remind','purchase_order.place','purchase_order.approve','communication.send_email']);
 const actionJobs=new Map([
+  ['purchasing.supplier_direct',37],
   ['document.read_contract',143],
   ['warehouse.read_shelf_photo',140],
   ['sales_order.reserve_rotation',192],['purchase_order.reorder_drafts',19],['purchasing.select_supplier',22],['purchasing.switch_backup_supplier',95],

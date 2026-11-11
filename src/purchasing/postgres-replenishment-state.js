@@ -23,7 +23,8 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  committed AS(SELECT sku_id,location_id,SUM(quantity) AS quantity FROM(SELECT * FROM sales_committed UNION ALL SELECT * FROM transfer_committed) held GROUP BY sku_id,location_id),
  purchase_incoming AS(SELECT line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id) AS location_id,SUM(line.quantity_units-line.quantity_received_units) AS quantity
   FROM purchase_order_lines line JOIN purchase_orders po ON po.id=line.purchase_order_id AND po.workspace_id=line.workspace_id
-  WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND po.status IN('APPROVED','ORDERED','PARTIALLY_RECEIVED') GROUP BY line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id)),
+  WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND po.status IN('APPROVED','ORDERED','PARTIALLY_RECEIVED')
+   AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' GROUP BY line.sku_id,COALESCE(line.destination_location_id,po.destination_location_id)),
  transfer_incoming AS(SELECT line.sku_id,t.destination_location_id AS location_id,SUM(CASE t.status WHEN 'REQUESTED' THEN line.requested_quantity WHEN 'APPROVED' THEN line.approved_quantity WHEN 'PICKED' THEN line.picked_quantity ELSE line.shipped_quantity-line.received_quantity-line.lost_quantity-line.damaged_quantity END) AS quantity
   FROM inventory_transfer_lines line JOIN inventory_transfers t ON t.id=line.transfer_id AND t.workspace_id=line.workspace_id
   WHERE line.workspace_id=$1 AND line.sku_id IN(SELECT id FROM selected_skus) AND t.status IN('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED') GROUP BY line.sku_id,t.destination_location_id),

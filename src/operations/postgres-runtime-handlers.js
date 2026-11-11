@@ -558,6 +558,8 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'webhook.deliver':external((job,database)=>require('../connections/postgres-outbound-webhooks').deliver(database,job,options.webhookDelivery||{})),'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
+  'agent.supplier_direct.dispatch.v1':external((job,database)=>require('../purchasing/agent-direct-shipments').process(job,database)),
+  'agent.supplier_direct.orders.v1':external((job,database)=>require('../purchasing/direct-shipment-routines').process(job,database)),
   'agent.slack.answer.v1':external((job,database)=>require('../connections/agent-slack').process(job,database,{provider:options.aiProvider}),'reading'),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
@@ -727,6 +729,12 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   ...Object.fromEntries(require('./agent-mail-protocol').kinds.map(kind=>[kind,external(async(job,database)=>{require('./agent-mail-protocol').assertJob(await providerEffects.get(database,job.workspaceId,job.payload?.effectId),job.kind);return providerEffect(job,database,options,providers);})])),
+  'agent.mail.supplier_direct_purchase.v1':external(async(job,database)=>{
+    const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);
+    require('./agent-mail-protocol').assertJob(effect,job.kind);
+    if(effect.status==='CANCELLED')return {cancelled:true};
+    return providerEffect(job,database,options,providers);
+  }),
   'agent.mail.supplier_rfq.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
     const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_rfq_deliveries WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;

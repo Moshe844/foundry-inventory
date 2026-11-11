@@ -10,6 +10,7 @@ const paymentConnect=require('../../payments/postgres-connect');
 const planning=require('../../forecasting/postgres-planning-service');
 const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
+const exactQuantity=require('../../domain/exact-quantity');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError,NotFoundError,AuthorizationError}=require('../../domain/errors');
@@ -61,6 +62,7 @@ function jsonValue(value,fallback){
 
 async function purchaseOrderPage(database,workspaceId,id){
   const detail=await commerce.purchaseOrder(database,workspaceId,id);
+  const direct=detail.order.delivery_kind==='CUSTOMER_DIRECT'?(await database.query('SELECT id,facts FROM stockchief_runtime.agent_direct_orders WHERE workspace_id=$1 AND purchase_order_id=$2',[workspaceId,id])).rows[0]:null;
   const [receiptLines,charges,documents,communications,supplierRows,billedLines]=await Promise.all([
     database.query(`SELECT rl.*,i.name AS item_name,s.variant_label,l.name AS location_name
       FROM purchase_order_receipt_lines rl
@@ -101,6 +103,7 @@ async function purchaseOrderPage(database,workspaceId,id){
     hasCosts:lines.length>0&&lines.every((line)=>line.unitCost!==null),isEditable:['DRAFT','AWAITING_APPROVAL'].includes(detail.order.status),
     isOpen:['ORDERED','PARTIALLY_RECEIVED'].includes(detail.order.status),
     canCancel:!['RECEIVED','CANCELLED'].includes(detail.order.status),integrityHash:detail.order.integrity_hash||'',
+    directDeliveryId:direct?.id||null,directCustomerName:direct?.facts.customer.name||null,directShipToAddress:direct?.facts.customer.address||null,
     destinationLocationName:lines.find((line)=>line.destinationLocationName)?.destinationLocationName||null};
   const receiptLineMap=new Map();
   for(const line of receiptLines.rows){
@@ -132,9 +135,9 @@ async function purchaseOrderPage(database,workspaceId,id){
 
 async function salesOrderPage(database,workspaceId,id){
   const detail=await commerce.salesOrder(database,workspaceId,id);
-  const [shipmentLines,communications,receipts,accountingRows,catalogue,customers,paymentAccount]=await Promise.all([
+  const [shipmentLines,communications,receipts,accountingRows,catalogue,customers,paymentAccount,directRows]=await Promise.all([
     database.query(`SELECT sl.*,l.name AS location_name FROM sales_shipment_stock_lines sl
-      JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
+      LEFT JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
       JOIN sales_shipments sh ON sh.id=sl.shipment_id AND sh.workspace_id=sl.workspace_id
       WHERE sl.workspace_id=$1 AND sh.sales_order_id=$2 ORDER BY sl.created_at,sl.id`,[workspaceId,id]),
     database.query(`SELECT * FROM customer_communications WHERE workspace_id=$1 AND sales_order_id=$2
@@ -151,18 +154,25 @@ async function salesOrderPage(database,workspaceId,id){
       JOIN accounting_accounts a ON a.id=l.account_id
       WHERE e.workspace_id=$1 AND e.status='POSTED' AND ((e.source_record_type='sales_order' AND e.source_record_id=$2) OR (e.source_record_type='customer_return' AND EXISTS(SELECT 1 FROM customer_returns r WHERE r.workspace_id=e.workspace_id AND r.id=e.source_record_id AND r.sales_order_id=$2))) GROUP BY e.id,e.status ORDER BY e.created_at DESC`,[workspaceId,id]),
     commerce.catalogue(database,workspaceId,{limit:50}),commerce.customers(database,workspaceId),paymentConnect.describe(database,workspaceId),
+    detail.lines.some(line=>Object.hasOwn(line,'direct_committed_quantity'))?database.query(`SELECT d.id,p.po_number,p.status
+      FROM stockchief_runtime.agent_direct_orders d JOIN purchase_orders p ON p.workspace_id=d.workspace_id AND p.id=d.purchase_order_id
+      WHERE d.workspace_id=$1 AND d.sales_order_id=$2 ORDER BY d.created_at,d.id`,[workspaceId,id]):{rows:[]},
   ]);
   const lines=detail.lines.map((line)=>{
     const ordered=Number(line.quantity_ordered);const fulfilled=Number(line.quantity_fulfilled);const allocated=Number(line.allocated);
+    const directCommitted=Number(line.direct_committed_quantity||0);
+    const unfulfilled=exactQuantity.subtract(ordered,fulfilled);
+    const locallyUnreserved=exactQuantity.subtract(exactQuantity.subtract(unfulfilled,allocated),directCommitted);
     return {...line,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),
       lineTotalMinor:line.pricing_snapshot?.grossMinor??(line.unit_price_minor===null?null:ordered*Number(line.unit_price_minor)),allocated,
-      backordered:detail.order.status==='CANCELLED'?0:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:line.isKit,
+      directCommitted,backordered:detail.order.status==='CANCELLED'?0:Math.max(0,Number(locallyUnreserved)),quantity_fulfilled:fulfilled,isKit:line.isKit,
       allocations:line.allocations.map((allocation)=>({...allocation,quantity:Number(allocation.quantity),
         location_name:allocation.location_name,kit_component_id:null}))};
   });
   const totals={ordered:lines.reduce((sum,line)=>sum+Number(line.quantity_ordered),0),
     fulfilled:lines.reduce((sum,line)=>sum+Number(line.quantity_fulfilled),0),
     allocated:lines.reduce((sum,line)=>sum+Number(line.allocated),0),
+    directCommitted:Number(lines.reduce((sum,line)=>exactQuantity.add(sum,line.directCommitted),'0')),
     backordered:lines.reduce((sum,line)=>sum+Number(line.backordered),0)};
   const subtotalMinor=lines.reduce((sum,line)=>sum+Number(line.lineTotalMinor||0),0);
   const order={...detail.order,customer:{id:detail.order.customer_id,name:detail.order.customer_name,
@@ -208,9 +218,9 @@ async function salesOrderPage(database,workspaceId,id){
   const latestAccounting=accountingRows.rows[0];const accounting=latestAccounting?{id:latestAccounting.id,
     journal_entry_id:latestAccounting.id,status:latestAccounting.status,outcome:accountingTotals}:{status:'DISABLED',outcome:{}};
   const fulfilmentState=totals.fulfilled===totals.ordered?require('../../sales/order-status').label('FULFILLED',totals.fulfilled,order.delivery_method):shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
-    ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':'Not started';
+    ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':totals.directCommitted?'Supplier delivering direct':'Not started';
   const paymentProviders=await payments.availableProviders(database,workspaceId);
-  return {detail,order,shipments,pickable,money,accounting,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
+  return {detail,order,shipments,pickable,money,accounting,directDeliveries:directRows.rows,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
     fulfilment:{state:fulfilmentState,label:fulfilmentState,detail:shipments.length?`${shipments.length} shipment${shipments.length===1?'':'s'}`:null},
     customerNotices:communications.rows.map((notice)=>({...notice,shipmentId:notice.shipment_id,
       messageKind:notice.message_kind,status:notice.status,sentAt:notice.sent_at})),
@@ -690,6 +700,7 @@ function createPostgresCommerceRouter(database,options={}){
     const buyView=require('../buy-view');
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
+    if(page.order.directDeliveryId&&req.user.role==='owner')return res.redirect(303,'/autopilot/direct-shipments/'+page.order.directDeliveryId);
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
@@ -1117,6 +1128,8 @@ function createPostgresCommerceRouter(database,options={}){
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,
+      directDeliveries:page.directDeliveries,canManageDirectShipping:req.user?.role==='owner',
+      directShippingAllowed:plans.usesAgentTerms(agentState)&&plans.permits(agentState.plan,37,'draft'),
       customerReceipts:page.customerReceipts,paymentRequests:page.paymentRequests,paymentCompleted:req.query.payment==='paid',
       openPaymentUrl:null,paymentProviders:page.paymentProviders,paymentAccount:page.paymentAccount,
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
@@ -1155,10 +1168,11 @@ function createPostgresCommerceRouter(database,options={}){
         WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
     ]);
-    const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
+    const needsReceiptMeasures=['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)&&customerReturn.lines.some(line=>line.secondary_unit_label||line.tracking_mode!=='quantity');
+    const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
-      locations:locationRows,refundableMinor,refundFinancials,refundRequest:refundRequestResult.rows[0]||null,
+      locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
       today:dateToday(req),formKey:newId('return-step')});
   }));
 
@@ -1173,6 +1187,7 @@ function createPostgresCommerceRouter(database,options={}){
     asyncRoute(async(req,res)=>{
       const customerReturn=await returns.getCustomerReturn(database,req.ctx.workspaceId,req.params.id);
       const lines=customerReturn.lines.map((line)=>({lineId:line.id,quantity:req.body[`quantity_${line.id}`],
+        secondaryQuantity:req.body[`secondary_${line.id}`],
         lotCode:trimOrNull(req.body[`lot_${line.id}`]),
         serials:String(req.body[`serials_${line.id}`]||'').split(',').map((value)=>value.trim()).filter(Boolean)}))
         .filter((line)=>Number(line.quantity)>0);
@@ -1187,6 +1202,8 @@ function createPostgresCommerceRouter(database,options={}){
       const customerReturn=await returns.getCustomerReturn(database,req.ctx.workspaceId,req.params.id);
       const lines=customerReturn.lines.map((line)=>({lineId:line.id,restock:req.body[`restock_${line.id}`],
         scrap:req.body[`scrap_${line.id}`],repair:req.body[`repair_${line.id}`],
+        restockSecondaryQuantity:req.body[`restockSecondary_${line.id}`],repairSecondaryQuantity:req.body[`repairSecondary_${line.id}`],
+        scrapSecondaryQuantity:req.body[`scrapSecondary_${line.id}`],
         restockLocationId:trimOrNull(req.body[`restockLocation_${line.id}`]),
         repairLocationId:trimOrNull(req.body[`repairLocation_${line.id}`]),
         conditionNote:trimOrNull(req.body[`condition_${line.id}`])}));

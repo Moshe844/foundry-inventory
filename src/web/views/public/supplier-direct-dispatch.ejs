@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title><%= poNumber %> · Direct customer delivery</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;color:#172033;background:#f5f7fa;margin:0;padding:24px}main{max-width:760px;margin:auto;background:white;border:1px solid #d8dfeb;border-radius:14px;padding:28px}h1{font-size:26px}h2{font-size:20px}label{display:block;margin:14px 0}input,textarea{box-sizing:border-box;display:block;width:100%;padding:10px;border:1px solid #aeb9cc;border-radius:6px;font:inherit}input[type=checkbox]{display:inline;width:auto}fieldset{border:1px solid #d8dfeb;border-radius:8px;margin:20px 0;padding:16px}button{padding:12px 18px;background:#183caf;color:white;border:0;border-radius:8px;font:inherit;cursor:pointer}.notice{padding:14px;background:#eaf6ed;border-radius:8px}.muted{color:#536079}address{font-style:normal;white-space:pre-line}
+</style></head><body><main>
+<h1><%= poNumber %> · Direct customer delivery</h1>
+<% if(received){ %><p class="notice">Your response was saved with this exact purchase.</p><% } %>
+<h2>Deliver to <%= customer.name %></h2>
+<address><%= customer.address %></address>
+<% if(customer.phone){ %><p>Delivery phone <%= customer.phone %></p><% } %>
+<p class="muted">Use this private link only for this purchase. Report what actually left, including every batch or serial and the actual weight of measured goods.</p>
+<h2>Confirm the purchase or propose a delivery date</h2>
+<form method="post" action="/supplier/order/<%= token %>/respond">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Expected customer delivery date <input type="date" name="date"></label>
+  <button name="kind" value="confirm">Confirm this exact purchase and destination</button>
+  <button name="kind" value="date">Propose a delivery date</button>
+</form>
+<% if(products.some(product=>Number(product.quantity)>Number(product.dispatched_quantity))){ %>
+<form method="post" action="/supplier/order/<%= token %>/direct-shipment">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Your dispatch reference <input name="supplierReference" required maxlength="240"></label>
+  <label>Actual shipping time, including time zone <input name="shippedAt" placeholder="2026-11-10T15:30:00-05:00" required></label>
+  <label>Carrier <input name="carrier" required maxlength="200"></label>
+  <label>Tracking number <input name="trackingNumber" required maxlength="240"></label>
+  <% products.forEach((product,index)=>{ const open=Number(product.quantity)-Number(product.dispatched_quantity);if(open<=0)return; %>
+    <fieldset><legend><%= product.name %> · <%= product.code %></legend>
+      <input type="hidden" name="lines[<%= index %>][lineId]" value="<%= product.id %>">
+      <label>Actually shipped <input type="number" min="0" max="<%= open %>" step="any" name="lines[<%= index %>][quantity]" placeholder="0"></label>
+      <p class="muted"><%= open %> <%= product.unit_label %> remain on this direct purchase</p>
+      <% if(product.secondary_unit_label){ %><label>Actual <%= product.secondary_unit_label %> <input type="number" min="0" step="any" name="lines[<%= index %>][secondaryQuantity]"></label><% } %>
+      <% if(product.tracking_mode==='lot'){ %><label>Actual batches, one per line. Use batch | quantity | expiry date | actual weight <textarea name="lines[<%= index %>][lotsText]" rows="4"></textarea></label><% } %>
+      <% if(product.tracking_mode==='serial'){ %><label>Actual serials, one per line. Use serial | actual weight | batch | expiry date <textarea name="lines[<%= index %>][serialsText]" rows="4"></textarea></label><% } %>
+    </fieldset>
+  <% }) %>
+  <label><input type="checkbox" name="actualShipment" value="yes" required> These exact goods have actually been dispatched to the customer destination shown above</label>
+  <button type="submit">Submit actual dispatch and tracking</button>
+</form>
+<% }else{ %><p class="notice">All goods on this purchase have recorded supplier dispatches.</p><% } %>
+<h2>Send the original invoice or ship notice</h2>
+<form id="supplier-document" data-url="/supplier/order/<%= token %>/file/" data-csrf="<%= csrfToken %>">
+  <label>Document type <select name="kind"><option value="invoice">Invoice</option><option value="ship-notice">Ship notice</option></select></label>
+  <label>PDF, up to 4 MB <input type="file" name="document" accept="application/pdf" required></label>
+  <button type="submit">Upload document</button><p role="status" id="upload-status"></p>
+</form>
+</main><script src="/supplier-order-link.js" defer></script></body></html>

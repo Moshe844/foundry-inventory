@@ -26,7 +26,9 @@ async function inventoryFacts(db,ctx,scope,{jobId,incomingBy}){
  const incoming=(await db.query(`SELECT l.id,l.sku_id,p.id AS purchase_order_id,p.po_number,p.status,p.expected_date,(l.quantity_units-l.quantity_received_units)::text remaining
   FROM purchase_order_lines l JOIN purchase_orders p ON p.workspace_id=l.workspace_id AND p.id=l.purchase_order_id
   WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND coalesce(l.destination_location_id,p.destination_location_id)=ANY($3::text[])
-   AND p.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED') AND l.quantity_units>l.quantity_received_units ORDER BY p.id,l.id LIMIT 2501`,[ctx.workspaceId,scope.skuIds,locationIds])).rows;
+   AND p.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')
+   AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
+   AND l.quantity_units>l.quantity_received_units ORDER BY p.id,l.id LIMIT 2501`,[ctx.workspaceId,scope.skuIds,locationIds])).rows;
  if(incoming.length>2500)throw new ValidationError('This supplier plan has more than 2,500 open purchase lines. Review a smaller product scope.');
  const transfer=(await db.query(`SELECT l.sku_id,count(*)::int n FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
   WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND t.destination_location_id=ANY($3::text[]) AND t.status NOT IN ('RECEIVED','CANCELLED') GROUP BY l.sku_id`,[ctx.workspaceId,scope.skuIds,locationIds])).rows;

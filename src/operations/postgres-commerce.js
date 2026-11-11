@@ -260,7 +260,7 @@ async function salesOrder(database, workspaceId, id) {
     WHERE so.workspace_id=$1 AND so.id=$2`,[workspaceId,id]);
   if(!header.rows.length)throw new NotFoundError('That sales order was not found.');
   const [lines,invoices,shipments,events,paymentRequests,paymentTerms,orderReceipts]=await Promise.all([
-    database.query(`SELECT sol.*,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,i.secondary_unit_label,s.code,s.variant_label,
+    database.query(`SELECT sol.*,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_increment,i.secondary_unit_label,s.code,s.variant_label,
       COALESCE((SELECT SUM(quantity) FROM sales_order_allocations a WHERE a.sales_order_line_id=sol.id),0)::numeric AS allocated
       ,COALESCE((SELECT SUM(rl.quantity_authorized) FROM customer_return_lines rl
         JOIN customer_returns r ON r.id=rl.customer_return_id
