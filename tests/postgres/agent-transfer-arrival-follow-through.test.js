@@ -116,6 +116,10 @@ test('scheduled transfer chase reaches only receiving staff, records a real phon
   const downgraded=await f.queue();await f.subscribe('starter');await f.run(downgraded);
   await assert.rejects(arrivals.page(db,eastStaff),e=>e.code==='entitlement_required');
   await assert.rejects(arrivals.check(db,eastStaff,eastTransfer.id,f.today),e=>e.code==='entitlement_required');
+  const locked=await phone.goto(base+'/transfers/arrival-follow-up');
+  assert.equal(locked.status(),200);
+  assert.match(await phone.locator('[data-agent-plan-locked]').innerText(),/Growth/);
+  assert.equal(await phone.locator('[data-agent-plan-locked] a').count(),0);
   assert.deepEqual(await notices.inbox(db,ctx.workspaceId,eastStaff.actorId),[]);
   await transfers.receive(db,eastStaff,eastTransfer.id,{idempotencyKey:randomUUID(),lines:[{lineId:eastTransfer.lines[0].id,received:2}]});
   assert.equal((await transfers.verify(db,ctx.workspaceId,eastTransfer.id)).ok,true);
