@@ -214,6 +214,7 @@ const actionJobs=new Map([
   ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
+  ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['sales_order.reserve_arrived',48],['sales_order.notify_stock_ready',50],['sales_order.repeat',53],['sales_order.allocation_priority',65],
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
@@ -242,6 +243,7 @@ const newAgentActions=new Set(['customer_invoice.prepare_document','sales_quote.
 newAgentActions.add('purchase_order.reorder_drafts');newAgentActions.add('purchasing.select_supplier');
 newAgentActions.add('sales_order.reserve_rotation');
 newAgentActions.add('transfer.prepare_balance');
+newAgentActions.add('inventory.write_down_aged');
 function actionPlan(state,name){
   if(usesAgentTerms(state))return state.plan;
   // Earlier offers retain their existing contracts. The new Agent-only contracts require the new offer.
@@ -252,6 +254,7 @@ const humanSteps=new Set([
   'purchase_order.receive_from_document',
   'sales_quote.accept',
   'catalog.restore_margin',
+  'inventory.write_down_aged',
   'inventory.receive','purchase_order.receive','transfer.receive','transfer.pick','transfer.dispatch','transfer.depart','transfer.in_transit','customer_return.receive',
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
   'customer_return.refund','supplier_payment.record','sales_order.cancel','catalog.set_price',

@@ -25,6 +25,19 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='inventory.write_down_aged'){
+  const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);
+  return {summary:proposal.summary,impact:'Reduces the inventory asset and records a write-down expense. All physical stock stays in place.',fields:[
+   {label:'Product and location',value:p.sku+' · '+p.location},
+   {label:'Whole valuation position',value:p.quantity+' '+p.unit+(p.weight?' · '+p.weight+' '+p.secondaryUnit:'')},
+   {label:'Old stock with confirmed receipt age',value:p.agedQuantity+' '+p.unit+' · oldest '+p.oldestDays+' days'},
+   {label:'Recorded carrying value',value:format(p.bookValueMinor)},
+   {label:'Supported net recoverable value',value:format(p.recoverableMinor)},
+   {label:'Write-down expense',value:format(p.writeDownMinor)},
+   {label:'Valuation evidence',value:p.valuationReference,multiline:true},
+   {label:'Posting date',value:p.date}
+  ]};
+ }
  if(proposal.action_type==='transfer.prepare_balance'){const s=proposal.payload.balanceSummary;return {summary:s.title,impact:'Creates a native Requested transfer and holds the proposed stock until separately approved.',fields:[{label:'Stock balancing and exact goods',value:s.text,multiline:true}]};}
  if(proposal.action_type==='customer_return.refund'&&proposal.payload.sourceFingerprint){
   const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);

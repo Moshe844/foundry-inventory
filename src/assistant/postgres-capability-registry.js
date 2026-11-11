@@ -134,6 +134,7 @@ const FIELDS=Object.freeze({
   paymentPurpose:{type:'string',description:'The requested payment-link purpose, such as balance or full.'},
   paymentProvider:{type:'string',description:'The connected payment gateway chosen by the user. Ask when multiple gateways are available.'},
   returnResolution:{type:'string',description:'One exact customer-return resolution: REFUND (also invoice credit), EXCHANGE, or NO_REFUND.'},
+  expectedStockFingerprint:{type:'string',description:'Exact saved stock age and carrying-value fingerprint from the review, when supplied.'},
   refundDestination:{type:'string',description:'Exact refund destination: AR to reduce an unpaid invoice, or CASH to return money already paid.'},
   refundPayments:{type:'string',description:'Optional owner-specified original receipt number and amount pairs in the invoice currency, one per line as receipt=amount. Use only exact values provided.'},
   disposition:{type:'string',description:'Physical return disposition: restock, scrap, or repair.'},

@@ -1030,6 +1030,23 @@ function createPostgresAutopilotRouter(database,options={}){
       {action:'catalog.restore_margin',sku:req.body.sku});
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  const writeDown=require('../../accounting/agent-inventory-write-downs');
+  const writeDownRoute=require('../../forecasting/agent-stock-age').route;
+  router.get(writeDownRoute,requireAuth,owner,asyncRoute(async(req,res)=>{
+    return agentPage(req,res,'autopilot/stock-write-down',{
+      title:'Review inventory write-down',nav:'autopilot',
+      backTo:{href:'/autopilot/reviews/stock-age',label:'Stock by age'}
+    },async()=>({review:await writeDown.page(database,req.ctx,req.query.position),formKey:newId('stock-write-down')}));
+  }));
+  router.post(writeDownRoute,requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes'||!req.body.expectedStockFingerprint)throw new ValidationError('Confirm the whole position and its valuation evidence before preparing the write-down.');
+    const result=await assistant.prepareAction(database,req.ctx,'Prepare this stock write-down from the supported net recoverable value.',{
+      action:writeDown.ACTION,recordReference:req.body.position,amount:req.body.amount,currency:req.body.currency,
+      reference:req.body.reference,expectedStockFingerprint:req.body.expectedStockFingerprint
+    });
+    if(!result.proposal?.id)throw new ValidationError(result.answer||'Review the current stock and its valuation evidence.');
+    return res.redirect(303,'/actions/'+result.proposal.id);
+  }));
   router.post('/autopilot/reviews/stock-rotation/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Review exact FIFO/FEFO reservations for this order',{action:'sales_order.reserve_rotation',recordReference:req.body.order,strategy:req.body.strategy,historicalFifoEvidence:req.body.historicalFifoEvidence});
     res.redirect(303,'/actions/'+prepared.proposal.id);

@@ -141,7 +141,8 @@ const suggestions={
   13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
-  17:r=>r.SKU+' at '+r.Location+' · '+r.Review+'.',
+  17:r=>r.SKU+' at '+r.Location+(r['Days since receipt']===null?' has unconfirmed age.':
+    ' has '+r.Units+' recorded units received '+r['Days since receipt']+' days ago.')+' '+r.Review+'.',
   9:r=>r.SKU+' at '+r.Location+' · '+r.Finding+'. '+r['Suggested next step'],
   86:r=>'Review '+r['Clearance units']+' units of '+r.SKU+' at '+r.Location+' for clearance.',
   58:r=>r.Service?'Consider '+r.Service+' at '+r.Price+' for '+r.Shipment+'. Carrier arrival '+r['Carrier arrival']+'.':r.Shipment+' · '+r.Status+'.',

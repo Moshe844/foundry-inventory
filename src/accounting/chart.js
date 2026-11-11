@@ -37,6 +37,7 @@ const DEFAULT_ACCOUNTS = Object.freeze([
   { code: '6180', name: 'Taxes and licenses', type: 'EXPENSE', subtype: 'TAXES', normal: 'DEBIT', systemKey: 'TAX_EXPENSE', control: false },
   { code: '6200', name: 'Payment processing fees', type: 'EXPENSE', subtype: 'PROCESSING_FEES', normal: 'DEBIT', systemKey: 'PAYMENT_FEES', control: false },
   { code: '6300', name: 'Inventory adjustments', type: 'EXPENSE', subtype: 'INVENTORY_ADJUSTMENTS', normal: 'DEBIT', systemKey: 'INVENTORY_ADJUSTMENTS', control: false },
+  { code: '6350', name: 'Inventory write-downs', type: 'EXPENSE', subtype: 'INVENTORY_WRITE_DOWNS', normal: 'DEBIT', systemKey: 'INVENTORY_WRITE_DOWNS', control: true, keptBy: 'inventory write-down approvals' },
   { code: '6400', name: 'Purchase price variance', type: 'EXPENSE', subtype: 'PURCHASE_PRICE_VARIANCE', normal: 'DEBIT', systemKey: 'PURCHASE_PRICE_VARIANCE', control: false },
   { code: '9990', name: 'Opening balance equity', type: 'EQUITY', subtype: 'OPENING_BALANCE', normal: 'CREDIT', systemKey: 'OPENING_BALANCE_EQUITY', control: true },
 ]);
