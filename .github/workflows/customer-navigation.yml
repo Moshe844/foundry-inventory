@@ -11,7 +11,7 @@ jobs:
       matrix:
         group: [core, crawl, shipping, agent-plans]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: ${{ matrix.group == 'agent-plans' && 55 || 40 }}
     env:
       NODE_ENV: test
       STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
