@@ -83,7 +83,8 @@
        phase.textContent='Opening the requested page';
        // Never navigate away with unsent input, from an older conversation, or
        // from a second tab after the durable delivery has already started.
-       const hasDraft=[...document.querySelectorAll('textarea[name="message"],input[name="message"]')]
+       // Only boxes the person types in: suggestion buttons carry their text in hidden inputs.
+       const hasDraft=[...document.querySelectorAll('textarea[name="message"],input[name="message"]:not([type="hidden"])')]
         .some(field=>!field.closest('[hidden]')&&(field.value||'').trim());
        const key=`stockchief-navigation:${goal.id}:${goal.navigation.id}`;
        if(goal.navigation.automatic&&goal.navigation.state==='PENDING'&&!hasDraft&&!sessionStorage.getItem(key)){
@@ -192,12 +193,19 @@
   }
   if(typeof window.EventSource==='function'){
    const stream=new window.EventSource(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}/stream`);
+   // The server sends the goal as soon as the stream opens and then at least
+   // every 15 seconds. A stream that is open but silent (held back by a proxy
+   // or network filter) must not leave the page waiting, so silence switches
+   // to polling: 5 seconds for the first update, 20 between later ones.
+   let watchdog=null;const fallBack=()=>{stream.close();if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))poll();};
+   const listen=(wait=20000)=>{window.clearTimeout(watchdog);watchdog=window.setTimeout(fallBack,wait);};
+   listen(5000);
    stream.addEventListener('goal',event=>{
-    try{applyGoal(JSON.parse(event.data));if(!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))stream.close();}
-    catch{stream.close();poll();}
+    try{listen();applyGoal(JSON.parse(event.data));if(!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status)){window.clearTimeout(watchdog);stream.close();}}
+    catch{window.clearTimeout(watchdog);stream.close();poll();}
    });
-   stream.onerror=()=>{stream.close();if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))poll();};
-   window.addEventListener('pagehide',()=>stream.close(),{once:true});
+   stream.onerror=()=>{window.clearTimeout(watchdog);fallBack();};
+   window.addEventListener('pagehide',()=>{window.clearTimeout(watchdog);stream.close();},{once:true});
   }else poll();
  }
 })();
