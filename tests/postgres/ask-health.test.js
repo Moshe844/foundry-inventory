@@ -11,6 +11,12 @@ test('Ask health distinguishes an absent agent from paused funding and resolves 
  await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=$2 WHERE workspace_id=$1',[ctx.workspaceId,new Date(now).toISOString()]);assert.equal((await health.sweep(db,{now})).unavailable,0);
  assert.equal((await db.query('SELECT status FROM operational_alerts WHERE id=$1',[alerts[0].id])).rows[0].status,'RESOLVED');
  const online=await agent.get('/ask/health').set('Accept','application/json');assert.equal(online.status,200);assert.equal(online.body.ok,true);
- const pilot=(await db.query('SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];assert.equal(health.state(pilot,now).ok,true);assert.equal(health.state(pilot,now+31000).workerAvailable,false);assert.match(health.state({...pilot,stopped:true},now).message,/allowance/);assert.equal(health.state({...pilot,period_ends_at:new Date(now-1)},now).ok,false);
+ const pilot=(await db.query('SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];assert.equal(health.state(pilot,now).ok,true);assert.equal(health.state(pilot,now+31000).workerAvailable,false);
+ const stopped=health.state({...pilot,stopped:true},now);
+ assert.match(stopped.message,/allowance was paused by an operator/);
+ const expired=health.state({...pilot,period_ends_at:new Date(now-1)},now);
+ assert.equal(expired.ok,false);assert.match(expired.message,/allowance has expired/);
+ assert.match(health.state({...pilot,approval_reference:null},now).message,/allowance needs approval/);
+ assert.match(health.state({...pilot,period_ends_at:'invalid'},now).message,/allowance has expired/);
  assert.equal(Number((await db.query('SELECT count(*) n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);assert.equal(Number((await db.query("SELECT count(*) n FROM operational_alerts WHERE workspace_id<>$1 AND kind='ask.worker_unavailable'",[ctx.workspaceId])).rows[0].n),0);
 });
