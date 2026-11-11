@@ -107,6 +107,7 @@ const definitions=[
   {id:58,key:'timely-shipping-rates',label:'Find the least expensive service meeting the delivery date',readPage:require('../shipping/agent-delivery-rates').review},
   ...require('../sales/agent-credit-pricing'),
   ...require('../sales/agent-order-checks').definitions,
+  require('../purchasing/agent-supplier-delivery-chases').definition,
   ...require('./exception-reviews'),
   ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},

@@ -154,6 +154,9 @@
           <a class="ox-btn ox-btn--secondary ox-btn--block" href="/autopilot/delivery-checks?orderId=<%= order.id %>">Compare actual delivery</a>
         </section>
       <% } %>
+      <% if(permissions.supplierDeliveryChases&&['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)){ %>
+        <a class="ox-btn" href="/autopilot/supplier-delivery-chases?supplierId=<%= encodeURIComponent(order.supplier_id) %>">Authorize reminders for this supplier</a>
+      <% } %>
       <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-money" style="padding-top:18px">
         <h2 id="ox-h-money">Money</h2>
         <div class="ox-sum__row"><span>Order total</span><b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></div>
@@ -298,14 +301,17 @@
 <% linkResponses.forEach(reply=>{ %><li><%= helpers.dateTime(reply.created_at) %> ·
 <% if(reply.kind==='confirm'){ %>Order confirmed<% }else if(reply.kind==='date'){ %>Delivery date proposed<% }else if(reply.kind==='amendment'){ %>
   <% if(permissions.supplierAmendments){ %><a href="/autopilot/po-delivery-dates/<%= reply.id %>">Review supplier purchase changes</a><% }else{ %>Supplier purchase changes received<% } %>
-<% }else if(reply.kind==='unavailable'){ %>Supplier reported unavailable<%= reply.valid_through?' through '+reply.valid_through:'' %><%= reply.evidence?' · '+reply.evidence:'' %><%= reply.revoked_at?' · Statement withdrawn':'' %>
-  <% if(permissions.withdrawSupplierAvailability&&reply.notice_id&&!reply.revoked_at&&order.lines.some(line=>line.outstandingUnits>0&&line.supplier_supply_hold_id===reply.notice_id)){ %>
-    <form method="post" action="/purchasing/orders/<%= order.id %>/supplier-availability/<%= reply.notice_id %>/withdraw" data-busy>
+<% }else if(reply.kind==='unavailable'){ %>Supplier reported unavailable
+  <% const reported=reply.notices||[]; const originalEmail=reported.find(notice=>notice.original_email_id)?.original_email_id; if(originalEmail){ %> · <a href="/mail/<%= originalEmail %>">Open original supplier email</a><% } %>
+  <% reported.forEach(notice=>{ %><div><strong><%= notice.code %></strong><%= notice.valid_through?' · Unavailable through '+notice.valid_through:'' %><%= notice.evidence?' · '+notice.evidence:'' %><%= notice.revoked_at?' · Statement withdrawn':'' %>
+  <% if(permissions.withdrawSupplierAvailability&&!notice.revoked_at&&order.lines.some(line=>line.outstandingUnits>0&&line.supplier_supply_hold_id===notice.id)){ %>
+    <form method="post" action="/purchasing/orders/<%= order.id %>/supplier-availability/<%= notice.id %>/withdraw" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label><input type="checkbox" name="confirmed" value="yes" required> This supplier report was entered in error</label>
       <button class="ox-btn" type="submit">Withdraw report</button>
     </form>
   <% } %>
+  </div><% }); %>
 <% }else{ %><a href="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>">Download <%= reply.kind==='invoice'?'invoice':'ship notice' %></a><% } %>
 <%= reply.expected_date || '' %></li><% }); %></ul></section><% } %>
 <script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>

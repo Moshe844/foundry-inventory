@@ -73,14 +73,28 @@ function createPostgresMailRouter(database,options={}){
       Boolean(require('../../purchasing/po-amendment-email-parser').subject(message.subject));
     const canReviewSupplierPurchase=supplierPurchaseMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&
       require('../../commercial/agent-plan').permits(plan.plan,31,'draft');
+    const supplierAvailabilityMail=req.user?.role==='owner'&&message.classification==='supplier'&&Boolean(message.external_thread_id);
+    const canReviewAvailability=supplierAvailabilityMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&
+      require('../../commercial/agent-plan').permits(plan.plan,32,'draft');
     const canImproveDraft=agentDrafts&&(await entitlements.capabilityState(database,commercialScope(req),
       'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured||require('../../assistant/postgres-codex-pilot').configured(req.ctx))
       &&!['READY','RUNNING'].includes(message.preparation_goal_status)&&!['PENDING','RETRY','RUNNING'].includes(message.draft_job_status);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
       canImproveDraft,agentDrafts,customerOrderMail,canReviewOrder,customerReturnMail,canReviewReturn,supplierDetailsMail,canReviewSupplierDetails,
-      supplierPurchaseMail,canReviewSupplierPurchase,canWriteReply:permissions.can(req.user,permissions.OPERATE),
+      supplierPurchaseMail,canReviewSupplierPurchase,supplierAvailabilityMail,canReviewAvailability,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentState.attachments,attachmentReading:attachmentState,drawers:DRAWERS});
+  }));
+  router.get('/mail/:id/supplier-availability',requireOwner,asyncRoute(async(req,res)=>{
+    const review=await require('../../purchasing/supplier-unavailability-mail').review(database,req.ctx,req.params.id);
+    if(review.replayed)return res.redirect(303,'/purchasing/orders/'+review.purchaseOrderId);
+    return res.set('Cache-Control','private, no-store').page('mail/supplier-availability',{title:'Review original supplier availability',nav:'mail',
+      review,messageId:req.params.id,backTo:{href:'/mail/'+req.params.id,label:'Original supplier email'}});
+  }));
+  router.post('/mail/:id/supplier-availability',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../purchasing/supplier-unavailability-mail').recordReviewed(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The original supplier statement is recorded on this purchase order.');
+    res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
   }));
   router.post('/mail/:id/purchase-changes',requireOwner,asyncRoute(async(req,res)=>{
     const result=await require('../../purchasing/po-amendment-email').intake(database,req.ctx.workspaceId,req.params.id);

@@ -142,6 +142,21 @@ async function capture(database,connection,message){
         poAmendmentQueued=true;
       }
     }
+    let availabilityQueued=false;
+    if(match.kind==='supplier'&&sentThread?.kind==='supplier'&&!attachments.length&&require('../purchasing/supplier-unavailability-mail-parser').subject(message.subject)){
+      const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
+      if(policy.usesAgentTerms(state)&&policy.permits(state.plan,32,'automatic')){
+        const mailbox=(await client.query('SELECT provider_account_id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
+          [connection.workspace_id,connection.id])).rows[0];
+        if(mailbox?.provider_account_id){
+          const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
+          const availability=require('../purchasing/supplier-unavailability-mail');
+          await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:availability.kind,
+            idempotencyKey:'supplier-unavailability-mail:'+id,payload:{messageId:id,mailboxAccount:mailbox.provider_account_id},priority:55,maxAttempts:3});
+          availabilityQueued=true;
+        }
+      }
+    }
     if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
       await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
         reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
@@ -167,8 +182,9 @@ async function capture(database,connection,message){
       detail:{kind:'business_email',connectorId:connection.id}});
     const nativeReviewGranted=match.kind==='supplier'&&await require('./postgres-document-review').granted(client,connection.workspace_id);
     const linkedSupplierReply=nativeReviewGranted&&sentThread?.kind==='supplier'&&(await client.query('SELECT 1 FROM supplier_communications WHERE workspace_id=$1 AND id=$2 AND purchase_order_id IS NOT NULL',[connection.workspace_id,sentThread.id])).rows.length>0;
-    const nativeDocumentReview=poAmendmentQueued||nativeReviewGranted&&(attachments.length>0||linkedSupplierReply);
-    if(linkedSupplierReply&&!attachments.length&&!poAmendmentQueued){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.supplier-review',idempotencyKey:'supplier-text-review:'+id,payload:{messageId:id},priority:45,maxAttempts:2});}
+    const typedSupplierReply=poAmendmentQueued||availabilityQueued;
+    const nativeDocumentReview=typedSupplierReply||nativeReviewGranted&&(attachments.length>0||linkedSupplierReply);
+    if(linkedSupplierReply&&!attachments.length&&!typedSupplierReply){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.supplier-review',idempotencyKey:'supplier-text-review:'+id,payload:{messageId:id},priority:45,maxAttempts:2});}
     if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview&&
       (typeof connection.config==='string'?JSON.parse(connection.config||'{}'):connection.config||{}).replyPreparationEnabled===true){
       const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};

@@ -707,6 +707,7 @@ function createPostgresCommerceRouter(database,options={}){
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
       can.supplierAmendments=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,31,'draft');
+      can.supplierDeliveryChases=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,30,'draft');
       can.withdrawSupplierAvailability=true;
     }
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));

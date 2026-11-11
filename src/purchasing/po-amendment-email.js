@@ -11,7 +11,7 @@ const {tokenFingerprint}=require('./po-amendment-link');
 const kind='mail.supplier-po-amendment.v1';
 const same=(a,b)=>String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase();
 
-async function original(db,workspaceId,id,{lock=false}={}){
+async function original(db,workspaceId,id,{lock=false,orderSubject=parser.subject,allowAttachments=false,requireLink=true}={}){
   const message=(await db.query(`SELECT m.id,m.connector_id,m.sender,m.subject,m.body_text,m.received_at,
     m.content_hash,m.external_thread_id,m.supplier_id,c.provider_type,c.provider_account_id,
     EXISTS(SELECT 1 FROM connection_email_attachments a WHERE a.workspace_id=m.workspace_id AND a.message_id=m.id) AS has_attachments
@@ -20,11 +20,11 @@ async function original(db,workspaceId,id,{lock=false}={}){
     WHERE m.workspace_id=$1 AND m.id=$2 AND m.trust_status='TRUSTED' AND m.classification='supplier'
       AND c.status='connected' AND c.paused_at IS NULL AND c.provider_type IN ('gmail','microsoft365')
       AND c.provider_account_id IS NOT NULL AND c.setup_status IS DISTINCT FROM 'REAUTHORIZATION_REQUIRED'`,[workspaceId,id])).rows[0];
-  if(!message||!message.external_thread_id||message.has_attachments)
+  if(!message||!message.external_thread_id||message.has_attachments&&!allowAttachments)
     throw new ValidationError('Use the original email from the known supplier on this purchase order’s connected mailbox thread.');
-  const requestedOrder=parser.subject(message.subject);
-  const orders=(await db.query(`SELECT p.id,p.currency,p.status,p.updated_at,l.token_hash
-    FROM purchase_orders p JOIN LATERAL (
+  const requestedOrder=orderSubject(message.subject);
+  const orders=(await db.query(`SELECT p.id,p.po_number,p.currency,p.status,p.updated_at,l.token_hash
+    FROM purchase_orders p ${requireLink?'JOIN':'LEFT JOIN'} LATERAL (
       SELECT token_hash FROM stockchief_runtime.supplier_order_links
       WHERE workspace_id=p.workspace_id AND purchase_order_id=p.id AND recipient=lower($4) AND expires_at>now()
       ORDER BY expires_at DESC,token_hash LIMIT 1
