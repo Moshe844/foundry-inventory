@@ -19,7 +19,8 @@
       <p class="ox-sub"><%= r.supplier_name %><% if (r.purchase_order_id) { %> · from <a href="/purchasing/orders/<%= r.purchase_order_id %>"><%= r.po_number %></a><% } %></p>
     </div>
     <div class="ox-head__actions">
-      <% if (r.status === 'REQUESTED') { %>
+      <% if(r.managedCaseId){ %><a class="ox-btn ox-btn--primary" href="/autopilot/supplier-returns/<%= r.managedCaseId %>">Open receipt, dispatch and credit tracking</a>
+      <% } else if (r.status === 'REQUESTED') { %>
         <form class="ox-inline-form" method="post" action="/supplier-returns/<%= r.id %>/authorize" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-authorize"><button class="ox-btn ox-btn--primary" type="submit">Supplier approved it</button></form>
       <% } else if (r.status === 'AUTHORIZED') { %>
         <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-ship-back">Mark shipped back</button>
@@ -44,13 +45,13 @@
     <div class="ox-card__h"><h2 id="ox-h-lines">What goes back</h2><span class="ox-muted ox-small"><%= r.reason || '' %></span></div>
     <table class="ox-table ox-poitems" data-preserve-grid>
       <thead><tr><th scope="col">Product</th><th scope="col" class="ox-hide-sm">From</th><th scope="col" class="ox-c">Units</th></tr></thead>
-      <tbody><% r.lines.forEach(function (l) { %><tr><td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= l.item_name %><%= l.variant_label ? ' / ' + l.variant_label : '' %></b><small><%= l.code %></small></div></div></td><td class="ox-hide-sm"><%= l.location_name %></td><td class="ox-c ox-num"><%= l.quantity %></td></tr><% }) %></tbody>
+      <tbody><% r.lines.forEach(function (l) { %><tr><td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= l.item_name %><%= l.variant_label ? ' / ' + l.variant_label : '' %></b><small><%= l.code %></small></div></div></td><td class="ox-hide-sm"><%= l.location_name %></td><td class="ox-c ox-num"><%= Number(l.quantity) %> <%= l.unit_label||'' %><% if(l.secondary_quantity!=null){ %> · <%= Number(l.secondary_quantity) %> <%= l.secondary_unit_label %><% } %></td></tr><% }) %></tbody>
     </table>
   </section>
 
   <div class="ox-grid2 ox-grid2--cards">
     <section class="ox-card ox-card__b" aria-labelledby="ox-h-goods"><h2 id="ox-h-goods" class="ox-h2">Goods</h2>
-      <p class="ox-big ox-num"><%= units %> <small>unit<%= units === 1 ? '' : 's' %></small></p>
+      <p class="ox-big ox-num"><%= r.managedCaseId?r.lines.length:units %> <small><%= r.managedCaseId?'receipt '+(r.lines.length===1?'line':'lines'):units===1?'unit':'units' %></small></p>
       <p class="ox-muted ox-small"><%= r.shipped_at ? 'Left ' + from + ' on ' + shortDate(r.shipped_at) + '.' : 'Still at ' + from + '. Not shipped yet.' %></p></section>
     <section class="ox-card ox-card__b" aria-labelledby="ox-h-credit"><h2 id="ox-h-credit" class="ox-h2">Credit</h2>
       <p class="ox-big ox-num"><%= r.actual_credit_minor == null ? m(r.expected_credit_minor) : m(r.actual_credit_minor) %></p>
@@ -58,7 +59,7 @@
   </div>
   <p class="ox-fine">Stock goes down only when the goods are shipped back. The credit is recorded when the supplier confirms it.</p>
 
-  <% if (r.status === 'AUTHORIZED') { %>
+  <% if (r.status === 'AUTHORIZED' && !r.managedCaseId) { %>
   <dialog class="ox ox-drawer" id="ox-ship-back" aria-labelledby="ox-ship-back-h">
     <form method="post" action="/supplier-returns/<%= r.id %>/ship" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-ship">
@@ -71,7 +72,7 @@
     </form>
   </dialog>
   <% } %>
-  <% if (r.status === 'AWAITING_CREDIT' && !r.trackedCredit) { %>
+  <% if (r.status === 'AWAITING_CREDIT' && !r.trackedCredit && !r.managedCaseId) { %>
   <dialog class="ox ox-drawer" id="ox-credit" aria-labelledby="ox-credit-h">
     <form method="post" action="/supplier-returns/<%= r.id %>/reconcile" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-reconcile">

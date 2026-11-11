@@ -113,6 +113,7 @@ const definitions=[
   ...require('../sales/agent-order-checks').definitions,
   require('../purchasing/agent-supplier-delivery-chases').definition,
   require('../purchasing/agent-supplier-ship-promises').definition,
+  require('../purchasing/agent-supplier-returns').definition,
   ...require('./exception-reviews'),
   ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},

@@ -18,7 +18,14 @@ const normalize = value => String(value || '').trim().toLowerCase();
 const listHref = '/autopilot/supplier-credits';
 const detailHref = id => listHref + '/' + encodeURIComponent(id);
 
-async function grant(db, ctx, { lock = false } = {}) {
+async function grant(db, ctx, { lock = false, managedReturnId = null } = {}) {
+  if(managedReturnId){
+    const returns=require('./supplier-return-evidence');
+    await returns.access(db,ctx,{lock,stop:true});
+    const tracked=await returns.lookup(db,ctx.workspaceId,managedReturnId);
+    if(!returns.dispatchProof(tracked))throw new ValidationError('Confirm the tracked physical supplier handoff first.');
+    return 'managed-supplier-return:'+managedReturnId;
+  }
   if (lock) {
     await db.query('SELECT a.id FROM account_subscriptions a JOIN workspaces w ON w.owner_account_id=a.account_id WHERE w.id=$1 FOR SHARE OF a', [ctx.workspaceId]);
   }
@@ -100,7 +107,8 @@ async function findReturn(db, ctx, row, document, originalBill, { lock, posted, 
   if (allowance || (!known && posted.some(p => p.source_hash))) return {};
   const matches = (await db.query(`SELECT id,return_number,status,supplier_bill_id,expected_credit_minor,shipped_at,actual_credit_minor
     FROM supplier_returns WHERE workspace_id=$1 AND supplier_id=$2
-      AND (CASE WHEN $5::text IS NOT NULL THEN id=$5 WHEN $3::text IS NOT NULL THEN lower(return_number)=lower($3) ELSE supplier_bill_id=$4 END)
+      AND (CASE WHEN $5::text IS NOT NULL THEN id=$5 WHEN $3::text IS NOT NULL THEN lower(return_number)=lower($3) OR EXISTS(
+        SELECT 1 FROM stockchief_runtime.agent_supplier_return_cases c WHERE c.workspace_id=$1 AND c.return_id=supplier_returns.id AND c.supplier_reference=lower(btrim($3))) ELSE supplier_bill_id=$4 END)
       AND status IN('REQUESTED','AUTHORIZED','AWAITING_CREDIT','RECONCILED','CREDIT_MISMATCH') ORDER BY id LIMIT 2${lock ? ' FOR UPDATE' : ''}`,
   [ctx.workspaceId, row.supplier_id, document.supplierReturnReference, originalBill.id, known])).rows;
   if (matches.length > 1) return { problem: 'Several supplier returns refer to this bill. Confirm the exact return reference in the source reading.' };
@@ -110,7 +118,18 @@ async function findReturn(db, ctx, row, document, originalBill, { lock, posted, 
   if (match.supplier_bill_id !== originalBill.id || match.status !== 'AWAITING_CREDIT' || !match.shipped_at) {
     return { problem: 'The named supplier return has not been physically shipped against this original bill, or was already reconciled.' };
   }
-  const otherNote = (await db.query(`SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications
+  const proof=require('./supplier-return-evidence');
+  const managed=await proof.lookup(db,ctx.workspaceId,match.id);
+  let progress=null;
+  if(managed){
+    if(!proof.dispatchProof(managed)){
+      return {problem:'The credit note needs the tracked return’s confirmed physical handoff.'};
+    }
+    if(document.issueDate<managed.dispatch.shippedOn)return {problem:'This credit predates the recorded physical return.'};
+    progress=await require('./agent-supplier-returns').credited(db,ctx,managed);
+    if(progress.problem)return {problem:progress.problem};
+  }
+  const otherNote = !managed&&(await db.query(`SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications
     WHERE workspace_id=$1 AND supplier_return_id=$2 AND source_hash IS DISTINCT FROM $3 LIMIT 1`,
   [ctx.workspaceId,match.id,row.source_hash])).rowCount;
   if (otherNote) return { problem:'A different sourced credit is already being applied to this physical return.' };
@@ -133,7 +152,11 @@ async function findReturn(db, ctx, row, document, originalBill, { lock, posted, 
     return { problem:'The return shipment and posted cost evidence no longer agree. Review the original return.' };
   }
   const returnCost = money.sum(costs.map(c=>-Number(c.cost_delta_minor)));
-  return { match:{...match,returnCost} };
+  if(managed&&(managed.dispatch.lines.map(l=>l.movementId).sort().join()!==[...movementIds].sort().join()
+      ||money.sum(managed.dispatch.lines.map(l=>Number(l.costMinor)))!==returnCost)){
+    return {problem:'The confirmed physical handoff no longer agrees with the posted return movement and cost.'};
+  }
+  return { match:{...match,returnCost,managed:Boolean(managed),progress} };
 }
 
 async function evaluate(db, ctx, row, { lock = false, targetReference = '', originalReference = '', authority = null, allowance = false } = {}) {
@@ -236,13 +259,17 @@ async function evaluate(db, ctx, row, { lock = false, targetReference = '', orig
   if (posted.some(p => (p.supplier_return_id || null) !== (returnRecord?.id || null))) {
     return waiting('The recorded physical return changed after an application. Review the original credit and shipment.', 'CONFLICT');
   }
-  const priorReturnCost = money.sum(posted.map(p => Number(p.return_cost_minor || 0)));
-  const returnCostMinor = returnRecord ? ratioMinor(returnRecord.returnCost, applied + amount, total) - priorReturnCost : null;
+  const progress=returnRecord?.progress;
+  if(progress&&result.remaining>progress.remaining)return waiting('The exact supplier note exceeds the outstanding expected return credit. Review its original and amount.');
+  const priorReturnCost = progress?progress.cost:money.sum(posted.map(p => Number(p.return_cost_minor || 0)));
+  const returnCostMinor = returnRecord ? ratioMinor(returnRecord.returnCost,
+    (progress?progress.amount:applied)+amount,progress?Number(returnRecord.expected_credit_minor):total)-priorReturnCost : null;
   if (returnCostMinor !== null && returnCostMinor < 0) return waiting('The posted credit already clears more than the verified return cost.', 'CONFLICT');
   const candidate = { billId: targetBill.id, billNumber: targetBill.bill_number, billBalance: Number(targetBill.balance_minor),
     amount, taxMinor, postingDate, balanceAfter: Number(targetBill.balance_minor) - amount, remainingAfter: result.remaining - amount,
     returnId: returnRecord?.id || null, returnNumber: returnRecord?.return_number || null, returnCost: returnRecord?.returnCost ?? null,
-    returnCostMinor, allowance: allowance && posted.length === 0,
+    returnCostMinor, managedReturn:Boolean(progress), cumulativeReturnCredit:progress?progress.amount+amount:null,
+    remainingReturnCredit:progress?progress.remaining-amount:null, allowance: allowance && posted.length === 0,
     needsReturnConfirmation: Boolean(returnRecord && !document.supplierReturnReference && !posted.length),
     expectedCredit: returnRecord?.expected_credit_minor == null ? null : Number(returnRecord.expected_credit_minor) };
   return { ...result, status: 'READY', candidate, problem: null, fingerprint: hash({ authority, revision: row.revision,
@@ -285,7 +312,8 @@ async function worker(database, workspaceId, id) {
 
 async function approve(database, ctx, id, input) {
   return database.transaction(async db => {
-    const authority = await grant(db, ctx, { lock: true });
+    const managedReturnId=String(input.managedReturnId||'').trim()||null;
+    const authority = await grant(db, ctx, { lock: true, managedReturnId });
     const row = await invoiceIntake.get(db, ctx, id, { lock: true });
     if (row.status !== 'CREDIT_REVIEW' || input.confirmed !== 'yes' || !/^[a-f0-9]{64}$/.test(input.fingerprint || '')) {
       throw new ValidationError('Confirm the exact original credit note and proposed bill application.');
@@ -306,6 +334,9 @@ async function approve(database, ctx, id, input) {
       throw new ValidationError('The credit original, approval, or bill balance changed. Review the current comparison again.');
     }
     const candidate = result.candidate;
+    if(candidate.managedReturn!==(managedReturnId!==null)||managedReturnId&&candidate.returnId!==managedReturnId){
+      throw new ValidationError('Open and approve this credit from the tracked physical supplier return.');
+    }
     if (candidate.billId !== result.originalBillId && input.confirmAlternate !== 'yes') {
       throw new ValidationError('Confirm the supplier allows applying the exact unused credit to this other bill.');
     }
@@ -327,7 +358,12 @@ async function approve(database, ctx, id, input) {
       creditNumber: result.number, creditDate: result.date, postingDate: candidate.postingDate, originalBillId: result.originalBillId,
       returnId: candidate.returnId, returnCostMinor: candidate.returnCostMinor,
       sourceHash: row.source_hash, sourceKey: 'agent-supplier-credit:' + input.fingerprint, reason });
-    if (candidate.returnId && candidate.remainingAfter === 0) {
+    if(candidate.managedReturn){
+      const complete=candidate.remainingReturnCredit===0;
+      await db.query(`UPDATE supplier_returns SET actual_credit_minor=$3,supplier_credit_id=$4,status=$5,
+        reconciled_at=CASE WHEN $5='RECONCILED' THEN $6 ELSE NULL END WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,candidate.returnId,candidate.cumulativeReturnCredit,booked.supplierCreditId,complete?'RECONCILED':'AWAITING_CREDIT',nowIso()]);
+    }else if (candidate.returnId && candidate.remainingAfter === 0) {
       const matches = candidate.expectedCredit == null || candidate.expectedCredit === result.total;
       await db.query(`UPDATE supplier_returns SET actual_credit_minor=$3,supplier_credit_id=$4,status=$5,
         reconciled_at=CASE WHEN $5='RECONCILED' THEN $6 ELSE NULL END WHERE workspace_id=$1 AND id=$2`,
@@ -430,13 +466,13 @@ async function page(database, ctx, input = {}) {
   const suggestion = account.plan === 'growth';
   if (!input.id || suggestion) return { ...report, suggestion, selected: null, filter, page: suggestion?1:number };
   const targetReference = String(input.targetReference || '').trim(), originalReference = String(input.originalReference || '').trim();
-  const allowance = input.allowance === 'yes';
+  const allowance = input.allowance === 'yes',managedReturnId=String(input.managedReturnId||'').trim()||null;
   if (targetReference.length > 150 || originalReference.length > 150) throw new ValidationError('Use an exact original or target bill reference.');
   const selected = await database.transaction(async db => {
     const row = await invoiceIntake.get(db, ctx, input.id);
     if (row.status !== 'CREDIT_REVIEW') throw new NotFoundError('This source is not a current supplier credit note.');
     let authority = null, hold;
-    try { authority = await grant(db, ctx); }
+    try { authority = await grant(db, ctx, {managedReturnId}); }
     catch (error) {
       if (!['validation_error','entitlement_required','forbidden'].includes(error.code)) throw error;
       hold = error.message;
@@ -446,6 +482,11 @@ async function page(database, ctx, input = {}) {
     catch (error) {
       if (!(error instanceof ValidationError) && !(error instanceof NotFoundError)) throw error;
       facts = { status:'WAITING',problem:error.message,number:row.invoice_number,postings:[] };
+    }
+    if(facts.candidate?.managedReturn&&facts.candidate.returnId!==managedReturnId){
+      hold='Open the exact credit from the tracked supplier return before approving it.';
+    }else if(managedReturnId&&facts.status==='READY'&&facts.candidate?.returnId!==managedReturnId){
+      hold='This credit identifies a different original supplier return.';
     }
     const alternatives = facts.originalBillId && facts.remaining > 0 && !hold && !['CONFLICT','DUPLICATE'].includes(facts.status)
       ? (await db.query(`SELECT b.bill_number,b.balance_minor FROM accounting_supplier_bills b
@@ -458,7 +499,7 @@ async function page(database, ctx, input = {}) {
         [ctx.workspaceId,row.supplier_id,facts.currency,facts.originalBillId,await require('../lib/business-time').today(db,ctx.workspaceId)])).rows
       : [];
     return { id:row.id, sourceHref:'/autopilot/supplier-invoices/'+encodeURIComponent(row.id),
-      facts, hold, targetReference, originalReference, alternatives, allowance };
+      facts, hold, targetReference, originalReference, alternatives, allowance, managedReturnId };
   }, { isolation:'REPEATABLE READ' });
   return { ...report, suggestion, selected, filter, page:number };
 }

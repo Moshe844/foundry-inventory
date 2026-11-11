@@ -705,7 +705,7 @@ async function readSupplierReturn(queryable, workspaceId, id, lock = false) {
     WHERE r.workspace_id=$1 AND r.id=$2${lock ? ' FOR UPDATE OF r' : ''}`, [workspaceId, id]);
   if (!header.rows.length) throw new NotFoundError('That supplier return could not be found.');
   const lines = await queryable.query(`SELECT l.*,s.item_id,s.code,s.variant_label,i.name AS item_name,
-      i.tracking_mode,loc.name AS location_name FROM supplier_return_lines l
+      i.tracking_mode,i.unit_label,i.secondary_unit_label,loc.name AS location_name FROM supplier_return_lines l
     JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id JOIN locations loc ON loc.id=l.location_id
     WHERE l.workspace_id=$1 AND l.supplier_return_id=$2 ORDER BY l.created_at,l.id`, [workspaceId, id]);
   const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds, lines: lines.rows.map((line) => ({ ...line,
@@ -717,7 +717,8 @@ async function getSupplierReturn(database, workspaceId, id) {
   const tracked = (await database.query(`SELECT a.intake_id,a.source_number
     FROM stockchief_runtime.agent_supplier_credit_applications a
     WHERE a.workspace_id=$1 AND a.supplier_return_id=$2 ORDER BY a.approved_at DESC LIMIT 1`,[workspaceId,id])).rows[0];
-  return { ...row, trackedCredit: tracked || null };
+  const managed=await require('../purchasing/supplier-return-evidence').lookup(database,workspaceId,id);
+  return { ...row, trackedCredit: tracked || null,managedCaseId:managed?.id||null };
 }
 
 async function listSupplierReturns(database, workspaceId, purchaseOrderId = null, page = null) {
@@ -743,8 +744,8 @@ async function requestSupplierReturn(database, rawContext, input) {
     let bill = null;
     if (trimOrNull(input.supplierBillId)) {
       bill = (await client.query(`SELECT * FROM accounting_supplier_bills WHERE id=$1 AND workspace_id=$2
-        AND supplier_id=$3 AND status IN('OPEN','PARTIALLY_PAID') FOR UPDATE`,
-      [input.supplierBillId, ctx.workspaceId, supplier.id])).rows[0];
+        AND supplier_id=$3 AND (status IN('OPEN','PARTIALLY_PAID') OR ($4 AND status='PAID')) FOR UPDATE`,
+      [input.supplierBillId, ctx.workspaceId, supplier.id, input.receiptCase===true])).rows[0];
       if (!bill) throw new ValidationError('Choose an open supplier bill for the credit reconciliation.');
     }
     const expectedCreditMinor = input.expectedCreditMinor === '' || input.expectedCreditMinor == null
@@ -756,14 +757,16 @@ async function requestSupplierReturn(database, rawContext, input) {
     [id, ctx.workspaceId, returnNumber, supplier.id, bill?.id || null, expectedCreditMinor,
       trimOrNull(input.reason), ctx.actorId, at]);
     for (const [index, raw] of input.lines.entries()) {
-      const stock = (await client.query(`SELECT s.id,s.item_id,i.name,i.tracking_mode,l.id AS location_id,
+      const stock = (await client.query(`SELECT i.*,s.id,s.item_id,l.id AS location_id,
           COALESCE(b.on_hand,0)::numeric AS on_hand FROM skus s JOIN items i ON i.id=s.item_id
         JOIN locations l ON l.id=$3 AND l.workspace_id=s.workspace_id
         LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
         WHERE s.id=$1 AND s.workspace_id=$2 AND s.is_active=1 AND i.is_active=1 AND l.is_active=1`,
       [raw.skuId, ctx.workspaceId, raw.locationId])).rows[0];
       if (!stock) throw new ValidationError(`Supplier-return line ${index + 1} has an unavailable SKU or location.`);
-      const quantity = positiveInteger(raw.quantity, `Supplier-return line ${index + 1} quantity`);
+      const stockUnits=require('../domain/stock-quantity');
+      const secondaryQuantity=stockUnits.secondary(stock,raw.secondaryQuantity);
+      const quantity = stockUnits.validate(stock,raw.quantity,{label:`Supplier-return line ${index + 1} quantity`});
       if (quantity > Number(stock.on_hand)) throw new ValidationError(`${stock.name}: return quantity exceeds stock on hand.`);
       let lotId = null; let serialUnitIds = [];
       if (stock.tracking_mode === 'lot') {
@@ -786,10 +789,10 @@ async function requestSupplierReturn(database, rawContext, input) {
         if (serialUnitIds.length !== quantity) throw new ValidationError(`${stock.name}: name every serial unit being returned.`);
       }
       await client.query(`INSERT INTO supplier_return_lines
-        (id,workspace_id,supplier_return_id,sku_id,location_id,lot_id,serial_unit_ids,quantity,reason,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        (id,workspace_id,supplier_return_id,sku_id,location_id,lot_id,serial_unit_ids,quantity,reason,created_at,secondary_quantity)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [newId('rtvl'), ctx.workspaceId, id, stock.id, stock.location_id, lotId,
-        JSON.stringify(serialUnitIds), quantity, trimOrNull(raw.reason), at]);
+        JSON.stringify(serialUnitIds), quantity, trimOrNull(raw.reason), at,secondaryQuantity]);
     }
     const result = { supplierReturnId: id, returnNumber, status: 'REQUESTED' };
     await completeOperation(client, operation, result);
@@ -821,17 +824,19 @@ async function shipSupplierReturn(database, rawContext, id, input) {
     if (operation.replayed) return { ...operation.result, replayed: true };
     const row = await readSupplierReturn(client, ctx.workspaceId, id, true);
     if (row.status !== 'AUTHORIZED') throw new ValidationError('Authorize this supplier return before shipping it.');
+    const managed=await require('../purchasing/supplier-return-evidence').lookup(client,ctx.workspaceId,id);
+    if(managed&&managed.id!==input.dispatchCaseId)throw new ValidationError('Confirm the physical handoff in the tracked supplier return.');
     const shipped = [];
     for (const [index, line] of row.lines.entries()) {
       const physical = await inventory.issueInTransaction(client, ctx, { skuId: line.sku_id,
-        locationId: line.location_id, quantity: Number(line.quantity), lotId: line.lot_id,
-        serialUnitIds: line.serialUnitIds, reasonCode: 'returned', reference: row.return_number,
+        locationId: line.location_id, quantity: Number(line.quantity),secondaryQuantity:line.secondary_quantity, lotId: line.lot_id,
+        serialUnitIds: line.serialUnitIds, reasonCode: managed?'damaged':'returned', reference: row.return_number,
         idempotencyKey: `${operation.key}:inventory:${line.id}` });
       const prepared = await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
       let journalEntryId = null;
       if (prepared.totalCostMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
-          postingInstant: input.shippedAt || nowIso(),
+          ...(managed?{postingDate:input.shippedAt}:{postingInstant:input.shippedAt||nowIso()}),
           sourceKey: `supplier-return-shipment:${operation.key}:${index}`,
           description: `Ship ${row.return_number} to ${row.supplier_name}`,
           sourceType: 'supplier_return_shipment', sourceRecordType: 'supplier_return', sourceRecordId: id,
@@ -868,6 +873,9 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
     await requirePermission(client, ctx, permissions.RECONCILE_SUPPLIER_RETURN, 'reconcile supplier credits');
     const operation = await beginOperation(client, ctx, 'supplier_return.reconcile', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
+    if(await require('../purchasing/supplier-return-evidence').lookup(client,ctx.workspaceId,id)){
+      throw new ValidationError('Use the original supplier credit note in the tracked supplier return.');
+    }
     const creditLedger = require('../accounting/postgres-supplier-credits');
     const identity = (await client.query('SELECT supplier_id,supplier_bill_id FROM supplier_returns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];
     if (!identity) throw new NotFoundError('That supplier return could not be found.');

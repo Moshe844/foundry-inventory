@@ -134,20 +134,24 @@ async function hold(c,ctx,id,lock=false){
 async function inspect(db,ctx,id,input){return db.transaction(async c=>{
  const h=await hold(c,ctx,id,true);await actor(c,ctx,{locationId:h.location_id});await access(c,ctx);
  if(h.status==='PASSED')return {id,replayed:true,released:true};
+ const returned=Number(h.returned_quantity||0),remaining=Number(h.quantity)-returned;
+ if(remaining<=0)throw new ValidationError('The whole inspected receipt has already been physically returned.');
+ if((await c.query('SELECT 1 FROM stockchief_runtime.agent_supplier_return_lines WHERE workspace_id=$1 AND receipt_line_id=$2 AND hold_active LIMIT 1',
+  [ctx.workspaceId,h.receipt_line_id])).rowCount)throw new ValidationError('Finish or cancel the recorded supplier return before inspecting the remaining goods.');
  if(Number(input.revision)!==h.revision||input.physicallyChecked!=='yes'||!['PASS','FAIL'].includes(input.decision))throw new ValidationError('Reload this inspection and confirm the checks were physically performed on these goods.');
  const checks=Array.isArray(input.checks)?input.checks:[input.checks].filter(Boolean);
  if(input.decision==='PASS'&&(checks.length!==h.checklist.length||h.checklist.some((_,i)=>!checks.includes(String(i)))))throw new ValidationError('Confirm every recorded physical check before marking this delivery as passed.');
  const note=String(input.note||'').trim();if(note.length>1000||input.decision==='FAIL'&&!note)throw new ValidationError('Describe a failed inspection in up to 1,000 characters.');
  const damagedText=String(input.damagedQuantity??'').trim(),damagedQuantity=damagedText===''?null:Number(damagedText);
- if(damagedQuantity!==null&&(!/^\d{1,6}$/.test(damagedText)||!Number.isSafeInteger(damagedQuantity)||damagedQuantity<1||damagedQuantity>h.quantity||input.decision!=='FAIL'))throw new ValidationError('Enter the actual damaged whole-unit count within this held delivery, only for a failed physical inspection.');
+ if(damagedQuantity!==null&&(!/^\d{1,6}$/.test(damagedText)||!Number.isSafeInteger(damagedQuantity)||damagedQuantity<1||damagedQuantity>remaining||input.decision!=='FAIL'))throw new ValidationError('Enter the actual damaged whole-unit count within this held delivery, only for a failed physical inspection.');
  let release=false,reason=null;const p=await getPolicy(c,ctx,h.policy_id,'share');
  if(input.decision==='PASS')try{
   if(h.policy_revision!==p.revision)throw new ValidationError('The QC authority changed. The owner must review this exact inspected delivery.');
-  await automatic(c,ctx.workspaceId,p,h.quantity);release=true;
+  await automatic(c,ctx.workspaceId,p,remaining);release=true;
  }catch(error){if(![400,402,403,404,422].includes(error.status))throw error;reason=error.message;}
  await c.query(`UPDATE stockchief_runtime.agent_quality_holds SET status=$3,inspection=$4,inspected_by=$5,inspected_at=clock_timestamp(),
   released_by=$6,released_at=CASE WHEN $6::text IS NOT NULL THEN clock_timestamp() END,revision=revision+1 WHERE workspace_id=$1 AND id=$2`,
- [ctx.workspaceId,id,release?'PASSED':input.decision==='FAIL'?'FAILED':'HELD',JSON.stringify({decision:input.decision,checks,note,damagedQuantity,releaseReason:reason}),ctx.actorId,release?p.authorized_by:null]);
+ [ctx.workspaceId,id,release?'PASSED':input.decision==='FAIL'?'FAILED':'HELD',JSON.stringify({decision:input.decision,checks,note,damagedQuantity,...(returned?{returnedBeforeInspection:returned}:{}),releaseReason:reason}),ctx.actorId,release?p.authorized_by:null]);
  await audit(c,ctx,'Physical delivery inspection recorded',id,{decision:input.decision,released:release,quantity:h.quantity,damagedQuantity});return {id,released:release,reason};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function release(db,ctx,id,input){return db.transaction(async c=>{
@@ -184,7 +188,7 @@ async function inbox(db,workspaceId,actorId){
  await actor(db,{workspaceId,actorId},{owner:true,lock:false});
  const rows=(await db.query(`SELECT h.id,h.quantity,h.status,h.created_at,s.code,l.name FROM stockchief_runtime.agent_quality_holds h
   JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id JOIN locations l ON l.workspace_id=h.workspace_id AND l.id=h.location_id
-  WHERE h.workspace_id=$1 AND h.status<>'PASSED' ORDER BY h.created_at,h.id LIMIT 50`,[workspaceId])).rows;
+  WHERE h.workspace_id=$1 AND h.status<>'PASSED' AND h.quantity>h.returned_quantity ORDER BY h.created_at,h.id LIMIT 50`,[workspaceId])).rows;
  return rows.map(h=>({kind:'purchasing',importance:'Needs You',priority:80,title:'Delivery QC: '+h.code+' · '+h.quantity+' units',happened:'Received goods remain unavailable at '+h.name+'.',why:h.status==='FAILED'?'A physical inspection failed. The goods remain held.':'A person must complete physical checks, or the owner must review a passed inspection.',recommendation:'Review the exact inspection checklist. Failed or unchecked goods cannot be released.',href:'/autopilot/delivery-quality/'+h.id,actionLabel:'Review delivery QC',sourceId:'delivery-quality:'+h.id,at:h.created_at,createdAt:h.created_at}));
 }
 module.exports={save,configure,applyReceipt,inspect,release,actor,access,hold,getPolicy,page,inbox,definition,action};

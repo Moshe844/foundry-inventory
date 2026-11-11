@@ -1,0 +1,76 @@
+
+<% const {c,today,number,more}=model; const base='/autopilot/supplier-returns'; %>
+<header class="rm-head"><a href="<%= c?base:'/autopilot/reviews' %>">← <%= c?'Tracked supplier returns':'Agent reviews' %></a>
+<h1><%= c?(model.position.returnNumber||'Faulty goods return'):'Tracked supplier returns' %></h1>
+<p><%= c?c.evidence.supplier+' · '+c.evidence.reference:'Start with the posted bill and the original physical receipt.' %></p></header>
+<% if(c){ const {position,notes,pro,canTeach,scopedRules}=model; const e=c.evidence,amount=n=>helpers.money(n,e.currency); %>
+<% if(c.problem||position.problem){ %><p class="notice notice--warn"><%= position.problem||c.problem %></p><% } %>
+<section class="rm-panel"><div class="rm-panel__body">
+<h2>Receipt and supplier authorization</h2><p><a href="/purchasing/orders/<%= e.purchaseOrderId %>"><%= e.purchaseOrder %></a> · <a href="/money/bills/<%= e.billId %>"><%= e.bill %></a> · <%= e.reference %></p>
+<p><%= e.reason %></p>
+<ul><% for(const l of e.lines){ %><li><%= l.item %> · <%= l.sku %> · <%= l.quantity %> <%= l.unit %><% if(l.secondaryQuantity!=null){ %> · <%= l.secondaryQuantity %> <%= l.weightUnit %><% } %><% if(l.lotCode){ %> · Lot <%= l.lotCode %><% } %> · <%= l.location %><% if(l.receipt){ %> · Receipt <%= l.receipt %><% } %></li><% } %></ul>
+<% if(c.cancelled_at){ %><p>Cancelled before dispatch.</p><% }else if(!c.return_id){ %><form method="post" action="<%= base %>/<%= c.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedHash" value="<%= c.evidence_hash %>">
+<label><input type="checkbox" name="confirmed" value="yes" required> I reviewed these faulty goods and the supplier’s authorization.</label>
+<button class="rm-btn">Prepare the authorized return</button></form>
+<% }else{ %><p><a href="/supplier-returns/<%= c.return_id %>">Open native return <%= position.returnNumber %></a></p><% } %>
+</div></section>
+<% if(!c.cancelled_at&&c.return_id){ %><section class="rm-panel"><div class="rm-panel__body"><h2>Physical handoff</h2>
+<% if(c.dispatch){ %><p>Goods left on <%= c.dispatch.shippedOn %> · Handoff <%= c.dispatch.reference %></p>
+<p><%= amount(c.dispatch.lines.reduce((total,l)=>total+l.costMinor,0)) %> of inventory cost moved to supplier returns receivable.</p>
+<% }else{ %><form method="post" action="<%= base %>/<%= c.id %>/dispatch">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedHash" value="<%= c.evidence_hash %>">
+<label>Actual handoff date <input type="date" name="shippedOn" required value="<%= today %>" max="<%= today %>"></label>
+<label>Handoff or carrier reference <input name="dispatchReference" maxlength="240" required></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> I confirmed these exact goods physically left the business.</label>
+<button class="rm-btn">Record physical dispatch</button></form><% } %>
+</div></section><% } %>
+<% if(c.dispatch){ %><section class="rm-panel"><div class="rm-panel__body"><h2>Supplier credit</h2>
+<dl class="kv"><dt>Expected</dt><dd><%= amount(e.expected) %></dd><dt>Posted</dt><dd><%= amount(position.amount) %></dd><dt>Still owed</dt><dd><%= amount(position.remaining) %></dd></dl>
+<% if(position.rows.length){ %><h3>Posted notes</h3><ul><% for(const r of position.rows){ %><li><a href="/autopilot/supplier-credits/<%= r.intake_id %>?managedReturnId=<%= c.return_id %>"><%= r.source_number %></a> · <%= amount(r.amount_minor) %> · <a href="/accounting/entries/<%= r.journal_entry_id %>">Journal</a></li><% } %></ul><% } %>
+<% if(c.checked_at){ %><p>Checked <%= helpers.dateTime(c.checked_at) %></p><% } %>
+<% if(position.remaining){ %><h3>Original credit notes</h3>
+<% if(!notes.length){ %><p>Waiting for the supplier’s original credit note.</p><% } %>
+<ul><% for(const n of notes){ const checked=c.tracking?.notes?.find(x=>x.id===n.id); %><li><a href="/autopilot/supplier-credits/<%= n.id %>?managedReturnId=<%= c.return_id %>"><%= n.invoice_number %></a><% if(checked?.problem){ %> · <%= checked.problem %><% }else if(checked?.proposed!=null){ %> · <%= amount(checked.proposed) %> ready to review<% } %></li><% } %></ul>
+<p><a href="/autopilot/supplier-invoices">Open supplier invoice and credit originals</a></p><% } %></div></section><% } %>
+<% if(!c.cancelled_at&&!c.dispatch){ %><form method="post" action="<%= base %>/<%= c.id %>/cancel">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedHash" value="<%= c.evidence_hash %>">
+<label><input type="checkbox" name="confirmed" value="yes" required> These goods have not left and this return is cancelled.</label>
+<button class="rm-btn rm-btn--ghost">Cancel unshipped return</button></form><% } %>
+<section class="rm-panel"><div class="rm-panel__body"><h2>Routine preparation</h2>
+<% if(pro&&!canTeach){ %><p>Complete one individually approved dispatch and its full posted credit to teach a routine.</p><% } %>
+<% for(const loc of new Map(e.lines.map(l=>[l.locationId,l.location]))){ const rule=scopedRules.find(r=>r.location_id===loc[0]); %>
+<% if(!pro||canTeach){ %><form method="post" action="<%= base %>/<%= c.id %>/scope">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= loc[0] %>"><input type="hidden" name="revision" value="<%= rule?.revision||0 %>">
+<label>Maximum expected credit at <%= loc[1] %> (<%= e.currency %>) <input name="maximum" inputmode="decimal" required></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> Prepare returns for this supplier and location after physical checks and supplier authorization.</label>
+<button class="rm-btn"><%= pro?'Teach routine':'Authorize routine' %></button></form><% } %>
+<% if(rule?.enabled){ %><form method="post" action="<%= base %>/<%= c.id %>/scope">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= loc[0] %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
+<button class="rm-btn rm-btn--ghost" name="stop" value="yes">Stop routine at <%= loc[1] %></button></form><% } %>
+<% } %></div></section>
+<% }else{ const {bill,lines,bills,recent}=model; %>
+<% if(!bill){ %><section class="rm-panel"><div class="rm-panel__body"><h2>Choose the original bill</h2>
+<ul><% for(const b of bills){ %><li><a href="<%= base %>?billId=<%= encodeURIComponent(b.id) %><%= model.holdId?'&holdId='+encodeURIComponent(model.holdId):'' %>"><%= b.supplier_name %> · <%= b.bill_number %> · <%= b.po_number %></a></li><% } %></ul></div></section>
+<% }else{ %><section class="rm-panel"><div class="rm-panel__body"><h2><%= bill.supplier_name %> · <%= bill.bill_number %></h2>
+<form method="post" action="<%= base %>">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="billId" value="<%= bill.id %>">
+<% for(const l of lines){ %><fieldset><legend><%= l.name %> · <%= l.code %> · <%= l.location_name %><%= l.reference?' · '+l.reference:'' %></legend>
+<label><input type="checkbox" name="receiptLine" value="<%= l.id %>" <%= model.holdId?'checked':'' %>> Return from this receipt<%= l.lot_code?' · Lot '+l.lot_code:'' %></label>
+<label>Faulty quantity (<%= l.unit_label %>) <input name="quantity_<%= l.id %>" inputmode="decimal" value="<%= model.holdId?l.inspection.damagedQuantity+(l.inspection.returnedBeforeInspection||0)-l.returned_quantity:'' %>"></label>
+<% if(l.secondary_unit_label){ %><label>Actual weight (<%= l.secondary_unit_label %>) <input name="weight_<%= l.id %>" inputmode="decimal"></label><% } %>
+<% if(l.tracking_mode==='serial'){ %><label>Exact serials, separated by commas <input name="serials_<%= l.id %>"></label><% } %>
+</fieldset><% } %>
+<label>What was physically found faulty <input name="reason" maxlength="1000" required></label>
+<label>Supplier authorization or RMA reference <input name="supplierReference" maxlength="240" required></label>
+<label>Confirmed expected credit (<%= bill.currency %>) <input name="expected" inputmode="decimal" required></label>
+<label><input type="checkbox" name="physicallyChecked" value="yes" required> I physically checked the exact goods, quantities and any tracking identifiers.</label>
+<label><input type="checkbox" name="supplierApproved" value="yes" required> The supplier authorized the return and confirmed the expected credit.</label>
+<button class="rm-btn">Save receipt and authorization</button></form></div></section><% } %>
+<section class="rm-panel"><div class="rm-panel__body"><h2>Saved returns</h2><ul><% for(const row of recent){ %><li>
+<a href="<%= base %>/<%= row.id %>"><%= row.evidence.supplier %> · <%= row.evidence.reference %></a> · <%= row.cancelled_at?'Cancelled':row.dispatch?'Dispatched':row.return_id?'Authorized':'Review receipt' %>
+</li><% } %></ul></div></section>
+<% } %>
+<% if(number>1||more){ const query=new URLSearchParams(model.bill?{billId:model.bill.id}:{}); if(model.holdId)query.set('holdId',model.holdId); %><p>
+<% if(number>1){ query.set('page',String(number-1)); %><a href="?<%= query.toString() %>">Previous</a><% } %>
+<% if(more){ query.set('page',String(number+1)); %><a href="?<%= query.toString() %>">Next</a><% } %></p><% } %>

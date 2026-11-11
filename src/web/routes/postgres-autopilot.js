@@ -225,6 +225,32 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/contracts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await contractReader.load(database,req.ctx,req.params.id);res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"}).type('application/octet-stream').attachment(r.filename).send(r.content);}));
   router.get('/autopilot/contracts/:id',requireAuth,owner,contractsPage);
   router.post('/autopilot/contracts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/contracts/'+req.params.id);}));
+  const supplierReturns=require('../../purchasing/agent-supplier-returns');
+  const returnPath=supplierReturns.href;
+  const supplierReturnPage=starterAgentPage(115,'draft','Tracked supplier returns',async(req,res)=>{
+    const number=Number(req.query.page||1);
+    if(!Number.isSafeInteger(number)||number<1||number>1000000)throw new ValidationError('Choose a valid results page.');
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/supplier-return-follow-through',{title:'Tracked supplier returns',nav:'autopilot',
+      model:await supplierReturns.page(database,req.ctx,{id:req.params.id,billId:req.query.billId,holdId:req.query.holdId,number})});
+  },'Pro');
+  router.get(returnPath,requireAuth,owner,supplierReturnPage);
+  router.get(returnPath+'/:id',requireAuth,owner,supplierReturnPage);
+  router.post(returnPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const selected=[req.body.receiptLine].flat().filter(Boolean);
+    const lines=selected.map(id=>({receiptLineId:id,quantity:req.body['quantity_'+id],secondaryQuantity:req.body['weight_'+id],
+      serials:String(req.body['serials_'+id]||'').split(',').map(s=>s.trim()).filter(Boolean)}));
+    const result=await supplierReturns.capture(database,req.ctx,{billId:req.body.billId,physicallyChecked:req.body.physicallyChecked,
+      supplierApproved:req.body.supplierApproved,expected:req.body.expected,supplierReference:req.body.supplierReference,
+      reason:req.body.reason,lines,requestKey:req.body.idempotencyKey});
+    return res.redirect(303,returnPath+'/'+result.id);
+  }));
+  for(const [step,handler] of [['approve',supplierReturns.approve],['dispatch',supplierReturns.dispatch],['cancel',supplierReturns.cancel],['scope',supplierReturns.configure]]){
+    router.post(returnPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await handler(database,req.ctx,req.params.id,req.body);
+      return res.redirect(303,returnPath+'/'+req.params.id);
+    }));
+  }
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
   const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},
@@ -235,7 +261,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-credits/:id/approve', requireAuth, owner, asyncRoute(async(req,res)=>{
     const result = await supplierCredits.approve(database,req.ctx,req.params.id,req.body);
     req.flash('success',result.replayed?'This exact credit application was already recorded.':'Supplier credit recorded against the reviewed bill.');
-    return res.redirect(303,supplierCredits.detailHref(req.params.id));
+    return res.redirect(303,supplierCredits.detailHref(req.params.id)+(req.body.managedReturnId?'?'+new URLSearchParams({managedReturnId:req.body.managedReturnId}):''));
   }));
   const supplierInvoices=require('../../purchasing/agent-supplier-invoice-intake');
   const supplierInvoicePage=starterAgentPage(98,'draft','Supplier invoices',async(req,res,state)=>res.page('autopilot/supplier-invoices',{title:'Supplier invoices: originals, matches and exceptions',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await supplierInvoices.page(database,req.ctx,{...req.query,id:req.params.id}),canTrackCredit:policy.permits(state.plan,105,'suggest'),invoiceCurrency:require('../../domain/currency'),differenceLabel:require('../../purchasing/postgres-invoice-review').differenceLabel}));

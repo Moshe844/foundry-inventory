@@ -23,12 +23,14 @@
   <% if(candidate){ %>
     <h3>Review this application</h3>
     <p>Apply <strong><%= helpers.money(candidate.amount,facts.currency) %></strong> to <a href="/money/bills/<%= candidate.billId %>"><%= candidate.billNumber %></a>. The payable falls from <%= helpers.money(candidate.billBalance,facts.currency) %> to <%= helpers.money(candidate.balanceAfter,facts.currency) %>.</p>
+    <% if(candidate.managedReturn){ %><p>Expected return credit still owed after this application <%= helpers.money(candidate.remainingReturnCredit,facts.currency) %>.</p><% } %>
     <p>Tax in this application <%= helpers.money(candidate.taxMinor,facts.currency) %>. Credit remaining <%= helpers.money(candidate.remainingAfter,facts.currency) %>. Posting date <%= candidate.postingDate %>.</p>
     <% if(candidate.returnId){ %><p>Shipped supplier return <a href="/supplier-returns/<%= candidate.returnId %>"><%= candidate.returnNumber %></a></p><% } %>
     <% if(!selected.hold){ %>
     <form class="form-stack" method="post" action="/autopilot/supplier-credits/<%= selected.id %>/approve">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="fingerprint" value="<%= facts.fingerprint %>">
+      <% if(selected.managedReturnId){ %><input type="hidden" name="managedReturnId" value="<%= selected.managedReturnId %>"><% } %>
       <input type="hidden" name="targetReference" value="<%= selected.targetReference %>">
       <input type="hidden" name="originalReference" value="<%= selected.originalReference %>">
       <% if(selected.allowance){ %><input type="hidden" name="allowance" value="yes"><% } %>
@@ -45,9 +47,10 @@
   <% if(facts.remaining>0&&!['DUPLICATE','CONFLICT'].includes(facts.status)&&!selected.hold){ %>
     <details><summary>Check an exact bill reference</summary>
       <% if(selected.alternatives.length){ %><p>Other open bills in <%= facts.currency %> from this supplier</p><ul>
-        <% for(const bill of selected.alternatives){ %><li><a href="?targetReference=<%= encodeURIComponent(bill.bill_number) %>&amp;originalReference=<%= encodeURIComponent(selected.originalReference) %><%= selected.allowance ? '&allowance=yes' : '' %>"><%= bill.bill_number %></a> · <%= helpers.money(Number(bill.balance_minor),facts.currency) %> due</li><% } %>
+        <% for(const bill of selected.alternatives){ %><li><a href="?targetReference=<%= encodeURIComponent(bill.bill_number) %>&amp;originalReference=<%= encodeURIComponent(selected.originalReference) %><%= selected.allowance ? '&allowance=yes' : '' %><%= selected.managedReturnId?'&managedReturnId='+encodeURIComponent(selected.managedReturnId):'' %>"><%= bill.bill_number %></a> · <%= helpers.money(Number(bill.balance_minor),facts.currency) %> due</li><% } %>
       </ul><% } %>
       <form class="form-stack" method="get" action="/autopilot/supplier-credits/<%= selected.id %>">
+        <% if(selected.managedReturnId){ %><input type="hidden" name="managedReturnId" value="<%= selected.managedReturnId %>"><% } %>
         <label>Original supplier bill, if the note omits it <input name="originalReference" maxlength="150" value="<%= selected.originalReference %>"></label>
         <label>Other open bill from the same supplier, if authorized <input name="targetReference" maxlength="150" value="<%= selected.targetReference %>"></label>
         <% if(facts.canChooseAllowance){ %><label><input type="checkbox" name="allowance" value="yes" <%= selected.allowance ? 'checked' : '' %>> Compare as a standalone supplier allowance</label><% } %>
