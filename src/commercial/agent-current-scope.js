@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 137:{common:'Reads complete original bills of lading and customs papers from uploads, saved attachments or earlier filings. Preserves each page and the original file. Exact printed PO numbers link the source to native purchase orders. The review shows page quotations for purchase orders, shipment references, containers, carriers and customs details.',
+ growth:'Reviews the complete original and prepares its exact PO links. You approve each batch. If the source does not establish a PO, you confirm the matching record and evidence.',
+ pro:'Can file clearly proven PO links from an explicitly authorized original without training after Watch and within current routine authority. Scanned or conflicting references need individual review. Existing paid attachment receipts are reused.',
+ enterprise:'Can file proven PO links from an exact owner-authorized original without training after Watch. Current authority and supplier and PO identity are checked again at dispatch. Complete originals and links remain available after downgrade.'},
  43:{common:'Fills one physical receiving review from a saved packing slip. Matches exact supplier codes, PO lines, purchase packs and warehouses. Keeps the actual batches, expiry dates, serials, individual weights and fractional quantities. Uses approved purchase costs. Completed forms count in the time-saved report when you record comparable timings.',
   growth:'Fills the receiving form for your review. Confirm the actual delivery once to book the goods and their approved costs.',
   pro:'Fills the receiving form without training from the original source and the placed purchase order. You confirm the actual physical receipt.',
