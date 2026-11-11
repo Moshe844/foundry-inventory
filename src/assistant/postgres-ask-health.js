@@ -1,8 +1,8 @@
 'use strict';
 function state(pilot,now=Date.now()){
  const available=[pilot?.worker_seen_at,pilot?.hosted_seen_at].some(at=>at&&now-new Date(at).getTime()<30000);
- const funded=Boolean(pilot?.enabled&&!pilot.stopped&&pilot.approval_reference&&Number(pilot.ceiling_micro_usd)>0&&new Date(pilot.period_ends_at).getTime()>now);
- return {ok:available&&funded,workerAvailable:available,allowanceAvailable:funded,message:!funded?'Ask is paused because its usage allowance is unavailable. No AI credits will be used while it is paused.':!available?'Ask is temporarily offline. Saved requests are waiting for an agent. You can keep using inventory, orders and reports.':'Ask is ready.'};
+ const lock=require('./postgres-codex-pilot').spendingLockMessage(pilot,now),funded=!lock;
+ return {ok:available&&funded,workerAvailable:available,allowanceAvailable:funded,message:lock?'Model-backed Ask requests are paused. '+lock+' Stock lookups and page navigation are available.':!available?'Ask is temporarily offline. Saved requests are waiting for an agent. You can keep using inventory, orders and reports.':'Ask is ready.'};
 }
 async function sweep(db,{now=Date.now()}={}){
  const pilots=(await db.query(`SELECT p.workspace_id,p.enabled,p.stopped,p.approval_reference,p.ceiling_micro_usd,p.period_ends_at,p.worker_seen_at,h.hosted_seen_at

@@ -45,6 +45,7 @@
   </section>
 
   <section class="ox-card ox-list" aria-label="Order list">
+    <% if (L.tab === 'open') { %><p class="ox-filter-note" data-open-filter><strong>Open orders · <%= L.matching %></strong> Confirmed, waiting for stock or partly shipped. <a href="/orders">Show all orders</a></p><% } %>
     <div class="ox-toolbar">
       <nav class="ox-tabs" aria-label="Filter by status">
         <% tabs.forEach(function (t) { %>

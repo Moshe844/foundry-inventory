@@ -533,3 +533,32 @@ html:root body.public-page[data-public-page=pricing] .plan-card[data-plan] .plan
  background:#e8ebee!important;background-image:none!important;color:#59636d!important;border-color:#c8d0d6!important;
  box-shadow:none!important;transform:none!important;translate:none!important;transition:none!important;cursor:default;opacity:1;width:100%;box-sizing:border-box;justify-content:center;
 }
+
+/* Integrations: the whole card opens that connection's window. */
+.pub-integration-cards article { position: relative; cursor: pointer; }
+.pub-integration-cards article:focus-within { border-color: rgb(79, 70, 229); box-shadow: 0 0 0 3px rgba(79, 70, 229, .18); }
+.pub-integration-open { all: unset; font: inherit; color: inherit; cursor: pointer; }
+.pub-integration-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.pub-integration-more { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--purple, #4f46e5); font-size: 13px; font-weight: 650; }
+.pub-integration-more::after { content: '→'; }
+.pub-integration-status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #FEF3C7; color: #92400E; font-size: 12px; font-weight: 650; }
+.pub-integration-dialog { width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 0; border-radius: 16px; color: #11152e; background: #fff; box-shadow: 0 30px 70px -24px rgba(17, 21, 46, .5); overflow: auto; }
+.pub-integration-dialog::backdrop { background: rgba(17, 21, 46, .5); }
+.pub-integration-dialog > header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 14px; padding: 22px 24px 16px; background: #fff; border-bottom: 1px solid #ECEEF4; }
+.pub-integration-dialog > header > div:nth-child(2) { flex: 1; min-width: 0; }
+.pub-integration-dialog h2 { margin: 0; font-size: 22px; line-height: 1.2; }
+.pub-integration-dialog__group { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; color: #667085; }
+.pub-integration-dialog__close { flex: none; width: 36px; height: 36px; border: 0; border-radius: 10px; background: #F1F2F7; color: #344054; font-size: 22px; line-height: 1; cursor: pointer; }
+.pub-integration-dialog__close:hover, .pub-integration-dialog__close:focus-visible { background: #E4E7EC; outline: 2px solid rgba(79, 70, 229, .4); }
+.pub-integration-dialog__what { margin: 18px 24px 0; font-size: 15px; line-height: 1.6; color: #344054; }
+.pub-integration-dialog h3 { margin: 22px 24px 8px; font-size: 13px; letter-spacing: .02em; text-transform: uppercase; color: #667085; }
+.pub-integration-dialog ul, .pub-integration-dialog ol { margin: 0 24px; padding-left: 20px; display: grid; gap: 7px; font-size: 14.5px; line-height: 1.55; color: #344054; }
+.pub-integration-dialog ol li::marker { color: rgb(79, 70, 229); font-weight: 700; }
+.pub-integration-dialog > footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; padding: 16px 24px 22px; border-top: 1px solid #ECEEF4; }
+.pub-integration-dialog > footer p { flex-basis: 100%; margin: 0 0 4px; font-size: 13.5px; color: #667085; }
+@media (max-width: 600px) {
+  .pub-integration-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 14px; }
+  .pub-integration-dialog > header, .pub-integration-dialog > footer { padding-left: 16px; padding-right: 16px; }
+  .pub-integration-dialog__what, .pub-integration-dialog h3 { margin-left: 16px; margin-right: 16px; }
+  .pub-integration-dialog ul, .pub-integration-dialog ol { margin: 0 16px; }
+}

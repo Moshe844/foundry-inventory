@@ -22,7 +22,7 @@ function json(value){if(value&&typeof value==='object')return value;try{return J
 
 const STOCK_GROUPS=Object.freeze([
   Object.freeze({key:'shortage',name:'Promised but not available',detail:'Customer orders need more units than you have.',tone:'hot',icon:'alert'}),
-  Object.freeze({key:'empty',name:'Nothing on hand',detail:'No physical units are here yet, or the stock has run out.',tone:'hot',icon:'box'}),
+  Object.freeze({key:'empty',name:'Out of stock',detail:'No physical units are here yet, or the stock has run out.',tone:'hot',icon:'box'}),
   Object.freeze({key:'incoming',name:'On the way',detail:'A placed supplier order still has units to arrive.',tone:'quiet',icon:'arrive'}),
   Object.freeze({key:'healthy',name:'Available now',detail:'Physical stock covers the units promised to customers.',tone:'ok',icon:'check'}),
 ]);

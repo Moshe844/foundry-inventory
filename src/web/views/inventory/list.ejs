@@ -2,7 +2,7 @@
   <div class="titles">
     <% if (returnTo) { %><a class="back-link" href="<%= returnTo %>">← Back to <%= returnLabel %> message history</a><% } %>
     <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : activeGroup ? activeGroup.name.replace(/^[0-9]+ /, '').replace(/^[a-z]/, function (c) { return c.toUpperCase(); }) : 'Products' %></h1>
-    <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : activeGroup ? activeGroup.detail : 'Everything you track, and how much of it you have.' %></div>
+    <div class="page-sub"><% if (activeGroup && !sourceLabel && !filters.archivedOnly && Number.isFinite(Number(locals.totalCount))) { %><strong data-group-count><%= helpers.qty(totalCount) %> <%= locals.isFlat ? (Number(totalCount) === 1 ? 'SKU' : 'SKUs') : (Number(totalCount) === 1 ? 'product' : 'products') %></strong> · <% } %><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : activeGroup ? activeGroup.detail : 'Everything you track, and how much of it you have.' %><% if (activeGroup) { %> <a href="/inventory/table">Show all stock</a><% } %></div>
   </div>
   <div class="page-actions"><a class="btn" href="/inventory/overview">Stock overview</a><a class="btn" href="/imports">Import</a><a class="btn btn--primary" href="/inventory/new">Add product</a>
   </div>
