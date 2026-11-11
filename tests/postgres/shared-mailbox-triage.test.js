@@ -117,7 +117,8 @@ test('the native Gmail and Microsoft workers classify complete pages, preserve u
   assert.equal(completed(await processPage(f,handlers)).accepted,1);
   assert.equal((await records(f)).find(r=>r.id==='starter').category,null);
   await browser.get('/mail').expect(200).expect(res=>assert.doesNotMatch(res.text,/>Sorted mail</));
-  await browser.get('/mail/sorted').expect(402);
+  await browser.get('/mail/sorted').expect(200).expect(/available on Growth/);
+  await browser.get('/mail/sorted').set('Accept','application/json').expect(402);
   assert(!calls.some(url=>/send/i.test(url.pathname)));
 });
 

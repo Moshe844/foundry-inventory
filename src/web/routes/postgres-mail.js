@@ -40,6 +40,11 @@ function createPostgresMailRouter(database,options={}){
   router.get('/mail/sorted',requireOwner,asyncRoute(async(req,res)=>{
     const plan=require('../../commercial/agent-plan'),sorter=require('../../connections/agent-mail-triage');
     const state=await plan.accountState(database,req.ctx.workspaceId);
+    const included=plan.permits(state.plan,138,'automatic');
+    if(!sorter.available(state)&&req.accepts('html')){
+      return res.page('autopilot/agent-plan-locked',{title:'Sorted mail',nav:'mail',tier:'Growth',
+        reviewTerms:included,backTo:{href:'/mail',label:'Mail'}});
+    }
     plan.requireJob(plan.usesAgentTerms(state)?state.plan:null,138,'automatic');
     const page=Number(req.query.page||1),filter=String(req.query.filter||'').trim().slice(0,254);
     if(!Number.isSafeInteger(page)||page<1||page>1000000)
