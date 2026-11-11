@@ -39,6 +39,13 @@ test('one Ask answer shows exact stock across locations without counting transit
  }
  const inTransit=await transfers.get(db,ctx.workspaceId,transfer.id);
  await transfers.receive(db,ctx,transfer.id,{idempotencyKey:randomUUID(),lines:[{lineId:inTransit.lines[0].id,received:1}]});
+ const measured=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{
+  name:'Catch-weight cartons',baseCode:'LOC-WEIGHT',trackingMode:'quantity',unitLabel:'piece',
+  secondaryUnitLabel:'kg',secondaryPrecision:3,secondaryIncrement:'0.001'});
+ for(const [locationId,quantity,secondaryQuantity] of [[f.location.id,2,'5.125'],[bin.id,1,'4.250']]){
+  await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:measured.skuIds[0],locationId,quantity,
+   secondaryQuantity,unitCost:'4',idempotencyKey:randomUUID()});
+ }
  const service={resolveSku:async()=>{throw Error('Expected the native location answer for an exact SKU');}};
  for(const plan of ['starter','growth','pro','enterprise']){
   await f.subscribe(plan);
@@ -52,6 +59,9 @@ test('one Ask answer shows exact stock across locations without counting transit
    [['In transit',2],['On hand',1],['On hand',7],['Supplier-owned consignment',4]]);
   assert.equal(answer.result.extent.complete,true);
   assert.equal(answer.provenance.modelCalls,0);
+  const weights=await direct.run(service,db,ctx,'Show stock for LOC-WEIGHT across all warehouses');
+  assert.deepEqual(weights.result.rows.map(r=>[r.onHand,Number(r.measured.split(' ')[0])]),[[2,5.125],[1,4.25]]);
+  assert(weights.result.columns.includes('measured'));
  }
  await transfers.receive(db,ctx,transfer.id,{idempotencyKey:randomUUID(),lines:[{lineId:inTransit.lines[0].id,received:2}]});
  const answer=await direct.run(service,db,ctx,'Show stock for '+code+' across every location');
