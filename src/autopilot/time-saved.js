@@ -296,8 +296,9 @@ async function moneyReview(db,ctx,days){
     JOIN accounting_supplier_bills b ON b.workspace_id=c.workspace_id AND b.id=c.supplier_bill_id
     JOIN accounting_journal_entries j ON j.workspace_id=c.workspace_id AND j.id=c.journal_entry_id AND j.status='POSTED'
     WHERE c.workspace_id=$1 AND c.created_at::timestamptz BETWEEN now()-make_interval(days=>$2) AND now()
-      AND EXISTS(SELECT 1 FROM stockchief_runtime.assistant_action_proposals a WHERE a.workspace_id=c.workspace_id
+      AND (EXISTS(SELECT 1 FROM stockchief_runtime.assistant_action_proposals a WHERE a.workspace_id=c.workspace_id
         AND a.action_type='supplier_return.reconcile' AND a.status='EXECUTED' AND a.result->>'supplierCreditId'=c.id)
+        OR EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications a WHERE a.workspace_id=c.workspace_id AND a.credit_id=c.id))
       AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries reversal WHERE reversal.workspace_id=j.workspace_id AND reversal.reversal_of_entry_id=j.id AND reversal.status='POSTED')
     GROUP BY b.currency)
     SELECT currency,coalesce(d.amount,0)::bigint AS flagged,coalesce(a.amount,0)::bigint AS applied

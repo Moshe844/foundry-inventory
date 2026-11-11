@@ -3,16 +3,18 @@
 const express = require('express');
 const transfers = require('../../transfers/postgres-transfer-service');
 const permissions = require('../../actions/permissions');
+const arrivals = require('../../transfers/agent-transfer-arrivals');
+const agentPlan = require('../../commercial/agent-plan');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { newId, trimOrNull } = require('../../lib/util');
 
-function access(user) {
+function access(user, { source = true, destination = true } = {}) {
   return {
     canRequest: permissions.can(user, permissions.REQUEST_TRANSFER),
-    canApprove: permissions.can(user, permissions.APPROVE_TRANSFER),
-    canPick: permissions.can(user, permissions.PICK_TRANSFER),
-    canDispatch: permissions.can(user, permissions.DISPATCH_TRANSFER),
-    canReceive: permissions.can(user, permissions.RECEIVE_TRANSFER),
+    canApprove: source && permissions.can(user, permissions.APPROVE_TRANSFER),
+    canPick: source && permissions.can(user, permissions.PICK_TRANSFER),
+    canDispatch: source && permissions.can(user, permissions.DISPATCH_TRANSFER),
+    canReceive: destination && permissions.can(user, permissions.RECEIVE_TRANSFER),
     canAdjust: permissions.can(user, permissions.ADJUST),
   };
 }
@@ -27,7 +29,28 @@ function createPostgresTransfersRouter(database) {
   router.get('/transfers', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
     return res.page('transfers/index', { title: 'Transfers', nav: 'transfers', room: true,
-      transfers: await transfers.list(database, req.ctx.workspaceId), pageOf: (rows) => require('../presentation/pagination').slice(req, rows), ...access(req.user) });
+      transfers: await transfers.list(database, req.ctx.workspaceId,{locations:await transfers.actorLocations(database,req.ctx)}),
+      pageOf: (rows) => require('../presentation/pagination').slice(req, rows), ...access(req.user) });
+  }));
+  router.get('/transfers/arrival-follow-up', asyncRoute(async(req,res) => {
+    permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
+    permissions.assertCan(req.user, permissions.RECEIVE_TRANSFER, 'review receiving follow-ups');
+    const state = await agentPlan.accountState(database, req.ctx.workspaceId);
+    const included = agentPlan.permits(state.plan, 124, 'suggest');
+    if (!included || !agentPlan.usesAgentTerms(state)) {
+      return res.page('autopilot/agent-plan-locked', {
+        title: 'Receiving transfer follow-up', nav: 'transfers', tier: 'Growth',
+        reviewTerms: included, showPlanOptions: req.user.role === 'owner',
+        backTo: { href: '/transfers', label: 'Transfers' },
+      });
+    }
+    const result=await arrivals.page(database,req.ctx,{locationId:String(req.query.location||''),page:req.query.page||1});
+    return res.page('transfers/arrival-follow-up',{title:'Receiving transfer follow-up',nav:'transfers',room:true,...result});
+  }));
+  router.post('/transfers/arrival-follow-up/:id/check', asyncRoute(async(req,res) => {
+    const result=await arrivals.check(database,req.ctx,req.params.id,req.body.reminderDay);
+    req.flash('success',result.replayed?'The receiving check was already recorded.':'Receiving check recorded. The outstanding stock remains open.');
+    return res.redirect(303,'/transfers/arrival-follow-up');
   }));
   router.get('/transfers/availability',asyncRoute(async(req,res)=>{
     permissions.assertCan(req.user,permissions.REQUEST_TRANSFER,'check transfer availability');
@@ -35,6 +58,7 @@ function createPostgresTransfersRouter(database) {
       WHERE s.workspace_id=$1 AND s.id=$2 AND l.id=$3 AND s.is_active=1 AND l.is_active=1`,
     [req.ctx.workspaceId,req.query.skuId,req.query.locationId])).rows.length;
     if(!valid)return res.status(404).json({error:'Choose a product and source from this inventory.'});
+    await require('../../operations/postgres-warehouse-access').assertLocations(database,req.ctx,[req.query.locationId]);
     return res.json(await transfers.sourceAvailable(database,req.ctx.workspaceId,req.query.skuId,req.query.locationId));
   }));
   router.get('/transfers/new', asyncRoute(async (req, res) => {
@@ -76,10 +100,10 @@ function createPostgresTransfersRouter(database) {
   }));
   router.get('/transfers/:id', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.VIEW_TRANSFERS, 'view inventory transfers');
-    const transfer = await transfers.get(database, req.ctx.workspaceId, req.params.id);
+    const {transfer,source,destination} = await transfers.getForActor(database, req.ctx, req.params.id);
     const binCorrection=(await database.query("SELECT id,status FROM stockchief_runtime.agent_bin_corrections WHERE workspace_id=$1 AND transfer_id=$2 AND status IN ('OPEN','SCANNED')",[req.ctx.workspaceId,transfer.id])).rows[0]||null;
     return res.page('transfers/detail', { title: transfer.transfer_number, nav: 'transfers', room: true,
-      transfer,binCorrection, receiptToken: newId('receipt'), dispatchToken: newId('dispatch'), ...access(req.user) });
+      transfer,binCorrection, receiptToken: newId('receipt'), dispatchToken: newId('dispatch'), ...access(req.user,{source,destination}) });
   }));
   router.post('/transfers/:id/approve', asyncRoute(async (req, res) => {
     const transfer = await transfers.approve(database, req.ctx, req.params.id, req.body);
@@ -103,7 +127,7 @@ function createPostgresTransfersRouter(database) {
   }));
   router.post('/transfers/:id/pick-and-dispatch', asyncRoute(async (req, res) => {
     const baseKey = trimOrNull(req.body.idempotencyKey) || newId('transfer-run');
-    let transfer = await transfers.get(database, req.ctx.workspaceId, req.params.id);
+    let {transfer} = await transfers.getForActor(database, req.ctx, req.params.id);
     if (transfer.status === 'APPROVED') transfer = await transfers.pick(database, req.ctx, req.params.id,
       { idempotencyKey: `${baseKey}:pick` });
     if (transfer.status === 'PICKED') transfer = await transfers.dispatch(database, req.ctx, req.params.id,
@@ -114,7 +138,7 @@ function createPostgresTransfersRouter(database) {
     return res.redirect(303, `/transfers/${transfer.id}`);
   }));
   router.post('/transfers/:id/receive', asyncRoute(async (req, res) => {
-    const current = await transfers.get(database, req.ctx.workspaceId, req.params.id);
+    const {transfer:current} = await transfers.getForActor(database, req.ctx, req.params.id);
     const line = current.lines.find((candidate) => candidate.id === req.body.lineId);
     const serialOutcomes = { RECEIVED: [], LOST: [], DAMAGED: [] };
     if (line?.tracking_mode === 'serial') {

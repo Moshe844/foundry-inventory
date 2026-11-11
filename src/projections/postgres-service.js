@@ -1,5 +1,13 @@
 'use strict';
 
+const {hasVerifiedMigration}=require('../db/migrate-postgres');
+const lotCertificateActivity=`CASE WHEN users.role='owner' THEN (
+  EXISTS(SELECT 1 FROM stockchief_runtime.lot_certificate_requirements r WHERE r.workspace_id=$1)
+  OR EXISTS(SELECT 1 FROM stockchief_runtime.lot_certificate_links d WHERE d.workspace_id=$1 AND d.state='DRAFT')
+  OR EXISTS(SELECT 1 FROM stockchief_runtime.lot_certificate_sources d
+    WHERE d.workspace_id=$1 AND d.review_reason IS NOT NULL AND d.dismissed_at IS NULL)
+) ELSE false END`;
+
 function number(value){return Number(value || 0);}
 // Urgent: something is already wrong or overdue. Important: time or money is really at stake.
 // Everything else simply waits for a decision and is not dressed up as an alarm.
@@ -12,16 +20,32 @@ function stockSentence(row,action){let facts=[];try{facts=typeof row.source_evid
 function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=new Date().toISOString().slice(0,10);if(neededBy<today)return 'Urgent';
  return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
-async function membership(database,workspaceId,actorId){return actorId?(await database.query(`SELECT role,permissions,
+async function membership(database,workspaceId,actorId){
+ const hasSupplierCredits=hasVerifiedMigration(database,'359-agent-supplier-credit-notes.sql');
+ return actorId?(await database.query(`SELECT role,permissions,
  coalesce((SELECT (to_jsonb(w)->>'has_supplier_direct_orders')::boolean FROM workspaces w
    WHERE w.id=users.workspace_id AND w.owner_account_id=users.account_id),false) AS has_supplier_direct_orders,
+ ${hasVerifiedMigration(database,'357-agent-lot-certificate-evidence.sql')?lotCertificateActivity:'false'} AS has_lot_certificate_activity,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.frozen_at))
  FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='FROZEN'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS annual_stocktake_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='DRAFT'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS export_paper_summary,
- CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
+ ${hasSupplierCredits?`CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*) FILTER(WHERE checked),'awaiting',count(*) FILTER(WHERE NOT checked),'created_at',min(p.at))
+ FROM (SELECT x.checked_at at,true checked FROM stockchief_runtime.agent_supplier_credit_work x
+ JOIN stockchief_runtime.agent_supplier_invoice_intakes q ON q.workspace_id=x.workspace_id AND q.id=x.intake_id
+ WHERE x.workspace_id=$1 AND q.status='CREDIT_REVIEW' AND x.result->>'status' IN('READY','WAITING','CONFLICT')
+ UNION ALL SELECT r.shipped_at::timestamptz,false FROM supplier_returns r
+ WHERE r.workspace_id=$1 AND r.status='AWAITING_CREDIT' AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_work x
+ WHERE x.workspace_id=r.workspace_id AND x.result->>'returnId'=r.id)
+ AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications a
+   WHERE a.workspace_id=r.workspace_id AND a.supplier_return_id=r.id AND a.intake_id IS NOT NULL)) p
+ WHERE EXISTS(SELECT 1 FROM workspaces w JOIN account_subscriptions sub ON sub.account_id=w.owner_account_id
+ JOIN stockchief_runtime.agent_job_modes mode ON mode.workspace_id=w.id AND mode.job_id=105 AND mode.mode='routine'
+ WHERE w.id=$1 AND w.owner_account_id=users.account_id AND mode.updated_by=users.id AND sub.plan_id IN('pro','enterprise')
+ AND sub.status IN('ACTIVE','TRIALING'))) END`:'NULL::jsonb'} AS supplier_credit_summary,
+ CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') ${hasSupplierCredits?`AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_work x WHERE x.workspace_id=$1 AND x.intake_id=agent_supplier_invoice_intakes.id AND x.result->>'status' IN('READY','WAITING','CONFLICT','APPLIED','DUPLICATE'))`:''} UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
  CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.changed_at)) FROM stockchief_runtime.agent_customer_invoice_work p WHERE p.workspace_id=$1 AND p.revision>p.completed_revision AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_invoice_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_order_cost_previews p WHERE p.workspace_id=$1 AND p.status='DRAFT'
@@ -42,6 +66,7 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
   SELECT 1 FROM stockchief_runtime.agent_channel_copy_versions done WHERE done.workspace_id=p.workspace_id AND done.document_hash=latest.document_hash AND done.exported_at IS NOT NULL))
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS channel_copy_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.updated_at)) FROM stockchief_runtime.agent_product_source_readings p WHERE p.workspace_id=$1 AND p.acknowledged_at IS NULL AND (p.status IN('READY','FAILED') OR p.status='SAVED' AND p.held_count>0) AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS product_source_summary,
+ ${hasVerifiedMigration(database,'361-agent-shipping-document-reading.sql')?`CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.updated_at)) FROM stockchief_runtime.agent_shipping_document_readings p WHERE p.workspace_id=$1 AND p.dismissed_at IS NULL AND p.status IN('READY','FAILED') AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END`:'NULL::jsonb'} AS shipping_document_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'reference',min(p.reference),'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_blanket_contracts p WHERE p.workspace_id=$1
  AND (p.enabled AND p.last_issue IS NOT NULL OR EXISTS(SELECT 1 FROM stockchief_runtime.agent_blanket_releases r
@@ -70,7 +95,7 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
@@ -88,7 +113,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-quality-holds').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-rfqs').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-claims').inbox(database,workspaceId,actorId):[],
-      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary)):[],
+      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary),require('../purchasing/agent-supplier-credit-notes').notices(actor.supplier_credit_summary)):[],
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
       actor?.role==='owner'?require('../operations/agent-return-disposition').notices(actor.return_assessment_summary):[],
       actor?.role==='owner'?require('../sales/agent-customer-order-pages').notices(actor.customer_page_request_summary):[],
@@ -97,10 +122,12 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../documents/agent-product-source').notices(actor.product_source_summary):[],
       actor?.role==='owner'&&actor.has_supplier_direct_orders?
         require('../purchasing/agent-direct-shipments').inbox(database,workspaceId,{installed:true}):[],
+      actor?.role==='owner'?require('../documents/agent-shipping-document-reader').notices(actor.shipping_document_summary):[],
+      actor?.role==='owner'&&actor.has_lot_certificate_activity?require('../autopilot/lot-certificate-coverage').inbox(database,workspaceId,actorId):[],
     ]);
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
-    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent

@@ -23,7 +23,10 @@
         <form class="ox-inline-form" method="post" action="/supplier-returns/<%= r.id %>/authorize" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-authorize"><button class="ox-btn ox-btn--primary" type="submit">Supplier approved it</button></form>
       <% } else if (r.status === 'AUTHORIZED') { %>
         <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-ship-back">Mark shipped back</button>
-      <% } else if (r.status === 'AWAITING_CREDIT') { %>
+      <% } else if (r.status === 'AWAITING_CREDIT' && r.trackedCredit?.intake_id) { %>
+        <% if(locals.canApplyTrackedCredit){ %><a class="ox-btn ox-btn--primary" href="/autopilot/supplier-credits/<%= encodeURIComponent(r.trackedCredit.intake_id) %>">Review remaining credit</a>
+        <% } else if(locals.canReviewCreditPlans){ %><span class="ox-badge">Pro</span> <a class="ox-btn ox-btn--ghost" href="/settings/billing">Review plans</a><% } %>
+      <% } else if (r.status === 'AWAITING_CREDIT' && !r.trackedCredit) { %>
         <button class="ox-btn ox-btn--primary" type="button" data-modal-open="ox-credit">Record credit</button>
       <% } %>
     </div>
@@ -51,7 +54,7 @@
       <p class="ox-muted ox-small"><%= r.shipped_at ? 'Left ' + from + ' on ' + shortDate(r.shipped_at) + '.' : 'Still at ' + from + '. Not shipped yet.' %></p></section>
     <section class="ox-card ox-card__b" aria-labelledby="ox-h-credit"><h2 id="ox-h-credit" class="ox-h2">Credit</h2>
       <p class="ox-big ox-num"><%= r.actual_credit_minor == null ? m(r.expected_credit_minor) : m(r.actual_credit_minor) %></p>
-      <p class="ox-muted ox-small"><%= r.actual_credit_minor == null ? 'Expected. Waiting for the supplier.' : 'Recorded' + (r.supplier_invoice_number || r.bill_number ? ' against ' + (r.supplier_invoice_number || r.bill_number) : '') + '.' %></p></section>
+      <p class="ox-muted ox-small"><% if (r.trackedCredit) { %><%= r.status === 'AWAITING_CREDIT' ? 'Applied so far' : 'Applied' %> from credit <%= r.trackedCredit.source_number %>.<% } else { %><%= r.actual_credit_minor == null ? 'Expected. Waiting for the supplier.' : 'Recorded' + (r.supplier_invoice_number || r.bill_number ? ' against ' + (r.supplier_invoice_number || r.bill_number) : '') + '.' %><% } %></p></section>
   </div>
   <p class="ox-fine">Stock goes down only when the goods are shipped back. The credit is recorded when the supplier confirms it.</p>
 
@@ -68,7 +71,7 @@
     </form>
   </dialog>
   <% } %>
-  <% if (r.status === 'AWAITING_CREDIT') { %>
+  <% if (r.status === 'AWAITING_CREDIT' && !r.trackedCredit) { %>
   <dialog class="ox ox-drawer" id="ox-credit" aria-labelledby="ox-credit-h">
     <form method="post" action="/supplier-returns/<%= r.id %>/reconcile" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= formKey %>-reconcile">

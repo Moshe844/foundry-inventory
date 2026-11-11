@@ -1,4 +1,18 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
+<% if(result.balanceForm){ %>
+  <p><a href="/autopilot/transfer-balancing">Manage saved balancing rules</a></p>
+  <details><summary>Prepare a stock balancing request</summary>
+    <form method="post" action="/autopilot/reviews/balance-transfers/prepare">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Exact product or variant code <input name="sku" required value="<%= filter||'' %>"></label>
+      <label>Source location <input name="fromLocation" required></label>
+      <label>Destination location <input name="toLocation" required></label>
+      <label>Maximum stocking quantity (optional) <input name="maximumBalanceQuantity" inputmode="decimal"></label>
+      <button class="btn">Review the balancing request</button>
+    </form>
+  </details>
+<% } %>
 <% if(result.rotationForm){ %><form method="post" action="/autopilot/reviews/stock-rotation/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Exact order number <input name="order" required value="<%= filter||'' %>"></label><label>Stock rotation <select name="strategy"><option value="FIFO">Oldest recorded receipt first (FIFO)</option><option value="FEFO">Earliest recorded expiry first (FEFO)</option></select></label><label>For mixed untracked stock with earlier issues: your checked records establishing that those issues used FIFO (optional) <textarea name="historicalFifoEvidence" maxlength="4000"></textarea></label><p>A new historical age fact requires your individual review before any reservation can use it.</p><button class="btn">Review exact reservations</button></form><% } %>
 <% if(result.reorderForm||result.supplierSelection){ %><details><summary><%= result.supplierSelection?'Choose a buying supplier':'Prepare grouped purchase drafts' %></summary>
 <form method="post" action="/autopilot/reviews/<%= result.supplierSelection?'supplier-options':'reorder-drafts' %>/purchasing-prepare">
@@ -11,6 +25,9 @@
 <p>Review missing costs, undated deliveries or existing unsent orders before purchasing. New supplier or price terms need individual approval.</p>
 <button class="btn"><%= result.supplierSelection?'Review supplier choice':'Review grouped drafts' %></button>
 </form></details><% } %>
+<% if(result.lotCertificateLink){ %><p><a class="btn" href="/autopilot/lot-certificates">Review and link certificate originals</a> <a href="/autopilot/lots">Find a recorded lot</a></p><% } %>
+<% if(result.supplierCreditLink){ %><p><a class="btn" href="/autopilot/supplier-credits">Open credit notes and applications</a></p><% } %>
+<% if(result.shippingDocumentLink){ %><p><a class="btn" href="/autopilot/shipping-documents">Read shipping originals</a></p><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>

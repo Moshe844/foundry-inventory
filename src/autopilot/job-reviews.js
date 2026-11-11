@@ -12,6 +12,7 @@ const definitions=[
   require('../imports/handwritten-table').definition,
   require('../documents/agent-voice-receiving').definition,
   require('../warehouse/agent-stock-rotation').definition,
+  require('../transfers/agent-transfer-balancing').definition,
   require('../purchasing/agent-blanket-releases').definition,
   require('../purchasing/agent-backup-suppliers').definition,
   require('../catalog/agent-channel-copy').definition,
@@ -60,6 +61,7 @@ const definitions=[
   require('../purchasing/agent-supplier-invoice-intake').definition,
   require('../purchasing/agent-supplier-invoice-intake').errorDefinition,
   require('../purchasing/agent-invoice-disputes').definition,
+  require('../purchasing/agent-supplier-credit-notes').definition,
   require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
@@ -93,7 +95,7 @@ const definitions=[
   {id:167,key:'brand-watches',label:'Watch stock levels by brand',sql:require('./brand-watches').matching,
     summary:'Compares the physical quantity of each active SKU across locations against the saved watch for its product brand.'},
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
-    summary:'Compare dispatch, physical receipt, recorded damage or loss and units still in transit. Overdue transfers get an in-app follow-up in Needs you.'},
+    summary:'Compare dispatch with physical receipts, recorded loss or damage and stock still in transit. Receiving teams see scheduled follow-ups for their assigned warehouses. Open each transfer for its product quantities.'},
   {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},
   {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
@@ -102,6 +104,7 @@ const definitions=[
     ...await require('./catalog-health').findings(db,ctx,options),summary:'Review the flagged fields against the product or supplier record.'})},
   {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
   {id:9,key:'slow-stock',label:'Find dead and slow stock',readPage:require('../forecasting/agent-excess-stock').slowStock},
+  {id:106,key:'cash-in-stock',label:'Review cash tied up in stock',readPage:require('../forecasting/agent-excess-stock').cashInStock},
   {id:86,key:'clearance-plan',label:'Estimate proceeds from clearance stock',readPage:require('../forecasting/agent-excess-stock').clearance,
     requiresChange:true,changeLabel:'Proposed markdown (%)',minChange:0,maxChange:100},
   {id:58,key:'timely-shipping-rates',label:'Find the least expensive service meeting the delivery date',readPage:require('../shipping/agent-delivery-rates').review},
@@ -130,6 +133,7 @@ function offers(state){
 }
 
 const suggestions={
+  118:r=>r.Quantity?'Request '+r.Quantity+' '+r.Unit+' of '+r.SKU+' from '+r.From+' to '+r.To+' while protecting the source target.':r.SKU+' at '+r.To+' · '+r.Review,
   85:r=>'Order '+r.Order+' has '+r['Posted net sales']+' posted net sales and '+r['Net contribution']+' net contribution after checked costs. '+r.Review,
   40:r=>r.Order?'The open recorded goods on '+r.Order+' are '+r['Open recorded goods']+'. Latest ECB reference estimate: '+r['Reference estimate']+'. '+r.Review:r.Review,
   13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
@@ -160,7 +164,7 @@ const suggestions={
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
   91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',
   99:r=>'Review supplier invoice '+r.Invoice+' with '+r.Supplier+'. '+r.Problem,
-  105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+'. '+r.Status+'.',
+  105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+(r.Amount?' for '+r.Amount:'')+(r.Bill?' against bill '+r.Bill:'')+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
   109:r=>r['Week beginning']+' · '+r.Currency+'. '+r.Review,
   148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
@@ -191,7 +195,7 @@ async function run(db,ctx,key,options={}){
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
   let rows,summary=def.summary,more=false,paymentRun;
   if(def.readPage){
-    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change});
+    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change,adviceOnly:mode==='suggest'});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
@@ -211,9 +215,13 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(def.id===105?{supplierCreditLink:true}:{}),
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...(result.rotationForm?{rotationForm:true}:{}),
+      ...(def.id===196?{lotCertificateLink:true}:{}),
+      ...(def.id===137?{shippingDocumentLink:true}:{}),
+      ...(result.balanceForm?{balanceForm:true}:{}),
       ...inputs};
   }
   if(def.read){
@@ -238,13 +246,12 @@ async function run(db,ctx,key,options={}){
     }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
-  if(def.id===105)for(const row of rows){row.Amount=row.Amount!=null&&row.Currency?money.format(row.Amount,row.Currency):null;}
-  if(def.id===196)for(const row of rows) row.link='/autopilot/lots?'+new URLSearchParams({sku:row.SKU,lot:row.Lot});
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }
   return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,
-    ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
+    ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{}),
+    ...(def.id===124?{transferArrivalLink:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

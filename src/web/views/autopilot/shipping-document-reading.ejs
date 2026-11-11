@@ -1,0 +1,48 @@
+<style>.shipping-reading{max-width:1080px}.shipping-reading section{margin:18px 0}.shipping-reading label{display:block;margin:12px 0}.shipping-reading input:not([type=checkbox]),.shipping-reading textarea,.shipping-reading select{box-sizing:border-box;max-width:100%}.shipping-reading p,.shipping-reading li,.shipping-reading blockquote,.shipping-reading dd,.shipping-reading pre{overflow-wrap:anywhere}.shipping-reading pre{white-space:pre-wrap;max-height:420px;overflow:auto;font:inherit}.shipping-reading .btn{white-space:normal}.shipping-reading blockquote{margin:10px 0;padding-left:12px;border-left:3px solid #b6c2d6}</style>
+<div class="shipping-reading"><h1>Bills of lading and customs papers</h1>
+<% if(screen.allowed){ %><p><a href="/autopilot/reviews/shipping-documents">See originals already filed on purchase orders</a></p><% }else{ %><p class="notice" data-shipping-original-plan-locked>Growth, Pro or Custom is required for new readings and filing. Original files and past links remain available. <a href="/billing">Review plans</a></p><% } %>
+<% if(screen.stop){ %><p class="notice"><%= screen.stop %></p><% } %>
+<% if(!screen.selected&&screen.allowed&&!screen.stop){ %><section class="card card-body"><h2>Read an original shipping document</h2>
+<p>Read a complete PDF, Word document, HTML, UTF-8 file, photo or scan. A new complete file uses one document allowance. An existing paid attachment receipt is reused.</p>
+<form method="post" action="/autopilot/shipping-documents" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(screen.initial.fileAttachment){ %><input type="hidden" name="fileAttachment" value="<%= screen.initial.fileAttachment %>"><p>Saved original attachment selected.</p>
+<% }else if(screen.initial.filedDocument){ %><input type="hidden" name="filedDocument" value="<%= screen.initial.filedDocument %>"><p>Previously filed original selected.</p>
+<% }else{ %><label>Original file up to 20 MB <input type="file" name="source" accept=".pdf,.docx,.html,.htm,.txt,.csv,.tsv,.png,.jpg,.jpeg,.webp,.gif,.bmp,.heic,.heif,.tif,.tiff"></label>
+<label>Or a saved attachment ID <input name="fileAttachment"></label><label>Or a filed original ID <input name="filedDocument"></label><% } %>
+<label>Expected purchase order number (optional) <input name="purchaseOrder" value="<%= screen.initial.reference %>" maxlength="120"></label>
+<% if(screen.automatic){ %><label><input type="checkbox" name="automatic" value="yes"> File clearly proven purchase order links automatically for this original.</label>
+<label><input type="checkbox" name="authorized" value="yes"> I authorize links from this exact original to the expected PO above, or to each clearly printed and matched PO if no expected PO is entered.</label>
+<% }else{ %><p>Review and approve the exact purchase order links after reading.</p><% } %>
+<button class="btn btn--primary">Read complete original</button></form></section><% } %>
+<% if(screen.selected){ const d=screen.selected,e=d.evidence; %><section class="card card-body"><h2><%= d.filename %></h2>
+<p data-shipping-reading-status role="status"><%= {PENDING:'Queued',RUNNING:'Reading complete original',READY:'Ready for purchase order review',FILED:'Filed on the purchase order',FAILED:'Reading stopped'}[d.status] %></p>
+<p data-shipping-document-usage><%= d.documents_used %> new document allowance used for this reading.</p>
+<p><a class="btn" href="/autopilot/shipping-documents/<%= d.id %>/original">Download exact original</a></p>
+<% if(d.issue){ %><p class="notice"><%= d.issue %></p><% } %>
+<% if(d.linked_documents.length){ %><ul><% d.linked_documents.forEach(item=>{ %><li><a href="/purchasing/orders/<%= item.poId %>"><%= item.reference %></a> · <a href="/autopilot/documents/<%= item.id %>">Filed original</a></li><% }); %></ul><% } %>
+<% if(['PENDING','RUNNING'].includes(d.status)){ %><p><a href="/autopilot/shipping-documents/<%= d.id %>">Refresh reading status</a></p><% } %>
+<% if(['READY','FILED'].includes(d.status)){ %><h3>Purchase order evidence</h3>
+<% if(e.headings?.length){ %><ul><% e.headings.forEach(h=>{ %><li>Section <%= h.page %> · <%= h.quote %><%= h.uncertain?' · Check against the original':'' %></li><% }); %></ul><% } %>
+<% if(e.referenceEvidence?.length){ %><ul><% e.referenceEvidence.forEach(p=>{ %><li>Section <%= p.page %> · <%= p.quote %><%= p.uncertain?' · Check against the original':'' %></li><% }); %></ul><% }else{ %><p>No exact PO reference could be read from the original.</p><% } %>
+<% if(e.issues?.some(i=>i.quote)){ %><ul><% e.issues.filter(i=>i.quote).forEach(i=>{ %><li>Section <%= i.page %> · <%= i.quote %> · <%= i.reason %></li><% }); %></ul><% } %>
+<% if(e.fields?.length){ %><details><summary>Read printed shipping and customs details</summary><dl><% e.fields.forEach(f=>{ %><dt><%= shippingProof.labels[f.kind] %> · section <%= f.page %></dt><dd><%= f.quote %><%= f.uncertain?' · Check against the original':'' %></dd><% }); %></dl></details><% } %>
+<% if(e.ownerReview?.reason){ %><p>Owner’s match evidence · <%= e.ownerReview.reason %></p><% } %>
+<details><summary>Complete readable source and page coverage</summary><% d.original_sections.forEach(p=>{ %><h4>Original section <%= p.page %><%= p.sourceName?' · '+p.sourceName:'' %></h4><% if(p.visualObservation){ %><p><%= p.visualObservation %></p><% } %><pre><%= p.text %></pre><% }); %></details>
+<% } %>
+<% if(d.status==='READY'&&screen.allowed&&!screen.stop){ %><form method="post" action="/autopilot/shipping-documents/<%= d.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= screen.reviewHash %>">
+<% if(d.document_kind){ %><p><%= shippingProof.kinds[d.document_kind] %></p><% }else{ %><label>Document type <select aria-label="Document type" name="documentKind" required><option value="">Choose after checking the original</option><% Object.entries(shippingProof.kinds).forEach(([key,label])=>{ %><option value="<%= key %>"><%= label %></option><% }); %></select></label><% } %>
+<% e.candidates.forEach(p=>{ %><label><input type="checkbox" name="purchaseOrderIds" value="<%= p.id %>" <%= p.uncertain?'':'checked' %>> <%= p.reference %> · <%= p.supplier %><%= p.uncertain?' · Check this reference against the original':'' %></label><% }); %>
+<% if(!e.candidates.some(p=>!p.uncertain)){ %><label>Exact PO number checked against the original <input name="purchaseOrder" value="<%= e.expected?.reference||'' %>" maxlength="120"></label><% } %>
+<% if(!e.candidates.length||e.candidates.some(p=>p.uncertain)){ %><label>How did you verify the exact PO? <textarea name="matchReason" maxlength="1000"></textarea></label><% } %>
+<label><input type="checkbox" name="confirmed" value="yes" required> I reviewed this complete original and approve filing it on the selected purchase order or orders.</label>
+<button class="btn btn--primary">Approve exact PO links</button></form><% } %>
+<% if(['READY','FAILED'].includes(d.status)){ %>
+<% if(screen.allowed&&!screen.stop){ %><details><summary>Read this original again</summary><form method="post" action="/autopilot/shipping-documents/<%= d.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Current expected PO number (optional) <input name="purchaseOrder" maxlength="120"></label><button class="btn">Queue a fresh review</button></form></details><% } %>
+<% if(!d.dismissed_at){ %><form method="post" action="/autopilot/shipping-documents/<%= d.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Dismiss review notice</button></form><% } %>
+<% } %>
+</section><% } %>
+<section class="card card-body"><h2>Original reading history</h2><% if(!screen.rows.length){ %><p>No original readings have been recorded.</p><% }else{ %><ul><% screen.rows.forEach(d=>{ %><li><a href="/autopilot/shipping-documents/<%= d.id %>"><%= d.filename %></a> · <%= {PENDING:'Queued',RUNNING:'Reading',READY:'Ready to review',FILED:'Filed',FAILED:'Stopped'}[d.status] %></li><% }); %></ul><% } %>
+<% if(screen.page>1){ %><a href="/autopilot/shipping-documents?page=<%= screen.page-1 %>">Previous originals</a><% } %>
+<% if(screen.more){ %><a href="/autopilot/shipping-documents?page=<%= screen.page+1 %>">Next originals</a><% } %></section></div>

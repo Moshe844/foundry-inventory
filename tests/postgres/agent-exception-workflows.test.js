@@ -74,6 +74,7 @@ test('scheduled transfer follow-ups reach the inbox, retain partial receipts and
   const {db,ctx,subscribe,browser}=f,tr=require('../../src/transfers/postgres-transfer-service');
   const notices=require('../../src/autopilot/operational-notices'),handler=require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate;
   await subscribe('pro');
+  await db.query("UPDATE accounts SET created_at=(now()-interval '20 days')::text WHERE id=$1",[f.owner.accountId]);
   const destination=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'East store',kind:'warehouse'});
   const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),past=require('../../src/accounting/customer-money').addDays(today,-2);
   const transfer=await tr.request(db,ctx,{fromLocationId:f.location.id,toLocationId:destination.id,expectedArrivalDate:past,

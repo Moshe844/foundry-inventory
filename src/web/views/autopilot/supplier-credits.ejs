@@ -1,0 +1,74 @@
+<header class="rm-head">
+  <h1>Supplier credit notes</h1>
+  <p><%= summary %></p>
+  <% if(!suggestion){ %><p><a href="/autopilot/job-modes">Choose when StockChief checks supplier credits</a></p><% } %>
+</header>
+<% if(selected){ const facts=selected.facts,candidate=facts.candidate; %>
+<section class="card"><div class="card-body">
+  <h2><%= facts.number %></h2>
+  <p><a href="<%= selected.sourceHref %>">Review the saved original credit note</a></p>
+  <% if(facts.currency){ %>
+    <dl><dt>Original credit</dt><dd><%= helpers.money(facts.total,facts.currency) %> · <%= facts.date %></dd>
+      <dt>Already applied</dt><dd><%= helpers.money(facts.applied,facts.currency) %></dd>
+      <dt>Unused credit</dt><dd><%= helpers.money(facts.remaining,facts.currency) %></dd></dl>
+  <% } %>
+  <% if(facts.originalBillId){ %><p>Original bill <a href="/money/bills/<%= facts.originalBillId %>"><%= facts.originalBillNumber %></a></p><% } %>
+  <% if(facts.problem){ %><p class="notice"><%= facts.problem %></p><% } %>
+  <% if(facts.originId){ %><p><a href="/autopilot/supplier-credits/<%= facts.originId %>">Open the first tracked original</a></p><% } %>
+  <% if(facts.postings.length){ %><h3>Posted applications</h3><ul>
+    <% for(const posting of facts.postings){ %><li><a href="/money/bills/<%= posting.billId %>"><%= posting.billNumber %></a> · <%= helpers.money(posting.amount,facts.currency) %> · <a href="/accounting/entries/<%= posting.journalId %>">Journal</a></li><% } %>
+  </ul><% } %>
+  <% if(facts.status==='APPLIED'){ %><p><strong>Fully applied</strong></p><% } %>
+  <% if(selected.hold&&facts.status!=='APPLIED'){ %><p class="notice"><%= selected.hold %></p><% } %>
+  <% if(candidate){ %>
+    <h3>Review this application</h3>
+    <p>Apply <strong><%= helpers.money(candidate.amount,facts.currency) %></strong> to <a href="/money/bills/<%= candidate.billId %>"><%= candidate.billNumber %></a>. The payable falls from <%= helpers.money(candidate.billBalance,facts.currency) %> to <%= helpers.money(candidate.balanceAfter,facts.currency) %>.</p>
+    <p>Tax in this application <%= helpers.money(candidate.taxMinor,facts.currency) %>. Credit remaining <%= helpers.money(candidate.remainingAfter,facts.currency) %>. Posting date <%= candidate.postingDate %>.</p>
+    <% if(candidate.returnId){ %><p>Shipped supplier return <a href="/supplier-returns/<%= candidate.returnId %>"><%= candidate.returnNumber %></a></p><% } %>
+    <% if(!selected.hold){ %>
+    <form class="form-stack" method="post" action="/autopilot/supplier-credits/<%= selected.id %>/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="fingerprint" value="<%= facts.fingerprint %>">
+      <input type="hidden" name="targetReference" value="<%= selected.targetReference %>">
+      <input type="hidden" name="originalReference" value="<%= selected.originalReference %>">
+      <% if(selected.allowance){ %><input type="hidden" name="allowance" value="yes"><% } %>
+      <label>Evidence reviewed <input name="reason" maxlength="1000" required></label>
+      <% if(candidate.billId!==facts.originalBillId){ %><label><input type="checkbox" name="confirmAlternate" value="yes" required> I confirmed this supplier allows using the credit on the selected bill.</label><% } %>
+      <% if(candidate.needsReturnConfirmation){ %><label><input type="checkbox" name="confirmReturn" value="yes" required> I verified the supplier credit covers this physically shipped return.</label><% } %>
+      <% if(candidate.allowance){ %><label><input type="checkbox" name="confirmAllowance" value="yes" required> I verified the original identifies a supplier allowance separate from a physical return.</label><% } %>
+      <% if(candidate.returnId&&candidate.expectedCredit!=null&&candidate.expectedCredit!==facts.total){ %><label><input type="checkbox" name="confirmVariance" value="yes" required> I reviewed the difference from the expected return credit of <%= helpers.money(candidate.expectedCredit,facts.currency) %>.</label><% } %>
+      <label><input type="checkbox" name="confirmed" value="yes" required> I approve this exact supplier credit application and bill balance.</label>
+      <button class="btn">Approve and apply credit</button>
+    </form>
+    <% } %>
+  <% } %>
+  <% if(facts.remaining>0&&!['DUPLICATE','CONFLICT'].includes(facts.status)&&!selected.hold){ %>
+    <details><summary>Check an exact bill reference</summary>
+      <% if(selected.alternatives.length){ %><p>Other open bills in <%= facts.currency %> from this supplier</p><ul>
+        <% for(const bill of selected.alternatives){ %><li><a href="?targetReference=<%= encodeURIComponent(bill.bill_number) %>&amp;originalReference=<%= encodeURIComponent(selected.originalReference) %><%= selected.allowance ? '&allowance=yes' : '' %>"><%= bill.bill_number %></a> · <%= helpers.money(Number(bill.balance_minor),facts.currency) %> due</li><% } %>
+      </ul><% } %>
+      <form class="form-stack" method="get" action="/autopilot/supplier-credits/<%= selected.id %>">
+        <label>Original supplier bill, if the note omits it <input name="originalReference" maxlength="150" value="<%= selected.originalReference %>"></label>
+        <label>Other open bill from the same supplier, if authorized <input name="targetReference" maxlength="150" value="<%= selected.targetReference %>"></label>
+        <% if(facts.canChooseAllowance){ %><label><input type="checkbox" name="allowance" value="yes" <%= selected.allowance ? 'checked' : '' %>> Compare as a standalone supplier allowance</label><% } %>
+        <button class="btn secondary">Compare current bill balances</button>
+      </form>
+    </details>
+  <% } %>
+</div></section>
+<% } %>
+<section class="card"><div class="card-body">
+  <h2><%= suggestion?'Credit suggestion':'Credit notes and supplier returns' %></h2>
+  <form class="inline-form" method="get" action="/autopilot/supplier-credits">
+    <label>Supplier, credit memo, return or bill number <input name="filter" maxlength="150" value="<%= filter %>"></label>
+    <button class="btn secondary">Find</button>
+  </form>
+  <% if(!rows.length){ %><p>No supplier credit notes or returns match.</p><% } %>
+  <% for(const row of rows){ %><article>
+    <h3><% if(suggestion){ %><%= row['Credit or return'] %><% } else { %><a href="<%= row.link %>"><%= row['Credit or return'] %></a><% } %></h3>
+    <p><%= row.Supplier %> · <%= row.Status %></p>
+    <% if(row.Amount){ %><p><%= row.Amount %><% if(row.Remaining){ %> · <%= row.Remaining %> unused<% } %><% if(row.Bill){ %> · Bill <%= row.Bill %><% } %></p><% } %>
+  </article><% } %>
+  <% if(page>1){ %><a href="?page=<%= page-1 %>&amp;filter=<%= encodeURIComponent(filter) %>">Previous</a><% } %>
+  <% if(more){ %><a href="?page=<%= page+1 %>&amp;filter=<%= encodeURIComponent(filter) %>">Next</a><% } %>
+</div></section>

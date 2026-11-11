@@ -1,7 +1,7 @@
 <section class="card card-body stack">
   <p><a href="/purchasing/orders/<%= orderId %>">Back to <%= shared.orderNumber %></a></p>
   <h1>Supplier response link</h1>
-  <p>Share this private link for <strong><%= shared.orderNumber %></strong> with <strong><%= shared.supplierName %></strong> (<%= shared.supplierEmail %>). The link expires in 90 days. The supplier can respond without signing in.</p>
+  <p>Share this private link for <strong><%= shared.orderNumber %></strong> with <strong><%= shared.supplierName %></strong><% if(shared.supplierEmail){ %> (<%= shared.supplierEmail %>)<% } %>. The link expires in 90 days. The supplier can respond without signing in.</p>
   <label class="field">Private link<input class="input" type="url" value="<%= shared.url %>" readonly></label>
   <button class="btn btn--primary" type="button" data-copy="<%= shared.url %>">Copy supplier link</button>
 </section>

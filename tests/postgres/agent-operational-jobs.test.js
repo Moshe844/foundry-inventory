@@ -226,6 +226,26 @@ test('agent jobs run through paid plans, posted books, stock records and approve
   assert.equal(Number(leads['Configured days']),4);
   const planning=await require('../../src/forecasting/postgres-planning-service').position(db,ctx.workspaceId,{onlySkuIds:[sku]});
   assert.equal(planning[0].leadTimeDays,5);
+  const addDays=require('../../src/accounting/customer-money').addDays;
+  const purchaseInput={supplierId:'fixture-supplier',destinationLocationId:f.location.id,
+    lines:[{skuId:sku,quantityUnits:1,unitCost:1}]};
+  const savedArrival=async id=>(await db.query(`SELECT expected_date,expected_date_source,source_detail::jsonb AS detail
+    FROM purchase_orders WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id])).rows[0];
+  for(const tier of ['starter','growth','pro','enterprise']){
+    await plan(tier);
+    const comparison=await reviews.run(db,ctx,'measured-lead-times',{filter:code,scheduled:true});
+    assert.equal(comparison.mode,'alone',tier);
+    assert.equal(Number(comparison.rows[0]['Average actual days']),5,tier);
+    const draft=await workflows.createPurchaseOrder(db,ctx,{...purchaseInput,source:'foundry_recommendation',idempotencyKey:randomUUID()});
+    const actual=await savedArrival(draft.purchaseOrderId);
+    assert.equal(actual.expected_date,addDays(today,5),tier);
+    assert.deepEqual(actual.detail.observedArrivalLead,[{skuId:sku,days:5,samples:3}],tier);
+  }
+  const manual=await workflows.createPurchaseOrder(db,ctx,{...purchaseInput,idempotencyKey:randomUUID()});
+  assert.equal((await savedArrival(manual.purchaseOrderId)).expected_date,addDays(today,4));
+  const explicit=await workflows.createPurchaseOrder(db,ctx,{...purchaseInput,source:'foundry_recommendation',
+    expectedDate:addDays(today,11),idempotencyKey:randomUUID()});
+  assert.equal((await savedArrival(explicit.purchaseOrderId)).expected_date,addDays(today,11));
   await plan('pro');
   await db.query("UPDATE accounts SET created_at=(now()-interval '21 days')::text WHERE id=$1",[owner.accountId]);
   const returns=require('../../src/operations/postgres-returns'),assistant=require('../../src/assistant/postgres-service');

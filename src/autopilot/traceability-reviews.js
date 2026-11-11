@@ -49,13 +49,7 @@ module.exports=[
     JOIN skus s ON s.workspace_id=$1 AND s.id=h.sku_id
     GROUP BY c.id,c.name,h.reference,h.kind,s.code,h.code,h.link
     ORDER BY c.name,h.reference,s.code,h.code,h.link`},
-  {id:196,key:'lot-documents',label:'Check lot certificates',usesDate:true,summary:'Required certificates for each SKU and lot with stock. Missing and expired documents appear first.',sql:`
-    SELECT s.code AS "SKU",l.code AS "Lot",r.kind AS "Document",c.expires_on::text AS "Expires",CASE WHEN c.lot_id IS NULL THEN 'Missing'
-      WHEN c.expires_on<$3::date THEN 'Expired' ELSE 'On file' END AS "Status"
-    FROM stockchief_runtime.lot_certificate_requirements r JOIN skus s ON s.id=r.sku_id JOIN lots l ON l.workspace_id=r.workspace_id AND l.sku_id=r.sku_id
-      LEFT JOIN stockchief_runtime.lot_certificates c ON c.workspace_id=l.workspace_id AND c.lot_id=l.id AND c.kind=r.kind
-    WHERE r.workspace_id=$1 AND ($2='' OR lower(l.code)=lower($2) OR lower(s.code)=lower($2)) AND EXISTS(SELECT 1 FROM lot_balances b WHERE b.lot_id=l.id AND b.quantity>0)
-    ORDER BY (c.lot_id IS NOT NULL AND (c.expires_on IS NULL OR c.expires_on>=$3::date)),s.code,l.code,r.kind`},
+  {id:196,key:'lot-documents',label:'Check lot certificates',filterLabel:'SKU or lot',readPage:require('./lot-certificate-coverage').rows},
   {id:197,key:'recall-audit',label:'Prepare the lot recall audit',summary:'Recall decisions in order, with the responsible person, time and recorded reason.',sql:`
     SELECT s.code AS "SKU",l.code AS "Lot",e.occurred_at AT TIME ZONE 'UTC' AS "Decision time UTC",u.name AS "Decided by",
       CASE WHEN e.held THEN 'Recall placed' ELSE 'Released' END AS "Decision",e.reason AS "Reason",e.revision AS "Revision"

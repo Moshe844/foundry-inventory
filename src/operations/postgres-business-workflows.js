@@ -166,15 +166,33 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
     const id = newId('po');
     const poNumber = trimOrNull(input.poNumber) || await numbered(client, ctx.workspaceId, 'purchase_orders', 'PO');
     const orderDate = dateOnly(input.orderDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Order date');
-    const leads=resolved.map(l=>l.supplierItem?.lead_time_days??supplier.default_lead_time_days).filter(v=>v!=null).map(Number);let expectedDate=input.expectedDate?dateOnly(input.expectedDate,'Expected date'):null;if(!expectedDate&&leads.length){const date=new Date(orderDate+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Math.max(...leads));expectedDate=date.toISOString().slice(0,10);}
+    let expectedDate=input.expectedDate?dateOnly(input.expectedDate,'Expected date'):null;
+    let expectedDateSource=expectedDate?'manual':'unknown';
+    let arrivalEvidence=null;
+    if(!expectedDate){
+      const recommendation=input.source==='foundry_recommendation';
+      const installed=recommendation&&(await client.query("SELECT to_regclass('stockchief_runtime.supplier_planning_leads') IS NOT NULL AS present")).rows[0].present;
+      const observations=installed?(await client.query(`SELECT sku_id,observed_lead,samples FROM stockchief_runtime.supplier_planning_leads
+        WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=ANY($3::text[]) AND observed_lead IS NOT NULL ORDER BY sku_id`,
+      [ctx.workspaceId,supplier.id,resolved.map(l=>l.sku.id)])).rows:[];
+      const measuredBySku=new Map(observations.map(row=>[row.sku_id,row]));
+      const leads=resolved.map(l=>measuredBySku.get(l.sku.id)?.observed_lead??l.supplierItem?.lead_time_days??supplier.default_lead_time_days)
+        .filter(days=>days!=null).map(Number);
+      if(leads.length&&(!recommendation||leads.length===resolved.length)){
+        expectedDate=require('../accounting/customer-money').addDays(orderDate,Math.max(...leads));
+        expectedDateSource=observations.length||resolved.some(l=>l.supplierItem?.lead_time_days!=null)?'supplier_item':'supplier_default';
+        if(observations.length)arrivalEvidence=observations.map(row=>({skuId:row.sku_id,days:Number(row.observed_lead),samples:row.samples}));
+      }
+    }
     await client.query(`INSERT INTO purchase_orders
       (id,workspace_id,po_number,supplier_id,status,order_date,expected_date,expected_date_source,
        destination_location_id,currency,notes,source,source_detail,created_by_user_id,integrity_hash,reference,created_at,updated_at)
       VALUES($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
     [id, ctx.workspaceId, poNumber, supplier.id, orderDate, expectedDate,
-      input.expectedDate ? 'manual' : expectedDate?(resolved.some(l=>l.supplierItem?.lead_time_days!=null)?'supplier_item':'supplier_default'):'unknown', input.destinationLocationId || null,
+      expectedDateSource, input.destinationLocationId || null,
       input.currency || supplier.currency || 'USD', trimOrNull(input.notes), input.source || 'manual',
-      JSON.stringify(input.sourceDetail || {}), ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), trimOrNull(input.reference), at]);
+      JSON.stringify(arrivalEvidence?{...input.sourceDetail,observedArrivalLead:arrivalEvidence}:input.sourceDetail||{}),
+      ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), trimOrNull(input.reference), at]);
     const lineIds = [];
     for (const [index, line] of resolved.entries()) {
       const lineId = newId('pol'); lineIds.push(lineId);

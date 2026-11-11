@@ -44,7 +44,7 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
       WHERE a.email='supplier-returns-ui@example.test'`)).rows[0];
     const ctx = { workspaceId: identity.workspace_id, actorId: identity.actor_id };
     assert.equal((await page.goto(`${base}/supplier-returns`)).status(),200);
-    assert.match(await page.locator('main').innerText(),/No supplier returns are recorded/);
+    assert.match(await page.locator('main').innerText(),/No returns yet\./);
     const main = await locations.createLocation(database, ctx, { name: 'Supplier Return Warehouse', kind: 'warehouse' });
     const item = await catalog.createItem(database, ctx, { name: 'Supplier Return Boot', baseCode: 'SRTN',
       trackingMode: 'quantity', unitLabel: 'pair' });
@@ -102,7 +102,7 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
     const mismatchReturnId = await completeReturn({ quantity: 1, expected: '8.00', actual: '7.00', creditNumber: 'CM-7' });
     assert.match(await page.locator('main').innerText(), /differs from the expected amount/i);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(), '1');
-    await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
+    await page.locator('a[href="/needs-you"]').filter({has:page.locator('.nav-count')}).click();
     assert.match(await page.locator('main').innerText(), /Resolve supplier credit mismatch/);
     await page.goto(`${base}/supplier-returns/${mismatchReturnId}`);
     state = (await database.query(`SELECT r.status,r.expected_credit_minor,r.actual_credit_minor,b.balance_minor

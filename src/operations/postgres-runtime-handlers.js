@@ -423,6 +423,7 @@ async function autopilotEvaluate(job,client){
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
+    await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
@@ -619,6 +620,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
   'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
@@ -707,10 +709,12 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
   'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
+    const certificate=await require('../autopilot/lot-certificate-evidence').queueMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
-    return order.skipped?result:{...result,order};
+    return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
@@ -758,12 +762,14 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
   'import.supplier-portal-invoice.v1':external((job,database)=>require('../purchasing/supplier-portal-invoices').work(database,job.workspaceId,job.payload.sourceId),'bulk'),
+  'agent.supplier-credit-source':external((job,database)=>require('../purchasing/agent-supplier-credit-notes').worker(database,job.workspaceId,job.payload.intakeId)),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     if(result.more)await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:job.kind,idempotencyKey:'supplier-claims:'+job.payload.cycleId+':'+result.nextAfterId,payload:{cycleId:job.payload.cycleId,afterId:result.nextAfterId},priority:65,maxAttempts:3});return result;
   }),
+  'agent.transfer-balance.v1':external((job,database)=>require('../transfers/agent-transfer-balancing').work(database,job.workspaceId,job.payload),'maintenance'),
   // Whole-inventory planning can outlast several provider polling intervals.
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
