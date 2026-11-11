@@ -1,7 +1,9 @@
 'use strict';
 
 const policy=require('../commercial/agent-plan');
-const overdue=require('./exception-reviews').find(d=>d.id===168);
+const exceptionReviews=require('./exception-reviews');
+const overdue=exceptionReviews.find(d=>d.id===168);
+const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,t.expected_arrival_date::date AS due,src.name AS source,dst.name AS destination,
       sum(l.shipped_quantity) AS shipped,sum(l.received_quantity) AS received,sum(l.lost_quantity+l.damaged_quantity) AS exceptions,
@@ -21,10 +23,21 @@ const transfers=`WITH positions AS (
       AND n.kind='Transfer' AND n.reference=p.transfer_number AND n.link='/transfers/'||p.id
     ORDER BY (p.outstanding>0 AND p.due<$3::date) DESC NULLS LAST,p.due NULLS LAST,p.transfer_number`;
 
+async function checkStockDiscrepancies(db,workspaceId,today){
+  const existing=await db.query(`SELECT 1 FROM stockchief_runtime.agent_stock_discrepancy_checks
+    WHERE workspace_id=$1 AND checked_on>=$2::date`,[workspaceId,today]);
+  if(existing.rowCount)return;
+  await db.query(`INSERT INTO stockchief_runtime.agent_stock_discrepancy_checks AS previous(workspace_id,checked_on,findings)
+    SELECT $1,$3::date,count(*)::int FROM (${stockDiscrepancies.sql}) findings
+    ON CONFLICT(workspace_id) DO UPDATE SET checked_on=excluded.checked_on,findings=excluded.findings
+    WHERE previous.checked_on<excluded.checked_on`,[workspaceId,'',today]);
+}
+
 async function refresh(db,workspaceId){
   const account=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
   const today=await require('../lib/business-time').today(db,workspaceId);
+  if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   const includeTransfers=policy.permits(account.plan,124,'automatic');
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
@@ -62,14 +75,23 @@ async function refresh(db,workspaceId){
 }
 
 async function inbox(db,workspaceId,actorId=null){
-  const {rows}=await db.query(`SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
-    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved
-      AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u WHERE u.workspace_id=n.workspace_id AND u.id=$2 AND u.role='owner'))
-    GROUP BY n.job_id`,[workspaceId,actorId]);
+  const installed=(await db.query("SELECT to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks")).rows[0];
+  const stockChecks=installed.stock_checks?`UNION ALL
+    SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
+    WHERE workspace_id=$1 AND findings>0`:'';
+  const {rows}=await db.query(`SELECT job_id,n,due FROM (
+    SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
+    FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
+    ${stockChecks}
+    ) current WHERE ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u
+      WHERE u.workspace_id=$1 AND u.id=$2 AND u.role='owner'))`,[workspaceId,actorId]);
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
   return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67})).map(r=>{
+    if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
+      happened:'The '+r.due+' stock check found '+r.n+' '+(r.n===1?'issue.':'issues.'),why:stockDiscrepancies.summary,
+      recommendation:'Review the current stock records.',href:'/autopilot/reviews/stock-exceptions',actionLabel:'Review stock discrepancies',sourceId:'agent-notice-3'};
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};

@@ -31,7 +31,8 @@ module.exports = [
       UNION ALL SELECT 'Repeated stock reductions',s.code,l.name,-sum(m.quantity_delta),'/inventory/'||s.item_id
       FROM movements m JOIN skus s ON s.workspace_id=m.workspace_id AND s.id=m.sku_id
       JOIN locations l ON l.workspace_id=m.workspace_id AND l.id=m.location_id
-      WHERE m.workspace_id=$1 AND m.operation='adjust' AND m.quantity_delta<0 AND m.occurred_at::timestamptz BETWEEN now()-interval '7 days' AND now()
+      WHERE m.workspace_id=$1 AND m.operation='adjust' AND m.quantity_delta<0
+        AND stockchief_movement_instant(m.occurred_at) BETWEEN now()-interval '7 days' AND now()
       GROUP BY s.id,s.code,s.item_id,l.id,l.name HAVING count(*)>=2)
       SELECT problem AS "Problem",code AS "SKU",location AS "Location",units AS "Units",link FROM problems
       WHERE ($2='' OR lower(code)=lower($2) OR lower(location)=lower($2)) ORDER BY problem,code,location,link`},
