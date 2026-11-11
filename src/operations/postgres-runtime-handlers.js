@@ -617,6 +617,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'erp.cutover.continue':external((job,database)=>require('../onboarding/postgres-cutover-runner').run(job,database),'bulk'),
   'warehouse.count.apply':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
+  'agent.phone-count.apply.v1':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
   'agent.annual-stocktake.apply.v1':external(async(job,database)=>{if(!(await database.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[job.workspaceId,job.payload?.campaignId])).rowCount)throw new (require('../domain/errors').ValidationError)('This job is not an annual stocktake worksheet.');return require('./postgres-count-campaigns').run(job,database);},'bulk'),
   'system.retention':external((job,database)=>require('./postgres-retention').run(database,{now:Number(job.payload?.now)||Date.now()}),'bulk'),
   'records.remove-import':external((job,database)=>require('../domain/postgres-record-removal').runImportRemoval(job,database),'bulk'),

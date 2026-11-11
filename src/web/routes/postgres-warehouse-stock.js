@@ -9,7 +9,14 @@ function createRouter(db){
   res.render('warehouse/my-count',{...await tasks.page(db,req.ctx,req.params.id),restricted:await access.scope(db,req.ctx)!==null});
  }));
  router.post('/warehouse/my-counts/:id',requirePermission(permissions.COUNT_STOCK,'perform stock counts'),asyncRoute(async(req,res)=>{
-  await tasks.record(db,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/my-counts/'+encodeURIComponent(req.params.id));
+  try{
+   await tasks.record(db,req.ctx,req.params.id,req.body);
+   return res.redirect(303,'/warehouse/my-counts/'+encodeURIComponent(req.params.id));
+  }catch(error){
+   if(error.code!=='validation_error'||!req.accepts('html'))throw error;
+   return res.status(400).render('warehouse/my-count',{...await tasks.page(db,req.ctx,req.params.id),
+    restricted:await access.scope(db,req.ctx)!==null,countError:error.message});
+  }
  }));
  router.get('/warehouse/stock',asyncRoute(async(req,res)=>{
   await require('../../commercial/enforcement').workspace(db,req.ctx.workspaceId,'inventory.core');
