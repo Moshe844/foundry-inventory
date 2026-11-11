@@ -1,0 +1,9 @@
+<label class="rm-field"><span>Maximum change in remaining quantity or weight per update (%)</span>
+  <input name="maximumQuantityPercent" type="number" min="0" step="0.01"
+    value="<%= values?.quantityBps==null?'':values.quantityBps/100 %>" required></label>
+<label class="rm-field"><span>Maximum change in unit price per update (%)</span>
+  <input name="maximumPricePercent" type="number" min="0" step="0.01"
+    value="<%= values?.priceBps==null?'':values.priceBps/100 %>" required></label>
+<label class="rm-field"><span>Maximum total increase from the original order (<%= currency %>)</span>
+  <input name="maximumOrderIncrease" inputmode="decimal"
+    value="<%= values?.orderIncrease==null?'':(values.orderIncrease/10**helpers.currencyExponent(currency)).toFixed(helpers.currencyExponent(currency)) %>" required></label>

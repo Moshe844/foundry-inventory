@@ -16,9 +16,9 @@ async function issue(client,workspaceId,orderId,recipient,origin) {
   return new URL('/supplier/order/'+token,base.origin).href;
 }
 
-async function lookup(db,token,lock=false,{includeCompleted=false}={}){
+async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=false}={}){
   if(!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundError();
-  const order=(await db.query(`SELECT po.id,po.workspace_id,po.po_number,po.expected_date,po.currency,
+  const order=(await db.query(`SELECT po.id,po.workspace_id,po.po_number,po.expected_date,po.currency,po.status,
       l.token_hash,s.name AS supplier_name,coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE') AS delivery_kind
       FROM stockchief_runtime.supplier_order_links l
     JOIN purchase_orders po ON po.id=l.purchase_order_id AND po.workspace_id=l.workspace_id
@@ -27,8 +27,9 @@ async function lookup(db,token,lock=false,{includeCompleted=false}={}){
     WHERE l.token_hash=$1 AND l.expires_at>now() AND lower(s.email)=l.recipient
       AND s.status='active' AND w.deletion_requested_at IS NULL
       AND (po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') OR
-        $2::boolean AND po.status='RECEIVED' AND to_jsonb(po)->>'delivery_kind'='CUSTOMER_DIRECT')
-      ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted])).rows[0];
+        $2::boolean AND po.status='RECEIVED' AND to_jsonb(po)->>'delivery_kind'='CUSTOMER_DIRECT' OR
+        $3::boolean AND po.status IN ('RECEIVED','CANCELLED'))
+      ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted,includeClosed])).rows[0];
   if(!order) throw new NotFoundError('This supplier order link is no longer active.');
   return order;
 }

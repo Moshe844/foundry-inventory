@@ -374,6 +374,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         JOIN skus s ON s.id=pol.sku_id WHERE pol.id=$1 AND pol.purchase_order_id=$2
         AND pol.workspace_id=$3 FOR UPDATE`, [requested.lineId, purchaseOrderId, ctx.workspaceId],
       `Receipt line ${index + 1} is not on this purchase order.`);
+      if(line.supplier_amendment_closed_at)throw new ValidationError('This original line was closed by a supplier change. Choose its current replacement line for goods that arrived.');
       const quantity = await physicalQuantity(client,ctx,line.sku_id,requested.quantity,`Receipt line ${index + 1} quantity`);
       const outstanding = exact.safeNumber(exact.subtract(line.quantity_units,line.quantity_received_units));
       const overBy = Math.max(0,exact.safeNumber(exact.subtract(quantity,outstanding),{signed:true}));

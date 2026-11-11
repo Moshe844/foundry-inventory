@@ -16,7 +16,7 @@ function confirmationEvidence(line,documents,replies){
   const link=replies.find(reply=>reply.kind==='confirm');
   if(link)return {kind:'supplier_link_confirmation',reference:link.id};
   const pending=documents.find(document=>document.document_type==='order_acknowledgement'&&document.status==='NEEDS_REVIEW');
-  if(pending||replies.some(reply=>reply.kind==='date'))return {kind:'supplier_response_needs_review',reference:pending?.id};
+  if(pending||replies.some(reply=>reply.kind==='date'||reply.kind==='amendment'))return {kind:'supplier_response_needs_review',reference:pending?.id};
   return null;
 }
 
@@ -44,7 +44,7 @@ async function candidates(db,workspaceId,rule,{now=Date.now()}={}){
       AND n.valid_through >= $5::date AND n.reported_at <= to_timestamp($6/1000.0)
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l
         ON l.token_hash=r.token_hash AND l.workspace_id=r.workspace_id WHERE l.workspace_id=n.workspace_id
-        AND l.purchase_order_id=n.purchase_order_id AND r.kind IN('confirm','date') AND r.created_at>n.reported_at)
+        AND l.purchase_order_id=n.purchase_order_id AND r.kind IN('confirm','date','amendment') AND r.created_at>n.reported_at)
       AND NOT EXISTS(SELECT 1 FROM supplier_documents d WHERE d.workspace_id=n.workspace_id AND d.purchase_order_id=n.purchase_order_id
         AND d.document_type='order_acknowledgement' AND d.status IN('MATCHED','NEEDS_REVIEW') AND d.processed_at::timestamptz>n.reported_at)
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_backup_supplier_runs s WHERE s.workspace_id=n.workspace_id
@@ -68,7 +68,7 @@ async function candidates(db,workspaceId,rule,{now=Date.now()}={}){
     WHERE workspace_id=$1 AND purchase_order_id=ANY($2::text[]) AND document_type='order_acknowledgement' AND status IN('MATCHED','NEEDS_REVIEW')`,[workspaceId,ids])).rows;
   const replies=(await db.query(`SELECT s.id,s.kind,l.purchase_order_id FROM stockchief_runtime.supplier_link_submissions s
     JOIN stockchief_runtime.supplier_order_links l ON l.token_hash=s.token_hash AND l.workspace_id=s.workspace_id
-    WHERE s.workspace_id=$1 AND l.purchase_order_id=ANY($2::text[]) AND s.kind IN('confirm','date')`,[workspaceId,ids])).rows;
+    WHERE s.workspace_id=$1 AND l.purchase_order_id=ANY($2::text[]) AND s.kind IN('confirm','date','amendment')`,[workspaceId,ids])).rows;
   const completed=new Set((await db.query(`SELECT trigger_key FROM stockchief_runtime.agent_backup_supplier_runs
     WHERE workspace_id=$1 AND rule_id=$2 AND purchase_order_id=ANY($3::text[])`,[workspaceId,rule.id,ids])).rows.map(row=>row.trigger_key));
   for(const line of lines){

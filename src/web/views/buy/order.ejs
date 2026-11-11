@@ -77,6 +77,7 @@
               <tr>
                 <td><div class="ox-pcell"><span class="ox-thumb" aria-hidden="true"></span><div><b><%= line.displayName %></b>
                   <small><%= [line.supplierSku, onHand > 0 ? onHand + ' in stock' : 'out of stock'].filter(Boolean).join(' · ') %><% if (line.unitsPerPurchaseUnit > 1) { %> · <%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %> of <%= line.unitsPerPurchaseUnit %><% } %></small>
+                  <% if(line.supplier_amendment_closed_at){ %><small><%= line.quantityUnits===0?'Cancelled by supplier change':'Closed after supplier change' %></small><% } %>
                   <small class="ox-show-sm"><%= line.quantityUnits %> × <%= each(line.unitCost) %> · <%= line.quantityReceivedUnits %> received</small></div></div></td>
                 <td class="ox-c ox-num"><%= line.quantityUnits %></td>
                 <td class="ox-c ox-num ox-hide-sm <%= line.quantityReceivedUnits ? '' : 'ox-muted' %>"><%= line.quantityReceivedUnits %></td>
@@ -294,7 +295,9 @@
 </div>
 <% if(locals.linkResponses?.length){ %><section class="card"><h2>Supplier responses</h2><ul>
 <% linkResponses.forEach(reply=>{ %><li><%= helpers.dateTime(reply.created_at) %> ·
-<% if(reply.kind==='confirm'){ %>Order confirmed<% }else if(reply.kind==='date'){ %>Delivery date proposed<% }else{ %><a href="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>">Download <%= reply.kind==='invoice'?'invoice':'ship notice' %></a><% } %>
+<% if(reply.kind==='confirm'){ %>Order confirmed<% }else if(reply.kind==='date'){ %>Delivery date proposed<% }else if(reply.kind==='amendment'){ %>
+  <% if(permissions.supplierAmendments){ %><a href="/autopilot/po-delivery-dates/<%= reply.id %>">Review supplier purchase changes</a><% }else{ %>Supplier purchase changes received<% } %>
+<% }else{ %><a href="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>">Download <%= reply.kind==='invoice'?'invoice':'ship notice' %></a><% } %>
 <%= reply.expected_date || '' %></li><% }); %></ul></section><% } %>
 <script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
 <script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

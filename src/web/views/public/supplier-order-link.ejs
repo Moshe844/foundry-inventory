@@ -7,6 +7,7 @@
 <form method="post" action="<%= currentPath %>/respond"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <p><label>Expected delivery date <input type="date" name="date"></label></p>
 <button name="kind" value="confirm">Confirm this order</button> <button name="kind" value="date">Propose a delivery date</button></form>
+<% if(typeof canAmend!=='undefined' && canAmend){ %><p><a href="<%= currentPath %>/amendment">Propose a quantity or price change</a></p><% } %>
 <% if (typeof backupLines!=='undefined' && backupLines.length) { %>
   <h2>Report an unavailable item</h2>
   <form method="post" action="<%= currentPath %>/unavailable">
