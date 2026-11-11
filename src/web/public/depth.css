@@ -925,6 +925,12 @@ html:root body.page-ask .sc-chat-history .ask-chat:is(:hover,:focus-within,[aria
 html:root body.page-ask .sc-chat-history > :is(.ask-all,.sc-ai-details,.sc-feedback) { flex:none; }
 /* The message box never shows a scrollbar while it fits; ask-tools.js sizes it to its words. */
 html:root body.page-ask .rm-chat > .rm-composer .rm-composer__input { overflow-y:hidden; }
+/* The chat column clips anything outside it, and the box is as wide as the column
+   whenever the window is not huge. So the box's edge is drawn inside it, and its soft
+   shadow falls only downward: neither can be cut at the sides or corners. */
+html:root body.page-ask .rm-chat > .rm-composer { box-shadow:inset 0 0 0 1px rgba(17,21,46,.12),0 14px 14px -14px rgba(17,21,46,.4); }
+html:root body.page-ask .rm-chat > .rm-composer:focus-within { box-shadow:inset 0 0 0 2px #4F46E5,0 14px 14px -14px rgba(17,21,46,.4); }
+html:root body.page-ask .rm-chat > .rm-composer.is-dropping { box-shadow:inset 0 0 0 2px #6172F3,0 14px 14px -14px rgba(17,21,46,.4); }
 /* When the chat column is too narrow for the words and the buttons side by side, the
    buttons take their own row under the words, as they already do on a phone. */
 html:root body.page-ask .rm-chat { container:ask-chat / inline-size; }
