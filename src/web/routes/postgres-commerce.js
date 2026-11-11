@@ -707,15 +707,18 @@ function createPostgresCommerceRouter(database,options={}){
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
       can.supplierAmendments=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,31,'draft');
+      can.supplierConfirmations=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,29,'draft');
       can.supplierDeliveryChases=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,30,'draft');
       can.withdrawSupplierAvailability=true;
     }
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
+    const shipDates=linkResponses.some(reply=>reply.ship_date)?await require('../../purchasing/agent-supplier-ship-promises')
+      .recorded(database,req.ctx.workspaceId,req.params.id):[];
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
-      permissions:can,dualApproval,linkResponses,communications:page.communications,supplierDocuments:page.supplierDocuments,
+      permissions:can,dualApproval,linkResponses,shipDates,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));

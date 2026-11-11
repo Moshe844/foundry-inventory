@@ -6,6 +6,7 @@
 <% lines.forEach(line=>{ %><tr><td><%= line.name %></td><td><%= line.code %></td><td><%= line.quantity_units %></td></tr><% }); %></tbody></table>
 <form method="post" action="<%= currentPath %>/respond"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <p><label>Expected delivery date <input type="date" name="date"></label></p>
+<p><label>Planned ship date when confirming <input type="date" name="shipDate"></label></p>
 <button name="kind" value="confirm">Confirm this order</button> <button name="kind" value="date">Propose a delivery date</button></form>
 <% if(typeof canAmend!=='undefined' && canAmend){ %><p><a href="<%= currentPath %>/amendment">Propose a quantity or price change</a></p><% } %>
 <% if (typeof backupLines!=='undefined' && backupLines.length) { %>
