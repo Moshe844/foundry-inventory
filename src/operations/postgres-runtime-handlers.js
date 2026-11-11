@@ -433,6 +433,7 @@ async function autopilotEvaluate(job,client){
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
     if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
+    if(account.plan==='enterprise')await require('../purchasing/agent-open-to-buy').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     if(require('../commercial/agent-plan').usesAgentTerms(account)&&account.plan){
       const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
@@ -721,6 +722,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
   'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'planning.open-to-buy.v1':Object.assign((job,c)=>require('../purchasing/agent-open-to-buy').run(job,c),{workerLane:'maintenance'}),
   'agent.daily-cycle-count.v1':Object.assign((job,c)=>require('./agent-daily-cycle-counts').work(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'agent.combine-freight.v1':Object.assign((job,c)=>require('../purchasing/agent-freight-combine').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'agent.split-purchase.v1':Object.assign((job,c)=>require('../purchasing/agent-purchase-splitting').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),

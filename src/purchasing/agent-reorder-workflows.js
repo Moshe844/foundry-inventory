@@ -58,8 +58,13 @@ function pack(offer,needed,profile){
  // a count or a past average. The owner can supply an exact requested measure.
  return {quantity,purchaseUnits,unitCostMinor,packJob:units!==factor||multiple!==factor,minimumApplied:counts>baseCounts,totalMinor:profile.secondary_unit_label?null:exact.costMinor(quantity,unitCostMinor)};
 }
-async function facts(c,ctx,args,selection){
+async function facts(c,ctx,args,selection,{collect=false,throughDate=null}={}){
  let source=await positions(c,ctx,args);const requested=source;
+ const held=[];
+ function hold(position,error){
+  if(!collect||!(error instanceof ValidationError))throw error;
+  held.push({skuId:position.sku_id,code:position.code,locationId:position.location_id,location:position.location_name,reason:error.message});
+ }
  const kitRows=(await c.query("SELECT DISTINCT kit_sku_id FROM kit_components WHERE workspace_id=$1 AND kit_sku_id=ANY($2::text[]) AND stock_basis='components'",[ctx.workspaceId,[...new Set(source.map(r=>r.sku_id))]])).rows;
  const kitIds=new Set(kitRows.map(k=>k.kit_sku_id)),recipes=[],requirements=new Map();
  if(kitIds.size){
@@ -67,26 +72,34 @@ async function facts(c,ctx,args,selection){
   await policy.requireWorkspaceJob(c,ctx.workspaceId,13,'draft');
   const capacities=await require('../domain/postgres-kit-availability').read(c,ctx.workspaceId,[...kitIds]);
   for(const p of source.filter(p=>kitIds.has(p.sku_id))){
+   try{
    if(!p.location_id)throw new ValidationError('Set a receiving location for each kit reorder.');
    const capacity=capacities.get(p.sku_id),buildable=capacity?.locations.find(l=>l.locationId===p.location_id)?.buildable||0;
    if(p.effectiveReorder===null||buildable>p.effectiveReorder)continue;
    const target=p.targetStock??p.effectiveReorder;
    const parts=await require('../domain/postgres-kit-service').explode(c,ctx.workspaceId,p.sku_id,{multiplier:String(target)});recipes.push({kit:p.sku_id,locationId:p.location_id,target,parts,capacity});
    for(const part of parts){const key=stock.key(part.skuId,p.location_id),old=requirements.get(key);requirements.set(key,{skuId:part.skuId,locationId:p.location_id,locationName:p.location_name,target:exact.add(old?.target||'0',part.quantity)});}
+   }catch(error){hold(p,error);}
   }
   const partIds=[...new Set([...requirements.values()].map(r=>r.skuId))],partPositions=partIds.length?await require('../forecasting/postgres-planning-service').position(c,ctx.workspaceId,{onlySkuIds:partIds}):[];
   const rawStock=await stock.readMany(c,ctx.workspaceId,[...requirements.values()].map(r=>({skuId:r.skuId,locationId:r.locationId})));
   source=source.filter(p=>!kitIds.has(p.sku_id));
   for(const r of requirements.values()){
    const key=stock.key(r.skuId,r.locationId),existing=source.find(p=>p.sku_id===r.skuId&&p.location_id===r.locationId),position=partPositions.find(p=>p.sku_id===r.skuId&&p.location_id===r.locationId)||partPositions.find(p=>p.sku_id===r.skuId),physical=rawStock.get(key);
-   if(!position)throw new ValidationError('Restore each active kit component before drafting its purchase.');
+   if(!position){hold({sku_id:r.skuId,code:r.skuId,location_id:r.locationId,location_name:r.locationName},new ValidationError('Restore each active kit component before drafting its purchase.'));continue;}
    if(existing){existing.targetStock=exact.safeNumber(exact.add(String(existing.targetStock||0),r.target));existing.effectiveReorder=existing.targetStock;existing.kitDerived=true;}
    else source.push({...position,scope:'position',planning_suppressed:false,location_id:r.locationId,location_name:r.locationName,policy_id:position.location_id===r.locationId?position.policy_id:null,preferred_supplier_id:position.location_id===r.locationId?position.preferred_supplier_id:null,onHand:physical?.onHand||0,on_hand:String(physical?.onHand||0),committed:(physical?.committed||0)+(physical?.reserved||0),incoming:position.location_id===r.locationId?position.incoming:0,targetStock:Number(r.target),effectiveReorder:Number(r.target),kitDerived:true});
   }
  }
  const ids=[...new Set(source.map(r=>r.sku_id))];
- if(!ids.length)throw new ValidationError('No products currently need a reorder draft.');
- const profiles=(await c.query(`SELECT i.*,s.id,s.code,s.item_id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) ORDER BY s.id`,[ctx.workspaceId,ids])).rows;
+ if(!ids.length){
+  if(collect)return {rows:[],held,today:await require('../lib/business-time').today(c,ctx.workspaceId)};
+  throw new ValidationError('No products currently need a reorder draft.');
+ }
+ const profiles=(await c.query(`SELECT i.*,s.id,s.code,s.item_id${collect?",lower(trim(coalesce(f.category,''))) budget_category":''}
+ FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+ ${collect?'LEFT JOIN catalogue_item_facts f ON f.workspace_id=i.workspace_id AND f.item_id=i.id':''}
+ WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) ORDER BY s.id`,[ctx.workspaceId,ids])).rows;
  const byId=new Map(profiles.map(p=>[p.id,p])),today=await require('../lib/business-time').today(c,ctx.workspaceId);
  const offers=(await c.query(`SELECT si.*,v.name supplier_name,v.currency,v.minimum_order_amount,v.payment_terms,v.freight_terms_currency,v.free_freight_threshold_minor,v.ordinary_freight_minor,v.updated_at supplier_updated_at,
  v.default_lead_time_days,lead.effective_lead,lead.samples FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id
@@ -116,22 +129,38 @@ async function facts(c,ctx,args,selection){
  const usable=await require('../domain/postgres-kit-availability').stock(c,ctx.workspaceId,ids);
  const valuation=(await c.query('SELECT sku_id,location_id,quantity_units::text,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) ORDER BY sku_id,location_id',[ctx.workspaceId,ids])).rows;
  const components=(await c.query("SELECT DISTINCT kit_sku_id FROM kit_components WHERE workspace_id=$1 AND kit_sku_id=ANY($2::text[]) AND stock_basis='components'",[ctx.workspaceId,ids])).rows;
+ const groupSku=records=>{
+  const result=new Map();
+  for(const row of records){
+   if(!result.has(row.sku_id))result.set(row.sku_id,[]);
+   result.get(row.sku_id).push(row);
+  }
+  return result;
+ };
+ const offersBySku=groupSku(offers),openBySku=groupSku(open),transfersBySku=groupSku(transfers),valueBySku=groupSku(valuation);
+ const componentIds=new Set(components.map(row=>row.kit_sku_id));
+ const measures=new Map(args.secondaryQuantities.split('\n').filter(Boolean).map(line=>{
+  const [sku,location,quantity,weight]=line.split('|').map(s=>s.trim());
+  return [JSON.stringify([sku,location]),{quantity,weight}];
+ }));
  const rows=[];
  for(const p of source){
+  try{
   const profile=byId.get(p.sku_id),scope=p.location_id?[p.location_id]:p.receivingOptions.map(l=>l.id);
-  const pending=[...open.filter(l=>l.sku_id===p.sku_id&&scope.includes(l.location_id)),...transfers.filter(l=>l.sku_id===p.sku_id&&scope.includes(l.location_id))];
+  const pending=[...(openBySku.get(p.sku_id)||[]),...(transfersBySku.get(p.sku_id)||[])].filter(l=>scope.includes(l.location_id));
   const drafts=pending.filter(l=>['DRAFT','AWAITING_APPROVAL'].includes(l.status)),uncertain=pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&(l.supply_hold||!l.expected_date||l.expected_date<today));
-  const timely=pending.filter(l=>!l.supply_hold&&!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&l.expected_date&&l.expected_date>=today);
+  const timely=pending.filter(l=>!l.supply_hold&&!['DRAFT','AWAITING_APPROVAL'].includes(l.status)&&l.expected_date&&l.expected_date>=today&&(!throughDate||l.expected_date<=throughDate));
   const incoming=timely.reduce((n,l)=>exact.add(n,l.remaining),'0');
   const datedIncoming=incoming;
   const rawAvailable=p.location_id?String(usable.get(stock.key(p.sku_id,p.location_id))||0):scope.reduce((n,l)=>exact.add(n,String(usable.get(stock.key(p.sku_id,l))||0)),'0');
   const projected=exact.add(rawAvailable,datedIncoming),shortage=p.effectiveReorder!==null&&Number(projected)<=p.effectiveReorder;
-  const measure=args.secondaryQuantities.split('\n').filter(Boolean).map(line=>{const [sku,location,quantity,weight]=line.split('|').map(s=>s.trim());return {sku,location,quantity,weight};}).find(m=>m.sku===p.code&&m.location===p.location_name);
-  const needed=measure?.quantity||args.quantity||(!shortage?'0':exact.subtract(String(p.targetStock??p.effectiveReorder),projected));
+  const measure=measures.get(JSON.stringify([p.code,p.location_name]));
+  const derived=shortage?exact.subtract(String(p.targetStock??p.effectiveReorder),projected):'0';
+  const needed=collect?derived:measure?.quantity||args.quantity||derived;
   if(!positive(needed))continue;
   if(p.lead_time_assumed&&p.reorderPoint===null)throw new ValidationError('Record a supplier lead time before deriving the reorder target for '+p.code+'.');
   const candidates=[];
-  for(const offer of offers.filter(o=>o.sku_id===p.sku_id)){
+  for(const offer of offersBySku.get(p.sku_id)||[]){
    try{const rounded=pack(offer,needed,profile);if(profile.secondary_unit_label){if(!measure||exact.canonical(rounded.quantity)!==measure.quantity)throw new ValidationError('Supply exact requested pieces and their independent weight, matching the supplier pack for '+p.code+'.');rounded.secondaryQuantity=String(quantities.secondary(profile,measure.weight));rounded.totalMinor=exact.costMinor(rounded.secondaryQuantity,rounded.unitCostMinor);}candidates.push({...offer,...rounded,leadDays:offer.effective_lead==null?null:Number(offer.effective_lead)});}catch(error){if(!(error instanceof ValidationError))throw error;candidates.push({...offer,blocked:error.message});}
   }
   if(selection)for(const o of candidates.filter(o=>!o.blocked&&o.totalMinor!==null)){
@@ -153,20 +182,22 @@ async function facts(c,ctx,args,selection){
    chosen=saved.length===1?saved[0]:candidates.length===1?candidates[0]:null;
   }
   if(!chosen||chosen.blocked)throw new ValidationError(chosen?.blocked||'Choose one saved supplier for '+p.code+' or use the eligible supplier selection job first.');
-  if(components.some(k=>k.kit_sku_id===p.sku_id))throw new ValidationError('Use the kit’s missing-parts reorder workflow for '+p.code+'; a component kit cannot be purchased as an ordinary finished-stock reorder.');
+  if(componentIds.has(p.sku_id))throw new ValidationError('Use the kit’s missing-parts reorder workflow for '+p.code+'; a component kit cannot be purchased as an ordinary finished-stock reorder.');
   if(drafts.length)throw new ValidationError('Review existing unsent purchase '+drafts.map(l=>l.po_number).join(', ')+' for '+p.code+' before creating another draft.');
   const unresolved=uncertain.filter(line=>!line.supply_hold||!reviewedBackups.some(run=>
    run.trigger_key==='notice:'+line.supply_hold&&run.sku_id===line.sku_id&&run.location_id===line.location_id&&run.supplier_id===chosen.supplier_id));
   if(unresolved.length)throw new ValidationError('Check supplier availability for '+unresolved.map(l=>l.po_number).join(', ')+' before making another purchase for '+p.code+'.');
   if(!p.location_id&&scope.length!==1)throw new ValidationError('Choose a receiving location for the inventory-wide reorder of '+p.code+'.');
   if(p.onHand<0)throw new ValidationError('Resolve negative stock before reordering '+p.code+'.');
-  const uncosted=valuation.filter(v=>v.sku_id===p.sku_id&&scope.includes(v.location_id));
+  const uncosted=(valueBySku.get(p.sku_id)||[]).filter(v=>scope.includes(v.location_id));
   if(p.onHand>0&&(!uncosted.length||uncosted.reduce((n,v)=>n+Number(v.quantity_units),0)<p.onHand))throw new ValidationError('Complete the recorded stock cost for '+p.code+' before its reorder can run.');
-  rows.push({position:p,profile,available:rawAvailable,incoming:datedIncoming,needed,candidates,chosen,knownTerms:knownOffers.includes(chosen.id),locationId:p.location_id||scope[0]});
+  rows.push({position:p,profile,available:rawAvailable,incoming:datedIncoming,needed,candidates,chosen,knownTerms:knownOffers.includes(chosen.id),locationId:p.location_id||scope[0],
+   ...(collect?{datedIncomingRecords:timely.map(({order_id,po_number,expected_date,remaining})=>({id:order_id,reference:po_number,date:expected_date,quantity:remaining}))}:{})});
+  }catch(error){hold(p,error);}
  }
- if(!rows.length)throw new ValidationError('Available and dated incoming stock already cover the selected reorder targets.');
+ if(!rows.length&&!collect)throw new ValidationError('Available and dated incoming stock already cover the selected reorder targets.');
  const sourceOrders=open.map(({supply_hold,...line})=>supply_hold?{...line,supply_hold}:line);
- return {rows,today,costEvidence,source:{today,requested,recipes,positions:source,profiles,offers,knownOffers,open:sourceOrders,...(reviewedBackups.length?{reviewedBackups}:{}),transfers,valuation,usable:[...usable],components,...(selection?{comparisonBasis:args.comparisonBasis,goodsOnlyReason:args.goodsOnlyReason,costEvidence}:{})}};
+ return {rows,held,today,costEvidence,source:{today,requested,recipes,positions:source,profiles,offers,knownOffers,open:sourceOrders,...(reviewedBackups.length?{reviewedBackups}:{}),transfers,valuation,usable:[...usable],components,...(selection?{comparisonBasis:args.comparisonBasis,goodsOnlyReason:args.goodsOnlyReason,costEvidence}:{})}};
 }
 function lineSummary(l,rows,currency){
  const row=rows.find(r=>r.position.sku_id===l.skuId&&r.locationId===l.destinationLocationId),profile=row.profile;

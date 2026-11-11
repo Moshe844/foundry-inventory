@@ -807,6 +807,25 @@ function createPostgresAutopilotRouter(database,options={}){
     await budgets.save(database,req.ctx,req.body);
     res.redirect(303,'/purchasing/budgets?'+new URLSearchParams({month:req.body.month}));
   }));
+  const monthlyBuying=require('../../purchasing/agent-open-to-buy');
+  const buyingPage=async(req,res)=>agentPage(req,res,'autopilot/open-to-buy',{title:'Monthly open-to-buy',nav:'purchasing',
+    backTo:{href:'/autopilot/reviews/open-to-buy',label:'Open-to-buy headroom'}},async()=>({
+    model:await monthlyBuying.page(database,req.ctx,{id:req.params.id,month:req.query.month,after:req.query.after}),
+  }),402);
+  router.get(monthlyBuying.path,requireAuth,owner,asyncRoute(buyingPage));
+  router.post(monthlyBuying.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await monthlyBuying.prepare(database,req.ctx,req.body);
+    res.redirect(303,monthlyBuying.path+'/'+result.id);
+  }));
+  router.post(monthlyBuying.path+'/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await monthlyBuying.configure(database,req.ctx,req.body);
+    res.redirect(303,monthlyBuying.path);
+  }));
+  router.get(monthlyBuying.path+'/:id',requireAuth,owner,asyncRoute(buyingPage));
+  router.post(monthlyBuying.path+'/:id/drafts',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await monthlyBuying.prepareDrafts(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,monthlyBuying.path+'/'+req.params.id);
+  }));
   // A locked destination remains a useful page. The underlying services still
   // enforce the plan on every read and mutation; only the HTML presentation changes.
   async function agentPage(req,res,view,locals,load,lockedStatus=200){
@@ -979,6 +998,7 @@ function createPostgresAutopilotRouter(database,options={}){
         result.reviewPrices=!result.pricePreparationHold;
       }
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
+      if(req.params.job==='open-to-buy')result.openToBuyPath=monthlyBuying.path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
