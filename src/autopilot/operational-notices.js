@@ -14,8 +14,9 @@ const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
 const orderCredit=require('../sales/order-credit-exposure');
-const monitoredJobs=[10,77,80,82,110,116];
-const historyScopedJobs=[82,116];
+const customerHealth=require('../sales/customer-health');
+const monitoredJobs=[10,77,80,82,88,110,116];
+const historyScopedJobs=[82,88,116];
 const noticeOperation=job=>[50,77].includes(job)?'suggest':'automatic';
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
@@ -112,6 +113,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (monitors.has(80)?' UNION ALL '+orderCredit.notices:'')+
     (monitors.has(77)?' UNION ALL '+marginPrices.notices:'')+
     (monitors.has(82)?' UNION ALL '+orderPrices.notices(cutoff):'')+
+    (monitors.has(88)?' UNION ALL '+customerHealth.notices(cutoff):'')+
     (monitors.has(116)?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
     (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
@@ -193,6 +195,9 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' '+(r.n===1?'draft has':'drafts have')+' an over-limit or incomplete credit check.',
       why:'The check compares current draft amounts, unbilled commitments and open invoices with saved customer limits.',
       href:'/autopilot/reviews/order-credit-limits',actionLabel:'Review customer credit',sourceId:'agent-notice-80'};
+    if(Number(r.job_id)===88)return {kind:'inventory',grouped:true,importance:'Information',priority:60,title:'Customers with fewer recent purchases',
+      happened:r.n+' '+(r.n===1?'customer had':'customers had')+' fewer orders or product units shipped.',
+      why:customerHealth.summary,href:customerHealth.path,actionLabel:'Review customer activity',sourceId:'agent-notice-88'};
     if(Number(r.job_id)===116)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'High return rates need review',
       happened:r.n+' '+(r.n===1?'SKU or customer rate is above its peer rate.':'SKU or customer rates are above their peer rates.'),
       why:returnRates.summary,href:'/autopilot/reviews/customer-return-rates',actionLabel:'Review return rates',sourceId:'agent-notice-116'};

@@ -63,7 +63,7 @@
   "82": "Flags orders with below-cost goods or discounts that differ from the latest saved quote. The owner can review the exact pricing revision, recorded units and posted fulfillment cost.",
   "86": "Estimates clearance quantities and gross proceeds from an owner-entered markdown. It does not change selling prices without a separate approval.",
   "87": "Compares verified channel prices with the catalog and owner-entered advertised-price minimum, and opens or clears an in-app warning. Real provider qualification remains open.",
-  "88": "Reviews customer buying activity using recorded shipment handoffs and highlights new or reduced activity.",
+  "88": "Scores customer activity from comparable orders and product units actually shipped across two 30-day periods. Starter gets one suggestion. Growth, Pro and Custom get automatic owner notices when recent purchases decline.",
   "89": "Prepares scoped supplier messages about orders and follow-ups with fresh send authority. Live mailbox acceptance remains unverified.",
   "90": "Shows a supplier scorecard using recorded order and receipt facts. A full multi-supplier late-delivery and dispute scenario remains open.",
   "91": "Links invoice price increases to the approved purchase order. Positive supplier-price-list comparison still needs source qualification.",

@@ -49,14 +49,8 @@ module.exports=[
   require('../sales/agent-customer-checkins').definition,
   {id:79,key:'bought-together',label:'Find items commonly bought together',requiresFilter:true,
     readPage:require('../sales/quote-companion-evidence').readReport},
-  {id:88,key:'customer-health',label:'Flag customers buying less',summary:'Compare distinct shipped orders in the last 30 days with the preceding 30 days.',sql:`
-    WITH history AS (SELECT o.customer_id,count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '30 days') AS recent,
-      count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '30 days') AS prior
-      FROM sales_orders o JOIN sales_shipments h ON h.workspace_id=o.workspace_id AND h.sales_order_id=o.id
-      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.shipped_at::timestamptz BETWEEN now()-interval '60 days' AND now() GROUP BY o.customer_id)
-    SELECT c.name AS "Customer",h.prior AS "Prior orders",h.recent AS "Recent orders",
-      CASE WHEN h.prior=0 THEN 'New activity' WHEN h.recent=0 THEN 'Stopped buying' WHEN h.recent<h.prior THEN 'Buying less' WHEN h.recent>h.prior THEN 'Buying more' ELSE 'Stable' END AS "Health"
-    FROM history h JOIN customers c ON c.id=h.customer_id WHERE ($2='' OR lower(c.name)=lower($2)) ORDER BY h.recent-h.prior,c.id`},
+  {id:88,key:'customer-health',label:'Review customer activity',filterLabel:'Customer or company name',
+    readPage:require('../sales/customer-health').review},
   {id:91,key:'supplier-price-increases',label:'Flag higher supplier prices',summary:'Supplier document prices compared with the original PO. Each difference retains its source and currency.',sql:`
     WITH evidence AS (
       SELECT d.purchase_order_id,p.id AS line_id,(f->>'unitCostMinor')::numeric AS minor,d.document_reference AS reference,d.document_type AS kind,d.facts::jsonb->>'currency' AS currency,(f->>'unitCostMinor')::numeric source_minor,1::numeric price_quantity
