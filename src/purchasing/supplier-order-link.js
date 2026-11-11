@@ -18,7 +18,7 @@ async function issue(client,workspaceId,orderId,recipient,origin) {
   return new URL('/supplier/order/'+token,base.origin).href;
 }
 
-async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=false}={}){
+async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=false,includeReceived=false}={}){
   if(!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundError();
   const order=(await db.query(`SELECT po.id,po.workspace_id,po.po_number,po.expected_date,po.currency,po.status,
       l.token_hash,s.name AS supplier_name,coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE') AS delivery_kind
@@ -30,8 +30,8 @@ async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=
       AND s.status='active' AND w.deletion_requested_at IS NULL
       AND (po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') OR
         $2::boolean AND po.status='RECEIVED' AND to_jsonb(po)->>'delivery_kind'='CUSTOMER_DIRECT' OR
-        $3::boolean AND po.status IN ('RECEIVED','CANCELLED'))
-      ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted,includeClosed])).rows[0];
+        $3::boolean AND po.status IN ('RECEIVED','CANCELLED') OR $4::boolean AND po.status='RECEIVED')
+      ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted,includeClosed,includeReceived])).rows[0];
   if(!order) throw new NotFoundError('This supplier order link is no longer active.');
   return order;
 }
@@ -47,7 +47,7 @@ async function submit(db,token,kind,value,{shipDate=null}={}){
   if(shipDate&&(kind!=='confirm'||!require('./supplier-unavailability-mail-parser').validDate(shipDate)))
     throw new ValidationError('Use Confirm this order to send a valid planned ship date.');
   return db.transaction(async client=>{
-    const order=await lookup(client,token,true,{includeCompleted:true});
+    const order=await lookup(client,token,true,{includeCompleted:true,includeReceived:file});
     const unavailable=kind==='confirm'&&(!date||shipDate)?(await client.query(`SELECT r.id FROM stockchief_runtime.supplier_link_submissions r
       JOIN stockchief_runtime.supplier_order_links l ON l.workspace_id=r.workspace_id AND l.token_hash=r.token_hash
       WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind='unavailable' ORDER BY r.created_at DESC,r.id DESC LIMIT 1`,
@@ -69,6 +69,7 @@ async function submit(db,token,kind,value,{shipDate=null}={}){
       VALUES($1,$2,$3,$4,$5,$6)`,[newId('poevt'),order.workspace_id,order.id,'supplier_link_'+kind,JSON.stringify({submission:id,expectedDate:date,...(shipDate?{shipDate}:{})}),nowIso()]);
     if(!file&&date)await require('./agent-po-delivery-dates').enqueue(client,order.workspace_id,id);
     if(shipDate)await require('./agent-supplier-ship-promises').enqueue(client,order.workspace_id,id);
+    if(kind==='invoice')await require('./supplier-portal-invoices').queue(client,order.workspace_id,id);
     return {saved:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

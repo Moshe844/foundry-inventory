@@ -317,7 +317,15 @@
     </form>
   <% } %>
   </div><% }); %>
-<% }else{ %><a href="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>">Download <%= reply.kind==='invoice'?'invoice':'ship notice' %></a><% } %>
+<% }else{ %><a href="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>">Download <%= reply.kind==='invoice'?'invoice':'ship notice' %></a>
+  <% if(reply.kind==='invoice'&&permissions.matchSupplierFiles){const matching=locals.portalInvoiceReviews?.get(reply.id); %>
+    <% if(matching?.intake_id){ %> · <a href="/autopilot/supplier-invoices/<%= matching.intake_id %>">Open invoice match</a>
+    <% }else if(matching){ %> · <a href="/autopilot/supplier-invoices">Open invoice reading status</a>
+    <% }else{ %><form method="post" action="/purchasing/orders/<%= order.id %>/supplier-files/<%= reply.id %>/match" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ox-btn" type="submit">Match this invoice</button>
+    </form><% } %>
+  <% } %>
+<% } %>
 <%= reply.expected_date || '' %></li><% }); %></ul></section><% } %>
 <script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
 <script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>

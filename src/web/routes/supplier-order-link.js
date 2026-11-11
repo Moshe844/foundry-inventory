@@ -12,7 +12,7 @@ function router(db){
     next();
   });
   router.get('/supplier/order/:token',asyncRoute(async(req,res)=>{
-    const order=await link.lookup(db,req.params.token,false,{includeCompleted:true});
+    const order=await link.lookup(db,req.params.token,false,{includeReceived:true});
     if(order.delivery_kind==='CUSTOMER_DIRECT')return res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment'+(req.query.saved==='1'?'?saved=1':''));
     const lines=(await db.query(`SELECT l.quantity_units,s.code,i.name FROM purchase_order_lines l
       JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
