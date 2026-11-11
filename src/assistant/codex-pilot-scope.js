@@ -1,6 +1,7 @@
 'use strict';
 const list=value=>String(value||'').split(',').map(s=>s.trim()).filter(Boolean);
-const fundingWorkspaces=()=>list(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES);
+const fundingWorkspaces=()=>process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&process.env.STOCKCHIEF_CODEX_PILOT==='1'
+ ?list(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES):[];
 const accountAccess=()=>process.env.STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS==='1';
 const customerAccess=()=>process.env.STOCKCHIEF_CODEX_CUSTOMER_ACCESS==='1'&&['staging','production'].includes(process.env.STOCKCHIEF_RUNTIME_ENV);
 function configured(ctx){return customerAccess()||process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&process.env.STOCKCHIEF_CODEX_PILOT==='1'&&
