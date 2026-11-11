@@ -91,7 +91,21 @@
 <% } else { %><p>Automatic holds require Pro. <a href="/billing">Upgrade</a></p><% } %>
 <% } %>
 <% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label><%= result.changeLabel||'Change in sales (%)' %> <input type="number" name="change" step="0.01" min="<%= result.minChange??-100 %>" max="<%= result.maxChange??1000 %>" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
-<% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>f!=='link'); %><div class="card"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
+<% if(result.paymentRun?.digest){ const paymentRun=result.paymentRun; %>
+  <section class="card card-body stack">
+    <h2>Payment review</h2>
+    <p><%= paymentRun.count %> supplier <%= paymentRun.count===1?'bill':'bills' %> in the current run. Use the individual bill links to pay suppliers and record payments.</p>
+    <% if(paymentRun.approvedAt){ %><p role="status">Approved <%= helpers.dateTime(paymentRun.approvedAt) %></p>
+    <% }else if(paymentRun.approvalHold){ %><p><%= paymentRun.approvalHold %></p>
+    <% }else{ %><form method="post" action="/autopilot/reviews/payment-run/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="digest" value="<%= paymentRun.digest %>">
+      <label><input type="checkbox" name="confirmed" value="yes" required> I reviewed all listed bills and discount terms.</label>
+      <button class="btn btn--primary" type="submit">Approve this payment run</button>
+    </form><% } %>
+  </section>
+<% } %>
+<% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>f!=='link'); %><div class="card<%= result.paymentRun?' table-wrap':'' %>"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
 <% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %><% if(result.reviewPrices&&f==='Suggested selling price'){ %><form method="post" action="/autopilot/reviews/margin-prices/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= r.SKU %>"><button class="btn">Prepare price change</button></form><% } %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>">Open</a></td><% } %></tr><% }); %>
 </tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
