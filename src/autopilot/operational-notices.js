@@ -38,6 +38,7 @@ async function refresh(db,workspaceId){
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
   const today=await require('../lib/business-time').today(db,workspaceId);
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
+  await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   const includeTransfers=policy.permits(account.plan,124,'automatic');
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
@@ -75,23 +76,46 @@ async function refresh(db,workspaceId){
 }
 
 async function inbox(db,workspaceId,actorId=null){
-  const installed=(await db.query("SELECT to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks")).rows[0];
+  const installed=(await db.query(`SELECT
+    to_regclass('stockchief_runtime.agent_stock_discrepancy_checks') IS NOT NULL AS stock_checks,
+    to_regclass('stockchief_runtime.agent_supplier_payment_checks') IS NOT NULL
+      AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
   const stockChecks=installed.stock_checks?`UNION ALL
     SELECT 3,findings,checked_on::text FROM stockchief_runtime.agent_stock_discrepancy_checks
     WHERE workspace_id=$1 AND findings>0`:'';
+  const paymentChecks=installed.payment_checks?`UNION ALL
+    SELECT 104,p.bill_count,p.checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks p
+    WHERE p.workspace_id=$1 AND p.bill_count>0 AND NOT EXISTS (
+      SELECT 1 FROM stockchief_runtime.agent_supplier_payment_approvals a WHERE a.workspace_id=p.workspace_id
+        AND a.week_start=date_trunc('week',p.checked_on::timestamp)::date AND a.digest=p.run_digest)
+    UNION ALL
+    SELECT 108,discount_count,checked_on::text FROM stockchief_runtime.agent_supplier_payment_checks
+    WHERE workspace_id=$1 AND discount_count>0`:'';
   const {rows}=await db.query(`SELECT job_id,n,due FROM (
     SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due
     FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
     ${stockChecks}
+    ${paymentChecks}
     ) current WHERE ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u
       WHERE u.workspace_id=$1 AND u.id=$2 AND u.role='owner'))`,[workspaceId,actorId]);
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
-  return rows.filter(r=>policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67})).map(r=>{
+  const visible=rows.filter(r=>policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
+  const suppressed=new Set();
+  for(const {job_id:job} of visible)if([104,108].includes(Number(job))&&await require('./job-modes').restriction(db,workspaceId,Number(job),true))suppressed.add(job);
+  return visible.filter(r=>!suppressed.has(r.job_id)).map(r=>{
     if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
       happened:'The '+r.due+' stock check found '+r.n+' '+(r.n===1?'issue.':'issues.'),why:stockDiscrepancies.summary,
       recommendation:'Review the current stock records.',href:'/autopilot/reviews/stock-exceptions',actionLabel:'Review stock discrepancies',sourceId:'agent-notice-3'};
+    if(Number(r.job_id)===104)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Supplier payment run ready to review',
+      happened:r.n+' supplier '+(r.n===1?'bill was':'bills were')+' included in the '+r.due+' check.',
+      why:'The run includes upcoming bills and documented discount deadlines.',href:'/autopilot/reviews/payment-run',
+      actionLabel:'Review supplier payments',sourceId:'agent-notice-104'};
+    if(Number(r.job_id)===108)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Early-payment discounts available',
+      happened:r.n+' supplier '+(r.n===1?'bill had':'bills had')+' an early-payment opportunity at the '+r.due+' check.',
+      why:'The recorded supplier terms identify the deadline and possible saving.',href:'/autopilot/reviews/early-discounts',
+      actionLabel:'Review supplier discounts',sourceId:'agent-notice-108'};
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
