@@ -70,11 +70,11 @@ async function call(ctx, path, { method = 'POST', values = null, idempotencyKey 
 
   // Reached or not is decided at the boundary (time limit, retry on 5xx/429
   // only when an idempotency key makes the retry safe); refused is read here.
-  const response = await (ctx.stripeFetch||providerFetch)(`${API}${path}`, {
+  const response = await providerFetch(`${API}${path}`, {
     method,
     headers,
     body: values ? form(values) : undefined,
-  }, { provider: 'Stripe', ...(exact?{retries:0}:{}) });
+  }, { provider: 'Stripe', fetch: ctx.stripeFetch, ...(exact?{retries:0}:{}) });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = payload?.error?.message || `Stripe refused the request (${response.status}).`;

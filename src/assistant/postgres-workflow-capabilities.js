@@ -392,10 +392,36 @@ async function returnInspect(database,ctx,customerReturn,args){
     `Record inspection of every unit on ${customerReturn.return_number} as ${disposition}${args.location?` at ${args.location}`:''}. This applies the physical disposition but does not issue a customer refund.`);
 }
 
+async function usesExactRefunds(database,workspaceId){
+  const policy=require('../commercial/agent-plan');
+  return policy.usesAgentTerms(await policy.accountState(database,workspaceId));
+}
+
 async function returnRefund(database,ctx,customerReturn,args){
   requireState(customerReturn,['AWAITING_REFUND'],'This customer return');
+  if(!await usesExactRefunds(database,ctx.workspaceId)){
+    if(args.refundPayments)throw new ValidationError('Exact original-payment breakdown requires current StockChief plan terms.');
+    return legacyReturnRefund(database,ctx,customerReturn,args);
+  }
   const destination=args.refundDestination?normalizeRefundDestination(args.refundDestination):null;
   return require('../operations/agent-return-refunds').prepare(database,ctx,customerReturn.id,destination,args.refundPayments);
+}
+
+async function legacyReturnRefund(database,ctx,customerReturn,args){
+  requireState(customerReturn,['AWAITING_REFUND'],'This customer return');
+  const destination=normalizeRefundDestination(args.refundDestination);
+  const detail=await returns.getCustomerReturn(database,ctx.workspaceId,customerReturn.id);
+  if(detail.resolution!=='REFUND')throw new ValidationError('This return does not have an approved refund resolution.');
+  let amountMinor=detail.lines.reduce((sum,line)=>sum+(line.trackingEvidence.costAllocations||[])
+    .reduce((part,allocation)=>part+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
+  if(detail.receipt_credit_policy==='RECEIPT_CREDIT_V1'){const credit=returns.refundSummary(detail);amountMinor=destination==='CASH'?credit.cashDueMinor:0;if(destination==='AR'&&credit.cashDueMinor)throw new ValidationError('The paid portion is owed back to the customer; the unpaid invoice was already credited.');if(!amountMinor)return prepareResult({recordId:customerReturn.id,destination,amountMinor:0},'Close '+customerReturn.return_number+' after its posted receipt credit. No additional credit or cash payment is created.');}
+  if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError(
+    'StockChief cannot verify a positive refund against the original sale.');
+  return prepareResult({recordId:customerReturn.id,destination,amountMinor},
+    `${destination==='CASH'?'Refund money already paid':'Reduce the unpaid invoice balance'} by `+
+    `${pricing.formatMinor(amountMinor,detail.currency)} for ${customerReturn.return_number}. `+
+    (destination==='CASH'?'An original provider payment is refunded through the verified provider first when one exists.':
+      'No money is sent to the customer by this receivable adjustment.'));
 }
 
 function normalizeRefundDestination(value){
@@ -1160,10 +1186,24 @@ const SPECS=Object.freeze([
     execute:(client,ctx,p)=>returns.inspectCustomerReturn(sameClient(client),ctx,p.recordId,p),
     verify:(client,ctx,r,p)=>state(client,ctx,'customer_returns',p.recordId,[r.status])},
   {name:'customer_return.refund',description:'Prepare the exact return credit and repay the remaining paid amount through each original payment. A person approves the original-payment breakdown.',
-    record:'customer_return',fields:['recordReference','refundDestination','refundPayments'],permission:permissions.REFUND_CUSTOMER_RETURN,ownerOnly:true,
+    record:'customer_return',fields:['recordReference','refundDestination','refundPayments'],permission:permissions.REFUND_CUSTOMER_RETURN,
     capability:'returns.core',build:returnRefund,
-    execute:(client,ctx,p)=>require('../operations/agent-return-refunds').approveInTransaction(client,ctx,p),
-    verify:(client,ctx,r,p)=>require('../operations/agent-return-refunds').verifyApproval(client,ctx,r,p)},
+    execute:async(client,ctx,p)=>{
+      if(p.sourceFingerprint)return require('../operations/agent-return-refunds').approveInTransaction(client,ctx,p);
+      if(await usesExactRefunds(client,ctx.workspaceId))throw new ValidationError('Open the current return and review its exact original-payment amounts before approval.');
+      if(p.destination==='AR')return returns.refundCustomerReturn(sameClient(client),ctx,p.recordId,
+        {destination:'AR',idempotencyKey:p.idempotencyKey});
+      const queued=await payments.queueCustomerReturnRefund(sameClient(client),ctx,p.recordId,{});
+      if(queued.noProviderPayment)return returns.refundCustomerReturn(sameClient(client),ctx,p.recordId,
+        {destination:'CASH',idempotencyKey:p.idempotencyKey});
+      return queued;
+    },
+    verify:async(client,ctx,r,p)=>p.sourceFingerprint
+      ?require('../operations/agent-return-refunds').verifyApproval(client,ctx,r,p):r.queued?
+      Boolean(r.refund?.id&&r.effectId&&(await client.query(`SELECT 1 FROM payment_refund_requests
+        WHERE workspace_id=$1 AND id=$2 AND customer_return_id=$3 AND amount_minor=$4 AND status='PENDING'`,
+      [ctx.workspaceId,r.refund.id,p.recordId,p.amountMinor])).rows.length):
+      Boolean(r.amountMinor===p.amountMinor&&await state(client,ctx,'customer_returns',p.recordId,['COMPLETED']))},
   {name:'customer_return.exchange',description:'After inspecting an authorized exchange return, prepare a zero-price replacement sales order for the returned SKU quantities. It still needs confirmation and physical fulfillment.',
     record:'customer_return',fields:['recordReference'],permission:permissions.REFUND_CUSTOMER_RETURN,
     capability:'returns.core',build:returnExchange,
