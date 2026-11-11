@@ -9,9 +9,18 @@
 <button class="btn" name="action" value="<%= lot.recalled_at?'release':'hold' %>"><%= lot.recalled_at?'Release this recall':'Recall and block shipping' %></button></form>
 <% }else{ %><p>Recall holds require Growth. <a href="/billing">Review plans</a></p><% } %>
 <% detail.history.forEach(e=>{ %><p><%= helpers.dateTime(e.occurred_at) %> &middot; <%= e.name %> &middot; <%= e.held?'Recalled':'Released' %> &middot; <%= e.reason %></p><% }); %>
-</section><section class="card"><h2>Certificates</h2><% if(detail.canCertify){detail.certificates.forEach(c=>{ %>
-<p><%= c.kind %> &middot; <% if(c.document_url){ %><a rel="noreferrer" href="<%= c.document_url %>">View document</a> <%= c.expires_on||'' %><% }else{ %>Missing<% } %></p>
-<% }); %><form method="post" action="/autopilot/lots/certificates"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= lot.sku %>"><input type="hidden" name="lot" value="<%= lot.code %>">
-<label>Required for this SKU <select name="kind"><option>CoA</option><option>Safety sheet</option></select></label>
-<label>Document URL for this lot <input type="url" name="documentUrl"></label><label>Expires <input type="date" name="expiresOn"></label>
-<button class="btn">Save requirement and document</button></form><% }else{ %><p>Certificate tracking requires Growth. <a href="/billing">Review plans</a></p><% } %></section><% } %>
+</section>
+<section class="card card-body"><h2>Lot certificates</h2>
+<% const lotQuery=new URLSearchParams({sku:lot.sku,lot:lot.code}); %>
+<% if(detail.certificates.length){ %><ul><% detail.certificates.forEach(c=>{ %><li><strong><%= c.kind %></strong> · <%= c.status %>
+<% if(c.id){ %> · <a href="/autopilot/lot-certificates/<%= c.id %>"><%= c.filename %></a><% }else if(c.document_url){ %> · <a rel="noreferrer" href="<%= c.document_url %>">Recorded document link</a><% } %>
+<% if(c.expires_on){ %> · Expires <%= c.expires_on %><% } %></li><% }); %></ul><% }else{ %><p>No certificate types are marked required for this SKU.</p><% } %>
+<% if(detail.certificateHistory.length||detail.canCertify){ %><p><a class="btn" href="/autopilot/lot-certificates?<%= lotQuery %>"><%= detail.canCertify?'Review and link original certificates':'Open original certificate history' %></a></p><% } %>
+<% if(detail.canCertify){ %><form method="post" action="/autopilot/lot-certificates/requirement">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= lot.sku %>"><input type="hidden" name="lot" value="<%= lot.code %>">
+<label>Certificate type <select name="kind"><option>CoA</option><option>Safety sheet</option></select></label>
+<label>Coverage for this SKU <select name="required"><option value="yes">Required on each lot</option><option value="no">No longer required</option></select></label>
+<button class="btn">Save certificate requirement</button></form>
+<p><a href="/autopilot/reviews/lot-documents?filter=<%= encodeURIComponent(lot.sku) %>">Check certificate coverage for this SKU</a></p>
+<% }else{ %><p>New certificate work requires Growth, Pro or Custom. <a href="/billing">Review plans</a></p><% } %>
+</section><% } %>
