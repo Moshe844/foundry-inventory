@@ -100,10 +100,13 @@ test('a supplier-direct draft uses the exact customer order and supplier terms, 
   await assert.rejects(f.workflows.cancelSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID(),reason:'Changed mind'}),/goods promised by a supplier/);
   await assert.rejects(f.workflows.fulfillSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID(),
     lines:[{lineId:order.lineIds[0],quantity:1,locationId:f.location.id}]}),/quantity available for this delivery method/);
+  await f.subscribe('starter');
+  await assert.rejects(require('../../src/purchasing/direct-shipment-mail').send(db,ctx,once.id,{
+    confirmed:'yes',revision:approved.revision,sourceHash:approved.source_hash,connectorId:'unconnected'
+  }),error=>error.code==='entitlement_required'&&/Growth/.test(error.message));
   const placed=await direct.place(db,ctx,once.id,{revision:approved.revision,sourceHash:approved.source_hash,confirmed:'yes',
     sentExternally:'yes',externalReference:'Supplier accepted exact PO and customer destination by phone, reference CALL-1'});
   assert.equal(placed.purchase_status,'ORDERED');
-  await f.subscribe('starter');
   await assert.rejects(direct.prepare(db,ctx,{...input,requestKey:randomUUID()}),error=>error.code==='entitlement_required'&&/Growth/.test(error.message));
   const completionPage=await f.browser.get(direct.path+'/'+once.id);
   assert.equal(completionPage.status,200);
@@ -242,6 +245,12 @@ test('connected purchase mail, private supplier submissions and the real dispatc
     assert.equal(await f.balance(),20);
   }
   assert.equal(sent.length,3);
+  const timings=(await require('../../src/autopilot/time-saved').report(db,ctx,'week')).rows;
+  for(const key of ['supplier-direct-purchase','supplier-direct-dispatch']){
+    const measured=timings.find(row=>row.key===key);
+    assert.equal(measured.count,3,key);
+    assert.equal(measured.minutes,null,key);
+  }
   const source=(await db.query(`SELECT * FROM stockchief_runtime.agent_direct_orders WHERE workspace_id=$1
     ORDER BY created_at DESC,id LIMIT 1`,[ctx.workspaceId])).rows[0];
   const routines=require('../../src/purchasing/direct-shipment-routines');
@@ -278,6 +287,8 @@ test('connected purchase mail, private supplier submissions and the real dispatc
   assert.equal(sent.length,3);
   assert.equal((await db.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
     [ctx.workspaceId,automatic.purchase_order_id])).rows[0].status,'APPROVED');
+  const pendingTiming=(await require('../../src/autopilot/time-saved').report(db,ctx,'week')).rows.find(row=>row.key==='supplier-direct-purchase');
+  assert.equal(pendingTiming.count,3,'A queued purchase with no provider acceptance contributes no completed send');
   await f.subscribe('starter');
   await direct.stop(db,ctx,automatic.id,{confirmed:'yes',supplierStopped:'yes',revision:automatic.revision,reason:'Supplier confirms pending order stopped, reference STOP-1'});
   assert.equal((await db.query('SELECT direct_committed_quantity::text FROM sales_order_lines WHERE workspace_id=$1 AND id=$2',

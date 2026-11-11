@@ -19,6 +19,10 @@ const activities = new Map([
   ['bin-correction','Post a physically confirmed stock bin correction'],
   ['supplier-details','Update known supplier details from an original email'],
   ['po-delivery-date','Update a purchase order from an original supplier delivery promise'],
+  ['receiving-document','Prepare one packing-slip receiving form from the original (administration only)'],
+  ['supplier-direct-purchase','Prepare and send one supplier-direct purchase'],
+  ['supplier-direct-dispatch','Record one actual supplier dispatch and customer invoice'],
+  ['delivery-comparison','Compare one actual supplier delivery with its purchase order'],
   ['container-plan','Calculate a container load plan from confirmed carton facts'],
   ['team-procedure','Write a private app procedure from verified completed team work'],
   ['product-facts','Read one complete product source and save its verified facts on one native product'],
@@ -48,9 +52,12 @@ const activities = new Map([
 ]);
 
 async function access(db, ctx) {
-  const member = await db.query("SELECT 1 FROM users WHERE id=$1 AND workspace_id=$2 AND role='owner'",[ctx.actorId,ctx.workspaceId]);
+  const member = await db.query(`SELECT to_regclass('stockchief_runtime.agent_direct_orders') IS NOT NULL AS supplier_direct,
+    to_regclass('stockchief_runtime.agent_delivery_comparisons') IS NOT NULL AS delivery_comparisons
+    FROM users WHERE id=$1 AND workspace_id=$2 AND role='owner'`,[ctx.actorId,ctx.workspaceId]);
   if (!member.rowCount) throw new AuthorizationError('The business owner can view this report.');
-  return policy.requireWorkspaceJob(db,ctx.workspaceId,161,'automatic');
+  await policy.requireWorkspaceJob(db,ctx.workspaceId,161,'automatic');
+  return member.rows[0];
 }
 
 async function sample(db, ctx, input) {
@@ -64,9 +71,40 @@ async function sample(db, ctx, input) {
 }
 
 async function report(db,ctx,window='week') {
-  await access(db,ctx);
+  const features=await access(db,ctx);
   if (!['week','month'].includes(window)) throw new ValidationError('Choose the last seven or thirty days.');
   const days = window==='week' ? 7 : 30;
+  const directEvents=features?.supplier_direct?`
+    SELECT 'supplier-direct-purchase',min(m.sent_at::timestamptz)
+      FROM stockchief_runtime.agent_direct_orders d JOIN supplier_communications m
+        ON m.workspace_id=d.workspace_id AND m.purchase_order_id=d.purchase_order_id
+      JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id
+        AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
+      WHERE d.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL
+        AND e.payload->'standingAuthority'->>'kind'='supplier_direct_purchase'
+        AND e.payload->'standingAuthority'->>'recordId'=d.id AND e.payload->'standingAuthority'->>'sourceHash'=d.source_hash
+      GROUP BY d.id UNION ALL
+    SELECT 'supplier-direct-dispatch',r.created_at::timestamptz
+      FROM stockchief_runtime.agent_direct_dispatches d JOIN stockchief_runtime.agent_direct_orders p
+        ON p.workspace_id=d.workspace_id AND p.id=d.direct_order_id
+      JOIN purchase_order_receipts r ON r.workspace_id=d.workspace_id AND r.id=d.purchase_receipt_id AND r.purchase_order_id=p.purchase_order_id
+      JOIN sales_shipments s ON s.workspace_id=d.workspace_id AND s.id=d.shipment_id AND s.sales_order_id=p.sales_order_id
+        AND s.delivery_kind='CUSTOMER_DIRECT' AND s.status IN ('SHIPPED','DELIVERED')
+      JOIN stockchief_runtime.business_operations o ON o.workspace_id=d.workspace_id AND o.kind='sales_order.fulfill'
+        AND o.idempotency_key='supplier-direct:'||d.id AND o.status='COMPLETED' AND o.result->>'salesOrderId'=p.sales_order_id
+      JOIN accounting_customer_invoices i ON i.workspace_id=d.workspace_id AND i.id=o.result->>'invoiceId' AND i.sales_order_id=p.sales_order_id
+        AND i.status IN ('OPEN','PARTIALLY_PAID','PAID')
+      WHERE d.workspace_id=$1 AND d.state='APPLIED' AND r.result::jsonb->>'dispatchId'=d.id
+        AND EXISTS(SELECT 1 FROM stockchief_runtime.agent_direct_dispatch_lines l WHERE l.workspace_id=d.workspace_id AND l.dispatch_id=d.id)
+        AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_direct_dispatch_lines l WHERE l.workspace_id=d.workspace_id AND l.dispatch_id=d.id
+          AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries j WHERE j.workspace_id=l.workspace_id AND j.id=l.journal_entry_id
+            AND j.status='POSTED' AND j.source_type='sale_fulfillment' AND j.metadata::jsonb->'supplierDirect'->>'dispatchLineId'=l.id
+            AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries reversal WHERE reversal.workspace_id=j.workspace_id
+              AND reversal.reversal_of_entry_id=j.id AND reversal.status='POSTED'))) UNION ALL`:'';
+  const comparisonEvents=features?.delivery_comparisons?`
+    SELECT 'delivery-comparison',min(c.recorded_at) FROM stockchief_runtime.agent_delivery_comparisons c
+      WHERE c.workspace_id=$1 AND c.result->>'version'='1' AND jsonb_array_length(c.result->'original')>0
+      GROUP BY c.purchase_order_id,lower(trim(c.source_reference)) UNION ALL`:'';
   const completed = (await db.query(`WITH first_send AS (
     SELECT m.purchase_order_id,min(m.sent_at::timestamptz) AS occurred FROM supplier_communications m
     WHERE m.workspace_id=$1 AND m.status='SENT' AND m.external_message_id IS NOT NULL AND EXISTS (
@@ -78,7 +116,9 @@ async function report(db,ctx,window='week') {
     FROM stockchief_runtime.supplier_link_submissions s JOIN stockchief_runtime.supplier_order_links l
     ON l.workspace_id=s.workspace_id AND l.token_hash=s.token_hash WHERE s.workspace_id=$1
     GROUP BY l.purchase_order_id,s.kind,s.fingerprint
-  ), events AS (
+  ), events(activity,occurred) AS (
+    ${directEvents}
+    ${comparisonEvents}
     SELECT 'repeat-order' AS activity,occurred FROM first_send UNION ALL
     SELECT 'supplier-response',occurred FROM responses UNION ALL
     SELECT 'staff-request',r.decided_at FROM stockchief_runtime.purchase_requests r
@@ -122,6 +162,27 @@ async function report(db,ctx,window='week') {
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed_count>0 AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'po-delivery-date',s.processed_at FROM stockchief_runtime.agent_po_date_sources s
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL UNION ALL
+    SELECT 'receiving-document',r.received_at::timestamptz FROM purchase_order_receipts r
+      JOIN stockchief_runtime.business_operations o ON o.workspace_id=r.workspace_id AND o.kind='purchase_order.receive'
+        AND o.idempotency_key=r.idempotency_key AND o.status='COMPLETED' AND o.result->>'receiptId'=r.id
+        AND o.result->>'purchaseOrderId'=r.purchase_order_id AND o.result=r.result::jsonb
+      WHERE r.workspace_id=$1 AND r.idempotency_key LIKE 'receiving-document:%'
+        AND r.created_at>=to_char((CURRENT_TIMESTAMP-($2::int * interval '24 hours')) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        AND jsonb_array_length(o.result->'lines')>0 AND EXISTS(
+          SELECT 1 FROM import_plans p WHERE p.workspace_id=r.workspace_id AND 'receiving-document:'||p.source_hash=r.idempotency_key
+            AND p.transformations::jsonb->>'agentJob'='43' AND p.transformations::jsonb->>'receivingOrderId'=r.purchase_order_id)
+        AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(o.result->'lines') receipt_line WHERE NOT EXISTS(
+          SELECT 1 FROM movements m JOIN accounting_inventory_cost_movements c
+            ON c.workspace_id=m.workspace_id AND c.inventory_movement_id=m.id AND c.cost_source_record_id=r.id
+            AND c.cost_source_type='purchase_order_receipt' AND c.quantity_delta=m.quantity_delta
+          WHERE m.workspace_id=r.workspace_id AND m.id=receipt_line->>'movementId' AND m.operation='receive'
+            AND m.quantity_delta=(receipt_line->>'quantity')::numeric AND c.cost_delta_minor=(receipt_line->>'totalCostMinor')::bigint
+            AND c.journal_entry_id IS NOT DISTINCT FROM (receipt_line->>'journalEntryId')
+            AND (c.cost_delta_minor=0 AND c.journal_entry_id IS NULL OR EXISTS(
+              SELECT 1 FROM accounting_journal_entries j WHERE j.workspace_id=c.workspace_id AND j.id=c.journal_entry_id
+                AND j.status='POSTED' AND j.source_type='purchase_receipt' AND j.source_record_id=r.id AND NOT EXISTS(
+                  SELECT 1 FROM accounting_journal_entries reversal WHERE reversal.workspace_id=j.workspace_id
+                    AND reversal.reversal_of_entry_id=j.id AND reversal.status='POSTED'))))) UNION ALL
     SELECT 'container-plan',r.completed_at FROM stockchief_runtime.agent_container_runs r
       WHERE r.workspace_id=$1 AND r.completed_at IS NOT NULL AND (r.result->>'cartons')::int>0 UNION ALL
     SELECT 'shutdown-purchase',p.purchase_created_at FROM stockchief_runtime.agent_supplier_shutdown_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id WHERE p.workspace_id=$1 AND p.purchase_created_at IS NOT NULL AND o.status<>'CANCELLED' UNION ALL

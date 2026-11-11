@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 43:{common:'Fills one physical receiving review from a saved packing slip. Matches exact supplier codes, PO lines, purchase packs and warehouses. Keeps the actual batches, expiry dates, serials, individual weights and fractional quantities. Uses approved purchase costs. Completed forms count in the time-saved report when you record comparable timings.',
+  growth:'Fills the receiving form for your review. Confirm the actual delivery once to book the goods and their approved costs.',
+  pro:'Fills the receiving form without training from the original source and the placed purchase order. You confirm the actual physical receipt.',
+  enterprise:'Fills the receiving form without training from the original source and the placed purchase order. You confirm the actual physical receipt.'},
  44:{common:'Compares the actual delivery rows you enter from checked goods or an original delivery note with the exact remaining purchase order. Shows short and extra quantities, wrong or ambiguous codes, supplier-pack differences and missing or mismatched actual weights. Keeps the original comparison with its delivery reference. Supports variants, batches, serials, fractional goods and finished kits.',
   starter:'Gives one delivery-check suggestion. Detailed comparisons require Growth or above.',
   growth:'Checks and saves the actual entered delivery rows without training. You confirm the physical goods separately when booking in the accepted delivery.',

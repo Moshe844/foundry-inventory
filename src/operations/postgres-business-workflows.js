@@ -362,6 +362,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
     const receiptId = newId('poreceipt');
     const movementGroupIds = [];
     const received = [];
+    const receiptParts = new Map();
     await client.query(`INSERT INTO purchase_order_receipts
       (id,workspace_id,purchase_order_id,idempotency_key,received_by_user_id,received_at,reference,note,
        over_receipt_approved,movement_group_ids,result,created_at)
@@ -380,18 +381,21 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         throw new ValidationError(`Receipt line ${index + 1} exceeds the ordered quantity by ${overBy}.`);
       }
       const locationId = requested.locationId || line.destination_location_id || order.destination_location_id;
+      const part = (receiptParts.get(line.id) || 0) + 1;
+      receiptParts.set(line.id, part);
+      const receiptLineKey = part === 1 ? line.id : `${line.id}:part:${part}`;
       const physical = await inventory.receiveInTransaction(client, ctx, {
         skuId: line.sku_id, locationId, quantity, secondaryQuantity:requested.secondaryQuantity,lotId: requested.lotId,
         lotCode: requested.lotCode, expiresAt: requested.expiresAt, serials: requested.serials,serialWeights:requested.serialWeights,
         reference: input.reference || order.po_number, notes: input.note,
-        occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${line.id}`,
+        occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${receiptLineKey}`,
       });
       const unitCostMinor = require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Supplier unit cost'});
       const measuredQuantity=stockQuantity.secondary(await stockQuantity.forSku(client,ctx,line.sku_id),requested.secondaryQuantity);
       const totalCostMinor = exact.costMinor(measuredQuantity??quantity,unitCostMinor);
       if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at);
       const posted = totalCostMinor===0?null:await ledger.postInTransaction(client, ctx, {
-        postingInstant:at, sourceKey: `purchase-receipt:${receiptId}:${line.id}`,
+        postingInstant:at, sourceKey: `purchase-receipt:${receiptId}:${receiptLineKey}`,
         description: `Receive ${quantity} units on ${order.po_number}`, sourceType: 'purchase_receipt',
         sourceRecordType: 'purchase_order_receipt', sourceRecordId: receiptId,
         currency: order.currency,

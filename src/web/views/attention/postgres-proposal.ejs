@@ -40,7 +40,7 @@
     <% if(!native?.decision?.scope){ %>
     <form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/approve' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% if(native){ %><input type="hidden" name="decision" value="approve"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %>
-      <button class="btn" type="submit" <%= access?.individual?.blocked?'disabled':'' %>><%= native?.decision?.approved?'Continue approved change':'Approve only this change' %></button></form><% } %>
+      <button class="btn" type="submit" <%= access?.individual?.blocked?'disabled':'' %>><%= native?.decision?.approved?'Continue approved change':proposal.action_type==='purchase_order.receive_from_document'?'Confirm physical receipt':'Approve only this change' %></button></form><% } %>
     <% if(!native?.decision?.approved){ %>
     <form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/cancel' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% if(native){ %><input type="hidden" name="decision" value="reject"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %><button class="btn" type="submit">Reject this change</button></form><% } %>

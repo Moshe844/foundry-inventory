@@ -54,6 +54,9 @@ test('actual delivery comparisons preserve exact plan gates, native stock, origi
   await f.subscribe('starter');
   assert.equal((await service.page(db,ctx,{id:first.id})).record.result.rows[0].short,1);
   await assert.rejects(service.save(db,ctx,{...input,requestKey:randomUUID()}),error=>error.code==='entitlement_required');
+  const timing=(await require('../../src/autopilot/time-saved').report(db,ctx,'week')).rows.find(row=>row.key==='delivery-comparison');
+  assert.equal(timing.count,1,'Repeated comparisons of the same original delivery count once');
+  assert.equal(timing.minutes,null);
   const beforeUpgrade=(await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows;
   assert.deepEqual(await require('../../src/db/migrate-postgres').migratePostgres(db),[]);
   assert.deepEqual((await db.query('SELECT name,checksum FROM stockchief_postgres_migrations ORDER BY name')).rows,beforeUpgrade);

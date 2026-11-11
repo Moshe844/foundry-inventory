@@ -82,8 +82,13 @@ function present(proposal){
  if(proposal.action_type==='purchase_order.receive_from_document'){
   const p=proposal.payload;
   return {summary:proposal.summary,impact:p.existing?'Reviews an existing receipt':'Records physically received goods',fields:[{label:'Purchase order',value:p.orderNumber},{label:'Delivery document',value:p.sourceName},
-    ...(p.receiving||[]).flatMap(r=>[{label:r.code+' · '+r.name,value:r.quantity+' units at '+r.locationName+' · '+require('../domain/currency').format(r.unitCostMinor,p.currency)+' each'},
-      ...(r.lotCode?[{label:'Batch',value:r.lotCode+(r.expiresAt?' · expires '+r.expiresAt:'')}]:[]),...(r.serials.length?[{label:'Received serials',value:r.serials.join(', ')}]:[])])]};
+    ...(p.receiving||[]).flatMap(r=>[{label:r.code+' · '+r.name+(r.variantLabel?' / '+r.variantLabel:''),
+      value:r.quantity+' '+(r.unit&&r.unit!=='unit'?r.unit:'units')+' at '+r.locationName+
+        (r.secondaryQuantity==null?'':' · actual '+r.secondaryQuantity+' '+r.secondaryUnit)+' · '+
+        require('../domain/currency').format(r.unitCostMinor,p.currency)+(r.secondaryUnit?' per '+r.secondaryUnit:' each')},
+      ...(r.lotCode?[{label:'Batch',value:r.lotCode+(r.expiresAt?' · expires '+r.expiresAt:'')}]:[]),
+      ...(r.serials.length?[{label:'Received serials',value:r.serials.map(serial=>r.serialWeights&&Object.hasOwn(r.serialWeights,serial)?
+        serial+' · '+r.serialWeights[serial]+' '+r.secondaryUnit:serial).join(', ')}]:[])])]};
  }
  if(proposal.action_type==='catalog.supplier_price_list'){
   const p=proposal.payload;
