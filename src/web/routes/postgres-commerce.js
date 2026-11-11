@@ -10,6 +10,7 @@ const paymentConnect=require('../../payments/postgres-connect');
 const planning=require('../../forecasting/postgres-planning-service');
 const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
+const supplierLinks=require('../../purchasing/supplier-order-link');
 const exactQuantity=require('../../domain/exact-quantity');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
@@ -695,15 +696,18 @@ function createPostgresCommerceRouter(database,options={}){
     const [page,supplierReturns,linkResponses]=await Promise.all([
       purchaseOrderPage(database,req.ctx.workspaceId,req.params.id),
       returns.listSupplierReturns(database,req.ctx.workspaceId,req.params.id),
-      require('../../purchasing/supplier-order-link').responses(database,req.ctx.workspaceId,req.params.id),
+      supplierLinks.responses(database,req.ctx.workspaceId,req.params.id),
     ]);
     const buyView=require('../buy-view');
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
     if(page.order.directDeliveryId&&req.user.role==='owner')return res.redirect(303,'/autopilot/direct-shipments/'+page.order.directDeliveryId);
+    const deliveryPlan=require('../../commercial/agent-plan');
+    const deliveryState=req.user.role==='owner'||can.approve?await deliveryPlan.accountState(database,req.ctx.workspaceId):null;
+    const origin=require('../../config').connections.publicOrigin;
+    can.shareSupplierLink=can.approve&&!page.order.directDeliveryId&&page.supplier?.status==='active'&&
+      supplierLinks.canShare(deliveryState,page.order.status,page.supplier.email,origin);
     if(req.user.role==='owner'){
-      const deliveryPlan=require('../../commercial/agent-plan');
-      const deliveryState=await deliveryPlan.accountState(database,req.ctx.workspaceId);
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
       can.supplierAmendments=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,31,'draft');
@@ -724,6 +728,13 @@ function createPostgresCommerceRouter(database,options={}){
       permissions:can,dualApproval,linkResponses,shipDates,portalInvoiceReviews,communications:page.communications,supplierDocuments:page.supplierDocuments,
       supplierBills:page.supplierBills,billSummary:page.billSummary,supplierReturns,ownSectionTabs:true,suppressBack:true,
       postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
+  }));
+
+  router.post('/purchasing/orders/:id/supplier-link',requirePermission(permissions.APPROVE_PO,'share an approved supplier order'),asyncRoute(async(req,res)=>{
+    const origin=require('../../config').connections.publicOrigin;
+    const shared=await supplierLinks.share(database,req.ctx,req.params.id,origin);
+    return res.set({'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'}).page('buy/supplier-link',{
+      title:'Supplier response link',nav:'purchasing',orderId:req.params.id,shared,suppressBack:true});
   }));
 
   router.post('/purchasing/orders/:id/supplier-availability/:noticeId/withdraw',requirePermission(permissions.APPROVE_PO,'correct a supplier availability report'),asyncRoute(async(req,res)=>{
