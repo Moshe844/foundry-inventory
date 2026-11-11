@@ -16,6 +16,8 @@
   <div class="ox-head__actions"><% if(locals.migrationAllowed===false){ %><span data-agent-migration-lock>Full ERP migration <span class="badge">Growth</span></span><a class="ox-btn ox-btn--ghost" href="/settings/billing">Upgrade</a><% }else{ %><a class="ox-btn ox-btn--ghost" href="/erp-cutovers">Move a full ERP opening position</a><% } %></div>
 </div>
 
+<% if(owner&&locals.variantsAllowed){ %><p><a class="ox-btn" href="/imports/variants">Spreadsheet variants</a></p><% }else if(owner){ %><p data-agent-variant-plan-locked>Spreadsheet variants requires Growth or above. <a href="/imports/variants">Variant import history</a></p><% } %>
+
 <% if (!canOperate) { %>
   <div class="notice notice--warn section">You have read-only access to this inventory, so you cannot import data into it.</div>
 <% } else { %>

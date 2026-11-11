@@ -1,0 +1,89 @@
+<div style="display:grid;gap:1rem;min-width:0">
+<header class="card card-body"><h1>Spreadsheet variants</h1>
+<p>Build catalogue variants from a spreadsheet with the original SKU and option values on every row.</p>
+<p><a href="/imports">File imports</a></p>
+<% if(!screen.allowed){ %><p class="notice" data-variant-plan-locked>Growth, Pro or Custom is required for new variant imports. Your past originals and results are available. <a href="/billing">Review plans</a></p><% }else if(screen.stop){ %><p class="notice"><%= screen.stop %></p><% } %>
+</header>
+<% const d=screen.selected;if(d){const states={PENDING:'Queued for reading',REVIEW:'Ready for owner review',APPROVED:'Approved and queued',APPLYING:'Creating variants',APPLIED:'Variants imported',FAILED:'Import stopped'}; %>
+<section class="card card-body" style="min-width:0;overflow-wrap:anywhere"><h2><%= d.filename %></h2>
+<p data-variant-import-status><%= d.job_status==='RUNNING'&&d.status==='PENDING'?'Reading spreadsheet':d.job_status==='RUNNING'&&d.status==='APPROVED'?'Creating variants':states[d.status] %></p>
+<p><a class="btn" href="/imports/variants/<%= d.id %>/original">Download exact original</a>
+<% if(d.review_hash){ %><a class="btn" href="/imports/variants/<%= d.id %>/results.csv">Download all review rows</a><% } %></p>
+<% if(['PENDING','APPROVED','APPLYING'].includes(d.status)){ %><p><a href="/imports/variants/<%= d.id %>">Refresh status</a></p><% } %>
+<% if(d.issue){ %><p class="notice"><%= d.issue %></p><% } %>
+<% if(d.result){ %><p><strong><%= d.result.variantsCreated %></strong> variants created · <strong><%= d.result.variantsAlreadyRecorded %></strong> rows matched to recorded variants · <strong><%= d.result.productsCreated %></strong> products created</p><% } %>
+<% if(d.review_hash&&!d.result){ %><p><%= d.summary.sourceRows %> variant rows · <%= d.summary.create %> new · <%= d.summary.existing %> already recorded · <%= d.summary.blocking %> checks to resolve</p><% } %>
+<% if(d.summary.problems?.length&&d.status!=='PENDING'){ %><details<% if(d.summary.blocking){ %> open<% } %>><summary>Review source and catalogue checks</summary>
+<ul><% for(const issue of d.summary.problems.slice(0,20)){ %><li><%= d.sheets.find(s=>s.index===issue.sheet)?.name||'Original' %><% if(issue.row){ %>, row <%= issue.row %><% } %> · <%= issue.message %></li><% } %></ul>
+<% if(d.summary.problems.length>20){ %><p>The complete review is in the downloadable rows.</p><% } %>
+</details><% } %>
+<% if(d.status==='REVIEW'&&!d.summary.blocking&&screen.allowed&&!screen.stop){ %><form method="post" action="/imports/variants/<%= d.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= d.review_hash %>">
+<p><label><input type="checkbox" name="confirmed" value="yes" required> I checked every supplied SKU, option and product match in this original.</label></p>
+<button class="btn btn-primary">Approve exact variants</button>
+</form><% } %>
+<% if(['FAILED','REVIEW'].includes(d.status)&&screen.allowed&&!screen.stop){ %>
+<form method="post" action="/imports/variants/<%= d.id %>/review-again"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= d.revision %>"><button class="btn">Review the saved original again</button></form>
+<% if(d.sheets.length){ %><h3>Worksheet mappings</h3><% } %>
+<% for(const sheet of d.sheets){const map=sheet.mapping,token='sheet-'+sheet.index; %>
+<details><summary><%= sheet.name %> · <%= sheet.rows %> source rows<% if(sheet.auxiliaryRows){ %> · <%= sheet.auxiliaryRows %> product or image detail rows<% } %> · <%= {products:'Product reference table',variants:'Variant table',skip:'Skipped by owner',unmapped:'Mapping needed'}[map.mode] %></summary>
+<form method="post" action="/imports/variants/<%= d.id %>/map">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= d.revision %>"><input type="hidden" name="sheetIndex" value="<%= sheet.index %>">
+<p><label for="<%= token %>-mode">Use this worksheet as</label> <select id="<%= token %>-mode" name="mode">
+<option value="variants" <%= map.mode==='variants'?'selected':'' %>>Variant rows</option>
+<option value="products" <%= map.mode==='products'?'selected':'' %>>Product code and name reference</option>
+<option value="skip" <%= map.mode==='skip'?'selected':'' %>>Skip this worksheet</option>
+</select></p>
+<% for(const [field,label] of [['parent','Product code'],['name','Product name'],['sku','Exact variant SKU'],['barcode','Barcode']]){ %>
+<p><label for="<%= token %>-<%= field %>"><%= label %></label> <select id="<%= token %>-<%= field %>" name="<%= field %>" style="max-width:100%">
+<option value="">Choose column</option><% for(const col of sheet.columns){ %><option value="<%= col.index %>" <%= map[field]===col.index?'selected':'' %>><%= col.name %></option><% } %>
+</select></p><% } %>
+<fieldset style="min-width:0"><legend>Columns containing option values</legend><div style="display:flex;flex-wrap:wrap;gap:0.75rem">
+<% for(const col of sheet.columns){ %><label><input type="checkbox" name="axes" value="<%= col.index %>" <%= map.axes.some(a=>a.index===col.index)?'checked':'' %>> <%= col.name %></label><% } %></div></fieldset>
+<details><summary>Columns with a separate option name and value</summary>
+<% for(const [index,pair] of [...map.pairs,{}].entries()){ %>
+<div><% for(const [part,label] of [['Name','Option name column'],['Value','Option value column']]){const key=part==='Name'?'nameIndex':'index'; %>
+<p><label for="<%= token %>-pair-<%= part %>-<%= index %>"><%= label %></label> <select id="<%= token %>-pair-<%= part %>-<%= index %>" name="pair<%= part %>_<%= index %>" style="max-width:100%">
+<option value="">Choose column</option><% for(const col of sheet.columns){ %><option value="<%= col.index %>" <%= pair[key]===col.index?'selected':'' %>><%= col.name %></option><% } %>
+</select></p><% } %></div><% } %>
+</details>
+<details><summary>Wide layout with one SKU column per option value</summary>
+<p><label>Option name for the wide columns <input name="matrixName" maxlength="120" value="<%= map.matrixName %>"></label></p>
+<fieldset style="min-width:0"><legend>Columns containing exact SKUs</legend><div style="display:flex;flex-wrap:wrap;gap:0.75rem">
+<% for(const col of sheet.columns){ %><label><input type="checkbox" name="matrix" value="<%= col.index %>" <%= map.matrix.some(a=>a.index===col.index)?'checked':'' %>> <%= col.name %></label><% } %></div></fieldset>
+<p><label><input type="checkbox" name="confirmMatrix" value="yes"> The selected cells contain exact variant SKUs.</label></p>
+</details>
+<p><label><input type="checkbox" name="fillParent" value="yes" <%= map.fillParent?'checked':'' %>> Blank product cells continue the previous source product group.</label></p>
+<p><label><input type="checkbox" name="confirmSkip" value="yes"> I checked this worksheet if I chose to skip it.</label></p>
+<button class="btn">Save mapping and review again</button>
+</form></details>
+<% } } %>
+<% if(screen.rows.length&&d.status!=='PENDING'){ %><h3>Exact variant rows</h3><div class="table-wrap" style="max-width:100%;overflow:auto"><table class="table">
+<thead><tr><th>Source row</th><th>Product</th><th>SKU and barcode</th><th>Options</th><th>Result</th></tr></thead><tbody>
+<% for(const row of screen.rows){const p=row.candidate,r=row.preview; %><tr>
+<td><%= d.sheets.find(s=>s.index===p.sheet)?.name||p.sheet %> · <%= p.row %><% if(p.part){ %> · <%= p.part %><% } %><% if(p.inheritedParent){ %><br><small>Continues previous source product</small><% } %></td>
+<td><% if(r.itemId){ %><a href="/inventory/<%= r.itemId %>"><%= r.product||p.name %></a><% }else{ %><%= r.product||p.name %><% } %><% if(r.productCode){ %><br><small><%= r.productCode %></small><% } %></td>
+<td><strong><%= p.sku||'Missing SKU' %></strong><% if(p.barcode){ %><br><small><%= p.barcode %></small><% } %></td>
+<td><%= p.options.map(a=>a.name+' '+a.value).join(' · ') %></td>
+<td><%= {create:d.result?'Created':'Create',existing:'Already recorded',repeat:'Repeated source row',review:'Check this row'}[r.action] %>
+<% if(r.errors?.length){ %><small><%= r.errors.join(' ') %></small><% } %></td></tr><% } %>
+</tbody></table></div>
+<% if(screen.page>1){ %><a class="btn" href="/imports/variants/<%= d.id %>?page=<%= screen.page-1 %>">Previous rows</a><% } %>
+<% if(screen.more){ %><a class="btn" href="/imports/variants/<%= d.id %>?page=<%= screen.page+1 %>">Next rows</a><% } %>
+<% } %>
+</section><% } %>
+<% if(screen.allowed&&!screen.stop){ %><section class="card card-body"><h2>Upload a variant spreadsheet</h2>
+<form method="post" action="/imports/variants" enctype="multipart/form-data">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p><label>Original spreadsheet <input type="file" required name="file" accept=".xlsx,.xlsm,.xlsb,.xls,.ods,.csv,.tsv,.txt"></label></p>
+<% if(screen.canAuto){ %><input type="hidden" name="authorized" value="yes">
+<p><label><input type="checkbox" name="automatic" value="yes"> I authorize importing the exact catalogue variants from this original when every match is proven.</label></p><% } %>
+<button class="btn btn-primary">Read variant spreadsheet</button>
+</form></section><% } %>
+<section class="card card-body"><h2>Variant import history</h2>
+<% if(!screen.history.length){ %><p>No variant spreadsheets have been checked.</p><% }else{ %><ul><% for(const row of screen.history){ %>
+<li style="overflow-wrap:anywhere"><a href="/imports/variants/<%= row.id %>"><%= row.filename %></a> · <%= {PENDING:'Queued',REVIEW:'Ready for review',APPROVED:'Approved',APPLYING:'Working',APPLIED:'Imported',FAILED:'Stopped'}[row.status] %></li>
+<% } %></ul><% } %>
+<% if(screen.historyPage>1){ %><a class="btn" href="/imports/variants?historyPage=<%= screen.historyPage-1 %>">Previous originals</a><% } %>
+<% if(screen.historyMore){ %><a class="btn" href="/imports/variants?historyPage=<%= screen.historyPage+1 %>">Next originals</a><% } %>
+</section></div>

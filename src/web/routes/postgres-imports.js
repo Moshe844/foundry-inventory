@@ -37,6 +37,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   async function renderStart(req,res){const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId),scope={accountId:state.accountId,workspaceId:req.ctx.workspaceId},creditPolicy=await require('../../commercial/ai-credit-policy').policy(database,scope),readingPolicy=(await database.query("SELECT units FROM commercial_operation_policies WHERE operation='import_mapping'")).rows[0];return res.page('imports/start',{
     handwritingPageCredits:Number(readingPolicy?.units||0)*creditPolicy.scale,
     handwritingAllowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,139,'draft'),
+    variantsAllowed:require('../../imports/agent-exact-variant-import').available(state),
     migrationAllowed:(await require('../../onboarding/postgres-cutover').planAccess(database,req.ctx)).allowed,
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
@@ -45,6 +46,62 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
+  const variantImports=require('../../imports/agent-exact-variant-import'),variantPath='/imports/variants';
+  async function variantsPage(req,res){
+    const screen=await variantImports.screen(database,req.ctx,{...req.query,id:req.params.id||null});
+    return res.set('Cache-Control','private, no-store').page('imports/variant-sheet',{
+      title:'Spreadsheet variants',nav:'imports',screen,backTo:{href:'/imports',label:'File imports'}});
+  }
+  router.get(variantPath,requireOwner,asyncRoute(variantsPage));
+  router.post(variantPath,requireOwner,asyncRoute(async(req,res)=>{
+    const files=(req.files||[]).filter(f=>f.field==='file');
+    if(files.length!==1)throw new ValidationError('Choose one original spreadsheet.');
+    const result=await variantImports.enqueue(database,req.ctx,{...req.body,filename:files[0].filename,buffer:files[0].buffer});
+    res.redirect(303,variantPath+'/'+result.id);
+  }));
+  router.get(variantPath+'/:id/original',requireOwner,asyncRoute(async(req,res)=>{
+    const saved=await variantImports.load(database,req.ctx,req.params.id,{original:true});
+    res.set('Cache-Control','private, no-store').type('application/octet-stream').attachment(saved.filename).send(saved.content);
+  }));
+  router.get(variantPath+'/:id/results.csv',requireOwner,asyncRoute(async(req,res)=>{
+    await variantImports.load(database,req.ctx,req.params.id);
+    const csv=require('../../reports/exports'),columns=['Worksheet','Row','Part','Product','Product code','SKU','Barcode','Options','Result','Issue','Product record','SKU record'];
+    async function* report(){
+      yield csv.csvHeader({columns});
+      for await(const row of variantImports.exportRows(database,req.ctx,req.params.id)){
+        const record=Object.fromEntries(columns.map((column,index)=>[column,row[index]]));
+        yield csv.csvRows({columns,rows:[record]});
+      }
+    }
+    res.set('Cache-Control','private, no-store').type('text/csv').attachment('variant-review.csv');
+    await require('node:stream/promises').pipeline(require('node:stream').Readable.from(report()),res);
+  }));
+  router.get(variantPath+'/:id',requireOwner,asyncRoute(variantsPage));
+  router.post(variantPath+'/:id/approve',requireOwner,asyncRoute(async(req,res)=>{
+    await variantImports.approve(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,variantPath+'/'+req.params.id);
+  }));
+  router.post(variantPath+'/:id/review-again',requireOwner,asyncRoute(async(req,res)=>{
+    await variantImports.revise(database,req.ctx,req.params.id,{revision:req.body.revision});
+    res.redirect(303,variantPath+'/'+req.params.id);
+  }));
+  router.post(variantPath+'/:id/map',requireOwner,asyncRoute(async(req,res)=>{
+    const batch=await variantImports.load(database,req.ctx,req.params.id);
+    const sheet=batch.sheets.find(s=>s.index===Number(req.body.sheetIndex));
+    if(!sheet)throw new ValidationError('Choose an exact worksheet from this source.');
+    const all=value=>[].concat(value||[]).map(Number);
+    const named=(indices,prior)=>indices.map(index=>({index,label:prior.find(a=>a.index===index)?.label||sheet.columns.find(c=>c.index===index)?.name}));
+    const axes=named(all(req.body.axes),sheet.mapping.axes),matrix=named(all(req.body.matrix),sheet.mapping.matrix);
+    const pairs=Object.keys(req.body).filter(key=>/^pairName_\d+$/u.test(key)).map(key=>({
+      nameIndex:req.body[key],index:req.body[key.replace('pairName_','pairValue_')]})).filter(p=>p.nameIndex!==''||p.index!=='');
+    if(req.body.mode==='skip'&&req.body.confirmSkip!=='yes')throw new ValidationError('Confirm that this worksheet contains no variants to import.');
+    if(matrix.length&&req.body.confirmMatrix!=='yes')throw new ValidationError('Confirm that the selected cells contain exact variant SKUs.');
+    await variantImports.revise(database,req.ctx,req.params.id,{revision:req.body.revision,mappings:{...batch.mappings,[sheet.index]:{
+      mode:req.body.mode,parent:req.body.parent,name:req.body.name,sku:req.body.sku,barcode:req.body.barcode,
+      axes,pairs,matrix,matrixName:req.body.matrixName,fillParent:req.body.fillParent==='yes'
+    }}});
+    res.redirect(303,variantPath+'/'+req.params.id);
+  }));
   router.get('/imports/uploads/:id',asyncRoute(async(req,res)=>{
     const upload=await sourceUploads.get(database,req.ctx.workspaceId,req.params.id);
     if(upload.ready)return res.redirect(303,upload.previewHref);

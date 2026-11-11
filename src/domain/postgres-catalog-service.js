@@ -110,9 +110,10 @@ async function createImportedItemInTransaction(client,ctx,input){
 
 // One canonical imported-catalog implementation for single and bulk callers.
 // All records are validated before writes; the enclosing caller owns atomicity.
-async function createImportedItemsInTransaction(client,ctx,inputs){
+async function createImportedItemsInTransaction(client,ctx,inputs,{variantImportId=null}={}){
   if(!Array.isArray(inputs))throw new ValidationError('Imported products must be a list.');
   if(!inputs.length)return [];
+  const exact=variantImportId&&await require('../imports/agent-exact-variant-import').admitCatalogue(client,ctx,variantImportId,inputs);
   const normalized=inputs.map(input=>({...input,name:requireText(input.name,'Item name',{max:240}),
     unitLabel:identity.unitLabel(input.unitLabel),trackingMode:requireOneOf(input.trackingMode,TRACKING_MODE_IDS,'Tracking type'),
     variants:Array.isArray(input.variants)&&input.variants.length?input.variants:[{}]}));
@@ -134,7 +135,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       const resumed=!parent?.created_here&&input.importPlanId&&(await client.query(`SELECT 1 FROM import_catalogue_bindings b JOIN import_plans p ON p.id=b.import_id AND p.workspace_id=b.workspace_id
         WHERE b.workspace_id=$1 AND b.import_id=$2 AND b.product_key=$3 AND b.item_id=$4 AND p.integrity_hash=$5 AND p.approval_status='APPROVED' LIMIT 1`,[ctx.workspaceId,input.importPlanId,input.importProductKey,itemId,input.importIntegrityHash])).rows.length;
       const cutover=!parent?.created_here&&input.cutoverPackageId&&(await client.query("SELECT 1 FROM migration_packages p JOIN external_identity_maps e ON e.workspace_id=p.workspace_id AND e.source_namespace=p.source_namespace AND e.first_package_id=p.id WHERE p.id=$1 AND p.workspace_id=$2 AND p.status='APPLYING' AND p.postgres_state IS NOT NULL AND p.approved_by_user_id=$3 AND e.entity_type='product' AND e.external_key=$4 AND e.local_type='item' AND e.local_id=$5 AND current_setting('stockchief.cutover_package_id',true)=p.id",[input.cutoverPackageId,ctx.workspaceId,ctx.actorId,input.cutoverProductKey,itemId])).rows.length;
-      if(!(parent?.created_here||resumed||cutover)||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
+      if(!(parent?.created_here||resumed||cutover||exact)||!Number(parent.is_active)||parent.tracking_mode!==input.trackingMode||parent.name!==input.name)
         throw new ValidationError('Import variants may only extend the matching product created by this approved import.');
       measurement=require('./stock-quantity').profile(input,parent);
       if(measurement.unitLabel!==parent.unit_label||measurement.quantityPrecision!==Number(parent.quantity_precision)||measurement.quantityIncrement!==require('./exact-quantity').canonical(parent.quantity_increment)||measurement.secondaryUnitLabel!==(parent.secondary_unit_label||null)||measurement.secondaryPrecision!==Number(parent.secondary_precision)||measurement.secondaryIncrement!==require('./exact-quantity').canonical(parent.secondary_increment))throw new ValidationError('Imported variants must retain their product unit definitions.');
@@ -147,6 +148,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
     for(const [position,v]of input.variants.entries()){
       const parts=(v.options||[]).map(p=>({name:p.name,value:requireText(p.value,'Option value',{max:120})}));
       let candidate=requireText(candidates[ci++],'SKU code',{max:240});
+      if(exact&&!trimOrNull(v.code))throw new ValidationError('Every imported variant needs its exact source SKU.');
       if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
       taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
@@ -154,7 +156,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});
     }
-    if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?'PRODUCT-'+itemId.toUpperCase():result.skus[0].code,
+    if(!input.appendToItemId)itemRows.push({id:itemId,name:input.name,base_code:exact&&input.baseCode?requireText(input.baseCode,'Product code',{max:240}):optionNames.length?'PRODUCT-'+itemId.toUpperCase():result.skus[0].code,
       description:trimOrNull(input.description),unit_label:measurement.unitLabel,tracking_mode:input.trackingMode,has_variants:optionNames.length||input.variants.length>1?1:0,quantity_precision:measurement.quantityPrecision,quantity_increment:measurement.quantityIncrement,secondary_unit_label:measurement.secondaryUnitLabel,secondary_precision:measurement.secondaryPrecision,secondary_increment:measurement.secondaryIncrement});
     created.push(result);
   }
