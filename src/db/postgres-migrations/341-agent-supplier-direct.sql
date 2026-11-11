@@ -301,6 +301,16 @@ INSERT INTO commercial_storage_usage(workspace_id,relation,baseline_complete)
  WHERE r.relation IN ('stockchief_runtime.agent_direct_orders'::regclass,'stockchief_runtime.agent_direct_rules'::regclass,'stockchief_runtime.agent_direct_order_lines'::regclass,
    'stockchief_runtime.agent_direct_dispatches'::regclass,'stockchief_runtime.agent_direct_dispatch_lines'::regclass,
    'stockchief_runtime.agent_direct_lots'::regclass,'stockchief_runtime.agent_direct_serial_units'::regclass);
-UPDATE commercial_storage_usage SET baseline_complete=false
- WHERE relation IN ('purchase_orders'::regclass,'sales_order_lines'::regclass,'purchase_order_receipt_lines'::regclass,
-   'sales_shipments'::regclass,'sales_shipment_lines'::regclass);
+
+-- Default columns add no customer data. Keep the measured bytes for existing
+-- native rows unchanged and count the new fields when a direct record uses them.
+UPDATE commercial_storage_tables t SET bytes_expression=replace(t.bytes_expression,'to_jsonb(t)',
+  format('(CASE WHEN %s THEN to_jsonb(t)-%L::text[] ELSE to_jsonb(t) END)',d.is_default,d.columns))
+FROM (VALUES
+  ('purchase_orders'::regclass,'t.delivery_kind=''WAREHOUSE''',ARRAY['delivery_kind','direct_sales_order_id']),
+  ('sales_order_lines'::regclass,'t.direct_committed_quantity=0 AND t.direct_committed_secondary_quantity=0',
+    ARRAY['direct_committed_quantity','direct_committed_secondary_quantity']),
+  ('purchase_order_receipt_lines'::regclass,'t.direct_dispatch_line_id IS NULL',ARRAY['direct_dispatch_line_id']),
+  ('sales_shipments'::regclass,'t.delivery_kind=''WAREHOUSE''',ARRAY['delivery_kind','direct_purchase_order_id']),
+  ('sales_shipment_lines'::regclass,'t.direct_dispatch_line_id IS NULL',ARRAY['direct_dispatch_line_id'])
+) d(relation,is_default,columns) WHERE t.relation=d.relation;
