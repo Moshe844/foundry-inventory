@@ -1,5 +1,5 @@
 <div class="ask-chat" data-chat-row data-chat-text="<%= chat.label.toLowerCase() %>" <%- locals.currentChatId===chat.chat_id?'aria-current="true"':'' %>>
-  <a class="sc-recent-request" href="<%= chat.href %>"><strong><%= chat.label %></strong><time data-local-time datetime="<%= new Date(chat.updated_at).toISOString() %>"><%= helpers.dateTime(chat.updated_at) %></time></a>
+  <a class="sc-recent-request" href="<%= chat.href %>" title="<%= chat.label %> · <%= helpers.dateTime(chat.updated_at) %>"><strong dir="auto"><%= chat.label %></strong><time data-local-time datetime="<%= new Date(chat.updated_at).toISOString() %>"><%= helpers.dateTime(chat.updated_at) %></time></a>
   <details class="ask-menu"><summary aria-label="Options for <%= chat.label %>"><span aria-hidden="true">⋯</span></summary><div class="ask-menu__panel">
     <form method="post" action="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/pin"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= chatReturn %>"><input type="hidden" name="pinned" value="<%= chat.pinned_at?'':'1' %>"><button type="submit"><%= chat.pinned_at?'Unpin':'Pin' %></button></form>
     <a href="/ask/chats/<%= encodeURIComponent(chat.chat_id) %>/download" download>Download</a>

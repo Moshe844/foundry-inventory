@@ -909,7 +909,30 @@ html:root body .ask-download__menu a:hover { background:#F1F2F7; color:#4F46E5; 
 html:root body.page-ask main#main:has([data-chat-scroll]),html:root body.page-ask .sc-chat-workspace,html:root body.page-ask .rm-chat { overflow:clip; }
 /* Approvals, saved conversations and the capabilities list share this page style but are ordinary pages. */
 html:root body.page-ask main#main:not(:has([data-chat-scroll])) { height:auto; min-height:100dvh; overflow:visible; }
-html:root body.page-ask .sc-chat-history { min-height:0; overflow:auto; scrollbar-width:thin; }
+/* Conversations: the heading, search and "All conversations" stay put and only the
+   list scrolls, fading out at its edge instead of cutting a row in half. A title reads
+   in full over up to two lines; the day is in the group heading (the exact time is on
+   hover), and a row's ⋯ menu shows when the row is pointed at, focused or open. */
+html:root body.page-ask .sc-chat-history { min-height:0; overflow:hidden; gap:6px; padding-bottom:12px; }
+html:root body.page-ask .sc-chat-history .ask-chats { flex:1 1 auto; min-height:0; overflow-y:auto; scrollbar-width:thin; scrollbar-color:rgba(17,21,46,.16) transparent; gap:14px; padding:2px 2px 28px 0; -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent); mask-image:linear-gradient(to bottom,#000 calc(100% - 28px),transparent); }
+html:root body.page-ask .sc-chat-history .ask-chats h3 { margin:0 0 4px; padding:0 10px; font-size:11.5px; font-weight:600; color:#7A839C; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request { padding:7px 4px 7px 10px; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request strong { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; white-space:normal; text-overflow:clip; overflow-wrap:anywhere; font-size:13px; font-weight:500; line-height:1.4; color:var(--d-ink); text-align:left; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request time { display:none; }
+html:root body.page-ask .sc-chat-history .ask-menu > summary { opacity:0; transition:opacity .12s; }
+html:root body.page-ask .sc-chat-history .ask-chat:is(:hover,:focus-within,[aria-current]) .ask-menu > summary,html:root body.page-ask .sc-chat-history .ask-menu[open] > summary { opacity:1; }
+@media (hover:none) { html:root body.page-ask .sc-chat-history .ask-menu > summary { opacity:1; } }
+html:root body.page-ask .sc-chat-history > :is(.ask-all,.sc-ai-details,.sc-feedback) { flex:none; }
+/* The message box never shows a scrollbar while it fits; ask-tools.js sizes it to its words. */
+html:root body.page-ask .rm-chat > .rm-composer .rm-composer__input { overflow-y:hidden; }
+/* When the chat column is too narrow for the words and the buttons side by side, the
+   buttons take their own row under the words, as they already do on a phone. */
+html:root body.page-ask .rm-chat { container:ask-chat / inline-size; }
+@container ask-chat (max-width:760px) {
+ html:root body.page-ask .rm-chat > .rm-composer { grid-template-columns:minmax(0,1fr); row-gap:2px; }
+ html:root body.page-ask .rm-chat > .rm-composer .rm-composer__foot { justify-content:space-between; padding:0 2px 2px; }
+ html:root body.page-ask .rm-chat > .rm-composer .rm-composer__foot .right { margin-left:auto; }
+}
 
 /* ———— Phones ———— */
 html:root body .sc-phone-extras { display:none; }
