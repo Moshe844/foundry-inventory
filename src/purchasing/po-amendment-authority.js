@@ -16,6 +16,7 @@ function limits(input,p){
     priceBps:exact.atoms(String(input.maximumPricePercent??''),2,{label:'Maximum unit price change percentage'}),
     orderIncrease:money.userToMinor(input.maximumOrderIncrease,p.currency,{label:'Maximum increase from the original order'}),
     profiles:[...new Set(p.amendments.filter(line=>line.changed).map(profile))].sort(),
+    mailbox:p.mailSource?{connectorId:p.mailSource.connectorId,providerAccountId:p.mailSource.providerAccountId}:null,
   };
 }
 
@@ -26,9 +27,19 @@ function exceeds(before,after,basisPoints,precision=6){
   return (difference<0n?-difference:difference)*10000n>old*BigInt(basisPoints);
 }
 
-function requireTerms(p,authorization,lines=p.amendments){
-  if(!authorization||!p.commitment)
+function sameSource(p,authorization){
+  return p.mailSource
+    ?authorization?.mailbox?.connectorId===p.mailSource.connectorId&&authorization.mailbox.providerAccountId===p.mailSource.providerAccountId
+    :!authorization?.mailbox;
+}
+
+function requireTerms(p,authorization,lines=p.amendments,{checkSource=true}={}){
+  if(!authorization||!p.commitment||!Array.isArray(authorization.profiles)||
+    !Number.isSafeInteger(authorization.quantityBps)||!Number.isSafeInteger(authorization.priceBps)||
+    !Number.isSafeInteger(authorization.orderIncrease))
     throw new ValidationError('Set explicit purchase-change limits and check the full order value before routine changes.');
+  if(checkSource&&!sameSource(p,authorization))
+    throw new ValidationError('Individually review this supplier response source before authorizing its mailbox or private link for routine changes.');
   for(const line of lines.filter(row=>row.changed)){
     if(!authorization?.profiles.includes(profile(line)))
       throw new ValidationError('Authorize this exact supplier product, warehouse and measurement before making routine purchase changes.');
@@ -66,4 +77,4 @@ async function requireBudget(db,p,account){
   return increase;
 }
 
-module.exports={profile,limits,requireTerms,commitment,requireBudget};
+module.exports={profile,limits,sameSource,requireTerms,commitment,requireBudget};

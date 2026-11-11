@@ -30,11 +30,12 @@ async function automatic(c,ctx,account,p,today){
  let trainedTerms=true;
  if(p.amendments){
   const changed=p.amendments.filter(line=>line.changed);
-  trainedTerms=changed.every(line=>related.some(rule=>rule.limits.commercial?.profiles.includes(amendments.profile(line))));
+  trainedTerms=changed.every(line=>related.some(rule=>rule.limits.commercial?.profiles.includes(amendments.profile(line))&&
+    amendments.sameSource(p,rule.limits.commercial)));
   for(const rule of related){
    if(!rule.limits.commercial)continue;
    const covered=changed.filter(line=>rule.scope.products.some(product=>product.skuId===line.skuId));
-   if(covered.length)amendments.requireTerms(p,rule.limits.commercial,covered);
+   if(covered.length)amendments.requireTerms(p,rule.limits.commercial,covered,{checkSource:false});
   }
  }
  policy.requireJob(account.plan,31,'automatic',{trained:trainedTerms&&(!p.amendments||p.proposedDate?trained:true)});

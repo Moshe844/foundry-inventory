@@ -1,6 +1,6 @@
 <% const isAmendment=Boolean(p?.amendmentInput); %>
 <h1><%= isAmendment?'Supplier purchase changes':'Supplier delivery date' %></h1>
-<p>Review the exact terms submitted through the supplier’s original purchase-order link.</p>
+<p>Review the exact terms submitted through the supplier’s private purchase-order link or connected purchase-order email thread.</p>
 <% if(locked){ %><section class="card"><h2><span class="badge">Pro</span> Supplier date updates</h2><p>Pro lets you review dates and teach routine scopes. Custom can handle dates within your explicit settings. Starter and Growth do not include this agent job.</p><a class="btn" href="/settings/billing">Upgrade</a></section><% } %>
 <% if(shadow){ %><p class="notice">StockChief watches during the first 14 days. You can compare the source here; agent date changes and new routine scopes wait until that period ends.</p><% } %>
 <% if(problem){ %><p class="notice"><%= problem %></p><% } %>
@@ -8,6 +8,8 @@
 <dl><dt>Current delivery promise</dt><dd><%= p.currentDate||'No date recorded' %></dd><dt>Supplier’s submitted date</dt><dd><%= p.proposedDate||'No change requested' %></dd><dt>Original promise used for the total-change limit</dt><dd><%= p.originalDate||'The first individually approved date' %></dd></dl>
 <ul><% for(const product of p.products){ %><li><%= product.code %> · <%= product.purchaseUnit %> of <%= product.unitsPerPurchaseUnit %> <%= product.unit %></li><% } %></ul>
 <% if(isAmendment){ %>
+  <% if(p.mailSource){ %><p><a href="/mail/<%= p.mailSource.id %>">Open original supplier email</a></p>
+    <p>This routine uses the connected mailbox that received this reply. A different mailbox needs its own approval.</p><% } %>
   <h3>Proposed changes to goods still due</h3>
   <% for(const line of p.amendments){ %>
   <p><strong>Line <%= line.number %> · <%= line.name %> · <%= line.code %></strong><br>

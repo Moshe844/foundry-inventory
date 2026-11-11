@@ -10,8 +10,8 @@ const {hash}=require('../pricing/postgres-promotions');
 const {lookup}=require('./supplier-order-link');
 const source=require('./po-delivery-date-source');
 
-function tokenFingerprint(date,changes,revision){
-  return createHash('sha256').update('amendment|'+hash({date,changes,revision})).digest('hex');
+function tokenFingerprint(date,changes,revision,mail){
+  return createHash('sha256').update('amendment|'+hash({date,changes,revision,...(mail?{mail}:{})})).digest('hex');
 }
 
 async function canAccept(db,workspaceId){

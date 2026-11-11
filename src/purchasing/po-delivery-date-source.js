@@ -27,7 +27,7 @@ async function facts(db,ctx,id){
  if(!r)throw new NotFoundError('That supplier response is not in this inventory.');
  const commercial=r.kind==='amendment';
  const valid=commercial
-  ?r.amendment?.changes?.length&&r.fingerprint===require('./po-amendment-link').tokenFingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision)
+  ?r.amendment?.changes?.length&&r.fingerprint===require('./po-amendment-link').tokenFingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision,r.amendment.mail)
   :['date','confirm'].includes(r.kind)&&r.proposed_date&&r.fingerprint===sha(r.kind+'|'+r.proposed_date);
  if(!valid)throw new ValidationError('Review the original supplier response. Its exact submitted terms could not be verified.');
  const instructionHash=hash({token:r.token_hash,fingerprint:r.fingerprint,kind:r.kind,date:r.proposed_date,receivedAt:r.received_text});
@@ -43,6 +43,12 @@ async function facts(db,ctx,id){
  const p={sourceId:id,kind:r.kind,receivedAt:r.received_text,instructionHash,capturedDate:r.captured_expected_date,capturedProfileHash:r.captured_order_profile_hash,currentProfileHash:r.order_snapshot_hash,
   orderId:r.order_id,orderNumber:r.po_number,supplierId:r.supplier_id,supplierName:r.supplier_name,supplierEmail:r.supplier_email,destinationLocationId:r.destination_location_id,destinationName:r.destination_name,currency:r.currency,currentDate:r.current_date,proposedDate:r.proposed_date,status:r.status,updatedAt:r.updated_at,orderProfileHash:hash({order:r.order_profile,lines:rows}),products:rows};
  if(commercial){
+  if(r.amendment.mail){
+   const original=await require('./po-amendment-email').original(db,ctx.workspaceId,r.amendment.mail.id);
+   if(original.order.id!==p.orderId||hash(original.mail)!==hash(r.amendment.mail))
+    throw new ValidationError('The original supplier message or approved mailbox changed. Review the original email before changing this purchase.');
+   p.mailSource=original.mail;
+  }
   const revision=hash({expected_date:r.current_date,status:r.status,snapshot:r.order_snapshot_hash});
   if(revision!==r.amendment.revision)throw new ValidationError('The purchase order changed after this supplier response. Ask the supplier to submit its revised remaining quantities and prices against the current order.');
   const changes=await require('./po-amendment-lines').prepare(db,ctx.workspaceId,{id:p.orderId,currency:p.currency},r.amendment.changes);
