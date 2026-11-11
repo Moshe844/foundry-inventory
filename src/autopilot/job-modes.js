@@ -41,6 +41,7 @@ async function save(db,ctx,raw,input){
     const plan=await owner(c,ctx);
     policy.requireJob(plan,job,'suggest');
     if(!choices(plan,job).includes(mode))throw new ValidationError('This job cannot run at that level on your plan.');
+    if(job===120)await c.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId]);
     const prior=(await c.query('SELECT mode,revision FROM stockchief_runtime.agent_job_modes WHERE workspace_id=$1 AND job_id=$2 FOR UPDATE',[ctx.workspaceId,job])).rows[0];
     if((prior?.revision||0)!==revision)throw new ValidationError('This job setting has changed. Open its current settings.');
     if((prior?.mode||'inherit')===mode)return;

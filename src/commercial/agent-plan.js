@@ -209,7 +209,7 @@ const actionJobs=new Map([
   ['import.supplier_catalog',127],['import.variants',130],
   ['kit.replenish_parts',13],
   ['sales_quote.create',73],['sales_quote.accept',75],
-  ['planning.safety_stock',150],
+  ['planning.safety_stock',150],['planning.location_reorder',120],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],

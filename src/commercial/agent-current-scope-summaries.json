@@ -87,7 +87,7 @@
   "117": "Shows posted stock quantities across owned locations, including completed physical transfers.",
   "118": "Balances owned locations using their stock targets, usable costed goods, customer commitments, transfer and other holds, and dated incoming. Supports exact lots, serials, measured stock and recorded independent weights. An authorized request holds stock for separate approval and physical handling.",
   "119": "Requests and approves costed transfers within the owner’s chosen routes and exact stocking-unit limit. Checks protected targets, commitments, incoming supply, lots, serials and actual weights. Moves stocked kit components where the recipe and targets call for them. Staff confirm picking, dispatch and receipt.",
-  "120": "Calculates and updates the named product's location-specific reorder point and target within current authority and saved limits. Covers quantity-tracked stock.",
+  "120": "Sets a product’s reorder point and target at the authorized location using actual local sales, recorded lead time, and exact stocking increments. Supports quantity, batch, serial and measured stock. Automatic changes stay within the owner’s saved target limit.",
   "121": "Reviews whole-order warehouse availability and saved warehouse pick sequence. Split-warehouse optimization remains separate.",
   "122": "Prepares a same-warehouse move list using recent picks, available quantities and measured distance from packing. Physical bin moves remain separate.",
   "123": "Compares recorded consignment counters with custody balances and shows separate dated ShipBob stock observations. Partner stock is not added to owned stock; live provider reconciliation remains open.",

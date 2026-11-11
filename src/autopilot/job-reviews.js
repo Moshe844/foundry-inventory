@@ -80,6 +80,7 @@ const definitions=[
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
   {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
+  require('../forecasting/location-reorder-rules').definition,
   require('../connections/agent-mail-triage').definition,
   require('../reports/manager-presentation').definition,
   require('../purchasing/dual-approval').definition,

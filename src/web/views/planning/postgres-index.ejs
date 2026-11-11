@@ -14,17 +14,19 @@
 
 <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what might run short or tell StockChief what you want to protect.' }) %>
 
-<% if(manageRules){ const positions=rows.filter(r=>r.location_id && r.tracking_mode==='quantity' && !r.planning_suppressed); %>
+<% if(manageRules||rules.length){ const positions=rows.filter(r=>r.location_id && !r.planning_suppressed); %>
 <details class="owner-manual section" id="location-rules"><summary>Automatic reorder limits by location</summary>
-<p>Choose a product and location, then set the most units StockChief may target. With routine work enabled, StockChief updates the reorder point and target from local sales and lead time.</p>
-<% if(positions.length){ %><form method="post" action="/planning/location-reorder-rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p>Review a product and location, then set the maximum target in its stocking unit. StockChief uses local sales and recorded lead time to update thresholds.</p>
+<% if(manageRules&&positions.length){ %><form method="get" action="/planning/location-reorder">
   <label>Product and location <select name="position"><% for(const r of positions){ %><option value="<%= JSON.stringify([r.sku_id,r.location_id]) %>"><%= r.code %> · <%= r.location_name %></option><% } %></select></label>
-  <label>Maximum target in units <input name="ceiling" type="number" min="1" max="2147483647" required></label>
-  <button class="rm-btn">Save reorder rule</button>
+  <button class="rm-btn">Review location reorder point</button>
 </form><% } %>
 <% for(const rule of rules){ const r=rows.find(p=>p.sku_id===rule.sku_id&&p.location_id===rule.location_id); if(r){ %><form method="post" action="/planning/location-reorder-rules">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= rule.sku_id %>"><input type="hidden" name="locationId" value="<%= rule.location_id %>">
-  <%= r.code %> · <%= r.location_name %> · up to <%= rule.ceiling %> units <button class="rm-btn rm-btn--ghost" name="remove" value="1">Remove rule</button>
+  <input type="hidden" name="revision" value="<%= rule.revision %>">
+  <%= r.code %> · <%= r.location_name %> · up to <%= helpers.unitCount(Number(rule.ceiling),r.unit_label) %>
+  <% if(!rule.profile_key){ %><span>Review and confirm the current unit to reactivate.</span><% } %>
+  <button class="rm-btn rm-btn--ghost" name="remove" value="1">Remove rule</button>
 </form><% }} %></details>
 <% }else if(planLocksReorder&&canAdmin){ %><p>Automatic reorder limits by location <span class="badge">Growth</span> <a href="/billing">Upgrade</a></p><% } %>
 <% if(safetyPreview){ const positions=rows.filter(r=>r.location_id&&!r.planning_suppressed); const sites=new Map(positions.map(r=>[r.location_id,r.location_name])); %>

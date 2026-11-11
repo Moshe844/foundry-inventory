@@ -49,7 +49,7 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  positions AS(SELECT * FROM active_positions UNION ALL
   SELECT empty.sku_id,l.id FROM(SELECT id AS sku_id FROM selected_skus EXCEPT SELECT sku_id FROM active_positions)empty
   CROSS JOIN(SELECT id FROM active_locations ORDER BY id LIMIT 1)l)
- SELECT s.id AS sku_id,s.code,s.variant_label,s.position AS sku_position,coalesce(source_version.version,0)::text AS source_version,i.id AS item_id,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
+ SELECT s.id AS sku_id,s.code,s.variant_label,s.position AS sku_position,coalesce(source_version.version,0)::text AS source_version,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,l.id AS location_id,l.name AS location_name,
   COALESCE(b.on_hand,0)::numeric AS on_hand,COALESCE(c.quantity,0)::numeric AS committed,COALESCE(inc.quantity,0)::numeric AS incoming,
   inc.supplier_hold AS supplier_supply_held,
   COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::numeric AS issued,rp.id AS policy_id,rp.location_id AS policy_location_id,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,
@@ -59,6 +59,8 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
     AND (global_policy.preferred_supplier_id IS NULL OR lead.supplier_id=global_policy.preferred_supplier_id)
     ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1),global_policy.lead_time_days,$7)) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
   (SELECT value FROM operational_preferences preference WHERE preference.workspace_id=$1 AND preference.key='target_days_of_stock') AS saved_cover_days,
+  CASE WHEN rp.location_id=l.id THEN rp.lead_time_days END AS local_lead,
+  CASE WHEN rp.location_id=l.id THEN rp.updated_at END AS local_policy_updated_at,
   COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead,$7) AS lead_time_days,
   COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead) IS NULL AS lead_time_assumed,cost.amount_minor AS cost_minor
  FROM positions pos CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=pos.sku_id LIMIT 1)s
