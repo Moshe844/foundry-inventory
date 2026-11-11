@@ -8,6 +8,7 @@ test('a form key that went through is not run twice, on any route',{timeout:2400
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Form keys',email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()});
  const runs={ok:0,slow:0,refused:0,render:0,away:0},notes=[];
+ const previewStarted=Promise.withResolvers(),finishPreview=Promise.withResolvers();
  const app=express();app.use(express.urlencoded({extended:false}));
  app.use(require('../../src/web/form-request-keys').middleware);
  app.use((req,res,next)=>{req.ctx={workspaceId:owner.workspaceId,actorId:owner.userId};req.flash=(type,message)=>notes.push({type,message});next();});
@@ -17,6 +18,7 @@ test('a form key that went through is not run twice, on any route',{timeout:2400
  app.post('/slow',async(req,res)=>{await new Promise(r=>setTimeout(r,700));runs.slow++;res.redirect(303,'/slow-done?n='+runs.slow);});
  app.post('/refused',(req,res)=>{runs.refused++;req.flash('error','That amount is too large.');res.redirect(303,'/form');});
  app.post('/render',(req,res)=>{runs.render++;res.send('<p>Preview</p>');});
+ app.post('/reports/preview',async(req,res)=>{previewStarted.resolve();await finishPreview.promise;res.json({ok:true});});
  app.post('/away',(req,res)=>{runs.away++;res.redirect(303,'https://provider.example/connect?state='+runs.away);});
  const server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));});
  t.after(async()=>{await new Promise(r=>server.close(r));await db.close();await cluster.stop();});
@@ -35,6 +37,16 @@ test('a form key that went through is not run twice, on any route',{timeout:2400
  await t.test('two taps at once run once',async()=>{
   const key=fresh(),both=await Promise.all([post('/slow',key),post('/slow',key)]);
   assert.equal(runs.slow,1);assert.deepEqual(both.map(r=>r.location),['/slow-done?n=1','/slow-done?n=1']);
+ });
+ await t.test('a live preview never holds the save key for the same report form',async()=>{
+  const key=fresh(),preview=post('/reports/preview',key);
+  try{
+   await previewStarted.promise;
+   const before=runs.ok,saved=await post('/ok',key);
+   assert.equal(saved.location,'/done?n='+(before+1));
+   assert.equal((await post('/ok',key)).location,saved.location);
+   assert.equal(runs.ok,before+1);
+  }finally{finishPreview.resolve();assert.equal((await preview).status,200);}
  });
  await t.test('a refusal, a page shown in place, or a trip to another site leaves the key free',async()=>{
   const refused=fresh();await post('/refused',refused);await post('/refused',refused);assert.equal(runs.refused,2,'a corrected resend still runs');
