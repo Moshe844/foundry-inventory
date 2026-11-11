@@ -37,6 +37,7 @@ function formatMinor(amountMinor,currency='USD'){
 }
 
 function hash(value){return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');}
+const catalogueOnlyPrice=row=>row?.source==='agent_margin_approval';
 
 async function requireSku(queryable,workspaceId,skuId){
   const row=(await queryable.query(`SELECT s.*,i.name AS item_name,i.unit_label FROM skus s JOIN items i ON i.id=s.item_id
@@ -131,7 +132,8 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
     if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
     const currency=normaliseCurrency(input.currency),before=current.get(input.skuId);
     if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(before?.id||null)!==(input.expectedCurrentId||null))throw new ValidationError('The current selling price changed after this preview was prepared. Start again from the latest price.');
-    if(before&&Number(before.amount_minor)===amountMinor&&before.amount_minor!==null&&before.currency===currency||before&&before.amount_minor===null&&amountMinor===null&&before.currency===currency){unchanged.add(input.skuId);continue;}
+    if(before&&before.currency===currency&&catalogueOnlyPrice(before)===catalogueOnlyPrice(input)&&
+      (before.amount_minor===null?amountMinor===null:Number(before.amount_minor)===amountMinor)){unchanged.add(input.skuId);continue;}
     rows.push({id:newId('prc'),sku_id:input.skuId,amount_minor:amountMinor,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});
   }
   if(rows.length){
@@ -142,7 +144,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   }
   const saved=initialize?new Map(inserted.map(row=>[row.sku_id,{...row,actor_name:actorName}])):rows.length?await readPrices():current;
   const deliveries=rows.length&&!initialize?await require('../connections/postgres-commerce-sync').publishPriceChangesInTransaction(client,ctx,
-    rows.map(row=>({skuId:row.sku_id,sourceConnectorId:row.source==='provider_catalog_sync'?row.source_detail.connectorId:null}))):new Map();
+    rows.filter(row=>!catalogueOnlyPrice(row)).map(row=>({skuId:row.sku_id,sourceConnectorId:row.source==='provider_catalog_sync'?row.source_detail.connectorId:null}))):new Map();
   return inputs.map(input=>{const row=saved.get(input.skuId),value={...row,isSet:row.amount_minor!==null,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),formatted:formatMinor(row.amount_minor,row.currency),...deliveries.get(input.skuId)};return unchanged.has(input.skuId)?{...value,replayed:true}:value;});
 }
 async function setPriceInTransaction(client,ctx,input){return (await setPricesInTransaction(client,ctx,[input]))[0];}
@@ -301,7 +303,7 @@ async function cancelPurchaseCostProposal(database,workspaceId,id){
   return getPurchaseCostProposal(database,workspaceId,id);
 }
 
-module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,listForSkus,
+module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,listForSkus,catalogueOnlyPrice,
   setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,setPurchaseCostsInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};

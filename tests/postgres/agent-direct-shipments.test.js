@@ -13,6 +13,9 @@ test('a supplier-direct draft uses the exact customer order and supplier terms, 
   await f.subscribe('pro');
   await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   const skuId=f.item.skuIds[0];
+  const prices=require('../../src/pricing/postgres-service');
+  await prices.setPrice(db,ctx,{skuId,amountMinor:1500,currency:'USD'});
+  await prices.setPurchaseCost(db,ctx,{skuId,amountMinor:500,currency:'USD'});
   await require('../../src/operations/postgres-commerce').linkSupplierItem(db,ctx,{
     supplierId:'fixture-supplier',skuId,lastUnitCost:'7.5',purchaseUnit:'box',unitsPerPurchaseUnit:2,
     minimumOrderQuantity:1,orderMultiple:1,isPreferred:true
@@ -157,6 +160,8 @@ test('a supplier-direct draft uses the exact customer order and supplier terms, 
   assert.equal(received.proven,true);
   assert.equal(received.quantity,'6');
   assert.equal(received.value,4500);
+  const margin=await require('../../src/autopilot/job-reviews').run(db,ctx,'margin-prices',{filter:skuId});
+  assert.match(margin.rows[0].Suggestion,/\$22\.50 USD per unit.*Posted supplier dispatch/);
   const purchaseLine=(await db.query('SELECT id FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2',
     [ctx.workspaceId,once.purchase_order_id])).rows[0];
   const bill=await f.workflows.recordSupplierInvoice(db,ctx,{supplierId:'fixture-supplier',purchaseOrderId:once.purchase_order_id,

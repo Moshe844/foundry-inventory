@@ -6,13 +6,15 @@ const transferArrivals=require('../transfers/agent-transfer-arrivals');
 const purchaseBudgets=require('../purchasing/agent-budgets');
 const stockLoss=require('./stock-loss-patterns');
 const returnRates=require('./return-rates');
+const marginPrices=require('../pricing/agent-margin-prices');
 const history=require('../commercial/agent-history');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
 const orderCredit=require('../sales/order-credit-exposure');
-const monitoredJobs=[10,80,110,116];
+const monitoredJobs=[10,77,80,110,116];
+const noticeOperation=job=>[50,77].includes(job)?'suggest':'automatic';
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
       CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
@@ -53,7 +55,7 @@ async function checkStockDiscrepancies(db,workspaceId,today){
 
 async function enabledMonitors(db,workspaceId,state,jobs){
   if(!policy.usesAgentTerms(state)||state.shadow)return new Set();
-  const eligible=jobs.filter(job=>policy.permits(state.plan,job,'automatic'));
+  const eligible=jobs.filter(job=>policy.permits(state.plan,job,noticeOperation(job)));
   if(!eligible.length)return new Set();
   const {rows}=await db.query(`SELECT requested.job FROM workspaces w
     CROSS JOIN unnest($2::int[]) requested(job)
@@ -61,7 +63,7 @@ async function enabledMonitors(db,workspaceId,state,jobs){
     LEFT JOIN stockchief_runtime.agent_job_modes m ON m.workspace_id=w.id AND m.job_id=requested.job
     WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND a.mode IS DISTINCT FROM 'OBSERVE'
       AND coalesce(a.paused,0)=0 AND coalesce(a.suspended,0)=0
-      AND coalesce(m.mode,'inherit') NOT IN ('watch','ask')
+      AND coalesce(m.mode,'inherit')<>'watch' AND (requested.job=77 OR coalesce(m.mode,'inherit')<>'ask')
       AND EXISTS(SELECT 1 FROM users u WHERE u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.role='owner')`,
   [workspaceId,eligible]);
   return new Set(rows.map(row=>row.job));
@@ -106,6 +108,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
     (monitors.has(80)?' UNION ALL '+orderCredit.notices:'')+
+    (monitors.has(77)?' UNION ALL '+marginPrices.notices:'')+
     (includeReturnRates?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
     (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
@@ -156,7 +159,7 @@ async function inbox(db,workspaceId,actorId=null){
   if(!policy.usesAgentTerms(state))return [];
   const transferNotices=rows.some(r=>Number(r.job_id)===124) && policy.permits(state.plan,124,'automatic')
     ? await transferArrivals.inbox(db,workspaceId,actorId?await transferArrivals.receiver(db,{workspaceId,actorId}):{owner:true,locations:null},state) : [];
-  const visible=rows.filter(r=>Number(r.job_id)!==124&&policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
+  const visible=rows.filter(r=>Number(r.job_id)!==124&&policy.permits(state.plan,Number(r.job_id),noticeOperation(Number(r.job_id)),{trained:Number(r.job_id)===67}));
   const suppressed=new Set();
   for(const {job_id:job} of visible)if([104,108].includes(Number(job))&&await require('./job-modes').restriction(db,workspaceId,Number(job),true))suppressed.add(job);
   const monitorJobs=visible.map(r=>Number(r.job_id)).filter(job=>monitoredJobs.includes(job));
@@ -190,6 +193,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===116)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'High return rates need review',
       happened:r.n+' '+(r.n===1?'SKU or customer rate is above its peer rate.':'SKU or customer rates are above their peer rates.'),
       why:returnRates.summary,href:'/autopilot/reviews/customer-return-rates',actionLabel:'Review return rates',sourceId:'agent-notice-116'};
+    if(Number(r.job_id)===77)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Review selling prices after a cost increase',
+      happened:'A recorded cost rise has a selling price suggestion.',why:marginPrices.summary,
+      href:'/autopilot/reviews/margin-prices',actionLabel:'Review selling prices',sourceId:'agent-notice-77'};
     if(Number(r.job_id)===10)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Repeated stock losses need review',
       happened:r.n+' '+(r.n===1?'product and shift combination shows':'product and shift combinations show')+' repeated stock corrections.',
       why:'Recorded stock was reduced more than once for the same product, warehouse and local shift.',

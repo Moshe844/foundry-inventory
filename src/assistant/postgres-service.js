@@ -2125,6 +2125,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
+    if(proposal.action_type==='catalog.restore_margin')await require('../pricing/agent-margin-prices').assertOwner(client,ctx);
     if(proposal.status==='EXECUTED')return {...proposal,replayed:true};
     if(proposal.status!=='PENDING')throw new InvariantError('That prepared change is no longer waiting for approval.',
       'proposal_not_pending');

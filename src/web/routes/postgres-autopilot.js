@@ -955,7 +955,12 @@ function createPostgresAutopilotRouter(database,options={}){
         result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});
         result.downloadLabel=packs.downloads[req.params.job].label;
       }
-      if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
+      if(req.params.job==='margin-prices'&&result.mode==='draft'){
+        const pricePolicy=require('../../commercial/agent-plan');
+        const state=await pricePolicy.accountState(database,req.ctx.workspaceId);
+        result.pricePreparationHold=await pricePolicy.stopped(database,req.ctx.workspaceId,state,'catalog.restore_margin',false);
+        result.reviewPrices=!result.pricePreparationHold;
+      }
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
