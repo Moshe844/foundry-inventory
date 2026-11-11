@@ -15,7 +15,7 @@
 <script src="/presentation-format.js?v=<%= assetVersion %>" defer></script>
 <link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 <link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script>
-<% if(nav==='pricing'){ %><link rel="stylesheet" href="/pricing.css?v=<%= assetVersion %>"><script src="/pricing.js?v=<%= assetVersion %>" defer></script><% } %></head>
+<% if(nav==='pricing'){ %><link rel="stylesheet" href="/pricing.css?v=<%= assetVersion %>"><script src="/pricing.js?v=<%= assetVersion %>" defer></script><% } %><% if(nav==='integrations'){ %><script src="/integrations.js?v=<%= assetVersion %>" defer></script><% } %></head>
 <body class="public-page" data-public-page="<%= nav||'' %>">
 <a class="pub-skip" href="#content">Skip to content</a>
 <header class="pub-nav" data-public-nav>
