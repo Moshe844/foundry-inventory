@@ -93,4 +93,38 @@ test('the supplier portal routes the original PDF into exact invoice matching on
   assert.match(held.result.reason,/different purchase order/);
   const source=(await links.responses(db,ctx.workspaceId,intended.purchaseOrderId)).find(r=>r.kind==='invoice');
   await assert.rejects(portal.prepare(db,ctx.workspaceId,source.id,{actorId:ctx.actorId,purchaseOrderId:wrong.purchaseOrderId}),/not on this purchase/);
+
+  const previousEnv=process.env.STOCKCHIEF_RUNTIME_ENV;
+  process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+  t.after(()=>{if(previousEnv===undefined)delete process.env.STOCKCHIEF_RUNTIME_ENV;else process.env.STOCKCHIEF_RUNTIME_ENV=previousEnv;});
+  const password='Removal!'+randomUUID();
+  const admin=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Removal admin',businessName:'Separate business',email:randomUUID()+'@example.test',password});
+  await db.query("INSERT INTO developer_account_administrators(account_id,granted_by) VALUES($1,'Supplier portal deletion fixture')",[admin.accountId]);
+  const remove=require('../../src/domain/postgres-developer-accounts'),review=await remove.review(db,admin.accountId,f.email);
+  assert.equal(review.canDelete,true,review.blockers.join(', '));
+  const deletion=await remove.queue(db,admin.accountId,{email:f.email,confirmEmail:f.email,confirmed:'yes',password,reviewHash:review.reviewHash});
+  assert.equal((await remove.execute(db,deletion.requestId)).signInAccountRemoved,true);
+  assert.equal((await db.query('SELECT id FROM stockchief_runtime.supplier_link_submissions WHERE workspace_id=$1',[ctx.workspaceId])).rowCount,0);
+  assert.equal((await db.query('SELECT id FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1',[ctx.workspaceId])).rowCount,0);
+});
+
+test('portal invoice migration preserves stored bytes and original owner uploads',{timeout:180000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{through:'352-agent-supplier-ship-date-email.sql'}),{db,ctx,workflows}=f;
+  await f.subscribe('pro');
+  const order=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:f.location.id,
+    idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantityUnits:2,unitCost:1}]});
+  const original=await pdf('Original owner-uploaded supplier invoice');
+  const contentHash=require('node:crypto').createHash('sha256').update(original).digest('hex'),id=randomUUID();
+  await db.query(`INSERT INTO stockchief_runtime.agent_supplier_invoice_uploads(id,workspace_id,owner_id,supplier_id,purchase_order_id,filename,content,content_hash)
+    VALUES($1,$2,$3,'fixture-supplier',$4,'existing-original.pdf',$5,$6)`,[id,ctx.workspaceId,ctx.actorId,order.purchaseOrderId,original,contentHash]);
+  const storage=require('../../src/commercial/storage-capacity');
+  await storage.refresh(db,ctx.workspaceId);
+  const before=await storage.state(db,f.owner.accountId);
+  const migrate=require('../../src/db/migrate-postgres').migratePostgres,upgrade={through:'353-agent-supplier-portal-invoices.sql'};
+  assert.deepEqual(await migrate(db,upgrade),[upgrade.through]);
+  await storage.refresh(db,ctx.workspaceId);
+  assert.equal(await storage.state(db,f.owner.accountId),before);
+  const row=(await db.query('SELECT content,content_hash,supplier_submission_id FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE id=$1',[id])).rows[0];
+  assert.deepEqual(row,{content:original,content_hash:contentHash,supplier_submission_id:null});
+  assert.deepEqual(await migrate(db,upgrade),[]);
 });
