@@ -95,6 +95,14 @@ test('supplier-direct purchases dispatch exact fractional, weighted, lot, serial
     assert(allocations.every(allocation=>allocation.inventoryMovementId===null&&allocation.evidenceId.startsWith('supplier-direct:')));
     await returns.inspectCustomerReturn(db,ctx,customerReturn.id,{idempotencyKey:randomUUID(),
       lines:[{lineId:customerReturn.lines[0].id,restock:returnedQuantity,restockLocationId:f.location.id}]});
+    if(example.serials){
+      const serial=typeof example.serials[0]==='string'?example.serials[0]:example.serials[0].serial;
+      const history=(await reviews.run(db,ctx,'serial-history',{filter:serial})).rows;
+      assert.deepEqual(history.map(row=>[row.Action,row.Direction]),[
+        ['Supplier direct dispatch','Out'],['receive','In'],['transfer','Out'],['transfer','In']
+      ]);
+      assert.equal(history[0].link,'/orders/'+order.salesOrderId);
+    }
     assert.equal(Number((await db.query('SELECT sum(on_hand) n FROM balances WHERE workspace_id=$1 AND sku_id=$2',
       [ctx.workspaceId,skuId])).rows[0].n),returnedQuantity,example.name);
     if(example.secondaryQuantity)assert.equal(Number((await db.query('SELECT sum(secondary_on_hand) n FROM balances WHERE workspace_id=$1 AND sku_id=$2',
