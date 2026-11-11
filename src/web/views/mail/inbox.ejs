@@ -18,6 +18,7 @@
   </div>
 </div>
 
+<% if(locals.sortEnabled){ %><p><a class="btn" href="/mail/sorted">Sorted mail</a></p><% } %>
 <div class="tabs">
   <% drawers.forEach(function (entry) { %>
     <a class="tab <%= entry.key === drawer.key ? 'is-active' : '' %>"

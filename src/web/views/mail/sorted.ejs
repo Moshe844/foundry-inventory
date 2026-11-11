@@ -1,0 +1,24 @@
+<header class="page-head"><div class="titles"><h1>Sorted mail</h1><p class="page-sub">Find orders, invoices, questions and junk from connected mailboxes.</p></div></header>
+<nav aria-label="Mail categories" class="tabs" style="flex-wrap:wrap">
+<a class="tab<%= !filter?' is-active':'' %>" href="/mail/sorted">All</a>
+<% for(const [key,label] of Object.entries(labels)){ %>
+<a class="tab<%= filter===key?' is-active':'' %>" href="/mail/sorted?filter=<%= key %>"><%= key==='bulk'?'Junk and automated':label %></a>
+<% } %>
+</nav>
+<form class="section" method="get" action="/mail/sorted">
+<label for="sorted-mail-filter">Mailbox name or sender address</label>
+<input class="input" id="sorted-mail-filter" name="filter" maxlength="254" value="<%= filter %>">
+<button class="btn">Find mail</button>
+</form>
+<% if(!result.rows.length){ %><div class="empty-state"><h2>No matching mail</h2><p>New arrivals appear after a connected mailbox check.</p></div><% }else{ %>
+<section class="section" aria-label="Sorted messages"><div class="rm-feed">
+<% for(const row of result.rows){ %><div class="rm-feed__row" style="overflow-wrap:anywhere">
+<div class="rm-feed__t"><a href="<%= row.link %>"><strong><%= row.Subject %></strong></a>
+<small><%= row.Category %> · <%= row.From %> · <%= row.Mailbox %></small>
+<% if(row.Reason){ %><small><%= row.Reason %></small><% } %></div>
+<small class="rm-feed__m"><%= helpers.dateTime(row.Received) %></small></div><% } %>
+</div></section><% } %>
+<% if(page>1||result.more){ %><nav aria-label="Mail pages">
+<% if(page>1){ %><a class="btn" href="/mail/sorted?filter=<%= encodeURIComponent(filter) %>&amp;page=<%= page-1 %>">Previous messages</a><% } %>
+<% if(result.more){ %><a class="btn" href="/mail/sorted?filter=<%= encodeURIComponent(filter) %>&amp;page=<%= page+1 %>">Next messages</a><% } %>
+</nav><% } %>

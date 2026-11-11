@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 138:{common:'Sorts new mail in connected Gmail and Microsoft 365 mailboxes by orders, invoices, questions, junk and other business mail. The Sorted mail view shows the reason and opens the original business message or private set-aside envelope. Mailbox checks pick up from the last completed page.',
+ growth:'Sorts mail from connected mailboxes without training. Review unclear messages and unknown senders in Mail.',
+ pro:'Sorts mail from connected mailboxes without training. A repeated original retains one sorted entry.',
+ enterprise:'Sorts mail from connected mailboxes without training. Mailbox access and sender trust remain under your inventory’s existing permissions.'},
  43:{common:'Fills one physical receiving review from a saved packing slip. Matches exact supplier codes, PO lines, purchase packs and warehouses. Keeps the actual batches, expiry dates, serials, individual weights and fractional quantities. Uses approved purchase costs. Completed forms count in the time-saved report when you record comparable timings.',
   growth:'Fills the receiving form for your review. Confirm the actual delivery once to book the goods and their approved costs.',
   pro:'Fills the receiving form without training from the original source and the placed purchase order. You confirm the actual physical receipt.',
