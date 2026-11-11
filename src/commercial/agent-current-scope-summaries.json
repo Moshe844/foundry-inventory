@@ -1,7 +1,7 @@
 {
   "1": "Looks up exact item names, sizes, SKU codes, lots and serials across locations, including zero stock, issued serials, independent measured quantities, reservations and component-kit capacity. Recalled, expired or uncosted goods are never promised as available.",
   "2": "Traces every posted receipt, issue, transfer and adjustment with exact before/change/after quantities, independent weights, lot or serial identity, stock cost and the originating native record. Current reservations are shown separately from physical stock.",
-  "3": "Reviews negative stock, repeated negative adjustments and overdue transfers. Proactive delivery of this review still needs verification.",
+  "3": "Checks for negative stock, repeated stock reductions and overdue transfers. Growth, Pro and Custom get a daily in-app alert when the check finds issues. Starter can ask for one suggestion.",
   "4": "Ranks quantity-count locations using stock value and correction risk, including separate priorities for the same product at different warehouses.",
   "5": "Prepares quantity-count adjustments from CSV or a readable image after individual physical confirmation. Tracked counts, unlabelled box counting and unattended source processing remain open.",
   "6": "Posts physically confirmed small quantity-count differences within an owner-set value limit, with matching stock and accounting entries.",
