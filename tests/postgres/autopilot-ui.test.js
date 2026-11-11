@@ -117,7 +117,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     await page.goto(`${base}/autopilot`);const authority=page.locator('form[action="/autopilot/routine-authority"]');
     await authority.getByLabel('Balance stock between locations').check();
     await authority.getByLabel('Complete routine replenishment').check();
-    await authority.getByLabel('Most units in one automatic transfer').fill('25');
+    await authority.getByLabel('Maximum stocking quantity per automatic transfer').fill('25');
     await authority.getByLabel('Most per purchase order ($)').fill('100');
     await authority.getByLabel('Most across seven days ($)').fill('500');
     await authority.getByLabel('Routine Supply').check();

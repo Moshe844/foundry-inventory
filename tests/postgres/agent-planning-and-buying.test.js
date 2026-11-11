@@ -112,6 +112,8 @@ test('local sales tune location thresholds only within current plan and owner au
   await issue(second.id,15,'sold');await issue(second.id,15,'sold');
   await subscribe('starter');const locked=await browser.get('/autopilot/reviews/reorder-settings').expect(200);assert.match(locked.text,/120 units sold in 90 days/);
   await browser.get('/autopilot/reviews/location-reorder').expect(402);
+  await browser.get('/planning/location-reorder').expect(200).expect(/available on Growth/);
+  await browser.get('/planning/location-reorder').set('Accept','application/json').expect(402);
   await assert.rejects(configure(locationId,30),/Growth/);
   await subscribe('growth');await assert.rejects(configure(locationId,30),/individually approved/);
   const first=(await rules.page(db,ctx,{skuId,locationId})).estimate;

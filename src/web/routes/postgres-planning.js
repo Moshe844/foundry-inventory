@@ -3,7 +3,7 @@
 const express = require('express');
 const permissions = require('../../actions/permissions');
 const planning = require('../../forecasting/postgres-planning-service');
-const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
+const { requireAuth, requireOwner, requirePermission, asyncRoute } = require('../middleware');
 const {requireCapability}=require('../commercial-middleware');
 function selectedPosition(input){
   if(!input.position)return input;
@@ -30,16 +30,18 @@ function createPostgresPlanningRouter(database) {
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
   }));
-  router.get('/planning/location-reorder',asyncRoute(async(req,res)=>{
+  router.get('/planning/location-reorder',requireOwner,asyncRoute(async(req,res)=>{
     const view={title:'Location reorder points',nav:'inventory'};
-    try {
-      const model=await require('../../forecasting/location-reorder-rules').page(database,req.ctx,selectedPosition(req.query));
-      return res.page('planning/location-reorder',{...view,model});
-    } catch(error) {
-      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
-      res.status(402);
-      return res.page('autopilot/locked',{...view,message:error.message});
+    const plan=require('../../commercial/agent-plan'),state=await plan.accountState(database,req.ctx.workspaceId);
+    const included=plan.permits(state.plan,120,'draft');
+    if((!included||!plan.usesAgentTerms(state))&&req.accepts('html')){
+      return res.page('autopilot/agent-plan-locked',{...view,tier:'Growth',
+        reviewTerms:included,backTo:{href:'/planning',label:'Planning'}});
     }
+    if(included&&plan.usesAgentTerms(state)&&!req.query.position&&!req.query.skuId&&!req.query.locationId)
+      return res.redirect(303,'/planning#location-rules');
+    const model=await require('../../forecasting/location-reorder-rules').page(database,req.ctx,selectedPosition(req.query));
+    return res.page('planning/location-reorder',{...view,model});
   }));
   router.post('/planning/location-reorder/approve',asyncRoute(async(req,res)=>{
     const result=await require('../../forecasting/location-reorder-rules').approve(database,req.ctx,req.body);
