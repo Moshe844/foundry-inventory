@@ -620,6 +620,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
+  'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),
   'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -715,7 +716,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);
     const certificate=await require('../autopilot/lot-certificate-evidence').queueMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
-    return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order})};
+    const filing=await require('../documents/document-filing-scopes').queueMessage(database,job.workspaceId,job.payload.messageId);
+    return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),

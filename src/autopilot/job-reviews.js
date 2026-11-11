@@ -222,6 +222,7 @@ async function run(db,ctx,key,options={}){
       ...(def.id===196?{lotCertificateLink:true}:{}),
       ...(def.id===137?{shippingDocumentLink:true}:{}),
       ...(result.balanceForm?{balanceForm:true}:{}),
+      ...(def.id===142?{documentDiscoveryLink:true}:{}),
       ...inputs};
   }
   if(def.read){

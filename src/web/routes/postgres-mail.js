@@ -140,7 +140,9 @@ function createPostgresMailRouter(database,options={}){
   }));
   router.get('/mail/:id/attachments/:attachmentId/text',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const document=await require('../../connections/postgres-attachments').textPage(database,req.ctx.workspaceId,req.params.id,req.params.attachmentId,Number(req.query.offset||0));
-    return res.page('mail/attachment-text',{title:document.filename,nav:'mail',document,messageId:req.params.id});
+    const filingEnabled=res.locals.currentUser?.role==='owner'&&require('../../documents/agent-document-discovery')
+      .available(await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId));
+    return res.page('mail/attachment-text',{title:document.filename,nav:'mail',document,messageId:req.params.id,filingEnabled});
   }));
   router.post('/mail/:id/state',requirePermission(permissions.OPERATE,'sort the mailbox'),asyncRoute(async(req,res)=>{
     const state=req.body.state==='RETHINK'?'NEEDS_REPLY':req.body.state;
