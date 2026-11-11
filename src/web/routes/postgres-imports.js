@@ -91,7 +91,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     if(!sheet)throw new ValidationError('Choose an exact worksheet from this source.');
     const all=value=>[].concat(value||[]).map(Number);
     const named=(indices,prior)=>indices.map(index=>({index,label:prior.find(a=>a.index===index)?.label||sheet.columns.find(c=>c.index===index)?.name}));
-    const axes=named(all(req.body.axes),sheet.mapping.axes),matrix=named(all(req.body.matrix),sheet.mapping.matrix);
+    const axes=named(all(req.body.axes),sheet.mapping.axes).map(a=>({...a,label:trimOrNull(req.body['axisLabel_'+a.index])||a.label}));
+    const matrix=named(all(req.body.matrix),sheet.mapping.matrix);
     const pairs=Object.keys(req.body).filter(key=>/^pairName_\d+$/u.test(key)).map(key=>({
       nameIndex:req.body[key],index:req.body[key.replace('pairName_','pairValue_')]})).filter(p=>p.nameIndex!==''||p.index!=='');
     if(req.body.mode==='skip'&&req.body.confirmSkip!=='yes')throw new ValidationError('Confirm that this worksheet contains no variants to import.');

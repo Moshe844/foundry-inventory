@@ -150,7 +150,7 @@ test('the phone workflow maps source headings and approves a complete exact CSV 
   await page.goto(url+'/login');await page.getByLabel('Work email',{exact:true}).fill(f.email);await page.locator('[name=password]').fill(f.password);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
   await page.goto(url+'/imports');await page.getByRole('link',{name:'Spreadsheet variants',exact:true}).click();
-  const bytes=text(['Item,Printed number,Finish','Ceramic vessel,VESSEL-001,Matte']);
+  const bytes=text(['Item,Printed number,Coating style','Ceramic vessel,VESSEL-001,Matte']);
   await page.getByLabel('Original spreadsheet',{exact:true}).setInputFiles({name:'Original variant columns.csv',mimeType:'text/csv',buffer:bytes});
   await page.getByRole('button',{name:'Read variant spreadsheet'}).click();
   await page.locator('[data-variant-import-status]').waitFor();
@@ -159,6 +159,9 @@ test('the phone workflow maps source headings and approves a complete exact CSV 
   await page.locator('summary').filter({hasText:'Mapping needed'}).click();
   await page.getByLabel('Product name',{exact:true}).selectOption('0');
   await page.getByLabel('Exact variant SKU',{exact:true}).selectOption('1');
+  await page.locator('input[name=axes][value="2"]').check();
+  await page.getByText('Match option column names',{exact:true}).click();
+  await page.getByLabel('Recorded option name for Coating style',{exact:true}).fill('Finish');
   await page.getByRole('button',{name:'Save mapping and review again'}).click();
   await page.locator('[data-variant-import-status]').waitFor();
   assert.equal(complete(await f.run(),'REVIEW').blocking,0);
@@ -167,6 +170,8 @@ test('the phone workflow maps source headings and approves a complete exact CSV 
   await page.getByRole('button',{name:'Approve exact variants'}).click();
   await page.locator('[data-variant-import-status]').waitFor();
   assert.equal(complete(await f.run(),'APPLIED').variantsCreated,1);
+  const vessel=(await f.variants('VESSEL'))[0];
+  assert.equal((await db.query('SELECT name FROM item_options WHERE workspace_id=$1 AND item_id=$2',[ctx.workspaceId,vessel.item_id])).rows[0].name,'Finish');
   await page.reload();
   assert.match(await page.locator('[data-variant-import-status]').innerText(),/Variants imported/);
   const download=page.waitForEvent('download');

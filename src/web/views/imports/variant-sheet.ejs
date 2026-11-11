@@ -40,6 +40,11 @@
 </select></p><% } %>
 <fieldset style="min-width:0"><legend>Columns containing option values</legend><div style="display:flex;flex-wrap:wrap;gap:0.75rem">
 <% for(const col of sheet.columns){ %><label><input type="checkbox" name="axes" value="<%= col.index %>" <%= map.axes.some(a=>a.index===col.index)?'checked':'' %>> <%= col.name %></label><% } %></div></fieldset>
+<details><summary>Match option column names</summary>
+<p>Enter the option name that each selected column uses in your catalogue.</p>
+<% for(const col of sheet.columns){ %><p><label for="<%= token %>-axis-<%= col.index %>">Recorded option name for <%= col.name %></label>
+<input id="<%= token %>-axis-<%= col.index %>" name="axisLabel_<%= col.index %>" maxlength="120" value="<%= map.axes.find(a=>a.index===col.index)?.label||'' %>" placeholder="<%= col.name %>"></p><% } %>
+</details>
 <details><summary>Columns with a separate option name and value</summary>
 <% for(const [index,pair] of [...map.pairs,{}].entries()){ %>
 <div><% for(const [part,label] of [['Name','Option name column'],['Value','Option value column']]){const key=part==='Name'?'nameIndex':'index'; %>
