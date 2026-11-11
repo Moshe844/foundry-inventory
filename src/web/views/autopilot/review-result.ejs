@@ -52,6 +52,7 @@
 <% if(result.shippingDocumentLink){ %><p><a class="btn" href="/autopilot/shipping-documents">Read shipping originals</a></p><% } %>
 <% if(result.variantImportLink){ %><p><a class="btn" href="/imports/variants">Open spreadsheet variants</a></p><% } %>
 <% if(result.supplierBenefitLink){ %><p><a class="btn" href="/autopilot/supplier-benefits">Open</a></p><% } %>
+<% if(result.supplierPriceListLink){ %><p><a class="btn" href="/autopilot/supplier-price-lists">Upload or review a supplier price list</a></p><% } %>
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>
 <% if(result.putawayForm){ %><%- include('putaway-labels',{form:result.putawayForm,csrfToken}) %><% } %>

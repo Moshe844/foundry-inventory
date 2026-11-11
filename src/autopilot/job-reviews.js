@@ -2,7 +2,6 @@
 
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/errors');
-const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
   require('../purchasing/agent-direct-shipments').definition,
@@ -167,7 +166,7 @@ const suggestions={
     ' after its cost rose from '+r['Previous cost']+' to '+r['Current cost']+' ('+r['Current cost evidence']+').',
   88:r=>'Review the ordering history for '+r.Customer+'. '+r.Health+'.',
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
-  91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',
+  91:r=>'Review '+r.Document+' for '+r.SKU+'. It shows '+r['Supplier unit price']+' compared with '+r['Previous trusted price']+' from '+r.Basis+'.',
   99:r=>'Review supplier invoice '+r.Invoice+' with '+r.Supplier+'. '+r.Problem,
   105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+(r.Amount?' for '+r.Amount:'')+(r.Bill?' against bill '+r.Bill:'')+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
@@ -201,7 +200,8 @@ async function run(db,ctx,key,options={}){
   let rows,summary=def.summary,more=false,paymentRun;
   if(def.readPage){
     const result=await def.readPage(db,ctx,{filter,page,today,change:options.change,adviceOnly:mode==='suggest'});
-    const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel};
+    const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel,
+      ...(def.id===91?{supplierPriceListLink:true}:{})};
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
@@ -241,18 +241,10 @@ async function run(db,ctx,key,options={}){
   }else{
     const args=def.usesDate?[ctx.workspaceId,filter,today]:[ctx.workspaceId,filter];
     if(def.salesHistory)args.push((await require('../commercial/agent-history').access(db,ctx.workspaceId)).salesFrom);
-    let sql=await require('../purchasing/direct-shipment-trace').extend(db,ctx,def);
-    if(def.priceIncrease){
-      const exponents=Object.fromEntries([...Intl.supportedValuesOf('currency'),'CLF','UYW'].map(code=>[code,money.exponent(code)]));
-      args.push(JSON.stringify(exponents));
-      sql='SELECT * FROM ('+sql+') evidence WHERE price_minor > "PO unit price"::numeric * power(10::numeric,($'+args.length+'::jsonb->>"Currency")::int) ORDER BY "Supplier","SKU","Order","Source","Document"';
-    }
+    const sql=await require('../purchasing/direct-shipment-trace').extend(db,ctx,def);
     args.push((page-1)*100);
     rows=(await db.query(sql+' LIMIT 101 OFFSET $'+args.length,args)).rows;
     more=rows.length>100;rows=rows.slice(0,100);
-    for(const row of rows) if(row.price_minor!=null){
-      row['Supplier unit price']=money.format(row.display_price_minor??row.price_minor,row.Currency)+(row.price_quantity!=null&&Number(row.price_quantity)!==1?' per '+row.price_quantity+' pricing units':'');delete row.price_minor;delete row.display_price_minor;delete row.price_quantity;
-    }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
   if(mode==='suggest'){

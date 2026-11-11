@@ -8,6 +8,7 @@ const stockLoss=require('./stock-loss-patterns');
 const returnRates=require('./return-rates');
 const marginPrices=require('../pricing/agent-margin-prices');
 const orderPrices=require('../sales/agent-order-price-alerts');
+const supplierPrices=require('../purchasing/agent-supplier-price-increases');
 const history=require('../commercial/agent-history');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
@@ -15,7 +16,7 @@ const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
 const orderCredit=require('../sales/order-credit-exposure');
 const customerHealth=require('../sales/customer-health');
-const monitoredJobs=[10,77,80,82,88,110,116];
+const monitoredJobs=[10,77,80,82,88,91,110,116];
 const historyScopedJobs=[82,88,116];
 const noticeOperation=job=>[50,77].includes(job)?'suggest':'automatic';
 const transfers=`WITH positions AS (
@@ -78,6 +79,9 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const {calendarDate:today,timeZone}=await require('../lib/business-time').forWorkspace(db,workspaceId,now);
   const includeTransfers=await transferArrivals.enabled(db,workspaceId,account,{lock:true});
   const monitors=await enabledMonitors(db,workspaceId,account,monitoredJobs);
+  const supplierPriceChecks=monitors.has(91)&&(hasVerifiedMigration(db,'392-agent-supplier-price-increases.sql')||
+    (await db.query("SELECT to_regclass('stockchief_runtime.agent_supplier_price_lists') IS NOT NULL AS installed")).rows[0].installed);
+  if(supplierPriceChecks)await require('../purchasing/agent-supplier-price-lists').lockNotices(db,workspaceId);
   const includeHistory=historyScopedJobs.some(job=>monitors.has(job));
   const args=[workspaceId,'',today];
   if(includeTransfers)args.push(timeZone);
@@ -114,6 +118,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (monitors.has(77)?' UNION ALL '+marginPrices.notices:'')+
     (monitors.has(82)?' UNION ALL '+orderPrices.notices(cutoff):'')+
     (monitors.has(88)?' UNION ALL '+customerHealth.notices(cutoff):'')+
+    (supplierPriceChecks?' UNION ALL '+supplierPrices.notices:'')+
     (monitors.has(116)?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
     (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
@@ -207,6 +212,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===82)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Order prices or discounts need review',
       happened:r.n+' '+(r.n===1?'order has':'orders have')+' a pricing exception.',why:orderPrices.summary,
       href:'/autopilot/reviews/order-price-exceptions',actionLabel:'Review order prices and discounts',sourceId:'agent-notice-82'};
+    if(Number(r.job_id)===91)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Higher supplier prices need review',
+      happened:r.n+' supplier '+(r.n===1?'document shows':'documents show')+' a higher comparable price.',why:supplierPrices.summary,
+      href:'/autopilot/reviews/supplier-price-increases',actionLabel:'Review supplier price increases',sourceId:'agent-notice-91'};
     if(Number(r.job_id)===10)return {kind:'inventory',grouped:true,importance:'Important',priority:70,title:'Repeated stock losses need review',
       happened:r.n+' '+(r.n===1?'product and shift combination shows':'product and shift combinations show')+' repeated stock corrections.',
       why:'Recorded stock was reduced more than once for the same product, warehouse and local shift.',

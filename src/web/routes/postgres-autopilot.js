@@ -254,6 +254,35 @@ function createPostgresAutopilotRouter(database,options={}){
     res.send(row.content);
   }));
   router.get('/autopilot/supplier-invoices/:id',requireAuth,owner,supplierInvoicePage);
+  const supplierPriceLists=require('../../purchasing/agent-supplier-price-lists');
+  const priceListFormats=require('../../imports/source-formats');
+  const supplierPriceListPage=starterAgentPage(91,'suggest','Supplier price lists',async(req,res)=>{
+    const source=await supplierPriceLists.page(database,req.ctx,req.params.id,req.query);
+    res.page('autopilot/supplier-price-lists',{title:'Supplier price lists',nav:'autopilot',
+      backTo:{href:'/autopilot/reviews/supplier-price-increases',label:'Supplier price increases'},source,
+      formatPrice:require('../../purchasing/agent-supplier-price-increases').format,accept:priceListFormats.accept});
+  });
+  router.get(supplierPriceLists.path,requireAuth,owner,supplierPriceListPage);
+  router.get(supplierPriceLists.path+'/:id',requireAuth,owner,supplierPriceListPage);
+  router.post(supplierPriceLists.path+'/upload',requireAuth,owner,require('../multipart').multipart({limit:priceListFormats.maxBytes+65536,maxFiles:1}),asyncRoute(async(req,res)=>{
+    const files=(req.files||[]).filter(file=>file.field==='priceListFile');
+    if(files.length!==1)throw new ValidationError('Choose one complete supplier price-list original.');
+    const result=await supplierPriceLists.upload(database,req.ctx,{...files[0],supplierId:req.body.supplierId,currency:req.body.currency});
+    res.redirect(303,supplierPriceLists.path+'/'+result.id);
+  }));
+  router.get(supplierPriceLists.path+'/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const file=await supplierPriceLists.download(database,req.ctx,req.params.id);
+    res.set({'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="'+file.filename.replace(/[^a-zA-Z0-9_.-]/g,'_')+'"','Cache-Control':'private, no-store'});
+    res.send(file.original);
+  }));
+  router.post(supplierPriceLists.path+'/:id/reviewed',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierPriceLists.acknowledge(database,req.ctx,req.params.id);
+    res.redirect(303,supplierPriceLists.path+'/'+req.params.id);
+  }));
+  router.post(supplierPriceLists.path+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierPriceLists.confirm(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,supplierPriceLists.path+'/'+req.params.id);
+  }));
   for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   const supplierCosts=require('../../purchasing/agent-supplier-comparison-terms');
