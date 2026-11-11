@@ -56,7 +56,10 @@ test('inactive customer check-ins use native purchases, completed examples and p
     for(const tier of ['starter','growth']){
       await f.subscribe(tier);
       await browser.get('/autopilot/reviews/customer-check-in').expect(402);
-      await browser.get(route).expect(402);
+      const locked=await browser.get(route).expect(200);
+      assert.match(locked.text,/data-agent-plan-locked/);
+      assert.match(locked.text,/Pro/);
+      await browser.get(route).set('Accept','application/json').expect(402);
       await assert.rejects(review('ProExample'),e=>e.code==='entitlement_required');
       await assert.rejects(prepare(pro),e=>e.code==='entitlement_required');
       await assert.rejects(train('fabricated'),e=>e.code==='entitlement_required');
@@ -189,6 +192,7 @@ test('inactive customer check-ins use native purchases, completed examples and p
     assert.match(stopped.text,/Stop routine drafting/);
     assert.doesNotMatch(stopped.text,/Authorize private drafting|Teach private drafting/);
     await checkins.configure(db,ctx,{revision:3,stop:'yes'});
-    await browser.get(route).expect(402);
+    await browser.get(route).expect(200).expect(/data-agent-plan-locked/);
+    await browser.get(route).set('Accept','application/json').expect(402);
   });
 });

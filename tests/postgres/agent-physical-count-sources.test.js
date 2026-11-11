@@ -52,7 +52,10 @@ test('physical count originals use native tracked and measured adjustments after
   const before=await effect();
   for(const tier of ['starter','growth']){
     await subscribe(tier);
-    await browser.get(route).expect(402);
+    const locked=await browser.get(route).expect(200);
+    assert.match(locked.text,/data-agent-plan-locked/);
+    assert.match(locked.text,/Pro/);
+    await browser.get(route).set('Accept','application/json').expect(402);
     await assert.rejects(sources.enqueue(db,ctx,{...input,filename:'Physical count.xlsx',buffer:original}),e=>e.code==='entitlement_required');
   }
   await subscribe('pro');
