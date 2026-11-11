@@ -2,6 +2,83 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const assistant=require('../../src/assistant/postgres-service');
+test('saved freight and exact current plan authority combine only qualifying native draft purchases',{timeout:300000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
+  const service=require('../../src/purchasing/agent-freight-combine');
+  const modes=require('../../src/autopilot/job-modes');
+  const jobs=require('../../src/operations/postgres-job-queue');
+  const handlers=require('../../src/operations/postgres-runtime-handlers').create();
+  const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const {addDays}=require('../../src/accounting/customer-money');
+  const supplier='fixture-supplier',location=f.location.id,sku=f.item.skuIds[0];
+  const path='/autopilot/reviews/combine-draft-orders';
+  await db.query("UPDATE accounts SET created_at=(now()-interval '20 days')::text WHERE id=$1",[f.owner.accountId]);
+  await db.query("UPDATE suppliers SET ordinary_freight_minor=500,free_freight_threshold_minor=1000,freight_terms_currency='USD' WHERE workspace_id=$1 AND id=$2",
+    [ctx.workspaceId,supplier]);
+  const create=(day,cost=6)=>workflows.createPurchaseOrder(db,ctx,{supplierId:supplier,destinationLocationId:location,
+    expectedDate:addDays(today,day),currency:'USD',idempotencyKey:randomUUID(),
+    lines:[{skuId:sku,quantityUnits:1,unitCost:cost}]});
+  const charge=(order,kind,amount)=>db.query(`INSERT INTO purchase_order_charges(id,workspace_id,purchase_order_id,label,kind,amount_minor,source,created_at)
+    VALUES($1,$2,$3,$4,$5,$6,'Checked supplier quote',now()::text)`,
+    [randomUUID(),ctx.workspaceId,order.purchaseOrderId,kind,kind,amount]);
+  const orders=async ids=>(await db.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id',
+    [ctx.workspaceId,ids])).rows.map(r=>r.status);
+  const charges=async id=>(await db.query('SELECT kind,amount_minor FROM purchase_order_charges WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY kind',
+    [ctx.workspaceId,id])).rows.map(r=>[r.kind,Number(r.amount_minor)]);
+  const args=(maximum,trainingProposal='',revision=0)=>({supplierId:supplier,locationId:location,maximum,trainingProposal,confirmed:'yes',revision});
+  const process=async()=>{
+    const job=await jobs.processOne(db,handlers,{owner:'freight-test',kinds:[service.kind]});
+    assert.equal(job.status,'COMPLETED',JSON.stringify(job.lastError));
+    return job.result;
+  };
+  const queue=()=>service.enqueue(db,ctx.workspaceId,randomUUID());
+  await subscribe('starter');
+  await assert.rejects(service.configure(db,ctx,args('12')),e=>e.code==='entitlement_required');
+  assert.deepEqual(await queue(),{skipped:true});
+  await subscribe('growth');
+  const a=await create(2),b=await create(2);
+  await charge(a,'freight',500);await charge(b,'freight',500);await charge(a,'insurance',200);
+  const sourceOrders=[a.poNumber,b.poNumber].join(',');
+  await assert.rejects(service.configure(db,ctx,args('12')),/approved freight-saving example/);
+  const plan=await assistant.prepareAction(db,ctx,'Review these purchases with freight terms',
+    {action:'purchase_order.combine_drafts',sourceOrders});
+  assert.match(plan.proposal.summary,/freight falls from \$10\.00 to \$0\.00/);
+  const approved=await assistant.executeProposal(db,ctx,plan.proposal.id);
+  assert.equal(approved.result.freight.savedMinor,1000);
+  assert.deepEqual(await charges(approved.result.drafts[0]),[['insurance',200]]);
+  assert.deepEqual(await orders([a.purchaseOrderId,b.purchaseOrderId]),['CANCELLED','CANCELLED']);
+  await assert.rejects(service.configure(db,ctx,args('13',plan.proposal.id)),/within the saved limit/);
+  const page=await browser.get(path).expect(200);
+  assert.match(page.text,/Completed freight-saving example/);
+  await browser.post(path+'/rule').type('form').send({_csrf:f.csrf(page.text),...args('12',plan.proposal.id)}).expect(303);
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const grown=[await create(3),await create(3)];
+  await queue();assert.equal((await process()).combined,1);
+  assert.deepEqual(await orders(grown.map(o=>o.purchaseOrderId)),['CANCELLED','CANCELLED']);
+  await queue();assert.equal((await process()).combined,0);
+
+  await subscribe('pro');await service.configure(db,ctx,args('12','',1));
+  const taxed=[await create(4),await create(4)];await charge(taxed[0],'tax',75);
+  const pro=[await create(5),await create(5)];
+  await queue();assert.equal((await process()).combined,1);
+  assert.deepEqual(await orders(pro.map(o=>o.purchaseOrderId)),['CANCELLED','CANCELLED']);
+  assert.deepEqual(await orders(taxed.map(o=>o.purchaseOrderId)),['DRAFT','DRAFT']);
+  assert.deepEqual(await charges(taxed[0].purchaseOrderId),[['tax',75]]);
+
+  await subscribe('enterprise');await service.configure(db,ctx,args('12','',2));
+  const custom=[await create(6,4),await create(6,4)];
+  await modes.save(db,ctx,24,{mode:'watch',revision:0});
+  await queue();assert.equal((await process()).held,true);
+  await modes.save(db,ctx,24,{mode:'routine',revision:1});
+  await queue();await subscribe('starter');assert.equal((await process()).held,true);
+  await subscribe('growth');await queue();assert.equal((await process()).combined,0);
+  await subscribe('enterprise');await queue();assert.equal((await process()).combined,1);
+  assert.deepEqual(await orders(custom.map(o=>o.purchaseOrderId)),['CANCELLED','CANCELLED']);
+  const {rows:[replacement]}=await db.query(`SELECT id,status FROM purchase_orders WHERE workspace_id=$1
+    AND source_detail::jsonb->'sourcePurchaseOrderIds' @> $2::jsonb`,[ctx.workspaceId,JSON.stringify(custom.map(o=>o.purchaseOrderId))]);
+  assert.equal(replacement.status,'DRAFT');
+  assert.deepEqual(await charges(replacement.id),[['freight',500]]);
+});
 test('vacation coverage sends open purchases and transfers only to a currently qualified deputy',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
   const auth=require('../../src/domain/postgres-auth-service'),p=require('../../src/actions/permissions'),vacation=require('../../src/autopilot/vacation-deputy');

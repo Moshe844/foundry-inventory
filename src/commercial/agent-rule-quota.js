@@ -9,7 +9,8 @@ const sources=[
  ['agent_direct_rules','enabled'],['agent_direct_orders','routine AND rule_id IS NULL'],
  ['agent_team_procedure_sets','enabled'],['agent_product_retirement_settings','enabled'],
  ['agent_supplier_shutdowns','enabled'],['agent_promotion_stock','enabled'],['agent_quality_policies','enabled'],['agent_rfq_rules','enabled'],['agent_supplier_claim_rules','enabled'],['agent_supplier_delivery_chase_rules','enabled'],['agent_supplier_confirmation_rules','enabled'],['agent_channel_buffer_recipes','active_members>0'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],['agent_putaway_rules'],
- ['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['daily_cycle_count_rules'],['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels']
+ ['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['daily_cycle_count_rules'],['agent_freight_combine_rules'],
+ ['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels']
 ];
 const limits={starter:5,growth:50,pro:500};
 const configured=sources.map(([table,predicate])=>`(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.${table} t JOIN owned o ON o.id=t.workspace_id ${predicate?'WHERE '+predicate:''} LIMIT $2::int) bounded)`).join('+');

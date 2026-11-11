@@ -1,7 +1,7 @@
 'use strict';
 
 module.exports=[
-  {id:24,key:'combine-draft-orders',label:'Combine unsent supplier orders',summary:'Draft orders for the same supplier, currency and delivery date can share one replacement PO. Original drafts stay in the history. Shipping savings depend on the supplier’s actual charges.',
+  {id:24,key:'combine-draft-orders',label:'Combine unsent supplier orders',summary:'Compare drafts with the same supplier, currency and delivery date. StockChief uses recorded freight terms when the drafts share one receiving location. An approved rule can combine drafts when those terms show a saving. Original drafts stay in the history.',
     sql:`WITH draft AS (SELECT p.*,s.name FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
       WHERE p.workspace_id=$1 AND p.status='DRAFT' AND ($2='' OR lower(s.name)=lower($2)))
       SELECT name AS "Supplier",currency AS "Currency",expected_date AS "Expected date",count(*) AS "Drafts",

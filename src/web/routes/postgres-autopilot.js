@@ -974,6 +974,7 @@ function createPostgresAutopilotRouter(database,options={}){
       const watch=require('../../autopilot/activity-watches'),job=watch.definitions.find(d=>d.key===req.params.job);
       if(job&&[170,171].includes(job.id))result.watchSettings={job:job.id,...await watch.settings(database,req.ctx.workspaceId,job.id)};
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
+      if(req.params.job==='combine-draft-orders')result.freightCombine=await require('../../purchasing/agent-freight-combine').screen(database,req.ctx);
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
@@ -1066,6 +1067,11 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Review current purchasing preparation',
       {action:actions[req.params.job],skuCodes:req.body.skuCodes,location:req.body.location,strategy:req.body.strategy,quantity:req.body.quantity,secondaryQuantities:req.body.secondaryQuantities,comparisonBasis:req.body.comparisonBasis,comparisonCurrency:req.body.comparisonCurrency,goodsOnlyReason:req.body.goodsOnlyReason});
     res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/reviews/combine-draft-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-freight-combine').configure(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Removed the freight-combining rule.':'Saved the freight-combining rule.');
+    return res.redirect(303,'/autopilot/reviews/combine-draft-orders');
   }));
   router.post('/autopilot/reviews/:job/regroup',requireAuth,owner,asyncRoute(async(req,res)=>{
     const actions={'combine-draft-orders':'purchase_order.combine_drafts','split-draft-orders':'purchase_order.split_draft'};
