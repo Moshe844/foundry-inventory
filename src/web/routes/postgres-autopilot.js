@@ -325,6 +325,18 @@ function createPostgresAutopilotRouter(database,options={}){
   }
   const slack=require('../../connections/agent-slack');
   const direct=require('../../purchasing/agent-direct-shipments');
+  const deliveryChecks=require('../../purchasing/agent-delivery-comparisons');
+  const deliveryCheckPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/delivery-checks',{
+    title:'Compare an actual supplier delivery',nav:'autopilot',backTo:{href:req.params.id?deliveryChecks.path:'/autopilot/reviews',
+      label:req.params.id?'Delivery comparisons':'Agent reviews'},
+    ...await deliveryChecks.page(database,req.ctx,{...req.query,id:req.params.id})});
+  router.get('/autopilot/reviews/delivery-check',requireAuth,owner,(_req,res)=>res.redirect(303,deliveryChecks.path));
+  router.get(deliveryChecks.path,requireAuth,owner,asyncRoute(deliveryCheckPage));
+  router.get(deliveryChecks.path+'/:id',requireAuth,owner,asyncRoute(deliveryCheckPage));
+  router.post(deliveryChecks.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const saved=await deliveryChecks.save(database,req.ctx,deliveryChecks.fromForm(req.body));
+    res.redirect(303,deliveryChecks.path+'/'+saved.id);
+  }));
   const directPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/direct-shipments',{
     title:'Supplier-direct deliveries',nav:'autopilot',backTo:{href:req.params.id?direct.path:'/autopilot/reviews',label:req.params.id?'Direct deliveries':'Agent reviews'},
     ...await direct.page(database,req.ctx,{...req.query,id:req.params.id})});

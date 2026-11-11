@@ -1,0 +1,88 @@
+<h1>Compare an actual supplier delivery</h1>
+<p>Check the goods or original delivery note against the purchase order. StockChief highlights short quantities, extra goods, unrecognized product codes and weight differences.</p>
+<% if(!allowed){ %>
+  <% if(suggestion){ %><p class="notice"><%= suggestion %></p><% } %>
+  <section class="card"><div class="card-body"><h2><span class="badge">Growth</span> Detailed delivery comparisons</h2>
+    <p>Starter gives a delivery-check suggestion. Growth, Pro and Custom compare and keep the actual delivery rows without training.</p>
+    <a class="btn" href="/billing">Upgrade</a>
+  </div></section>
+<% } %>
+<% if(record){ const result=record.result; const original=record.source_snapshot; %>
+  <section class="card"><div class="card-body">
+    <h2><%= original.order.po_number %> · <%= original.order.supplier_name %></h2>
+    <p>Original delivery reference <strong><%= record.source_reference %></strong> · recorded <%= helpers.dateTime(record.recorded_at) %>.</p>
+    <p class="notice"><strong><%= result.agrees?'The reported goods agree with the remaining order.':'Review the delivery differences below.' %></strong></p>
+    <% result.rows.forEach(row=>{ %><section class="panel"><div class="card-body">
+      <h3><%= row.name %> · <%= row.code %></h3>
+      <p><%= row.expected %> <%= row.unit %> due at comparison · <strong><%= row.observed %> <%= row.unit %> reported</strong>.</p>
+      <% if(row.weightUnit){ %><p><%= row.expectedWeight %> <%= row.weightUnit %> due · <%= row.observedWeight===null?'Actual weight missing':row.observedWeight+' '+row.weightUnit+' reported' %>.</p><% } %>
+      <% if(row.findings.length){ %><ul><% row.findings.forEach(finding=>{ %><li><%= finding %></li><% }) %></ul><% }else{ %><p>Quantity agrees.</p><% } %>
+    </div></section><% }) %>
+    <% if(result.unexpected.length){ %><h3>Check these product codes</h3>
+      <% result.unexpected.forEach(row=>{ %><section class="panel"><div class="card-body">
+        <p><strong style="overflow-wrap:anywhere"><%= row.code %></strong></p>
+        <p><%= row.quantity %> <%= row.unit||(row.basis==='purchase'?'supplier packs':'reported units') %>.</p>
+        <p><%= row.issue %></p>
+      </div></section><% }) %>
+    <% } %>
+    <p>This comparison is saved with its original rows. Book the physically accepted goods through the purchase order.</p>
+    <a class="btn btn--primary" href="/purchasing/orders/<%= record.purchase_order_id %>">Open purchase order and receiving</a>
+    <a class="btn" href="/autopilot/delivery-checks?orderId=<%= record.purchase_order_id %>">Compare another delivery</a>
+  </div></section>
+<% } %>
+<% if(allowed&&!record){ %>
+  <section class="card"><div class="card-body"><h2>Choose the purchase order</h2>
+    <form method="get" action="/autopilot/delivery-checks" class="form-stack">
+      <label>Placed purchase order <select name="orderId" required><option value="">Choose an order</option>
+        <% orders.forEach(order=>{ %><option value="<%= order.id %>" <%= snapshot?.order.id===order.id?'selected':'' %>><%= order.po_number %> · <%= order.supplier_name %></option><% }) %>
+      </select></label>
+      <button class="btn" type="submit">Compare this delivery</button>
+    </form>
+  </div></section>
+  <% if(snapshot){ %><section class="card"><div class="card-body"><h2><%= snapshot.order.po_number %> · actual delivery rows</h2>
+    <p>Enter the actual product code and quantity from each delivery row. Empty rows are skipped. Use an extra row for goods bearing a different code.</p>
+    <form method="post" action="/autopilot/delivery-checks" class="form-stack" data-delivery-check-form data-next-row="<%= snapshot.lines.length+3 %>">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="orderId" value="<%= snapshot.order.id %>">
+      <input type="hidden" name="sourceHash" value="<%= sourceHash %>">
+      <input type="hidden" name="requestKey" value="<%= requestKey %>">
+      <label>Original delivery reference <input name="sourceReference" maxlength="240" required placeholder="Delivery note or physical inspection reference"></label>
+      <% snapshot.lines.forEach((line,index)=>{ %><fieldset class="panel"><legend><%= line.name %> · <%= line.code %></legend><div class="card-body form-stack">
+        <p>Ordered <%= line.quantity_units %> <%= line.unit_label %> · already received <%= line.quantity_received_units %>.</p>
+        <input type="hidden" name="observations[<%= index %>][lineId]" value="<%= line.id %>">
+        <label>Actual product code <input name="observations[<%= index %>][code]" value="<%= line.supplier_sku||line.code %>" maxlength="120"></label>
+        <label>Actual quantity <input name="observations[<%= index %>][quantity]" type="number" min="0" step="any" placeholder="Quantity actually found"></label>
+        <label>Quantity uses <select name="observations[<%= index %>][basis]"><option value="stock"><%= line.unit_label %></option>
+          <option value="purchase"><%= line.purchase_unit %> · <%= line.units_per_purchase_unit %> <%= line.unit_label %> each</option></select></label>
+        <% if(line.secondary_unit_label){ %><label>Actual total <%= line.secondary_unit_label %> <input name="observations[<%= index %>][secondaryQuantity]" type="number" min="0" step="<%= line.secondary_increment %>"></label><% } %>
+      </div></fieldset><% }) %>
+      <div data-delivery-extra-rows>
+      <% for(let extra=0;extra<3;extra++){ const index=snapshot.lines.length+extra; %><fieldset class="panel"><legend>Extra delivery row <%= extra+1 %></legend><div class="card-body form-stack">
+        <label>Actual product code <input name="observations[<%= index %>][code]" maxlength="120"></label>
+        <label>Actual quantity <input name="observations[<%= index %>][quantity]" type="number" min="0" step="any"></label>
+        <label>Printed unit or pack <input name="observations[<%= index %>][unit]" maxlength="40"></label>
+        <label>Quantity uses <select name="observations[<%= index %>][basis]"><option value="stock">Stock units</option><option value="purchase">Supplier packs</option></select></label>
+      </div></fieldset><% } %>
+      </div>
+      <button type="button" class="btn" data-add-delivery-row>Add another delivery row</button>
+      <p class="hint" data-delivery-row-limit role="status"></p>
+      <label><input type="checkbox" name="physicallyChecked" value="yes" required> I checked these actual goods or original delivery-note rows</label>
+      <button class="btn btn--primary" type="submit">Check quantities, codes and weights</button>
+    </form>
+  </div></section><% } %>
+  <section class="card"><div class="card-body"><h2>Saved delivery comparisons</h2>
+    <% if(!history.length){ %><p>No comparisons saved yet.</p><% } %>
+    <% history.forEach(check=>{ %><p><a href="/autopilot/delivery-checks/<%= check.id %>"><%= check.po_number %> · <%= check.source_reference %></a> · <%= check.agrees==='true'?'Agrees':'Differences to review' %></p><% }) %>
+    <% if(pageNumber>1){ %><a class="btn" href="?page=<%= pageNumber-1 %>">Previous</a><% } %>
+    <% if(more){ %><a class="btn" href="?page=<%= pageNumber+1 %>">Next</a><% } %>
+  </div></section>
+<% } %>
+<template data-delivery-extra-template>
+  <fieldset class="panel"><legend>Extra delivery row</legend><div class="card-body form-stack">
+    <label>Actual product code <input name="observations[__ROW__][code]" maxlength="120"></label>
+    <label>Actual quantity <input name="observations[__ROW__][quantity]" type="number" min="0" step="any"></label>
+    <label>Quantity uses <select name="observations[__ROW__][basis]"><option value="stock">Stock units</option><option value="purchase">Supplier packs</option></select></label>
+    <label>Printed unit or pack <input name="observations[__ROW__][unit]" maxlength="40"></label>
+  </div></fieldset>
+</template>
+<script src="/delivery-comparison.js" defer></script>

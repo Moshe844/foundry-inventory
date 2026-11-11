@@ -16,7 +16,8 @@ async function facts(db,ctx,raw,{exampleIds=null,recordedFrom=null,recordedThrou
  const location=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,scope.locationId])).rows[0];if(!location)throw new ValidationError('Choose an active owned warehouse or stock location.');
  const covered=await require('../operations/postgres-warehouse-access').locations(db,ctx.workspaceId,[scope.locationId]),history=await require('../commercial/agent-history').access(db,ctx.workspaceId),window=(await db.query("SELECT greatest(coalesce($3::timestamptz,now()-make_interval(days=>$1)),coalesce($2::timestamptz,'-infinity'::timestamptz)) AS starts,least(coalesce($4::timestamptz,now()),now()) AS ends",[scope.lookbackDays,history.activityAfter,recordedFrom,recordedThrough])).rows[0],from=window.starts.toISOString(),to=window.ends.toISOString(),args=[ctx.workspaceId,covered.map(l=>l.id),from,to,exampleIds];let examples;
  if(scope.kind==='receiving')examples=(await db.query(`WITH recent AS MATERIALIZED(
-  SELECT r.* FROM purchase_order_receipts r WHERE r.workspace_id=$1 AND ($5::text[] IS NULL OR r.id=ANY($5)) AND r.created_at>=$3 AND r.created_at<=$4
+  SELECT r.id,r.workspace_id,r.purchase_order_id,r.created_at,r.received_by_user_id,r.reference,r.over_receipt_approved
+  FROM purchase_order_receipts r WHERE r.workspace_id=$1 AND ($5::text[] IS NULL OR r.id=ANY($5)) AND r.created_at>=$3 AND r.created_at<=$4
    AND EXISTS(SELECT 1 FROM purchase_order_receipt_lines l WHERE l.workspace_id=r.workspace_id AND l.receipt_id=r.id AND l.location_id=ANY($2::text[]))
   ORDER BY r.created_at DESC,r.id DESC LIMIT 1000)
   SELECT r.id,p.po_number AS reference,r.created_at AS recorded_at,r.received_by_user_id AS actor_id,
@@ -36,7 +37,9 @@ async function facts(db,ctx,raw,{exampleIds=null,recordedFrom=null,recordedThrou
   HAVING count(*)=(SELECT count(*) FROM purchase_order_receipt_lines all_lines WHERE all_lines.workspace_id=r.workspace_id AND all_lines.receipt_id=r.id AND all_lines.location_id=ANY($2::text[]))
   ORDER BY r.created_at DESC,r.id DESC LIMIT 101`,args)).rows;
  else if(scope.kind==='dispatch')examples=(await db.query(`WITH recent AS MATERIALIZED(
-  SELECT sh.* FROM sales_shipments sh WHERE sh.workspace_id=$1 AND ($5::text[] IS NULL OR sh.id=ANY($5)) AND sh.ship_from_location_id=ANY($2::text[]) AND sh.status IN ('SHIPPED','DELIVERED') AND sh.created_at>=$3 AND sh.created_at<=$4
+  SELECT sh.id,sh.workspace_id,sh.sales_order_id,sh.shipment_number,sh.created_at,sh.created_by_user_id,
+    sh.handover,sh.tracking_number,sh.ship_from_location_id,sh.status
+  FROM sales_shipments sh WHERE sh.workspace_id=$1 AND ($5::text[] IS NULL OR sh.id=ANY($5)) AND sh.ship_from_location_id=ANY($2::text[]) AND sh.status IN ('SHIPPED','DELIVERED') AND sh.created_at>=$3 AND sh.created_at<=$4
   ORDER BY sh.created_at DESC,sh.id DESC LIMIT 1000)
   SELECT sh.id,sh.shipment_number AS reference,sh.created_at AS recorded_at,sh.created_by_user_id AS actor_id,
   sh.handover,coalesce(sh.tracking_number,'')<>'' AS has_tracking,sh.sales_order_id

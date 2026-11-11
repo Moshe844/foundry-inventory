@@ -3,6 +3,11 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 44:{common:'Compares the actual delivery rows you enter from checked goods or an original delivery note with the exact remaining purchase order. Shows short and extra quantities, wrong or ambiguous codes, supplier-pack differences and missing or mismatched actual weights. Keeps the original comparison with its delivery reference. Supports variants, batches, serials, fractional goods and finished kits.',
+  starter:'Gives one delivery-check suggestion. Detailed comparisons require Growth or above.',
+  growth:'Checks and saves the actual entered delivery rows without training. You confirm the physical goods separately when booking in the accepted delivery.',
+  pro:'Checks and saves the actual entered delivery rows without training. You confirm the physical goods separately when booking in the accepted delivery.',
+  enterprise:'Checks and saves the actual entered delivery rows without training. You confirm the physical goods separately when booking in the accepted delivery.'},
  37:{common:'Turns a checked customer order into an exact supplier purchase for delivery to that customer. Sends a private supplier link for actual dispatch quantities, batches, serials, weights, carrier and tracking. Posts each confirmed dispatch to the customer invoice and supplier cost together. Partial deliveries, supplier invoices and customer returns preserve their original evidence.',
   starter:'Owners can manually finish supplier-direct purchases approved before a downgrade, including the actual dispatch and customer invoice.',
   growth:'You approve each exact supplier purchase, purchase email and supplier dispatch before it is posted.',

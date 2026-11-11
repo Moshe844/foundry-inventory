@@ -146,6 +146,12 @@
     </div>
 
     <aside class="ox-2col__side">
+      <% if(permissions.deliveryChecks&&['ORDERED','PARTIALLY_RECEIVED','RECEIVED'].includes(order.status)){ %>
+        <section class="ox-card ox-card__b"><h2 class="ox-h2">Delivery check</h2>
+          <% if(!permissions.detailedDeliveryChecks){ %><p><span class="badge">Growth</span> Detailed comparisons</p><p class="ox-fine">Starter gives a delivery-check suggestion.</p><% }else{ %><p class="ox-fine">Compare actual product codes, quantities and weights with this order.</p><% } %>
+          <a class="ox-btn ox-btn--secondary ox-btn--block" href="/autopilot/delivery-checks?orderId=<%= order.id %>">Compare actual delivery</a>
+        </section>
+      <% } %>
       <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-money" style="padding-top:18px">
         <h2 id="ox-h-money">Money</h2>
         <div class="ox-sum__row"><span>Order total</span><b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></div>

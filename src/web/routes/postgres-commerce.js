@@ -701,6 +701,12 @@ function createPostgresCommerceRouter(database,options={}){
     const can={...purchasingPermissions(req),accounting:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       returns:permissions.can(req.user,permissions.AUTHORIZE_SUPPLIER_RETURN)};
     if(page.order.directDeliveryId&&req.user.role==='owner')return res.redirect(303,'/autopilot/direct-shipments/'+page.order.directDeliveryId);
+    if(req.user.role==='owner'){
+      const deliveryPlan=require('../../commercial/agent-plan');
+      const deliveryState=await deliveryPlan.accountState(database,req.ctx.workspaceId);
+      can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
+      can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
+    }
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
     return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
