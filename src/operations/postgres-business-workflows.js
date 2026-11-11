@@ -761,7 +761,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     let short = false;
     for (const line of lines.rows) {
       let needed = exact.safeNumber(exact.subtract(exact.subtract(line.quantity_ordered,line.quantity_fulfilled),line.direct_committed_quantity||0));
-      const existing = await client.query(`SELECT COALESCE(SUM(quantity),0) AS quantity FROM sales_order_allocations
+      const existing = await client.query(`SELECT COALESCE(SUM(quantity),0) AS quantity,
+        bool_or(to_jsonb(sales_order_allocations)->>'rotation_selection' IS NOT NULL) AS has_rotation FROM sales_order_allocations
         WHERE sales_order_line_id=$1 AND workspace_id=$2`, [line.id, ctx.workspaceId]);
       needed = exact.safeNumber(exact.subtract(needed,existing.rows[0].quantity),{signed:true});
       const balances = await client.query(`SELECT b.location_id,b.on_hand,
@@ -776,18 +777,19 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
         const available = (await require('../transfers/postgres-transfer-service').sourceAvailable(client,ctx.workspaceId,line.sku_id,balance.location_id)).available;
         const quantity = Math.min(needed, available);
         if (!quantity) continue;
-        await client.query(`INSERT INTO sales_order_allocations
-          (id,workspace_id,sales_order_line_id,location_id,quantity,created_at,updated_at)
-          VALUES($1,$2,$3,$4,$5,$6,$6)
-          ON CONFLICT(sales_order_line_id,location_id) DO UPDATE SET quantity=sales_order_allocations.quantity+EXCLUDED.quantity,
+        const rotationUpdate=existing.rows[0].has_rotation?`
             rotation_selection=CASE WHEN sales_order_allocations.rotation_selection IS NOT NULL
               AND EXISTS(SELECT 1 FROM jsonb_array_elements(sales_order_allocations.rotation_selection) selection WHERE selection ? 'arrivals')
               AND EXISTS(SELECT 1 FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
                 WHERE s.workspace_id=$2 AND s.id=$7 AND i.tracking_mode='quantity' AND i.secondary_unit_label IS NULL)
               THEN sales_order_allocations.rotation_selection||jsonb_build_array(jsonb_build_object('quantity',EXCLUDED.quantity,'arrivals','[]'::jsonb))
-              ELSE sales_order_allocations.rotation_selection END,
+              ELSE sales_order_allocations.rotation_selection END,`:'';
+        await client.query(`INSERT INTO sales_order_allocations
+          (id,workspace_id,sales_order_line_id,location_id,quantity,created_at,updated_at)
+          VALUES($1,$2,$3,$4,$5,$6,$6)
+          ON CONFLICT(sales_order_line_id,location_id) DO UPDATE SET quantity=sales_order_allocations.quantity+EXCLUDED.quantity,${rotationUpdate}
             updated_at=EXCLUDED.updated_at`,
-        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso(),line.sku_id]);
+        [newId('soa'), ctx.workspaceId, line.id, balance.location_id, quantity, nowIso(),...(rotationUpdate?[line.sku_id]:[])]);
         allocations.push({ lineId: line.id, locationId: balance.location_id, quantity });
         needed = exact.safeNumber(exact.subtract(needed,quantity));
       }

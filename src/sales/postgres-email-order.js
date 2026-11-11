@@ -5,6 +5,13 @@ const permissions=require('../actions/permissions');
 const {ValidationError,NotFoundError}=require('../domain/errors');
 const promotions=require('../pricing/postgres-promotions');
 const uncertain=()=>new ValidationError('Review the original message. StockChief needs an exact product code and quantity for every line, and clear delivery instructions.');
+const orderSubject=/^(?:(?:new |customer |purchase |sales )?order|purchase order attached|order request|po)(?:\s*(?:[:#-]|no\.|number)\s*[\w.-]+)?[.!]?$/i;
+const orderReference=/^(?:purchase order|customer po|po)\s*(?:#|no\.?|number|:)\s*([\w.-]{1,60})$/i;
+
+function isOrderEnvelope(subject,body,hasAttachments){
+  if(!orderSubject.test(String(subject||'').trim()))return false;
+  return Boolean(hasAttachments||String(body||'').split(/\r?\n/).some(line=>orderReference.test(line.trim())));
+}
 
 // Match a complete line. A date, quoted price or second instruction must never
 // silently become a quantity or disappear from a draft.
@@ -18,7 +25,7 @@ function parse(parts){
     const line=raw.trim();
     if(!line||/^(?:hello|hi|thanks|thank you|regards)[!. ,]*$/i.test(line))continue;
     if(/^(?:purchase order|new order|please (?:see (?:the )?attached (?:purchase )?order|order(?: the following)?))[.!:]?$/i.test(line)){ordered=true;continue;}
-    const po=/^(?:purchase order|customer po|po)\s*(?:#|no\.?|number|:)\s*([\w.-]{1,60})$/i.exec(line);
+    const po=orderReference.exec(line);
     if(po){if(reference&&reference!==po[1])throw uncertain();reference=po[1];ordered=true;continue;}
     if(/^(?:customer pickup|pickup|pick up)[.!]?$/i.test(line)){pickup=true;continue;}
     const codeFirst=/^(?:SKU\s+)?([\w./-]+)\s+(?:qty\.?\s*[:=]?\s*|[x×]\s*)(\d+(?:\.\d+)?)$/i.exec(line);
@@ -43,7 +50,7 @@ async function review(c,ctx,id,{lock=false}={}){
   const existing=(await c.query('SELECT id,order_number FROM sales_orders WHERE workspace_id=$1 AND source_email_message_id=$2',[ctx.workspaceId,id])).rows[0];
   if(existing)return {existing};
   if(m.trust_status!=='TRUSTED'||m.classification!=='customer'||m.supplier_id)throw uncertain();
-  if(!/^(?:(?:new |customer |purchase |sales )?order|purchase order attached|order request|po)(?:\s*(?:[:#-]|no\.|number)\s*[\w.-]+)?[.!]?$/i.test(String(m.subject||'').trim()))
+  if(!orderSubject.test(String(m.subject||'').trim()))
     throw new ValidationError('Review the subject and original email before preparing this order.');
   const customers=(await c.query(`SELECT id,name,shipping_address FROM customers WHERE workspace_id=$1 AND lower(email)=lower($2) AND record_state='ACTIVE'
     AND NOT EXISTS(SELECT 1 FROM suppliers WHERE workspace_id=$1 AND lower(email)=lower($2) AND status='active') LIMIT 2`,[ctx.workspaceId,m.sender])).rows;
@@ -102,10 +109,13 @@ async function create(db,ctx,id,digest,{automatic=false}={}){
 }
 
 async function onArrival(db,workspaceId,id){
-  const actor=(await db.query(`SELECT u.id FROM stockchief_runtime.agent_job_modes j JOIN users u ON u.workspace_id=j.workspace_id AND u.id=j.updated_by
+  const actor=(await db.query(`SELECT u.id,m.subject,m.body_text,m.agent_category,EXISTS(
+    SELECT 1 FROM connection_email_attachments a WHERE a.workspace_id=m.workspace_id AND a.message_id=m.id) AS has_attachments
+    FROM stockchief_runtime.agent_job_modes j JOIN users u ON u.workspace_id=j.workspace_id AND u.id=j.updated_by
     JOIN connection_email_messages m ON m.workspace_id=j.workspace_id AND m.id=$2
-    WHERE j.workspace_id=$1 AND j.job_id=52 AND j.mode='routine' AND u.role='owner' AND m.classification='customer' AND m.agent_category='order'`,[workspaceId,id])).rows[0];
-  if(!actor)return {skipped:true};
+    WHERE j.workspace_id=$1 AND j.job_id=52 AND j.mode='routine' AND u.role='owner'
+      AND m.classification='customer' AND m.trust_status='TRUSTED'`,[workspaceId,id])).rows[0];
+  if(!actor||actor.agent_category!=='order'&&!isOrderEnvelope(actor.subject,actor.body_text,actor.has_attachments))return {skipped:true};
   try{return await create(db,{workspaceId,actorId:actor.id},id,null,{automatic:true});}
   catch(e){
     if(![400,402,403,404,422].includes(e.status))throw e;
@@ -114,4 +124,4 @@ async function onArrival(db,workspaceId,id){
     return {held:true,reason:e.message};
   }
 }
-module.exports={review,create,onArrival};
+module.exports={review,create,onArrival,isOrderEnvelope};
