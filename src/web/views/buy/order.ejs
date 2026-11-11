@@ -34,6 +34,12 @@
     </div>
     <div class="ox-head__actions">
       <a class="ox-btn ox-btn--ghost ox-hide-sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">Print</a>
+      <% if(permissions.shareSupplierLink){ %>
+        <form class="ox-inline-form" method="post" action="/purchasing/orders/<%= order.id %>/supplier-link" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="ox-btn ox-btn--ghost" type="submit">Share supplier response link</button>
+        </form>
+      <% } %>
       <%- nextButton() %>
     </div>
   </header>
