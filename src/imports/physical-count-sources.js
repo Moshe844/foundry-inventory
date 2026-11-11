@@ -192,6 +192,26 @@ async function readSource(db,ctx,source,{provider,usageKey}){
   }
 }
 
+// Job 6: a count sheet whose differences are small posts on its own. The owner's count
+// rule decides it exactly as for counts typed in the app: under the value limit, on a plan
+// that allows it, in routine mode, outside shadow, pauses and Watch only. On Pro the sheet
+// must come through a taught count routine (job 5 is trained there); Custom needs none.
+// A person still checks anything read from a photo or PDF, any row that needs review, a
+// unit cost written on the sheet, and every serial added or removed: a serial is one
+// identified unit, so its loss or appearance is a fact to confirm, not a small difference.
+async function smallDifferences(c,ctx,source,rows,parsed){
+  if(parsed.visual||!rows.length||rows.some(r=>r.issue||!r.checked||!r.preview))return null;
+  const effects=rows.map(r=>r.preview),currencies=[...new Set(effects.map(p=>p.currency))];
+  if(currencies.length!==1||effects.some(p=>p.expected?.serial&&Number(p.delta)))return null;
+  if(!source.rule_id)try{await policy.requireWorkspaceJob(c,ctx.workspaceId,5,'automatic');}catch(error){if(error instanceof DomainError)return null;throw error;}
+  const decision=await require('../autopilot/count-rules').evaluate(c,ctx,{currency:currencies[0],
+    lines:effects.map(p=>({delta:Number(p.delta)||0,costDeltaMinor:Number(p.costDelta)||0}))},rows.map(r=>({unitCost:r.observed?.cost??''})));
+  if(!decision)return null;
+  if(decision.action==='post')await require('../operations/postgres-security-audit').record(c,ctx,{action:'Count sheet posted under the count limit',
+    reference:source.id,after:{exposureMinor:decision.exposureMinor,limitMinor:decision.limitMinor,currency:decision.currency}});
+  return decision;
+}
+
 async function readJob(db,ctx,job,options){
   const source=await load(db,ctx,job.payload.id,{original:true});
   if(source.job_id!==job.id||source.status!=='QUEUED')return {id:source.id,replayed:true};
@@ -215,6 +235,17 @@ async function readJob(db,ctx,job,options){
       await saveRows(c,ctx,source.id,rows,{original:true});
       await c.query(`UPDATE ${sources} SET status='REVIEW',layout_hash=$3,evidence_hash=$4,reading_note=$5,issue=NULL WHERE workspace_id=$1 AND id=$2`,
         [ctx.workspaceId,source.id,parsed.layoutHash,fingerprint(rows),parsed.visual?'Check all visual readings against the saved original.':null]);
+      const decision=await smallDifferences(c,ctx,source,rows,parsed);
+      if(decision){
+        const money=minor=>require('../domain/currency').format(minor,decision.currency);
+        const posting=decision.action==='post',note=posting
+          ?`Posted on its own: the differences come to ${money(decision.exposureMinor)}, within your ${money(decision.limitMinor)} count limit.`
+          :`The differences come to ${money(decision.exposureMinor)}, over your ${money(decision.limitMinor)} count limit. Check the counts and approve them yourself.`;
+        const jobId=posting?await addJob(c,ctx,source.id,'post'):null;
+        await c.query(`UPDATE ${sources} SET reading_note=$3${jobId?",status='APPROVED',job_id=$4,approved_at=now()":''} WHERE workspace_id=$1 AND id=$2`,
+          jobId?[ctx.workspaceId,source.id,note,jobId]:[ctx.workspaceId,source.id,note]);
+        summary.posting=posting;
+      }
       if(parsed.paid)await documents.commitCredits(c,ctx,key);
       await leased(c,job,summary);
       return summary;
