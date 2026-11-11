@@ -46,15 +46,7 @@ module.exports=[
       AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
       AND l.quantity_units>l.quantity_received_units AND ($2='' OR lower(s.code)=lower($2) OR lower(v.name)=lower($2))
     ORDER BY p.expected_date,p.id,l.line_number`,usesDate:true},
-  {id:78,key:'customer-check-in',salesHistory:true,label:'Draft check-ins for inactive customers',summary:'Customers with at least two shipped orders and no shipment in 90 days. Review the draft before contacting anyone.',sql:`
-    WITH sales AS (SELECT o.customer_id,max(h.shipped_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC'))::date AS last_sale,count(DISTINCT o.id) AS n
-      FROM sales_orders o JOIN sales_shipments h ON h.sales_order_id=o.id AND h.workspace_id=o.workspace_id
-      JOIN workspaces w ON w.id=o.workspace_id JOIN accounts a ON a.id=w.owner_account_id
-      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.customer_return_id IS NULL AND h.shipped_at IS NOT NULL AND ($4::text IS NULL OR o.order_date >= $4) GROUP BY o.customer_id)
-    SELECT c.name AS "Customer",s.last_sale::text AS "Last shipment",s.n AS "Previous orders",
-      'Hello '||c.name||', our last shipment to you was on '||s.last_sale::text||'. Would you like an updated stock list or help planning your next order?' AS "Draft"
-    FROM sales s JOIN customers c ON c.id=s.customer_id AND c.record_state='ACTIVE'
-    WHERE s.n>=2 AND s.last_sale<($3::date-90) AND ($2='' OR lower(c.name)=lower($2)) ORDER BY s.last_sale,c.id`,usesDate:true},
+  require('../sales/agent-customer-checkins').definition,
   {id:79,key:'bought-together',label:'Find items commonly bought together',requiresFilter:true,
     readPage:require('../sales/quote-companion-evidence').readReport},
   {id:88,key:'customer-health',label:'Flag customers buying less',summary:'Compare distinct shipped orders in the last 30 days with the preceding 30 days.',sql:`

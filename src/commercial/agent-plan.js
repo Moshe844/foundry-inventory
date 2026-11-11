@@ -208,7 +208,7 @@ const actionJobs=new Map([
   ['sales_order.recurring',67],
   ['import.supplier_catalog',127],['import.variants',130],
   ['kit.replenish_parts',13],
-  ['sales_quote.create',73],['sales_quote.accept',75],['sales_quote.add_companions',79],
+  ['sales_quote.create',73],['sales_quote.accept',75],['customer.check_in',78],['sales_quote.add_companions',79],
   ['planning.safety_stock',150],['planning.location_reorder',120],['inventory.plan_daily_cycle_count',4],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
@@ -243,6 +243,7 @@ const newAgentActions=new Set(['customer_invoice.prepare_document','sales_quote.
 newAgentActions.add('purchase_order.reorder_drafts');newAgentActions.add('purchasing.select_supplier');
 newAgentActions.add('sales_order.reserve_rotation');
 newAgentActions.add('sales_quote.add_companions');
+newAgentActions.add('customer.check_in');
 newAgentActions.add('transfer.prepare_balance');
 newAgentActions.add('inventory.write_down_aged');
 function actionPlan(state,name){
@@ -255,6 +256,7 @@ const humanSteps=new Set([
   'purchase_order.receive_from_document',
   'sales_quote.accept',
   'sales_quote.add_companions',
+  'customer.check_in',
   'catalog.restore_margin',
   'inventory.write_down_aged',
   'inventory.receive','purchase_order.receive','transfer.receive','transfer.pick','transfer.dispatch','transfer.depart','transfer.in_transit','customer_return.receive',

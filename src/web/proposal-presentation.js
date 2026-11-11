@@ -112,6 +112,13 @@ function present(proposal){
   const p=proposal.payload,money=require('../domain/currency');
   return {summary:proposal.summary,impact:p.expectedStatus==='DISPUTED'?'Records a disputed supplier document':'Records the supplier invoice owed',fields:[{label:'Supplier invoice',value:p.supplierInvoiceNumber},{label:'Invoice date',value:p.issueDate},{label:'Due date',value:p.dueDate||'Needs confirmation'},...(p.sourceEvidence?[{label:'Original document',value:p.sourceEvidence.filename}]:[]),...(p.lines||[]).map(l=>({label:l.description||'Invoice item',value:l.quantity+' units at '+money.format(l.unitCostMinor,p.currency)+' each'})),...(p.expectedTotalMinor!=null?[{label:'Invoice total',value:money.format(p.expectedTotalMinor,p.currency)}]:[]),...(p.invoiceRoutineHold?[{label:'Needs your review',value:p.invoiceRoutineHold}]:[])]};
  }
+ if(proposal.action_type==='customer.check_in'){
+  const {message,evidence}=proposal.payload;
+  return {summary:proposal.summary,impact:'Saves one private check-in draft',fields:[
+    {label:'Customer',value:evidence.customer},{label:'Last purchase',value:evidence.lastPurchase},
+    {label:'Prior purchases',value:evidence.purchases.map(p=>p.orderNumber+' · '+p.handedOn).join('\n'),multiline:true},
+    {label:'To',value:message.recipient},{label:'Subject',value:message.subject},{label:'Draft',value:message.body,multiline:true}]};
+ }
  if(proposal.action_type==='customer.statement'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one requested customer account statement',fields:[{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'As of',value:p.asOf},{label:'Account balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',multiline:true,value:require('../accounting/agent-customer-statements').compose(p).body}]};
  }

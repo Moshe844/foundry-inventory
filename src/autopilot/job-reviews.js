@@ -221,6 +221,7 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(def.id===78?{customerCheckinLink:true}:{}),
       ...(def.id===105?{supplierCreditLink:true}:{}),
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),

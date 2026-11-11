@@ -1,6 +1,7 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
 <% if(result.pricePreparationHold){ %><p><%= result.pricePreparationHold %></p><% } %>
 <% if(result.countSourcePath){ %><p><a class="btn" href="<%= result.countSourcePath %>">Open physical count originals</a></p><% } %>
+<% if(result.customerCheckinLink){ %><p><a href="/autopilot/customer-check-ins">Open saved check-ins and routine settings</a></p><% } %>
 <% if(result.cyclePlan){ %><p><a class="btn" href="/autopilot/daily-cycle-counts">Open daily cycle-count plans</a></p><% } %>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
 <% if(result.lossShifts?.length){ %>

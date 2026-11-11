@@ -443,7 +443,7 @@ function createPostgresCommerceRouter(database,options={}){
         GROUP BY so.id,c.name HAVING SUM(a.quantity)>0 ORDER BY COALESCE(so.needed_by,'9999-12-31'),so.created_at`,[req.ctx.workspaceId]),
       database.query(`SELECT cc.*,c.name AS customer_name,so.order_number,sh.shipment_number FROM customer_communications cc
         LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN sales_orders so ON so.id=cc.sales_order_id
-        LEFT JOIN sales_shipments sh ON sh.id=cc.shipment_id WHERE cc.workspace_id=$1 AND cc.status IN ('PREPARED','FAILED')
+        LEFT JOIN sales_shipments sh ON sh.id=cc.shipment_id WHERE cc.workspace_id=$1 AND cc.status IN ('PREPARED','FAILED') AND cc.message_kind<>'customer_check_in'
         ORDER BY cc.created_at`,[req.ctx.workspaceId]),
       database.query('SELECT * FROM customer_communication_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
       database.query(`SELECT id,display_name FROM workspace_connectors WHERE workspace_id=$1

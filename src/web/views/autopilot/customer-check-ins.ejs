@@ -1,0 +1,40 @@
+
+<header class="rm-head"><a href="/autopilot/reviews/customer-check-in">← Find inactive customers</a>
+<h1>Customer check-in drafts</h1><p>Saved drafts stay in StockChief for your review.</p></header>
+<% if(problem){ %><p class="notice notice--warn"><%= problem %></p><% } %>
+<% if(current){ %><section class="rm-panel"><div class="rm-panel__body">
+<h2><%= current.evidence.customer %></h2><p>Latest purchase <%= current.evidence.lastPurchase %> · <%= current.evidence.priorOrders %> prior orders</p>
+<ul><% for(const p of current.evidence.purchases){ %><li><a href="/orders/<%= p.orderId %>"><%= p.orderNumber %></a> · <%= p.shipmentNumber %> · <%= p.handedOn %></li><% } %></ul>
+<% if(current.draftId){ %><p><a class="rm-btn" href="/autopilot/customer-check-ins?draft=<%= encodeURIComponent(current.draftId) %>">Open saved check-in</a></p>
+<% }else{ %><form method="post" action="/autopilot/customer-check-ins/prepare">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="customerId" value="<%= current.recordId %>">
+<button class="rm-btn" type="submit">Review exact check-in draft</button>
+</form><% } %></div></section><% } %>
+<% if(selected){ %><section class="rm-panel"><div class="rm-panel__body">
+<h2><%= selected.subject %></h2>
+<% if(!selected.current){ %><p class="notice notice--warn">Customer activity or contact details changed after this draft. This is the original record.</p><% } %>
+<p>To <%= selected.recipient %></p><p style="white-space:pre-wrap"><%= selected.body %></p>
+<p>Saved <%= helpers.dateTime(selected.created_at) %> · <%= {INDIVIDUAL:'Individually approved',TRAINED:'Taught routine',CUSTOM:'Owner-authorized routine'}[selected.authority_kind] %></p>
+<h3>Purchase evidence</h3><ul><% for(const p of selected.evidence.purchases){ %><li><a href="/orders/<%= p.orderId %>"><%= p.orderNumber %></a> · <%= p.shipmentNumber %> · <%= p.handedOn %></li><% } %></ul>
+</div></section><% } %>
+<% if(!locked){ %><section class="rm-panel"><div class="rm-panel__body"><h2>Saved drafts</h2>
+<% if(!rows.length){ %><p>No drafts saved yet.</p><% }else{ %><ul><% for(const d of rows){ %><li><a href="/autopilot/customer-check-ins?draft=<%= encodeURIComponent(d.id) %>"><%= d.customer %></a> · latest purchase <%= d.purchase %></li><% } %></ul><% } %>
+<% const query=new URLSearchParams(customerId?{customer:customerId}:{}); %>
+<% if(page>1){ query.set('page',String(page-1)); %><a href="/autopilot/customer-check-ins?<%= query.toString() %>">Previous page</a><% } %>
+<% if(more){ query.set('page',String(page+1)); %><a href="/autopilot/customer-check-ins?<%= query.toString() %>">Next page</a><% } %>
+</div></section><% } %>
+<section class="rm-panel"><div class="rm-panel__body"><h2>Routine drafting</h2>
+<% if(setting?.enabled){ %><p><%= setting.authority_kind==='TRAINED'?'Taught routine saved.':'Owner authority saved.' %></p><form method="post" action="/autopilot/customer-check-ins/routine">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting.revision %>">
+<button class="rm-btn rm-btn--ghost" name="stop" value="yes">Stop routine drafting</button></form><% } %>
+<% if(!locked){ %>
+<% if(shadow){ %><p>Routine drafting starts after the 14-day observation period.</p><% } %>
+<% if(canTeach&&!examples.length){ %><p>Approve one check-in draft from a real customer’s purchases before teaching the routine.</p>
+<% }else{ %><form method="post" action="/autopilot/customer-check-ins/routine">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting?.revision||0 %>">
+<% if(canTeach){ %><label>Individually approved example
+<select name="exampleId" required><option value="">Choose a saved example</option><% for(const d of examples){ %><option value="<%= d.id %>"><%= d.customer %> · <%= d.purchase %></option><% } %></select></label><% } %>
+<label><input type="checkbox" name="confirmed" value="yes" required> Draft private check-ins for existing customers with at least two purchases, no open order and no shipment in 90 days.</label>
+<button class="rm-btn" type="submit"><%= canTeach?'Teach private drafting':'Authorize private drafting' %></button>
+</form><% } %><% } %>
+</div></section>

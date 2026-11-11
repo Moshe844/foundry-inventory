@@ -909,6 +909,23 @@ function createPostgresAutopilotRouter(database,options={}){
     res.page('autopilot/reviews',{ediEnabled,title:'Agent reviews',nav:'autopilot',offers:reviews.offers(state),shipbobEnabled:policy.usesAgentTerms(state)&&policy.permits(state.plan,186,'draft')});
   }));
   const landedCosts=require('../../accounting/postgres-landed-costs');
+  const customerCheckins=require('../../sales/agent-customer-checkins');
+  const checkinPath=customerCheckins.path;
+  router.get(checkinPath,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const page=Number(req.query.page||1);
+    if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid results page.');
+    return agentPage(req,res,'autopilot/customer-check-ins',{title:'Customer check-in drafts',nav:'autopilot'},
+      ()=>customerCheckins.page(database,req.ctx,{customerId:req.query.customer,selectedId:req.query.draft,page}),402);
+  }));
+  router.post(checkinPath+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const p=await assistant.prepareAction(database,req.ctx,'Prepare this customer check-in.',{action:customerCheckins.ACTION,recordReference:req.body.customerId});
+    if(!p.proposal?.id)throw new ValidationError(p.answer||'Review this exact customer and purchase evidence first.');
+    return res.redirect(303,'/actions/'+p.proposal.id);
+  }));
+  router.post(checkinPath+'/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await customerCheckins.configure(database,req.ctx,req.body);
+    return res.redirect(303,checkinPath);
+  }));
   const quoteFollowups=require('../../sales/agent-quote-followups');
   router.get('/autopilot/quote-followups/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/quote-followup',{title:'Customer quote follow-up',nav:'autopilot'},()=>quoteFollowups.page(database,req.ctx,req.params.id),402)));
   router.post('/autopilot/quote-followups/:id/received',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.record(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));

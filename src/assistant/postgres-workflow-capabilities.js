@@ -746,6 +746,7 @@ const SPECS=Object.freeze([
   require('../warehouse/agent-stock-rotation').spec,
   require('../transfers/agent-transfer-balancing').spec,
   ...require('../sales/agent-quotes').specs,
+  require('../sales/agent-customer-checkins').spec,
   require('../sales/agent-quote-companions').spec,
   require('../purchasing/agent-regroup-orders').spec(24),require('../purchasing/agent-regroup-orders').spec(25),
   {name:'catalog.fill_supplier_specs',description:'Fill missing barcodes, unit weights and dimensions from the exact approved supplier file. Skip unknown units, duplicate barcodes or conflicting evidence. Optionally restrict to a named SKU.',
