@@ -11,9 +11,10 @@
   var oxShipped = Number(order.totals && order.totals.fulfilled || 0) > 0;
   var oxPicking = (locals.shipments || []).some(function (s) { return s.status !== 'CANCELLED'; });
   var oxHeld = Number(order.totals && order.totals.allocated || 0) > 0;
-  var oxCanEdit = locals.canEdit !== false && (order.status === 'DRAFT'
+  var oxDirect = Number(order.totals && order.totals.directCommitted || 0) > 0;
+  var oxCanEdit = !oxDirect && locals.canEdit !== false && (order.status === 'DRAFT'
     || (['CONFIRMED', 'BACKORDERED'].includes(order.status) && !oxShipped && !oxPicking));
-  var oxCanCancel = locals.canEdit !== false && !['FULFILLED', 'CANCELLED'].includes(order.status);
+  var oxCanCancel = !oxDirect && locals.canEdit !== false && !['FULFILLED', 'CANCELLED'].includes(order.status);
 %>
 <link rel="stylesheet" href="/orders-ui.css?v=<%= assetVersion %>">
 <div class="ox ox-ohead-wrap">

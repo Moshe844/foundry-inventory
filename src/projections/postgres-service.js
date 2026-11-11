@@ -13,6 +13,8 @@ function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=n
  return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
 async function membership(database,workspaceId,actorId){return actorId?(await database.query(`SELECT role,permissions,
+ coalesce((SELECT (to_jsonb(w)->>'has_supplier_direct_orders')::boolean FROM workspaces w
+   WHERE w.id=users.workspace_id AND w.owner_account_id=users.account_id),false) AS has_supplier_direct_orders,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.frozen_at))
  FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='FROZEN'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS annual_stocktake_summary,
@@ -68,7 +70,7 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
@@ -93,10 +95,12 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../catalog/agent-channel-copy').notices(actor.channel_copy_summary):[],
       actor?.role==='owner'?require('../purchasing/agent-blanket-releases').notices(actor.blanket_contract_summary):[],
       actor?.role==='owner'?require('../documents/agent-product-source').notices(actor.product_source_summary):[],
+      actor?.role==='owner'&&actor.has_supplier_direct_orders?
+        require('../purchasing/agent-direct-shipments').inbox(database,workspaceId,{installed:true}):[],
     ]);
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
-    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent
@@ -140,7 +144,7 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
         WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
         AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')) ORDER BY message.received_at ASC`,[workspaceId]),
     database.query(`SELECT so.id,so.order_number,so.needed_by,so.created_at,c.name AS customer_name,
-      SUM(sol.quantity_ordered-sol.quantity_fulfilled) AS remaining,
+      SUM(sol.quantity_ordered-sol.quantity_fulfilled-coalesce((to_jsonb(sol)->>'direct_committed_quantity')::numeric,0)) AS remaining,
       COALESCE(SUM(a.allocated),0) AS allocated
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id
       JOIN sales_order_lines sol ON sol.sales_order_id=so.id
@@ -148,7 +152,7 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
         WHERE workspace_id=$1 GROUP BY sales_order_line_id) a ON a.sales_order_line_id=sol.id
       WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
       GROUP BY so.id,so.order_number,so.needed_by,so.created_at,c.name
-      HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled)>COALESCE(SUM(a.allocated),0)
+      HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled-coalesce((to_jsonb(sol)->>'direct_committed_quantity')::numeric,0))>COALESCE(SUM(a.allocated),0)
       ORDER BY so.needed_by NULLS LAST,so.created_at`,[workspaceId]),
     database.query(`SELECT po.id,po.po_number,po.expected_date,po.created_at,s.name AS supplier_name
       FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
@@ -304,7 +308,8 @@ async function briefData(database,workspaceId,{includeLocationStock,includeAvail
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
-        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming FROM sku_stats`,[workspaceId]),
+        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+        AND coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE')='WAREHOUSE') AS incoming FROM sku_stats`,[workspaceId]),
     includeLocationStock?database.query(`SELECT l.id,l.name,${require('../domain/stock-totals').totalsSql('l.workspace_id','l.id')} AS stock FROM locations l
       WHERE l.workspace_id=$1 AND l.is_active=1 ORDER BY l.name`,[workspaceId]):{rows:[]},
     database.query(`WITH recent_movements AS MATERIALIZED(

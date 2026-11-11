@@ -16,16 +16,19 @@ async function issue(client,workspaceId,orderId,recipient,origin) {
   return new URL('/supplier/order/'+token,base.origin).href;
 }
 
-async function lookup(db,token,lock=false){
+async function lookup(db,token,lock=false,{includeCompleted=false}={}){
   if(!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundError();
   const order=(await db.query(`SELECT po.id,po.workspace_id,po.po_number,po.expected_date,po.currency,
-      l.token_hash,s.name AS supplier_name FROM stockchief_runtime.supplier_order_links l
+      l.token_hash,s.name AS supplier_name,coalesce(to_jsonb(po)->>'delivery_kind','WAREHOUSE') AS delivery_kind
+      FROM stockchief_runtime.supplier_order_links l
     JOIN purchase_orders po ON po.id=l.purchase_order_id AND po.workspace_id=l.workspace_id
     JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
     JOIN workspaces w ON w.id=po.workspace_id
     WHERE l.token_hash=$1 AND l.expires_at>now() AND lower(s.email)=l.recipient
       AND s.status='active' AND w.deletion_requested_at IS NULL
-      AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') ${lock?'FOR UPDATE OF po,l':''}`,[hash(token)])).rows[0];
+      AND (po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') OR
+        $2::boolean AND po.status='RECEIVED' AND to_jsonb(po)->>'delivery_kind'='CUSTOMER_DIRECT')
+      ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted])).rows[0];
   if(!order) throw new NotFoundError('This supplier order link is no longer active.');
   return order;
 }
@@ -39,7 +42,7 @@ async function submit(db,token,kind,value){
   if(date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date))
     throw new ValidationError('Enter a valid delivery date.');
   return db.transaction(async client=>{
-    const order=await lookup(client,token,true),digest=hash(kind+'|'+(file?hash(value):date||'')),id=newId('supplierreply');
+    const order=await lookup(client,token,true,{includeCompleted:true}),digest=hash(kind+'|'+(file?hash(value):date||'')),id=newId('supplierreply');
     const existing=await client.query('SELECT 1 FROM stockchief_runtime.supplier_link_submissions WHERE token_hash=$1 AND fingerprint=$2',[order.token_hash,digest]);
     if(existing.rowCount) return {saved:true};
     if(file) await require('../commercial/storage-capacity').reserve(client,order.workspace_id,'supplier-file:'+id,value.length,{finished:true});

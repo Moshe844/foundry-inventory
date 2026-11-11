@@ -5,6 +5,7 @@ const {ValidationError,AuthorizationError,NotFoundError}=require('../domain/erro
 const money=require('../domain/currency');
 const cash=require('../accounting/agent-cash-planning');
 const definitions=[
+  require('../purchasing/agent-direct-shipments').definition,
   require('../documents/agent-sop-sources').definition,
   require('../documents/agent-contract-reader').definition,
   require('../warehouse/agent-shelf-photos').definition,
@@ -221,7 +222,7 @@ async function run(db,ctx,key,options={}){
   }else{
     const args=def.usesDate?[ctx.workspaceId,filter,today]:[ctx.workspaceId,filter];
     if(def.salesHistory)args.push((await require('../commercial/agent-history').access(db,ctx.workspaceId)).salesFrom);
-    let sql=def.sql;
+    let sql=await require('../purchasing/direct-shipment-trace').extend(db,ctx,def);
     if(def.priceIncrease){
       const exponents=Object.fromEntries([...Intl.supportedValuesOf('currency'),'CLF','UYW'].map(code=>[code,money.exponent(code)]));
       args.push(JSON.stringify(exponents));

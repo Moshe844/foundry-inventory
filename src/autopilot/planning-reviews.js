@@ -19,6 +19,7 @@ async function reorder(db,ctx,options){
   const incoming=(await db.query(`SELECT l.sku_id,coalesce(l.destination_location_id,o.destination_location_id) location_id,o.po_number,o.expected_date,o.status,
    (l.quantity_units-l.quantity_received_units)::text remaining FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')
+   AND coalesce(to_jsonb(o)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
    AND l.quantity_units>l.quantity_received_units
    UNION ALL SELECT l.sku_id,t.destination_location_id,coalesce(t.reference,t.id),t.expected_arrival_date,t.status,
    (CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity WHEN 'APPROVED' THEN l.approved_quantity WHEN 'PICKED' THEN l.picked_quantity ELSE l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity END)::text

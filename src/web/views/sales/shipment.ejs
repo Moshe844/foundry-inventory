@@ -151,7 +151,9 @@
         <h2><%= s.status === 'PICKING' ? 'What to collect'
           : s.status === 'PACKED' ? 'What is in the box' : s.status === 'CANCELLED' ? 'What was in the box' : 'What went' %></h2>
         <span class="t-xs t-muted">
-          <% if (s.status === 'PICKING') { %>
+          <% if(s.delivery_kind==='CUSTOMER_DIRECT'){ %>
+            Delivered directly by the supplier
+          <% }else if (s.status === 'PICKING') { %>
             <%= pickList.stops.length %>
             <%= pickList.stops.length === 1 ? 'place to visit' : 'places to visit' %>
           <% } else { %>
@@ -930,8 +932,12 @@
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="btn" type="submit">Mark delivered</button>
             <span class="hint">
+              <% if(s.delivery_kind==='CUSTOMER_DIRECT'){ %>
+              The supplier provided this carrier and tracking number. Open the tracking link for the carrier’s latest delivery scans.
+              <% }else{ %>
               StockChief has no carrier account, so it cannot see a delivery scan.
               This is you telling it what you know.
+              <% } %>
             </span>
           </form>
         </div>

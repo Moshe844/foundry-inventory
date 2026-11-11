@@ -20,7 +20,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const state=await shipping.state(database,workspaceId,shipmentId);
   const [lineRows,orderDetail,noticeRows,mailboxRows,transactionRows,policyRows,ruleRows]=await Promise.all([
     database.query(`SELECT sl.*,l.name AS location_name,i.name AS item_name,i.unit_label,i.tracking_mode,i.secondary_unit_label,s.code AS sku_code,s.variant_label
-      FROM sales_shipment_stock_lines sl JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
+      FROM sales_shipment_stock_lines sl LEFT JOIN locations l ON l.id=sl.location_id AND l.workspace_id=sl.workspace_id
       JOIN skus s ON s.id=sl.sku_id AND s.workspace_id=sl.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE sl.workspace_id=$1 AND sl.shipment_id=$2 ORDER BY l.name,i.name,sl.id`,[workspaceId,shipmentId]),
@@ -36,7 +36,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
   ]);
   const stops=[];const stopMap=new Map();
   for(const line of lineRows.rows){
-    if(!stopMap.has(line.location_id)){const stop={locationId:line.location_id,locationName:line.location_name,lines:[]};
+    if(!stopMap.has(line.location_id)){const stop={locationId:line.location_id,
+      locationName:state.shipment.delivery_kind==='CUSTOMER_DIRECT'?'Supplier-direct dispatch':line.location_name,lines:[]};
       stopMap.set(line.location_id,stop);stops.push(stop);}
     stopMap.get(line.location_id).lines.push({...line,quantity:Number(line.quantity),kit_component_id:line.kit_component_id||null});
   }

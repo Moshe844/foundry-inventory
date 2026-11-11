@@ -5,7 +5,9 @@
 const sources=[
  ['agent_draft_rules'],['agent_supplier_invoice_settings','enabled'],['agent_customer_invoice_rules'],['agent_invoice_reminder_rules'],['agent_supplier_forecast_rules','enabled'],['agent_return_email_rules'],['agent_return_disposition_rules','enabled'],['agent_customer_order_pages','enabled'],['agent_customer_page_rules','enabled'],['agent_website_stock_chats','enabled'],['agent_channel_copy_sets','enabled'],['agent_contract_reading_settings','enabled'],['agent_shelf_photo_rules'],['agent_backup_supplier_rules','enabled'],['agent_blanket_contracts','enabled'],
  ['agent_supplier_term_settings','enabled'],['agent_supplier_term_rules'],['agent_po_date_settings','enabled'],['agent_po_date_rules'],
- ['agent_container_projects','enabled'],['agent_container_rules'],['agent_inbound_freight','routine'],['agent_van_route_rules','enabled'],['agent_team_procedure_sets','enabled'],['agent_product_retirement_settings','enabled'],
+ ['agent_container_projects','enabled'],['agent_container_rules'],['agent_inbound_freight','routine'],['agent_van_route_rules','enabled'],
+ ['agent_direct_rules','enabled'],['agent_direct_orders','routine AND rule_id IS NULL'],
+ ['agent_team_procedure_sets','enabled'],['agent_product_retirement_settings','enabled'],
  ['agent_supplier_shutdowns','enabled'],['agent_promotion_stock','enabled'],['agent_quality_policies','enabled'],['agent_rfq_rules','enabled'],['agent_supplier_claim_rules','enabled'],['agent_channel_buffer_recipes','active_members>0'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],['agent_putaway_rules'],
  ['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels']
 ];

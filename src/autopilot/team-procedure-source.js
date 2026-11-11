@@ -16,13 +16,14 @@ async function facts(db,ctx,raw,{exampleIds=null,recordedFrom=null,recordedThrou
  const location=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,scope.locationId])).rows[0];if(!location)throw new ValidationError('Choose an active owned warehouse or stock location.');
  const covered=await require('../operations/postgres-warehouse-access').locations(db,ctx.workspaceId,[scope.locationId]),history=await require('../commercial/agent-history').access(db,ctx.workspaceId),window=(await db.query("SELECT greatest(coalesce($3::timestamptz,now()-make_interval(days=>$1)),coalesce($2::timestamptz,'-infinity'::timestamptz)) AS starts,least(coalesce($4::timestamptz,now()),now()) AS ends",[scope.lookbackDays,history.activityAfter,recordedFrom,recordedThrough])).rows[0],from=window.starts.toISOString(),to=window.ends.toISOString(),args=[ctx.workspaceId,covered.map(l=>l.id),from,to,exampleIds];let examples;
  if(scope.kind==='receiving')examples=(await db.query(`WITH recent AS MATERIALIZED(
-  SELECT r.id FROM purchase_order_receipts r WHERE r.workspace_id=$1 AND ($5::text[] IS NULL OR r.id=ANY($5)) AND r.created_at>=$3 AND r.created_at<=$4
+  SELECT r.id,r.workspace_id,r.purchase_order_id,r.created_at,r.received_by_user_id,r.reference,r.over_receipt_approved
+  FROM purchase_order_receipts r WHERE r.workspace_id=$1 AND ($5::text[] IS NULL OR r.id=ANY($5)) AND r.created_at>=$3 AND r.created_at<=$4
    AND EXISTS(SELECT 1 FROM purchase_order_receipt_lines l WHERE l.workspace_id=r.workspace_id AND l.receipt_id=r.id AND l.location_id=ANY($2::text[]))
   ORDER BY r.created_at DESC,r.id DESC LIMIT 1000)
   SELECT r.id,p.po_number AS reference,r.created_at AS recorded_at,r.received_by_user_id AS actor_id,
   r.reference IS NOT NULL AND trim(r.reference)<>'' AS has_reference,r.over_receipt_approved=1 AS over_receipt,
   count(*)::int AS lines,array_agg(DISTINCT i.tracking_mode ORDER BY i.tracking_mode) AS tracking_modes
-  FROM recent JOIN purchase_order_receipts r ON r.workspace_id=$1 AND r.id=recent.id JOIN purchase_orders p ON p.workspace_id=r.workspace_id AND p.id=r.purchase_order_id
+  FROM recent r JOIN purchase_orders p ON p.workspace_id=r.workspace_id AND p.id=r.purchase_order_id
   JOIN purchase_order_receipt_lines l ON l.workspace_id=r.workspace_id AND l.receipt_id=r.id AND l.location_id=ANY($2::text[])
   JOIN movements m ON m.workspace_id=l.workspace_id AND m.id=(l.movement_ids::jsonb->>0) AND m.sku_id=l.sku_id AND m.location_id=l.location_id AND m.operation='receive' AND m.quantity_delta=l.quantity_units
   JOIN accounting_inventory_cost_movements c ON c.workspace_id=m.workspace_id AND c.inventory_movement_id=m.id AND c.quantity_delta=m.quantity_delta AND c.cost_source_record_id=r.id AND c.cost_source_type='purchase_order_receipt'
@@ -32,14 +33,17 @@ async function facts(db,ctx,raw,{exampleIds=null,recordedFrom=null,recordedThrou
    AND p.approved_at IS NOT NULL AND p.ordered_at IS NOT NULL AND p.ordered_at::timestamptz<=r.created_at::timestamptz
    AND c.cost_delta_minor>=0 AND ((c.cost_delta_minor=0 AND c.journal_entry_id IS NULL) OR (j.status='POSTED' AND j.source_record_id=r.id AND j.metadata::jsonb->>'movementId'=m.id))
    AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries reversal WHERE reversal.workspace_id=j.workspace_id AND reversal.reversal_of_entry_id=j.id AND reversal.status='POSTED')
-  GROUP BY r.id,p.po_number HAVING count(*)=(SELECT count(*) FROM purchase_order_receipt_lines all_lines WHERE all_lines.workspace_id=r.workspace_id AND all_lines.receipt_id=r.id AND all_lines.location_id=ANY($2::text[]))
+  GROUP BY r.workspace_id,r.id,r.created_at,r.received_by_user_id,r.reference,r.over_receipt_approved,p.po_number
+  HAVING count(*)=(SELECT count(*) FROM purchase_order_receipt_lines all_lines WHERE all_lines.workspace_id=r.workspace_id AND all_lines.receipt_id=r.id AND all_lines.location_id=ANY($2::text[]))
   ORDER BY r.created_at DESC,r.id DESC LIMIT 101`,args)).rows;
  else if(scope.kind==='dispatch')examples=(await db.query(`WITH recent AS MATERIALIZED(
-  SELECT sh.id FROM sales_shipments sh WHERE sh.workspace_id=$1 AND ($5::text[] IS NULL OR sh.id=ANY($5)) AND sh.ship_from_location_id=ANY($2::text[]) AND sh.status IN ('SHIPPED','DELIVERED') AND sh.created_at>=$3 AND sh.created_at<=$4
+  SELECT sh.id,sh.workspace_id,sh.sales_order_id,sh.shipment_number,sh.created_at,sh.created_by_user_id,
+    sh.handover,sh.tracking_number,sh.ship_from_location_id,sh.status
+  FROM sales_shipments sh WHERE sh.workspace_id=$1 AND ($5::text[] IS NULL OR sh.id=ANY($5)) AND sh.ship_from_location_id=ANY($2::text[]) AND sh.status IN ('SHIPPED','DELIVERED') AND sh.created_at>=$3 AND sh.created_at<=$4
   ORDER BY sh.created_at DESC,sh.id DESC LIMIT 1000)
   SELECT sh.id,sh.shipment_number AS reference,sh.created_at AS recorded_at,sh.created_by_user_id AS actor_id,
   sh.handover,coalesce(sh.tracking_number,'')<>'' AS has_tracking,sh.sales_order_id
-  FROM recent JOIN sales_shipments sh ON sh.workspace_id=$1 AND sh.id=recent.id JOIN sales_orders o ON o.workspace_id=sh.workspace_id AND o.id=sh.sales_order_id
+  FROM recent sh JOIN sales_orders o ON o.workspace_id=sh.workspace_id AND o.id=sh.sales_order_id
   WHERE sh.workspace_id=$1 AND ($5::text[] IS NULL OR sh.id=ANY($5)) AND sh.ship_from_location_id=ANY($2::text[]) AND sh.status IN ('SHIPPED','DELIVERED') AND sh.created_at>=$3 AND sh.created_at<=$4
    AND sh.created_at::timestamptz>=$3::timestamptz AND sh.created_at::timestamptz<=$4::timestamptz
    AND EXISTS(SELECT 1 FROM stockchief_runtime.business_operations op WHERE op.workspace_id=sh.workspace_id AND op.kind='sales_order.fulfill' AND op.status='COMPLETED'

@@ -48,6 +48,17 @@
 <% if(locals.postgresPlacement&&order.lines.some(l=>l.allocations.some(a=>a.rotation_selection)||l.kitComponents?.some(p=>p.allocations?.some(a=>a.rotation_selection)))){ %><p>Exact FIFO/FEFO identities are reserved. Physical picks must match those identities.</p><% if(locals.currentUser?.role==='owner'){ %><form method="post" action="/autopilot/stock-rotation/<%= order.id %>/release"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Release identity selection; keep quantity commitments</button></form><% }} %>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= helpers.shortDate(order.order_date) %><%= order.needed_by ? ' · needed by ' + helpers.shortDate(order.needed_by) : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : helpers.orderStatus(order.status,order.totals.fulfilled,order.delivery_method) %></span></div>
 <% if(order.reference){ %><p class="t-muted">Reference: <%= order.reference %></p><% } %>
+<% if(locals.postgresPlacement&&locals.canManageDirectShipping&&order.delivery_method==='SHIP'&&!setupRequired){ %>
+  <section class="notice" aria-label="Supplier-direct delivery">
+    <strong>Supplier-direct delivery</strong>
+    <% if(order.totals.directCommitted){ %><p><%= order.totals.directCommitted %> ordered units are promised for delivery directly from suppliers.</p><% } %>
+    <% (locals.directDeliveries||[]).forEach(delivery=>{ %><p><a href="/autopilot/direct-shipments/<%= delivery.id %>"><%= delivery.po_number %></a> · <%= delivery.status.toLowerCase().replaceAll('_',' ') %></p><% }) %>
+    <% if(!['FULFILLED','CANCELLED'].includes(order.status)){ %>
+      <% if(locals.directShippingAllowed){ %><a class="btn" href="/autopilot/direct-shipments?orderId=<%= order.id %>">Prepare supplier-direct purchase</a>
+      <% }else{ %><span class="badge">Growth</span> <a class="btn" href="/billing">Upgrade for supplier-direct delivery</a><% } %>
+    <% } %>
+  </section>
+<% }else if(locals.postgresPlacement&&order.totals.directCommitted){ %><p class="notice"><%= order.totals.directCommitted %> ordered units are promised for delivery directly from suppliers.</p><% } %>
 <% if (locals.postgresPlacement) { %><div class="ox-order"><aside class="ox-order__side"><%- include('order-side-v2') %><%- include('order-contact') %></aside><div class="ox-order__main"><%- include('order-lines') %><% } %>
 
 
@@ -991,7 +1002,7 @@
             <label class="field"><span class="field-label">Quarantine location</span><select class="input" name="quarantineLocationId" required><option value="">Choose where uninspected goods wait</option><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
             <label class="field"><span class="field-label">Expected outcome</span><select class="input" name="resolution"><option value="REFUND">Refund after inspection</option><option value="EXCHANGE">Prepare a replacement order after inspection</option><option value="NO_REFUND">No refund; physical return only</option></select></label>
             <% returnableLines.forEach(function (line) { var maximum = Number(line.quantity_fulfilled) - Number(line.quantity_returned || 0); %>
-              <label class="field"><span class="field-label"><%= line.displayName %> · <%= maximum %> eligible</span><input class="input" aria-label="Return <%= line.displayName %> quantity" type="number" name="quantity_<%= line.id %>" min="0" max="<%= maximum %>" value="0"></label>
+              <label class="field"><span class="field-label"><%= line.displayName %> · <%= maximum %> eligible</span><input class="input" aria-label="Return <%= line.displayName %> quantity" type="number" name="quantity_<%= line.id %>" step="<%= line.quantity_increment||1 %>" min="0" max="<%= maximum %>" value="0"></label>
             <% }) %>
             <label class="field"><span class="field-label">Reason</span><textarea class="input" name="reason" rows="2" placeholder="Why the customer is returning it"></textarea></label>
             <div><button class="btn btn--primary" type="submit">Request return</button></div>

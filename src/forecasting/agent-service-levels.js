@@ -13,6 +13,7 @@ async function report(db,ctx,{today,filter,page}){
       FROM purchase_order_receipt_lines x JOIN purchase_order_receipts r ON r.workspace_id=x.workspace_id AND r.id=x.receipt_id CROSS JOIN zone z
       WHERE x.workspace_id=l.workspace_id AND x.purchase_order_line_id=l.id) received ON true
     WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND p.expected_date::date BETWEEN $3::date-90 AND $3::date-1
+      AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'
       AND ($2='' OR lower(s.name)=lower($2)) GROUP BY p.id,p.supplier_id,s.name,l.id,l.quantity_units
   ), customer_lines AS (
     SELECT 'Customer' AS kind,o.customer_id AS party,c.name,o.id AS order_id,l.quantity_ordered AS ordered,
@@ -39,6 +40,6 @@ async function report(db,ctx,{today,filter,page}){
     AND scored_at::timestamptz >= ($2::date-90)::timestamp AT TIME ZONE $3 AND scored_at::timestamptz < $2::date::timestamp AT TIME ZONE $3`,
     [ctx.workspaceId,today,(await require('../lib/business-time').forWorkspace(db,ctx.workspaceId)).timeZone])).rows[0];
   const forecast=projection.n?'Across '+projection.n+' comparable SKU forecast'+(projection.n===1?'':'s')+', the mean absolute error was '+projection.error+' units.':'No comparable SKU forecast was scored in this period.';
-  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Orders due in the previous 90 completed days. Fill rate measures units shipped to customers or received from suppliers against units ordered. OTIF counts orders for which every line arrived by the promised date. Orders without a promise are excluded. '+forecast};
+  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Orders due in the previous 90 completed days. Fill rate measures units shipped to customers or received into your warehouses against units ordered. OTIF counts orders for which every line arrived by the promised date. Orders without a promise are excluded. '+forecast};
 }
 module.exports={report};

@@ -27,8 +27,10 @@ const reports = [
       JOIN skus s ON s.id=l.sku_id JOIN suppliers v ON v.id=p.supplier_id
     WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND ($2='' OR lower(p.po_number)=lower($2) OR lower(s.code)=lower($2))
     ORDER BY p.order_date DESC,p.id,l.line_number`},
-  {id:90,key:'supplier-scorecard',label:'Review supplier performance',summary:'On-time rate uses completed, dated POs. Fill rate counts each stock unit up to the quantity ordered. Exceptions count disputed bills. Price increases compare consecutive ordered unit prices in the same currency and pack.',sql:`
-    WITH po AS (SELECT * FROM purchase_orders WHERE workspace_id=$1 AND status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')),
+  {id:90,key:'supplier-scorecard',label:'Review supplier performance',summary:'Delivery, fill and price figures cover warehouse purchases. On-time rate uses completed, dated POs. Fill rate counts stock units up to the quantity ordered. Exceptions count disputed bills. Price increases compare consecutive ordered unit prices in the same currency and pack.',sql:`
+    WITH po AS (SELECT id,workspace_id,supplier_id,status,currency,ordered_at,expected_date FROM purchase_orders p
+      WHERE workspace_id=$1 AND status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
+        AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'),
     receipt AS (SELECT purchase_order_id,max(r.received_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC')) AS delivered FROM purchase_order_receipts r JOIN workspaces w ON w.id=r.workspace_id JOIN accounts a ON a.id=w.owner_account_id WHERE r.workspace_id=$1 GROUP BY r.purchase_order_id),
     delivery AS (SELECT p.supplier_id,count(*) AS orders,round(100*avg((r.delivered::date<=p.expected_date::date)::int) FILTER(WHERE p.status='RECEIVED'),1) AS on_time
       FROM po p LEFT JOIN receipt r ON r.purchase_order_id=p.id GROUP BY p.supplier_id),

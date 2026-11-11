@@ -78,8 +78,11 @@ async function plan(c,ctx,orderId,strategy,{lock=false,historicalEvidence=''}={}
   if(positive(remaining))throw new ValidationError('No eligible unpromised '+strategy+' identities cover '+a.code+' at '+a.location_name+'.');
   bindings.push({kind:a.kind,allocationId:a.allocation_id,allocationKey:allocationKey(a),lineId:a.line_id,skuId:a.sku_id,code:a.code,name:a.name,locationId:a.location_id,location:a.location_name,quantity:a.quantity,unit:a.unit_label,secondaryUnit:a.secondary_unit_label,strategy,selection});
  }
- const lineMeasures=(await c.query('SELECT id,quantity_ordered::text,quantity_fulfilled::text,secondary_quantity_ordered::text,secondary_quantity_fulfilled::text FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY id',[ctx.workspaceId,orderId])).rows;
- for(const line of lineMeasures.filter(l=>l.secondary_quantity_ordered!==null)){const normal=bindings.filter(b=>b.kind==='sales'&&b.lineId===line.id);if(normal.reduce((n,b)=>add(n,b.quantity),'0')===sub(line.quantity_ordered,line.quantity_fulfilled)&&normal.flatMap(b=>b.selection).reduce((n,s)=>add(n,s.secondaryQuantity),'0')!==sub(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled))throw new ValidationError('The exact selected goods have a different actual weight from the confirmed order. Review its independent measure before reserving.');}
+ const lineMeasures=(await c.query(`SELECT id,quantity_ordered::text,quantity_fulfilled::text,secondary_quantity_ordered::text,
+  secondary_quantity_fulfilled::text,coalesce((to_jsonb(sales_order_lines)->>'direct_committed_quantity')::numeric,0)::text direct_committed_quantity,
+  coalesce((to_jsonb(sales_order_lines)->>'direct_committed_secondary_quantity')::numeric,0)::text direct_committed_secondary_quantity
+  FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY id`,[ctx.workspaceId,orderId])).rows;
+ for(const line of lineMeasures.filter(l=>l.secondary_quantity_ordered!==null)){const normal=bindings.filter(b=>b.kind==='sales'&&b.lineId===line.id);if(normal.reduce((n,b)=>add(n,b.quantity),'0')===sub(sub(line.quantity_ordered,line.quantity_fulfilled),line.direct_committed_quantity||0)&&normal.flatMap(b=>b.selection).reduce((n,s)=>add(n,s.secondaryQuantity),'0')!==sub(sub(line.secondary_quantity_ordered,line.secondary_quantity_fulfilled),line.direct_committed_secondary_quantity||0))throw new ValidationError('The exact selected goods have a different actual weight from the confirmed order. Review its independent measure before reserving.');}
  return {order,bindings,pools,sourceFingerprint:hash({today,order,held,stock:[...stock],costs,batches,lots,serials,transfers,picks,other,pools,bindings,lineMeasures})};
 }
 async function bind(c,ctx,p){

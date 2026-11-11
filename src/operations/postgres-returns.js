@@ -7,6 +7,8 @@ const inventory = require('../domain/postgres-inventory-engine');
 const costing = require('../accounting/postgres-costing');
 const ledger = require('../accounting/postgres-ledger');
 const workflows = require('./postgres-business-workflows');
+const exactQuantity=require('../domain/exact-quantity');
+const stockQuantity=require('../domain/stock-quantity');
 
 function positiveInteger(value, label) {
   const number = Number(value);
@@ -88,7 +90,7 @@ async function readReturn(queryable, workspaceId, id, lock = false) {
     WHERE r.workspace_id=$1 AND r.id=$2${lock ? ' FOR UPDATE OF r' : ''}`, [workspaceId, id]);
   if (!header.rows.length) throw new NotFoundError('That customer return could not be found.');
   const lines = await queryable.query(`SELECT rl.*,sol.quantity_fulfilled,sol.unit_price_minor,s.item_id,s.code,
-      s.variant_label,i.name AS item_name,i.tracking_mode
+      s.variant_label,i.name AS item_name,i.tracking_mode,i.unit_label,i.quantity_increment,i.secondary_unit_label
     FROM customer_return_lines rl JOIN sales_order_lines sol ON sol.id=rl.sales_order_line_id
     JOIN skus s ON s.id=rl.sku_id JOIN items i ON i.id=s.item_id
     WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2 ORDER BY rl.created_at,rl.id`, [workspaceId, id]);
@@ -152,11 +154,11 @@ async function requestCustomerReturn(database, rawContext, input) {
       [ctx.workspaceId, order.id, requested.salesOrderLineId]);
       const line = lineResult.rows[0];
       if (!line) throw new ValidationError(`Return line ${index + 1} is not on that order.`);
-      const quantity = positiveInteger(requested.quantity, `Return line ${index + 1} quantity`);
+      const quantity = stockQuantity.validate(await stockQuantity.forSku(client,ctx,line.sku_id),requested.quantity,{label:`Return line ${index + 1} quantity`});
       const prior = await client.query(`SELECT COALESCE(SUM(rl.quantity_authorized),0)::numeric AS quantity
         FROM customer_return_lines rl JOIN customer_returns r ON r.id=rl.customer_return_id
         WHERE rl.workspace_id=$1 AND rl.sales_order_line_id=$2 AND r.status<>'CANCELLED'`, [ctx.workspaceId, line.id]);
-      if (Number(prior.rows[0].quantity) + quantity > Number(line.quantity_fulfilled)) {
+      if (exactQuantity.safeNumber(exactQuantity.add(prior.rows[0].quantity,quantity)) > Number(line.quantity_fulfilled)) {
         throw new ValidationError(`Return line ${index + 1} exceeds the quantity that actually left.`);
       }
       await client.query(`INSERT INTO customer_return_lines
@@ -193,18 +195,20 @@ async function authorizeCustomerReturn(database, rawContext, id, input) {
 
 async function fulfillmentEvidence(client, ctx, salesOrderLineId) {
   const result = await client.query(`WITH evidence AS(SELECT icm.inventory_movement_id,icm.journal_entry_id,
-      ABS(icm.quantity_delta)::numeric AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata,icm.created_at AS source_at,icm.id AS source_id
+      ABS(icm.quantity_delta)::numeric AS quantity,ABS(icm.secondary_quantity_delta)::numeric AS secondary_quantity,
+      ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata,icm.created_at AS source_at,icm.id AS source_id
     FROM accounting_inventory_cost_movements icm
     JOIN accounting_journal_entries je ON je.id=icm.journal_entry_id AND je.workspace_id=icm.workspace_id
     JOIN movements m ON m.id=icm.inventory_movement_id AND m.workspace_id=icm.workspace_id
     WHERE icm.workspace_id=$1 AND je.source_type='sale_fulfillment'
       AND je.status='POSTED' AND je.metadata::jsonb->>'salesOrderLineId'=$2
       AND icm.quantity_delta<0 AND NOT(je.metadata::jsonb?'kitComponents')
-    UNION ALL SELECT je.metadata::jsonb->>'movementId',je.id,(je.metadata::jsonb->>'quantity')::numeric,(je.metadata::jsonb->>'cogsMinor')::bigint,NULL::text,je.posted_at,je.metadata,je.created_at,je.id
+    UNION ALL SELECT je.metadata::jsonb->>'movementId',je.id,(je.metadata::jsonb->>'quantity')::numeric,NULL::numeric,(je.metadata::jsonb->>'cogsMinor')::bigint,NULL::text,je.posted_at,je.metadata,je.created_at,je.id
     FROM accounting_journal_entries je WHERE je.workspace_id=$1 AND je.source_type='sale_fulfillment' AND je.status='POSTED' AND je.metadata::jsonb->>'salesOrderLineId'=$2 AND je.metadata::jsonb?'kitComponents') SELECT * FROM evidence ORDER BY posted_at,source_at,source_id`, [ctx.workspaceId, salesOrderLineId]);
-  return result.rows.map((row) => ({ inventoryMovementId: row.inventory_movement_id,
-    originalJournalEntryId: row.journal_entry_id, quantity: Number(row.quantity), costMinor: Number(row.cost_minor),
+  const physical=result.rows.map((row) => ({ inventoryMovementId: row.inventory_movement_id,
+    originalJournalEntryId: row.journal_entry_id, quantity: Number(row.quantity),secondaryQuantity:row.secondary_quantity==null?null:Number(row.secondary_quantity),costMinor: Number(row.cost_minor),
     lotId: row.lot_id || null,pricing:parseJson(row.metadata,{}) }));
+  return physical.concat(await require('../purchasing/direct-shipment-return-evidence').read(client,ctx,salesOrderLineId));
 }
 
 async function existingAllocations(client, ctx, salesOrderLineId) {
@@ -215,36 +219,56 @@ async function existingAllocations(client, ctx, salesOrderLineId) {
   return rows.rows.flatMap((row) => parseJson(row.tracking_evidence, {}).costAllocations || []);
 }
 
-function allocateCost(evidence, used, quantity, preferredMovementIds = []) {
+function allocateCost(evidence, used, quantity, preferredMovementIds = [],secondaryQuantity=null) {
   const usedByMovement = new Map();
   for (const allocation of used) {
-    const key = allocation.inventoryMovementId;
-    const current = usedByMovement.get(key) || { quantity: 0, costMinor: 0 };
-    current.quantity += Number(allocation.quantity || 0); current.costMinor += Number(allocation.costMinor || 0);
+    const key = allocation.evidenceId||allocation.inventoryMovementId;
+    const current = usedByMovement.get(key) || { quantity: 0, costMinor: 0,secondaryQuantity:0,missingWeight:false };
+    current.quantity=exactQuantity.safeNumber(exactQuantity.add(current.quantity,allocation.quantity||0));
+    current.costMinor += Number(allocation.costMinor || 0);
+    current.secondaryQuantity=exactQuantity.safeNumber(exactQuantity.add(current.secondaryQuantity,allocation.secondaryQuantity||0));
+    current.missingWeight=current.missingWeight||allocation.secondaryQuantity==null;
     usedByMovement.set(key, current);
   }
   const preferred = new Set(preferredMovementIds);
-  const ordered = preferred.size ? evidence.filter((row) => preferred.has(row.inventoryMovementId)) : evidence;
-  const allocations = []; let remaining = quantity;
+  const ordered = preferred.size ? evidence.filter((row) => preferred.has(row.evidenceId||row.inventoryMovementId)) : evidence;
+  const allocations = []; let remaining = quantity,remainingWeight=secondaryQuantity;
   for (const source of ordered) {
     if (!remaining) break;
-    const prior = usedByMovement.get(source.inventoryMovementId) || { quantity: 0, costMinor: 0 };
-    const availableQuantity = source.quantity - prior.quantity;
+    const prior = usedByMovement.get(source.evidenceId||source.inventoryMovementId) || { quantity: 0, costMinor: 0,secondaryQuantity:0,missingWeight:false };
+    const availableQuantity = exactQuantity.safeNumber(exactQuantity.subtract(source.quantity,prior.quantity),{signed:true});
     const availableCost = source.costMinor - prior.costMinor;
     if (availableQuantity <= 0) continue;
     const take = Math.min(remaining, availableQuantity);
-    const costMinor = take === availableQuantity ? availableCost : Math.round(availableCost * take / availableQuantity);
+    let takenWeight=null,pricingBefore=prior.quantity,pricingQuantity=take,sourceMeasure=source.quantity;
+    if(source.secondaryQuantity!==null&&source.secondaryQuantity!==undefined){
+      if(prior.quantity>0&&prior.missingWeight)throw new ValidationError('The original returned weight needs reconciliation before receiving more of these goods.');
+      const availableWeight=exactQuantity.safeNumber(exactQuantity.subtract(source.secondaryQuantity,prior.secondaryQuantity));
+      if(remainingWeight===null&&take!==availableQuantity)
+        throw new ValidationError('Enter the actual returned weight before crediting a partial measured shipment.');
+      takenWeight=take===availableQuantity?availableWeight:remainingWeight;
+      if(takenWeight<=0||takenWeight>availableWeight||(take===availableQuantity)!==(takenWeight===availableWeight))
+        throw new ValidationError('Returned pieces and actual weight must match their original shipment evidence.');
+      if(remainingWeight!==null&&takenWeight>remainingWeight)
+        throw new ValidationError('Choose the original measured shipment that matches these returned goods.');
+      pricingBefore=prior.secondaryQuantity;pricingQuantity=takenWeight;sourceMeasure=source.secondaryQuantity;
+    }else if(remainingWeight!==null)throw new ValidationError('The original shipment has no confirmed weight evidence.');
+    const costMeasure=takenWeight??take,availableMeasure=takenWeight===null?availableQuantity:
+      exactQuantity.safeNumber(exactQuantity.subtract(source.secondaryQuantity,prior.secondaryQuantity));
+    const costMinor = take === availableQuantity ? availableCost : exactQuantity.ratioMinor(availableCost,costMeasure,availableMeasure);
     const calculator=require('../pricing/calculator'),pricing=source.pricing||{};
-    const amounts=Number.isSafeInteger(pricing.grossMinor??pricing.revenueMinor)?calculator.monetaryPortion(pricing,source.quantity,prior.quantity,take):{};
+    const amounts=Number.isSafeInteger(pricing.grossMinor??pricing.revenueMinor)?calculator.monetaryPortion(pricing,sourceMeasure,pricingBefore,pricingQuantity):{};
     // Product returns do not implicitly refund delivery/service charges or
     // their tax. Any such financial credit needs its own authorized scope.
     if(amounts.chargeTaxMinor)amounts.taxMinor-=amounts.chargeTaxMinor;
     if(amounts.grossMinor!==undefined&&amounts.discountMinor!==undefined){amounts.chargesMinor=Math.min(0,amounts.chargesMinor||0);amounts.revenueMinor=amounts.grossMinor-amounts.discountMinor+amounts.chargesMinor;}
-    allocations.push({ inventoryMovementId: source.inventoryMovementId,
-      originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor,...amounts,...(source.pricing?.kitComponents?{kitComponents:source.pricing.kitComponents}:{}) });
-    remaining -= take;
+    allocations.push({ inventoryMovementId: source.inventoryMovementId,...(source.evidenceId?{evidenceId:source.evidenceId}:{}),
+      originalJournalEntryId: source.originalJournalEntryId, quantity: take,...(takenWeight===null?{}:{secondaryQuantity:takenWeight}),costMinor,...amounts,...(source.pricing?.kitComponents?{kitComponents:source.pricing.kitComponents}:{}) });
+    remaining=exactQuantity.safeNumber(exactQuantity.subtract(remaining,take));
+    if(remainingWeight!==null&&takenWeight!==null)remainingWeight=exactQuantity.safeNumber(exactQuantity.subtract(remainingWeight,takenWeight));
   }
   if (remaining) throw new ValidationError('The return quantity exceeds the fulfilled inventory-cost evidence.');
+  if(remainingWeight!==null&&remainingWeight!==0)throw new ValidationError('The returned weight differs from the selected original shipment evidence.');
   return allocations;
 }
 
@@ -260,27 +284,44 @@ async function resolveReturnIdentity(client, ctx, line, raw, evidence, quantity)
     if (!lotId) throw new ValidationError(`${line.item_name}: enter the returned lot or batch number.`);
     const proven = evidence.filter((row) => row.lotId === lotId);
     if (!proven.length) throw new ValidationError(`${line.item_name}: that lot is not proven to have left on this order.`);
-    return { preferredMovementIds: proven.map((row) => row.inventoryMovementId), tracking: { lotId } };
+    return { preferredMovementIds: proven.map((row) => row.evidenceId||row.inventoryMovementId), tracking: { lotId } };
   }
   const serials = [...new Set((raw.serials || []).map((value) => String(value).trim()).filter(Boolean))];
   if (serials.length !== quantity) throw new ValidationError(`${line.item_name}: scan every returned serial number.`);
   const movementIds = evidence.map((row) => row.inventoryMovementId);
-  const units = await client.query(`SELECT su.id,su.serial,ims.movement_id FROM serial_units su
+  const units = await client.query(`SELECT su.id,su.serial,su.secondary_quantity,ims.movement_id FROM serial_units su
     JOIN stockchief_runtime.inventory_movement_serial_units ims ON ims.serial_unit_id=su.id AND ims.workspace_id=su.workspace_id
     WHERE su.workspace_id=$1 AND su.sku_id=$2 AND su.status='issued'
       AND ims.movement_id=ANY($3::text[]) AND lower(su.serial)=ANY($4::text[])`,
   [ctx.workspaceId, line.sku_id, movementIds, serials.map((serial) => serial.toLowerCase())]);
+  const direct=evidence.filter(source=>source.directSerialUnitId&&serials.some(serial=>serial.toLowerCase()===source.directSerial.toLowerCase()));
+  const externalUnits=direct.length?(await client.query(`SELECT id,serial,secondary_quantity FROM serial_units WHERE workspace_id=$1 AND sku_id=$2
+    AND status='issued' AND location_id IS NULL AND id=ANY($3::text[]) FOR UPDATE`,[ctx.workspaceId,line.sku_id,direct.map(source=>source.directSerialUnitId)])).rows:[];
+  for(const unit of externalUnits)units.rows.push({...unit,movement_id:direct.find(source=>source.directSerialUnitId===unit.id).evidenceId});
   if (units.rows.length !== quantity) {
     throw new ValidationError(`${line.item_name}: one or more serial numbers are not proven to have left on this order.`);
   }
+  const measured=units.rows.some(unit=>unit.secondary_quantity!==null);
+  if(measured&&units.rows.some(unit=>unit.secondary_quantity===null))throw new ValidationError('Confirm the actual weight of every original serial before receiving these returned pieces.');
   return { preferredMovementIds: units.rows.map((unit) => unit.movement_id),
-    tracking: { serialUnitIds: units.rows.map((unit) => unit.id), serials: units.rows.map((unit) => unit.serial) } };
+    tracking: { serialUnitIds: units.rows.map((unit) => unit.id), serials: units.rows.map((unit) => unit.serial),
+      secondaryQuantity:measured?exactQuantity.safeNumber(units.rows.reduce((sum,unit)=>exactQuantity.add(sum,unit.secondary_quantity),'0')):null,
+      serialWeights:measured?Object.fromEntries(units.rows.map(unit=>[unit.id,Number(unit.secondary_quantity)])):null} };
 }
 
 async function previewReceiptCredit(database,ctx,id,inputLines=null){
  const row=await readReturn(database,ctx.workspaceId,id),lines=inputLines||row.lines.map(l=>({lineId:l.id,quantity:Number(l.quantity_authorized)-Number(l.quantity_received)})).filter(l=>l.quantity>0);
  if(row.receipt_credit_policy!=='RECEIPT_CREDIT_V1')return null;
- const allocations=[];for(const raw of lines){const line=row.lines.find(l=>l.id===raw.lineId);if(!line)throw new ValidationError('The receipt line is not on this return.');const quantity=positiveInteger(raw.quantity,'Received quantity');const evidence=await fulfillmentEvidence(database,ctx,line.sales_order_line_id),used=await existingAllocations(database,ctx,line.sales_order_line_id);allocations.push({...line,trackingEvidence:{costAllocations:allocateCost(evidence,used,quantity)}});}
+ const allocations=[];
+ for(const raw of lines){
+  const line=row.lines.find(l=>l.id===raw.lineId);
+  if(!line)throw new ValidationError('The receipt line is not on this return.');
+  const profile=await stockQuantity.forSku(database,ctx,line.sku_id),quantity=stockQuantity.validate(profile,raw.quantity,{label:'Received quantity'});
+  const evidence=await fulfillmentEvidence(database,ctx,line.sales_order_line_id),used=await existingAllocations(database,ctx,line.sales_order_line_id);
+  const identity=inputLines?await resolveReturnIdentity(database,ctx,line,raw,evidence,quantity):{preferredMovementIds:[],tracking:{}};
+  const weight=raw.secondaryQuantity??identity.tracking.secondaryQuantity??null;
+  allocations.push({...line,trackingEvidence:{costAllocations:allocateCost(evidence,used,quantity,identity.preferredMovementIds,weight)}});
+ }
  const groups=require('./return-money').groups({lines:allocations}),sum=key=>groups.reduce((n,g)=>n+Number(g[key]||0),0),review={policy:row.receipt_credit_policy,returnId:row.id,lines,revenueMinor:sum('revenueMinor'),taxMinor:sum('taxMinor'),priceMinor:sum('grossMinor'),chargesMinor:sum('chargesMinor'),discountMinor:sum('discountMinor'),costMinor:sum('costMinor'),currency:row.currency};review.totalMinor=review.revenueMinor+review.taxMinor;review.hash=require('../pricing/postgres-promotions').hash(review);return review;
 }
 async function receiveCustomerReturn(database, rawContext, id, input) {
@@ -299,18 +340,20 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
     for (const [index, raw] of input.lines.entries()) {
       const line = row.lines.find((candidate) => candidate.id === raw.lineId);
       if (!line) throw new ValidationError(`Received line ${index + 1} is not authorized on this return.`);
-      const quantity = positiveInteger(raw.quantity, `${line.item_name} received quantity`);
-      if (Number(line.quantity_received) + quantity > Number(line.quantity_authorized)) {
+      const stockProfile=await stockQuantity.forSku(client,ctx,line.sku_id);
+      const quantity = stockQuantity.validate(stockProfile,raw.quantity,{label:`${line.item_name} received quantity`});
+      if (exactQuantity.safeNumber(exactQuantity.add(line.quantity_received,quantity)) > Number(line.quantity_authorized)) {
         throw new ValidationError(`${line.item_name}: received quantity exceeds the authorization.`);
       }
       const evidence = await fulfillmentEvidence(client, ctx, line.sales_order_line_id);
       if (!evidence.length) throw new ValidationError(`${line.item_name}: the original fulfillment has no inventory-cost evidence.`);
       const identity = await resolveReturnIdentity(client, ctx, line, raw, evidence, quantity);
+      const actualWeight=stockQuantity.secondary(stockProfile,raw.secondaryQuantity??identity.tracking.secondaryQuantity);
       const used = await existingAllocations(client, ctx, line.sales_order_line_id);
-      const allocations = allocateCost(evidence, used, quantity, identity.preferredMovementIds);
+      const allocations = allocateCost(evidence, used, quantity, identity.preferredMovementIds,actualWeight);
       const costMinor = allocations.reduce((sum, allocation) => sum + allocation.costMinor, 0);
       const physical = await inventory.receiveInTransaction(client, ctx, {
-        skuId: line.sku_id, locationId: row.quarantine_location_id, quantity,
+        skuId: line.sku_id, locationId: row.quarantine_location_id, quantity,secondaryQuantity:actualWeight,
         lotId: identity.tracking.lotId, returnSerialUnitIds: identity.tracking.serialUnitIds,
         returnCondition: 'unknown', reasonCode: 'customer_return', reference: row.return_number,
         notes: 'Received into quarantine; condition not yet decided.',
@@ -336,7 +379,7 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
       await costing.receiveInTransaction(client, ctx, { movementId: physical.movementId, totalCostMinor: costMinor,
         journalEntryId: inventoryJournalEntryId, sourceType: 'customer_return_receipt', sourceRecordId: id });
       const trackingEvidence = line.trackingEvidence || {};
-      const batch = { quantity, costMinor, returnMovementId: physical.movementId, inventoryJournalEntryId,
+      const batch = { quantity,secondaryQuantity:actualWeight,serialWeights:identity.tracking.serialWeights||null,costMinor, returnMovementId: physical.movementId, inventoryJournalEntryId,
         lotId: identity.tracking.lotId || null, serialUnitIds: identity.tracking.serialUnitIds || [],
         serials: identity.tracking.serials || [], allocations: allocations.map((allocation) => ({ ...allocation,
           inventoryJournalEntryId,costRecognition:deferred?'ON_REFUND':'ON_RECEIPT', returnMovementId: physical.movementId })) };
@@ -364,19 +407,39 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
 }
 
 function dispositionChunks(batches, quantities) {
-  const available = batches.map((batch) => ({ ...batch, remaining: Number(batch.quantity), serialOffset: 0 }));
+  const available = batches.map((batch) => ({ ...batch, remaining: Number(batch.quantity),
+    remainingWeight:batch.secondaryQuantity==null?null:Number(batch.secondaryQuantity),serialOffset: 0 }));
   const chunks = [];
   for (const choice of quantities) {
-    let remaining = choice.quantity;
+    let remaining = choice.quantity,remainingWeight=choice.secondaryQuantity??null;
     for (const batch of available) {
       if (!remaining || !batch.remaining) continue;
       const quantity = Math.min(remaining, batch.remaining);
+      const serialUnitIds=(batch.serialUnitIds || []).slice(batch.serialOffset,batch.serialOffset+quantity);
+      let secondaryQuantity=null;
+      if(batch.remainingWeight!==null){
+        if(serialUnitIds.length&&batch.serialWeights){
+          secondaryQuantity=exactQuantity.safeNumber(serialUnitIds.reduce((sum,id)=>exactQuantity.add(sum,batch.serialWeights[id]),'0'));
+        }else if(quantity===batch.remaining)secondaryQuantity=batch.remainingWeight;
+        else if(remainingWeight!==null)secondaryQuantity=remainingWeight;
+        else throw new ValidationError('Enter the actual restock, repair or scrap weight when splitting measured returned goods.');
+        if(secondaryQuantity<=0||secondaryQuantity>batch.remainingWeight||
+          (quantity===batch.remaining)!==(secondaryQuantity===batch.remainingWeight)||
+          remainingWeight!==null&&secondaryQuantity>remainingWeight)
+          throw new ValidationError('Disposition pieces and weights must match the exact received batches and serials.');
+      }
       chunks.push({ kind: choice.kind, destinationLocationId: choice.destinationLocationId, quantity,
-        lotId: batch.lotId || null,
-        serialUnitIds: (batch.serialUnitIds || []).slice(batch.serialOffset, batch.serialOffset + quantity) });
-      batch.serialOffset += quantity; batch.remaining -= quantity; remaining -= quantity;
+        secondaryQuantity,lotId: batch.lotId || null,serialUnitIds });
+      batch.serialOffset += quantity;
+      batch.remaining=exactQuantity.safeNumber(exactQuantity.subtract(batch.remaining,quantity));
+      remaining=exactQuantity.safeNumber(exactQuantity.subtract(remaining,quantity));
+      if(secondaryQuantity!==null){
+        batch.remainingWeight=exactQuantity.safeNumber(exactQuantity.subtract(batch.remainingWeight,secondaryQuantity));
+        if(remainingWeight!==null)remainingWeight=exactQuantity.safeNumber(exactQuantity.subtract(remainingWeight,secondaryQuantity));
+      }
     }
     if (remaining) throw new InvariantError('Return disposition exceeds the received identity evidence.', 'return_identity_mismatch');
+    if(remainingWeight!==null&&remainingWeight!==0)throw new ValidationError('The disposition weight differs from its received identity evidence.');
   }
   return chunks;
 }
@@ -396,26 +459,31 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
     for (const line of row.lines) {
       const decision = input.lines.find((candidate) => candidate.lineId === line.id);
       if (!decision) throw new ValidationError(`${line.item_name}: choose restock, scrap, or repair.`);
-      const restock = nonNegativeInteger(decision.restock, `${line.item_name} restock quantity`);
-      const scrap = nonNegativeInteger(decision.scrap, `${line.item_name} scrap quantity`);
-      const repair = nonNegativeInteger(decision.repair, `${line.item_name} repair quantity`);
-      if (restock + scrap + repair !== Number(line.quantity_received)) {
+      const profile=await stockQuantity.forSku(client,ctx,line.sku_id);
+      const restock = stockQuantity.validate(profile,decision.restock||0,{positive:false,label:`${line.item_name} restock quantity`});
+      const scrap = stockQuantity.validate(profile,decision.scrap||0,{positive:false,label:`${line.item_name} scrap quantity`});
+      const repair = stockQuantity.validate(profile,decision.repair||0,{positive:false,label:`${line.item_name} repair quantity`});
+      if (exactQuantity.canonical(exactQuantity.add(exactQuantity.add(restock,scrap),repair)) !== exactQuantity.canonical(line.quantity_received)) {
         throw new ValidationError(`${line.item_name}: dispositions must total the ${line.quantity_received} units received.`);
       }
       if (restock && !trimOrNull(decision.restockLocationId)) throw new ValidationError(`${line.item_name}: choose a restock location.`);
       if (repair && !trimOrNull(decision.repairLocationId)) throw new ValidationError(`${line.item_name}: choose a repair location.`);
       const batches = line.trackingEvidence.receivedBatches || [];
+      const dispositionWeight=(value,quantity)=>!quantity||value==null||value===''?null:stockQuantity.secondary(profile,value);
       const chunks = dispositionChunks(batches, [
-        { kind: 'restock', quantity: restock, destinationLocationId: decision.restockLocationId },
-        { kind: 'repair', quantity: repair, destinationLocationId: decision.repairLocationId },
-        { kind: 'scrap', quantity: scrap, destinationLocationId: null },
+        { kind: 'restock', quantity: restock, destinationLocationId: decision.restockLocationId,
+          secondaryQuantity:dispositionWeight(decision.restockSecondaryQuantity,restock) },
+        { kind: 'repair', quantity: repair, destinationLocationId: decision.repairLocationId,
+          secondaryQuantity:dispositionWeight(decision.repairSecondaryQuantity,repair) },
+        { kind: 'scrap', quantity: scrap, destinationLocationId: null,
+          secondaryQuantity:dispositionWeight(decision.scrapSecondaryQuantity,scrap) },
       ]);
       const movementIds = [];
       for (const [chunkIndex, chunk] of chunks.entries()) {
         const exact = chunk.lotId ? { lotId: chunk.lotId } : chunk.serialUnitIds.length ? { serialUnitIds: chunk.serialUnitIds } : {};
         if (chunk.kind === 'scrap') {
           const physical = await inventory.issueInTransaction(client, require('./postgres-return-holds').inspectionContext(ctx,id), { skuId: line.sku_id,
-            locationId: row.quarantine_location_id, quantity: chunk.quantity, reasonCode: 'damaged',
+            locationId: row.quarantine_location_id, quantity: chunk.quantity,secondaryQuantity:chunk.secondaryQuantity,reasonCode: 'damaged',
             reference: row.return_number, idempotencyKey: `${operation.key}:${line.id}:scrap:${chunkIndex}`, ...exact });
           const prepared = await costing.prepareIssueInTransaction(client, ctx, { movementId: physical.movementId });
           let journalEntryId = null;
@@ -446,7 +514,7 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
         } else {
           const physical = await inventory.transferInTransaction(client, require('./postgres-return-holds').inspectionContext(ctx,id), { skuId: line.sku_id,
             sourceLocationId: row.quarantine_location_id, destinationLocationId: chunk.destinationLocationId,
-            quantity: chunk.quantity, reference: row.return_number,
+            quantity: chunk.quantity,secondaryQuantity:chunk.secondaryQuantity,reference: row.return_number,
             idempotencyKey: `${operation.key}:${line.id}:${chunk.kind}:${chunkIndex}`, ...exact });
           await costing.transferInTransaction(client, ctx, { outMovementId: physical.outMovementId,
             inMovementId: physical.inMovementId, sourceType: `customer_return_${chunk.kind}`, sourceRecordId: id });

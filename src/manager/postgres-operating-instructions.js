@@ -498,6 +498,8 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_container_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_inbound_freight WHERE workspace_id IN(SELECT id FROM owned) AND routine)
       +(SELECT count(*) FROM stockchief_runtime.agent_van_route_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_direct_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_direct_orders WHERE workspace_id IN(SELECT id FROM owned) AND routine AND rule_id IS NULL)
       +(SELECT count(*) FROM stockchief_runtime.agent_team_procedure_sets WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_product_retirement_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_shutdowns WHERE workspace_id IN(SELECT id FROM owned) AND enabled)

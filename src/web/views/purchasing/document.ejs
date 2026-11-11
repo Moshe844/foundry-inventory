@@ -78,7 +78,8 @@
     </div>
     <div>
       <div class="label">Deliver to</div>
-      <div><%= order.destinationLocationName || '—' %></div>
+      <div><%= order.directCustomerName||order.destinationLocationName||'—' %></div>
+      <% if(order.directShipToAddress){ %><div><%= order.directShipToAddress %></div><% } %>
       <% if (supplier.paymentTerms) { %>
         <div class="label" style="margin-top:12px;">Terms</div>
         <div class="muted"><%= supplier.paymentTerms %></div>

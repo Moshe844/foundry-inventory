@@ -8,7 +8,7 @@ const fields=require('../../imports/fields');
 const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
 const config=require('../../config');
-const { requireAuth,asyncRoute }=require('../middleware');
+const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
 const { newId,trimOrNull }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
@@ -137,6 +137,14 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     if(receivingReceipt)return res.page('imports/receiving-source',{title:'Recorded delivery document',nav:'purchasing',plan,rows,page,pageSize:PAGE_SIZE,receivingReceipt,
       backTo:{href:'/purchasing/orders/'+receivingReceipt.purchaseOrderId,label:'Purchase order'}});
+    const receivingCandidate=req.user?.role==='owner'&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&
+      plan.transformations.dataset!=='suppliers'&&(!plan.transformations.handwriting||plan.transformations.handwriting.purpose==='delivery');
+    const receivingPolicy=require('../../commercial/agent-plan');
+    const receivingState=receivingCandidate?await receivingPolicy.accountState(database,req.ctx.workspaceId):null;
+    const receivingOffer=receivingState&&receivingPolicy.usesAgentTerms(receivingState)?{
+      allowed:receivingPolicy.permits(receivingState.plan,43,'draft'),
+      needsReading:(plan.sourceKind==='image'||plan.transformations.visualSource)&&!plan.transformations.imageReadingConfirmed
+    }:null;
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',ownSectionTabs:true,suppressBack:true,plan,rows,counts,analysisNoticeMessage:require('../../imports/analysis-notice').message(),
       columnAccess:plan.transformations.columnTemplate?await require('../../imports/agent-column-mapping').access(database,req.ctx):null,
@@ -144,13 +152,16 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       missingLocationRows:missingLocation.rows.length>0,
       missingLocationCount:savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)?savedSummary.missingLocationRows:null,
       missingAccountingSetup:missingAccounting.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,approvalReview,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,approvalReview,receivingOffer,
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
-  router.post('/imports/:id/receiving-form',asyncRoute(async(req,res)=>{
-    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);if(plan.transformations.handwriting?.purpose!=='delivery')throw new ValidationError('Choose a handwritten delivery-note preview.');
-    await require('../../imports/handwritten-table').authorize(database,req.ctx);
+  router.post('/imports/:id/receiving-form',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../commercial/agent-plan').requireWorkspaceJob(database,req.ctx.workspaceId,43,'draft');
+    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+    if(plan.transformations.dataset==='suppliers'||plan.transformations.handwriting&&plan.transformations.handwriting.purpose!=='delivery')
+      throw new ValidationError('Choose an original supplier delivery-note preview.');
+    if(plan.transformations.handwriting)await require('../../imports/handwritten-table').authorize(database,req.ctx);
     const ref=typeof req.body.purchaseOrder==='string'?req.body.purchaseOrder.trim().replace(/^#/,''):'';const orders=(await database.query('SELECT po_number FROM purchase_orders WHERE workspace_id=$1 AND (id=$2 OR lower(po_number)=lower($2)) LIMIT 2',[req.ctx.workspaceId,ref])).rows;if(orders.length!==1)throw new ValidationError('Enter one exact purchase order number from this inventory.');
     const p=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Prepare the receiving form from this reviewed original delivery note',{action:'purchase_order.receive_from_document',recordReference:orders[0].po_number,sourceImport:plan.id,receivingBasis:req.body.receivingBasis});
     if(!p.proposal?.id)throw new ValidationError(p.answer||'Choose the exact placed purchase order and the written quantity units.');return res.redirect(303,'/actions/'+p.proposal.id);

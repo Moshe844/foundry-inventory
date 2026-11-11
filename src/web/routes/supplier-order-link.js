@@ -11,13 +11,23 @@ function router(db){
     next();
   });
   router.get('/supplier/order/:token',asyncRoute(async(req,res)=>{
-    const order=await link.lookup(db,req.params.token);
+    const order=await link.lookup(db,req.params.token,false,{includeCompleted:true});
+    if(order.delivery_kind==='CUSTOMER_DIRECT')return res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment'+(req.query.saved==='1'?'?saved=1':''));
     const lines=(await db.query(`SELECT l.quantity_units,s.code,i.name FROM purchase_order_lines l
       JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
       JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
       WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.line_number`,[order.workspace_id,order.id])).rows;
     const backupLines=await backup.linkLines(db,order);
     return res.render('public/supplier-order-link',{order,lines,backupLines,received:req.query.saved==='1'});
+  }));
+  router.get('/supplier/order/:token/direct-shipment',asyncRoute(async(req,res)=>{
+    const direct=await require('../../purchasing/agent-direct-shipments').supplierPage(db,req.params.token);
+    if(!direct)throw new (require('../../domain/errors').NotFoundError)();
+    return res.render('public/supplier-direct-dispatch',{...direct,token:req.params.token,received:req.query.saved==='1'});
+  }));
+  router.post('/supplier/order/:token/direct-shipment',asyncRoute(async(req,res)=>{
+    await require('../../purchasing/agent-direct-shipments').supplierSubmit(db,req.params.token,req.body);
+    res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment?saved=1');
   }));
   router.post('/supplier/order/:token/respond',asyncRoute(async(req,res)=>{
     await link.submit(db,req.params.token,req.body.kind,req.body.date);

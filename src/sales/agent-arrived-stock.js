@@ -7,7 +7,7 @@ async function inspect(db,ctx,id,{lock=false}={}){
   JOIN locations l ON l.workspace_id=o.workspace_id AND l.id=o.fulfillment_location_id
   WHERE o.workspace_id=$1 AND o.id=$2${lock?' FOR UPDATE OF o':''}`,[ctx.workspaceId,id])).rows[0];
  if(!order||!['BACKORDERED','PARTIALLY_FULFILLED'].includes(order.status)||!order.confirmed_at||order.record_state!=='ACTIVE'||!order.is_active||order.custody_agreement_id)throw new ValidationError('Choose an already confirmed backorder with an active customer and dispatch location.');
- const lines=(await db.query(`SELECT l.id,l.sku_id,l.quantity_ordered::text,l.quantity_fulfilled::text,l.unit_price_minor::text,s.code,i.tracking_mode,
+ const lines=(await db.query(`SELECT l.id,l.sku_id,l.quantity_ordered::text,l.quantity_fulfilled::text,coalesce((to_jsonb(l)->>'direct_committed_quantity')::numeric,0)::text direct_committed_quantity,l.unit_price_minor::text,s.code,i.tracking_mode,
   coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)::text allocated
   FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
   WHERE l.workspace_id=$1 AND l.sales_order_id=$2 ORDER BY l.id`,[ctx.workspaceId,id])).rows;
@@ -15,7 +15,7 @@ async function inspect(db,ctx,id,{lock=false}={}){
  if(lock)await db.query('SELECT sku_id FROM balances WHERE workspace_id=$1 AND location_id=$2 AND sku_id=ANY($3::text[]) ORDER BY sku_id FOR UPDATE',[ctx.workspaceId,order.fulfillment_location_id,lines.map(l=>l.sku_id)]);
  const quantities=[],free=new Map();let amount=0;
  for(const line of lines){
-  const needed=exact.safeNumber(exact.subtract(exact.subtract(line.quantity_ordered,line.quantity_fulfilled),line.allocated),{signed:true});
+  const needed=exact.safeNumber(exact.subtract(exact.subtract(exact.subtract(line.quantity_ordered,line.quantity_fulfilled),line.direct_committed_quantity||0),line.allocated),{signed:true});
   if(!free.has(line.sku_id))free.set(line.sku_id,(await require('../transfers/postgres-transfer-service').sourceAvailable(db,ctx.workspaceId,line.sku_id,order.fulfillment_location_id)).available);
   const available=free.get(line.sku_id),quantity=Math.max(0,Math.min(needed,available));
   if(quantity){
@@ -23,7 +23,7 @@ async function inspect(db,ctx,id,{lock=false}={}){
     WHERE o.workspace_id=$1 AND o.status IN('BACKORDERED','PARTIALLY_FULFILLED') AND o.confirmed_at IS NOT NULL AND l.sku_id=$2
      AND (o.fulfillment_location_id=$3 OR o.fulfillment_location_id IS NULL)
      AND (o.allocation_priority,coalesce(o.needed_by,'9999-12-31'),o.created_at,o.id)<($4,$5,$6,$7)
-     AND l.quantity_ordered-l.quantity_fulfilled>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
+     AND l.quantity_ordered-l.quantity_fulfilled-coalesce((to_jsonb(l)->>'direct_committed_quantity')::numeric,0)>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
     ORDER BY o.allocation_priority,o.needed_by NULLS LAST,o.created_at,o.id LIMIT 1`,[ctx.workspaceId,line.sku_id,order.fulfillment_location_id,order.allocation_priority,order.needed_by||'9999-12-31',order.created_at,order.id])).rows[0];
    if(earlier)throw new ValidationError('Order '+earlier.order_number+' has priority for this stock. Review it first.');
    amount+=require('../pricing/calculator').ratio(Number(line.unit_price_minor),Math.round(quantity*1000000),1000000);
@@ -70,7 +70,7 @@ async function run(db,workspaceId){
  if(!grant||!policy.usesAgentTerms(state)||!policy.permits(state.plan,job,'automatic',{trained:true})||!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate)return result;
  const ctx={workspaceId,actorId:grant.updated_by},candidates=(await db.query(`SELECT o.id FROM sales_orders o LEFT JOIN stockchief_runtime.agent_arrived_stock_checks checked ON checked.workspace_id=o.workspace_id AND checked.sales_order_id=o.id WHERE o.workspace_id=$1 AND o.status IN('BACKORDERED','PARTIALLY_FULFILLED') AND o.confirmed_at IS NOT NULL
   AND EXISTS(SELECT 1 FROM sales_order_lines l JOIN balances b ON b.workspace_id=l.workspace_id AND b.sku_id=l.sku_id AND b.location_id=o.fulfillment_location_id
-   WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND b.on_hand>0 AND l.quantity_ordered-l.quantity_fulfilled>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
+   WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND b.on_hand>0 AND l.quantity_ordered-l.quantity_fulfilled-coalesce((to_jsonb(l)->>'direct_committed_quantity')::numeric,0)>coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id),0)
    AND (checked.retry_after IS NULL OR checked.retry_after<=now() OR b.updated_at::timestamptz>checked.checked_at OR o.updated_at::timestamptz>checked.checked_at))
   ORDER BY o.allocation_priority,o.needed_by NULLS LAST,o.created_at,o.id LIMIT 20`,[workspaceId])).rows;
  for(const candidate of candidates){
