@@ -8,7 +8,7 @@
   "7": "Assigns blind quantity-count lists in the app, records staff progress and supports taught weekly assignments. Physical counts, posting approval and hardware delivery remain separate.",
   "8": "Shows a blind recount in Needs You when a recorded count difference exceeds your limit. A matching physical recount comes before separate owner approval.",
   "9": "Reviews slow and dead stock using recorded sales and stocked days, while separating commitments and transfer needs. Price changes and supplier returns need separate decisions.",
-  "10": "Flags repeated quantity losses for the same product, warehouse and local time band. A flag calls for investigation; it does not establish theft.",
+  "10": "Flags repeat negative stock corrections for the same product, warehouse and local shift across its bins. Growth, Pro and Custom receive automatic in-app alerts without training and can configure shift start times. Review the original stock movements to determine the cause.",
   "13": "Shows buildable kits from available components and prepares missing-part purchase drafts at one warehouse using saved supplier packs. Sending orders needs separate purchasing authority.",
   "14": "Creates production drafts from saved bills of materials and approved limits. Physical component use and finished-goods receipt require individual confirmation.",
   "15": "Classifies products monthly from recorded stock cost sold and uses the ranking for count priorities. Missing cost evidence holds classification for review.",

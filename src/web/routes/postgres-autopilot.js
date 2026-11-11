@@ -920,6 +920,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='margin-prices'&&result.mode==='draft')result.reviewPrices=true;
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
+      if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
@@ -976,6 +977,10 @@ function createPostgresAutopilotRouter(database,options={}){
     const report=await database.transaction(async c=>definition.readPage(c,req.ctx,{download:true,filter:req.query.filter,today:await require('../../lib/business-time').today(c,req.ctx.workspaceId)}),{isolation:'REPEATABLE READ'});
     const format=packs.downloads[definition.key],file=await format.render(report);
     res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+'.'+format.extension).send(file);
+  }));
+  router.post('/autopilot/reviews/repeat-loss/shifts',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/stock-loss-patterns').save(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/repeat-loss');
   }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);

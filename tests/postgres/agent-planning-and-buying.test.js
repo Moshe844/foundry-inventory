@@ -5,6 +5,65 @@ const {randomUUID}=require('node:crypto');
 const reviews=require('../../src/autopilot/job-reviews');
 const commerce=require('../../src/operations/postgres-commerce');
 
+test('repeated stock losses use exact physical corrections across bins and local shifts on current plans',{timeout:240000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,subscribe,csrf}=f;
+  const locations=require('../../src/domain/postgres-location-service');
+  const stock=require('../../src/domain/postgres-inventory-engine');
+  const businessTime=require('../../src/lib/business-time');
+  const modes=require('../../src/autopilot/job-modes');
+  const notices=require('../../src/autopilot/operational-notices');
+  const {addDays}=require('../../src/accounting/customer-money');
+  const path='/autopilot/reviews/repeat-loss',skuId=f.item.skuIds[0];
+  const zone='America/New_York';
+  await db.query('UPDATE workspaces SET time_zone=$2 WHERE id=$1',[ctx.workspaceId,zone]);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '20 days')::text WHERE id=$1",[f.owner.accountId]);
+  const yesterday=addDays(await businessTime.today(db,ctx.workspaceId),-1);
+  const bin=(name,parent)=>locations.createLocation(db,ctx,{name,kind:'bin',parentLocationId:parent});
+  await subscribe('growth');
+  const west=await locations.createLocation(db,ctx,{name:'Other warehouse',kind:'warehouse'});
+  const a=await bin('Count bin one',f.location.id),b=await bin('Count bin two',f.location.id),c=await bin('Count bin west',west.id);
+  for(const shelf of [a,b,c])await stock.receive(db,ctx,{skuId,locationId:shelf.id,quantity:20,idempotencyKey:randomUUID()});
+  const adjust=(shelf,count,hour,minute,reasonCode='cycle_count',day=yesterday)=>
+    stock.adjust(db,ctx,{skuId,locationId:shelf.id,countedQuantity:count,reasonCode,
+      occurredAt:businessTime.wall(day,hour,minute,zone).toISOString(),idempotencyKey:randomUUID()});
+  await adjust(a,17,22,30,'cycle_count',addDays(yesterday,-1));
+  await adjust(b,18,1,15);
+  await adjust(c,18,22,45);
+  await adjust(a,16,23,10,'damaged');
+  await adjust(b,17,1,30,'cycle_count',addDays(yesterday,-95));
+  const page=await browser.get(path).expect(200);
+  const settings={_csrf:csrf(page.text),locationId:f.location.id,revision:0,starts:'05:30, 13:30, 21:30'};
+  const save=input=>browser.post(path+'/shifts').type('form').send(input);
+  await save(settings).expect(303);
+  await assert.rejects(require('../../src/autopilot/stock-loss-patterns').save(db,ctx,
+    {...settings,starts:'03:00'}),/shifts changed/);
+  const dashboard=await browser.get(path).expect(200);
+  assert.match(dashboard.text,/05:30, 13:30, 21:30/);
+  const review=()=>reviews.run(db,ctx,'repeat-loss',{filter:f.location.name});
+  const alerts=async()=>(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).filter(x=>x.sourceId==='agent-notice-10');
+  const movements=async()=>Number((await db.query('SELECT count(*) FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count);
+  const before=await movements();
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  for(const tier of ['growth','pro','enterprise']){
+    await subscribe(tier);
+    const found=await review();
+    assert.equal(found.mode,'alone');
+    assert.deepEqual(found.rows.map(row=>[row.Warehouse,row['Shift starts'],Number(row.Adjustments),Number(row['Units removed'])]),
+      [[f.location.name,'21:30',2,5]]);
+    await notices.refresh(db,ctx.workspaceId);
+    assert.equal((await alerts()).length,1);
+  }
+  await modes.save(db,ctx,10,{mode:'watch',revision:0});
+  assert.deepEqual(await alerts(),[]);
+  await modes.save(db,ctx,10,{mode:'routine',revision:1});
+  await subscribe('starter');
+  await browser.get(path).expect(402);
+  await assert.rejects(require('../../src/autopilot/stock-loss-patterns').save(db,ctx,
+    {...settings,revision:1}),error=>error.code==='entitlement_required');
+  assert.deepEqual(await alerts(),[]);
+  assert.equal(await movements(),before);
+});
+
 test('fresh warehouse move lists rank picks and stay within the measured warehouse and current plan',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
   await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '18 days')::text WHERE id=$1",[f.owner.accountId]);

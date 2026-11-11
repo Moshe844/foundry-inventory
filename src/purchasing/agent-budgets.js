@@ -55,18 +55,6 @@ const overBudgetNotices=`
   JOIN (${budgetNoticeActual}) a USING(category,currency)
   WHERE b.workspace_id=$1 AND b.month_start=${budgetNoticeMonth} AND a.actual>b.amount_minor`;
 
-async function monitoringEnabled(db,workspaceId,state){
-  if(!plan.usesAgentTerms(state)||!plan.permits(state.plan,110,'automatic')||state.shadow)return false;
-  return Boolean((await db.query(`SELECT 1 FROM workspaces w
-    LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
-    LEFT JOIN stockchief_runtime.agent_job_modes m ON m.workspace_id=w.id AND m.job_id=110
-    WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND a.mode IS DISTINCT FROM 'OBSERVE'
-      AND coalesce(a.paused,0)=0 AND coalesce(a.suspended,0)=0
-      AND coalesce(m.mode,'inherit') NOT IN ('watch','ask')
-      AND EXISTS(SELECT 1 FROM users u WHERE u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.role='owner')`,
-  [workspaceId])).rowCount);
-}
-
 async function report(db,ctx,{filter,today,page},openToBuy=false){
   const month=filter||today.slice(0,7),{start,next}=period(month);
   const {rows:totals}=await db.query(`WITH actual AS (${actualPurchases('$2','$3')}), outstanding AS (
@@ -115,4 +103,4 @@ async function settings(db,ctx,requestedMonth){
   return {month,budgets:rows.map(row=>({...row,amount:money.fromMinor(row.amount_minor,row.currency)})),currency:books?.base_currency||'USD'};
 }
 
-module.exports={period,save,report,settings,monitoringEnabled,overBudgetNotices};
+module.exports={period,save,report,settings,overBudgetNotices};
