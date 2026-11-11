@@ -2,25 +2,35 @@
 
 const policy=require('../commercial/agent-plan');
 const {hasVerifiedMigration}=require('../db/migrate-postgres');
+const transferArrivals=require('../transfers/agent-transfer-arrivals');
 const exceptionReviews=require('./exception-reviews');
 const overdue=exceptionReviews.find(d=>d.id===168);
 const stockDiscrepancies=exceptionReviews.find(d=>d.id===3);
 const migratedInboxDatabases=new WeakSet();
 const transfers=`WITH positions AS (
-    SELECT t.id,t.transfer_number,t.status,t.expected_arrival_date::date AS due,src.name AS source,dst.name AS destination,
+    SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
+      CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
       sum(l.shipped_quantity) AS shipped,sum(l.received_quantity) AS received,sum(l.lost_quantity+l.damaged_quantity) AS exceptions,
       sum(l.shipped_quantity-l.received_quantity-l.lost_quantity-l.damaged_quantity) AS outstanding
     FROM inventory_transfers t JOIN inventory_transfer_lines l ON l.workspace_id=t.workspace_id AND l.transfer_id=t.id
+    JOIN skus sku ON sku.workspace_id=l.workspace_id AND sku.id=l.sku_id
+    JOIN items i ON i.workspace_id=sku.workspace_id AND i.id=sku.item_id
     JOIN locations src ON src.workspace_id=t.workspace_id AND src.id=t.source_location_id
     JOIN locations dst ON dst.workspace_id=t.workspace_id AND dst.id=t.destination_location_id
     WHERE t.workspace_id=$1 AND t.status IN ('SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED','RECEIVED')
       AND ($2='' OR lower(t.transfer_number)=lower($2) OR lower(src.name)=lower($2) OR lower(dst.name)=lower($2))
     GROUP BY t.id,src.name,dst.name)
-  SELECT p.transfer_number AS "Transfer",p.source AS "From",p.destination AS "To",p.due::text AS "Due",p.shipped AS "Dispatched",
-    p.received AS "Received",p.outstanding AS "Still in transit",p.exceptions AS "Lost or damaged",
-    CASE WHEN p.outstanding>0 AND p.due<$3::date THEN 'Past expected arrival' WHEN p.outstanding>0 THEN 'In transit'
+  SELECT p.transfer_number AS "Transfer",p.source AS "From",p.destination AS "To",p.due::text AS "Due",p.unit AS "Unit",
+    CASE WHEN p.unit IS NOT NULL THEN p.shipped END AS "Dispatched",
+    CASE WHEN p.unit IS NOT NULL THEN p.received END AS "Received",
+    CASE WHEN p.unit IS NOT NULL THEN p.outstanding END AS "Still in transit",
+    CASE WHEN p.unit IS NOT NULL THEN p.exceptions END AS "Lost or damaged",
+    CASE WHEN p.outstanding>0 AND p.due<$3::date THEN 'Past expected arrival'
+      WHEN p.outstanding>0 AND p.due IS NULL THEN 'Arrival date not recorded' WHEN p.outstanding>0 THEN 'In transit'
       WHEN p.exceptions>0 THEN 'Closed with a difference' ELSE 'Received complete' END AS "Result",
-    coalesce(n.reminders,0) AS "In-app reminders",'/transfers/'||p.id AS link
+    coalesce(n.reminders,0) AS "In-app reminders", n.last_reminded::text AS "Last reminder",
+    (SELECT max(e.created_at) FROM inventory_transfer_events e WHERE e.workspace_id=$1 AND e.transfer_id=p.id
+      AND e.event_type='ARRIVAL_FOLLOW_UP_CHECKED') AS "Last receiving check",'/transfers/'||p.id AS link
     FROM positions p LEFT JOIN stockchief_runtime.agent_operational_notices n ON n.workspace_id=$1 AND n.job_id=124
       AND n.kind='Transfer' AND n.reference=p.transfer_number AND n.link='/transfers/'||p.id
     ORDER BY (p.outstanding>0 AND p.due<$3::date) DESC NULLS LAST,p.due NULLS LAST,p.transfer_number`;
@@ -35,13 +45,13 @@ async function checkStockDiscrepancies(db,workspaceId,today){
     WHERE previous.checked_on<excluded.checked_on`,[workspaceId,'',today]);
 }
 
-async function refresh(db,workspaceId){
+async function refresh(db,workspaceId,{now=new Date()}={}){
   const account=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,168,'automatic'))return;
-  const today=await require('../lib/business-time').today(db,workspaceId);
+  const {calendarDate:today,timeZone}=await require('../lib/business-time').forWorkspace(db,workspaceId,now);
+  const includeTransfers=await transferArrivals.enabled(db,workspaceId,account,{lock:true});
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
-  const includeTransfers=policy.permits(account.plan,124,'automatic');
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
@@ -65,16 +75,17 @@ async function refresh(db,workspaceId){
         WHERE NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=p.workspace_id
           AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
     ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
-    (includeTransfers?' UNION ALL SELECT 124,\'Transfer\',"Transfer",link,"Due"::date FROM ('+transfers+') t WHERE "Result"=\'Past expected arrival\'':'')+watchQueries;
+    (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+watchQueries;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
     INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded)
     SELECT $1,job,kind,ref,link,due,$3::date FROM current
     ON CONFLICT(workspace_id,job_id,kind,reference,link) DO UPDATE SET due=excluded.due,last_reminded=excluded.last_reminded,
-      reminders=n.reminders+CASE WHEN n.last_reminded<excluded.last_reminded OR n.resolved THEN 1 ELSE 0 END,resolved=false
+      reminders=n.reminders+CASE WHEN n.last_reminded<excluded.last_reminded OR (n.resolved AND n.job_id<>124) THEN 1 ELSE 0 END,resolved=false
     WHERE n.resolved OR (n.job_id IN (124,168) AND (n.last_reminded<excluded.last_reminded OR n.due<>excluded.due))
     RETURNING job_id)
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
-      AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,[workspaceId,'',today]);
+      AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
+  includeTransfers?[workspaceId,'',today,timeZone]:[workspaceId,'',today]);
 }
 
 async function inbox(db,workspaceId,actorId=null){
@@ -103,12 +114,14 @@ async function inbox(db,workspaceId,actorId=null){
     FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id
     ${stockChecks}
     ${paymentChecks}
-    ) current WHERE ($2::text IS NULL OR EXISTS(SELECT 1 FROM users u
+    ) current WHERE (current.job_id=124 OR $2::text IS NULL OR EXISTS(SELECT 1 FROM users u
       WHERE u.workspace_id=$1 AND u.id=$2 AND u.role='owner'))`,[workspaceId,actorId]);
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state))return [];
-  const visible=rows.filter(r=>policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
+  const transferNotices=rows.some(r=>Number(r.job_id)===124) && policy.permits(state.plan,124,'automatic')
+    ? await transferArrivals.inbox(db,workspaceId,actorId?await transferArrivals.receiver(db,{workspaceId,actorId}):{owner:true,locations:null},state) : [];
+  const visible=rows.filter(r=>Number(r.job_id)!==124&&policy.permits(state.plan,Number(r.job_id),Number(r.job_id)===50?'suggest':'automatic',{trained:Number(r.job_id)===67}));
   const suppressed=new Set();
   for(const {job_id:job} of visible)if([104,108].includes(Number(job))&&await require('./job-modes').restriction(db,workspaceId,Number(job),true))suppressed.add(job);
   return visible.filter(r=>!suppressed.has(r.job_id)).map(r=>{
@@ -147,12 +160,11 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===206)return {kind:'inventory',grouped:true,importance:'Information',priority:40,title:'Review this month’s automation opportunities',
       happened:'Repeated owner approvals can become taught routines.',why:'The work stayed inside the same customer, supplier or product scope.',
       recommendation:'Review the examples and choose the limits for each rule.',href:'/autopilot/reviews/automation-opportunities',actionLabel:'Review routines',sourceId:'agent-notice-206'};
-    const transfer=Number(r.job_id)===124,name=transfer?'warehouse transfers':'orders, shipments or invoices';
-    return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:transfer?'Overdue warehouse transfers':'Overdue orders, shipments and invoices',
-      happened:r.n+' outstanding '+name+'. Earliest due date '+r.due+'.',why:'A scheduled check found work still open past the promised date.',
-      recommendation:transfer?'Check with the receiving location and confirm the units physically received.':'Review the overdue records and follow up with the named contact.',
-      href:'/autopilot/reviews/'+(transfer?'transfer-arrivals':'overdue-work'),actionLabel:'Review overdue records',sourceId:'agent-notice-'+r.job_id,dueDate:r.due};
-  });
+    return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Overdue orders, shipments and invoices',
+      happened:r.n+' outstanding orders, shipments or invoices. Earliest due date '+r.due+'.',why:'A scheduled check found work still open past the promised date.',
+      recommendation:'Review the overdue records and follow up with the named contact.',
+      href:'/autopilot/reviews/overdue-work',actionLabel:'Review overdue records',sourceId:'agent-notice-'+r.job_id,dueDate:r.due};
+  }).concat(transferNotices);
 }
 
 module.exports={transfers,refresh,inbox};

@@ -7,6 +7,7 @@ const costing = require('../accounting/postgres-costing');
 const ledger = require('../accounting/postgres-ledger');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
+const warehouse = require('../operations/postgres-warehouse-access');
 
 const OPEN = ['REQUESTED', 'APPROVED', 'PICKED', 'SHIPPED', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'];
 const RECEIVABLE = ['SHIPPED', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'];
@@ -103,10 +104,31 @@ async function get(client, workspaceId, id, { lock = false } = {}) {
   return { ...transfer, decision_detail: parseJson(transfer.decision_detail), lines, events, totals };
 }
 
-async function list(database, workspaceId, { status = null } = {}) {
+async function actorLocations(database, ctx) {
+  const roots = await warehouse.scope(database, ctx);
+  return roots === null ? null : (await warehouse.locations(database, ctx.workspaceId, roots)).map(l => l.id);
+}
+
+async function getForActor(database, ctx, id) {
+  const actor = (await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,ctx.actorId])).rows[0];
+  permissions.assertCan(actor, permissions.VIEW_TRANSFERS, 'view inventory transfers');
+  const transfer = await get(database, ctx.workspaceId, id);
+  const allowed = await actorLocations(database, ctx);
+  const source = allowed === null || allowed.includes(transfer.source_location_id);
+  const destination = allowed === null || allowed.includes(transfer.destination_location_id);
+  if (!source && !destination) throw new NotFoundError('That transfer could not be found.');
+  return { transfer, source, destination };
+}
+
+async function list(database, workspaceId, { status = null, locations = null } = {}) {
   const values = [workspaceId];
   let filter = '';
   if (status) { values.push(status); filter = ` AND t.status=$${values.length}`; }
+  if (locations !== null) {
+    values.push(locations);
+    filter += ` AND (t.source_location_id=ANY($${values.length}::text[]) OR t.destination_location_id=ANY($${values.length}::text[]))`;
+  }
   return (await database.query(`SELECT t.*,src.name AS source_name,dst.name AS destination_name,
       COALESCE((SELECT SUM(requested_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS requested_units,
       COALESCE((SELECT SUM(received_quantity) FROM inventory_transfer_lines WHERE transfer_id=t.id),0) AS received_units,
@@ -165,7 +187,15 @@ async function requestInTransaction(client, rawContext, input) {
   await requirePermission(client, ctx, permissions.REQUEST_TRANSFER, 'request an inventory transfer');
   await lockKey(client, ctx.workspaceId, key);
   const prior = await eventByKey(client, ctx.workspaceId, key);
-  if (prior) return { ...(await get(client, ctx.workspaceId, prior.transfer_id)), replayed: true };
+  if (prior) {
+    const transfer = await get(client, ctx.workspaceId, prior.transfer_id);
+    await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+    return { ...transfer, replayed: true };
+  }
+  const expectedArrivalDate = trimOrNull(input.expectedArrivalDate);
+  if (expectedArrivalDate && !require('./agent-transfer-arrivals').isDay(expectedArrivalDate)) {
+    throw new ValidationError('Enter a valid expected arrival date.');
+  }
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Add at least one product to transfer.');
   const locations = (await client.query(`SELECT id,name,is_active FROM locations
     WHERE workspace_id=$1 AND id=ANY($2::text[]) AND custody_agreement_id IS NULL ORDER BY id FOR UPDATE`,
@@ -173,6 +203,7 @@ async function requestInTransaction(client, rawContext, input) {
   const from = locations.find((row) => row.id === input.fromLocationId);
   const to = locations.find((row) => row.id === input.toLocationId);
   if (!from || !to) throw new ValidationError('Choose source and destination locations from this inventory.');
+  await warehouse.assertLocations(client, ctx, [from.id]);
   if (from.id === to.id) throw new ValidationError('Choose two different locations.');
   if (!Number(from.is_active) || !Number(to.is_active)) throw new ValidationError('Archived locations cannot be used for transfers.');
   const duplicate = new Set();
@@ -226,7 +257,7 @@ async function requestInTransaction(client, rawContext, input) {
     (id,workspace_id,transfer_number,source_location_id,destination_location_id,status,expected_arrival_date,
      reason,notes,reference,decision_detail,requested_by_user_id,requested_at,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,'REQUESTED',$6,$7,$8,$9,$10,$11,$12,$12,$12)`,
-  [id, ctx.workspaceId, transferNumber, from.id, to.id, trimOrNull(input.expectedArrivalDate),
+  [id, ctx.workspaceId, transferNumber, from.id, to.id, expectedArrivalDate,
     trimOrNull(input.reason), trimOrNull(input.notes), trimOrNull(input.reference),
     JSON.stringify(input.decisionDetail || {}), ctx.actorId, at]);
   for (const row of prepared) {
@@ -269,8 +300,9 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
   await requirePermission(client, ctx, permissions.APPROVE_TRANSFER, 'approve an inventory transfer');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'REQUESTED') throw new ValidationError('Only a requested transfer can be approved.');
   const lockRows = [...transfer.lines].sort((a, b) => `${a.sku_id}:${a.lot_id || ''}`.localeCompare(`${b.sku_id}:${b.lot_id || ''}`));
@@ -332,8 +364,9 @@ async function pickInTransaction(client, rawContext, transferId, input = {}) {
   await requirePermission(client, ctx, permissions.PICK_TRANSFER, 'pick an inventory transfer');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'APPROVED') throw new ValidationError('Only an approved transfer can be picked.');
   const at = nowIso();
@@ -386,8 +419,9 @@ async function dispatchInTransaction(client, rawContext, transferId, input = {})
   await requirePermission(client, ctx, permissions.DISPATCH_TRANSFER, 'dispatch an inventory transfer');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'PICKED') throw new ValidationError('Only a picked transfer can be dispatched.');
   const event = await addEvent(client, ctx, transferId, 'SHIPPED', {}, key);
@@ -439,8 +473,9 @@ async function markInTransitInTransaction(client, rawContext, transferId, input 
   await requirePermission(client, ctx, permissions.DISPATCH_TRANSFER, 'mark an inventory transfer in transit');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (transfer.status !== 'SHIPPED') throw new ValidationError('Only a shipped transfer can be marked in transit.');
   const at = nowIso();
@@ -507,8 +542,12 @@ async function receiveInTransaction(client, rawContext, transferId, input = {}) 
   if (hasDifference) await requirePermission(client, ctx, permissions.ADJUST, 'record transfer loss or damage');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
+  if (replay && (replay.transfer_id !== transferId || replay.event_type !== 'RECEIPT_RECORDED')) {
+    throw new ValidationError('This receipt key belongs to a different transfer or action.');
+  }
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.destination_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (!RECEIVABLE.includes(transfer.status)) throw new ValidationError('This transfer is not waiting to be received.');
   const event = await addEvent(client, ctx, transferId, 'RECEIPT_RECORDED', { lines: input.lines }, key);
@@ -588,7 +627,36 @@ async function receiveInTransaction(client, rawContext, transferId, input = {}) 
     received_at=CASE WHEN $3='RECEIVED' THEN $5 ELSE received_at END,updated_at=$5,version=version+1
     WHERE id=$1 AND workspace_id=$2`, [transferId, ctx.workspaceId, status, ctx.actorId, at]);
   await reconcilePegs(client, ctx, transferId, transfer.destination_location_id);
+  if (status === 'RECEIVED') await client.query(`UPDATE stockchief_runtime.agent_operational_notices SET resolved=true
+    WHERE workspace_id=$1 AND job_id=124 AND kind='Transfer' AND reference=$2 AND link=$3 AND NOT resolved`,
+  [ctx.workspaceId, transfer.transfer_number, '/transfers/' + transferId]);
   return { ...(await get(client, ctx.workspaceId, transferId)), replayed: false };
+}
+
+async function recordArrivalCheck(client, ctx, transferId, reminderDay, locations) {
+  const arrival = require('./agent-transfer-arrivals');
+  const day = String(reminderDay || '');
+  if (!arrival.isDay(day)) {
+    throw new ValidationError('Reload the current receiving reminder before confirming the check.');
+  }
+  const transfer = (await client.query(`SELECT t.id,t.transfer_number,t.destination_location_id,t.status,
+    (${arrival.expectedDate})::text AS expected_arrival_date,t.shipped_at,${arrival.unsettled} AS unsettled
+    FROM inventory_transfers t WHERE t.workspace_id=$1 AND t.id=$2 FOR UPDATE`, [ctx.workspaceId, transferId])).rows[0];
+  if (!transfer || locations && !locations.includes(transfer.destination_location_id)) throw new NotFoundError('That incoming transfer could not be found.');
+  const key = arrival.checkKey(transferId, day);
+  if (await eventByKey(client, ctx.workspaceId, key)) return { replayed: true };
+  const business = await require('../lib/business-time').forWorkspace(client, ctx.workspaceId);
+  const expected = transfer.expected_arrival_date;
+  const shippedAt = new Date(transfer.shipped_at || NaN);
+  const dispatched = Number.isFinite(shippedAt.getTime()) && require('../lib/business-time').context(business.timeZone, shippedAt).calendarDate;
+  const stillDue = expected ? expected < business.calendarDate : dispatched && dispatched < business.calendarDate;
+  if (!RECEIVABLE.includes(transfer.status) || !transfer.unsettled || !stillDue) throw new ValidationError('This transfer no longer needs that receiving check.');
+  const notice = (await client.query(`SELECT last_reminded::text FROM stockchief_runtime.agent_operational_notices
+    WHERE workspace_id=$1 AND job_id=124 AND kind='Transfer' AND reference=$2 AND link=$3 AND NOT resolved FOR SHARE`,
+  [ctx.workspaceId, transfer.transfer_number, '/transfers/' + transferId])).rows[0];
+  if (notice?.last_reminded !== day) throw new ValidationError('A newer receiving reminder is available. Reload the current follow-up.');
+  await addEvent(client, ctx, transferId, arrival.FOLLOW_UP, { reminderDay: day, result: 'STILL_WAITING' }, key);
+  return { replayed: false };
 }
 
 function receive(database, ctx, transferId, input) {
@@ -602,8 +670,9 @@ async function cancelInTransaction(client, rawContext, transferId, input = {}) {
   await requirePermission(client, ctx, permissions.APPROVE_TRANSFER, 'cancel an inventory transfer');
   await lockKey(client, ctx.workspaceId, key);
   const replay = await eventByKey(client, ctx.workspaceId, key);
-  if (replay) return { ...(await get(client, ctx.workspaceId, replay.transfer_id)), replayed: true };
   const transfer = await get(client, ctx.workspaceId, transferId, { lock: true });
+  await warehouse.assertLocations(client, ctx, [transfer.source_location_id]);
+  if (replay) return { ...transfer, replayed: true };
   await assertBinWorkflow(client,ctx,transferId);
   if (!['REQUESTED', 'APPROVED', 'PICKED'].includes(transfer.status)) {
     throw new ValidationError('A dispatched transfer cannot be cancelled; record receipt, loss, or damage to settle its custody.');
@@ -660,4 +729,4 @@ async function incomingForSku(database, workspaceId, skuId, { locationId = null 
 
 module.exports = { OPEN, request, requestInTransaction, approve, approveInTransaction, pick, pickInTransaction,
   dispatch, dispatchInTransaction, markInTransit, markInTransitInTransaction, receive, receiveInTransaction,
-  cancel, cancelInTransaction, get, list, sourceAvailable, incomingForSku, verify };
+  cancel, cancelInTransaction, get, getForActor, actorLocations, list, sourceAvailable, incomingForSku, verify, recordArrivalCheck };

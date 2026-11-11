@@ -23,6 +23,9 @@ function createRouter(db){
   res.locals.flash=req.session.flash||[];req.session.flash=[];
   res.locals.countTasks=permissions.can(req.user,permissions.COUNT_STOCK)?await tasks.inbox(db,req.ctx.workspaceId,req.ctx.actorId):[];
   const putawayPolicy=require('../../commercial/agent-plan'),putawayState=await putawayPolicy.accountState(db,req.ctx.workspaceId);
+  const arrivals=require('../../transfers/agent-transfer-arrivals');
+  res.locals.transferArrivals=roots!==null&&permissions.can(req.user,permissions.VIEW_TRANSFERS)&&permissions.can(req.user,permissions.RECEIVE_TRANSFER)
+    ? await arrivals.inbox(db,req.ctx.workspaceId,{owner:false,locations:locations.map(l=>l.id)},putawayState) : [];
   res.locals.canCorrectBins=permissions.can(req.user,permissions.REQUEST_TRANSFER);
   res.locals.binCorrectionAllowed=putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,11,'draft');
   res.locals.staffRequestsAllowed=putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,41,'draft');
@@ -67,6 +70,11 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(!req.ctx||await access.scope(db,req.ctx)===null)return req.path.startsWith('/warehouse/stock')?router(req,res,next):next();
   if(req.path==='/logout')return next();
   if(req.path==='/purchasing/requests'&&['GET','POST'].includes(req.method))return router(req,res,next);
+  const transferDetail=/^\/transfers\/tr_[A-Za-z0-9_-]+$/;
+  const transferReceipt=/^\/transfers\/tr_[A-Za-z0-9_-]+\/receive$/;
+  const transferCheck=/^\/transfers\/arrival-follow-up\/tr_[A-Za-z0-9_-]+\/check$/;
+  if(req.method==='GET'&&(req.path==='/transfers/arrival-follow-up'||transferDetail.test(req.path)) ||
+     req.method==='POST'&&(transferReceipt.test(req.path)||transferCheck.test(req.path)))return next();
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);

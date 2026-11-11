@@ -91,7 +91,7 @@
   "121": "Reviews whole-order warehouse availability and saved warehouse pick sequence. Split-warehouse optimization remains separate.",
   "122": "Prepares a same-warehouse move list using recent picks, available quantities and measured distance from packing. Physical bin moves remain separate.",
   "123": "Compares recorded consignment counters with custody balances and shows separate dated ShipBob stock observations. Partner stock is not added to owned stock; live provider reconciliation remains open.",
-  "124": "Checks dispatched transfers against received, lost and damaged quantities and creates a daily in-app follow-up for overdue arrivals.",
+  "124": "Checks dispatched transfers against physical receipts, loss and damage without training. Receiving staff see daily in-app follow-ups for assigned warehouses and can confirm they checked or record an actual arrival. Split receipts stay open for the exact remaining products, lots, serials and weights. A missing expected date is flagged separately. Physical receipt and write-offs retain their existing permissions.",
   "125": "Shows an authorized Custom account's inventory summary across its inventories. Lower plans cannot open this combined view.",
   "126": "Finds ambiguous item codes, duplicate barcodes and missing purchase costs or weights. General duplicate merging and purchase-cost repair remain open.",
   "127": "Creates products and purchase-cost records from an approved supported supplier CSV through the native import worker, preserving stock on replay.",

@@ -93,7 +93,7 @@ const definitions=[
   {id:167,key:'brand-watches',label:'Watch stock levels by brand',sql:require('./brand-watches').matching,
     summary:'Compares the physical quantity of each active SKU across locations against the saved watch for its product brand.'},
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
-    summary:'Compare dispatch, physical receipt, recorded damage or loss and units still in transit. Overdue transfers get an in-app follow-up in Needs you.'},
+    summary:'Compare dispatch with physical receipts, recorded loss or damage and stock still in transit. Receiving teams see scheduled follow-ups for their assigned warehouses. Open each transfer for its product quantities.'},
   {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},
   {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
@@ -245,7 +245,8 @@ async function run(db,ctx,key,options={}){
     rows=firstSuggestion(def,rows);more=false;
   }
   return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,
-    ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{})};
+    ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{}),
+    ...(def.id===124?{transferArrivalLink:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

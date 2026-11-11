@@ -1,0 +1,26 @@
+<div class="rm-title"><div><h1>Receiving transfer follow-up</h1><p class="rm-sub">Record what physically arrived, or confirm that you checked and are still waiting.</p></div></div>
+<% if (!rows.length) { %><p>No scheduled receiving checks are waiting for this warehouse.</p><% } %>
+<% for (const t of rows) { %>
+<section class="rm-panel">
+  <div class="rm-panel__head"><div><h2><%= t.transfer_number %> · <%= t.destination %></h2>
+    <p class="rm-sub">From <%= t.source %> · <%= t.expected_arrival_date ? 'Expected '+t.expected_arrival_date : 'Arrival date needs confirmation' %></p>
+  </div></div>
+  <div class="rm-panel__body">
+    <p>Last reminder <%= t.reminder_day %> · <%= t.checked ? 'Receiving team checked and is still waiting' : 'Receiving check needed' %></p>
+    <ul>
+    <% for (const line of t.lines) { %><li>
+      <strong><%= line.name %> · <%= line.code %></strong><% if (line.lot) { %> · Lot <%= line.lot %><% } %>
+      <div><%= line.shipped %> <%= line.unit %> dispatched · <%= line.received %> received · <%= line.lost %> lost · <%= line.damaged %> damaged · <%= line.outstanding %> still in transit<% if (line.secondaryUnit) { %> · <%= line.secondaryOutstanding %> <%= line.secondaryUnit %> still in transit<% } %></div>
+      <% if (line.serials?.length) { %><div>Serials still in transit: <%= line.serials.join(', ') %></div><% } %>
+    </li><% } %>
+    </ul>
+    <p><a class="rm-btn" href="/transfers/<%= t.id %>">Open transfer to record arrival</a></p>
+    <% if (!t.checked) { %><form method="post" action="/transfers/arrival-follow-up/<%= t.id %>/check">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="reminderDay" value="<%= t.reminder_day %>">
+      <button class="rm-btn rm-btn--ghost">Checked and still waiting</button>
+    </form><% } %>
+  </div>
+</section>
+<% } %>
+<% if (more) { %><p><a href="/transfers/arrival-follow-up?page=<%= page+1 %>&amp;location=<%= encodeURIComponent(locationId) %>">Next transfers</a></p><% } %>
