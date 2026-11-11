@@ -621,6 +621,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
+  'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
   'import.read-voice-receipt.v1':external((job,database)=>require('../documents/agent-voice-receiving').run(job,database,
     {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),

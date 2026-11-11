@@ -3,16 +3,16 @@
 <% if(kind==='/roadmap'){ %>
 <p>These are future development areas. They are not promises of current support or delivery dates.</p>
 <ul><li>Vendor-qualified ERP integrations, including NetSuite</li><li>Full two-way QuickBooks and Xero accounting sync. Connections for approved journal exports are available today; full two-way accounting sync is planned.</li><li>EDI trading-partner workflows</li><li>SAML single sign-on. Company sign-in using OpenID Connect is available today on Pro and Custom.</li><li>Multi-currency operations</li><li>Multi-company administration and consolidation</li></ul>
-<p>Current work focuses on import reliability, inventory accuracy, plan limits, and everyday warehouse operations. <a href="/contact">Discuss a requirement</a> before relying on a roadmap feature.</p>
+<p>Current work focuses on import reliability, inventory accuracy, plan limits, and everyday warehouse operations. <a href="/contact?topic=requirement">Discuss a requirement</a> before relying on a roadmap feature.</p>
 <% }else if(kind==='/security'){ %>
 <h2>Encryption and credentials</h2><p>Hosted access uses HTTPS. Stored connection credentials use AES-256-GCM encryption. Passwords are stored as salted scrypt hashes; API tokens are stored as hashes. Database encryption and recovery settings depend on the deployed hosting configuration.</p>
 <h2>Access control</h2><p>Business records are scoped to an inventory and account. Team permissions, API scopes, plan checks, and approval rules limit operations. Stock movements and posted journal entries retain their history.</p>
 <h2>Backups and recovery</h2><p>Database recovery uses the hosting provider's configured backup facilities. Contact support for the retention period and latest restore-test evidence for your deployment; this page does not certify a recovery time.</p>
 <h2>Availability and data location</h2><p>See <a href="/status">service status</a> for a current web and database check. A measured uptime SLA is not published here. Deployment region and third-party processing locations must be confirmed for your account before agreeing to a residency requirement.</p>
 <h2>SOC 2</h2><p>StockChief does not claim SOC 2 certification or an available SOC 2 report on this page. Independent audit scope and completion dates have not been published. Ask support for current security evidence and contractual requirements.</p>
-<p><a href="/privacy">Privacy notice</a> · <a href="/control">Approvals and controls</a> · <a href="/contact">Security questions</a></p>
+<p><a href="/privacy">Privacy notice</a> · <a href="/control">Approvals and controls</a> · <a href="/contact?topic=security">Security questions</a></p>
 <% }else if(kind==='/status'){ %>
-<h2><%= available?'Web and database responding':'Database connection unavailable' %></h2><p>Checked <%= checkedAt %>.</p><p>This checks the current web request and database connection. It does not certify background jobs, payment providers, AI availability, or historical uptime.</p><p><a href="/support">Report a problem</a> · <a href="/security">Security information</a></p>
+<h2><%= available?'Web and database responding':'Database connection unavailable' %></h2><p>Checked <%= checkedAt %>.</p><p>This checks the current web request and database connection. It does not certify background jobs, payment providers, AI availability, or historical uptime.</p><p><a href="/support?topic=problem">Report a problem</a> · <a href="/security">Security information</a></p>
 <% }else{ %>
 <p>Public API access requires an eligible plan and a key scoped to your inventory. Create and revoke keys in Settings. Send keys only over HTTPS and keep them out of browser code.</p>
 <h2>Authentication</h2><pre>Authorization: Bearer YOUR_API_KEY</pre><p>Inventory tokens can have <code>inventory:read</code> and <code>inventory:write</code>. Custom customers can issue an owner token with <code>agent:run</code> for operational reviews.</p>

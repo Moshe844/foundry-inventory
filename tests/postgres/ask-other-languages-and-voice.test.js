@@ -55,3 +55,21 @@ test('a voice note is read into text in the spoken language, charged once, and r
  assert.deepEqual(usage.map(row=>row.status),['COMMITTED','REVERSED'],'one charge for the note that was read, none for the silent one');
  await assert.rejects(voice.transcribe(db,ctx,Buffer.from('not audio'),{transcriber:transcriber('x')}),/WAV voice note/);
 });
+
+test('when the web service has no transcription key, the worker reads the voice note and the request gets the words',{timeout:180000},async t=>{
+ const old=process.env.OPENAI_API_KEY;delete process.env.OPENAI_API_KEY;t.after(()=>{if(old!==undefined)process.env.OPENAI_API_KEY=old;});
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t);
+ const {db,ctx}=f,voice=require('../../src/assistant/ask-voice'),budget=require('../../src/commercial/model-cost-budget');
+ await f.subscribe('pro');
+ const worker=text=>({name:'openai',model:'gpt-transcribe',providerVersion:'audio-2026-08-26',async transcribe(wave,{hold}){assert.ok(budget.useTranscriptionHold(hold));return {text,seconds:1};}});
+ // The worker picks up the queued note, as the job runner would.
+ const work=async text=>{for(let n=0;n<100;n++){const job=(await db.query("SELECT j.id,j.workspace_id,j.payload FROM stockchief_runtime.jobs j JOIN stockchief_runtime.ask_voice_notes n ON n.workspace_id=j.workspace_id AND n.job_id=j.id WHERE j.workspace_id=$1 AND j.kind=$2 AND n.state='QUEUED' LIMIT 1",[ctx.workspaceId,voice.kind])).rows[0];
+  if(job){return voice.run({id:job.id,workspaceId:job.workspace_id,payload:job.payload},db,{transcriber:worker(text)}).catch(error=>error);}
+  await new Promise(r=>setTimeout(r,100));}throw new Error('no voice note was queued');};
+ const [heard]=await Promise.all([voice.read(db,ctx,wav(),{usageKey:'worker-note',waitMs:20000,pollMs:100}),work('כמה זוגות נעליים יש לנו?')]);
+ assert.deepEqual(heard,{text:'כמה זוגות נעליים יש לנו?',truncated:false});
+ const saved=(await db.query('SELECT state,content IS NULL AS cleared FROM stockchief_runtime.ask_voice_notes WHERE workspace_id=$1',[ctx.workspaceId])).rows;
+ assert.deepEqual(saved,[{state:'READY',cleared:true}],'the audio is not kept once the words are back');
+ const [silent]=await Promise.all([voice.read(db,ctx,wav(),{usageKey:'worker-silent',waitMs:20000,pollMs:100}).catch(error=>error),work('')]);
+ assert.match(silent.message,/No words were heard/,'the worker\'s reason reaches the person');
+});

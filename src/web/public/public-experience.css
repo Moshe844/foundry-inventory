@@ -556,6 +556,8 @@ html:root body.public-page[data-public-page=pricing] .plan-card[data-plan] .plan
 .pub-integration-dialog ol li::marker { color: rgb(79, 70, 229); font-weight: 700; }
 .pub-integration-dialog > footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; padding: 16px 24px 22px; border-top: 1px solid #ECEEF4; }
 .pub-integration-dialog > footer p { flex-basis: 100%; margin: 0 0 4px; font-size: 13.5px; color: #667085; }
+.pub-integration-dialog__access { margin: 20px 24px 0; padding: 12px 14px; border-radius: 10px; background: #EEF2FF; color: #3730A3; font-size: 14px; line-height: 1.5; }
+@media (max-width: 600px) { .pub-integration-dialog__access { margin-left: 16px; margin-right: 16px; } }
 @media (max-width: 600px) {
   .pub-integration-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 14px; }
   .pub-integration-dialog > header, .pub-integration-dialog > footer { padding-left: 16px; padding-right: 16px; }

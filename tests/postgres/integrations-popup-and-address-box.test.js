@@ -30,10 +30,13 @@ test('every public connection opens a window with what it does and how to connec
   assert.equal(await page.locator('dialog#'+providers[0].id).evaluate(d=>d.open),false,'a click outside closes it');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,width+': no sideways scroll');
  }
- // Connections not yet open to businesses say so, and offer a question instead of a sign-up.
- const soon=providers.find(p=>p.status);
- if(soon){const page=await browser.newPage();await page.goto(origin+'/integrations');await page.getByRole('button',{name:soon.name,exact:true}).click();
-  assert.match(await page.locator('dialog#'+soon.id+' footer').innerText(),/Ask about/);}
+ // Built connections switched on per business show as normal cards; their window explains early access.
+ const early=providers.find(p=>p.earlyAccess);
+ {const page=await browser.newPage();await page.goto(origin+'/integrations');
+  assert.doesNotMatch(await page.locator('main').innerText(),/Coming soon/i,'nothing built is called coming soon');
+  if(early){await page.getByRole('button',{name:early.name,exact:true}).click();
+   assert.match(await page.locator('dialog#'+early.id).innerText(),/Early access/);
+   assert.ok((await page.locator('dialog#'+early.id+' footer').innerText()).includes('Ask us to turn on '+early.name),'early access offers to switch it on');}}
 
  // New customer: the delivery address heading and fields sit inside their box, not on its edge.
  const page=await browser.newPage();

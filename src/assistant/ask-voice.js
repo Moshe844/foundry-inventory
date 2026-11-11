@@ -50,4 +50,45 @@ async function transcribe(db,ctx,buffer,{transcriber,usageKey}={}){
   }
 }
 
-module.exports={available,transcribe,MAX_TEXT};
+// The web service reads a voice note itself when it holds the transcription
+// key. Otherwise the worker — where the AI keys live — reads it, and this
+// request waits for the words, so the person sees the same thing either way.
+const table='stockchief_runtime.ask_voice_notes',kind='ask.read-voice-note.v1';
+async function read(db,ctx,buffer,{usageKey,transcriber,waitMs=60000,pollMs=400}={}){
+  if(transcriber||available())return transcribe(db,ctx,buffer,{transcriber,usageKey});
+  const {wave}=waveform.validate(buffer),id=require('../lib/util').newId('askvoice');
+  await db.transaction(async tx=>{
+    await tx.query(`DELETE FROM ${table} WHERE workspace_id=$1 AND created_at<now()-interval '1 day'`,[ctx.workspaceId]);
+    const scoped={query:(...args)=>tx.query(...args),transaction:fn=>fn(tx)};
+    const {job}=await require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,kind,idempotencyKey:id,
+      payload:{id,actorId:ctx.actorId},maxAttempts:1,priority:20});
+    await tx.query(`INSERT INTO ${table}(workspace_id,id,actor_user_id,job_id,usage_key,content) VALUES($1,$2,$3,$4,$5,$6)`,
+      [ctx.workspaceId,id,ctx.actorId,job.id,String(usageKey||'').slice(0,200),wave]);
+  },{isolation:'READ COMMITTED'});
+  for(const deadline=Date.now()+waitMs;;){
+    const row=(await db.query(`SELECT state,transcript,problem FROM ${table} WHERE workspace_id=$1 AND id=$2 AND actor_user_id=$3`,
+      [ctx.workspaceId,id,ctx.actorId])).rows[0];
+    if(row?.state==='READY'){const text=String(row.transcript||'');return {text:text.slice(0,MAX_TEXT),truncated:text.length>MAX_TEXT};}
+    if(row?.state==='FAILED')throw new ValidationError(row.problem||'The voice note could not be read. Try again or type the question.');
+    if(Date.now()>deadline)throw new ValidationError('Reading the voice note is taking longer than usual. Try again in a moment.');
+    await new Promise(resolve=>setTimeout(resolve,pollMs));
+  }
+}
+// The worker's side: read the saved recording, keep the words, clear the audio.
+async function run(job,db,{transcriber}={}){
+  const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
+  const row=(await db.query(`SELECT content,usage_key,state FROM ${table} WHERE workspace_id=$1 AND id=$2 AND job_id=$3`,
+    [ctx.workspaceId,job.payload.id,job.id])).rows[0];
+  if(!row||row.state!=='QUEUED'||!row.content)return {id:job.payload.id,replayed:true};
+  try{
+    const heard=await transcribe(db,ctx,row.content,{transcriber,usageKey:row.usage_key});
+    await db.query(`UPDATE ${table} SET state='READY',transcript=$3,content=NULL WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,job.payload.id,heard.text]);
+    return {id:job.payload.id};
+  }catch(error){
+    await db.query(`UPDATE ${table} SET state='FAILED',problem=$3,content=NULL WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,job.payload.id,String(error.message||'The voice note could not be read.').slice(0,500)]);
+    throw error;
+  }
+}
+
+module.exports={available,transcribe,read,run,kind,MAX_TEXT};

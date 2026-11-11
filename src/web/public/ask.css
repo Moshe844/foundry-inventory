@@ -128,6 +128,7 @@
 /* What the voice note is doing, on its own line under the buttons. */
 .rm-composer__voice-status { order:99; flex-basis:100%; margin:2px 0 0; font-size:12.5px; line-height:1.4; color:#475467; }
 .rm-composer__voice-status[hidden] { display:none; }
+.rm-composer__foot:has(.rm-composer__voice-status:not([hidden])) { flex-wrap:wrap; }
 .page-ask .rm-chat > .rm-composer .rm-composer__send { min-height:30px; border-radius:6px; background:#444CE7; font-size:13px; }
 .ask-history-tools { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px; margin:0 0 12px; }
 .ask-history-tools form { display:flex; align-items:center; gap:8px; margin:0; }

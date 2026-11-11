@@ -78,7 +78,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Terms',heading:'Terms of service',kind:'terms',supportEmail:config.supportEmail})));
   const support=require('../../operations/postgres-support');
-  const supportData=async req=>({supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
+  const supportData=async req=>({supportTopic:require('../presentation/support-topics').topic(req.query),supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
     supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0],supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId})});
   router.get('/contact',asyncRoute(async(req,res)=>{const plan=(await commercial.listPlans(database)).find(p=>p.id===req.query.plan);return renderPublic(req,res,'public/contact',{title:plan?'Discuss '+plan.public_name:'Contact StockChief',nav:'contact',inquiryPlan:plan||null,...await supportData(req)});}));
   router.get('/support',asyncRoute(async(req,res,next)=>{if(req.account)return next();return renderPublic(req,res,'public/contact',{title:'StockChief support',nav:'contact',...await supportData(req)});}));

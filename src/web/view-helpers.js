@@ -236,6 +236,8 @@ module.exports = {
   unitLabel,
   // "3.75 kg, 12 m": measured stock, never added to counted units.
   measuredStock:require('../domain/stock-totals').measuredText,
+  // What a support form opened from a link is about (presentation/support-topics.js).
+  supportTopic:require('./presentation/support-topics').topic,
   // "22 units and 1.25 kg" still without a recorded cost.
   missingCost:require('../domain/stock-totals').missingCostText,
   icon,

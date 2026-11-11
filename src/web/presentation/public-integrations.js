@@ -71,8 +71,9 @@ function groups(){
     {title:'Accounting',description:'Connect your accounting company and keep your records in sync.',providers:known.filter(p=>['quickbooks','xero'].includes(p.type))}
   ].map(group=>({...group,providers:group.providers.map(p=>({...p,description:presentation.description(p),
     what:p.description,provides:p.provides||[],steps:stepsFor(p,group.title),
-    // A connection still in qualification is "coming soon"; the internal reason is never shown publicly.
-    status:p.available===false?'Coming soon':null}))}));
+    // Built, and switched on per business while the provider's partner approval
+    // finishes (connections/launch-policy.js); its internal reason is never shown publicly.
+    earlyAccess:p.available===false}))}));
   return [...catalogued,
     {title:'Payments',description:'Your customers pay your own merchant account.',providers:PAYMENTS},
     {title:'Shipping',description:'Your own provider account pays for postage.',providers:SHIPPING.map(p=>({what:SHIPPING_WHAT,provides:['live rates on each order','labels bought from your own account','tracking on the order'],...p}))}

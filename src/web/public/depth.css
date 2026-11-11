@@ -922,6 +922,9 @@ html:root body .sc-phone-extras { display:none; }
  html:root body .sc-toolbar .sc-toolbar-actions { flex-wrap:wrap !important; justify-content:flex-end; gap:6px; width:100%; max-width:100%; overflow:visible; }
  html:root body .sc-toolbar .sc-toolbar-actions > * { flex:0 1 auto; min-width:0; }
  html:root body .sc-toolbar .sc-toolbar-actions :is(.sc-usage-link,.sc-upgrade-link) { display:none; }
+ /* Ask: Attach, Speak and Voice note are icon buttons on a phone, so the box keeps the room. */
+ html:root body .rm-composer__foot > :is(.rm-composer__attach,.rm-composer__voice) { width:38px; min-width:38px; height:36px; padding:0; justify-content:center; }
+ html:root body .rm-composer__foot > :is(.rm-composer__attach,.rm-composer__voice) > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
  html:root body .sc-phone-extras { display:grid; gap:2px; margin:auto 0 8px; padding:8px 0 0; border-top:1px solid rgba(255,255,255,.12); }
  html:root body .sc-phone-extras a { padding:8px 12px; border-radius:8px; color:#D5D8EE; font-size:13.5px; text-decoration:none; }
 

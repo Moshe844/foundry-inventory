@@ -77,7 +77,7 @@
     };
     note.addEventListener('click', function () {
       // Without the transcription service the button stays, and says why it cannot record yet.
-      if (!ready) { tell('Voice notes are not switched on for this StockChief yet. Use Speak, or type the question.'); return; }
+      if (!ready) { tell('Voice notes are not available yet. Use Speak, or type your question.'); return; }
       if (active) { var current = active; active = null; current.stop().then(read, function (error) { tell(error.message); idle(); }); return; }
       note.disabled = true;
       noteRecorder.start().then(function (recording) {
