@@ -75,7 +75,7 @@
   "102": "Schedules invoice reminders from current balances and due dates with customer, mailbox and value limits. Only confirmed delivery counts as completed work; live mailbox qualification remains open.",
   "103": "Matches supported same-currency bank credits to issued invoices and records receipt and allocation together. Live bank ingestion, other cash accounts and batch remittances remain open.",
   "104": "Prepares the upcoming supplier payment review from posted bills and documented discount deadlines. Growth prepares a draft for you to approve. Pro and Custom prepare it automatically. You approve the review and pay each supplier.",
-  "105": "Tracks expected supplier-return credits and applies an approved credit to its original bill once.",
+  "105": "Tracks original supplier credit notes and unused balances, prepares the exact bill application, and verifies the owner-approved posting.",
   "106": "Shows recorded inventory value and identifies clearance candidates by SKU and location. It keeps stock needed for orders, transfers, rentals and replenishment out of the list and flags missing costs before decisions.",
   "107": "Prepares an exact paid cash-refund review or closes a return after its posted unpaid-invoice credit. Every refund needs individual approval. Live payment-provider refunds remain unqualified.",
   "108": "Finds valid early-payment discounts in posted supplier bills and includes upcoming deadlines and possible savings in the payment run. Starter gets one suggestion. Growth, Pro and Custom get an automatic in-app alert.",

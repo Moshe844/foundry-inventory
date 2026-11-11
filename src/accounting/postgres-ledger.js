@@ -158,6 +158,11 @@ async function postManyInTransaction(client,ctx,inputs,options={}){
   }
   const reversedSources=inputs.map(i=>i.reversalOfEntryId).filter(Boolean);
   if(reversedSources.length)await client.query('SELECT id FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,reversedSources]);
+  if (reversedSources.length && (await client.query(`SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications a
+    JOIN accounting_supplier_credits c ON c.workspace_id=a.workspace_id AND c.id=a.credit_id
+    WHERE c.workspace_id=$1 AND c.journal_entry_id=ANY($2::text[]) LIMIT 1`, [ctx.workspaceId,reversedSources])).rowCount) {
+    throw new ValidationError('Correct this supplier credit with its payable and original source evidence. Reversing the journal alone would leave the supplier bill incorrect.');
+  }
   if(reversedSources.length){
     if((await client.query("SELECT 1 FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='custody_agreement'",[ctx.workspaceId,reversedSources])).rows.length)throw new ValidationError('Correct agreement-owned stock and cost through its rental or consignment records, not an isolated journal reversal.');
     const owned=(await client.query("SELECT id,source_type FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='manufacturing_work_order'",[ctx.workspaceId,reversedSources])).rows;

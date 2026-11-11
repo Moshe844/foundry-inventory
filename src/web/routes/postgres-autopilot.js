@@ -207,6 +207,18 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/contracts/:id/original',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await contractReader.load(database,req.ctx,req.params.id);res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"}).type('application/octet-stream').attachment(r.filename).send(r.content);}));
   router.get('/autopilot/contracts/:id',requireAuth,owner,contractsPage);
   router.post('/autopilot/contracts/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{await contractReader.retry(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/contracts/'+req.params.id);}));
+  const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
+  const supplierCreditPage = async (req,res) => res.page('autopilot/supplier-credits', {
+    title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},
+    ...await supplierCredits.page(database,req.ctx,{...req.query,id:req.params.id}),
+  });
+  router.get('/autopilot/supplier-credits', requireAuth, owner, asyncRoute(supplierCreditPage));
+  router.get('/autopilot/supplier-credits/:id', requireAuth, owner, asyncRoute(supplierCreditPage));
+  router.post('/autopilot/supplier-credits/:id/approve', requireAuth, owner, asyncRoute(async(req,res)=>{
+    const result = await supplierCredits.approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This exact credit application was already recorded.':'Supplier credit recorded against the reviewed bill.');
+    return res.redirect(303,supplierCredits.detailHref(req.params.id));
+  }));
   const supplierInvoices=require('../../purchasing/agent-supplier-invoice-intake');
   const supplierInvoicePage=starterAgentPage(98,'draft','Supplier invoices',async(req,res)=>res.page('autopilot/supplier-invoices',{title:'Supplier invoices: originals, matches and exceptions',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await supplierInvoices.page(database,req.ctx,{...req.query,id:req.params.id}),invoiceCurrency:require('../../domain/currency'),differenceLabel:require('../../purchasing/postgres-invoice-review').differenceLabel}));
   router.get('/autopilot/supplier-invoices',requireAuth,owner,supplierInvoicePage);

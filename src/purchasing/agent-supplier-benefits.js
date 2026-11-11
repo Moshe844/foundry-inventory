@@ -95,8 +95,11 @@ async function factsForDefinition(db,ctx,p){
   LEFT JOIN purchase_order_lines po ON po.workspace_id=l.workspace_id AND po.id=l.purchase_order_line_id
   GROUP BY l.bill_id
  ), credits AS (
-  SELECT c.supplier_bill_id,count(*)::int AS n,md5(string_agg(jsonb_build_array(c.id,c.amount_minor,c.journal_entry_id,c.credit_date)::text,'|' ORDER BY c.id)) AS fingerprint
-  FROM accounting_supplier_credits c JOIN bills b ON b.workspace_id=c.workspace_id AND b.id=c.supplier_bill_id GROUP BY c.supplier_bill_id
+  SELECT b.id AS supplier_bill_id,count(*)::int AS n,md5(string_agg(jsonb_build_array(c.id,c.amount_minor,c.journal_entry_id,c.credit_date)::text,'|' ORDER BY c.id)) AS fingerprint
+  FROM accounting_supplier_credits c
+  LEFT JOIN stockchief_runtime.agent_supplier_credit_applications a ON a.workspace_id=c.workspace_id AND a.credit_id=c.id
+  JOIN bills b ON b.workspace_id=c.workspace_id AND b.id=coalesce(a.evidence->>'originalBillId',c.supplier_bill_id)
+  GROUP BY b.id
  ), returns AS (
   SELECT r.supplier_bill_id,count(*)::int AS n,md5(string_agg(jsonb_build_array(r.id,r.status,r.actual_credit_minor,r.supplier_credit_id)::text,'|' ORDER BY r.id)) AS fingerprint
   FROM supplier_returns r JOIN bills b ON b.workspace_id=r.workspace_id AND b.id=r.supplier_bill_id WHERE r.status<>'CANCELLED' GROUP BY r.supplier_bill_id

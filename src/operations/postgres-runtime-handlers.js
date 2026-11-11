@@ -760,6 +760,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
   'import.supplier-portal-invoice.v1':external((job,database)=>require('../purchasing/supplier-portal-invoices').work(database,job.workspaceId,job.payload.sourceId),'bulk'),
+  'agent.supplier-credit-source':external((job,database)=>require('../purchasing/agent-supplier-credit-notes').worker(database,job.workspaceId,job.payload.intakeId)),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{

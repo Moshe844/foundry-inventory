@@ -60,6 +60,7 @@ const definitions=[
   require('../purchasing/agent-supplier-invoice-intake').definition,
   require('../purchasing/agent-supplier-invoice-intake').errorDefinition,
   require('../purchasing/agent-invoice-disputes').definition,
+  require('../purchasing/agent-supplier-credit-notes').definition,
   require('../accounting/agent-customer-invoices').definition,
   require('../accounting/agent-invoice-reminders').definition,
   require('../accounting/agent-customer-payment-matches').definition,
@@ -161,7 +162,7 @@ const suggestions={
   90:r=>'Review '+r.Supplier+' using its '+r['Placed orders']+' recorded purchase orders.',
   91:r=>'Check the higher supplier price on '+r.Order+' for '+r.SKU+'.',
   99:r=>'Review supplier invoice '+r.Invoice+' with '+r.Supplier+'. '+r.Problem,
-  105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+'. '+r.Status+'.',
+  105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+(r.Amount?' for '+r.Amount:'')+(r.Bill?' against bill '+r.Bill:'')+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
   109:r=>r['Week beginning']+' · '+r.Currency+'. '+r.Review,
   148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
@@ -212,6 +213,7 @@ async function run(db,ctx,key,options={}){
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
+      ...(def.id===105?{supplierCreditLink:true}:{}),
       ...(result.reorderForm?{reorderForm:true}:{}),
       ...(result.supplierSelection?{supplierSelection:true}:{}),
       ...(result.rotationForm?{rotationForm:true}:{}),
@@ -240,7 +242,6 @@ async function run(db,ctx,key,options={}){
     }
   }
   if(def.id===99)for(const row of rows)row.Problem=require('../purchasing/postgres-invoice-review').differenceLabel(row.Problem);
-  if(def.id===105)for(const row of rows){row.Amount=row.Amount!=null&&row.Currency?money.format(row.Amount,row.Currency):null;}
   if(mode==='suggest'){
     rows=firstSuggestion(def,rows);more=false;
   }

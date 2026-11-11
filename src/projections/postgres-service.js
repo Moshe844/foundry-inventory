@@ -20,7 +20,9 @@ function stockSentence(row,action){let facts=[];try{facts=typeof row.source_evid
 function orderImportance(neededBy){if(!neededBy)return 'Needs You';const today=new Date().toISOString().slice(0,10);if(neededBy<today)return 'Urgent';
  return new Date(Date.parse(today+'T00:00:00Z')+3*86400000).toISOString().slice(0,10)>=neededBy?'Important':'Needs You';}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
-async function membership(database,workspaceId,actorId){return actorId?(await database.query(`SELECT role,permissions,
+async function membership(database,workspaceId,actorId){
+ const hasSupplierCredits=hasVerifiedMigration(database,'359-agent-supplier-credit-notes.sql');
+ return actorId?(await database.query(`SELECT role,permissions,
  coalesce((SELECT (to_jsonb(w)->>'has_supplier_direct_orders')::boolean FROM workspaces w
    WHERE w.id=users.workspace_id AND w.owner_account_id=users.account_id),false) AS has_supplier_direct_orders,
  ${hasVerifiedMigration(database,'357-agent-lot-certificate-evidence.sql')?lotCertificateActivity:'false'} AS has_lot_certificate_activity,
@@ -30,7 +32,20 @@ async function membership(database,workspaceId,actorId){return actorId?(await da
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='DRAFT'
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS export_paper_summary,
- CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
+ ${hasSupplierCredits?`CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*) FILTER(WHERE checked),'awaiting',count(*) FILTER(WHERE NOT checked),'created_at',min(p.at))
+ FROM (SELECT x.checked_at at,true checked FROM stockchief_runtime.agent_supplier_credit_work x
+ JOIN stockchief_runtime.agent_supplier_invoice_intakes q ON q.workspace_id=x.workspace_id AND q.id=x.intake_id
+ WHERE x.workspace_id=$1 AND q.status='CREDIT_REVIEW' AND x.result->>'status' IN('READY','WAITING','CONFLICT')
+ UNION ALL SELECT r.shipped_at::timestamptz,false FROM supplier_returns r
+ WHERE r.workspace_id=$1 AND r.status='AWAITING_CREDIT' AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_work x
+ WHERE x.workspace_id=r.workspace_id AND x.result->>'returnId'=r.id)
+ AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications a
+   WHERE a.workspace_id=r.workspace_id AND a.supplier_return_id=r.id AND a.intake_id IS NOT NULL)) p
+ WHERE EXISTS(SELECT 1 FROM workspaces w JOIN account_subscriptions sub ON sub.account_id=w.owner_account_id
+ JOIN stockchief_runtime.agent_job_modes mode ON mode.workspace_id=w.id AND mode.job_id=105 AND mode.mode='routine'
+ WHERE w.id=$1 AND w.owner_account_id=users.account_id AND mode.updated_by=users.id AND sub.plan_id IN('pro','enterprise')
+ AND sub.status IN('ACTIVE','TRIALING'))) END`:'NULL::jsonb'} AS supplier_credit_summary,
+ CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.created_at)) FROM (SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_intakes WHERE workspace_id=$1 AND status IN('READY','HELD','EXCEPTION','CREDIT_REVIEW') ${hasSupplierCredits?`AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_credit_work x WHERE x.workspace_id=$1 AND x.intake_id=agent_supplier_invoice_intakes.id AND x.result->>'status' IN('READY','WAITING','CONFLICT','APPLIED','DUPLICATE'))`:''} UNION ALL SELECT workspace_id,created_at FROM stockchief_runtime.agent_supplier_invoice_uploads WHERE workspace_id=$1 AND status='HELD') p WHERE EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS supplier_invoice_summary,
  CASE WHEN role='owner' THEN (SELECT jsonb_build_object('n',count(*),'created_at',min(p.changed_at)) FROM stockchief_runtime.agent_customer_invoice_work p WHERE p.workspace_id=$1 AND p.revision>p.completed_revision AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS customer_invoice_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_order_cost_previews p WHERE p.workspace_id=$1 AND p.status='DRAFT'
@@ -97,7 +112,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-quality-holds').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-rfqs').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-claims').inbox(database,workspaceId,actorId):[],
-      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary)):[],
+      actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary),require('../purchasing/agent-supplier-credit-notes').notices(actor.supplier_credit_summary)):[],
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
       actor?.role==='owner'?require('../operations/agent-return-disposition').notices(actor.return_assessment_summary):[],
       actor?.role==='owner'?require('../sales/agent-customer-order-pages').notices(actor.customer_page_request_summary):[],

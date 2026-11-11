@@ -711,7 +711,11 @@ async function readSupplierReturn(queryable, workspaceId, id, lock = false) {
 }
 
 async function getSupplierReturn(database, workspaceId, id) {
-  return readSupplierReturn(database, workspaceId, id, false);
+  const row = await readSupplierReturn(database, workspaceId, id, false);
+  const tracked = (await database.query(`SELECT a.intake_id,a.source_number
+    FROM stockchief_runtime.agent_supplier_credit_applications a
+    WHERE a.workspace_id=$1 AND a.supplier_return_id=$2 ORDER BY a.approved_at DESC LIMIT 1`,[workspaceId,id])).rows[0];
+  return { ...row, trackedCredit: tracked || null };
 }
 
 async function listSupplierReturns(database, workspaceId, purchaseOrderId = null, page = null) {
@@ -862,13 +866,24 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
     await requirePermission(client, ctx, permissions.RECONCILE_SUPPLIER_RETURN, 'reconcile supplier credits');
     const operation = await beginOperation(client, ctx, 'supplier_return.reconcile', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
+    const creditLedger = require('../accounting/postgres-supplier-credits');
+    const identity = (await client.query('SELECT supplier_id,supplier_bill_id FROM supplier_returns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];
+    if (!identity) throw new NotFoundError('That supplier return could not be found.');
+    if ((await creditLedger.lockIdentity(client, ctx.workspaceId, identity.supplier_id, input.creditNumber, { native:true })).length) {
+      throw new ValidationError('This supplier credit memo number is already recorded. Review the existing application.');
+    }
+    const bill = identity.supplier_bill_id && (await client.query(`SELECT * FROM accounting_supplier_bills WHERE id=$1 AND workspace_id=$2
+      AND supplier_id=$3 FOR UPDATE`, [identity.supplier_bill_id, ctx.workspaceId, identity.supplier_id])).rows[0];
     const row = await readSupplierReturn(client, ctx.workspaceId, id, true);
     if (row.status !== 'AWAITING_CREDIT') throw new ValidationError('This supplier return is not waiting for a credit.');
+    if ((await client.query(`SELECT 1 FROM stockchief_runtime.agent_supplier_credit_applications
+      WHERE workspace_id=$1 AND supplier_return_id=$2 LIMIT 1`,[ctx.workspaceId,id])).rowCount) {
+      throw new ValidationError('Part of this return credit is already recorded. Review the remaining amount in Supplier credit notes.');
+    }
     if (!row.supplier_bill_id) throw new ValidationError('Match the supplier return to an open bill before reconciling its credit.');
-    const bill = (await client.query(`SELECT * FROM accounting_supplier_bills WHERE id=$1 AND workspace_id=$2
-      AND supplier_id=$3 AND status IN('OPEN','PARTIALLY_PAID') FOR UPDATE`,
-    [row.supplier_bill_id, ctx.workspaceId, row.supplier_id])).rows[0];
-    if (!bill) throw new ValidationError('The matched supplier bill is no longer open.');
+    if (!bill || row.supplier_bill_id !== bill.id || !['OPEN','PARTIALLY_PAID'].includes(bill.status)) {
+      throw new ValidationError('The matched supplier bill is no longer open.');
+    }
     if (amountMinor > Number(bill.balance_minor)) throw new ValidationError('Supplier credit cannot exceed the amount still owed on the bill.');
     const movementIds = row.lines.flatMap((line) => line.movementIds);
     const costResult = await client.query(`SELECT COALESCE(SUM(ABS(cost_delta_minor)),0)::bigint AS amount
@@ -895,17 +910,9 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
       currency: bill.currency, metadata: { supplierReturnId: id, supplierBillId: bill.id,
         amountMinor, returnCostMinor, taxCreditMinor }, lines,
     });
-    const balanceMinor = Number(bill.balance_minor) - amountMinor;
-    await client.query(`UPDATE accounting_supplier_bills SET balance_minor=$2::bigint,status=$3,updated_at=$4,
-      paid_at=CASE WHEN $2::bigint=0::bigint THEN $4 ELSE paid_at END WHERE id=$1`,
-    [bill.id, balanceMinor, balanceMinor === 0 ? 'PAID' : 'PARTIALLY_PAID', at]);
-    await client.query(`INSERT INTO accounting_supplier_credits
-      (id,workspace_id,supplier_bill_id,supplier_id,credit_number,credit_date,amount_minor,reason,
-       journal_entry_id,source_key,created_by_user_id,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-    [creditId, ctx.workspaceId, bill.id, row.supplier_id, trimOrNull(input.creditNumber),
-      creditDate, amountMinor, `Supplier return ${row.return_number}`,
-      posted.entry.id, `supplier-return:${id}`, ctx.actorId, at]);
+    const { balanceMinor } = await creditLedger.insert(client, ctx, bill, { id: creditId,
+      creditNumber: input.creditNumber, creditDate, amountMinor, reason: `Supplier return ${row.return_number}`,
+      journalEntryId: posted.entry.id, sourceKey: `supplier-return:${id}` });
     const matches = row.expected_credit_minor == null || Number(row.expected_credit_minor) === amountMinor;
     await client.query(`UPDATE supplier_returns SET actual_credit_minor=$3,supplier_credit_id=$4,status=$5,
       reconciled_at=CASE WHEN $5='RECONCILED' THEN $6 ELSE NULL END WHERE id=$1 AND workspace_id=$2`,
