@@ -60,7 +60,7 @@
   "79": "Finds companions in orders that actually shipped both products. Starter gets one suggestion. Growth prepares a private quote revision for individual approval. Pro and Custom can add eligible companions without training to new matching quotes within the owner’s customer, warehouse, currency, products, quantities and added-value limit. StockChief uses current stock and native customer pricing, tax and selling units. The original quote stays in history.",
   "80": "Checks credit on the draft order before confirmation. Starter shows one suggestion. Growth, Pro and Custom automatically surface over-limit or incomplete checks and show the draft, unbilled commitments and open invoices against the saved credit limit.",
   "81": "Prepares a reconciled customer account statement with current-month entries and outstanding invoices, separately by currency. Large statements, PDF attachments and live delivery remain open.",
-  "82": "Flags orders below recorded cost and discounts that differ from the saved quotation.",
+  "82": "Flags orders with below-cost goods or discounts that differ from the latest saved quote. The owner can review the exact pricing revision, recorded units and posted fulfillment cost.",
   "86": "Estimates clearance quantities and gross proceeds from an owner-entered markdown. It does not change selling prices without a separate approval.",
   "87": "Compares verified channel prices with the catalog and owner-entered advertised-price minimum, and opens or clears an in-app warning. Real provider qualification remains open.",
   "88": "Reviews customer buying activity using recorded shipment handoffs and highlights new or reduced activity.",

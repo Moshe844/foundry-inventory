@@ -100,7 +100,11 @@ function quote(input){
     const grossMinor=recorded?integer(line.grossMinor,'Recorded line gross'):extended(unitPriceMinor,scaled[index]);
     const discountMinor=recorded?integer(line.discountMinor??0,'Recorded line discount'):0;
     if(discountMinor>grossMinor)invalid('Recorded discount exceeds its line value.');
-    return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,...(line.pricingQuantity!=null?{pricingQuantity:Number(line.pricingQuantity)}:{}),priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
+    return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,
+      ...(line.pricingQuantity!=null?{pricingQuantity:Number(line.pricingQuantity)}:{}),
+      ...(line.costEvidence?{costEvidence:line.costEvidence}:{}),
+      priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,
+      grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
   });
   if(input.priceListId&&!lists.some(r=>r.id===input.priceListId&&lines.some(l=>l.priceSource?.id===r.id)))invalid('The selected price list is not applicable to this customer, currency or quantity.');
   const originalSubtotal=sum(lines.map(l=>l.grossMinor)),applied=[],groups=new Set();let exclusive=false;
