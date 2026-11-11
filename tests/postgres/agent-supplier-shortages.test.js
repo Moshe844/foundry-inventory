@@ -147,4 +147,11 @@ test('Custom can file a measured serial shortage within its explicitly authorize
   await f.deliver();
   assert.equal(f.sent.length,2);
   assert.match(f.sent[1].body,/0.625 kg/);
+  const day=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
+  const digest=await require('../../src/autopilot/agent-work-digest').report(db,ctx,{filter:day});
+  const report=digest.rows.find(row=>row.link==='/autopilot/supplier-claims/'+shortage.id);
+  assert.match(report.Action,/Sent supplier shortage claim/);
+  const measured=(await require('../../src/autopilot/time-saved').report(db,ctx)).rows.find(row=>row.key==='supplier-claim');
+  assert.equal(measured.count,2);
+  assert.equal(measured.minutes,null);
 });

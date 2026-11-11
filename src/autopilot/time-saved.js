@@ -34,7 +34,7 @@ const activities = new Map([
   ['promotion-purchase','Prepare one promotion purchase draft'],
   ['delivery-qc','Apply a QC hold to one received product line'],
   ['supplier-rfq','Prepare and send one supplier quotation request'],
-  ['supplier-claim','Prepare and send one physically evidenced supplier damage claim'],
+  ['supplier-claim','Prepare and send one supplier delivery claim from verified evidence'],
   ['customer-reservation','Reserve one complete customer order from actual available stock'],
   ['customer-priority','Apply one checked customer stock priority'],
   ['channel-buffer','Publish and verify one buffered channel stock update'],

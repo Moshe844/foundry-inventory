@@ -43,7 +43,7 @@ async function preview(db,ctx,input){return db.transaction(async c=>{
 async function rule(c,ctx,id,lock=false){const r=(await c.query('SELECT * FROM stockchief_runtime.agent_supplier_claim_rules WHERE workspace_id=$1 AND id=$2'+(lock?' FOR UPDATE':''),[ctx.workspaceId,id])).rows[0];if(!r)throw new NotFoundError('That claim rule is not in this inventory.');return r;}
 async function example(c,ctx,id){
  const r=await claim(c,ctx,id),m=r.communication_id&&(await c.query("SELECT id FROM supplier_communications WHERE workspace_id=$1 AND id=$2 AND status='SENT' AND nullif(external_message_id,'') IS NOT NULL",[ctx.workspaceId,r.communication_id])).rows[0];
- if(r.automatic||r.reviewed_by!==ctx.actorId||!r.reviewed_at||!m)throw new ValidationError('On Pro, first individually approve a matching damage claim and finish sending it through the connected mailbox.');return r;
+ if(r.automatic||r.reviewed_by!==ctx.actorId||!r.reviewed_at||!m)throw new ValidationError('On Pro, first individually approve a matching supplier claim and finish sending it through the connected mailbox.');return r;
 }
 function fits(p,r){return r.profile_hash===hash(source.profile(p))&&Number(source.units(p))<=Number(r.scope.maxShortUnits??r.max_units)&&
  (p.missingWeight==null||Number(p.missingWeight)<=Number(r.scope.maxShortWeight))&&
@@ -77,14 +77,14 @@ async function configure(db,ctx,id,input){return db.transaction(async c=>{
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function authority(c,workspaceId,g){
  const ctx={workspaceId,actorId:g.actorId},r=await claim(c,ctx,g.claimId),p=r.snapshot;
- if(g.kind!==kind||g.sourceFingerprint!==r.source_fingerprint||r.prepared_by!==ctx.actorId)throw new ValidationError('Review this exact damage claim under the current inventory owner.');
+ if(g.kind!==kind||g.sourceFingerprint!==r.source_fingerprint||r.prepared_by!==ctx.actorId)throw new ValidationError('Review this exact supplier claim under the current inventory owner.');
  let saved=null;if(g.automatic){saved=await rule(c,ctx,g.ruleId);await source.access(c,ctx,{automatic:true,trained:Boolean(saved.example_id),withPhotos:p.photos.length>0});
   const fresh=await current(c,ctx,r,{automatic:true});if(!saved.enabled||saved.authorized_by!==ctx.actorId||saved.revision!==g.ruleRevision||!fits(fresh,saved))throw new ValidationError('The claim exceeds current owner authority, goods value, quantity, receipt age or photo scope.');
   if((await policy.accountState(c,workspaceId)).plan==='pro'){const done=await example(c,ctx,saved.example_id);if(hash(source.profile(done.snapshot))!==saved.profile_hash||Number(source.units(p))>Number(source.units(done.snapshot))||
    p.missingWeight!=null&&Number(p.missingWeight)>Number(done.snapshot.missingWeight)||BigInt(p.totalMinor)>BigInt(done.snapshot.totalMinor)||p.photos.length&&!done.snapshot.photos.length)throw new ValidationError('This claim does not fit the completed Pro example.');}
   const used=(await c.query(`SELECT coalesce(sum((snapshot->>'totalMinor')::numeric),0)::text total FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND rule_id=$2 AND automatic AND automatic_reserved_at>=now()-interval '168 hours' AND id<>$3`,[workspaceId,saved.id,r.id])).rows[0].total;
   if(BigInt(used)+BigInt(p.totalMinor)>BigInt(saved.max_weekly_minor))throw new ValidationError('The rule reached its rolling seven-day claim goods value limit.');
- }else{await source.access(c,ctx,{withPhotos:p.photos.length>0});if(g.manualApproval!==true||r.reviewed_by!==ctx.actorId||!r.reviewed_at)throw new ValidationError('Individually approve the exact supplier, damaged quantity, goods value, text and selected photos.');await current(c,ctx,r);}
+ }else{await source.access(c,ctx,{withPhotos:p.photos.length>0});if(g.manualApproval!==true||r.reviewed_by!==ctx.actorId||!r.reviewed_at)throw new ValidationError('Individually approve the exact supplier, claim quantity, goods value, text and supporting evidence.');await current(c,ctx,r);}
  if(r.communication_id){const m=(await c.query('SELECT recipient,connector_id,subject,body FROM supplier_communications WHERE workspace_id=$1 AND id=$2',[workspaceId,r.communication_id])).rows[0],words=source.compose(p);if(!m||m.recipient!==p.recipient||m.connector_id!==p.connectorId||m.subject!==words.subject||m.body!==words.body)throw new ValidationError('The queued claim no longer matches its reviewed text and recipient.');}
  return r;
 }
@@ -103,7 +103,7 @@ async function queue(c,ctx,r,saved=null){
  const result=await require('../connections/postgres-outbound-mail').queueInTransaction(c,ctx,{recipientKind:'supplier',recipientId:p.supplierId,recipientEmail:p.recipient,connectorId:p.connectorId,...source.compose(p),standingAuthority:g},key,{agentRequested:true,agentJob:45});
  await c.query('UPDATE stockchief_runtime.agent_supplier_claims SET communication_id=$3,automatic=$4,rule_id=$5,rule_revision=$6,automatic_reserved_at=CASE WHEN $4 THEN clock_timestamp() ELSE NULL END WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,r.id,result.communicationId,Boolean(saved),saved?.id||null,saved?.revision||null]);return {claimId:r.id,...result};
 }
-async function send(db,ctx,id,input){return db.transaction(async c=>{const r=await claim(c,ctx,id,true);await source.access(c,ctx,{withPhotos:r.snapshot.photos.length>0});if(input.confirmed!=='yes'||input.sourceFingerprint!==r.source_fingerprint)throw new ValidationError('Review the exact damage claim and selected photos before sending.');await c.query('UPDATE stockchief_runtime.agent_supplier_claims SET reviewed_by=$3,reviewed_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,ctx.actorId]);return queue(c,ctx,{...r,reviewed_by:ctx.actorId,reviewed_at:new Date().toISOString()});},{isolation:'SERIALIZABLE',retrySafe:true});}
+async function send(db,ctx,id,input){return db.transaction(async c=>{const r=await claim(c,ctx,id,true);await source.access(c,ctx,{withPhotos:r.snapshot.photos.length>0});if(input.confirmed!=='yes'||input.sourceFingerprint!==r.source_fingerprint)throw new ValidationError('Review the exact supplier claim and its evidence before sending.');await c.query('UPDATE stockchief_runtime.agent_supplier_claims SET reviewed_by=$3,reviewed_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,ctx.actorId]);return queue(c,ctx,{...r,reviewed_by:ctx.actorId,reviewed_at:new Date().toISOString()});},{isolation:'SERIALIZABLE',retrySafe:true});}
 async function sendAutomatic(db,ctx,id,ruleId){return db.transaction(async c=>{const r=await claim(c,ctx,id,true),saved=await rule(c,ctx,ruleId,true);return queue(c,ctx,r,saved);},{isolation:'SERIALIZABLE',retrySafe:true});}
 async function page(db,ctx,{id=null}={}){
  await source.owner(db,ctx,{lock:false});const state=await policy.accountState(db,ctx.workspaceId),locked=!policy.usesAgentTerms(state)||!policy.permits(state.plan,45,'draft');
@@ -116,11 +116,16 @@ async function page(db,ctx,{id=null}={}){
 const definition={id:45,key:'supplier-damage-claims',label:'Open supplier delivery claims',readPage:async()=>({summary:'Prepare a claim from a confirmed delivery shortage and its original receipt, or a failed physical damage inspection and its selected photo evidence. Pro learns from a completed manual send. Custom can authorize bounded routine claims without training. Credit, settlement and stock decisions stay separate.',rows:[{Action:'Review supplier claims',link:'/autopilot/supplier-claims'}],more:false})};
 const photoDefinition={id:46,key:'delivery-damage-photos',label:'Prepare actual delivery damage photos',readPage:async()=>({summary:'Growth can preserve and prepare original JPEG/PNG delivery evidence for individual review. Pro and Custom can attach up to three resized copies within separately authorized claim rules without photo training. A person records the physical damage; photo preparation never infers a count or changes the original.',rows:[{Action:'Open physical delivery evidence',link:'/autopilot/delivery-quality'}],more:false})};
 async function inbox(db,workspaceId,actorId){
- await source.owner(db,{workspaceId,actorId},{lock:false});const rows=(await db.query(`SELECT c.id,c.reference,c.created_at,m.status,e.status effect_status FROM stockchief_runtime.agent_supplier_claims c
+ await source.owner(db,{workspaceId,actorId},{lock:false});const rows=(await db.query(`SELECT c.id,c.reference,c.created_at,c.snapshot->>'claimKind' AS claim_kind,m.status,e.status effect_status FROM stockchief_runtime.agent_supplier_claims c
  LEFT JOIN supplier_communications m ON m.workspace_id=c.workspace_id AND m.id=c.communication_id
  LEFT JOIN LATERAL(SELECT status FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=c.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' ORDER BY created_at DESC,id DESC LIMIT 1)e ON true
  WHERE c.workspace_id=$1 AND (c.communication_id IS NULL OR m.status='FAILED' OR e.status='AMBIGUOUS') ORDER BY c.created_at,c.id LIMIT 50`,[workspaceId])).rows;
- return rows.map(r=>({kind:'purchasing',importance:'Needs You',priority:r.effect_status==='AMBIGUOUS'?90:75,title:'Review supplier damage claim '+r.reference,happened:r.effect_status==='AMBIGUOUS'?'Mailbox acceptance is uncertain.':'A recorded physical delivery claim needs review.',why:r.effect_status==='AMBIGUOUS'?'Check the mailbox Sent folder before any further action.':'Review the actual inspection, damaged-unit count, goods cost, recipient and selected photos.',recommendation:'Open the exact saved claim. Credits, write-offs, replacement receipt and settlement need separate approval.',href:'/autopilot/supplier-claims/'+r.id,actionLabel:'Review claim',sourceId:'supplier-claim:'+r.id,at:r.created_at,createdAt:r.created_at}));
+ return rows.map(r=>({kind:'purchasing',importance:'Needs You',priority:r.effect_status==='AMBIGUOUS'?90:75,
+  title:'Review supplier '+(r.claim_kind==='shortage'?'shortage':'damage')+' claim '+r.reference,
+  happened:r.effect_status==='AMBIGUOUS'?'Mailbox acceptance is uncertain.':'A recorded delivery claim needs review.',
+  why:r.effect_status==='AMBIGUOUS'?'Check the mailbox Sent folder before any further action.':
+   r.claim_kind==='shortage'?'Check the original delivery, receipt, missing quantity, goods cost and recipient.':'Check the actual inspection, damaged units, goods cost, recipient and selected photos.',
+  recommendation:'Open the exact saved claim. Credits, write-offs, replacement receipt and settlement need separate approval.',href:'/autopilot/supplier-claims/'+r.id,actionLabel:'Review claim',sourceId:'supplier-claim:'+r.id,at:r.created_at,createdAt:r.created_at}));
 }
 async function run(db,workspaceId,{afterId=''}={}){
  const shortageCursor=afterId.startsWith('shortage:');
