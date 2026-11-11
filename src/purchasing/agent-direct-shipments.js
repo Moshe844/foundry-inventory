@@ -540,7 +540,7 @@ async function supplierPage(db,token){
     JOIN purchase_order_lines p ON p.workspace_id=d.workspace_id AND p.id=d.purchase_order_line_id
     JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
     WHERE d.workspace_id=$1 AND d.direct_order_id=$2 ORDER BY p.line_number,d.id`,[ctx.workspaceId,row.id])).rows;
-  return {id:row.id,poNumber:po.po_number,customer:row.facts.customer,products};
+  return {id:row.id,poNumber:po.po_number,canRespond:po.status!=='RECEIVED',customer:row.facts.customer,products};
 }
 
 async function supplierSubmit(db,token,input){

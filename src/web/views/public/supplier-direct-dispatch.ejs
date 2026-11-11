@@ -10,6 +10,7 @@ body{font:16px/1.5 system-ui,sans-serif;color:#172033;background:#f5f7fa;margin:
 <address><%= customer.address %></address>
 <% if(customer.phone){ %><p>Delivery phone <%= customer.phone %></p><% } %>
 <p class="muted">Use this private link only for this purchase. Report what actually left, including every batch or serial and the actual weight of measured goods.</p>
+<% if(canRespond){ %>
 <h2>Confirm the purchase or propose a delivery date</h2>
 <form method="post" action="/supplier/order/<%= token %>/respond">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -17,6 +18,7 @@ body{font:16px/1.5 system-ui,sans-serif;color:#172033;background:#f5f7fa;margin:
   <button name="kind" value="confirm">Confirm this exact purchase and destination</button>
   <button name="kind" value="date">Propose a delivery date</button>
 </form>
+<% } %>
 <% if(products.some(product=>Number(product.quantity)>Number(product.dispatched_quantity))){ %>
 <form method="post" action="/supplier/order/<%= token %>/direct-shipment">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
