@@ -15,6 +15,10 @@
 .addr-native textarea { width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; border: 0 !important; resize: none; }
 fieldset.addr-set { border: 0; padding: 0; margin: 0; }
 fieldset.addr-set > legend { font-weight: 600; font-size: 14px; margin-bottom: 8px; padding: 0; }
+/* An address group drawn as a box keeps its heading and fields off the box edge. */
+html:root body fieldset.addr-set.rm-work { padding: 14px 16px 16px; }
+html:root body fieldset.addr-set.rm-work > legend { float: left; width: 100%; margin: 0 0 10px; }
+html:root body fieldset.addr-set.rm-work > legend + * { clear: both; }
 #order-destination { grid-column: 1 / -1; }
 @media (max-width: 640px) {
   .addr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
