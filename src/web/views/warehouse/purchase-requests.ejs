@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Staff purchase requests · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
+<p><a href="/warehouse/stock">Back to warehouse stock</a></p>
+<% for(const notice of notices){ %><p role="status"><%= notice.message %></p><% } %>
+<% if(lockedMessage){ %><h1>Staff purchase requests</h1><p><%= lockedMessage %></p>
+<% }else{ %><%- include('../autopilot/purchase-requests') %><% } %>
+</main></body></html>

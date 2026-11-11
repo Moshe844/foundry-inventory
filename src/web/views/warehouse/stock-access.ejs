@@ -2,6 +2,8 @@
 <h1>Warehouse stock</h1><p><%= workspace.name %> · <%= restricted?'Your assigned warehouses and their bins. Inventory-wide reports and order management require inventory-wide access.':'All warehouses' %></p>
 <% if(message){ %><p role="status"><%= message %></p><% } %>
 <p><a href="/guide" data-dest="/guide">Staff guide</a></p>
+<% if(locals.staffRequestsAllowed){ %><p><a href="/purchasing/requests" data-dest="/purchasing/requests">Request a purchase</a></p>
+<% }else{ %><p><strong>Growth</strong> · Staff purchase requests <% if(currentUser?.role==='owner'){ %><a href="/settings/billing" data-dest="/settings/billing">Upgrade for purchase requests</a><% } %></p><% } %>
 <% if(locals.canCorrectBins){ %><% if(locals.binCorrectionAllowed){ %><p><a href="/warehouse/bin-corrections" data-dest="/warehouse/bin-corrections">Prepare or confirm a stock bin correction</a></p><% }else{ %><p><strong>Pro</strong> · Scanned bin corrections need Pro with a taught rule, or Custom. <% if(currentUser?.role==='owner'){ %><a href="/settings/billing" data-dest="/settings/billing">Upgrade</a><% } %></p><% } %><% } %>
 <% for(const task of locals.countTasks||[]){ %><p><%= task.title %> · <a href="<%= task.href %>" data-dest="<%= task.href %>"><%= task.actionLabel %></a></p><% } %>
 <% if(locals.putawayInstructions?.length){ %><section><h2>Put-away instruction sheets</h2><p>StockChief checks the current quantities and codes when you open a saved sheet.</p><% for(const p of locals.putawayInstructions){ %><p><a href="/warehouse/putaway/<%= p.id %>" data-dest="/warehouse/putaway/<%= p.id %>"><%= p.source.quantity %> × <%= p.source.product %> → <%= p.source.to.name %></a></p><% } %></section><% } %>
