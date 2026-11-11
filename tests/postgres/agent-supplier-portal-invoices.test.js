@@ -1,6 +1,7 @@
 'use strict';
 
 process.env.NODE_ENV='test';
+process.env.FOUNDRY_PUBLIC_URL='https://stockchief.example.test';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {randomUUID}=require('node:crypto');
@@ -23,6 +24,16 @@ test('the supplier portal routes the original PDF into exact invoice matching on
   const code=(await db.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,skuId])).rows[0].code;
   const rows=[{sku:code,quantity:2,price:125,total:250}],lines=[{skuId,quantityUnits:2,unitCost:'1.25'}];
   const issue=async order=>new URL(await db.transaction(c=>links.issue(c,ctx.workspaceId,order.purchaseOrderId,f.sender,'https://stockchief.example.test'))).pathname;
+  async function share(order){
+    const detail='/purchasing/orders/'+order.purchaseOrderId;
+    const page=await f.browser.get(detail).expect(200);
+    assert.match(page.text,/Share supplier response link/);
+    const response=await f.browser.post(detail+'/supplier-link').type('form').send({_csrf:f.csrf(page.text)}).expect(200);
+    assert.match(response.headers['cache-control'],/no-store/);
+    assert.match(response.text,/Copy supplier link/);
+    const url=new URL(/data-copy="(https:\/\/stockchief\.example\.test\/supplier\/order\/[^"]+)"/.exec(response.text)[1]);
+    return url.pathname;
+  }
   const work=kind=>f.queue.processOne(db,f.handlers,{owner:'supplier-portal-invoice-test',kinds:[kind]});
   const reads=()=>work('import.read-supplier-invoice.v1');
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
@@ -40,7 +51,18 @@ test('the supplier portal routes the original PDF into exact invoice matching on
   }
   for(const plan of ['starter','growth','pro','enterprise']){
     await f.subscribe(plan);
-    const order=await f.po(lines),path=await issue(order),buffer=await pdf(f.text(order,{rows}));
+    const order=await f.po(lines,false),buffer=await pdf(f.text(order,{rows}));
+    if(plan==='starter')await db.query('UPDATE workspace_connectors SET paused_at=now() WHERE id=$1',[f.connector]);
+    const path=await share(order);
+    if(plan==='starter')await db.query('UPDATE workspace_connectors SET paused_at=NULL WHERE id=$1',[f.connector]);
+    const open=await supplier.get(path).expect(200);
+    const reply=(kind,date)=>supplier.post(path+'/respond').type('form').send({_csrf:f.csrf(open.text),kind,date});
+    await reply('confirm','').expect(303);
+    await reply('date','2040-01-14').expect(303);
+    assert.deepEqual((await links.responses(db,ctx.workspaceId,order.purchaseOrderId)).map(response=>response.kind).sort(),['confirm','date']);
+    await f.workflows.receivePurchaseOrder(db,ctx,order.purchaseOrderId,{idempotencyKey:randomUUID(),
+      lines:[{lineId:order.lineIds[0],quantity:2,locationId:f.location.id}]});
+    await reply('date','2040-01-15').set('Accept','application/json').expect(404);
     if(plan==='starter'){
       await phone.goto('http://127.0.0.1:'+server.address().port+path);
       assert.equal(await phone.getByRole('button',{name:'Confirm this order'}).count(),0);
@@ -51,6 +73,13 @@ test('the supplier portal routes the original PDF into exact invoice matching on
       assert.deepEqual(errors,[]);
     }else await upload(path,buffer);
     await upload(path,buffer);
+    const secondLink=await share(order);
+    assert.notEqual(secondLink,path);
+    await upload(secondLink,buffer);
+    assert.equal((await links.responses(db,ctx.workspaceId,order.purchaseOrderId)).filter(reply=>reply.kind==='invoice').length,1);
+    const secondTokenHash=require('node:crypto').createHash('sha256').update(secondLink.split('/').at(-1)).digest('hex');
+    await db.query("UPDATE stockchief_runtime.supplier_order_links SET expires_at=now()-interval '1 day' WHERE token_hash=$1",[secondTokenHash]);
+    await supplier.get(secondLink).expect(404);
     const bridged=await work(portal.kind);
     assert.equal(bridged.status,'COMPLETED',JSON.stringify(bridged));
     const {uploadId}=bridged.result;
