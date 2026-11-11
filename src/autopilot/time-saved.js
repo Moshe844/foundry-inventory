@@ -19,6 +19,7 @@ const activities = new Map([
   ['bin-correction','Post a physically confirmed stock bin correction'],
   ['supplier-details','Update known supplier details from an original email'],
   ['po-delivery-date','Update a purchase order from an original supplier delivery promise'],
+  ['po-supplier-amendment','Update a purchase order from original supplier quantity or price changes'],
   ['receiving-document','Prepare one packing-slip receiving form from the original (administration only)'],
   ['supplier-direct-purchase','Prepare and send one supplier-direct purchase'],
   ['supplier-direct-dispatch','Record one actual supplier dispatch and customer invoice'],
@@ -161,7 +162,14 @@ async function report(db,ctx,window='week') {
     SELECT 'supplier-details',s.processed_at FROM stockchief_runtime.agent_supplier_term_sources s
       WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed_count>0 AND s.instruction_hash IS NOT NULL UNION ALL
     SELECT 'po-delivery-date',s.processed_at FROM stockchief_runtime.agent_po_date_sources s
-      WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL UNION ALL
+      WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL
+        AND s.source_snapshot->>'kind' IS DISTINCT FROM 'amendment' UNION ALL
+    SELECT 'po-supplier-amendment',s.processed_at FROM stockchief_runtime.agent_po_date_sources s
+      WHERE s.workspace_id=$1 AND s.processed_at IS NOT NULL AND s.changed AND s.instruction_hash IS NOT NULL
+        AND s.source_snapshot->>'kind'='amendment'
+        AND EXISTS(SELECT 1 FROM purchase_order_events e WHERE e.workspace_id=s.workspace_id
+          AND e.purchase_order_id=s.purchase_order_id AND e.event='supplier_purchase_amended'
+          AND e.detail::jsonb->>'sourceId'=s.source_id) UNION ALL
     SELECT 'receiving-document',r.received_at::timestamptz FROM purchase_order_receipts r
       JOIN stockchief_runtime.business_operations o ON o.workspace_id=r.workspace_id AND o.kind='purchase_order.receive'
         AND o.idempotency_key=r.idempotency_key AND o.status='COMPLETED' AND o.result->>'receiptId'=r.id

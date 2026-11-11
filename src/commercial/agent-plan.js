@@ -101,25 +101,41 @@ async function purchaseReview(database, workspaceId, candidate, policy, state, c
      Number(last.units_per_purchase_unit || 1)!==Number(candidate.unitsPerPurchaseUnit || 1)))
     return 'The latest supplier order used a different currency, price or pack. A person must approve the changed terms.';
   const money = require('../domain/currency');
-  const totalsSql = require('../operations/postgres-team-access').purchaseTotalsSql('po.workspace_id','po.id','$3::numeric');
-  const ledger = await database.query(`SELECT po.currency, totals.lines, totals.charges, totals.priced
-    FROM purchase_orders po JOIN workspaces w ON w.id=po.workspace_id
-    CROSS JOIN LATERAL (${totalsSql}) totals
-    WHERE w.owner_account_id=$1 AND po.id IS DISTINCT FROM $2
-      AND po.approved_at::timestamptz>=CURRENT_TIMESTAMP-interval '168 hours'
-      AND EXISTS(SELECT 1 FROM work_items wi WHERE wi.workspace_id=po.workspace_id AND wi.purchase_order_id=po.id
-        AND wi.source='postgres_autopilot' AND wi.approval_requirement='NONE')`,
-    [state.accountId, committedId, 10**money.exponent(cap.currency)]);
-  let committed = 0;
-  for (const row of ledger.rows) {
-    if (row.currency !== cap.currency || !row.priced) return 'Review the account’s automatic purchase commitments before spending more.';
-    const amount = money.sum([money.integer(row.lines), money.integer(row.charges,'Purchase charges',{signed:true})]);
-    if (amount < 0) return 'Review the account’s automatic purchase commitments before spending more.';
-    committed = money.sum([committed, amount]);
-  }
-  if (money.sum([committed, money.toMinor(String(candidate.value), cap.currency)]) > money.toMinor(String(cap.perWeek), cap.currency))
+  const ledger=await automaticPurchaseCommitments(database,state,cap.currency,committedId);
+  if(ledger.unknown)return 'Review the account’s automatic purchase commitments before spending more.';
+  if (money.sum([ledger.committed, money.toMinor(String(candidate.value), cap.currency)]) > money.toMinor(String(cap.perWeek), cap.currency))
     return 'This order would exceed the weekly automatic purchasing limit across your inventories.';
   return null;
+}
+
+async function automaticPurchaseCommitments(database,state,currency,exceptId=null){
+  const money=require('../domain/currency');
+  const totalsSql = require('../operations/postgres-team-access').purchaseTotalsSql('po.workspace_id','po.id','$3::numeric');
+  const ledger = await database.query(`WITH automated AS (
+    SELECT po.workspace_id,po.id,po.currency,totals.lines,totals.charges,totals.priced
+    FROM purchase_orders po JOIN workspaces w ON w.id=po.workspace_id
+    CROSS JOIN LATERAL (${totalsSql}) totals
+    WHERE w.owner_account_id=$1
+      AND po.approved_at::timestamptz>=CURRENT_TIMESTAMP-interval '168 hours'
+      AND EXISTS(SELECT 1 FROM work_items wi WHERE wi.workspace_id=po.workspace_id AND wi.purchase_order_id=po.id
+        AND wi.source='postgres_autopilot' AND wi.approval_requirement='NONE')
+  ) SELECT currency,lines,charges,priced FROM automated WHERE id IS DISTINCT FROM $2
+  UNION ALL
+  SELECT e.detail::jsonb->'commitment'->>'currency',(e.detail::jsonb->'commitment'->>'addedMinor')::numeric,0,true
+  FROM purchase_order_events e JOIN workspaces w ON w.id=e.workspace_id
+  WHERE w.owner_account_id=$1 AND e.event='supplier_purchase_amended'
+    AND e.created_at::timestamptz>=CURRENT_TIMESTAMP-interval '168 hours'
+    AND e.detail::jsonb->'commitment' IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM automated a WHERE a.workspace_id=e.workspace_id AND a.id=e.purchase_order_id)`,
+    [state.accountId,exceptId,10**money.exponent(currency)]);
+  let committed = 0;
+  for (const row of ledger.rows) {
+    if (row.currency !== currency || !row.priced) return {unknown:true};
+    const amount = money.sum([money.integer(row.lines), money.integer(row.charges,'Purchase charges',{signed:true})]);
+    if (amount < 0) return {unknown:true};
+    committed = money.sum([committed, amount]);
+  }
+  return {committed,unknown:false};
 }
 
 // A mission approval cannot substitute for confirming the physical or
@@ -259,4 +275,5 @@ async function customerOrderNeedsPerson(db,workspaceId,capability,payload,propos
   return !known.rowCount;
 }
 
-module.exports = { actionJob,actionPlan,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob, purchaseReview, allowance, permits, requireJob, accountState, purchaseLimits };
+module.exports = { actionJob,actionPlan,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob,
+  purchaseReview,automaticPurchaseCommitments,allowance,permits,requireJob,accountState,purchaseLimits };

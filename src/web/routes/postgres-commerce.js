@@ -706,6 +706,7 @@ function createPostgresCommerceRouter(database,options={}){
       const deliveryState=await deliveryPlan.accountState(database,req.ctx.workspaceId);
       can.deliveryChecks=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,44,'suggest');
       can.detailedDeliveryChecks=can.deliveryChecks&&deliveryPlan.permits(deliveryState.plan,44,'draft');
+      can.supplierAmendments=deliveryPlan.usesAgentTerms(deliveryState)&&deliveryPlan.permits(deliveryState.plan,31,'draft');
     }
     const view=await buyView.purchaseOrderView(database,req.ctx.workspaceId,page,can,dateToday(req));
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;

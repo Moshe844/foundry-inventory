@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Propose changes to <%= order.po_number %> · StockChief</title>
+</head>
+<body><main>
+  <p><a href="<%= supplierOrderUrl %>">Back to purchase order</a></p>
+  <h1>Propose changes to <%= order.po_number %></h1>
+  <p>Enter only the figures that changed. Quantity and price changes apply to goods that still need to arrive.</p>
+  <% if(!lines.length){ %><p>This order has no remaining goods to change.</p><% }else{ %>
+  <form method="post" action="<%= currentPath %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="revision" value="<%= revision %>">
+    <p><label>New delivery date, if changed <input type="date" name="date"></label></p>
+    <% lines.forEach((line,index)=>{ %>
+    <fieldset>
+      <legend>Line <%= line.line_number %> · <%= line.name %> · <%= line.code %></legend>
+      <input type="hidden" name="terms[<%= index %>][lineId]" value="<%= line.id %>">
+      <p>Still due <%= line.remaining %> <%= line.unit_label %><%= line.secondary_unit_label?' · '+line.remaining_weight+' '+line.secondary_unit_label:'' %>.</p>
+      <p>Purchase unit <%= line.purchase_unit %> of <%= line.units_per_purchase_unit %> <%= line.unit_label %>.</p>
+      <p><label>Revised remaining <%= line.unit_label %>
+        <input name="terms[<%= index %>][quantity]" inputmode="decimal" maxlength="32"></label></p>
+      <% if(line.secondary_unit_label){ %>
+      <p><label>Revised remaining <%= line.secondary_unit_label %>
+        <input name="terms[<%= index %>][secondary]" inputmode="decimal" maxlength="32"></label></p>
+      <% } %>
+      <p><label>New price in <%= order.currency %> per <%= line.secondary_unit_label||line.unit_label %>
+        <input name="terms[<%= index %>][price]" inputmode="decimal" maxlength="32"></label></p>
+      <% if(line.unit_cost!=null){ %><p>Current price <%= line.unit_cost %> <%= order.currency %> per <%= line.secondary_unit_label||line.unit_label %>.</p><% } %>
+    </fieldset>
+    <% }); %>
+    <p><label><input type="checkbox" name="confirmed" value="yes" required> I confirm the revised terms entered above.</label></p>
+    <button type="submit">Send exact changes</button>
+  </form>
+  <% } %>
+</main></body></html>

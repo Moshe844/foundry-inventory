@@ -50,24 +50,36 @@ function decision(code,happened,impact,checked,recommendation,alternatives,requi
 async function purchase(database,workspaceId,id,prior,clock){
  const po=(await database.query(`SELECT p.*,s.name AS supplier_name,s.follow_up_days FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id WHERE p.workspace_id=$1 AND p.id=$2`,[workspaceId,id])).rows[0];
  if(!po)return missing();
- const lines=(await database.query('SELECT id,sku_id,quantity_units,quantity_received_units FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY line_number,id',[workspaceId,id])).rows;
- const documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED'
- UNION ALL SELECT r.id,CASE WHEN r.kind='date' OR (r.expected_date IS NOT NULL AND p.expected_date IS NOT NULL AND r.expected_date<>p.expected_date::date) THEN 'NEEDS_REVIEW' ELSE 'MATCHED' END,
-  'order_acknowledgement',json_build_object('expectedArrivalDate',r.expected_date)::text,'[]',to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),NULL
+ const lines=(await database.query(`SELECT id,sku_id,quantity_units,quantity_received_units,
+   to_jsonb(l)->>'supplier_amendment_closed_at' AS amendment_closed
+   FROM purchase_order_lines l WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY line_number,id`,[workspaceId,id])).rows;
+ let documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id,NULL AS reply_kind FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED'
+ UNION ALL SELECT r.id,CASE WHEN r.kind IN ('amendment','date') OR (r.expected_date IS NOT NULL AND p.expected_date IS NOT NULL AND r.expected_date<>p.expected_date::date)
+  THEN 'NEEDS_REVIEW' ELSE 'MATCHED' END,
+  'order_acknowledgement',json_build_object('expectedArrivalDate',r.expected_date)::text,'[]',to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),NULL,r.kind
  FROM stockchief_runtime.supplier_link_submissions r JOIN stockchief_runtime.supplier_order_links l USING(token_hash)
  JOIN purchase_orders p ON p.id=l.purchase_order_id AND p.workspace_id=l.workspace_id
- WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind IN ('confirm','date')
+ WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 AND r.kind IN ('confirm','date','amendment')
  ORDER BY processed_at,id`,[workspaceId,id])).rows;
+ const amendments=documents.filter(row=>row.reply_kind==='amendment').map(row=>row.id);
+ if(amendments.length){
+  const states=(await database.query(`SELECT source_id,processed_at,archived_at FROM stockchief_runtime.agent_po_date_sources
+    WHERE workspace_id=$1 AND source_id=ANY($2::text[])`,[workspaceId,amendments])).rows;
+  const bySource=new Map(states.map(row=>[row.source_id,row]));
+  documents=documents.filter(row=>row.reply_kind!=='amendment'||!bySource.get(row.id)?.archived_at)
+    .map(row=>row.reply_kind==='amendment'&&bySource.get(row.id)?.processed_at?{...row,status:'MATCHED'}:row);
+ }
  const bills=(await database.query("SELECT id,status FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2 AND status<>'VOID'",[workspaceId,id])).rows;
  const proof={purchaseOrderId:id,status:po.status,ordered:lines.reduce((n,l)=>n+Number(l.quantity_units),0),received:lines.reduce((n,l)=>n+Number(l.quantity_received_units),0),documentIds:documents.map(d=>d.id),billIds:bills.map(b=>b.id)};
  const base={recordId:id,reference:po.po_number,href:kinds.purchase.href+id,party:po.supplier_name,proof};
  if(po.status==='CANCELLED')return {...base,phase:'CANCELLED',cancelled:true,nextAction:'The unreceived remainder was cancelled; recorded receipts remain intact.'};
  const newestConfirmation=documents.filter(d=>d.document_type==='order_acknowledgement').at(-1),bad=documents.findLast(d=>d.status==='NEEDS_REVIEW'),disputed=bills.find(b=>b.status==='DISPUTED');
- if(bad||disputed)return {...base,phase:'PURCHASE_EXCEPTION',nextAction:'Review the supplier discrepancy',decision:decision('supplier_discrepancy','The supplier evidence differs from this purchase order.',`${proof.ordered-proof.received} units remain unreceived.`,['Saved purchase lines','Supplier documents','Recorded receipts and bills'],'Review the exact discrepancy before accepting changed terms.',['Keep the original commitment','Request a corrected supplier document'],'Accept a reviewed change or dispute it.'),reviewHref:disputed?'/accounting/payables/'+disputed.id+'/review':'/mail/'+bad.message_id};
+ if(bad||disputed)return {...base,phase:'PURCHASE_EXCEPTION',nextAction:'Review the supplier discrepancy',decision:decision('supplier_discrepancy','The supplier evidence differs from this purchase order.',`${proof.ordered-proof.received} units remain unreceived.`,['Saved purchase lines','Supplier documents','Recorded receipts and bills'],'Review the exact discrepancy before accepting changed terms.',['Keep the original commitment','Request a corrected supplier document'],'Accept a reviewed change or dispute it.'),reviewHref:disputed?'/accounting/payables/'+disputed.id+'/review':bad.reply_kind?'/autopilot/po-delivery-dates/'+bad.id:'/mail/'+bad.message_id};
  if(po.status==='RECEIVED'){
   const receipts=(await database.query(`SELECT l.purchase_order_line_id,sum(l.quantity_units)::numeric AS received FROM purchase_order_receipt_lines l JOIN purchase_order_receipts r ON r.id=l.receipt_id AND r.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND r.purchase_order_id=$2 GROUP BY l.purchase_order_line_id`,[workspaceId,id])).rows;
   const received=new Map(receipts.map(l=>[l.purchase_order_line_id,Number(l.received)]));
-  if(lines.length&&lines.every(l=>Number(l.quantity_received_units)>=Number(l.quantity_units)&&received.get(l.id)===Number(l.quantity_received_units)))return {...base,phase:'RECEIVED_AND_RECONCILED',complete:true,nextAction:'Physical receipt is recorded and agrees with every order line.',completionProof:{...proof,receiptLines:receipts}};
+  if(lines.length&&lines.every(l=>l.amendment_closed&&Number(l.quantity_units)===0&&!received.has(l.id)||
+    Number(l.quantity_received_units)>=Number(l.quantity_units)&&received.get(l.id)===Number(l.quantity_received_units)))return {...base,phase:'RECEIVED_AND_RECONCILED',complete:true,nextAction:'Physical receipt is recorded and agrees with every order line.',completionProof:{...proof,receiptLines:receipts}};
   return {...base,phase:'RECEIPT_REVIEW',nextAction:'Reconcile the physical receipt records',decision:decision('receipt_evidence_missing','The order is marked received, but its receipt evidence does not reconcile.','StockChief cannot confirm completion.',['Order quantities','Canonical receipt lines'],'Review the receipt history.',['Investigate the recorded receiving event'],'Confirm the correct receiving evidence; never receive it twice.')};
  }
  if(['DRAFT','AWAITING_APPROVAL'].includes(po.status))return {...base,phase:'PURCHASE_PREPARATION',nextAction:'Review and approve the purchase order; no supplier commitment has been sent.'};
