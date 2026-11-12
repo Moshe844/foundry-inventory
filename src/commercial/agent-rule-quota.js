@@ -15,7 +15,7 @@ const sources=[
  ['agent_channel_buffer_recipes','active_members>0'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],
  ['agent_putaway_rules'],['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['daily_cycle_count_rules'],
  ['agent_freight_combine_rules'],['agent_purchase_split_rules'],['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels'],
- ['agent_reorder_refresh_rules','enabled'],['agent_backorder_rules','enabled'],['agent_stock_sharing_rules','enabled'],['agent_slow_stock_rules','enabled'],['agent_annual_stocktake_rules','enabled'],['agent_incoming_rules','enabled'],['agent_warehouse_routing_rules','enabled'],['agent_expiry_warning_rules','enabled'],['agent_compliance_schedules','enabled'],['agent_container_order_rules','enabled'],['agent_landed_cost_rules','enabled'],['agent_fx_alert_rules','enabled']
+ ['agent_reorder_refresh_rules','enabled'],['agent_backorder_rules','enabled'],['agent_stock_sharing_rules','enabled'],['agent_slow_stock_rules','enabled'],['agent_annual_stocktake_rules','enabled'],['agent_incoming_rules','enabled'],['agent_warehouse_routing_rules','enabled'],['agent_expiry_warning_rules','enabled'],['agent_compliance_schedules','enabled'],['agent_container_order_rules','enabled'],['agent_landed_cost_rules','enabled'],['agent_fx_alert_rules','enabled'],['agent_pick_release_rules','enabled']
 ];
 const limits={starter:5,growth:50,pro:500};
 const configured=sources.map(([table,predicate])=>`(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.${table} t JOIN owned o ON o.id=t.workspace_id ${predicate?'WHERE '+predicate:''} LIMIT $2::int) bounded)`).join('+');

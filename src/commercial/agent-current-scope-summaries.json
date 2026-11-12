@@ -50,7 +50,7 @@
   "53": "Prepares a repeat customer draft from the previous calendar month at current prices. Ambiguous history and new delivery details need review; live language routing remains unverified.",
   "54": "Reviews open orders for unreserved quantities, overdue receivables, delivery details and pricing problems.",
   "55": "An owner-enabled rule holds orders for overdue customer receivables and releases the hold after full payment. Lower-plan suggestions do not enable this hold.",
-  "56": "Releases up to 20 fully reserved, unshipped quantity orders at one warehouse by saved priority and due date. Physical scans, packing and handoff stay separate.",
+  "56": "Releases ready orders to each warehouse in the best pick order: your priority, the ship-by date, the carrier cut-off, then order age. Ready means the ship-from warehouse is chosen, the order is fully reserved there or in its bins (lots, serials and weighed goods too), the address is complete, there is no overdue-invoice hold and the stock is still there; others wait with the reason. Batch size follows your warehouse rule or its busiest shipping day. Growth proposes until taught; Pro and Custom release alone. Releases move no stock, are audited and undo until picking starts.",
   "57": "Prepares single-warehouse quantity pick waves with scan and packing checks. Multi-zone optimization and tracked, kit or partial-order workflows remain open.",
   "58": "Selects the lowest current shipping quote that meets the recorded delivery promise, keeping currencies separate and refusing missing or expired estimates.",
   "59": "Buys eligible labels within current owner and plan limits, with individual Starter approval. Live carrier qualification remains open.",

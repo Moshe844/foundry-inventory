@@ -212,7 +212,7 @@ async function run(db,ctx,key,options={}){
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.cyclePlan?{cyclePlan:true}:{}),
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
-      ...(result.pickReleaseForm?{pickReleaseForm:result.pickReleaseForm}:{}),
+      ...(result.pickReleaseLink?{pickReleaseLink:true}:{}),
       ...(result.putawayForm?{putawayForm:result.putawayForm}:{}),
       ...(result.landedCostForm?{landedCostForm:result.landedCostForm}:{}),
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
