@@ -26,8 +26,8 @@ async function membership(database,workspaceId,actorId){
  coalesce((SELECT (to_jsonb(w)->>'has_supplier_direct_orders')::boolean FROM workspaces w
    WHERE w.id=users.workspace_id AND w.owner_account_id=users.account_id),false) AS has_supplier_direct_orders,
  ${hasVerifiedMigration(database,'357-agent-lot-certificate-evidence.sql')?lotCertificateActivity:'false'} AS has_lot_certificate_activity,
- CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.frozen_at))
- FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='FROZEN'
+ CASE WHEN users.role='owner' THEN (${hasVerifiedMigration(database,'416-agent-annual-stocktake-runs.sql')?require('../operations/agent-annual-stocktakes').summarySql('p'):`SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.frozen_at))
+ FROM stockchief_runtime.agent_annual_stocktakes p WHERE p.workspace_id=$1 AND p.status='FROZEN'`}
  AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=p.workspace_id AND w.owner_account_id=users.account_id)) END AS annual_stocktake_summary,
  CASE WHEN users.role='owner' THEN (SELECT jsonb_build_object('n',count(*)::int,'created_at',min(p.created_at))
  FROM stockchief_runtime.agent_export_paper_packets p WHERE p.workspace_id=$1 AND p.status='DRAFT'
