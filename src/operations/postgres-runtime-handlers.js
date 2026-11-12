@@ -394,6 +394,7 @@ async function runtimeSweep(job,client,options={}){
       maxAttempts:5,availableAt:now,now});
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
+  await require('../reports/agent-inventory-rollup').schedule(client);
   await require('../connections/postgres-shipbob-sandbox').schedule(client);
   await require('../connections/agent-partner-stock-reads').schedule(client);
   await require('../connections/postgres-orderful-test').schedule(client);
@@ -742,6 +743,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.split-purchase.v1':Object.assign((job,c)=>require('../purchasing/agent-purchase-splitting').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.location-reorder.v1':Object.assign((job,c)=>require('../forecasting/location-reorder-rules').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.reorder-refresh.v1':Object.assign((job,c)=>require('../forecasting/agent-reorder-refresh').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'agent.inventory-rollup.v1':Object.assign((job,c)=>require('../reports/agent-inventory-rollup').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
     const result=await require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId);

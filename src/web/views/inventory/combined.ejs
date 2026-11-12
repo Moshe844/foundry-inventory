@@ -1,0 +1,100 @@
+<% const m=model,base='/inventory/combined',query={filter:m.filter==='all'?null:m.filter,q:m.q||null};
+   const amount=(minor,currency)=>helpers.money(Number(minor),currency);
+   const units=n=>helpers.qty(n);
+   const when=iso=>iso?helpers.dateTime(iso):'';
+   const many=m.inventories.length; %>
+<div class="page-head" data-inventory-rollup>
+  <div class="titles">
+    <h1>All inventories together</h1>
+    <div class="page-sub">Stock, value, buying and sales across the <%= many %> <%= many===1?'inventory':'inventories' %> you can open. StockChief updates these figures every <%= m.everyMinutes %> minutes.</div>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="<%= base %>/export.xlsx<%= helpers.queryString(query,{}) %>">Download Excel</a>
+    <a class="btn" href="<%= base %>/export.pdf<%= helpers.queryString(query,{}) %>">Download PDF</a>
+  </div>
+</div>
+
+<% if(m.limited.length){ %><p class="notice notice--info" data-rollup-limited>Not included: <%= m.limited.map(i=>i.name).join(', ') %>. Your access there is limited to assigned warehouses.</p><% } %>
+
+<div class="rm-pulse">
+  <div class="rm-stat"><span class="rm-stat__n"><%= units(m.counts.products) %></span><span class="rm-stat__d"><%= m.counts.products===1?'product':'products' %>, <%= units(m.counts.matched) %> found in more than one inventory</span></div>
+  <div class="rm-stat<%= m.counts.out?' rm-stat--flag':'' %>"><span class="rm-stat__n"><%= units(m.counts.out) %></span><span class="rm-stat__d">out of stock somewhere<% if(m.counts.out_everywhere){ %>, <%= units(m.counts.out_everywhere) %> everywhere<% } %></span></div>
+  <div class="rm-stat"><span class="rm-stat__n"><%= units(m.counts.low) %></span><span class="rm-stat__d">low somewhere</span></div>
+  <div class="rm-stat<%= m.counts.to_check?' rm-stat--flag':'' %>"><span class="rm-stat__n"><%= units(m.counts.to_check) %></span><span class="rm-stat__d">codes to check</span></div>
+</div>
+
+<% if(m.canValue||m.canBuy||m.canMoney){ const currencies=[...new Set([...m.totals.value,...m.totals.incoming,...m.totals.sales].map(t=>t.currency))].sort(); %>
+<section class="rm-panel" data-rollup-currencies>
+  <div class="rm-panel__head"><%- helpers.icon('layers',{size:15,className:'rm-quiet'}) %><h2>Money by currency</h2><span class="right">Each currency is kept apart</span></div>
+  <% if(!currencies.length){ %><div class="rm-panel__body"><p>No stock value, open purchase orders or sales recorded yet.</p></div><% }else{ %>
+  <div class="rm-scroll"><table class="rm-vtable">
+    <thead><tr><th>Currency</th><% if(m.canValue){ %><th class="num">Stock value</th><% } %><% if(m.canBuy){ %><th class="num">On open purchase orders</th><% } %><% if(m.canMoney){ %><th class="num">Sales, last <%= m.salesDays %> days</th><% } %></tr></thead>
+    <tbody><% for(const c of currencies){ const pick=list=>list.find(t=>t.currency===c); %><tr data-currency="<%= c %>">
+      <td class="vt-id"><strong><%= c %></strong><small><%= [...new Set([...(pick(m.totals.value)?.inventories||[]),...(pick(m.totals.incoming)?.inventories||[]),...(pick(m.totals.sales)?.inventories||[])])].join(', ') %></small></td>
+      <% if(m.canValue){ %><td class="num"><%= pick(m.totals.value)?amount(pick(m.totals.value).minor,c):'—' %></td><% } %>
+      <% if(m.canBuy){ %><td class="num"><%= pick(m.totals.incoming)?amount(pick(m.totals.incoming).minor,c):'—' %></td><% } %>
+      <% if(m.canMoney){ %><td class="num"><%= pick(m.totals.sales)?amount(pick(m.totals.sales).minor,c):'—' %></td><% } %>
+    </tr><% } %></tbody>
+  </table></div><% } %>
+  <% if(m.totals.missingCost.length||m.totals.uncosted.length){ %><div class="rm-panel__foot"><span>
+    <% if(m.totals.missingCost.length){ %>Stock value is incomplete: <%= m.totals.missingCost.map(x=>x.inventory+' has '+x.text+' without a purchase cost').join('; ') %>. <% } %>
+    <% if(m.totals.uncosted.length){ %>Some open purchase order lines have no cost in <%= m.totals.uncosted.join(', ') %>.<% } %>
+  </span></div><% } %>
+</section>
+<% } %>
+
+<section class="rm-panel" data-rollup-inventories style="margin-top:18px">
+  <div class="rm-panel__head"><%- helpers.icon('box',{size:15,className:'rm-quiet'}) %><h2>Inventories</h2></div>
+  <div class="rm-scroll"><table class="rm-vtable">
+    <thead><tr><th>Inventory</th><th class="num">In stock</th><th class="num">Low</th><th class="num">Out</th><% if(m.canValue){ %><th class="num">Stock value</th><% } %><% if(m.canBuy){ %><th class="num">Open orders</th><% } %><% if(m.canMoney){ %><th class="num">Sales, <%= m.salesDays %> days</th><% } %><th></th></tr></thead>
+    <tbody><% for(const i of m.inventories){ const f=i.figures; %><tr data-rollup-inventory="<%= i.id %>">
+      <td class="vt-id"><strong><%= i.name %></strong><% if(i.company){ %><small><%= i.company %></small><% } %>
+        <small><% if(i.heldReason){ %><span class="badge badge--warn">Waiting</span> <%= i.heldReason %><% if(i.refreshedAt){ %> Figures from <%= when(i.refreshedAt) %>.<% } %><% }else if(i.refreshedAt){ %>Updated <%= when(i.refreshedAt) %><% }else{ %>Not updated yet<% } %></small>
+        <% if(i.mayApprove){ %><% if(i.updateRequested){ %><small>Update approved. It runs in a moment.</small><% }else{ %><form method="post" action="<%= base %>/update"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="inventoryId" value="<%= i.id %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Approve an update now</button></form><% } %><% } %>
+      </td>
+      <td class="num"><%= f?units(f.inStock):'—' %></td>
+      <td class="num"><% if(f&&f.low){ %><span class="badge badge--warn"><%= units(f.low) %></span><% }else{ %><%= f?0:'—' %><% } %></td>
+      <td class="num"><% if(f&&f.out){ %><span class="badge badge--danger"><%= units(f.out) %></span><% }else{ %><%= f?0:'—' %><% } %></td>
+      <% if(m.canValue){ %><td class="num"><%= !f||f.value===undefined?'—':f.value?amount(f.value.minor,f.value.currency):'Books not set up' %></td><% } %>
+      <% if(m.canBuy){ %><td class="num"><%= !f||f.incoming===undefined?'—':f.incoming.orders?f.incoming.orders+' · '+f.incoming.byCurrency.map(r=>amount(r.minor,r.currency)).join(', '):'None' %></td><% } %>
+      <% if(m.canMoney){ %><td class="num"><%= !f||f.sales===undefined?'—':f.sales?amount(f.sales.minor,f.sales.currency):'Books not set up' %></td><% } %>
+      <td><% if(i.current){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory">Open</a><% }else{ %><form method="post" action="/inventories/switch"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="workspaceId" value="<%= i.id %>"><input type="hidden" name="next" value="/inventory"><button class="rm-btn rm-btn--ghost rm-btn--sm" aria-label="Open <%= i.name %>">Open</button></form><% } %></td>
+    </tr><% } %></tbody>
+  </table></div>
+</section>
+
+<section class="rm-panel" data-rollup-products style="margin-top:18px">
+  <div class="rm-panel__head"><%- helpers.icon('layers',{size:15,className:'rm-quiet'}) %><h2>Products</h2><span class="right">Matched by code or barcode</span></div>
+  <div class="rm-panel__body">
+    <div class="att-filters" role="navigation" aria-label="Product filter">
+      <a class="chip <%= m.filter==='all'?'is-active':'' %>" href="<%= base %><%= helpers.queryString({q:m.q||null},{}) %>">All products</a>
+      <a class="chip <%= m.filter==='low'?'is-active':'' %>" href="<%= base %><%= helpers.queryString({q:m.q||null},{filter:'low'}) %>">Low or out</a>
+      <a class="chip <%= m.filter==='check'?'is-active':'' %>" href="<%= base %><%= helpers.queryString({q:m.q||null},{filter:'check'}) %>">Codes to check</a>
+    </div>
+    <form class="filters" method="get" action="<%= base %>">
+      <% if(m.filter!=='all'){ %><input type="hidden" name="filter" value="<%= m.filter %>"><% } %>
+      <input class="input filter-search" type="search" name="q" value="<%= m.q %>" placeholder="Search products, codes or barcodes" aria-label="Search products">
+      <button class="btn btn--sm" type="submit">Search</button>
+    </form>
+  </div>
+  <% if(!m.rows.length){ %><div class="empty"><h3><%= m.q||m.filter!=='all'?'Nothing matches':'No products yet' %></h3><p><%= m.q||m.filter!=='all'?'Try another search or filter.':'Products appear here after the next update.' %></p></div><% }else{ %>
+  <div class="rm-scroll"><table class="rm-vtable">
+    <thead><tr><th>Product</th><% for(const i of m.inventories){ %><th class="num"><%= i.name %></th><% } %><th class="num">Total</th><% if(m.canBuy){ %><th class="num">On order</th><% } %><% if(m.canSell){ %><th class="num">Sold, <%= m.salesDays %> days</th><% } %></tr></thead>
+    <tbody><% for(const r of m.rows){ %><tr data-rollup-product="<%= r.key %>">
+      <td class="vt-id"><a href="<%= base %>/product?key=<%= encodeURIComponent(r.key) %>"><strong><%= r.product %></strong></a><small class="mono"><%= r.codes.join(' · ') %></small>
+        <% if(r.problem){ %><small><span class="badge badge--warn" title="<%= r.problemText %>"><%= r.problemShort %></span></small><% }else if(r.matchedByBarcode){ %><small>Matched by barcode</small><% } %></td>
+      <% for(const i of m.inventories){ const parts=r.parts.filter(p=>p.workspaceId===i.id); %><td class="num">
+        <% if(!parts.length){ %><span class="t-muted">—</span><% }else{ %><%= parts.map(p=>units(p.onHand)+(r.problem==='units'?' '+p.unit:'')).join(' · ') %>
+        <% if(parts.some(p=>p.out)){ %> <span class="badge badge--danger">Out</span><% }else if(parts.some(p=>p.low)){ %> <span class="badge badge--warn">Low</span><% } %><% } %>
+      </td><% } %>
+      <td class="num"><% if(r.total==null){ %><span class="t-muted">Not added up</span><% }else{ %><strong><%= helpers.unitCount(r.total,r.unit) %></strong><% } %></td>
+      <% if(m.canBuy){ %><td class="num"><%= r.incoming==null?'—':units(r.incoming) %></td><% } %>
+      <% if(m.canSell){ %><td class="num"><%= r.sold==null?'—':units(r.sold) %></td><% } %>
+    </tr><% } %></tbody>
+  </table></div>
+  <% if(m.number>1||m.more){ %><div class="rm-panel__foot"><span>Page <%= m.number %> of <%= m.pages %></span>
+    <% if(m.number>1){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= base %><%= helpers.queryString(query,{page:m.number-1}) %>">Previous</a><% } %>
+    <% if(m.more){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= base %><%= helpers.queryString(query,{page:m.number+1}) %>">Next</a><% } %>
+  </div><% } %>
+  <% } %>
+</section>

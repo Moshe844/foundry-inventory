@@ -60,11 +60,11 @@ const PLAIN_NUMBER=/^-?(?:0|[1-9]\d{0,8})(?:\.\d+)?$/;
 function columnName(index){let name='';for(let n=index+1;n>0;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;return name;}
 // Excel checks every part against its declared type and refuses the file when
 // one is wrong, so the workbook part names its own type, not the file type.
-function xlsx(result){
+function worksheetXml(result){
   const rows=[result.columns.map((column)=>result.columnLabels?.[column]||column),
     ...result.rows.map((_row,index)=>result.columns.map((column)=>
     exportValue(result,index,column)))];
-  const worksheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row,index)=>
       `<row r="${index+1}">${row.map((value,column)=>{
         const type=result.columnTypes?.[result.columns[column]];
@@ -73,12 +73,26 @@ function xlsx(result){
         return numeric?`<c r="${address}"><v>${value}</v></c>`:
           `<c r="${address}" t="inlineStr"><is><t xml:space="preserve">${xml(cell(value).slice(0,32767))}</t></is></c>`;
       }).join('')}</row>`).join('')}</sheetData></worksheet>`;
-  return zip({'[Content_Types].xml':`<?xml version="1.0" encoding="UTF-8"?>
+}
+// Excel sheet names: at most 31 characters, none of []:*?/\, and unique.
+function sheetNames(sheets){
+  const used=new Set();
+  return sheets.map((sheet,index)=>{
+    const base=String(sheet.name||'Report').replace(/[[\]:*?/\\]/g,' ').trim().slice(0,31)||'Sheet '+(index+1);
+    let name=base;for(let n=2;used.has(name.toLowerCase());n++)name=base.slice(0,31-String(n).length-1)+' '+n;
+    used.add(name.toLowerCase());return name;
+  });
+}
+// One report is one "Report" sheet. A result with `sheets` holds several
+// reports, each on its own sheet in the same workbook.
+function xlsx(result){
+  const sheets=Array.isArray(result.sheets)?result.sheets:[{...result,name:'Report'}],names=sheetNames(sheets);
+  const files={'[Content_Types].xml':`<?xml version="1.0" encoding="UTF-8"?>
     <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
     <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
     <Default Extension="xml" ContentType="application/xml"/>
     <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-    <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+    ${sheets.map((_sheet,index)=>`<Override PartName="/xl/worksheets/sheet${index+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('\n    ')}
     </Types>`,
   '_rels/.rels':`<?xml version="1.0" encoding="UTF-8"?>
     <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -87,20 +101,24 @@ function xlsx(result){
   'xl/workbook.xml':`<?xml version="1.0" encoding="UTF-8"?>
     <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-      <sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      <sheets>${names.map((name,index)=>`<sheet name="${xml(name)}" sheetId="${index+1}" r:id="rId${index+1}"/>`).join('')}</sheets></workbook>`,
   'xl/_rels/workbook.xml.rels':`<?xml version="1.0" encoding="UTF-8"?>
     <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-    </Relationships>`,
-  'xl/worksheets/sheet1.xml':worksheet});
+    ${sheets.map((_sheet,index)=>`<Relationship Id="rId${index+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index+1}.xml"/>`).join('\n    ')}
+    </Relationships>`};
+  sheets.forEach((sheet,index)=>{files[`xl/worksheets/sheet${index+1}.xml`]=worksheetXml(sheet);});
+  return zip(files);
 }
 async function pdf(result){
   const PDFDocument=require('pdfkit');
   const fontPath=require.resolve('pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf');
   const font=require('fontkit').openSync(fontPath);
-  const values=[result.config.title,...result.columns.map((column)=>result.columnLabels?.[column]||column),
-    ...result.rows.flatMap((row,index)=>
-    result.columns.map((column)=>cell(result.displayRows?.[index]?.[column]??row[column])))];
+  // A result with `sheets` prints each one as its own section, from a new page.
+  const sections=Array.isArray(result.sheets)?result.sheets.map((sheet)=>({...sheet,
+    config:{title:`${result.config.title} · ${sheet.title||sheet.name}`}})):[result];
+  const values=sections.flatMap((section)=>[section.config.title,section.sourceLabel||'',...section.columns.map((column)=>section.columnLabels?.[column]||column),
+    ...section.rows.flatMap((row,index)=>
+    section.columns.map((column)=>cell(section.displayRows?.[index]?.[column]??row[column])))]);
   for(const value of values)for(const character of String(value)){
     const code=character.codePointAt(0);
     if(code<32&&character!=='\n'&&character!=='\r'&&character!=='\t')
@@ -108,44 +126,49 @@ async function pdf(result){
     if(code>=32&&!font.hasGlyphForCodePoint(code))
       throw new Error('PDF export cannot safely represent every character in this report. Use Excel or CSV; no text was silently replaced.');
   }
+  const widest=Math.max(...sections.map((section)=>section.columns.length));
   return new Promise((resolve,reject)=>{
-    const doc=new PDFDocument({size:result.columns.length>8?'A3':'A4',
-      layout:result.columns.length>5?'landscape':'portrait',margin:42,bufferPages:true,
+    const doc=new PDFDocument({size:widest>8?'A3':'A4',
+      layout:widest>5?'landscape':'portrait',margin:42,bufferPages:true,
       info:{Title:result.config.title,Author:'StockChief',Subject:'Verified PostgreSQL report'}});
     const chunks=[];doc.on('data',(chunk)=>chunks.push(chunk));doc.on('error',reject);
     doc.on('end',()=>resolve(Buffer.concat(chunks)));
     try{
       doc.registerFont('Report',fontPath).font('Report');
-      const margin=42,usable=doc.page.width-margin*2,width=usable/result.columns.length;
-      const fontSize=result.columns.length>8?7:8;
-      const drawHeader=()=>{
-        doc.fillColor('#25243b').fontSize(15).text(result.config.title,margin,margin,{width:usable});
-        doc.fillColor('#646477').fontSize(8).text(result.sourceLabel||`PostgreSQL source | checked ${result.asOf} | ${result.rows.length} verified rows`,
-          margin,doc.y+4,{width:usable});
-        doc.y+=15;const top=doc.y;
-        doc.fontSize(fontSize);
-        const headerHeight=Math.max(23,...result.columns.map((column)=>
-          doc.heightOfString((result.columnLabels?.[column]||column).replaceAll('_',' '),{width:width-8})+10));
-        doc.rect(margin,top,usable,headerHeight).fill('#eceafd');
-        doc.fillColor('#302b62').fontSize(fontSize);
-        result.columns.forEach((column,index)=>doc.text((result.columnLabels?.[column]||column).replaceAll('_',' '),margin+index*width+4,top+5,
-          {width:width-8}));
-        doc.y=top+headerHeight;return doc.y;
-      };
-      let y=drawHeader();
-      for(const [rowIndex,row] of result.rows.entries()){
-        const cells=result.columns.map((column)=>cell(result.displayRows?.[rowIndex]?.[column]??row[column])
-          .replaceAll('\r\n','\n').replaceAll('\t','    '));
-        doc.fontSize(fontSize);
-        const height=Math.max(20,...cells.map((value)=>doc.heightOfString(value,{width:width-8})+8));
-        if(height>doc.page.height-margin*2-85)
-          throw new Error('One report row is too tall for a legible PDF page. Use Excel or CSV.');
-        if(y+height>doc.page.height-margin-20){doc.addPage();y=drawHeader();}
-        if(rowIndex%2===1)doc.rect(margin,y,usable,height).fill('#f7f7fb');
-        doc.fillColor('#292936').fontSize(fontSize);
-        cells.forEach((value,index)=>doc.text(value,margin+index*width+4,y+4,{width:width-8}));
-        y+=height;doc.y=y;
+      for(const [sectionIndex,result] of sections.entries()){
+        if(sectionIndex>0)doc.addPage();
+        const margin=42,usable=doc.page.width-margin*2,width=usable/result.columns.length;
+        const fontSize=result.columns.length>8?7:8;
+        const drawHeader=()=>{
+          doc.fillColor('#25243b').fontSize(15).text(result.config.title,margin,margin,{width:usable});
+          doc.fillColor('#646477').fontSize(8).text(result.sourceLabel||`PostgreSQL source | checked ${result.asOf} | ${result.rows.length} verified rows`,
+            margin,doc.y+4,{width:usable});
+          doc.y+=15;const top=doc.y;
+          doc.fontSize(fontSize);
+          const headerHeight=Math.max(23,...result.columns.map((column)=>
+            doc.heightOfString((result.columnLabels?.[column]||column).replaceAll('_',' '),{width:width-8})+10));
+          doc.rect(margin,top,usable,headerHeight).fill('#eceafd');
+          doc.fillColor('#302b62').fontSize(fontSize);
+          result.columns.forEach((column,index)=>doc.text((result.columnLabels?.[column]||column).replaceAll('_',' '),margin+index*width+4,top+5,
+            {width:width-8}));
+          doc.y=top+headerHeight;return doc.y;
+        };
+        let y=drawHeader();
+        for(const [rowIndex,row] of result.rows.entries()){
+          const cells=result.columns.map((column)=>cell(result.displayRows?.[rowIndex]?.[column]??row[column])
+            .replaceAll('\r\n','\n').replaceAll('\t','    '));
+          doc.fontSize(fontSize);
+          const height=Math.max(20,...cells.map((value)=>doc.heightOfString(value,{width:width-8})+8));
+          if(height>doc.page.height-margin*2-85)
+            throw new Error('One report row is too tall for a legible PDF page. Use Excel or CSV.');
+          if(y+height>doc.page.height-margin-20){doc.addPage();y=drawHeader();}
+          if(rowIndex%2===1)doc.rect(margin,y,usable,height).fill('#f7f7fb');
+          doc.fillColor('#292936').fontSize(fontSize);
+          cells.forEach((value,index)=>doc.text(value,margin+index*width+4,y+4,{width:width-8}));
+          y+=height;doc.y=y;
+        }
       }
+      const margin=42;
       const range=doc.bufferedPageRange();
       for(let index=0;index<range.count;index++){
         doc.switchToPage(index);

@@ -77,10 +77,9 @@ async function runStep(db,ctx,actor,key){
       GROUP BY s.id,s.name,p.currency ORDER BY s.name,s.id,p.currency`,[ctx.workspaceId]);
     return {label:def.label,summary:'Orders from the last completed calendar quarter, with receipts recorded to date.',rows:result.rows};
   }
-  const result=await db.query(`SELECT w.name AS inventory, count(DISTINCT b.sku_id)::integer AS stocked_skus,
-      coalesce(sum(b.on_hand),0) AS quantity_on_hand FROM workspaces w LEFT JOIN balances b ON b.workspace_id=w.id AND b.on_hand<>0
-      WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL GROUP BY w.id,w.name ORDER BY w.name,w.id`,[actor.account_id]);
-  return {label:def.label,summary:'Current stock by owned inventory.',rows:result.rows};
+  // The same figures as the combined view, kept current by its own routine.
+  const rollup=require('../reports/agent-inventory-rollup');
+  return {label:def.label,summary:'Stock by inventory, as last updated by the combined view.',rows:await rollup.inventoryRows(db,ctx),link:rollup.href};
 }
 async function run(db,ctx,id,requestKey){
   if(typeof requestKey!=='string'||!requestKey||requestKey.length>160) throw new ValidationError('A playbook run needs its request reference.');

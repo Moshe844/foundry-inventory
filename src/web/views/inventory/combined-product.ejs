@@ -1,0 +1,33 @@
+<% const m=model,r=m.product,names=new Map(m.inventories.map(i=>[i.id,i])),units=n=>helpers.qty(n); %>
+<div class="page-head" data-rollup-product-page>
+  <div class="titles">
+    <h1><%= r.product %></h1>
+    <div class="page-sub"><span class="mono"><%= r.codes.join(' · ') %></span><% if(r.barcodes.length){ %> · Barcode <span class="mono"><%= r.barcodes.join(' · ') %></span><% } %></div>
+  </div>
+</div>
+
+<% if(r.problemText){ %><p class="notice notice--warn" data-rollup-problem><strong><%= r.problemText %></strong> Check the code, barcode and unit in each inventory below, then correct the product that is wrong. The figures stay apart until they agree.</p>
+<% }else if(r.matchedByBarcode){ %><p class="notice notice--info">These products share a barcode but use different codes. They are added up as one product.</p><% } %>
+
+<div class="rm-pulse">
+  <div class="rm-stat"><span class="rm-stat__n"><%= r.total==null?'—':units(r.total) %></span><span class="rm-stat__d"><%= r.total==null?'not added up':helpers.plural(r.total,r.unit)+' on hand in all' %></span></div>
+  <div class="rm-stat<%= r.outIn?' rm-stat--flag':'' %>"><span class="rm-stat__n"><%= units(r.outIn) %></span><span class="rm-stat__d"><%= r.outEverywhere?'out of stock everywhere':'inventories out of stock' %></span></div>
+  <div class="rm-stat"><span class="rm-stat__n"><%= units(r.lowIn) %></span><span class="rm-stat__d">inventories low</span></div>
+  <% if(m.canBuy){ %><div class="rm-stat"><span class="rm-stat__n"><%= r.incoming==null?'—':units(r.incoming) %></span><span class="rm-stat__d">on open purchase orders</span></div><% } %>
+</div>
+
+<section class="rm-panel" data-rollup-parts>
+  <div class="rm-panel__head"><%- helpers.icon('box',{size:15,className:'rm-quiet'}) %><h2>In each inventory</h2></div>
+  <div class="rm-scroll"><table class="rm-vtable">
+    <thead><tr><th>Inventory</th><th>Code</th><th>Barcode</th><th class="num">On hand</th><% if(m.canBuy){ %><th class="num">On order</th><% } %><% if(m.canSell){ %><th class="num">Sold, <%= m.salesDays %> days</th><% } %><th></th></tr></thead>
+    <tbody><% for(const p of r.parts){ const i=names.get(p.workspaceId); %><tr data-rollup-part="<%= p.workspaceId %>">
+      <td class="vt-id"><strong><%= i.name %></strong><% if(i.company){ %><small><%= i.company %></small><% } %></td>
+      <td class="mono"><%= p.code %></td>
+      <td class="mono"><%= p.barcode||'—' %></td>
+      <td class="num"><strong><%= helpers.unitCount(p.onHand,p.unit) %></strong><% if(p.out){ %> <span class="badge badge--danger">Out</span><% }else if(p.low){ %> <span class="badge badge--warn">Low</span><% } %></td>
+      <% if(m.canBuy){ %><td class="num"><%= p.incoming==null?'—':units(p.incoming) %></td><% } %>
+      <% if(m.canSell){ %><td class="num"><%= p.sold==null?'—':units(p.sold) %></td><% } %>
+      <td><% if(i.current){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= encodeURIComponent(p.itemId) %>">Open product</a><% }else{ %><form method="post" action="/inventories/switch"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="workspaceId" value="<%= p.workspaceId %>"><input type="hidden" name="next" value="/inventory/<%= encodeURIComponent(p.itemId) %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" aria-label="Open in <%= i.name %>">Open in <%= i.name %></button></form><% } %></td>
+    </tr><% } %></tbody>
+  </table></div>
+</section>
