@@ -1413,13 +1413,25 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/vacation-deputy');
   }));
+  // Job 94: negotiation emails built from recorded facts.
+  const negotiations=require('../../purchasing/negotiation-drafts');
+  const negotiationPage=async(req,res,options)=>res.page('autopilot/supplier-negotiations',{title:'Supplier negotiation emails',nav:'autopilot',
+    backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'},...await negotiations.page(database,req.ctx,options)});
+  router.get('/autopilot/supplier-negotiations',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{supplier:req.query.supplier})));
+  router.get('/autopilot/supplier-negotiations/drafts/:id',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{draftId:req.params.id})));
+  router.post('/autopilot/supplier-negotiations/drafts/:id/save',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await negotiations.edit(database,req.ctx,req.params.id,req.body);req.flash('success','Draft saved. Nothing was sent.');res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-negotiations/drafts/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await negotiations.send(database,req.ctx,req.params.id,req.body);req.flash('success','The email is queued to the supplier.');res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+req.params.id);
+  }));
   router.post('/autopilot/negotiation-draft',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const id=await require('../../purchasing/negotiation-drafts').prepare(database,req.ctx,req.body);
-    res.redirect(303,'/messages/supplier/'+id);
+    const id=await negotiations.prepare(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+id);
   }));
   router.post('/autopilot/negotiation-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/negotiation-drafts').configure(database,req.ctx,req.body);
-    res.redirect(303,'/autopilot/reviews/supplier-negotiation?'+new URLSearchParams({filter:req.body.supplier}));
+    await negotiations.configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/supplier-negotiations?'+new URLSearchParams({supplier:req.body.supplier}));
   }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);

@@ -1,7 +1,5 @@
 'use strict';
 const time=require('../lib/business-time');
-const {addDays}=require('../accounting/customer-money');
-const {ValidationError}=require('../domain/errors');
 
 // One complete, physically received order is one delivery. A split receipt
 // is complete on its last receipt date in this inventory's time zone.
@@ -37,23 +35,14 @@ async function habits(db,ctx,{filter,page,today}){
       'Last recorded':r.latest,Pattern:r.kind==='Customer'?'Orders about every '+r.typical+' days':'Delivers in about '+r.typical+' days',
       'Estimated next order':r.expected,link:(r.kind==='Customer'?'/sales/customers/':'/suppliers/')+r.id}))};
 }
+// Job 94: the negotiation email and its facts come from negotiation-evidence.
 async function negotiation(db,ctx,filter){
-  if(!String(filter||'').trim())throw new ValidationError('Choose a supplier by exact name or record ID.');
-  const people=(await db.query("SELECT id,name,email FROM suppliers WHERE workspace_id=$1 AND status='active' AND (id=$2 OR lower(name)=lower($2)) ORDER BY id LIMIT 2",[ctx.workspaceId,filter])).rows;
-  if(people.length!==1)throw new ValidationError('Choose one matching supplier in this inventory. Use the supplier record to distinguish similar names.');
-  const person=people[0],{timeZone,calendarDate:today}=await time.forWorkspace(db,ctx.workspaceId);
-  const start=addDays(today,-89);
-  const {rows}=await db.query(`WITH deliveries AS (${deliveries}) SELECT po_number,expected::text,received::text FROM deliveries
-    WHERE supplier_id=$2 AND received BETWEEN $4::date AND $5::date AND expected IS NOT NULL AND placed<=received ORDER BY received,id`,
-    [ctx.workspaceId,person.id,timeZone,start,today]);
-  const late=rows.filter(r=>r.received>r.expected);
-  if(!late.length)return {supplier:person,summary:'No completed order with a recorded late receipt in the last 90 days.',rows:[]};
-  const subject='Delivery times for '+person.name;
-  const body=['Hello '+person.name+',','', 'From '+start+' through '+today+', '+late.length+' of '+rows.length+' completed orders with a recorded expected date arrived after that date.',
-    ...late.slice(-5).map(r=>r.po_number+' was expected '+r.expected+' and fully received '+r.received+'.'),'',
-    'Can you confirm the lead time you can consistently meet and suggest changes that would help us receive future orders on time?'].join('\n');
-  const hash=require('../pricing/postgres-promotions').hash,sourceKey=hash({supplier:person,rows}),evidence=hash({sourceKey,subject,body});
-  return {supplier:person,subject,body,evidence,sourceKey,summary:'Check the recorded dates before contacting the supplier.',rows:[{Supplier:person.name,'Completed dated orders':rows.length,'Late deliveries':late.length,Subject:subject,Draft:body}]};
+  const ev=require('../purchasing/negotiation-evidence'),found=await ev.collect(db,ctx,filter);
+  if(!found.facts.length)return {supplier:found.supplier,summary:'Nothing recorded in the last 12 months to negotiate with: no late or short deliveries, price increases, cheaper quotes or orders.',rows:[]};
+  const words=ev.negotiationEmail(found),evidence=ev.key(found,words),count=kind=>found.facts.find(f=>f.kind===kind)?.count||0;
+  return {supplier:found.supplier,...words,evidence,sourceKey:evidence,summary:'Check each fact and its evidence before contacting the supplier.',
+    rows:[{Supplier:found.supplier.name,'Completed dated orders':found.completed,'Late deliveries':count('late'),'Short order lines':count('short'),'Price increases':count('price'),
+      'Cheaper quotes':count('quote'),'Orders placed':count('volume'),Subject:words.subject,Draft:words.body,link:'/autopilot/supplier-negotiations?supplier='+encodeURIComponent(found.supplier.id)}]};
 }
 const definitions=[
   {id:211,key:'partner-habits',label:'Learn customer order patterns and supplier lead times',filterLabel:'Customer or supplier',readPage:habits},
