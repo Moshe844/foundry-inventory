@@ -595,6 +595,18 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'This was already done.':catalogDone[step]);
     res.redirect(303,catalogFixes.path);
   }));
+  // Job 200: the data health score and its fix list.
+  const dataHealth=require('../../autopilot/data-health');
+  router.get(dataHealth.path,requireAuth,owner,starterAgentPage(200,'automatic','Data health',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/data-health',{title:'Data health',nav:'autopilot',screen:await dataHealth.page(database,req.ctx),
+      backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  }));
+  router.post(dataHealth.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await dataHealth.check(database,req.ctx);
+    req.flash('success','StockChief is checking your product data. The new score appears here in a minute.');
+    res.redirect(303,dataHealth.path);
+  }));
   router.post(catalogFixes.path+'/limits/:kind',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await catalogFixes.configure(database,req.ctx,String(req.params.kind).toUpperCase(),req.body);
     req.flash('success',result.stopped?'Every fix of this kind now waits for you.':'Limit saved.');
@@ -1480,6 +1492,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
+      if(req.params.job==='catalog-health')result.dataHealthPath=require('../../autopilot/data-health').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;

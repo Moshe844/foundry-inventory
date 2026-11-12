@@ -63,11 +63,11 @@ test('day-one health scores active product records and exposes exact fixes at ea
   for(const tier of ['starter','growth','pro','enterprise']){
     await subscribe(tier);
     const home=await browser.get('/onboarding?add=1').expect(200);
-    assert.match(home.text,/href="\/autopilot\/reviews\/catalog-health"/);
+    assert.match(home.text,/href="\/autopilot\/data-health"/);
     const page=await browser.get('/autopilot/reviews/catalog-health').expect(200);
-    assert.match(page.text,/of 12 checks passed across 3 active SKUs/);
+    assert.match(page.text,/of 27 checks passed across 3 active SKUs/);
     const result=await reviews.run(db,ctx,'catalog-health',{filter:'HEALTH-1',scheduled:true});
-    assert.equal(result.rows.length,1);assert.equal(result.rows[0]['Checks passed'],'3 of 4');
+    assert.equal(result.rows.length,1);assert.equal(result.rows[0]['Checks passed'],'6 of 9');
     assert.match(result.rows[0]['What to fix'],/duplicate/);
     const list=await reviews.run(db,ctx,'catalog-fixes',{filter:'HEALTH-2'});
     if(tier==='starter')assert.deepEqual(Object.keys(list.rows[0]),['Suggestion']);
@@ -83,7 +83,8 @@ test('day-one health scores active product records and exposes exact fixes at ea
   await db.query("UPDATE catalogue_item_facts SET category='Supplies' WHERE workspace_id=$1 AND item_id=$2",[ctx.workspaceId,complete.itemId]);
   assert.equal((await reviews.run(db,ctx,'product-categories',{filter:'HEALTH-2'})).rows[0]['Suggested category'],null);
   await db.query("UPDATE skus SET barcode='000032' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,other.skuIds[0]]);
-  assert.equal((await reviews.run(db,ctx,'catalog-health',{filter:'HEALTH-1'})).rows.length,0);
+  const fixed=(await reviews.run(db,ctx,'catalog-health',{filter:'HEALTH-1'})).rows[0];
+  assert.equal(fixed['Checks passed'],'7 of 9');assert.doesNotMatch(fixed['What to fix'],/barcode/);
   await db.query('UPDATE items SET is_active=0 WHERE workspace_id=$1',[ctx.workspaceId]);
   assert.match((await reviews.run(db,ctx,'catalog-health')).summary,/Add your first product/);
   await assert.rejects(reviews.run(db,{...ctx,actorId:'not-the-owner'},'catalog-health'),/business owner/);

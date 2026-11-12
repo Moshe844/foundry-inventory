@@ -101,7 +101,7 @@ const definitions=[
   {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},
   {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
-  {id:200,key:'catalog-health',label:'Check your catalog health score',readPage:require('./catalog-health').health},
+  {id:200,key:'catalog-health',label:'Check your data health score',readPage:require('./catalog-health').health},
   require('../catalog/agent-catalog-fixes').definition,
   {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
   {id:9,key:'slow-stock',label:'Find dead and slow stock',readPage:require('../forecasting/agent-excess-stock').slowStock},

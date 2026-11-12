@@ -431,6 +431,7 @@ async function autopilotEvaluate(job,client){
     await require('../forecasting/agent-slow-stock-steps').schedule(client,job.workspaceId,cycleId);
     await require('./agent-expiry-warnings').schedule(client,job.workspaceId,cycleId);
     await require('../catalog/agent-catalog-fixes').schedule(client,job.workspaceId,cycleId);
+    await require('../autopilot/data-health').schedule(client,job.workspaceId);
     await require('../reports/agent-compliance-reports').schedule(client,job.workspaceId,cycleId);
     await require('../accounting/agent-landed-cost-bills').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -645,6 +646,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier-price-update.v1':external((job,database)=>require('../pricing/agent-supplier-price-updates').run(job,database)),
   'agent.slow-stock.v1':external((job,database)=>require('../forecasting/agent-slow-stock-steps').run(job,database)),
   'agent.catalog-fixes.v1':external((job,database)=>require('../catalog/agent-catalog-fixes').run(job,database)),
+  'agent.data-health.v1':external((job,database)=>require('../autopilot/data-health').run(job,database)),
   'agent.expiry-warnings.v1':external((job,database)=>require('./agent-expiry-warnings').run(job,database)),
   'agent.compliance-reports.v1':external((job,database)=>require('../reports/agent-compliance-reports').run(job,database)),
   'agent.landed-cost-bill.v1':external((job,database)=>require('../accounting/agent-landed-cost-bills').run(job,database)),

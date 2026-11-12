@@ -1,0 +1,41 @@
+<% const s=screen, level={Urgent:'badge--danger',Important:'badge--warn',Normal:'badge--info'}; %>
+<header class="rm-head">
+  <h1>Data health</h1>
+  <p>How complete and correct your product data is, from 0 to 100. StockChief works it out after each import and every day, and lists what to fix first.</p>
+</header>
+<% if(!s.products){ %>
+<p data-health-empty>Add your first product to get a data health score.</p>
+<% }else{ %>
+<div class="stat-strip section" data-health-score>
+  <div><span class="stat-value"><%= s.score %></span><span class="stat-label">of 100</span></div>
+  <div><span class="stat-value"><%= s.products %></span><span class="stat-label">active <%= s.products===1?'product':'products' %> checked</span></div>
+  <div><span class="stat-value"><%= s.fixes.length %></span><span class="stat-label"><%= s.fixes.length===1?'fix to make':'fixes to make' %></span></div>
+</div>
+<p><small>Checked <%= helpers.dateTime(s.computedAt) %><%= s.change===null?'':s.change>0?' · up '+s.change+' since the last check':s.change<0?' · down '+(-s.change)+' since the last check':' · the same as the last check' %>.</small></p>
+<% } %>
+<form method="post" action="/autopilot/data-health/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost"<%= s.checking?' disabled':'' %>><%= s.checking?'Checking now':'Check again' %></button>
+  <a href="/autopilot/reviews/catalog-health">See each product that needs work</a></form>
+
+<% if(s.products){ %>
+<h2>Fix these first</h2>
+<% if(!s.fixes.length){ %><p>Every check passes. Nothing to fix.</p><% } %>
+<ul class="rm-list" data-health-fixes>
+<% for(const f of s.fixes){ %>
+  <li class="list-row" data-health-fix="<%= f.key %>">
+    <span><strong><%= f.text %></strong>
+      <a class="rm-btn rm-btn--ghost" href="<%= f.href %>"><%= f.action %></a></span>
+    <span class="badge <%= level[f.importance] %>"><%= f.importance %></span>
+  </li>
+<% } %>
+</ul>
+
+<h2>How the score is made</h2>
+<ul class="rm-list" data-health-checks>
+<% for(const c of s.checks){ %>
+  <li class="list-row" data-health-check="<%= c.key %>">
+    <span><strong><%= c.label %></strong><small><%= c.passed %> of <%= s.products %> pass<%= c.failed?' · '+c.failed+' to fix':'' %></small></span>
+    <span class="badge <%= c.failed?'badge--warn':'badge--ok' %>"><%= c.percent %>%</span>
+  </li>
+<% } %>
+</ul>
+<% } %>
