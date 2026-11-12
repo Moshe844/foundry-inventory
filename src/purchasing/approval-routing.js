@@ -54,7 +54,7 @@ async function inbox(db,workspaceId,actorId){
 const rows=async(db,ctx)=>({summary:'These purchase orders have entered two-person review. Eligible buyers are ordered by their spending limit, with the owner as fallback.',
   rows:(await assignments(db,ctx.workspaceId)).map(r=>({Order:r.order,Reviewer:r.reviewer,Reason:r.reason,link:'/purchasing/orders/'+r.id}))});
 const definitions=[
-  {id:176,key:'purchase-review-routing',label:'Route purchase approvals by role and amount',read:rows},
+  {id:176,key:'purchase-review-routing',label:'Send each approval to the right person',readPage:(db,ctx)=>require('../autopilot/approval-desk').review(db,ctx)},
   {id:172,key:'purchase-review-escalation',label:'Pass unanswered purchase approvals to the next reviewer',read:rows}
 ];
 module.exports={assignments,inbox,definitions};

@@ -1862,6 +1862,7 @@ function createPostgresAutopilotRouter(database,options={}){
         const rule=await require('../../purchasing/dual-approval').setting(database,req.ctx.workspaceId);
         result.purchaseThreshold={...rule,amount:rule.amount_minor==null?'':require('../../domain/currency').fromMinor(rule.amount_minor,rule.currency)};
       }
+      if(req.params.job==='purchase-review-routing')result.approvalRoutingPath=require('../../autopilot/approval-desk').path;
       const watch=require('../../autopilot/activity-watches'),job=watch.definitions.find(d=>d.key===req.params.job);
       if(job&&[170,171].includes(job.id))result.watchSettings={job:job.id,...await watch.settings(database,req.ctx.workspaceId,job.id)};
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
@@ -1940,6 +1941,20 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/purchase-approval-threshold');
+  }));
+  // Job 176: who approves what, by role and amount.
+  const approvalDesk=require('../../autopilot/approval-desk');
+  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/approval-routing',
+    {title:'Who approves what',nav:'autopilot'},async()=>({model:await approvalDesk.screen(database,req.ctx)}),402)));
+  router.post(approvalDesk.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const saved=await approvalDesk.saveRule(database,req.ctx,req.body);
+    req.flash('success',saved.removed!==undefined?(saved.removed?'Rule removed.':'That rule was already removed.'):saved.unchanged?'Nothing changed.':'Rule saved: '+saved.rule+'.');
+    res.redirect(303,approvalDesk.path);
+  }));
+  router.post(approvalDesk.path+'/limits',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const saved=await approvalDesk.saveLimit(database,req.ctx,req.body);
+    req.flash('success',saved.unchanged?'Nothing changed.':saved.removed!==undefined?(saved.removed?'Limit removed.':'There was no limit to remove.'):'Limit saved.');
+    res.redirect(303,approvalDesk.path);
   }));
   // Job 167: an unclear rule is asked back and its words stay in the form.
   const saveWatchRule=asyncRoute(async(req,res)=>{
