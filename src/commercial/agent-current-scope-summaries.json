@@ -118,7 +118,7 @@
   "138": "Classifies captured Gmail or Outlook messages as orders, invoices, questions, bulk mail or unknown senders. Live mailbox polling still needs verification.",
   "142": "Files supported original PDF/text documents on exact purchase, customer-order or product records. Uncertain target matches need separate confirmation; full live mailbox runs remain open.",
   "144": "Forecasts every product each day from its own confirmed orders and recorded sales, and tests each method on held-out days. With a year of history it follows yearly and weekday patterns. Each week's forecast is scored against what then sold. On Growth and up the forecasts drive the reorder list and the daily reorder point check. You can keep any product on plain sales history.",
-  "146": "Estimates new-product demand from a category-matched comparison item with compatible units. Unrelated comparison products produce no estimate.",
+  "146": "Forecasts each product added in the last 90 days from similar items with the same units and at least eight weeks of sales, chosen by you or by explicit rules: the same product, category or brand first, then a selling price within 25% and matching details. The similar items' own forecasts carry their seasons, and the new product's early sales count more each day. With no clear similar item it stops and asks you to choose one.",
   "148": "Reviews rising demand from recorded customer shipment handoffs.",
   "149": "Models the next 30 days of sales volume using a percentage you enter. Other types of what-if scenarios remain open.",
   "150": "Calculates safety stock from recorded stocked lead-time periods and your service target, excluding damage and stockout periods. Missing lead-time evidence holds the update.",

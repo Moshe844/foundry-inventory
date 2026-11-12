@@ -62,6 +62,9 @@ function rateFor(shape, date) {
     }
     case 'weekday': return Math.max(0, round(shape.rate * shape.factors[weekdayOf(date)]));
     case 'seasonal': return Math.max(0, round(shape.level * shape.month[monthOf(date)] * shape.weekday[weekdayOf(date)]));
+    // Another item's shape at a different level: a new product forecast from
+    // a similar item, or a recent trend, keeps that item's seasons.
+    case 'scaled': return Math.max(0, round(shape.factor * rateFor(shape.shape, date)));
     default: throw new TypeError(`Unknown forecast shape: ${shape.kind}`);
   }
 }

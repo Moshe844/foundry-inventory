@@ -108,10 +108,10 @@ test('dated orders forecast weekly demand and posted stock issues quantify the m
     const forecast=await reviews.run(db,ctx,'seasonal-demand',{filter:await code(sku)});
     const newProduct=()=>reviews.run(db,ctx,'new-product-forecast',{filter:launchCode});
     if(tier==='starter')await assert.rejects(newProduct(),e=>e.code==='entitlement_required');
-    else if(tier==='growth')assert.deepEqual((await newProduct()).rows,[{Suggestion:'Consider about 30 units for '+launchCode+' over its first 30 days.'}]);
+    else if(tier==='growth')assert.deepEqual((await newProduct()).rows,[{Suggestion:'Consider about 35 units for '+launchCode+' over its first 30 days.'}]);
     else{
       const related=(await newProduct()).rows[0];
-      assert.equal(related['Comparable SKUs'],1);assert.equal(related['Estimated units in 30 days'],30);
+      assert.equal(related['Comparable SKUs'],1);assert.equal(related['Estimated units in 30 days'],35);assert.equal(related['Why similar'],'same category');
       const missing=(await reviews.run(db,ctx,'new-product-forecast',{filter:unrelatedCode})).rows[0];
       assert.equal(missing['Comparable SKUs'],0);assert.equal(missing['Estimated units in 30 days'],null);
     }

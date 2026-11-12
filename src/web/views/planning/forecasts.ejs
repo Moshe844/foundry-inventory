@@ -53,3 +53,20 @@
 <% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
 </div></section>
 <% } %>
+<% if(m.launchLocked){ %><section class="rm-panel" id="new-products"><div class="rm-panel__head"><h2>New products</h2></div><div class="rm-panel__body">
+<p class="rm-muted">Forecasting new products from similar items starts on Growth. <a href="/billing">Review plans</a></p></div></section>
+<% }else if(m.launches){ %><section class="rm-panel" id="new-products"><div class="rm-panel__head"><h2>New products</h2></div><div class="rm-panel__body">
+<p>Products added in the last 90 days are forecast from similar items with the same units and eight weeks of sales: the same product, category or brand first, then a selling price within 25% and matching details. Their own sales count more each day. <%= m.launchMode==='suggest'?'On Growth these are suggestions; planning does not use them.':'' %></p>
+<% if(!m.launches.length){ %><p class="rm-muted">No new products right now.</p><% } %>
+<ul class="rm-list"><% for(const n of m.launches){ const first=n.comparisons[0]; %><li><div class="rm-told__t">
+  <p><strong><%= n.code %></strong> · <%= m.launchWords[n.status] %></p>
+  <% if(n.status!=='ASK'){ %><p>Next 30 days <%= qty(n.next_30,n.unit_label) %><% if(n.own_days>0){ %> · <%= n.own_days %> days of its own sales count for <%= Math.round(n.weight*100) %>%<% } %></p><% } %>
+  <% if(first){ %><p class="rm-muted">Like <%= n.comparisons.map(c=>c.code+' ('+qty(c.units30,n.unit_label)+' in 30 days)').join(', ') %> · <%= first.matched.join(', ') %></p><% } %>
+  <% if(n.reason&&n.status!=='USED'){ %><p class="rm-muted"><%= n.reason %></p><% } %>
+  <div class="rm-actions">
+    <% if(n.status==='PROPOSED'){ %><form method="post" action="<%= base %>/new/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= n.sku_id %>"><button class="rm-btn rm-btn--sm">Use for planning</button></form><% } %>
+    <form method="post" action="<%= base %>/similar" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= n.sku_id %>">
+      <label>Similar item code <input name="code" value="<%= n.chosen_code||'' %>" maxlength="150"></label>
+      <button class="rm-btn rm-btn--ghost rm-btn--sm"><%= n.chosen_code?'Change similar item':'Choose similar item' %></button></form>
+  </div>
+</div></li><% } %></ul></div></section><% } %>

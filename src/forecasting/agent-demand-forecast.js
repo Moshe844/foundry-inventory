@@ -203,9 +203,13 @@ async function forecastPage(c,ctx,auth,run,skuIds,today){
   return counts;
 }
 
-// Later jobs add their own step to each page of products.
-const steps=[];
+// Later jobs add their own step to each page of products, their own part of
+// the forecasts page and their own Needs you items.
+const steps=[],sections=[],inboxes=[];
 function addStep(step){steps.push(step);}
+function addSection(section){sections.push(section);}
+function addInbox(inbox){inboxes.push(inbox);}
+async function extraSections(db,ctx,auth){const model={};for(const section of sections)Object.assign(model,await section(db,ctx,auth));return model;}
 
 // One worker page: up to 100 active products. A finished run, or a page this
 // run already passed, is not processed again.
@@ -318,21 +322,23 @@ async function setExcluded(db,ctx,input){
 // physical sales. Rows the forecast cannot split are left on sales history.
 const feeds=[];
 function addFeed(feed){feeds.push(feed);}
+// Later feeds (new products, trends) take precedence over the product's own
+// forecast, each only on plans where its job may act on its own.
 async function attach(db,workspaceId,rows){
   if(!rows.length||!await installed.has(db,forecasts))return rows;
   const skuIds=[...new Set(rows.map(r=>r.sku_id))];
-  const found=(await db.query(`SELECT sku_id,'HISTORY' AS basis,method,method_label AS label,shape FROM ${forecasts}
-    WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND status='USED'`,[workspaceId,skuIds])).rows;
-  const sources=new Map(found.map(r=>[r.sku_id,r]));
-  for(const feed of feeds)for(const r of await feed(db,workspaceId,skuIds))sources.set(r.sku_id,r);
-  if(!sources.size)return rows;
+  const found=[...(await db.query(`SELECT sku_id,'HISTORY' AS basis,method,method_label AS label,shape FROM ${forecasts}
+    WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND status='USED'`,[workspaceId,skuIds])).rows];
+  for(const feed of feeds)found.push(...await feed(db,workspaceId,skuIds));
+  if(!found.length)return rows;
   const account=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(account))return rows;
+  const sources=new Map(found.filter(r=>policy.permits(account.plan,r.job||JOB,'automatic')).map(r=>[r.sku_id,r]));
   const today=await time.today(db,workspaceId),bySku=new Map();
   for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   for(const [skuId,list] of bySku){
     const source=sources.get(skuId);
-    if(!source||!policy.permits(account.plan,source.job||JOB,'automatic'))continue;
+    if(!source)continue;
     const sites=list.filter(r=>r.location_id&&r.scope!=='workspace');
     const total=sites.reduce((sum,r)=>sum+Number(r.issued||0),0);
     const horizon=Math.min(MAX_PLANNING_DAYS,Math.max(decision.SAFETY_DAYS,...list.map(r=>Math.ceil(Number(r.local_lead??r.lead_time_days??decision.DEFAULT_LEAD_DAYS))||0),
@@ -395,7 +401,8 @@ async function page(db,ctx,{number=1}={}){
   const today=await time.today(db,ctx.workspaceId);
   if(auth.level==='suggest'){
     const first=(await review(db,ctx,{filter:'',page:1,today})).rows.find(r=>r['Next 7 days']!=null);
-    return {plan:auth.plan,level:auth.level,suggestion:first?{code:first.SKU,next7:first['Next 7 days'],method:first['Forecast method']}:null,forecasts:[],waiting:[],excluded:[]};
+    return {plan:auth.plan,level:auth.level,suggestion:first?{code:first.SKU,next7:first['Next 7 days'],method:first['Forecast method']}:null,forecasts:[],waiting:[],
+      ...await extraSections(db,ctx,auth)};
   }
   const run=(await db.query(`SELECT * FROM ${runs} WHERE workspace_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0]||null;
   const select=`SELECT f.*,f.next_7::float8 AS next_7,f.next_30::float8 AS next_30,f.holdout_error::float8 AS holdout_error,s.code,i.name,i.unit_label
@@ -406,11 +413,17 @@ async function page(db,ctx,{number=1}={}){
   const weeks=await lastWeeks(db,ctx.workspaceId,[...list,...waiting].map(r=>r.sku_id));
   for(const r of [...list,...waiting])r.week=weeks.get(r.sku_id)||null;
   return {plan:auth.plan,level:auth.level,reason:auth.reason,run,forecasts:list.slice(0,50),more:list.length>50,number,waiting,
-    accuracy:await accuracy(db,ctx.workspaceId),isOwner:who.role==='owner',statusWords};
+    accuracy:await accuracy(db,ctx.workspaceId),isOwner:who.role==='owner',statusWords,...await extraSections(db,ctx,auth)};
 }
 
-// Needs you: forecasts waiting for the owner on Growth, Pro and Custom.
+// Needs you: forecasts waiting for the owner on Growth, Pro and Custom, then
+// what the later forecasting jobs add.
 async function inbox(db,workspaceId){
+  const items=await ownInbox(db,workspaceId);
+  for(const extra of inboxes)items.push(...await extra(db,workspaceId));
+  return items;
+}
+async function ownInbox(db,workspaceId){
   if(!await installed.has(db,forecasts))return [];
   const account=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,JOB,'automatic'))return [];
@@ -424,4 +437,7 @@ async function inbox(db,workspaceId){
 }
 
 module.exports={JOB,KIND,CAPABILITY,href,MODEL_VERSION,authority,demand,daysOf,fit,units,historyStart,ownerUser,member,process,schedule,requestCheck,
-  approve,approveAll,setExcluded,attach,addStep,addFeed,review,page,inbox,statusWords};
+  approve,approveAll,setExcluded,attach,addStep,addFeed,addSection,addInbox,review,page,inbox,statusWords};
+
+// Jobs 146 and 148 add their steps, feeds, page parts and Needs you items.
+require('./agent-launch-forecast');

@@ -73,7 +73,7 @@ async function demandScenario(db,ctx,options){
 
 module.exports=[
   {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
-  {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/postgres-agent-forecast').similarProducts},
+  {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/agent-launch-forecast').review},
   {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:stockout},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},
   {id:18,key:'reorder-explanation',label:'Explain what to order and why',readPage:reorder},

@@ -94,7 +94,8 @@ test('job 144: every product is forecast with its seasons, and on Growth and up 
   assert.equal((await planned(season)).forecast, undefined, 'A waiting forecast does not drive planning.');
   const growthReview = (await reviews.run(db, ctx, 'seasonal-demand', { filter: 'SEASON' })).rows[0];
   assert.deepEqual([growthReview['Forecast method'], growthReview['Next 30 days'], growthReview.Planning], ['Yearly and weekday pattern', expected(30), 'Waiting for your approval']);
-  const [notice] = await forecast.inbox(db, ws);
+  const own = async () => (await forecast.inbox(db, ws)).filter(n => n.sourceId === 'demand-forecasts');
+  const [notice] = await own();
   assert.equal(notice.title, 'Forecasts wait for your approval');
   assert.match(notice.happened, /^1 product forecast is ready/);
   assert.ok((await require('../../src/projections/postgres-service').needs(db, ws, ctx.actorId)).some(n => n.sourceId === 'demand-forecasts'));
@@ -108,7 +109,7 @@ test('job 144: every product is forecast with its seasons, and on Growth and up 
   assert.equal(await audits('Approved demand forecast for planning'), 1);
   assert.equal((await forecast.approve(db, ctx, season)).replayed, true);
   assert.equal(await audits('Approved demand forecast for planning'), 1);
-  assert.deepEqual(await forecast.inbox(db, ws), []);
+  assert.deepEqual(await own(), []);
   let position = await planned(season);
   assert.equal(position.forecast.method, 'yearly_seasonal');
   assert.equal(Math.round(position.dailyRate * 30 * 1000) / 1000, expected(30));

@@ -131,6 +131,16 @@ function createPostgresPlanningRouter(database) {
     req.flash('success',result.replayed?'That forecast was already approved.':'Planning now uses this forecast.');
     return res.redirect(303,forecastPath);
   }));
+  router.post(forecastPath+'/similar',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await require('../../forecasting/agent-launch-forecast').choose(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'That similar item was already chosen.':result.status==='ASK'?'Cleared. StockChief will look for similar items again.':'Similar item saved. The new product is forecast from it.');
+    return res.redirect(303,forecastPath+'#new-products');
+  }));
+  router.post(forecastPath+'/new/approve',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await require('../../forecasting/agent-launch-forecast').approve(database,req.ctx,req.body.skuId);
+    req.flash('success',result.replayed?'That forecast was already approved.':'Planning now uses this new product forecast.');
+    return res.redirect(303,forecastPath+'#new-products');
+  }));
   router.post(forecastPath+'/use',manageReorders,asyncRoute(async(req,res)=>{
     const result=await forecast().setExcluded(database,req.ctx,req.body);
     req.flash('success',result.status==='EXCLUDED'?'Planning uses plain sales history for this product.':'The forecast can plan this product again.');

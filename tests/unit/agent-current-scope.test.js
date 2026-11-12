@@ -49,7 +49,7 @@ test('every operationally qualified duty explains its current scope while permis
  assert.equal(balance.plans.find(p=>p.tier==='growth').mode,'trained');assert.match(balance.plans.find(p=>p.tier==='growth').currentScope,/complete a matching draft/);
  for(const tier of ['pro','enterprise']){assert.equal(balance.plans.find(p=>p.tier===tier).mode,'alone');assert.match(balance.plans.find(p=>p.tier===tier).currentScope,/without training/);}
  assert.deepEqual(rows.filter(r=>r.status==='complete').map(r=>r.id),require('../../src/commercial/agent-plan-progress.json').complete,'Only verified complete duties qualify');
- for(const id of [1,2,4,18,19,21,22,48,117,120,130,144,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
+ for(const id of [1,2,4,18,19,21,22,48,117,120,130,144,146,192])assert.equal(rows.find(r=>r.id===id).status,'complete');
  const reorderRefresh=rows.find(r=>r.id===21);
  assert.match(reorderRefresh.currentScope,/every stocked product and location/);
  assert.equal(reorderRefresh.plans.find(p=>p.tier==='starter').mode,'suggest');
@@ -62,6 +62,12 @@ test('every operationally qualified duty explains its current scope while permis
  assert.equal(demandForecast.plans.find(p=>p.tier==='starter').mode,'suggest');
  assert.match(demandForecast.plans.find(p=>p.tier==='starter').currentScope,/one product/);
  for(const tier of ['growth','pro','enterprise']){assert.equal(demandForecast.plans.find(p=>p.tier===tier).mode,'alone');assert.match(demandForecast.plans.find(p=>p.tier===tier).currentScope,/drive planning on their own/);}
+ const launchForecast=rows.find(r=>r.id===146);
+ assert.match(launchForecast.currentScope,/stops and asks you to choose one/);
+ assert.equal(launchForecast.plans.find(p=>p.tier==='starter').mode,'excluded');
+ assert.equal(launchForecast.plans.find(p=>p.tier==='growth').mode,'suggest');
+ assert.match(launchForecast.plans.find(p=>p.tier==='growth').currentScope,/Planning does not use it/);
+ for(const tier of ['pro','enterprise'])assert.match(launchForecast.plans.find(p=>p.tier===tier).currentScope,/drive planning on its own/);
  const localReorder=rows.find(r=>r.id===120);
  assert.equal(localReorder.plans.find(p=>p.tier==='starter').mode,'excluded');
  assert.equal(localReorder.plans.find(p=>p.tier==='growth').mode,'trained');
