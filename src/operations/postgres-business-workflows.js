@@ -359,6 +359,8 @@ async function cancelPurchaseOrderInTransaction(client,rawContext,purchaseOrderI
   [ctx.workspaceId,purchaseOrderId,reason,ctx.actorId,at]);
   await event(client,'purchase_order_events',null,{workspaceId:ctx.workspaceId,
     recordId:purchaseOrderId,type:'cancelled',detail:{reason},actorId:ctx.actorId,at});
+  // Preorders waiting on these goods are flagged for the owner (job 68).
+  await require('../sales/agent-preorder-fills').onSupplyChange(client,ctx,purchaseOrderId,'cancel:'+operation.id);
   const result={purchaseOrderId,status:'CANCELLED'};
   await completeOperation(client,operation,result);
   return {...result,replayed:false};
@@ -844,6 +846,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     // An order still without a ship-from warehouse gets one chosen by the owner's routing rules (job 121).
     await require('../sales/agent-ship-from').queueAfterConfirmation(client,ctx,order,input.idempotencyKey);
     await require('../sales/agent-order-screening').queue(client,ctx,salesOrderId,'confirmed');
+    // An order confirmed partly in stock may be split by the owner's rules (job 61).
+    if(short&&(allocations.length||kitReservations.allocations.length))await require('../sales/agent-order-splits').queue(client,ctx,[salesOrderId],'confirm:'+input.idempotencyKey);
     await completeOperation(client, operation, result);
     if(Object.hasOwn(lines.rows[0]||{},'direct_committed_quantity'))
       await require('../purchasing/direct-shipment-routines').queueForOrder(client,ctx.workspaceId,salesOrderId);

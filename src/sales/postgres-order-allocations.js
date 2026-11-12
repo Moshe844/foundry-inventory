@@ -110,6 +110,8 @@ async function change(c,ctx,orderId,{lines,idempotencyKey,direction,expectedVers
     [newId('soevt'),ctx.workspaceId,orderId,direction==='add'?'stock_set_aside':'stock_given_back',
       JSON.stringify({...detail,lines:wanted,status:next}),ctx.actorId,idempotencyKey+':event',at]);
   const result={salesOrderId:orderId,orderNumber:order.order_number,status:next,before:order.status,version,lines:wanted};
+  // Stock newly set aside may let the owner's rules split the order or send its rest (job 61).
+  if(direction==='add')await require('./agent-order-splits').queue(c,ctx,[orderId],idempotencyKey);
   await c.query(`UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,completed_at=now() WHERE id=$1`,
     [operation.id,JSON.stringify(result)]);
   return {...result,replayed:false};

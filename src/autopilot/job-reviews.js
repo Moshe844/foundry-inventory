@@ -229,6 +229,8 @@ async function run(db,ctx,key,options={}){
       ...(result.stockReadyForm?{stockReadyForm:result.stockReadyForm}:{}),
       ...(def.id===65?{stockSharingLink:true}:{}),
       ...(def.id===121?{warehouseRoutingLink:true}:{}),
+      ...(def.id===61?{orderSplitsLink:true}:{}),
+      ...(def.id===68?{preordersLink:true}:{}),
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),

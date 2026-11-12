@@ -1,0 +1,87 @@
+<% const m=model,r=m.rules,pro=m.mode==='trained';
+const list=(p,key)=>p.lines.filter(l=>l[key]>0).map(l=>l[key]+' × '+l.code+(l.kit?' (kit)':'')).join(', ')||'Nothing';
+const value=v=>helpers.money(v,r?.currency||m.currency); %>
+<div class="page-head"><div class="titles"><h1>Split orders</h1>
+<p>When an order is partly in stock, StockChief sends the part that is set aside to picking and keeps the rest waiting on the same order. Your rules decide which orders can be split.</p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows which orders it would split and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
+<% for(const d of m.drafts){ const p=d.plan; %><article class="section" id="split-<%= d.id %>">
+<h3><%= p.final?'Send the rest of':'Split' %> <a href="/orders/<%= p.orderId %>"><%= p.orderNumber %></a> · <%= p.customer %></h3>
+<% if(d.reason&&d.reason!=='Prepared on request.'){ %><p class="cell-sub"><%= d.reason %></p><% } %>
+<p><strong>Ships now from <%= p.location %>:</strong> <%= list(p,'ready') %> · <%= value(p.valueMinor) %></p>
+<% if(!p.final){ %><p><strong>Waits on the order:</strong> <%= list(p,'waiting') %></p><% } %>
+<% if(r&&r.notify==='send'){ %><p class="cell-sub"><%= p.recipient?'StockChief emails '+p.recipient+' when you approve.':'The customer has no email address, so nobody is told.' %></p><% } %>
+<div class="btn-row"><form method="post" action="<%= m.href %>/splits/<%= d.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= d.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--primary" <%= m.blocked?'disabled':'' %>>Approve and send to picking</button></form>
+<form method="post" action="<%= m.href %>/splits/<%= d.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost">Dismiss</button></form></div></article><% } %></section><% } %>
+
+<section class="card section"><h2>Orders partly in stock</h2>
+<% if(!r||!r.enabled){ %><p>Save your rules below to see which orders StockChief would split.</p>
+<% }else if(!m.orders.length){ %><p>No shipping order is partly in stock right now.</p>
+<% }else{ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>Order</th><th>Ships now</th><th>Waits</th><th>What happens next</th></tr></thead><tbody>
+<% for(const p of m.orders){ %><tr><td class="cell-main"><a class="cell-title" href="/orders/<%= p.orderId %>"><%= p.orderNumber %></a><span class="cell-sub"><%= p.customer %> · <%= p.location||'No warehouse' %></span></td>
+<td data-label="Ships now"><%= list(p,'ready') %><span class="cell-sub"><%= p.percent %>% · <%= value(p.valueMinor) %></span></td>
+<td data-label="Waits"><%= p.final?'Nothing':list(p,'waiting') %></td>
+<td data-label="Next"><% if(p.hold){ %><span class="badge badge--warn">Needs you</span> <%= p.hold %>
+<% }else if(p.wait){ %><span class="badge">Waits</span> <%= p.wait %>
+<% }else{ %><span class="badge badge--ok"><%= p.final?'Rest ships':'Splits' %></span> <%= p.final?'The rest is set aside and can go to picking.':'Part '+p.split+' can go to picking now.' %>
+<% if(!m.shadow&&!m.drafts.some(d=>d.sales_order_id===p.orderId)){ %><form method="post" action="<%= m.href %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="orderId" value="<%= p.orderId %>">
+<button class="btn btn--sm" <%= m.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %><% } %></td></tr><% } %>
+</tbody></table></div>
+<% if(!m.shadow&&!m.blocked){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check orders now</button></form><% } %><% } %></section>
+
+<section class="card section"><h2>Your rules</h2>
+<% if(r&&r.enabled){ %><p><%= r.customers==='all'?'Every customer, unless you marked them to ship complete.':'Only customers and orders you marked as accepting partial shipments.' %>
+Send a part when at least <strong><%= r.min_percent %>%</strong> of the order<%= Number(r.min_value_minor)>0?' and at least '+value(Number(r.min_value_minor)):'' %> is ready, in up to <strong><%= r.max_splits %></strong> <%= r.max_splits===1?'part':'parts' %> before the rest is complete.
+<%= r.notify==='send'?'The customer is told by email.':'The customer is not emailed.' %></p>
+<% if(r.automatic){ %><p><span class="badge badge--ok">On its own</span> StockChief splits orders within these rules.<% if(m.automatic){ %> <%= m.automatic %><% } %></p>
+<% }else if(pro){ %><p><span class="badge">Proposes</span> StockChief proposes each split for your approval until you teach it.</p><% }else{ %><p><span class="badge">Proposes</span> StockChief proposes each split for your approval.</p><% } %>
+<% }else{ %><p>No rules yet. Until you save them, orders wait until they are complete.</p><% } %>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<fieldset class="rm-field"><legend>Who gets partial shipments</legend>
+<label class="checkbox"><input type="radio" name="customers" value="accepting" <%= (r?.customers||'accepting')==='accepting'?'checked':'' %>><span class="checkbox-text">Only customers and orders marked as accepting them</span></label>
+<label class="checkbox"><input type="radio" name="customers" value="all" <%= r?.customers==='all'?'checked':'' %>><span class="checkbox-text">Every customer, unless marked to ship complete</span></label></fieldset>
+<label class="rm-field"><span>Least share of the order to send, in %</span><input type="number" name="minPercent" min="0" max="99" step="1" value="<%= r?r.min_percent:50 %>"></label>
+<label class="rm-field"><span>Least value to send (<%= m.currency %>)</span><input type="number" name="minValue" min="0" step="any" value="<%= m.minValue %>"></label>
+<label class="rm-field"><span>Most parts before the rest is complete</span><input type="number" name="maxSplits" min="1" max="10" step="1" required value="<%= r?.max_splits||1 %>"></label>
+<fieldset class="rm-field"><legend>Tell the customer</legend>
+<label class="checkbox"><input type="radio" name="notify" value="off" <%= (r?.notify||'off')==='off'?'checked':'' %>><span class="checkbox-text">Do not email the customer</span></label>
+<label class="checkbox"><input type="radio" name="notify" value="send" <%= r?.notify==='send'?'checked':'' %> <%= m.mailboxes.length?'':'disabled' %>><span class="checkbox-text">Email the customer what ships now and what follows</span></label>
+<% if(m.mailboxes.length){ %><label class="rm-field"><span>Send from</span><select name="connectorId"><% for(const b of m.mailboxes){ %><option value="<%= b.id %>" <%= r?.connector_id===b.id?'selected':'' %>><%= b.display_name %></option><% } %></select></label>
+<% }else{ %><p class="cell-sub">Connect a Gmail or Microsoft 365 mailbox to email customers.</p><% } %></fieldset>
+<% if(!pro){ %><label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= r?.automatic?'checked':'' %>><span class="checkbox-text">Split orders on its own within these rules</span></label><% } %>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Use these rules for orders that are partly in stock. People still pick, pack and hand over the goods.</span></label>
+<button class="btn btn--primary">Save rules</button></form>
+<% if(pro&&r&&r.enabled&&!r.automatic){ %><% if(m.example){ %><form method="post" action="<%= m.href %>/teach" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>"><input type="hidden" name="splitId" value="<%= m.example.id %>">
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">You approved splitting <%= m.example.order_number %> under these rules. Let StockChief split orders like that on its own.</span></label>
+<button class="btn">Teach these rules</button></form><% }else{ %><p class="cell-sub">Approve one split under these rules to teach StockChief to split orders on its own.</p><% } %><% } %>
+<% if(r&&r.enabled){ %><div class="btn-row"><% if(r.automatic){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="manual" value="yes">Propose each split instead</button></form><% } %>
+<form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="stop" value="yes">Turn off rules</button></form></div><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<section class="card section"><h2>Who accepts partial shipments</h2><p>An order’s own answer comes before its customer’s.</p>
+<% if(m.choices.length){ %><ul class="rm-list"><% for(const x of m.choices){ %><li class="list-row"><span><strong><%= x.name %></strong><small><%= x.sales_order_id?'Order':'Customer' %> · <%= x.accepts?'Accepts partial shipments':'Ships complete only' %></small></span>
+<form method="post" action="<%= m.href %>/customers" class="btn-row"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(x.sales_order_id){ %><input type="hidden" name="orderNumber" value="<%= x.name %>"><% }else{ %><input type="hidden" name="customerId" value="<%= x.customer_id %>"><% } %>
+<button class="btn btn--ghost btn--sm" name="accepts" value="">Remove</button></form></li><% } %></ul><% } %>
+<form method="post" action="<%= m.href %>/customers" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(m.customers.length){ %><label class="rm-field"><span>Customer</span><select name="customerId"><% for(const c of m.customers){ %><option value="<%= c.id %>"><%= c.name %></option><% } %></select></label><% } %>
+<label class="rm-field"><span>Or one order number</span><input name="orderNumber" autocomplete="off"></label>
+<fieldset class="rm-field"><legend>Partial shipments</legend>
+<label class="checkbox"><input type="radio" name="accepts" value="yes" checked><span class="checkbox-text">Accepts partial shipments</span></label>
+<label class="checkbox"><input type="radio" name="accepts" value="no"><span class="checkbox-text">Ships complete only</span></label></fieldset>
+<button class="btn">Save</button></form></section>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent splits</h2><ul class="rm-list">
+<% for(const s of m.recent){ const p=s.plan; %><li class="list-row"><span><strong><%= s.authorization_kind==='AUTOMATIC'?'StockChief':'You' %> <%= p.final?'sent the rest of':'split' %> <a href="/orders/<%= p.orderId %>"><%= p.orderNumber %></a></strong>
+<small><%= helpers.dateTime(s.applied_at) %><% if(s.shipment_number){ %> · <a href="/fulfilment/<%= s.shipment_id %>"><%= s.shipment_number %></a><% } %></small>
+<small>Ships: <%= list(p,'ready') %><%= p.final?'':' · waits: '+list(p,'waiting') %></small>
+<% if(s.notice_id){ %><small>Customer email: <%= String(s.notice_status||'queued').toLowerCase() %></small><% }else if(s.notice_problem){ %><small><%= s.notice_problem %></small><% } %></span>
+<% if(s.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else if(s.shipment_status==='PICKING'){ %><form method="post" action="<%= m.href %>/splits/<%= s.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %></li><% } %></ul></section><% } %>
