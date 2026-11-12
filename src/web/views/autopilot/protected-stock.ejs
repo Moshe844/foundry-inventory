@@ -1,0 +1,94 @@
+<% const m=model,base='/autopilot/protected-stock';
+const kinds={customer:'Big customer',expected:'Expected order',recurring:'Repeating order'};
+const changeWords={held:'Reserved',topped_up:'Topped up',trimmed:'Cut back',released:'Released by you',expired:'Ended',order_arrived:'Used by their order',undone:'Undone',removed:'No longer protected',plan:'Plan no longer includes this'};
+const byWords={INDIVIDUAL:'You',TRAINED:'StockChief',CUSTOM:'StockChief',UPKEEP:'StockChief',ORDER:'Order'};
+const editing=m.protections.find(p=>p.id===edit)||null; %>
+<div class="page-head"><div class="titles"><h1>Protected stock</h1>
+<p>Keep stock set aside for big customers and upcoming orders. Other orders and sales channels can’t take it. The customer’s own order uses it first.</p></div></div>
+<p class="muted"><%= m.custom?'StockChief reserves on its own, inside the amounts you set.':'StockChief suggests each reservation until you approve one, or let it reserve on its own. After that it reserves on its own, inside the amounts you set.' %>
+Nothing moves on the shelf, and stock already promised to other orders is never taken.</p>
+
+<section class="card section" aria-label="What you protect">
+<h2>What you protect</h2>
+<% if(!m.protections.length){ %><p>Nothing is protected yet. Add a big customer or an upcoming order below.</p><% } %>
+<% for(const p of m.protections){ const c=p.cycle; %>
+<section class="section" data-protection="<%= p.id %>">
+<h3><%= p.customer_name %> · <%= kinds[p.kind] %></h3>
+<p class="muted"><%= p.location_name %> ·
+<% if(p.kind==='customer'){ %><%= p.ends_on?'Kept until '+p.ends_on:'Kept until you stop it' %><% }else{ %>Order expected <%= p.next_on %><%= p.kind==='recurring'?', then every '+p.every_days+' days':'' %> · held from <%= c.start %> to <%= c.last %><% } %>
+<% if(m.pro){ %> · <%= p.routine?'Reserves on its own (saved rule)':p.taught?'Reserves on its own (taught by your approval)':'Asks you first' %><% } %></p>
+<% if(p.problem){ %><p class="notice notice--warn" role="status"><%= p.problem %></p><% } %>
+<% if(p.auth.mode!=='auto'){ %><p class="notice" role="status"><%= p.auth.reason %></p><% } %>
+<div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Kept for them</th><th>Reserved now</th><th>Status</th></tr></thead><tbody>
+<% for(const line of p.lines){ const rows=p.rows.filter(r=>r.sku_id===line.skuId); const preview=p.preview.find(x=>x.skuId===line.skuId); %>
+<% if(!rows.length){ %><tr><td><%= p.codes[line.skuId] %></td><td><%= line.quantity %></td><td>0</td><td>
+<%= !c.open?(c.passed?'Ended':'Starts '+c.start):preview&&preview.want?(p.auth.mode==='watch'?'Would reserve '+preview.want:'Waiting for its first check'):'Waiting for free stock' %></td></tr><% } %>
+<% for(const r of rows){ %><tr data-reservation="<%= r.id %>"><td><%= r.code %> · <%= r.product %></td><td><%= r.target %></td><td><strong><%= r.held %></strong></td><td>
+<% if(r.until){ %><span class="muted">Until <%= r.until %></span><% }else if(r.kept){ %><span class="muted">Kept until you release it</span><% } %>
+<% if(Number(r.proposed)>0){ %>
+<form method="post" action="<%= base %>/reservations/<%= r.id %>/approve" class="form-stack">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<input type="hidden" name="quantity" value="<%= r.proposed %>"><input type="hidden" name="requestKey" value="<%= m.requestKey %>-a-<%= r.id %>-<%= r.revision %>">
+<button class="btn btn--primary">Reserve <%= r.proposed %> now</button></form>
+<% }else if(Number(r.held)<Number(r.target)&&!r.kept){ %><span><%= preview&&preview.want&&p.auth.mode==='watch'?'Would reserve '+preview.want:'Waiting for free stock' %></span><% } %>
+<% if(Number(r.held)>0){ %>
+<form method="post" action="<%= base %>/reservations/<%= r.id %>/release" class="form-stack">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<input type="hidden" name="requestKey" value="<%= m.requestKey %>-r-<%= r.id %>-<%= r.revision %>">
+<button class="btn secondary">Release</button></form><% } %>
+</td></tr><% } %>
+<% } %>
+</tbody></table></div>
+<div class="btn-row"><a class="btn secondary" href="<%= base %>?edit=<%= encodeURIComponent(p.id) %>#protect-form">Change</a>
+<form method="post" action="<%= base %>/protections/<%= p.id %>/stop">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= p.revision %>">
+<button class="btn secondary">Stop protecting</button></form></div>
+</section>
+<% } %>
+<% if(m.more){ %><p class="muted">Showing the first 100 protections.</p><% } %>
+</section>
+
+<section class="card section" id="protect-form" aria-label="<%= editing?'Change protected stock':'Protect stock' %>">
+<h2><%= editing?'Change '+editing.customer_name+' · '+kinds[editing.kind]:'Protect stock' %></h2>
+<form method="post" action="<%= base %>" class="form-stack">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= m.requestKey %>">
+<% if(editing){ %><input type="hidden" name="id" value="<%= editing.id %>"><input type="hidden" name="revision" value="<%= editing.revision %>">
+<p class="muted"><%= editing.location_name %>. To protect for another customer or location, add a new one.</p>
+<% }else{ %>
+<label class="rm-field"><span>Customer</span><input name="customer" list="protect-customers" required maxlength="200" autocomplete="off"></label>
+<datalist id="protect-customers"><% for(const c of m.customers){ %><option value="<%= c.name %>"><% } %></datalist>
+<label class="rm-field"><span>What to protect</span><select name="kind" required>
+<option value="customer">A big customer: always keep this much</option>
+<option value="expected">An expected order on a date</option>
+<option value="recurring">A repeating order</option></select></label>
+<label class="rm-field"><span>Location</span><select name="locationId" required><% for(const l of m.locations){ %><option value="<%= l.id %>"><%= l.name %></option><% } %></select></label>
+<% } %>
+<label class="rm-field"><span>Products and units to keep, one per line, like ABC-1, 10</span>
+<textarea name="lines" rows="4" maxlength="10000" required><%= editing?editing.lineText:'' %></textarea></label>
+<% if(!editing||editing.kind!=='customer'){ %>
+<label class="rm-field"><span>Expected order date (expected and repeating orders)</span><input type="date" name="nextOn" min="<%= m.today %>" value="<%= editing?editing.next_on:'' %>"></label>
+<label class="rm-field"><span>Repeats every this many days (repeating orders)</span><input type="number" name="everyDays" min="1" max="365" step="1" value="<%= editing?.every_days||'' %>"></label>
+<label class="rm-field"><span>Start holding this many days before</span><input type="number" name="leadDays" min="0" max="90" step="1" value="<%= editing?editing.lead_days:7 %>"></label>
+<label class="rm-field"><span>If no order comes, release this many days after</span><input type="number" name="graceDays" min="0" max="30" step="1" value="<%= editing?editing.grace_days:2 %>"></label>
+<% } %>
+<% if(!editing||editing.kind==='customer'){ %>
+<label class="rm-field"><span>Last day to keep it (big customers, optional)</span><input type="date" name="endsOn" min="<%= m.today %>" value="<%= editing?.ends_on||'' %>"></label>
+<% } %>
+<% if(m.pro){ %><p><label><input type="checkbox" name="routine" value="yes" <%= editing?.routine?'checked':'' %>> Reserve this on its own without asking me. This saves a rule.</label></p><% } %>
+<div class="btn-row"><button class="btn btn--primary"><%= editing?'Save changes':'Protect this stock' %></button>
+<% if(editing){ %><a class="btn secondary" href="<%= base %>">Cancel</a><% } %></div>
+</form>
+</section>
+
+<section class="card section" aria-label="Recent changes">
+<h2>Recent changes</h2>
+<% if(!m.changes.length){ %><p>No changes yet.</p><% }else{ %>
+<div class="table-wrap"><table class="table"><thead><tr><th>When</th><th>Customer</th><th>Product</th><th>Change</th><th>By</th><th></th></tr></thead><tbody>
+<% for(const ch of m.changes){ const canUndo=!ch.undone_at&&!['undone','order_arrived'].includes(ch.kind)&&ch.reason!=='The owner lowered the protected amount.'; %>
+<tr data-change="<%= ch.id %>"><td><%= helpers.dateTime(ch.created_at,m.timeZone) %></td><td><%= ch.customer_name %></td><td><%= ch.code %></td>
+<td><% if(ch.kind==='order_arrived'){ %><%= changeWords[ch.kind] %>: <%= ch.handed_over %><%= -ch.delta>ch.handed_over?' · the rest released':'' %><% }else{ %><%= changeWords[ch.kind] %> <%= ch.delta>0?'+'+ch.delta:ch.delta %><% } %><% if(ch.undone_at){ %> · undone<% } %></td>
+<td><%= byWords[ch.authority] %></td><td><% if(canUndo){ %><form method="post" action="<%= base %>/changes/<%= ch.id %>/undo">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= m.requestKey %>-u-<%= ch.id %>">
+<button class="btn secondary">Undo</button></form><% } %></td></tr>
+<% } %></tbody></table></div><% } %>
+</section>

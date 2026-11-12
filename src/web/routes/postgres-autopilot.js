@@ -251,6 +251,28 @@ function createPostgresAutopilotRouter(database,options={}){
       return res.redirect(303,returnPath+'/'+req.params.id);
     }));
   }
+  const protectedStock=require('../../sales/agent-stock-protections');
+  router.get('/autopilot/reviews/protected-stock',requireAuth,owner,(_req,res)=>res.redirect(303,protectedStock.href));
+  router.get(protectedStock.href,requireAuth,owner,starterAgentPage(12,'draft','Protected stock',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/protected-stock',{title:'Protected stock',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},
+      model:await protectedStock.page(database,req.ctx),edit:typeof req.query.edit==='string'?req.query.edit:null});
+  },'Pro'));
+  router.post(protectedStock.href,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await protectedStock.save(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'This change was already saved.':result.held?'Saved. '+result.held+' units are reserved now.':
+      result.proposed?'Saved. Review the suggested reservation below.':'Saved.');
+    return res.redirect(303,protectedStock.href);
+  }));
+  for(const [path,handler,done] of [['/protections/:id/stop',protectedStock.stop,'Stopped. Its reserved stock is free again.'],
+    ['/reservations/:id/approve',protectedStock.approve,'Reserved.'],['/reservations/:id/release',protectedStock.release,'Released. The stock is free again.'],
+    ['/changes/:id/undo',protectedStock.undo,'Undone.']]){
+    router.post(protectedStock.href+path,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const result=await handler(database,req.ctx,req.params.id,req.body);
+      req.flash('success',result.replayed?'This was already done.':done);
+      return res.redirect(303,protectedStock.href);
+    }));
+  }
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
   const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},

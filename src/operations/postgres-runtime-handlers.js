@@ -787,6 +787,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier-invoice-dispute':external((job,database)=>require('../purchasing/invoice-dispute-follow-through').worker(database,job.workspaceId,job.payload)),
   'agent.supplier-invoice-source':external((job,database)=>require('../purchasing/agent-supplier-invoice-intake').process(database,job.workspaceId,job.payload)),
   'agent.supplier-return.prepare.v1':external((job,database)=>require('../purchasing/agent-supplier-returns').run(database,job.workspaceId,job.payload)),
+  'agent.stock-protection.v1':external((job,database)=>require('../sales/agent-stock-protections').run(database,job.workspaceId,job.payload)),
   'agent.customer.check-in.v1':external((job,database)=>require('../sales/agent-customer-checkins').run(database,job.workspaceId,job.payload)),
   'agent.sales-quote.acceptance.v1':external((job,database)=>require('../sales/agent-quote-buyers').run(database,job.workspaceId,job.payload)),
   'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),

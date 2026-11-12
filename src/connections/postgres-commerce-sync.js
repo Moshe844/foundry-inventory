@@ -25,7 +25,9 @@ async function local(db,p){
    COALESCE(cost.quantity_units,0) AS costed,
    COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id
      JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
-     WHERE a.workspace_id=s.workspace_id AND l.sku_id=s.id AND a.location_id=$3 AND o.status NOT IN ('CANCELLED','FULFILLED')),0) AS committed
+     WHERE a.workspace_id=s.workspace_id AND l.sku_id=s.id AND a.location_id=$3 AND o.status NOT IN ('CANCELLED','FULFILLED')),0)
+   +COALESCE((SELECT SUM(r.quantity) FROM sales_stock_commitments r WHERE r.workspace_id=s.workspace_id AND r.sku_id=s.id
+     AND r.location_id=$3 AND r.stock_reservation_id IS NOT NULL),0) AS committed
   FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
   JOIN locations loc ON loc.workspace_id=s.workspace_id AND loc.id=$3 AND loc.is_active=1
   LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=loc.id

@@ -488,7 +488,7 @@ function markInTransit(database, ctx, transferId, input) {
 }
 
 async function reconcilePegs(client, ctx, transferId, destinationLocationId) {
-  const pegs = (await client.query(`SELECT p.*,l.sku_id,l.sales_order_id,o.status,o.fulfillment_location_id
+  const pegs = (await client.query(`SELECT p.*,l.sku_id,l.sales_order_id,o.status,o.fulfillment_location_id,o.customer_id
     FROM inventory_transfer_pegs p JOIN sales_order_lines l ON l.id=p.sales_order_line_id
     JOIN sales_orders o ON o.id=l.sales_order_id JOIN inventory_transfer_lines tl ON tl.id=p.transfer_line_id
     WHERE tl.transfer_id=$1 AND p.workspace_id=$2
@@ -503,9 +503,11 @@ async function reconcilePegs(client, ctx, transferId, destinationLocationId) {
       FROM sales_order_lines l WHERE l.id=$1`, [peg.sales_order_line_id]);
     const availability = await client.query(`SELECT COALESCE(b.on_hand,0)-COALESCE((SELECT SUM(a.quantity)
         FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id
-        WHERE a.workspace_id=b.workspace_id AND a.location_id=b.location_id AND l.sku_id=b.sku_id),0) AS available
-      FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=$2 AND b.location_id=$3 FOR UPDATE`,
-    [ctx.workspaceId, peg.sku_id, destinationLocationId]);
+        WHERE a.workspace_id=b.workspace_id AND a.location_id=b.location_id AND l.sku_id=b.sku_id),0)
+        -COALESCE((SELECT SUM(r.quantity) FROM sales_stock_commitments r WHERE r.workspace_id=b.workspace_id AND r.sku_id=b.sku_id
+          AND r.location_id=b.location_id AND r.stock_reservation_id IS NOT NULL AND r.reserved_for_customer_id IS DISTINCT FROM $4),0) AS available
+      FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=$2 AND b.location_id=$3 FOR UPDATE OF b`,
+    [ctx.workspaceId, peg.sku_id, destinationLocationId, peg.customer_id]);
     const quantity = Math.min(Number(peg.quantity), Math.max(0, Number(needResult.rows[0]?.needed || 0)),
       Math.max(0, Number(availability.rows[0]?.available || 0)));
     if (quantity > 0) {
@@ -515,6 +517,8 @@ async function reconcilePegs(client, ctx, transferId, destinationLocationId) {
         ON CONFLICT(sales_order_line_id,location_id) DO UPDATE SET quantity=sales_order_allocations.quantity+EXCLUDED.quantity,
           updated_at=EXCLUDED.updated_at`,
       [newId('soa'), ctx.workspaceId, peg.sales_order_line_id, destinationLocationId, quantity, nowIso()]);
+      await require('../sales/agent-stock-protections').handOver(client, ctx,
+        { id: peg.sales_order_id, customer_id: peg.customer_id }, [{ skuId: peg.sku_id, locationId: destinationLocationId, quantity }]);
       orderIds.add(peg.sales_order_id);
     }
   }
