@@ -43,11 +43,16 @@ const sql=`WITH setting AS MATERIALIZED (
   FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id AND i.is_active=1
   LEFT JOIN catalogue_item_facts f ON f.workspace_id=s.workspace_id AND f.item_id=s.item_id
   WHERE s.workspace_id=$1 AND s.is_active=1
+), landed AS MATERIALIZED (
+  -- Freight, duty and other charges added to receipts (landed cost), per receipt line.
+  SELECT a.receipt_line_id,d.currency,sum(a.amount_minor) AS amount
+  FROM landed_cost_documents d JOIN landed_cost_allocations a ON a.workspace_id=d.workspace_id AND a.document_id=d.id
+  WHERE d.workspace_id=$1 AND d.status='APPLIED' GROUP BY a.receipt_line_id,d.currency
 ), receipts AS (
   SELECT l.sku_id,r.id,max(r.received_at)::timestamptz AS at,coalesce(fx.base_currency,po.currency) AS currency,po.po_number,
     CASE WHEN count(cm.id)=count(*) AND sum(l.quantity_units)>0
-      THEN (sum(cm.cost_delta_minor)+coalesce(sum(lc.landed),0))::numeric/sum(l.quantity_units) END AS unit_cost,
-    coalesce(sum(lc.landed),0)<>0 AS landed
+      THEN (sum(cm.cost_delta_minor)+coalesce(sum(lc.amount),0))::numeric/sum(l.quantity_units) END AS unit_cost,
+    coalesce(sum(lc.amount),0)<>0 AS landed
   FROM purchase_order_receipt_lines l JOIN products p ON p.id=l.sku_id
   JOIN purchase_order_receipts r ON r.workspace_id=l.workspace_id AND r.id=l.receipt_id
   JOIN purchase_orders po ON po.workspace_id=r.workspace_id AND po.id=r.purchase_order_id AND po.delivery_kind<>'CUSTOMER_DIRECT'
@@ -56,10 +61,7 @@ const sql=`WITH setting AS MATERIALIZED (
   LEFT JOIN accounting_inventory_cost_movements cm ON cm.workspace_id=l.workspace_id AND cm.sku_id=l.sku_id
     AND cm.cost_source_type='purchase_order_receipt' AND cm.cost_source_record_id=r.id AND cm.quantity_delta=l.quantity_units
     AND l.movement_ids::jsonb ? cm.inventory_movement_id
-  LEFT JOIN LATERAL (SELECT sum(a.amount_minor) AS landed FROM landed_cost_allocations a
-    JOIN landed_cost_documents d ON d.workspace_id=a.workspace_id AND d.id=a.document_id AND d.status='APPLIED'
-      AND d.currency=coalesce(fx.base_currency,po.currency)
-    WHERE a.workspace_id=l.workspace_id AND a.receipt_line_id=l.id) lc ON true
+  LEFT JOIN landed lc ON lc.receipt_line_id=l.id AND lc.currency=coalesce(fx.base_currency,po.currency)
   WHERE l.workspace_id=$1
   GROUP BY l.sku_id,r.id,fx.base_currency,po.currency,po.po_number
 ), costs AS (
