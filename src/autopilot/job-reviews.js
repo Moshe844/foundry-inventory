@@ -101,6 +101,7 @@ const definitions=[
   ...require('./daily-briefs').definitions,
   require('./stock-alerts').definition,
   ...require('../forecasting/agent-service-levels').definitions,
+  require('./escalations').definition,
   require('./watch-rules').definition,
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
     summary:'Compare dispatch with physical receipts, recorded loss or damage and stock still in transit. Receiving teams see scheduled follow-ups for their assigned warehouses. Open each transfer for its product quantities.'},

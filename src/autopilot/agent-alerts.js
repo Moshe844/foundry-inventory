@@ -1,6 +1,8 @@
 'use strict';
 
-// Jobs 166, 167 and 168 deliver their alerts the same way.
+// Jobs 166, 167, 168, 170 and 171 deliver their alerts the same way. Job 172
+// (escalations.js) uses the same mailbox choice and outbox for the emails it
+// sends to the person an unanswered item is passed to.
 //
 // The alerts are agent notices: the routine check (operational-notices.refresh,
 // run by the worker) opens, updates and clears them. Every alert is shown in
@@ -36,13 +38,28 @@ const JOBS={
   167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
     subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
   168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
-    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'}
+    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'},
+  // Needs migration 473.
+  170:{action:'alert.cost_margin',name:'Cost and margin alerts',module:'./cost-alerts',needs473:true,
+    subject:(n,first)=>n===1?first.split(':')[0]:n+' cost and margin alerts',
+    intro:'StockChief found costs that went up or margins under your minimum. Margins are gross margins, before fees and shipping.'},
+  171:{action:'alert.unusual_activity',name:'Unusual activity',module:'./unusual-activity',needs473:true,
+    subject:(n,first)=>n===1?'Unusual activity: '+first.split(':')[0]:n+' unusual activity alerts',
+    intro:'StockChief noticed activity that looks unusual. Nothing was blocked.'},
+  // Needs migration 474. It sends its own emails (escalations.js deliver).
+  172:{action:'alert.escalation',name:'Unanswered alerts and approvals',module:'./escalations',needs474:true,own:true}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
 const tx=(db,fn)=>typeof db.transaction==='function'?db.transaction(fn,{isolation:'SERIALIZABLE',retrySafe:true}):fn(db);
 const job=value=>{const id=Number(value);if(!JOBS[id])throw new NotFoundError('That alert is not available.');return id;};
 const pathFor=id=>require(JOBS[id].module).path;
+// The alert jobs this database can record: 170 and later need migration 473.
+async function tracked(db){
+  const later=await installed.has(db,'stockchief_runtime.agent_alert_settings','cost_rise_pct');
+  const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
+  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474));
+}
 // The alert job behind a review page, if any.
 const forKey=key=>Object.keys(JOBS).map(Number).find(id=>require(JOBS[id].module).key===key)||null;
 
@@ -77,9 +94,9 @@ async function track(db,workspaceId,account){
         AND n.kind=d.kind AND n.reference=d.reference AND n.link=d.link AND NOT n.resolved) RETURNING job_id`,[workspaceId])).rows;
     const raised=(await c.query(`INSERT INTO ${deliveries}(workspace_id,job_id,kind,reference,link)
       SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
-      WHERE n.workspace_id=$1 AND n.job_id IN (166,167,168) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
+      WHERE n.workspace_id=$1 AND n.job_id=ANY($2::int[]) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
-      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId])).rows;
+      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId,await tracked(c)])).rows;
     if(raised.length||cleared.length){
       const count=rows=>{const out={};for(const r of rows)out[r.job_id]=(out[r.job_id]||0)+1;return out;};
       const person=await currentOwner(c,workspaceId);
@@ -100,6 +117,7 @@ async function deliver(c,workspaceId,account,{only=null,manual=false}={}){
   for(const setting of settings){
     const id=Number(setting.job_id),spec=JOBS[id];
     if(!policy.permits(account.plan,id,'automatic'))continue;
+    if(spec.own){out[id]=await require(spec.module).deliver(c,workspaceId,account,setting,{manual});continue;}
     const pending=(await c.query(`SELECT kind,reference,link FROM ${deliveries} WHERE workspace_id=$1 AND job_id=$2 AND email_batch IS NULL
       ORDER BY raised_at,kind,reference,link LIMIT ${MAX_EMAIL}`,[workspaceId,id])).rows;
     const note=async text=>{
@@ -114,31 +132,40 @@ async function deliver(c,workspaceId,account,{only=null,manual=false}={}){
     const box=(await mailboxes(c,workspaceId)).find(b=>b.id===setting.email_connector_id);
     if(!box){await note('The chosen mailbox is disconnected, paused or cannot send. Reconnect it, or choose another. No email was sent.');continue;}
     const text=await require(spec.module).lines(c,workspaceId,pending);
-    const batch=newId('alert-email');
-    await c.query('SAVEPOINT agent_alert_email');
-    try{
-      const queued=await require('../connections/postgres-outbound-mail').queueInTransaction(c,{workspaceId,actorId:person.id},{
-        recipientKind:'address',recipientEmail:person.email,connectorId:box.id,
-        subject:spec.subject(pending.length,text[0]).replace(/[\r\n]+/g,' ').slice(0,200),
-        body:spec.intro+'\n\n'+text.map(line=>'- '+line).join('\n')+'\n\nOpen '+spec.name+' in StockChief to see every alert.',
-        standingAuthority:{kind:'agent_alert',job:id,batch,connectorId:box.id,manual}},'agent-alert-email:'+batch);
-      await c.query('RELEASE SAVEPOINT agent_alert_email');
-      await c.query(`UPDATE ${deliveries} d SET email_batch=$3,email_communication_id=$4
-        FROM unnest($5::text[],$6::text[],$7::text[]) k(kind,reference,link)
-        WHERE d.workspace_id=$1 AND d.job_id=$2 AND d.kind=k.kind AND d.reference=k.reference AND d.link=k.link AND d.email_batch IS NULL`,
-      [workspaceId,id,batch,queued.communicationId,pending.map(p=>p.kind),pending.map(p=>p.reference),pending.map(p=>p.link)]);
-      await c.query(`UPDATE ${channels} SET email_note=NULL,last_communication_id=$3,last_emailed_at=clock_timestamp() WHERE workspace_id=$1 AND job_id=$2`,
-        [workspaceId,id,queued.communicationId]);
-      await audit.record(c,{workspaceId,actorId:person.id},{action:'Alert email queued',reference:queued.communicationId,
-        after:{job:id,alerts:pending.length,mailbox:box.name,to:person.email,...(manual?{sentByOwner:true}:{})}});
-      out[id]={emailed:pending.length,communicationId:queued.communicationId};
-    }catch(error){
-      if(!expected(error))throw error;
-      await c.query('ROLLBACK TO SAVEPOINT agent_alert_email');await c.query('RELEASE SAVEPOINT agent_alert_email');
-      await note('No email was sent. '+error.message);
-    }
+    const queued=await queue(c,workspaceId,{job:id,person,box,manual,count:pending.length,
+      subject:spec.subject(pending.length,text[0]),
+      body:spec.intro+'\n\n'+text.map(line=>'- '+line).join('\n')+'\n\nOpen '+spec.name+' in StockChief to see every alert.'});
+    if(queued.problem){await note('No email was sent. '+queued.problem);continue;}
+    await c.query(`UPDATE ${deliveries} d SET email_batch=$3,email_communication_id=$4
+      FROM unnest($5::text[],$6::text[],$7::text[]) k(kind,reference,link)
+      WHERE d.workspace_id=$1 AND d.job_id=$2 AND d.kind=k.kind AND d.reference=k.reference AND d.link=k.link AND d.email_batch IS NULL`,
+    [workspaceId,id,queued.batch,queued.communicationId,pending.map(p=>p.kind),pending.map(p=>p.reference),pending.map(p=>p.link)]);
+    await c.query(`UPDATE ${channels} SET email_note=NULL,last_communication_id=$3,last_emailed_at=clock_timestamp() WHERE workspace_id=$1 AND job_id=$2`,
+      [workspaceId,id,queued.communicationId]);
+    out[id]={emailed:pending.length,communicationId:queued.communicationId};
   }
   return out;
+}
+
+// Queues one alert email from the chosen mailbox and audits it. A refusal the
+// mailbox or plan gives is returned as {problem}, with nothing queued.
+// `sender` is the owner StockChief acts for; it defaults to the recipient.
+async function queue(c,workspaceId,{job:id,person,box,subject,body,manual=false,count=1,authority={},sender=person.id}){
+  const batch=newId('alert-email');
+  await c.query('SAVEPOINT agent_alert_email');
+  try{
+    const queued=await require('../connections/postgres-outbound-mail').queueInTransaction(c,{workspaceId,actorId:sender},{
+      recipientKind:'address',recipientEmail:person.email,connectorId:box.id,subject:subject.replace(/[\r\n]+/g,' ').slice(0,200),body,
+      standingAuthority:{kind:'agent_alert',job:id,batch,connectorId:box.id,manual,...authority}},'agent-alert-email:'+batch);
+    await c.query('RELEASE SAVEPOINT agent_alert_email');
+    await audit.record(c,{workspaceId,actorId:sender},{action:'Alert email queued',reference:queued.communicationId,
+      after:{job:id,alerts:count,mailbox:box.name,to:person.email,...(manual?{sentByOwner:true}:{})}});
+    return {batch,communicationId:queued.communicationId};
+  }catch(error){
+    if(!expected(error))throw error;
+    await c.query('ROLLBACK TO SAVEPOINT agent_alert_email');await c.query('RELEASE SAVEPOINT agent_alert_email');
+    return {problem:error.message};
+  }
 }
 
 // Checked again just before the mailbox sends: the job may still act, the
@@ -152,6 +179,7 @@ async function emailAuthority(db,workspaceId,grant){
   if(stop)throw new ValidationError(stop+' The alert email is held.');
   const setting=(await db.query(`SELECT email_connector_id FROM ${channels} WHERE workspace_id=$1 AND job_id=$2`,[workspaceId,id])).rows[0];
   if(!setting||setting.email_connector_id!==grant.connectorId)throw new ValidationError('The alert email settings changed, so this email was not sent.');
+  if(JOBS[id].own)return require(JOBS[id].module).emailAuthority(db,workspaceId,grant);
   const open=(await db.query(`SELECT 1 FROM ${deliveries} WHERE workspace_id=$1 AND job_id=$2 AND email_batch=$3 LIMIT 1`,
     [workspaceId,id,String(grant.batch||'')])).rowCount;
   if(!open)throw new ValidationError('These alerts cleared before the email was sent, so it was not sent.');
@@ -164,6 +192,7 @@ async function configure(database,ctx,raw,input={}){
   return database.transaction(async c=>{
     await owner(c,ctx);
     await policy.requireWorkspaceJob(c,ctx.workspaceId,id,'suggest');
+    if(!(await tracked(c)).includes(id))throw new ValidationError('These alerts are being upgraded. Try again shortly.');
     const prior=(await c.query(`SELECT * FROM ${channels} WHERE workspace_id=$1 AND job_id=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
     if(input.revision!=null&&input.revision!==''&&Number(input.revision)!==(prior?.revision||0))
       throw new ValidationError('These alert settings changed. Reload the page to see them.');
@@ -183,15 +212,23 @@ async function configure(database,ctx,raw,input={}){
       units=typed===''?null:exact.canonical(typed,{label:'Alert level',scale:6});
       if(units!==null&&exact.safeNumber(units,{label:'Alert level'})>1e12)throw new ValidationError('Enter an alert level up to 1,000,000,000,000.');
     }
-    if(prior&&(prior.email_connector_id??null)===connector&&(prior.low_stock_units==null?null:exact.canonical(String(prior.low_stock_units)))===units)return {unchanged:true};
-    if(!prior&&connector===null&&units===null)return {unchanged:true};
+    let hours=prior?.escalation_hours??null;
+    if(id===172&&Object.hasOwn(input,'escalationHours')){
+      const typed=String(input.escalationHours??'').trim();
+      hours=typed===''?null:Number(typed);
+      if(hours!==null&&(!/^\d+$/.test(typed)||hours<1||hours>720))throw new ValidationError('Choose between 1 and 720 hours, or leave it empty to stop passing items on.');
+    }
+    if(prior&&(prior.email_connector_id??null)===connector&&(prior.low_stock_units==null?null:exact.canonical(String(prior.low_stock_units)))===units&&(prior.escalation_hours??null)===hours)return {unchanged:true};
+    if(!prior&&connector===null&&units===null&&hours===null)return {unchanged:true};
     await c.query(`INSERT INTO ${channels} AS a(workspace_id,job_id,email_connector_id,low_stock_units,authorized_by) VALUES($1,$2,$3,$4,$5)
       ON CONFLICT(workspace_id,job_id) DO UPDATE SET email_connector_id=excluded.email_connector_id,low_stock_units=excluded.low_stock_units,
         authorized_by=excluded.authorized_by,email_note=NULL,revision=a.revision+1,updated_at=clock_timestamp()`,
       [ctx.workspaceId,id,connector,units,ctx.actorId]);
+    if(id===172)await c.query(`UPDATE ${channels} SET escalation_hours=$3 WHERE workspace_id=$1 AND job_id=$2`,[ctx.workspaceId,id,hours]);
     await audit.record(c,ctx,{action:'Alert settings saved',reference:String(id),
-      before:prior?{email:Boolean(prior.email_connector_id),...(id===166?{lowStockUnits:prior.low_stock_units==null?null:exact.canonical(String(prior.low_stock_units))}:{})}:{},
-      after:{email:Boolean(connector),...(id===166?{lowStockUnits:units}:{})}});
+      before:prior?{email:Boolean(prior.email_connector_id),...(id===166?{lowStockUnits:prior.low_stock_units==null?null:exact.canonical(String(prior.low_stock_units))}:{}),
+        ...(id===172?{hours:prior.escalation_hours??null}:{})}:{},
+      after:{email:Boolean(connector),...(id===166?{lowStockUnits:units}:{}),...(id===172?{hours}:{})}});
     // A new alert level changes which products are low right away.
     if(id===166)await require('./operational-notices').refresh(c,ctx.workspaceId);
     return {saved:true};
@@ -216,21 +253,22 @@ async function sendNow(database,ctx,raw){
 // What the alert page shows about sending.
 async function panel(db,ctx,raw){
   const id=job(raw);
-  if(!await installed.has(db,channels))return null;
+  if(!await installed.has(db,channels)||!(await tracked(db)).includes(id))return null;
   const account=await policy.accountState(db,ctx.workspaceId);
   const setting=(await db.query(`SELECT a.*,m.status AS last_status FROM ${channels} a
     LEFT JOIN customer_communications m ON m.workspace_id=a.workspace_id AND m.id=a.last_communication_id
     WHERE a.workspace_id=$1 AND a.job_id=$2`,[ctx.workspaceId,id])).rows[0]||null;
-  const waiting=Number((await db.query(`SELECT count(*) AS n FROM ${deliveries} WHERE workspace_id=$1 AND job_id=$2 AND email_batch IS NULL`,
-    [ctx.workspaceId,id])).rows[0].n);
+  const waiting=Number((await db.query(JOBS[id].own?`SELECT count(*) AS n FROM stockchief_runtime.agent_escalations WHERE workspace_id=$1 AND $2::int=${id}
+      AND status='WAITING' AND step>0 AND email_batch IS NULL AND holder_user_id IS NOT NULL`
+    :`SELECT count(*) AS n FROM ${deliveries} WHERE workspace_id=$1 AND job_id=$2 AND email_batch IS NULL`,[ctx.workspaceId,id])).rows[0].n);
   const person=await currentOwner(db,ctx.workspaceId),boxes=await mailboxes(db,ctx.workspaceId);
   const chosen=setting?.email_connector_id?boxes.find(b=>b.id===setting.email_connector_id)||{id:setting.email_connector_id,name:'A mailbox that is no longer connected',missing:true}:null;
   const stop=chosen?await policy.stopped(db,ctx.workspaceId,account,JOBS[id].action,true):null;
   const ownerStop=stop?await policy.stopped(db,ctx.workspaceId,account,JOBS[id].action,false):null;
   return {job:id,action:'/autopilot/alerts/'+id,revision:setting?.revision||0,mailboxes:boxes,chosen,to:person?.email||null,
-    lowStockUnits:id===166&&setting?.low_stock_units!=null?exact.canonical(String(setting.low_stock_units)):'',
+    lowStockUnits:id===166&&setting?.low_stock_units!=null?exact.canonical(String(setting.low_stock_units)):'',escalationHours:setting?.escalation_hours??'',
     waiting,note:setting?.email_note||null,stop,lastStatus:setting?.last_status||null,lastAt:setting?.last_emailed_at||null,
     canSendNow:Boolean(chosen&&!chosen.missing&&waiting&&stop&&!ownerStop)};
 }
 
-module.exports={JOBS,track,deliver,emailAuthority,configure,sendNow,panel,mailboxes,pathFor,forKey};
+module.exports={JOBS,track,deliver,queue,emailAuthority,configure,sendNow,panel,mailboxes,pathFor,forKey};
