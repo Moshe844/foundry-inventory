@@ -1,0 +1,69 @@
+<% const s=screen, date=d=>new Date(d).toISOString().slice(0,10), money=list=>list.length?list.map(a=>a.text).join(' + '):'None'; %>
+<header class="rm-head">
+  <h1>Your first 14 days</h1>
+  <p><% if(s.shadow){ %>StockChief is watching: day <%= s.day %> of 14. It changes nothing on its own and writes down what it would have done. Watching ends <%= date(s.endsAt) %>.<% }else{ %>StockChief watched from <%= date(s.startedAt) %> to <%= date(s.endsAt) %> and changed nothing. This is what it would have done, from your own records.<% } %></p>
+</header>
+
+<div class="stat-strip section" data-shadow-totals>
+  <div><span class="stat-value"><%= s.orders.count %></span><span class="stat-label"><%= s.orders.count===1?'order':'orders' %> it <%= s.orderVerb %></span></div>
+  <div><span class="stat-value"><%= money(s.orders.amounts) %></span><span class="stat-label">value of <%= s.orders.count===1?'that order':'those orders' %></span></div>
+  <div><span class="stat-value"><%= s.stockouts.length %></span><span class="stat-label"><%= s.stockouts.length===1?'stockout':'stockouts' %> it would have prevented</span></div>
+  <div><span class="stat-value"><%= money(s.caught.amounts) %></span><span class="stat-label">money it would have caught</span></div>
+</div>
+
+<h2>Stockouts it would have prevented</h2>
+<% if(!s.stockouts.length){ %><p data-shadow-stockouts-empty>None so far. An item counts only when your stock records show it ran out after the order or transfer would have arrived.</p><% } %>
+<ul class="rm-list" data-shadow-stockouts>
+<% for(const r of s.stockouts){ %>
+  <li class="list-row"><span><strong><%= r.summary %></strong><small><%= r.evidence %></small></span><span class="badge badge--ok">Prevented</span></li>
+<% } %>
+</ul>
+
+<h2>Money it would have caught</h2>
+<% if(!s.held.length){ %><p>None so far. This counts orders it would have held because the customer was overdue.</p><% } %>
+<ul class="rm-list" data-shadow-caught>
+<% for(const r of s.held){ %>
+  <li class="list-row"><span><strong><%= r.summary %></strong><small><%= date(r.at) %></small></span><span class="badge badge--warn"><%= r.caught %></span></li>
+<% } %>
+</ul>
+
+<h2>Everything it would have done</h2>
+<% if(!s.areas.length){ %><p data-shadow-empty><%= s.shadow?'Nothing yet. Orders, transfers, counts, holds and emails it would have made appear here as they come up.':'It found nothing it would have done on its own.' %></p><% } %>
+<% for(const a of s.areas){ %>
+<section class="section" data-shadow-area="<%= a.key %>">
+  <h3><%= a.label %> · <%= a.count %></h3>
+  <ul class="rm-list">
+  <% for(const r of a.rows){ %>
+    <li class="list-row"><span><strong><%= r.summary %></strong><small><%= r.kind %> · <%= date(r.at) %><%= r.amount?' · '+r.amount:'' %></small></span>
+      <% if(r.href){ %><a class="rm-btn rm-btn--ghost" href="<%= r.href %>">Open</a><% } %></li>
+  <% } %>
+  </ul>
+  <% if(a.count>a.rows.length){ %><p><small>And <%= a.count-a.rows.length %> more. <a href="/autopilot/reviews/shadow-report">See them all</a></small></p><% } %>
+</section>
+<% } %>
+
+<h2 id="switch-on">Switch on automatic work</h2>
+<% if(s.decision){ %>
+<div class="notice notice--success" data-shadow-decision><div>
+  <strong><%= s.decision.areas.length?'Switched on: '+s.decision.areas.join(', ')+'.':'You chose to keep StockChief watching.' %></strong>
+  <p><%= s.decision.by||'The owner' %> chose this on <%= date(s.decision.at) %>. Areas not listed keep watching. Change a single job in <a href="/autopilot/job-modes">Authority by job</a>, and set spending limits in <a href="/autopilot">StockChief AI</a>.</p>
+</div></div>
+<% }else if(s.shadow){ %>
+<p data-shadow-locked>You can switch on automatic work from <%= date(s.endsAt) %>, after the 14 days of watching.</p>
+<% }else if(s.canDecide){ %>
+<p>Tick what StockChief may now handle on its own, inside your limits. Areas you leave unticked keep watching. Spending still needs the limits you set in <a href="/autopilot">StockChief AI</a>.</p>
+<form method="post" action="/autopilot/shadow/decide" class="form-stack" data-shadow-form>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="choice-grid">
+  <% for(const a of s.choices){ %>
+    <label class="choice"><input type="checkbox" name="areas" value="<%= a.key %>" checked>
+      <span class="choice-body"><strong><%= a.label %></strong><span><%= a.alone?a.alone+(a.alone===1?' job can run on its own':' jobs can run on their own')+' on your plan':'Your plan asks you first in this area' %></span></span></label>
+  <% } %>
+  </div>
+  <div class="form-actions">
+    <button class="rm-btn" name="choice" value="selected">Switch on what I ticked</button>
+    <button class="rm-btn rm-btn--ghost" name="choice" value="all">Switch on everything</button>
+    <button class="rm-btn rm-btn--ghost" name="choice" value="watch">Keep watching</button>
+  </div>
+</form>
+<% } %>

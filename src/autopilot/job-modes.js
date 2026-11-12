@@ -61,4 +61,4 @@ async function restriction(db,workspaceId,job,automatic){
   return null;
 }
 
-module.exports={page,save,restriction,modes};
+module.exports={page,save,restriction,modes,choices,auditedJobs};

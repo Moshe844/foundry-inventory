@@ -108,7 +108,9 @@ async function runSchedules(c,workspaceId){
     ORDER BY r.location_id FOR UPDATE OF r`,[workspaceId])).rows;
   if(!due.length)return;
   const account=await policy.accountState(c,workspaceId);
-  if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,7,'automatic',{trained:true})||account.shadow)return;
+  // Job 198: in the first 14 days the due lists are only recorded as what StockChief would have sent.
+  if(account.shadow){await require('../autopilot/shadow-mode').fromCountSchedules(c,workspaceId,account,due);return;}
+  if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,7,'automatic',{trained:true}))return;
   await c.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR SHARE',[workspaceId]);
   const settings=await require('../autopilot/postgres-service').getState(c,workspaceId);
   if(settings.mode!=='POLICY_AUTOMATED'||settings.paused||settings.suspended||

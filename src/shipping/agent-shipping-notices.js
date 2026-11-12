@@ -79,7 +79,15 @@ async function queue(db,ctx,note,row,connector,automatic){
   const rule={kind:'shipment_notice',shipmentId:row.id,customerId:row.customer_id,recipient:note.recipient,tracking:row.tracking_number,
     carrier:row.carrier,connector:connector.id,mailboxAccount:connector.provider_account_id,revision:row.policy_revision,actorId:ctx.actorId,automatic};
   try{await authority(db,ctx.workspaceId,rule);}
-  catch(error){if(automatic&&error instanceof ValidationError)return {prepared:note.id,reason:error.message};throw error;}
+  catch(error){
+    if(!(automatic&&error instanceof ValidationError))throw error;
+    // Job 198: in the first 14 days the email it would have sent is recorded for the report.
+    const account=await policy.accountState(db,ctx.workspaceId);
+    if(account.shadow)await require('../autopilot/shadow-mode').record(db,ctx.workspaceId,{job:60,kind:'message',key:'shipment-notice:'+row.id,
+      summary:'Email '+note.recipient+' that order '+row.order_number+' shipped, with '+(row.carrier?row.carrier+' ':'')+'tracking '+row.tracking_number,
+      evidence:{shipment:row.shipment_number,tracking:row.tracking_number},href:'/fulfilment/'+row.id+'#notice'},account);
+    return {prepared:note.id,reason:error.message};
+  }
   const at=nowIso();
   await db.query(`UPDATE customer_communications SET status='QUEUED',connector_id=$3,transport=$4,approved_by_user_id=$5,
     approved_at=$6,queued_at=$6,updated_at=$6 WHERE workspace_id=$1 AND id=$2 AND status='PREPARED'`,[ctx.workspaceId,note.id,connector.id,connector.provider_type,ctx.actorId,at]);

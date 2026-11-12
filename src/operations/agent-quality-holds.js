@@ -145,7 +145,7 @@ async function applyReceipt(c,ctx,receiptId,input={}){
  const policyIds=[...new Set(candidates.map(r=>r.policy_id))].sort();
  const policies=new Map((await c.query('SELECT * FROM stockchief_runtime.agent_quality_policies WHERE workspace_id=$1 AND id=ANY($2::text[]) AND enabled ORDER BY id FOR SHARE',[ctx.workspaceId,policyIds])).rows.map(p=>[p.id,p]));
  if(policies.size!==policyIds.length)throw new ValidationError('A QC rule changed while this delivery was being received. Try again.');
- const lines=(await c.query(`SELECT l.id,l.purchase_order_line_id,l.sku_id,l.location_id,l.quantity_units::text quantity,l.lot_id,l.movement_ids,
+ const lines=(await c.query(`SELECT l.id,l.purchase_order_line_id,l.sku_id,s.code,l.location_id,l.quantity_units::text quantity,l.lot_id,l.movement_ids,
    s.is_active=1 AND i.is_active=1 AND loc.is_active=1 AND loc.custody_agreement_id IS NULL supported,i.tracking_mode,
    coalesce((SELECT array_agg(m.serial_unit_id ORDER BY m.serial_unit_id) FROM stockchief_runtime.inventory_movement_serial_units m
     WHERE m.workspace_id=l.workspace_id AND m.movement_id IN(SELECT jsonb_array_elements_text(l.movement_ids::jsonb))),'{}') serial_unit_ids
@@ -165,6 +165,10 @@ async function applyReceipt(c,ctx,receiptId,input={}){
   else if(!l.supported){status='PROPOSED';reason='This product or receiving location is no longer active and owned, so StockChief stopped. Review this delivery.';}
   else try{await automatic(c,ctx.workspaceId,p,totals.get(p.id+':'+l.sku_id),receiptChecks);auto=true;}catch(error){
    if(!businessError(error))throw error;
+   // Job 198: in the first 14 days only the watching stopped this hold; record it for the report.
+   if(error.message===policy.SHADOW_REASON)await require('../autopilot/shadow-mode').record(c,ctx.workspaceId,{job:51,kind:'hold',key:'qc-hold:'+l.id,
+    summary:'Hold '+text(l.quantity)+' of '+l.code+' from this delivery until it passes inspection',skuId:l.sku_id,locationId:l.location_id,quantity:text(l.quantity),
+    evidence:{receiptId,rule:p.id,checks:p.checklist}});
    if(input.qcConfirmed==='yes'){receiver=receiver||await actor(c,ctx);await require('./postgres-warehouse-access').assertLocations(c,ctx,[l.location_id]);}
    else{status='PROPOSED';reason=error.message;}
   }

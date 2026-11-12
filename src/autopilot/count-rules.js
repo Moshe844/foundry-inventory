@@ -47,6 +47,15 @@ async function evaluate(client, ctx, payload, supplied) {
   if (!rule || !payload.lines.some(line => line.delta !== 0)) return null;
   const account = await plan.accountState(client, ctx.workspaceId);
   if (!plan.usesAgentTerms(account) || !plan.permits(account.plan,8,'automatic')) return null;
+  if (account.shadow) {
+    // Job 198: StockChief only watches for its first 14 days. It records whether it
+    // would have posted this count under the limit or asked for a recount.
+    const exposure = money.sum(payload.lines.map(line => Math.abs(line.costDeltaMinor || 0)));
+    const priced = !supplied.some(line => String(line.unitCost ?? '').trim()) && !payload.lines.some(line => line.delta && !line.costDeltaMinor);
+    const action = exposure > Number(rule.limit_minor) ? 'recount' : rule.automatic && plan.permits(account.plan,6,'automatic') && priced ? 'post' : null;
+    await require('./shadow-mode').fromCount(client, ctx.workspaceId, account, rule, payload, exposure, action);
+    return null;
+  }
   const state = await require('./postgres-service').getState(client, ctx.workspaceId);
   if (state.paused || state.suspended || state.mode === 'OBSERVE' || account.shadow) return null;
   const exposure = money.sum(payload.lines.map(line => Math.abs(line.costDeltaMinor)));

@@ -647,6 +647,18 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success','StockChief is checking your product data. The new score appears here in a minute.');
     res.redirect(303,dataHealth.path);
   }));
+  // Job 198: what StockChief would have done in its first 14 days, and the owner's choice afterwards.
+  const shadowMode=require('../../autopilot/shadow-mode');
+  router.get(shadowMode.path,requireAuth,owner,starterAgentPage(198,'automatic','Your first 14 days',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/shadow-report',{title:'Your first 14 days',nav:'autopilot',screen:await shadowMode.page(database,req.ctx),
+      backTo:{href:'/autopilot',label:'StockChief AI'}});
+  }));
+  router.post(shadowMode.path+'/decide',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await shadowMode.decide(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'You already chose. Change a single job in Authority by job.':result.areas.length?'Automatic work is on for the areas you chose. The rest keep watching.':'StockChief keeps watching. Nothing changes on its own.');
+    res.redirect(303,shadowMode.path);
+  }));
   // Job 127: products from a supplier catalog or price list.
   const supplierCatalogs=require('../../catalog/agent-supplier-catalog'),catalogBack={href:supplierCatalogs.path,label:'Supplier catalogs'};
   router.get(supplierCatalogs.path,requireAuth,owner,starterAgentPage(127,'draft','Products from a supplier catalog',async(req,res)=>{
