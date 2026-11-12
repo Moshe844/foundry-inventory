@@ -281,12 +281,14 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.get('/autopilot/supplier-invoices/:id',requireAuth,owner,supplierInvoicePage);
   const supplierPriceLists=require('../../purchasing/agent-supplier-price-lists');
+  const supplierPriceUpdates=require('../../pricing/agent-supplier-price-updates');
   const priceListFormats=require('../../imports/source-formats');
-  const supplierPriceListPage=starterAgentPage(91,'suggest','Supplier price lists',async(req,res)=>{
+  const supplierPriceListPage=starterAgentPage(91,'suggest','Supplier price lists',async(req,res,state)=>{
     const source=await supplierPriceLists.page(database,req.ctx,req.params.id,req.query);
     res.page('autopilot/supplier-price-lists',{title:'Supplier price lists',nav:'autopilot',
       backTo:{href:'/autopilot/reviews/supplier-price-increases',label:'Supplier price increases'},source,
-      formatPrice:require('../../purchasing/agent-supplier-price-increases').format,accept:priceListFormats.accept});
+      formatPrice:require('../../purchasing/agent-supplier-price-increases').format,accept:priceListFormats.accept,
+      costUpdates:policy.usesAgentTerms(state)&&policy.permits(state.plan,135,'draft')});
   });
   router.get(supplierPriceLists.path,requireAuth,owner,supplierPriceListPage);
   router.get(supplierPriceLists.path+'/:id',requireAuth,owner,supplierPriceListPage);
@@ -308,6 +310,40 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post(supplierPriceLists.path+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
     await supplierPriceLists.confirm(database,req.ctx,req.params.id,req.body);
     res.redirect(303,supplierPriceLists.path+'/'+req.params.id);
+  }));
+  // Job 135: supplier price lists update the exact supplier's future costs.
+  const supplierCostPage=starterAgentPage(135,'draft','Supplier cost updates',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/supplier-price-updates',{title:'Supplier cost updates',nav:'autopilot',
+      screen:await supplierPriceUpdates.page(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),
+      backTo:{href:req.params.id?supplierPriceUpdates.path:'/autopilot/reviews',label:req.params.id?'Supplier cost updates':'Agent reviews'}});
+  },'Pro');
+  router.get(supplierPriceUpdates.path,requireAuth,owner,supplierCostPage);
+  router.get(supplierPriceUpdates.path+'/:id',requireAuth,owner,supplierCostPage);
+  const costDone={approve:'The supplier’s cost was updated.',keep:'The current cost stays as it is.',undo:'The previous cost is back.'};
+  for(const step of Object.keys(costDone)){
+    router.post(supplierPriceUpdates.path+'/:id/rows/:ordinal/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const ordinal=Number(req.params.ordinal);
+      if(!Number.isSafeInteger(ordinal)||ordinal<1||ordinal>2147483647)throw new ValidationError('Choose a row from this price list.');
+      const result=await supplierPriceUpdates[step](database,req.ctx,req.params.id,ordinal,req.body);
+      req.flash('success',result.replayed?'This was already done.':costDone[step]);
+      res.redirect(303,supplierPriceUpdates.path+'/'+encodeURIComponent(req.params.id));
+    }));
+  }
+  router.post(supplierPriceUpdates.path+'/:id/keep',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await supplierPriceUpdates.keep(database,req.ctx,req.params.id,null,req.body);
+    req.flash('success',result.kept?'The remaining costs stay as they are.':'Nothing was waiting on this list.');
+    res.redirect(303,supplierPriceUpdates.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(supplierPriceUpdates.path+'/:id/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await supplierPriceUpdates.check(database,req.ctx,req.params.id);
+    req.flash('success','StockChief will check this list against the supplier’s saved costs.');
+    res.redirect(303,supplierPriceUpdates.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(supplierPriceUpdates.path+'/:id/limit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await supplierPriceUpdates.configure(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.stopped?'Every cost change from this supplier now waits for you.':'Limit saved. Smaller changes from this supplier now update on their own.');
+    res.redirect(303,supplierPriceUpdates.path+'/'+encodeURIComponent(req.params.id));
   }));
   for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));

@@ -8,6 +8,7 @@
     <h2><%= list.filename %></h2>
     <p><%= list.supplier||'Archived supplier' %> · <%= {QUEUED:'Reading queued',READY:'Comparison complete',HELD:'Source needs review'}[list.status] %></p>
     <p><a href="<%= href %>/original">Download the original price list</a></p>
+    <% if(costUpdates&&list.status==='READY'){ %><p><a href="/autopilot/supplier-price-updates/<%= encodeURIComponent(list.id) %>">Supplier cost updates from this list</a></p><% } %>
     <% if(list.problem){ %><p class="notice"><%= list.problem %></p><% } %>
     <% if(list.confirmed_at){ %><p>The owner confirmed the pricing table against this original.</p><% } %>
     <% if(list.status==='HELD'){ %>

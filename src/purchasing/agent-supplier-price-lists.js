@@ -120,10 +120,17 @@ async function supplierBasis(db,workspaceId,supplierId,before){
     ORDER BY sku_id,currency,observed_at DESC,priority DESC,reference DESC
   )
   SELECT link.*,s.code,i.unit_label,i.secondary_unit_label,supplier.name AS supplier_name,
+    CASE WHEN si.id IS NOT NULL AND si.last_unit_cost IS NOT NULL AND coalesce(si.last_cost_at,si.updated_at)::timestamptz>=supplier.updated_at::timestamptz
+      THEN jsonb_build_object('id',si.id,'supplierId',si.supplier_id,'skuId',si.sku_id,'supplierSku',si.supplier_sku,
+        'currency',supplier.currency,'pack',trim_scale(si.units_per_purchase_unit::numeric)::text,'purchaseUnit',si.purchase_unit,
+        'unit',coalesce(i.secondary_unit_label,i.unit_label),'measured',i.secondary_unit_label IS NOT NULL,
+        'cost',si.last_unit_cost::text,'updatedAt',si.updated_at) END AS supplier_terms,
     coalesce((SELECT jsonb_agg(to_jsonb(latest)-'sku_id' ORDER BY latest.currency) FROM latest WHERE latest.sku_id=link.sku_id),'[]'::jsonb) AS prior
   FROM link JOIN skus s ON s.workspace_id=$1 AND s.id=link.sku_id AND s.is_active=1
   JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id AND i.is_active=1
-  JOIN suppliers supplier ON supplier.workspace_id=s.workspace_id AND supplier.id=$2 AND supplier.status='active'`,[workspaceId,supplierId,before]);
+  JOIN suppliers supplier ON supplier.workspace_id=s.workspace_id AND supplier.id=$2 AND supplier.status='active'
+  LEFT JOIN supplier_items si ON si.workspace_id=s.workspace_id AND si.supplier_id=supplier.id AND si.sku_id=s.id
+    AND si.is_active=1 AND si.updated_at::timestamptz<=$3`,[workspaceId,supplierId,before]);
   return rows;
 }
 
@@ -153,8 +160,10 @@ function findings(raw,products,confirmedCurrency){
       const previousMinor=prior.minor==null?money.toMinor(prior.major,value.currency):money.integer(prior.minor);
       const higher=BigInt(value.amountMinor)*BigInt(exact.atoms(prior.pricing_quantity,6))>
         BigInt(previousMinor)*BigInt(exact.atoms(value.pricingQuantity,6));
+      // The supplier's saved terms as read, so job 135 can later prove nothing changed.
+      const supplierTerms=product.supplier_terms?.currency===value.currency?product.supplier_terms:null;
       return {...r,currency:value.currency,amount_minor:value.amountMinor,pricing_quantity:value.pricingQuantity,
-        prior:{...prior,amountMinor:previousMinor,unit:value.unit},result:higher?'HIGHER':'NO_INCREASE'};
+        prior:{...prior,amountMinor:previousMinor,unit:value.unit,supplierTerms},result:higher?'HIGHER':'NO_INCREASE'};
     }catch(error){if(error.code!=='validation_error')throw error;return {...r,result:'HELD',reason:error.message};}
   });
 }
@@ -173,6 +182,8 @@ async function saveComparison(db,row,compared,json,payment,confirmation=null){
     confirmed_by=$3,confirmed_at=CASE WHEN $3::text IS NOT NULL THEN clock_timestamp() END,confirmation_hash=$4
     WHERE workspace_id=$1 AND id=$2`,[row.workspace_id,row.id,confirmation?.actorId||null,confirmation?.hash||null]);
   if(payment)await ent.commitUsage(db,payment.scope,payment.usage);
+  // Job 135 then checks each exact row against the supplier's saved cost.
+  await require('../pricing/agent-supplier-price-updates').queue(db,row.workspace_id,row.id);
   return {status:'READY',increases:compared.filter(r=>r.result==='HIGHER').length,rows:compared.length};
 }
 

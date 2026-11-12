@@ -54,6 +54,7 @@ module.exports=[
   {id:91,key:'supplier-price-increases',label:'Flag higher supplier prices',
     filterLabel:'Exact SKU, supplier, purchase order or source reference',
     readPage:require('../purchasing/agent-supplier-price-increases').readPage},
+  {id:135,key:'supplier-price-updates',label:'Update costs from supplier price lists',readPage:require('../pricing/agent-supplier-price-updates').readPage},
   {id:148,key:'rising-demand',label:'Find items selling faster',summary:'Shipped units in the last seven days compared with the preceding seven days. Products with no earlier shipments are identified separately.',sql:`
     WITH demand AS (SELECT l.sku_id,coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '7 days'),0) AS current_units,
       coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '7 days'),0) AS previous_units FROM sales_shipments h
