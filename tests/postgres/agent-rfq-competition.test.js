@@ -113,6 +113,15 @@ test('Custom sends on its own within the rule; shadow, watch-only, pause, Ask me
  const pricey=await why({threshold_minor:100,currency:'USD'});assert.deepEqual(pricey.map(x=>x[0]),[costly]);assert.match(pricey[0][1],/at the last price/);
  assert.deepEqual(await why({threshold_minor:10000000,currency:'USD'}),[],'Below the amount needs no competition');
  const orders=await f.count('SELECT count(*)::int n FROM purchase_orders WHERE workspace_id=$1');
+ // The page's quote rule form saves and stops a rule.
+ const form=await f.browser.get('/autopilot/supplier-rfqs').expect(200);assert.match(form.text,/Add a quote rule/);
+ await f.browser.post('/autopilot/supplier-rfq-competition').type('form').send({_csrf:f.csrf(form.text),ruleName:'Form rule',ruleNewItems:'yes',ruleThreshold:'250',ruleCurrency:'USD',ruleSuppliers:f.suppliers.map(s=>s.name).join('\n'),
+  ruleLocationId:f.location.id,ruleConnectorId:f.connectorId,ruleReplyDays:'4',ruleDeliveryDays:'14',ruleChaseDays:'2',ruleMaxPerWeek:'3',confirmed:'yes'}).expect(303);
+ const formRule=(await db.query("SELECT * FROM stockchief_runtime.agent_rfq_competition_rules WHERE workspace_id=$1 AND name='Form rule'",[ctx.workspaceId])).rows[0];
+ assert.equal(formRule.new_items,true);assert.equal(Number(formRule.threshold_minor),25000);assert.equal(formRule.supplier_ids.length,3);assert.equal(formRule.reply_days,4);
+ const listed=await f.browser.get('/autopilot/supplier-rfqs').expect(200);assert.match(listed.text,/Form rule/);
+ await f.browser.post('/autopilot/supplier-rfq-competition/'+formRule.id+'/stop').type('form').send({_csrf:f.csrf(listed.text),revision:formRule.revision}).expect(303);
+ assert.equal((await competition.rule(db,ctx,formRule.id)).enabled,false);
  // Shadow mode only watches.
  const saved=await f.rule({categories:'',skuCodes:await f.code(named),maxRequestsPerWeek:'1'});
  await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
