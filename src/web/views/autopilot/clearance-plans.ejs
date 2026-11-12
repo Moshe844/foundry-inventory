@@ -1,0 +1,96 @@
+<% const base='/autopilot/clearance-plans', money=(minor,currency)=>helpers.money(minor,currency); %>
+<% const pct=points=>(Number(points)/100).toLocaleString('en-US',{maximumFractionDigits:2})+'%'; %>
+<% if(builder){ const {query,built,problem}=builder, f=built&&built.facts; %>
+<header class="rm-head">
+  <h1>Build a clearance plan</h1>
+  <p>Choose the first markdown and how long each step runs. StockChief suggests the next steps, never below the stock cost, and shows the cash each should bring back. No price changes until you approve it.</p>
+</header>
+<form method="get" action="<%= base %>/new" class="rm-panel" data-clearance-builder><div class="rm-panel__body">
+  <label>Item code <input name="sku" required maxlength="150" value="<%= query.sku %>"></label>
+  <label>First markdown (%) <input name="markdown" type="number" inputmode="decimal" min="0.01" max="99" step="0.01" required value="<%= query.markdown %>"></label>
+  <label>Days per step <input name="stepDays" type="number" inputmode="numeric" min="1" max="365" step="1" required value="<%= query.stepDays %>"></label>
+  <button class="rm-btn rm-btn--ghost">Show the plan</button>
+</div></form>
+<% if(problem){ %><p class="notice notice--warn" data-clearance-problem><%= problem %></p><% } %>
+<% if(f&&!problem){ %>
+<section class="rm-panel"><div class="rm-panel__body">
+  <h2><%= f.sku.code %> · <%= f.sku.name %></h2>
+  <dl class="kv">
+    <dt>Units to clear</dt><dd><%= f.units %></dd>
+    <dt>Where</dt><dd><%= f.positions.map(p=>p.location+': '+p.units).join(' · ') %></dd>
+    <dt>Selling price now</dt><dd><%= money(f.price.amount,f.price.currency) %></dd>
+    <dt>Stock cost</dt><dd><%= money(f.unitCost,f.price.currency) %> each</dd>
+    <dt>Sold in the last <%= f.windowDays %> days</dt><dd><%= f.sold %></dd>
+  </dl>
+</div></section>
+<% if(built.steps){ %>
+<ul class="rm-list" data-clearance-preview>
+  <% for(const s of built.steps){ %><li class="list-row">
+    <span><strong>Step <%= s.step %>: <%= pct(s.points) %> off, <%= money(s.priceMinor,f.price.currency) %></strong>
+      <small>Runs <%= s.days %> days. Expect <%= s.expectedUnits %> sold, bringing back <%= money(s.expectedCashMinor,f.price.currency) %>.</small>
+      <small>At the current selling speed, about <%= Math.floor(f.sold*s.days/f.windowDays) %> would sell in that time.</small></span>
+  </li><% } %>
+</ul>
+<p>Expected cash back before tax: <strong><%= money(built.expectedCash,f.price.currency) %></strong></p>
+<form method="post" action="<%= base %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= builder.requestKey %>">
+  <input type="hidden" name="sku" value="<%= f.sku.code %>"><input type="hidden" name="markdown" value="<%= query.markdown %>"><input type="hidden" name="stepDays" value="<%= query.stepDays %>">
+  <button class="rm-btn">Save the plan</button>
+</form>
+<% } %>
+<% } %>
+<% }else if(!screen.plan){ %>
+<header class="rm-head">
+  <h1>Clearance plans</h1>
+  <p>Each plan suggests markdown steps for stock nobody needs, with the cash it should bring back. You approve every price.</p>
+</header>
+<p><a class="rm-btn rm-btn--ghost" href="<%= base %>/new">Build a plan</a> <a href="/autopilot/reviews/slow-stock">Find dead and slow stock</a></p>
+<% if(!screen.plans.length){ %><p>No clearance plans yet.</p><% } %>
+<ul class="rm-list">
+  <% for(const p of screen.plans){ %><li class="list-row" data-clearance-plan="<%= p.id %>">
+    <span><a href="<%= base %>/<%= encodeURIComponent(p.id) %>"><strong><%= p.code %></strong></a>
+      <small><%= p.name %> · <%= p.units %> units · expects <%= money(p.expected_cash_minor,p.currency) %><%= p.automatic?' · prepared by StockChief':'' %></small></span>
+    <span><%= p.status==='ACTIVE'?'Step '+p.current_step+' of '+p.step_count:p.label %></span>
+  </li><% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Plan pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+<% }else{ const p=screen.plan, t=screen.tracking, href=base+'/'+encodeURIComponent(p.id), next=screen.next&&p.steps[screen.next-1]; %>
+<header class="rm-head">
+  <h1>Clearance plan for <%= p.code %></h1>
+  <p><%= p.name %> · <%= p.label %><%= t?' · '+t.label:'' %></p>
+</header>
+<section class="rm-panel"><div class="rm-panel__body">
+  <dl class="kv">
+    <dt>Units to clear</dt><dd><%= p.units %></dd>
+    <dt>Where</dt><dd><%= (p.evidence.locations||[]).map(l=>l.name+': '+l.units).join(' · ') %></dd>
+    <dt>Price before the plan</dt><dd><%= money(p.original_price_minor,p.currency) %></dd>
+    <dt>Stock cost</dt><dd><%= money(p.unit_cost_minor,p.currency) %> each, <%= money(screen.bookValue,p.currency) %> in all</dd>
+    <dt>Expected cash back</dt><dd><%= money(p.expected_cash_minor,p.currency) %> before tax</dd>
+    <dt>Sold in the <%= p.evidence.windowDays %> days before</dt><dd><%= p.evidence.sold %></dd>
+    <% if(t){ %><dt>Sold since it started</dt><dd><%= t.units %> of <%= p.units %><%= t.cashMinor!=null?', '+money(t.cashMinor,p.currency):'' %></dd><% } %>
+  </dl>
+</div></section>
+<ul class="rm-list" data-clearance-steps>
+  <% for(const s of p.steps){ %><li class="list-row" data-clearance-step="<%= s.step %>">
+    <span><strong>Step <%= s.step %>: <%= screen.percent(s.points) %> off, <%= money(s.priceMinor,p.currency) %></strong>
+      <small>Runs <%= s.days %> days. Expect <%= s.expectedUnits %> sold, bringing back <%= money(s.expectedCashMinor,p.currency) %>.</small>
+      <% if(s.startedAt){ %><small>Started <%= helpers.dateTime(s.startedAt) %>. Sold <%= s.actualUnits %><%= s.actualCashMinor!=null?', '+money(s.actualCashMinor,p.currency):'' %>.</small><% } %></span>
+    <span><%= s.priceId?'Approved':p.status==='DRAFT'||p.status==='ACTIVE'?'Waiting':'Not used' %></span>
+  </li><% } %>
+</ul>
+<% if(screen.hold){ %><p class="notice notice--warn" data-clearance-hold><%= screen.hold %></p>
+<% }else if(screen.stop&&next){ %><p class="notice notice--warn"><%= screen.stop %></p>
+<% }else if(next){ const current=p.steps[p.current_step-1]; %><form method="post" action="<%= href %>/approve" data-clearance-approve>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="step" value="<%= next.step %>"><input type="hidden" name="evidenceHash" value="<%= p.evidence_hash %>">
+  <% if(current&&current.dueAt&&!(t&&t.due)){ %><p>Step <%= next.step %> is due <%= helpers.dateTime(current.dueAt) %>, if the plan is behind by then.</p><% } %>
+  <p><label><input type="checkbox" name="confirmed" value="yes" required> Change the selling price of <%= p.code %> to <%= money(next.priceMinor,p.currency) %>.</label></p>
+  <button class="rm-btn">Approve <%= money(next.priceMinor,p.currency) %></button>
+</form><% } %>
+<% if(p.status==='DRAFT'||p.status==='ACTIVE'){ %><form method="post" action="<%= href %>/end">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if(p.status==='ACTIVE'&&screen.restorable){ %><p><label><input type="checkbox" name="restore" value="yes"> Put the price back to <%= money(p.original_price_minor,p.currency) %></label></p><% } %>
+  <p><label><input type="checkbox" name="confirmed" value="yes" required> <%= p.status==='DRAFT'?'Cancel this plan. No price changes.':'Stop this plan.' %></label></p>
+  <button class="rm-btn rm-btn--ghost"><%= p.status==='DRAFT'?'Cancel the plan':'End the plan' %></button>
+</form><% } %>
+<p><a href="/inventory/<%= encodeURIComponent(p.item_id) %>">Open the item</a></p>
+<% } %>

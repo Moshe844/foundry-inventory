@@ -2,16 +2,17 @@
 
 const planning=require('./postgres-planning-service');
 const {classify,THRESHOLDS}=require('./excess');
-const {transferPlan,retainedUnits}=require('../purchasing/replenishment-decision');
+const {transferPlan,retainedUnits,COVER_DAYS}=require('../purchasing/replenishment-decision');
 const {ValidationError}=require('../domain/errors');
 const money=require('../domain/currency');
 const exact=require('../domain/exact-quantity');
 
-async function candidates(db,ctx,{filter,page,today}){
+async function candidates(db,ctx,{filter='',page=1,today,skuIds=null}){
   const {rows:items}=await db.query(`SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
     WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2='' OR lower(s.code)=lower($2))
+    AND ($4::text[] IS NULL OR s.id=ANY($4::text[]))
     AND EXISTS(SELECT 1 FROM balances b WHERE b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.on_hand>0)
-    ORDER BY s.code,s.id LIMIT 26 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*25]);
+    ORDER BY s.code,s.id LIMIT 26 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*25,skuIds]);
   const ids=items.slice(0,25).map(r=>r.id);
   if(!ids.length)return {rows:[],more:false};
   const positions=await planning.position(db,ctx.workspaceId,{onlySkuIds:ids});
@@ -41,9 +42,49 @@ async function candidates(db,ctx,{filter,page,today}){
     const retained=Math.max(retainedUnits(position),position.targetStock??0);
     const surplus=Math.max(0,exact.safeNumber(exact.subtract(position.available,retained),{signed:true}));
     const transferable=moves.reduce((n,t)=>n+t.quantity,0);
-    rows.push({position,h,kind,since,moves,units:Math.max(0,exact.safeNumber(exact.subtract(surplus,transferable),{signed:true}))});
+    rows.push({position,h,kind,since,moves,surplus,others:physical.filter(p=>p.sku_id===position.sku_id&&p.location_id!==position.location_id),
+      units:Math.max(0,exact.safeNumber(exact.subtract(surplus,transferable),{signed:true}))});
   }
   return {rows,more:items.length>25};
+}
+
+// A location where the item sells and still has room under its stock target.
+function sellingDestination(others){
+  const need=p=>Math.max(0,(p.target??Math.ceil(p.rate*COVER_DAYS))-p.projected);
+  return others.filter(p=>p.rate>0&&need(p)>0)
+    .sort((a,b)=>b.rate-a.rate||a.location_id.localeCompare(b.location_id)).map(p=>({position:p,need:need(p)}))[0]||null;
+}
+
+// The exact units each finding can free up now. Surplus above the location's
+// own target, less stock already held for transfers, rentals, returns or quality
+// checks and units on an open supplier return. Part of it can move to a location
+// where the item sells; the rest is what a return or a discount would clear.
+async function findings(db,ctx,options){
+  const result=await candidates(db,ctx,options);
+  const selection=result.rows.filter(row=>row.surplus>0);
+  if(!selection.length)return {rows:[],more:result.more};
+  const keys=selection.map(({position})=>({skuId:position.sku_id,locationId:position.location_id}));
+  const [available,returning]=await Promise.all([
+    require('../domain/postgres-stock-availability').readMany(db,ctx.workspaceId,keys,{sellableOnly:true}),
+    db.query(`SELECT l.sku_id,l.location_id,sum(l.quantity)::text AS quantity FROM supplier_return_lines l
+      JOIN supplier_returns r ON r.workspace_id=l.workspace_id AND r.id=l.supplier_return_id
+      WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND r.status IN ('REQUESTED','AUTHORIZED') GROUP BY l.sku_id,l.location_id`,
+    [ctx.workspaceId,[...new Set(keys.map(k=>k.skuId))]])
+  ]);
+  const onReturn=new Map(returning.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),r.quantity]));
+  const rows=[];
+  for(const row of selection){
+    const {position}=row,key=JSON.stringify([position.sku_id,position.location_id]),current=available.get(key);
+    if(!current||current.onHand!==position.onHand)continue;
+    const held=Math.max(0,exact.safeNumber(exact.subtract(position.available,current.available),{signed:true}));
+    const clearable=Math.max(0,exact.safeNumber(exact.subtract(exact.subtract(row.surplus,String(held)),onReturn.get(key)||'0'),{signed:true}));
+    if(clearable<=0)continue;
+    const destination=position.tracking_mode==='quantity'&&!position.secondary_unit_label?sellingDestination(row.others):null;
+    const move=destination?Math.min(clearable,destination.need):0;
+    rows.push({...row,clearable,move:move?{quantity:move,destination:destination.position}:null,
+      rest:exact.safeNumber(exact.subtract(String(clearable),String(move)),{signed:true})});
+  }
+  return {rows,more:result.more};
 }
 
 async function slowStock(db,ctx,options){
@@ -107,14 +148,15 @@ async function clearance(db,ctx,options){
   if(!value)return {rows:[],more:false,summary:'Enter a markdown to estimate the proceeds if the listed units sell.'};
   if(!/^\d{1,3}(?:\.\d{1,2})?$/.test(value)||Number(value)>100)throw new ValidationError('Enter a markdown from 0% to 100%.');
   const result=await candidates(db,ctx,options);
-  return {more:result.more,summary:'Gross proceeds assume all listed units sell at the entered markdown. They exclude tax, selling fees and shipping. A person must approve any change to selling prices.',
+  return {more:result.more,summary:'Gross proceeds assume all listed units sell at the entered markdown. They exclude tax, selling fees and shipping. Build a plan to see markdown steps, the cash each should bring back and when. A person approves every price.',
     rows:result.rows.filter(r=>r.units>0).map(({position,h,units})=>{
       const known=h.amount_minor!=null && !h.secondary_unit_label;
       const price=known?exact.ratioMinor(Number(h.amount_minor),10000-Math.round(Number(value)*100),10000):null;
       return {SKU:position.code,Location:position.location_name,'Clearance units':units,'Markdown':value+'%',
         'Proposed unit price':known?money.format(price,h.currency):null,'Gross proceeds if sold':known?money.format(exact.costMinor(units,price),h.currency):null,
-        'Price basis':known?'Current catalog price':h.secondary_unit_label?'Requires a measured selling quantity':'Current price missing',link:'/inventory/'+position.item_id};
+        'Price basis':known?'Current catalog price':h.secondary_unit_label?'Requires a measured selling quantity':'Current price missing',
+        link:'/autopilot/clearance-plans/new?'+new URLSearchParams({sku:position.code,markdown:value}),linkLabel:'Build a plan'};
     })};
 }
 
-module.exports={slowStock,clearance,cashInStock};
+module.exports={slowStock,clearance,cashInStock,candidates,findings,sellingDestination};

@@ -345,6 +345,40 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.stopped?'Every cost change from this supplier now waits for you.':'Limit saved. Smaller changes from this supplier now update on their own.');
     res.redirect(303,supplierPriceUpdates.path+'/'+encodeURIComponent(req.params.id));
   }));
+  // Job 86: clearance plans. A person approves every price.
+  const clearancePlans=require('../../pricing/agent-clearance-plans');
+  const clearancePage=starterAgentPage(86,'draft','Clearance plans',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    if(req.params.id==='new'){
+      const query={sku:String(req.query.sku||''),markdown:String(req.query.markdown??''),stepDays:String(req.query.stepDays??'')};
+      let built=null,problem=null;
+      if(query.sku){try{built=await clearancePlans.preview(database,req.ctx,query);problem=built.problem;}
+        catch(error){if(error.code!=='validation_error')throw error;problem=error.message;}}
+      return res.page('autopilot/clearance-plans',{title:'Build a clearance plan',nav:'autopilot',builder:{query,built,problem,requestKey:newId('clearance-plan')},
+        screen:null,backTo:{href:clearancePlans.path,label:'Clearance plans'}});
+    }
+    res.page('autopilot/clearance-plans',{title:'Clearance plans',nav:'autopilot',builder:null,
+      screen:await clearancePlans.page(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),
+      backTo:{href:req.params.id?clearancePlans.path:'/autopilot/reviews',label:req.params.id?'Clearance plans':'Agent reviews'}});
+  },'Growth');
+  router.get(clearancePlans.path,requireAuth,owner,clearancePage);
+  router.get(clearancePlans.path+'/:id',requireAuth,owner,clearancePage);
+  router.post(clearancePlans.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await clearancePlans.prepare(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'This plan was already saved.':'Plan saved. No price changes until you approve it.');
+    res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(result.id));
+  }));
+  router.post(clearancePlans.path+'/:id/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await clearancePlans.approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This price was already approved.':'Price approved. The new selling price is live.');
+    res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(clearancePlans.path+'/:id/end',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await clearancePlans.end(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This plan was already closed.':result.cancelled?'Plan cancelled. No price changed.':
+      result.restored?'Plan ended. The original price is back.':'Plan ended. The current price stays.');
+    res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(req.params.id));
+  }));
   for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   const supplierCosts=require('../../purchasing/agent-supplier-comparison-terms');
@@ -1133,6 +1167,7 @@ function createPostgresAutopilotRouter(database,options={}){
         result.pricePreparationHold=await pricePolicy.stopped(database,req.ctx.workspaceId,state,'catalog.restore_margin',false);
         result.reviewPrices=!result.pricePreparationHold;
       }
+      if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='open-to-buy')result.openToBuyPath=monthlyBuying.path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
