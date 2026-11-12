@@ -1,0 +1,36 @@
+<% const m=model,growth=m.mode==='trained',runBy=x=>x.started_kind==='AUTOMATIC'?'StockChief':'A person';
+const zoneLine=z=>{const n=Array.isArray(z.lines)?z.lines.length:z.lines;return z.name+' · '+n+' line'+(n===1?'':'s')+(z.walkMetres!=null?' · about '+z.walkMetres+' m walk':'');}; %>
+<div class="page-head"><div class="titles"><h1>Pick waves by zone</h1>
+<p><%= growth?'StockChief groups released orders into waves by zone, with one pick list per zone in walking order. A person starts each wave until you teach it.':'StockChief groups released orders into waves by zone, with one pick list per zone in walking order, and starts them on its own within your rules. Every wave can be undone until picking starts.' %></p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It builds no waves.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.prepared.length){ %><section class="card section" id="waiting"><h2>Waiting for a person to start</h2><ul class="rm-list">
+<% for(const w of m.prepared){ %><li class="list-row" id="wave-<%= w.id %>"><span><strong><a href="/warehouse/waves/<%= w.wave_id %>">Wave #<%= w.wave_number %></a> · <%= w.plan.orders.length %> order<%= w.plan.orders.length===1?'':'s' %> at <%= w.plan.location %></strong>
+<small><%= w.reason %></small>
+<% for(const z of w.zones){ %><small><%= zoneLine(z) %></small><% } %></span>
+<div class="btn-row"><form method="post" action="<%= m.href %>/waves/<%= w.id %>/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary btn--sm" <%= m.blocked?'disabled':'' %>>Start picking</button></form>
+<form method="post" action="<%= m.href %>/waves/<%= w.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Undo</button></form></div></li><% } %></ul></section><% } %>
+
+<section class="card section" id="rules"><h2>Your warehouses</h2>
+<% if(!m.sites.length){ %><p>Add a warehouse first.</p><% } %>
+<% for(const s of m.sites){ const on=s.enabled; %><div class="section" id="site-<%= s.id %>"><h3><%= s.name %></h3>
+<p><%= s.waiting %> released order<%= s.waiting===1?'':'s' %> waiting for a wave<%= on?' · up to '+s.wave_orders+' orders a wave':'' %><%= on&&s.start_cutoff?' · starts on its own until '+s.start_cutoff:'' %></p>
+<% if(s.startStop){ %><p><span class="badge">Prepares</span> <%= s.startStop %></p><% }else{ %><p><span class="badge badge--ok">On its own</span> StockChief builds and starts waves here within this rule.</p><% } %>
+<% if(s.waiting&&!m.blocked&&!m.shadow){ %><form method="post" action="<%= m.href %>/build"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= s.id %>"><button class="btn btn--sm">Build waves now</button></form><% } %>
+<details<%= on?'':' open' %>><summary><%= on?'Change the wave rule':'Set a wave rule' %></summary>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= s.id %>"><input type="hidden" name="revision" value="<%= s.revision||0 %>">
+<div class="field-row"><label class="rm-field"><span>Most orders in one wave</span><input type="number" name="waveOrders" min="1" max="<%= m.maxWave %>" step="1" required value="<%= on?s.wave_orders:'' %>"></label>
+<label class="rm-field"><span>Last time to start a wave on its own</span><input name="startCutoff" value="<%= on&&s.start_cutoff?s.start_cutoff:'' %>" placeholder="15:00" maxlength="8"></label></div>
+<% if(growth){ %><label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= on&&s.automatic?'checked':'' %>><span class="checkbox-text">Start waves here on its own within this rule. This teaches StockChief.</span></label><% } %>
+<button class="btn btn--primary">Save rule</button></form>
+<% if(on){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= s.id %>"><input type="hidden" name="revision" value="<%= s.revision %>">
+<button class="btn btn--ghost btn--sm" name="stop" value="yes">Turn off this rule</button></form><% } %></details></div><% } %>
+<p class="cell-sub">Waves are built from orders released to the warehouse. Each zone gets its own pick list, farthest bin first so pickers end near packing. Batches, serial numbers and weighed goods name exactly what to take or which to scan first. Scanning, packing and handoff are done by your team. <a href="/autopilot/pick-release">Release ready orders</a> · <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<% if(m.recent.length){ %><section class="card section" id="recent"><h2>Recent waves</h2><ul class="rm-list">
+<% for(const x of m.recent){ %><li class="list-row"><span><strong><a href="/warehouse/waves/<%= x.wave_id %>">Wave #<%= x.wave_number %></a> · <%= x.status==='UNDONE'?'Undone':runBy(x)+' started it' %> · <%= x.plan.orders.length %> order<%= x.plan.orders.length===1?'':'s' %> at <%= x.plan.location %></strong>
+<small><%= x.plan.zones.map(zoneLine).join(' · ') %></small></span>
+<div class="btn-row"><% if(x.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else if(!x.can_undo){ %><span class="badge badge--muted">Picking started</span><% }else{ %><form method="post" action="<%= m.href %>/waves/<%= x.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %>
+<% if(x.can_teach){ %><form method="post" action="<%= m.href %>/waves/<%= x.id %>/teach"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Start waves like this on its own</button></form><% } %></div></li><% } %></ul></section><% } %>

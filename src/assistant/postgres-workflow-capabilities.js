@@ -1538,10 +1538,10 @@ const SPECS=Object.freeze([
       // warehouse enum. Keep the warehouse engine's three actual strategies.
       const strategy=requestedStrategy==='PICK_BY_ORDER'?'WAVE':requestedStrategy;
       if(!['WAVE','BATCH','CLUSTER'].includes(strategy))throw new ValidationError('Choose a wave, batch, or cluster picking strategy.');
-      const training=await require('../warehouse/agent-pick-release').single(_database,_ctx,row.id,strategy);
+      const training=await require('../warehouse/agent-pick-waves').single(_database,_ctx,row.id);
       return prepareResult({orderIds:[row.id],orderNumber:row.order_number,strategy,title:`${strategy} pick for ${row.order_number}`,...training},
         `Release ${row.order_number} to a ${strategy.toLowerCase()} pick. No stock leaves yet.`);},
-    execute:(client,ctx,p)=>require('../warehouse/agent-pick-release').executeSingle(client,ctx,p),
+    execute:(client,ctx,p)=>require('../warehouse/agent-pick-waves').executeSingle(client,ctx,p),
     verify:async(client,ctx,r)=>Boolean(r.waveId&&r.status==='PICKING'&&
       await state(client,ctx,'fulfillment_waves',r.waveId,['PICKING']))},
   {name:'warehouse.wave.scan',description:'Verify a physically scanned location, SKU and optional lot or serial on an open fulfillment wave. The canonical scan engine rejects mismatches and duplicates.',

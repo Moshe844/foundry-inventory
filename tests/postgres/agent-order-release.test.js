@@ -24,6 +24,8 @@ async function mission(db,ctx,p){
 async function setup(t,units=40){
  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units}),{db,ctx}=f,ws=ctx.workspaceId;await f.subscribe('pro');
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+ // Job 57 (zone waves) has its own test; here releases stay waiting for a wave.
+ await modes.save(db,ctx,57,{mode:'watch',revision:0});
  const assistant=require('../../src/assistant/postgres-service'),sku=f.item.skuIds[0];
  await db.query("UPDATE skus SET barcode='PICK-ITEM' WHERE workspace_id=$1 AND id=$2",[ws,sku]);await db.query("UPDATE locations SET barcode='PICK-BIN' WHERE workspace_id=$1 AND id=$2",[ws,f.location.id]);
  const order=async({quantity=2,price=1000,priority=100,neededBy=null,location=f.location.id,address='10 Jobsite Rd, Albany, NY 12207',customer='fixture-customer',skuId=sku}={})=>{
@@ -79,6 +81,9 @@ test('ready orders go out in pick order; Starter is refused, Growth proposes unt
  const asked=await f.prepare('warehouse.release_orders',id(later),{quantity:5});
  assert.deepEqual(asked.payload.orderIds,[id(urgent),id(dueHere),id(later),id(plain)],'No fixed cap: the request releases up to the asked number.');
  await assert.rejects(mission(db,ctx,asked),/teach|Individually approve|Pro plan/i);
+ const shown=require('../../src/web/proposal-presentation').present(asked);
+ assert.match(shown.fields.find(x=>x.label==='Orders in pick order').value,/^1\. .* · Priority 10 · /);
+ assert.match((await browser.get('/actions/'+asked.id).expect(200)).text,/Orders in pick order/);
  await f.assistant.cancelProposal?.(db,ctx,asked.id).catch(()=>{});
  const view=await browser.get('/autopilot/pick-release').expect(200);assert.match(view.text,/Waiting for you/);assert.match(view.text,/East dock/);
  await browser.post('/autopilot/pick-release/releases/'+dispatchProposal.id+'/approve').type('form').send({_csrf:f.csrf(view.text),fingerprint:dispatchProposal.fingerprint,confirmed:'yes'}).expect(303);
@@ -203,8 +208,11 @@ test('only ready orders go out: bins inside the warehouse, tracked goods and FEF
  const short=await order({skuId:shelf,quantity:2});
  // A count finds one missing after the order was reserved.
  await stock.adjust(db,ctx,{skuId:shelf,locationId:f.location.id,countedQuantity:1,reasonCode:'count',idempotencyKey:randomUUID()});
+ const partial=await order({quantity:2});
+ await flows.fulfillSalesOrder(db,ctx,id(partial),{idempotencyKey:randomUUID(),lines:[{lineId:partial.lineIds[0],locationId:f.location.id,quantity:1}]});
  const page=await release.page(db,ctx);
  const reasons=Object.fromEntries(page.held.map(h=>[h.id,h.reason]));
+ assert.match(reasons[id(partial)],/Part of this order has shipped/,'Orders StockChief cannot release still say why.');
  assert.match(reasons[id(noAddress)],/address is missing or incomplete/);
  assert.match(reasons[id(onCredit)],/overdue invoice/);
  assert.match(reasons[id(recalled)],/Batch LATE reserved for .* was recalled/);

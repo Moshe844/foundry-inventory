@@ -131,11 +131,19 @@ function createPostgresWarehouseRouter(database){
       req.flash('success',created.replayed?'That wave was already released.':'Wave released. Stock remains committed and on hand until physical handoff.');
       return res.redirect(303,`/warehouse/waves/${created.waveId}`);
     }));
-  router.get('/warehouse/waves/:id',asyncRoute(async(req,res)=>res.page('warehouse/wave',{
-    title:'Fulfillment wave',nav:'warehouse',room:true,
-    wave:await waves.get(database,req.ctx.workspaceId,req.params.id,{afterLineId:req.query.afterLineId,afterShipmentId:req.query.afterShipmentId}),
-    containers:await waves.containers(database,req.ctx.workspaceId),
-  })));
+  router.get('/warehouse/waves/:id',asyncRoute(async(req,res)=>{
+    const wave=await waves.get(database,req.ctx.workspaceId,req.params.id,{afterLineId:req.query.afterLineId,afterShipmentId:req.query.afterShipmentId});
+    return res.page('warehouse/wave',{title:'Fulfillment wave',nav:'warehouse',room:true,wave,
+      containers:await waves.containers(database,req.ctx.workspaceId),
+      // One pick list per zone, in walking order (job 57).
+      zones:await require('../../warehouse/agent-pick-waves').pickLists(database,req.ctx.workspaceId,wave.id)});
+  }));
+  router.post('/warehouse/waves/:id/start',requirePermission(permissions.MANAGE_FULFILLMENT_WAVES,'start fulfillment waves'),
+    asyncRoute(async(req,res)=>{
+      await require('../../warehouse/agent-pick-waves').start(database,req.ctx,{waveId:req.params.id});
+      req.flash('success','Wave started. Pickers can scan now.');
+      return res.redirect(303,`/warehouse/waves/${req.params.id}`);
+    }));
   router.post('/warehouse/waves/:id/scans',
     requirePermission(permissions.MANAGE_FULFILLMENT_WAVES,'scan fulfillment waves'),asyncRoute(async(req,res)=>{
       const result=await waves.scan(database,req.ctx,req.params.id,req.body);

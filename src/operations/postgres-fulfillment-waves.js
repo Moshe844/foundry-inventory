@@ -118,10 +118,13 @@ async function create(database,ctx,input,options={}){
       [ctx.workspaceId])).rows[0].number);
     const strategy=requireOneOf(String(input.strategy||'WAVE').toUpperCase(),['WAVE','BATCH','CLUSTER'],'Picking strategy');
     const waveId=newId('wave');const at=nowIso();
+    // A prepared wave (RELEASED) waits for a person or StockChief to start it;
+    // nobody can scan or pack it before then.
+    const status=options.prepared?'RELEASED':'PICKING';
     await client.query(`INSERT INTO fulfillment_waves
       (id,workspace_id,wave_number,strategy,status,title,created_by_user_id,created_at)
-      VALUES($1,$2,$3,$4,'PICKING',$5,$6,$7)`,[waveId,ctx.workspaceId,number,strategy,
-      trimOrNull(input.title)||`${strategy.charAt(0)+strategy.slice(1).toLowerCase()} pick #${number}`,ctx.actorId,at]);
+      VALUES($1,$2,$3,$4,$8,$5,$6,$7)`,[waveId,ctx.workspaceId,number,strategy,
+      trimOrNull(input.title)||`${strategy.charAt(0)+strategy.slice(1).toLowerCase()} pick #${number}`,ctx.actorId,at,status]);
     for(const orderId of orderIds){
       const order=(await client.query(`SELECT orders.*,customer.name AS customer_name,customer.shipping_address AS customer_shipping_address,customer.shipping_address_fields AS customer_shipping_address_fields FROM sales_orders orders
         JOIN customers customer ON customer.id=orders.customer_id WHERE orders.workspace_id=$1 AND orders.id=$2 FOR UPDATE OF orders`,
@@ -158,10 +161,23 @@ async function create(database,ctx,input,options={}){
           shipmentLineId,allocation.sku_id,allocation.location_id,Number(allocation.quantity)]);
       }
     }
-    const result={waveId,waveNumber:number,status:'PICKING'};
+    const result={waveId,waveNumber:number,status};
     await client.query(`UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,
       completed_at=now() WHERE id=$1`,[operation.id,JSON.stringify(result)]);
     return {...result,replayed:false};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+// Opens a prepared wave for picking.
+async function start(database,ctx,id){
+  return database.transaction(async(client)=>{
+    await actor(client,ctx,'start fulfillment waves');
+    const wave=(await client.query('SELECT * FROM fulfillment_waves WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
+    if(!wave)throw new NotFoundError('That fulfillment wave could not be found.');
+    if(wave.status==='PICKING')return {waveId:id,waveNumber:wave.wave_number,status:'PICKING',replayed:true};
+    if(wave.status!=='RELEASED')throw new ValidationError('This wave is not waiting to start.');
+    await client.query("UPDATE fulfillment_waves SET status='PICKING' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);
+    return {waveId:id,waveNumber:wave.wave_number,status:'PICKING',replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
@@ -351,6 +367,6 @@ async function containers(database,workspaceId){
   return (await database.query(`SELECT * FROM warehouse_containers WHERE workspace_id=$1 ORDER BY code,id`,[workspaceId])).rows;
 }
 
-module.exports={get,list,readyOrders,create,scan,reportShortage,packShipment,refresh,containers,resolveIdentity};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{create:'warehouse.advanced',scan:'warehouse.advanced',
+module.exports={get,list,readyOrders,create,start,scan,reportShortage,packShipment,refresh,containers,resolveIdentity};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{create:'warehouse.advanced',start:'warehouse.advanced',scan:'warehouse.advanced',
  reportShortage:'warehouse.advanced',packShipment:'warehouse.advanced',refresh:'warehouse.advanced'});

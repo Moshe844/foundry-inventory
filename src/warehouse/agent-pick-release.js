@@ -289,7 +289,9 @@ async function apply(c,ctx,{locationId,orderIds,fingerprint,kind,requestKey,prop
     [ctx.workspaceId,row.id,o.id,o.position,o.version]);
   await audit.record(c,ctx,{action:kind==='AUTOMATIC'?'StockChief released orders to the warehouse':'Released orders to the warehouse',reference:now.location.name,
     after:{release:row.id,orders:now.orders.map(o=>[o.orderNumber,o.why]),kind}});
-  return {releaseId:row.id,orderIds:now.orders.map(o=>o.id),orderNumbers:now.orders.map(o=>o.orderNumber),location:now.location.name,replayed:false};
+  // Job 57 groups the released orders into zone waves at once.
+  const waves=await require('./agent-pick-waves').afterRelease(c,ctx,locationId);
+  return {releaseId:row.id,orderIds:now.orders.map(o=>o.id),orderNumbers:now.orders.map(o=>o.orderNumber),location:now.location.name,waves,replayed:false};
 }
 
 async function owner(c,ctx,{lock=false}={}){
@@ -390,14 +392,17 @@ async function undo(db,ctx,id){
 // Unshipped boxes for these orders, and whether anyone has started picking them.
 async function startedBoxes(c,workspaceId,orderIds){
   if(!orderIds.length)return [];
-  return (await c.query(`SELECT h.id shipment_id,o.order_number,(h.status='PACKED' OR EXISTS(SELECT 1 FROM fulfillment_wave_scans s JOIN fulfillment_wave_lines w
+  return (await c.query(`SELECT h.id shipment_id,h.sales_order_id,o.order_number,(h.status='PACKED' OR EXISTS(SELECT 1 FROM fulfillment_wave_scans s JOIN fulfillment_wave_lines w
       ON w.workspace_id=s.workspace_id AND w.id=s.line_id WHERE s.workspace_id=h.workspace_id AND w.shipment_id=h.id AND s.status='ACCEPTED')
       OR EXISTS(SELECT 1 FROM fulfillment_wave_lines w WHERE w.workspace_id=h.workspace_id AND w.shipment_id=h.id AND w.picked_quantity>0)) started
     FROM sales_shipments h JOIN sales_orders o ON o.workspace_id=h.workspace_id AND o.id=h.sales_order_id
     WHERE h.workspace_id=$1 AND h.sales_order_id=ANY($2::text[]) AND h.status IN ('PICKING','PACKED') ORDER BY h.id FOR UPDATE OF h`,[workspaceId,orderIds])).rows;
 }
-// Picking waves built from this release follow it (job 57).
-async function afterUndo(){}
+// Picking waves built from this release end with it (job 57).
+async function afterUndo(c,ctx,r,boxes){
+  const orders=[...new Set(boxes.map(b=>b.sales_order_id).filter(Boolean))];
+  await require('./agent-pick-waves').releaseUndone(c,ctx,orders);
+}
 
 function whole(value,label,min,max){
   const n=Number(String(value??'').trim());
@@ -561,6 +566,31 @@ async function recheck(db,ctx){
   });
 }
 
+// Shipping orders StockChief cannot release at all, and what a person does instead.
+async function notReady(c,workspaceId,filter=''){
+  return (await c.query(`WITH RECURSIVE ${TREE},
+   flagged AS (SELECT o.id,o.order_number,c.name customer,site.name location,
+     CASE WHEN EXISTS(SELECT 1 FROM sales_order_lines l JOIN sales_order_kit_components k ON k.workspace_id=l.workspace_id AND k.sales_order_line_id=l.id
+        WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id) THEN 'Kits are picked from their parts. Release this order yourself as a wave.'
+      WHEN o.status='PARTIALLY_FULFILLED' OR EXISTS(SELECT 1 FROM sales_order_lines l WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND l.quantity_fulfilled<>0)
+       THEN 'Part of this order has shipped. Send the rest with a partial release.'
+      WHEN EXISTS(SELECT 1 FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+        WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND i.quantity_precision<>0) THEN 'Boxes take whole units and this order has a measured quantity. Ship it yourself.'
+      WHEN EXISTS(SELECT 1 FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+        WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND (s.is_active<>1 OR i.is_active<>1)) THEN 'A product on this order is archived.'
+      WHEN EXISTS(SELECT 1 FROM sales_order_lines l JOIN sales_order_allocations a ON a.workspace_id=l.workspace_id AND a.sales_order_line_id=l.id AND a.quantity>0
+        WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id AND NOT EXISTS(SELECT 1 FROM tree t WHERE t.root=o.fulfillment_location_id AND t.id=a.location_id))
+       THEN 'Some of its stock is reserved at another warehouse. Reserve it all at '||site.name||' first.'
+     END reason
+    FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
+    JOIN locations site ON site.workspace_id=o.workspace_id AND site.id=o.fulfillment_location_id
+    WHERE o.workspace_id=$1 AND o.status IN ('CONFIRMED','PARTIALLY_FULFILLED') AND o.delivery_method='SHIP'
+     AND ($2='' OR lower(site.name)=lower($2) OR lower(o.order_number)=lower($2))
+     AND NOT EXISTS(SELECT 1 FROM sales_shipments h WHERE h.workspace_id=o.workspace_id AND h.sales_order_id=o.id AND h.status IN ('PICKING','PACKED'))
+     AND NOT EXISTS(SELECT 1 FROM ${MEMBERS} m WHERE m.workspace_id=o.workspace_id AND m.sales_order_id=o.id AND m.state='RELEASED'))
+   SELECT * FROM flagged WHERE reason IS NOT NULL ORDER BY order_number LIMIT 50`,[workspaceId,String(filter||'').trim()])).rows;
+}
+
 async function page(db,ctx,{filter='',location=''}={}){
   await owner(db,ctx);
   const state=await policy.accountState(db,ctx.workspaceId);
@@ -580,6 +610,7 @@ async function page(db,ctx,{filter='',location=''}={}){
     const facts=await stockFacts(c,ctx.workspaceId,listed.map(o=>o.id));
     for(const o of listed.filter(o=>facts.problems.has(o.id)))held.push({...o,reason:facts.problems.get(o.id)});
     const readyRows=listed.filter(o=>!facts.problems.has(o.id));
+    held.push(...await notReady(c,ctx.workspaceId,filter));
     for(const s of sites){
       const rule=s.enabled?s:null;
       s.size=await sizing(c,ctx.workspaceId,s.id,rule);
@@ -683,36 +714,7 @@ async function requireRoutineAuthority(db,ctx){
   return {kind:'standing_job_rule',job:JOB,ownerId:ctx.actorId};
 }
 
-// Job 57's single-order wave keeps its own checks until its rewrite.
-function trainingFor(orders,lines,locationId,location,method,currency){
-  let amount=0;for(const line of lines)amount=require('../domain/currency').integer(amount+exact.costMinor(line.allocated,line.price));
-  const qualification=['pick-release',locationId,method,...new Set(orders.map(o=>JSON.stringify([o.customer_id,o.ship_to_address])).sort()),...new Set(lines.map(l=>l.sku_id).sort())];
-  return require('../autopilot/draft-authority').scope(locationId,currency,amount,qualification,'Ready orders at '+location+' · '+method.toLowerCase()+' picking');
-}
-async function single(db,ctx,id,method){
-  if(!(await db.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner'",[ctx.workspaceId,ctx.actorId])).rowCount)return {needsWaveConfirmation:true};
-  if(!await installed(db))return {needsWaveConfirmation:true};
-  try{
-    const p=await inspect(db,ctx,id,{single:true});
-    const order=(await db.query('SELECT customer_id,ship_to_address,currency FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];
-    return {training:trainingFor([order],p.lines,p.locationId,p.location.name,method,order.currency),releaseFingerprint:p.fingerprint,needsWaveConfirmation:false};
-  }catch(error){if(error instanceof ValidationError)return {needsWaveConfirmation:true};throw error;}
-}
-async function executeSingle(db,ctx,p){
-  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['fulfillment-wave:'+ctx.workspaceId]);
-  if(p.releaseFingerprint){const now=await inspect(db,ctx,p.orderIds[0],{single:true,lock:true});if(now.fingerprint!==p.releaseFingerprint)throw new ValidationError('The ready order or its reservations changed. Review a fresh pick wave.');}
-  const state=await policy.accountState(db,ctx.workspaceId);
-  if(policy.usesAgentTerms(state)){
-    const automatic=ctx.agentWarehouseReleaseScope==='automatic';
-    const trainedRule=automatic&&await require('../autopilot/draft-authority').trained(db,ctx.workspaceId,'warehouse.wave.create',p);
-    policy.requireJob(state.plan,57,automatic?'automatic':'draft',{trained:trainedRule});
-    const stop=await policy.stopped(db,ctx.workspaceId,state,'warehouse.wave.create',automatic,p);if(stop)throw new ValidationError(stop);
-    if(automatic&&p.training){const rule=(await db.query('SELECT maximum_minor FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4 FOR SHARE',[ctx.workspaceId,'warehouse.wave.create',p.training.key,p.training.currency])).rows[0];if(rule&&Number(rule.maximum_minor)<p.training.amountMinor)throw new ValidationError('This pick wave exceeds the saved owner limit. Review it individually.');}
-  }
-  return require('../operations/postgres-fulfillment-waves').create({query:db.query.bind(db),transaction:fn=>fn(db)},ctx,p);
-}
-
 module.exports={JOB,ACTION,href,MAX_BATCH,installed,read,candidates,preview,stockFacts,sizing,openWork,shippedPerDay,automaticStop,propose,apply,
   releaseNow,approve,discard,undo,configure,teach,trained,run,recheck,page,review,inbox,inspect,build,execute,verify,requireRoutineAuthority,
-  single,executeSingle,parseCutoffs,cutoffs,startedBoxes,
+  parseCutoffs,cutoffs,startedBoxes,
   definition:{id:JOB,key:'pick-release',label:'Release ready orders to the warehouse',filterLabel:'Warehouse name or order number',readPage:review}};
