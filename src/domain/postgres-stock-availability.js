@@ -25,6 +25,9 @@ async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=nu
  // Name the job 12 protection columns only when a caller asks about them, so this
  // read still works on a database migrated before those columns existed.
  const params=[workspaceId,requested,lotId,excludeTransferId];let protectionFilter='';
+ // Before the job 12 migration there are no protections to look through.
+ if((customerId!==null||reservationId!==null)&&!(await c.query(`SELECT EXISTS(SELECT 1 FROM information_schema.columns
+   WHERE table_name='sales_stock_commitments' AND column_name='reserved_for_customer_id') AS installed`)).rows[0].installed){customerId=null;reservationId=null;}
  if(customerId!==null){params.push(customerId);protectionFilter+=' AND a.reserved_for_customer_id IS DISTINCT FROM $'+params.length;}
  if(reservationId!==null){params.push(reservationId);protectionFilter+=' AND a.stock_reservation_id IS DISTINCT FROM $'+params.length;}
  const rows=(await c.query(`WITH requested AS (SELECT DISTINCT sku_id,location_id FROM jsonb_to_recordset($2::jsonb) AS p(sku_id text,location_id text))
