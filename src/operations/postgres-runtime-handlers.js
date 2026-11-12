@@ -791,7 +791,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
-    const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
+    const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2 UNION ALL SELECT 1 FROM stockchief_runtime.agent_supplier_claim_chases WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
     if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
   }),
   'import.read-supplier-invoice.v1':external((job,database)=>require('../purchasing/supplier-invoice-uploads').read(database,job.workspaceId,job.payload.uploadId),'bulk'),
@@ -807,6 +807,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
+    // After the last claim page, follow sent claims: replies, settlements and reminders.
+    if(!result.more)result.followThrough=await require('../purchasing/supplier-claim-follow-through').run(database,job.workspaceId);
     if(result.more)await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:job.kind,idempotencyKey:'supplier-claims:'+job.payload.cycleId+':'+result.nextAfterId,payload:{cycleId:job.payload.cycleId,afterId:result.nextAfterId},priority:65,maxAttempts:3});return result;
   }),
   'agent.transfer-balance.v1':external((job,database)=>require('../transfers/agent-transfer-balancing').work(database,job.workspaceId,job.payload),'maintenance'),

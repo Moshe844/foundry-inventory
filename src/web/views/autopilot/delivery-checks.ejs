@@ -26,6 +26,7 @@
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="comparisonId" value="<%= record.id %>">
             <input type="hidden" name="lineId" value="<%= row.lineId %>">
+            <fieldset><legend>Ask the supplier for</legend><label><input type="radio" name="remedy" value="credit" checked required> A credit note</label> <label><input type="radio" name="remedy" value="replacement" required> Replacement goods</label> <label><input type="radio" name="remedy" value="refund" required> A refund</label></fieldset>
             <label>Connected sending mailbox <select name="connectorId" required><option value="">Choose mailbox</option>
               <% claimMailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %>
             </select></label>

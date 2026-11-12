@@ -1,0 +1,18 @@
+<div class="page-head"><div class="titles"><h1>Delivery damage</h1><p><%= receipt.supplier_name %> · <%= receipt.po_number %> · received <%= helpers.dateTime(receipt.received_at) %><% if(receipt.reference){ %> · <%= receipt.reference %><% } %></p></div></div>
+<% if(receipt.note){ %><p>Receiving note: <%= receipt.note %></p><% } %>
+<% if(!reports.length){ %><section class="card section"><p>No units were marked damaged on this delivery.</p></section><% } %>
+<% for(const d of reports){ %><section class="card section">
+ <h2><%= d.product %> · <%= d.code %></h2>
+ <p><strong><%= d.quantity %> <%= d.unit_label %> damaged</strong> · reported by <%= d.reporter %> · <%= helpers.dateTime(d.created_at) %>. These units were written off when they were received.</p>
+ <p style="overflow-wrap:anywhere"><%= d.note %></p>
+ <% if(d.claim){ %><p><a href="/autopilot/supplier-claims/<%= d.claim.id %>">Claim <%= d.claim.reference %></a> · <%= d.claim.outcome?'Closed':d.claim.sent?'Sent':'Draft, not sent' %></p>
+ <% }else if(!owner){ %><p>The owner decides whether to claim these units from the supplier.</p>
+ <% }else if(!canClaim){ %><p><span class="badge">Pro</span> Supplier claims require Pro or Custom. <a class="btn" href="/settings/billing">Upgrade</a></p>
+ <% }else if(!claimMailboxes.length){ %><p>Connect a sending mailbox in <a href="/settings/connections">Connections</a> to prepare a claim.</p>
+ <% }else{ %><form method="post" action="/autopilot/supplier-claims/preview" class="form-stack">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reportId" value="<%= d.id %>">
+  <fieldset><legend>Ask the supplier for</legend><% Object.entries(remedies).forEach(([value,label],i)=>{ %><label><input type="radio" name="remedy" value="<%= value %>" <%= i===0?'checked':'' %> required> <%= label %></label> <% }) %></fieldset>
+  <label class="rm-field"><span>Connected sending mailbox</span><select name="connectorId" required><option value="">Choose mailbox</option><% claimMailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
+  <button class="btn" type="submit">Prepare damage claim for review</button>
+ </form><% } %>
+</section><% } %>

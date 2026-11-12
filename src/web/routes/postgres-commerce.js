@@ -909,6 +909,9 @@ function createPostgresCommerceRouter(database,options={}){
       await require('../../accounting/postgres-stock-removal').issue(database,req.ctx,{skuId:source.sku_id,locationId:line.locationId,
         quantity:line.quantity,reasonCode:'damaged',notes:`Arrived damaged on ${detail.order.po_number}`,reference:detail.order.po_number,
         idempotencyKey:`${receiptKey}:damaged:${line.lineId}`});
+      // The staff report stays with the receipt line as supplier-claim evidence.
+      await require('../../purchasing/receipt-damage-reports').record(database,req.ctx,{receiptId:receipt.receiptId,
+        purchaseOrderLineId:line.lineId,quantity:line.quantity,note:trimOrNull(req.body.note),removalKey:`${receiptKey}:damaged:${line.lineId}`});
       damaged+=Number(line.quantity);}
     const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
     const places=[...new Set(lines.map((line)=>line.locationId))];

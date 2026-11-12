@@ -110,6 +110,7 @@
               <% receipts.forEach(function (receipt) { var where = [...new Set(receipt.lines.map(function (l) { return l.locationName; }))].join(', '); %>
                 <li><details><summary><span><b><%= shortDate(receipt.receivedAt) %></b><% if (receipt.reference) { %> · <%= receipt.reference %><% } %> · <span class="ox-green">+<%= receipt.totalUnits %></span> → <%= where %><% if (receipt.overReceiptApproved) { %> · <span class="ox-amber">more than ordered</span><% } %></span></summary>
                   <ul class="ox-sublines"><% receipt.lines.forEach(function (l) { %><li><span><%= l.displayName %> → <%= l.locationName %><% if (l.lotCode) { %> · lot <%= l.lotCode %><% } %><% if (l.serials.length) { %> · <%= l.serials.join(', ') %><% } %></span><b class="ox-num">+<%= l.quantityUnits %></b></li><% }) %></ul>
+                  <p class="ox-fine"><a href="/autopilot/delivery-evidence/<%= encodeURIComponent(receipt.id) %>">Delivery damage</a></p>
                 </details></li>
               <% }) %>
             </ul>
