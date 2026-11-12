@@ -482,6 +482,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_invoice_settings WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_return_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_cost_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_slow_stock_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_customer_invoice_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_invoice_reminder_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_forecast_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)

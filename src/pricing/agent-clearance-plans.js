@@ -160,10 +160,7 @@ async function prepareIn(c,ctx,input,{automatic=false}={}){
   const sku=await product(c,ctx,input.sku);
   await c.query('SELECT id FROM skus WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,sku.id]);
   const open=(await c.query(`SELECT id FROM ${plans} WHERE workspace_id=$1 AND sku_id=$2 AND status IN ('DRAFT','ACTIVE')`,[ctx.workspaceId,sku.id])).rows[0];
-  if(open){
-    if(automatic)return {id:open.id,existing:true};
-    throw new ValidationError('This item already has an open clearance plan. Open it instead.');
-  }
+  if(open)throw new ValidationError('This item already has an open clearance plan. Open it instead.');
   const f=await facts(c,ctx,sku);
   if(f.problem)throw new ValidationError(f.problem);
   const stepDays=stepLength(input.stepDays),steps=ladder(f,{points:markdownPoints(input.markdown),stepDays});

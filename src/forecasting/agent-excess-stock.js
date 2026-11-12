@@ -59,10 +59,11 @@ function sellingDestination(others){
 // own target, less stock already held for transfers, rentals, returns or quality
 // checks and units on an open supplier return. Part of it can move to a location
 // where the item sells; the rest is what a return or a discount would clear.
-async function findings(db,ctx,options){
+async function findings(db,ctx,options,{all=false}={}){
   const result=await candidates(db,ctx,options);
   const selection=result.rows.filter(row=>row.surplus>0);
-  if(!selection.length)return {rows:[],more:result.more};
+  const none=row=>({...row,clearable:0,move:null,rest:0});
+  if(!selection.length)return {rows:all?result.rows.map(none):[],more:result.more};
   const keys=selection.map(({position})=>({skuId:position.sku_id,locationId:position.location_id}));
   const [available,returning]=await Promise.all([
     require('../domain/postgres-stock-availability').readMany(db,ctx.workspaceId,keys,{sellableOnly:true}),
@@ -73,28 +74,30 @@ async function findings(db,ctx,options){
   ]);
   const onReturn=new Map(returning.rows.map(r=>[JSON.stringify([r.sku_id,r.location_id]),r.quantity]));
   const rows=[];
-  for(const row of selection){
+  for(const row of all?result.rows:selection){
     const {position}=row,key=JSON.stringify([position.sku_id,position.location_id]),current=available.get(key);
-    if(!current||current.onHand!==position.onHand)continue;
+    if(!current||current.onHand!==position.onHand){if(all)rows.push(none(row));continue;}
     const held=Math.max(0,exact.safeNumber(exact.subtract(position.available,current.available),{signed:true}));
     const clearable=Math.max(0,exact.safeNumber(exact.subtract(exact.subtract(row.surplus,String(held)),onReturn.get(key)||'0'),{signed:true}));
-    if(clearable<=0)continue;
-    const destination=position.tracking_mode==='quantity'&&!position.secondary_unit_label?sellingDestination(row.others):null;
-    const move=destination?Math.min(clearable,destination.need):0;
-    rows.push({...row,clearable,move:move?{quantity:move,destination:destination.position}:null,
-      rest:exact.safeNumber(exact.subtract(String(clearable),String(move)),{signed:true})});
+    if(clearable<=0){if(all)rows.push(none(row));continue;}
+    // Batches, serials and measured weights need a person to pick the exact units.
+    const destination=sellingDestination(row.others),exactUnits=position.tracking_mode==='quantity'&&!row.h.secondary_unit_label;
+    const move=destination?{quantity:Math.min(clearable,destination.need),destination:destination.position,exact:exactUnits}:null;
+    rows.push({...row,clearable,move,
+      rest:exact.safeNumber(exact.subtract(String(clearable),String(move&&exactUnits?move.quantity:0)),{signed:true})});
   }
   return {rows,more:result.more};
 }
 
 async function slowStock(db,ctx,options){
-  const result=await candidates(db,ctx,options);
-  return {more:result.more,summary:'Uses sales and stock history at each location. Units kept for open orders, replenishment targets and internal transfers are excluded from clearance.',
-    rows:result.rows.map(({position,h,kind,moves,units})=>({SKU:position.code,Location:position.location_name,Finding:kind.label,
-      'Days with stock':h.held_days,'Days since recorded sale':h.days_since_sale,'Available units':position.available,'Clearance candidates':units,
-      'Suggested next step':moves.length?moves.map(t=>'Move '+t.quantity+' to '+t.destination.location_name).join(', '):
-        units?'Check supplier return eligibility or review a markdown.':'Keep stock for existing commitments or the saved target.',
-      link:'/inventory/'+position.item_id}))};
+  const result=await findings(db,ctx,options,{all:true}),steps=require('./agent-slow-stock-steps'),rows=[];
+  for(const row of result.rows){
+    const {position,h,kind}=row;
+    rows.push({SKU:position.code,Location:position.location_name,Finding:kind.label,
+      'Days with stock':h.held_days,'Days since recorded sale':h.days_since_sale,'Available units':position.available,'Clearance candidates':row.rest,
+      'Suggested next step':await steps.nextStep(db,ctx,row),link:'/inventory/'+position.item_id});
+  }
+  return {more:result.more,rows,summary:'Uses sales and stock history at each location. Units kept for open orders, replenishment targets, transfers and returns are left out. Each finding gets a next step: move it to a location where it sells, send it back to its supplier, or discount it with a clearance plan.'};
 }
 
 async function cashInStock(db,ctx,options){

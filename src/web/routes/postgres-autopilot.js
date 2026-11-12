@@ -379,6 +379,31 @@ function createPostgresAutopilotRouter(database,options={}){
       result.restored?'Plan ended. The original price is back.':'Plan ended. The current price stays.');
     res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(req.params.id));
   }));
+  // Job 9: next steps for dead and slow stock.
+  const slowStock=require('../../forecasting/agent-slow-stock-steps');
+  router.get(slowStock.path,requireAuth,owner,starterAgentPage(9,'draft','Slow stock next steps',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/slow-stock',{title:'Slow stock next steps',nav:'autopilot',screen:await slowStock.page(database,req.ctx,{page:req.query.page||1}),
+      backTo:{href:'/autopilot/reviews/slow-stock',label:'Dead and slow stock'}});
+  },'Growth'));
+  router.post(slowStock.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await slowStock.check(database,req.ctx);
+    req.flash('success','StockChief is checking your stock for slow and dead items.');
+    res.redirect(303,slowStock.path);
+  }));
+  const slowDone={approve:'',dismiss:'The stock stays as it is.',undo:'The step was undone.'};
+  for(const step of Object.keys(slowDone))router.post(slowStock.path+'/steps/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await slowStock[step](database,req.ctx,req.params.id,req.body);
+    const approved={MOVE:'Transfer requested. The stock is held until someone approves and moves it.',
+      RETURN:'Supplier return requested. Nothing leaves until the supplier agrees and you send it.',DISCOUNT:'Clearance plan saved. No price changes until you approve it.'};
+    req.flash('success',result.replayed?'This was already done.':step==='approve'?approved[result.kind]:slowDone[step]);
+    res.redirect(303,step==='approve'&&result.kind==='DISCOUNT'?clearancePlans.path+'/'+encodeURIComponent(result.clearance_plan_id):slowStock.path);
+  }));
+  router.post(slowStock.path+'/limits/:kind',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await slowStock.configure(database,req.ctx,String(req.params.kind).toUpperCase(),req.body);
+    req.flash('success',result.stopped?'Every step of this kind now waits for you.':'Limit saved.');
+    res.redirect(303,slowStock.path);
+  }));
   for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   const supplierCosts=require('../../purchasing/agent-supplier-comparison-terms');
@@ -1168,6 +1193,7 @@ function createPostgresAutopilotRouter(database,options={}){
         result.reviewPrices=!result.pricePreparationHold;
       }
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
+      if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='open-to-buy')result.openToBuyPath=monthlyBuying.path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
