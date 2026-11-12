@@ -246,9 +246,10 @@ async function dispatch(database,ctx,id,input){
     await releaseCaseStock(db,ctx,c);
     for(const l of c.evidence.lines){
       if(!l.holdId)continue;
-      const changed=await db.query(`UPDATE stockchief_runtime.agent_quality_holds SET returned_quantity=returned_quantity+$3,revision=revision+1
-        WHERE workspace_id=$1 AND id=$2 AND status='FAILED' AND inspection=$4::jsonb
-          AND returned_quantity+$3<=(inspection->>'damagedQuantity')::integer+coalesce((inspection->>'returnedBeforeInspection')::int,0)`,[ctx.workspaceId,l.holdId,l.quantity,JSON.stringify(l.inspection)]);
+      const changed=await db.query(`UPDATE stockchief_runtime.agent_quality_holds SET returned_quantity=returned_quantity+$3::numeric,
+          serial_unit_ids=ARRAY(SELECT x FROM unnest(serial_unit_ids) x WHERE NOT x=ANY($5::text[]) ORDER BY x),revision=revision+1
+        WHERE workspace_id=$1 AND id=$2 AND status='FAILED' AND inspection=$4::jsonb AND written_off_quantity=0
+          AND returned_quantity+$3::numeric<=(inspection->>'damagedQuantity')::numeric+coalesce((inspection->>'returnedBeforeInspection')::numeric,0)`,[ctx.workspaceId,l.holdId,l.quantity,JSON.stringify(l.inspection),l.serialUnitIds||[]]);
       if(!changed.rowCount)throw new ValidationError('The exact failed quality hold changed before dispatch.');
     }
     const result=await native.shipSupplierReturn(scoped(db),ctx,c.return_id,{
@@ -357,7 +358,7 @@ async function page(db,ctx,{id,billId,holdId,number=1}={}){
     hold=(await db.query(`SELECT h.id,h.receipt_line_id,rl.purchase_order_line_id,r.purchase_order_id FROM stockchief_runtime.agent_quality_holds h
       JOIN purchase_order_receipt_lines rl ON rl.workspace_id=h.workspace_id AND rl.id=h.receipt_line_id
       JOIN purchase_order_receipts r ON r.workspace_id=rl.workspace_id AND r.id=rl.receipt_id
-      WHERE h.workspace_id=$1 AND h.id=$2 AND h.status='FAILED' AND (h.inspection->>'damagedQuantity')::int+coalesce((h.inspection->>'returnedBeforeInspection')::int,0)>h.returned_quantity`,[ctx.workspaceId,holdId])).rows[0];
+      WHERE h.workspace_id=$1 AND h.id=$2 AND h.status='FAILED' AND h.written_off_quantity=0 AND (h.inspection->>'damagedQuantity')::numeric+coalesce((h.inspection->>'returnedBeforeInspection')::numeric,0)>h.returned_quantity`,[ctx.workspaceId,holdId])).rows[0];
     if(!hold)throw new ValidationError('Choose a failed receipt inspection with verified damaged units still to return.');
   }
   if(billId){

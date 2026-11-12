@@ -448,8 +448,9 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
     await client.query(`UPDATE purchase_orders SET status=$3,updated_at=$4,
       completed_at=CASE WHEN $3='RECEIVED' THEN $4 ELSE completed_at END WHERE id=$1 AND workspace_id=$2`,
     [purchaseOrderId, ctx.workspaceId, status, nowIso()]);
-    const qualityHoldIds = await require('./agent-quality-holds').applyReceipt(client,ctx,receiptId,input);
-    const result = { purchaseOrderId, receiptId, status, lines: received, ...(qualityHoldIds.length?{qualityHoldIds}:{}) };
+    const quality = await require('./agent-quality-holds').applyReceipt(client,ctx,receiptId,input);
+    const result = { purchaseOrderId, receiptId, status, lines: received, ...(quality.held.length?{qualityHoldIds:quality.held}:{}),
+      ...(quality.suggested.length?{qualitySuggestionIds:quality.suggested}:{}), ...(quality.notHeld.length?{qualityNotHeldIds:quality.notHeld}:{}) };
     await client.query(`UPDATE purchase_order_receipts SET movement_group_ids=$2,result=$3 WHERE id=$1`,
       [receiptId, JSON.stringify(movementGroupIds), JSON.stringify(result)]);
     await event(client, 'purchase_order_events', null, { workspaceId: ctx.workspaceId, recordId: purchaseOrderId,

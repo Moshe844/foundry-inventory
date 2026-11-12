@@ -7,7 +7,7 @@ test('a warehouse receiver can attest physical QC only within assigned locations
  await db.query("INSERT INTO users(id,workspace_id,account_id,name,role,permissions,warehouse_location_ids,created_at) VALUES($1,$2,$3,'QC receiver','staff',$4,$5,now())",[staffId,ctx.workspaceId,outsider.accountId,JSON.stringify(['VIEW','VIEW_PURCHASING','RECEIVE_PO']),JSON.stringify([])]);const staff={workspaceId:ctx.workspaceId,actorId:staffId};
  await assert.rejects(quality.inspect(db,staff,id,pass),/outside your assigned/);assert.equal((await quality.page(db,staff)).rows.length,0);
  await db.query('UPDATE users SET warehouse_location_ids=$2 WHERE id=$1',[staffId,JSON.stringify([f.location.id])]);assert.equal((await quality.page(db,staff)).rows.length,1);
- await assert.rejects(quality.configure(db,staff,p.id,{revision:2,stop:'yes'}),/Only the inventory owner/);await assert.rejects(quality.release(db,staff,id,{revision:1,confirmed:'yes'}),/Only the inventory owner/);
+ await assert.rejects(quality.configure(db,staff,p.id,{revision:2,stop:'yes'}),/Only the inventory owner/);await assert.rejects(quality.release(db,staff,id,{revision:1,confirmed:'yes'}),/inventory owner/);
  assert.equal((await quality.inspect(db,staff,id,pass)).released,true);assert.equal((await f.available()).available,18);
 });
 test('receipt and physical inspection can complete concurrently without holding one another in opposite lock order', {timeout:240000},async t=>{

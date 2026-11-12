@@ -34,7 +34,7 @@
   <% if (warnings && warnings.length) { %><div class="ox-error" role="alert"><% warnings.forEach(function (w) { %><%= w %> <% }) %></div><% } %>
   <% if (sourceEvent) { %><div class="ox-note"><%= sourceEvent.attachmentName ? 'Prepared from ' + sourceEvent.attachmentName + '.' : 'From what you said: “' + sourceEvent.statedAs + '”.' %> Check what physically arrived; nothing has changed yet.</div><% } %>
 
-  <% if(locals.qualityConfigured){ %><div class="ox-note"><p>Matching goods stay on QC hold until a person physically inspects them. <a href="/autopilot/delivery-quality">Review delivery QC checks</a>.</p><label><input type="checkbox" name="qcConfirmed" value="yes"> As owner, I approve applying the configured QC holds to this delivery once if routine handling is unavailable. This does not approve inspection results or release stock.</label></div><% } %>
+  <% if(locals.qualityConfigured){ %><div class="ox-note"><p>Some of these goods are covered by a QC rule. Held goods stay unavailable until a person physically inspects them. <a href="/autopilot/delivery-quality">Review delivery QC checks</a>.</p><label><input type="checkbox" name="qcConfirmed" value="yes"> Hold these goods for QC now, even where StockChief would only suggest a hold. Leave this unticked to let the owner decide.</label></div><% } %>
   <div class="ox-2col">
    <div class="ox-2col__main">
     <section class="ox-card" aria-labelledby="ox-h-arrived">
@@ -81,7 +81,7 @@
      <div class="ox-sum__row"><span>Still to come after this</span><b class="ox-num" data-ox-rcv-left>0</b></div>
      <p class="ox-sum__stock" role="status"><span class="ox-dot ox-dot--green" aria-hidden="true"></span><span data-ox-rcv-status>This completes <%= order.poNumber %>.</span></p>
      <div class="ox-sum__btns"><button class="ox-btn ox-btn--primary ox-btn--block" type="submit" data-ox-rcv-label aria-label="Receive this delivery">Receive <%= remaining %> units</button></div>
-     <p class="ox-fine"><% if(locals.qualityConfigured){ %>Goods matching QC rules stay unavailable until their physical inspection passes. Record failed goods in QC; a write-off needs separate review. The supplier bill is separate.<% }else{ %>Adds good units to stock right away. Damaged units are written off, so they never count as stock you can sell. The supplier bill is separate.<% } %></p>
+     <p class="ox-fine"><% if(locals.qualityConfigured){ %>Goods held for QC stay unavailable until their physical inspection passes. Record damage in the inspection; the owner can then write off failed goods. The supplier bill is separate.<% }else{ %>Adds good units to stock right away. Damaged units are written off, so they never count as stock you can sell. The supplier bill is separate.<% } %></p>
     </section>
    </aside>
   </div>

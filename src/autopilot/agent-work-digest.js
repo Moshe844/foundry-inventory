@@ -211,12 +211,19 @@ async function report(db,ctx,{filter='',page=1}={}){
   WHERE e.workspace_id=$1 AND e.kind='commerce.position.publish' AND e.status='SUCCEEDED' AND e.payload->'channelBuffer'->>'id' IS NOT NULL AND e.result->>'verified'='true'
    AND e.completed_at>=$2::timestamptz AND e.completed_at<$3::timestamptz AND ($5::text IS NULL OR e.completed_at>=$5::timestamptz) ORDER BY e.completed_at,e.id LIMIT $7
  ), delivery_quality AS (
-  SELECT 'delivery-qc' AS origin,h.id,'inventory.inspect_delivery' AS action_type,
-   'Applied delivery QC hold: '||h.quantity||' units of '||s.code AS summary,
+  (SELECT 'delivery-qc' AS origin,h.id,'inventory.inspect_delivery' AS action_type,
+   'Applied delivery QC hold: '||trim_scale(h.quantity)||' units of '||s.code AS summary,
    jsonb_build_object('holdId',h.id) AS result,h.created_at AS executed_at,'{}'::jsonb AS payload,false AS undone
   FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id
   WHERE h.workspace_id=$1 AND h.automatic AND h.created_at>=$2::timestamptz AND h.created_at<$3::timestamptz
-   AND ($5::text IS NULL OR h.created_at>=$5::timestamptz) ORDER BY h.created_at,h.id LIMIT $7
+   AND ($5::text IS NULL OR h.created_at>=$5::timestamptz) ORDER BY h.created_at,h.id LIMIT $7)
+  UNION ALL
+  (SELECT 'delivery-qc' AS origin,h.id,'inventory.inspect_delivery' AS action_type,
+   'Released passed QC goods under your rule: '||trim_scale(h.quantity-h.returned_quantity-h.written_off_quantity)||' units of '||s.code AS summary,
+   jsonb_build_object('holdId',h.id,'released',true) AS result,h.released_at AS executed_at,'{}'::jsonb AS payload,false AS undone
+  FROM stockchief_runtime.agent_quality_holds h JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id
+  WHERE h.workspace_id=$1 AND h.released_by_rule AND h.released_at>=$2::timestamptz AND h.released_at<$3::timestamptz
+   AND ($5::text IS NULL OR h.released_at>=$5::timestamptz) ORDER BY h.released_at,h.id LIMIT $7)
  ), promotion_purchases AS (
   SELECT 'promotion-purchase' AS origin,p.id,'purchasing.plan_promotion_stock' AS action_type,
    'Prepared promotion purchase draft: '||o.po_number||' from '||s.reference AS summary,

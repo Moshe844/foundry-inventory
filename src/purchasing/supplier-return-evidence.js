@@ -49,7 +49,7 @@ async function receipts(db,ctx,purchaseId,ids=null){
   return (await db.query(`SELECT l.id,l.sku_id,l.location_id,l.lot_id,l.lot_code,l.serials,l.quantity_units,l.secondary_quantity,l.movement_ids,
     l.purchase_order_line_id,r.reference,r.received_at,s.code,i.name,i.tracking_mode,i.unit_label,i.quantity_precision,i.quantity_increment,
     i.secondary_unit_label,i.secondary_precision,i.secondary_increment,h.id hold_id,h.revision hold_revision,h.status hold_status,
-    h.inspection,h.quantity hold_quantity,h.returned_quantity,loc.name location_name
+    h.inspection,h.quantity hold_quantity,h.returned_quantity,h.written_off_quantity,loc.name location_name
     FROM purchase_order_receipt_lines l JOIN purchase_order_receipts r ON r.workspace_id=l.workspace_id AND r.id=l.receipt_id
     JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
     JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
@@ -120,7 +120,8 @@ async function confirmLines(db,ctx,b,input,{caseId=null}={}){
     if(!position||Number(position.on_hand)<qty||weight!=null&&Number(position.secondary_on_hand)<weight)throw new ValidationError('The exact goods or weight are no longer on hand at the original receipt location.');
     if(r.lot_id&&!(await db.query('SELECT 1 FROM lot_balances WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3 AND quantity>=$4',
       [ctx.workspaceId,r.lot_id,r.location_id,qty])).rowCount)throw new ValidationError('The original lot no longer holds the requested quantity at this location.');
-    if(r.hold_id&&r.hold_status!=='PASSED'&&(r.hold_status!=='FAILED'||!r.inspection?.damagedQuantity||
+    if(r.hold_id&&Number(r.written_off_quantity)>0&&r.hold_status==='FAILED')throw new ValidationError('These failed QC goods were written off. Return goods from another receipt.');
+    if(r.hold_id&&['HELD','FAILED'].includes(r.hold_status)&&(r.hold_status!=='FAILED'||!r.inspection?.damagedQuantity||
       primaryAtoms(exact.add(qty,claimed.quantity))>primaryAtoms(exact.add(r.inspection.damagedQuantity,r.inspection.returnedBeforeInspection||0)))){
       throw new ValidationError('Confirm the physically damaged count on the original QC hold before returning it.');
     }
