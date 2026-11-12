@@ -1128,6 +1128,19 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current invoice before preparing its reminder.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/customer-credits/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this customer credit or refund',{action:'customer_credit.prepare',recordReference:req.body.recordReference,
+      creditKind:req.body.creditKind,creditLines:req.body.creditKind==='price_adjustment'?req.body.creditLines:undefined,reason:req.body.reason,refundPayments:req.body.refundPayments||undefined});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact invoice or order and what happened.');res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/customer-credits/refunds/:id/paid',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-customer-credits').markPaid(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Refund recorded as paid.');res.redirect(303,'/autopilot/reviews/customer-credits');
+  }));
+  router.post('/autopilot/customer-credits/refunds/:id/verify',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-customer-credits').verifyProviderPart(database,req.ctx,req.params.id);
+    req.flash('success','Stripe confirmed the refund and it was recorded.');res.redirect(303,'/autopilot/reviews/customer-credits');
+  }));
   router.post('/autopilot/invoice-reminders/disputes',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await require('../../accounting/agent-invoice-reminders').dispute(database,req.ctx,req.body);
     req.flash('success',result.resolved?'Dispute settled. Reminders for this invoice resume.':'Reminders for this invoice stopped until you settle the dispute.');

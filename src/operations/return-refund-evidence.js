@@ -74,12 +74,14 @@ async function creditProof(db,workspaceId,returnId,currency){
 }
 
 async function paymentsFor(db,workspaceId,invoice,lock){
+  // Job 107 credits refund through the same original payments as returns.
+  const credits=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_customer_credit_refunds');
   if(lock)await db.query(`SELECT p.id FROM accounting_payments p WHERE p.workspace_id=$1 AND EXISTS(
     SELECT 1 FROM accounting_payment_allocations l WHERE l.workspace_id=p.workspace_id AND l.payment_id=p.id AND l.customer_invoice_id=$2)
     ORDER BY p.id FOR UPDATE`,[workspaceId,invoice.id]);
   return (await db.query(`SELECT p.id,p.payment_number,p.payment_date,p.created_at,p.amount_minor,p.method,p.reference,p.source_key,p.currency,
       p.cash_account_id,a.name cash_name,a.active ledger_active,a.account_type,a.normal_balance,
-      alloc.amount_minor AS allocated,coalesce(spent.all_minor,0) already_paid,coalesce(spent.invoice_minor,0) already_paid_invoice,
+      alloc.amount_minor AS allocated,coalesce(spent.all_minor,0)+coalesce(credit.all_minor,0) already_paid,coalesce(spent.invoice_minor,0)+coalesce(credit.invoice_minor,0) already_paid_invoice,
       proof.cash_paid,proof.valid_journal,coalesce(payments.identities,'[]'::jsonb) provider_identities
     FROM accounting_payments p JOIN accounting_accounts a ON a.workspace_id=p.workspace_id AND a.id=p.cash_account_id
     JOIN LATERAL(SELECT sum(l.amount_minor) AS amount_minor FROM accounting_payment_allocations l
@@ -93,6 +95,9 @@ async function paymentsFor(db,workspaceId,invoice,lock){
       sum(s.amount_minor) FILTER(WHERE plan.invoice_id=$2) invoice_minor FROM stockchief_runtime.agent_return_refund_parts s
       JOIN stockchief_runtime.agent_return_refund_plans plan ON plan.workspace_id=s.workspace_id AND plan.id=s.plan_id
       WHERE s.workspace_id=p.workspace_id AND s.original_payment_id=p.id AND s.status IN('APPROVED','SETTLED','REVIEW')) spent ON true
+    ${credits?`LEFT JOIN LATERAL(SELECT sum(r.amount_minor) all_minor,sum(r.amount_minor) FILTER(WHERE c.invoice_id=$2 AND c.kind='price_adjustment') invoice_minor
+      FROM stockchief_runtime.agent_customer_credit_refunds r JOIN stockchief_runtime.agent_customer_credits c ON c.workspace_id=r.workspace_id AND c.id=r.credit_id
+      WHERE r.workspace_id=p.workspace_id AND r.original_payment_id=p.id AND r.status<>'FAILED') credit ON true`:'CROSS JOIN LATERAL(SELECT NULL::bigint all_minor,NULL::bigint invoice_minor) credit'}
     LEFT JOIN LATERAL(SELECT jsonb_agg(DISTINCT jsonb_build_object('provider',e.provider,'requestId',q.id,'externalPaymentId',e.external_payment_id,
       'merchant',coalesce(e.payload::jsonb->>'providerAccountId',e.payload::jsonb->>'account',
         (SELECT k.merchant_account_id FROM cardknox_checkout_sessions k WHERE q.provider='cardknox' AND k.workspace_id=q.workspace_id AND k.request_id=q.id)),
@@ -236,4 +241,4 @@ async function snapshot(db,ctx,returnId,{requested='',lock=false}={}){
     legacyGroups:modern?null:financials.groups(row)})};
 }
 
-module.exports={ACTION,JOB,owner,access,snapshot,creditProof,checkProviderRefundHistory};
+module.exports={ACTION,JOB,owner,access,snapshot,creditProof,checkProviderRefundHistory,provenTenders,offline};
