@@ -126,8 +126,8 @@ function present(proposal){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one quotation follow-up',fields:[{label:'Quote',value:p.quoteNumber},{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'Quoted total',value:require('../domain/currency').format(p.totalMinor,p.currency)},{label:'Valid through',value:p.validUntil},{label:p.presentationBasis==='mailbox_accepted'?'Quotation emailed':'Customer received it',value:p.presentedOn},{label:p.presentationBasis==='mailbox_accepted'?'Sending confirmation':'Your delivery reference',value:p.presentationEvidence},{label:'Message',multiline:true,value:require('../sales/agent-quote-followups').compose(p).body}]};
  }
  if(proposal.action_type==='customer_invoice.remind'){
-  const p=proposal.payload,words='Hello '+p.customerName+',\n\nOur records show '+require('../domain/currency').format(p.balanceMinor,p.currency)+' outstanding on invoice '+p.invoiceNumber+', due '+p.dueDate+'. Please let us know if you have already paid or have a question about this invoice.\n\nThank you.';
-  return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',value:words}]};
+  const p=proposal.payload,words=require('../accounting/agent-invoice-reminders').compose(p);
+  return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Subject',value:words.subject},{label:'Message',multiline:true,value:words.body}]};
  }
  if(proposal.action_type==='customer_payment.match_bank_line'){
   const p=proposal.payload,money=require('../domain/currency');

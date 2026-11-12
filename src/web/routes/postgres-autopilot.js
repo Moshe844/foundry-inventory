@@ -1128,6 +1128,11 @@ function createPostgresAutopilotRouter(database,options={}){
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current invoice before preparing its reminder.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/invoice-reminders/disputes',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await require('../../accounting/agent-invoice-reminders').dispute(database,req.ctx,req.body);
+    req.flash('success',result.resolved?'Dispute settled. Reminders for this invoice resume.':'Reminders for this invoice stopped until you settle the dispute.');
+    res.redirect(303,'/autopilot/reviews/invoice-reminders');
+  }));
   router.post('/autopilot/invoice-reminders/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-invoice-reminders').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/invoice-reminders');

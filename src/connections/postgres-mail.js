@@ -157,6 +157,9 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
         await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:require('../sales/agent-repeat-orders').kind,idempotencyKey:'customer-repeat-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
       }
     }
+    // Job 102: a customer disputing an invoice, or saying it is paid, stops its reminders.
+    if(match.kind==='customer'&&match.id)await require('../accounting/agent-invoice-reminders').fromEmail(client,connection.workspace_id,
+      {messageId:id,customerId:match.id,subject:message.subject,body:message.bodyText||message.body,threadId,connectorId:connection.id});
     // Job 81: a customer asking for their account statement.
     if(match.kind==='customer'&&require('../accounting/statement-request').read(message.subject,message.bodyText||message.body)){
       const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
