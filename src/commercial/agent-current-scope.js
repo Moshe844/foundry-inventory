@@ -317,7 +317,11 @@ const notes={
   starter:'Suggests one item at one location to review from its stock turns, margin return and days of supply. Checking every item each day and flagging the worst in Needs you needs Growth.',
   growth:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
   pro:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
-  enterprise:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.'}
+  enterprise:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.'},
+ 163:{common:summaries[163],
+  growth:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.',
+  pro:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.',
+  enterprise:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.'}
 };
 function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};

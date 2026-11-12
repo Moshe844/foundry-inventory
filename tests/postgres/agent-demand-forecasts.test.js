@@ -149,7 +149,7 @@ test('job 144: every product is forecast with its seasons, and on Growth and up 
   const weekReview = (await reviews.run(db, ctx, 'seasonal-demand', { filter: 'SEASON' })).rows[0];
   assert.deepEqual([weekReview['Last full week forecast'], weekReview['Last full week actual'], weekReview.Planning], [predicted, expected(7, addDays(today, -7)), 'Used for planning']);
   await db.query('UPDATE forecast_outcomes SET scored_at=$2 WHERE workspace_id=$1', [ws, at(addDays(today, -1))]);
-  assert.match((await reviews.run(db, ctx, 'service-levels')).summary, /Across 1 comparable SKU forecast/);
+  assert.match((await reviews.run(db, ctx, 'service-levels')).summary, /Across 1 scored weekly forecast for 1 product/);
   await run();
   assert.equal((await db.query('SELECT count(*)::int n FROM forecast_outcomes WHERE workspace_id=$1', [ws])).rows[0].n, 1, 'Each week is scored once.');
 

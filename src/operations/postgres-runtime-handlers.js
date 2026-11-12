@@ -742,6 +742,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'reports.net-margin.v1':external((job,database)=>require('../reports/agent-net-margin').run(database,job.workspaceId)),
   'reports.roi.v1':external((job,database)=>require('../reports/agent-roi-report').run(database,job.workspaceId,job.payload)),
   'reports.stock-health.v1':external((job,database)=>require('../forecasting/agent-stock-health').run(database,job.workspaceId)),
+  'reports.service-levels.v1':external((job,database)=>require('../forecasting/agent-service-levels').run(database,job.workspaceId)),
   'reports.month-end-stock.v1':external((job,database)=>require('../reports/agent-month-end-stock').run(database,job.workspaceId,job.payload)),
   'reports.change-digest.v1':external((job,database)=>require('../reports/agent-change-explanations').run(database,job.workspaceId,job.payload)),
   'reports.board-pack.v1':external((job,database)=>require('../reports/agent-board-pack').run(database,job.workspaceId,job.payload)),

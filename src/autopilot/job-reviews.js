@@ -98,7 +98,7 @@ const definitions=[
   ...require('../accounting/agent-report-packs').definitions,
   ...require('./activity-watches').definitions,
   ...require('./daily-briefs').definitions,
-  {id:163,key:'service-levels',label:'Forecast accuracy, fill rate and on-time delivery',filterLabel:'Customer or supplier name',readPage:require('../forecasting/agent-service-levels').report},
+  ...require('../forecasting/agent-service-levels').definitions,
   {id:167,key:'brand-watches',label:'Watch stock levels by brand',sql:require('./brand-watches').matching,
     summary:'Compares the physical quantity of each active SKU across locations against the saved watch for its product brand.'},
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,

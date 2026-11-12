@@ -779,6 +779,13 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',r.replayed?'Nothing changed since the last check.':(r.opened.length?r.opened.length+' item'+(r.opened.length===1?'':'s')+' flagged.':'Checked every item.')+(r.cleared.length?' '+r.cleared.length+' cleared.':''));
     res.redirect(303,stockHealth.href+'#stock-health-flags');}));
   router.post(stockHealth.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  // Job 163: forecast accuracy, fill rate and on-time in full, kept current on Growth and up.
+  const serviceLevels=require('../../forecasting/agent-service-levels');
+  router.get(serviceLevels.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/service-levels',{title:'Forecast accuracy and delivery',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>serviceLevels.page(database,req.ctx,req.query),402)));
+  router.get(serviceLevels.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>reportFile(res,await serviceLevels.download(database,req.ctx,req.query))));
+  router.post(serviceLevels.href+'/keep',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await serviceLevels.keep(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since this month was kept.':'Month kept.');
+    res.redirect(303,serviceLevels.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-months');}));
   router.post(roiReport.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:r.period})+'#kept-reports');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));

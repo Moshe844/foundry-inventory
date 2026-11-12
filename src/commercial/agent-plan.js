@@ -203,6 +203,7 @@ const actionJobs=new Map([
   ['report.board_pack',159],
   ['report.roi',161],
   ['report.stock_health',162],
+  ['report.service_levels',163],
   ['channel.price_check',87],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],
