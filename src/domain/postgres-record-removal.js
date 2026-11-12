@@ -335,4 +335,4 @@ async function runImportRemoval(job,database){
 }
 async function importRemoval(db,ctx,importId){return liveRemoval(db,ctx,importId);}
 
-module.exports={KINDS,settings,review,remove,runImportRemoval,runProductRemoval,importRemoval,protectingReferences,label};
+module.exports={KINDS,settings,review,remove,runImportRemoval,runProductRemoval,importRemoval,protectingReferences,label,openWork};
