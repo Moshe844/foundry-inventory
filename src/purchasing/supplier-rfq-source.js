@@ -20,11 +20,23 @@ function input(value){
  if(supplierIds.length<2||supplierIds.length>20||supplierIds.some(s=>typeof s!=='string'||!s)||new Set(supplierIds).size!==supplierIds.length)throw new ValidationError('Choose two to twenty distinct known suppliers.');
  if(!lines.length||lines.length>100||new Set(lines.map(l=>l.skuId)).size!==lines.length||lines.some(l=>typeof l.skuId!=='string'||!l.skuId||!/^\d{1,6}$/.test(String(l.quantity))||Number(l.quantity)<1||Number(l.quantity)>100000))throw new ValidationError('Enter one to 100 distinct whole-unit products with explicit quantities from one to 100,000.');
  const replyBy=String(value.replyBy||'');if(!/^\d{4}-\d{2}-\d{2}$/.test(replyBy)||!Number.isFinite(Date.parse(replyBy))||new Date(replyBy+'T00:00:00Z').toISOString().slice(0,10)!==replyBy)throw new ValidationError('Choose the actual date you want supplier quotations by.');
- return {reference,requestKey,connectorId,supplierIds:[...supplierIds].sort(),lines:lines.map(l=>({skuId:l.skuId,quantity:Number(l.quantity)})).sort((a,b)=>a.skuId.localeCompare(b.skuId)),replyBy};
+ // Job 93: every new RFQ also says when and where the goods are needed.
+ // Requests saved before that keep their original wording.
+ const deliverBy=value.deliverBy==null||value.deliverBy===''?null:String(value.deliverBy),locationId=value.locationId==null||value.locationId===''?null:String(value.locationId);
+ if(deliverBy!==null&&(!/^\d{4}-\d{2}-\d{2}$/.test(deliverBy)||!Number.isFinite(Date.parse(deliverBy))||new Date(deliverBy+'T00:00:00Z').toISOString().slice(0,10)!==deliverBy))throw new ValidationError('Choose the actual date you need the goods delivered by.');
+ if((deliverBy===null)!==(locationId===null))throw new ValidationError('Choose both the delivery date and where the goods should be delivered.');
+ return {reference,requestKey,connectorId,supplierIds:[...supplierIds].sort(),lines:lines.map(l=>({skuId:l.skuId,quantity:Number(l.quantity)})).sort((a,b)=>a.skuId.localeCompare(b.skuId)),replyBy,...(deliverBy?{deliverBy,locationId}:{})};
 }
 async function snapshot(c,ctx,raw,{readOnly=false}={}){
  await access(c,ctx,{readOnly});const scope=input(raw),clock=await require('../lib/business-time').forWorkspace(c,ctx.workspaceId);
  if(scope.replyBy<clock.calendarDate||scope.replyBy>addDays(clock.calendarDate,365))throw new ValidationError('Choose a quotation deadline from today through the next year.');
+ let location;
+ if(scope.deliverBy){
+  if(scope.deliverBy<scope.replyBy||scope.deliverBy>addDays(clock.calendarDate,365))throw new ValidationError('Choose a delivery date on or after the reply date and within the next year.');
+  location=(await c.query('SELECT id,name,address FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[ctx.workspaceId,scope.locationId])).rows[0];
+  if(!location||/[\r\n\x00-\x1f\x7f]/.test(location.name))throw new ValidationError('Choose an active location for the delivery.');
+  location={id:location.id,name:location.name,address:location.address?String(location.address).replace(/\s*[\r\n]+\s*/g,', ').replace(/[\x00-\x1f\x7f]/g,' ').trim()||null:null};
+ }
  const mailbox=await require('../shipping/agent-shipping-notices').mailbox(c,ctx.workspaceId,scope.connectorId);
  if(!mailbox)throw new ValidationError('Choose a connected, active Gmail or Microsoft 365 mailbox before preparing supplier requests.');
  const suppliers=(await c.query("SELECT id,name,email,currency FROM suppliers WHERE workspace_id=$1 AND id=ANY($2::text[]) AND status='active' ORDER BY id",[ctx.workspaceId,scope.supplierIds])).rows;
@@ -42,9 +54,9 @@ async function snapshot(c,ctx,raw,{readOnly=false}={}){
  for(const link of links){
   if(link.units_per_purchase_unit!==null&&(!Number.isSafeInteger(Number(link.units_per_purchase_unit))||Number(link.units_per_purchase_unit)<1)||link.minimum_order_quantity!==null&&(!Number.isSafeInteger(Number(link.minimum_order_quantity))||Number(link.minimum_order_quantity)<0)||link.order_multiple!==null&&(!Number.isSafeInteger(Number(link.order_multiple))||Number(link.order_multiple)<1))throw new ValidationError('Review invalid saved supplier pack terms before quoting. Unconfirmed terms can remain unknown; they are never guessed.');
  }
- const facts={...scope,preparedAt:clock.instant,timeZone:clock.timeZone,suppliers,products,links,mailboxAccount:mailbox.provider_account_id,providerType:mailbox.provider_type};return {...facts,sourceFingerprint:hash(facts)};
+ const facts={...scope,preparedAt:clock.instant,timeZone:clock.timeZone,suppliers,products,links,mailboxAccount:mailbox.provider_account_id,providerType:mailbox.provider_type,...(location?{location}:{})};return {...facts,sourceFingerprint:hash(facts)};
 }
-function profile(p){return {supplierIds:p.supplierIds,connectorId:p.connectorId,suppliers:p.suppliers,products:p.products,links:p.links,mailboxAccount:p.mailboxAccount,providerType:p.providerType,timeZone:p.timeZone};}
+function profile(p){return {supplierIds:p.supplierIds,connectorId:p.connectorId,suppliers:p.suppliers,products:p.products,links:p.links,mailboxAccount:p.mailboxAccount,providerType:p.providerType,timeZone:p.timeZone,location:p.location};}
 async function knownPartners(c,ctx,p){
  const known=(await c.query(`SELECT s.id FROM suppliers s WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND (
   EXISTS(SELECT 1 FROM purchase_orders o WHERE o.workspace_id=s.workspace_id AND o.supplier_id=s.id AND o.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND o.approved_by_user_id IS NOT NULL)
@@ -62,7 +74,19 @@ function compose(p,supplierId){
   const multiple=link.order_multiple===null?'Order multiple not confirmed. Please state it.':'Recorded order multiple: '+link.order_multiple+' purchase units.';
   return product.code+' · '+product.name+'\nRequested: '+quantity+(link.supplier_sku?'\nYour product code: '+link.supplier_sku:'\nPlease confirm that you can supply this exact product.')+'\n'+terms+' '+minimum+' '+multiple+'\nPlease quote availability for the requested quantity and identify any different supply conditions separately.';
  });
- const body='Hello '+s.name+',\n\nPlease provide a quotation for RFQ '+p.reference+' by '+p.replyBy+'.\n\n'+rows.join('\n\n')+'\n\nPlease state your unit prices in '+s.currency+', availability, earliest delivery date, freight and tax separately, quote validity and any changed pack or payment terms.\n\nThis is a request for a quotation only. It is not a purchase order, acceptance of terms, delivery promise or commitment to buy. No order has been placed.\n\nThank you.';
+ const notOrder='This is a request for a quotation only. It is not a purchase order, acceptance of terms, delivery promise or commitment to buy. No order has been placed.';
+ const body=p.deliverBy?'Hello '+s.name+',\n\nPlease send us a quotation for RFQ '+p.reference+' by '+p.replyBy+'.\n\n'+rows.join('\n\n')+'\n\nNeeded by '+p.deliverBy+', delivered to '+p.location.name+(p.location.address?', '+p.location.address:'')+'.\n\nPlease state your unit prices in '+s.currency+', availability, the delivery date you can meet, freight and tax separately, quote validity and any changed pack or payment terms.\n\nYou can reply with one line per product, like this:\n'+replyFormat(p,s)+'\n\n'+notOrder+'\n\nThank you.'
+  :'Hello '+s.name+',\n\nPlease provide a quotation for RFQ '+p.reference+' by '+p.replyBy+'.\n\n'+rows.join('\n\n')+'\n\nPlease state your unit prices in '+s.currency+', availability, earliest delivery date, freight and tax separately, quote validity and any changed pack or payment terms.\n\n'+notOrder+'\n\nThank you.';
  if(body.length>100000)throw new ValidationError('Choose fewer products so each complete quote request fits in one email.');return {subject:'Request for quotation · '+p.reference,body};
 }
-module.exports={owner,access,input,snapshot,profile,compose,knownPartners};
+// The reply lines StockChief can read on its own (supplier-rfq-reply-parser).
+function replyFormat(p,s){
+ const first=p.products.find(v=>v.id===p.lines[0].skuId);
+ return first.code+': '+p.lines[0].quantity+' at '+s.currency+' 0.00 each\nFreight: '+s.currency+' 0.00\nValid through: YYYY-MM-DD\nDelivery date: YYYY-MM-DD';
+}
+// A reminder to a supplier who has not replied. It never changes the request.
+function composeChase(p,supplierId,sentOn){
+ const s=p.suppliers.find(s=>s.id===supplierId);if(!s)throw new ValidationError('This supplier is not in the reviewed RFQ.');
+ return {subject:'Reminder: Request for quotation · '+p.reference,body:'Hello '+s.name+',\n\nWe sent you RFQ '+p.reference+' on '+sentOn+' and have not had your quotation yet. We asked for a reply by '+p.replyBy+(p.deliverBy?' and need the goods by '+p.deliverBy:'')+'.\n\nCould you send your prices, availability and delivery date, or tell us if you cannot quote?\n\nThis is a request for a quotation only. No order has been placed.\n\nThank you.'};
+}
+module.exports={owner,access,input,snapshot,profile,compose,composeChase,knownPartners};
