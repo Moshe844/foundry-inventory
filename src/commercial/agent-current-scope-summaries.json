@@ -151,7 +151,7 @@
   "173": "Supports in-app notices and scoped threshold email. Push, SMS and delivery for other alert types remain open.",
   "174": "Collects supported actor-private approvals in Needs you and excludes stale or completed decisions. Bulk approval of arbitrary decisions remains unqualified.",
   "175": "Opens authenticated replenishment approval links on a phone; opening a link creates no order. Other approval types and live email-link delivery remain open.",
-  "176": "Routes purchase signatures by current permission, whole-inventory access and amount authority, with owner fallback. Other approval types remain open.",
+  "176": "Sends every waiting approval (purchases, stock adjustments and write-offs, refunds and credits, landed costs, supplier prices, transfers, returns) to one person: the owner's rule first (\"refunds over $500 go to Sarah\"), else the team member with its permission, the whole inventory and the lowest limit that covers it, else the owner. Limits are checked again on approval. The first 14 days, Watch only, pause and Ask me first keep everything with the owner. Each reviewer is audited.",
   "177": "Assigns warehouse quantity counts to eligible staff and records their observations for owner review. Picking and other task types remain open.",
   "179": "Answers supported inventory and warehouse how-to questions from the in-app guide, filtered by current plan, role and warehouse access.",
   "180": "Shows daily stock activities by staff member and the overdue-record count. Other kinds of team work remain outside this report.",

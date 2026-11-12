@@ -5,6 +5,7 @@
 <% if(result.openToBuyPath){ %><p><a class="btn" href="<%= result.openToBuyPath+(filter?'?month='+encodeURIComponent(filter):'') %>">Open monthly buying plans</a></p><% } %>
 <% if(result.cyclePlan){ %><p><a class="btn" href="/autopilot/daily-cycle-counts">Open daily cycle-count plans</a></p><% } %>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
+<% if(result.approvalRoutingPath){ %><p><a class="btn" href="<%= result.approvalRoutingPath %>">Set who approves what</a></p><% } %>
 <% if(result.backorderLink){ %><p><a class="btn" href="/autopilot/backorders">Open backorders</a></p><% } %>
 <% if(result.staleIncomingLink){ %><p><a class="btn" href="/autopilot/stale-incoming">Goods that will not arrive</a></p><% } %>
 <% if(result.stockSharingLink){ %><p><a class="btn" href="/autopilot/stock-sharing">Share scarce stock by your rules</a></p><% } %>
