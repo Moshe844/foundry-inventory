@@ -11,6 +11,15 @@ function planRequirements(plan){
  if(!t.workbook&&t.sheetCount>1&&t.worksheetScope?.confirmed!==true)add('worksheets','Review the worksheet scope','Confirm which worksheets belong in this import.','#worksheet-scope','Review worksheets','Review every worksheet before approval. Read the complete workbook again, or explicitly confirm the displayed worksheet scope; other worksheets will not be imported.');
  if((plan.sourceKind==='image'||t.visualSource===true)&&t.imageReadingConfirmed!==true)add('image','Check the image reading','Compare the extracted codes, quantities and prices with the original, then save your review.','#image-reading','Review image reading','Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
  if(t.handwriting?.purpose==='delivery'&&t.agentJob!==43)add('receiving-form','Receive against the purchase order','Choose the placed purchase order and confirm whether the written quantities are stock units or its purchase packs.','#receiving-form','Prepare receiving form','Use this delivery note to prepare a purchase-order receiving form. Do not import it as unrelated stock.');
+ // Job 133: a column StockChief is not sure about stops the import. A clear
+ // mapping proposed for a person (Starter, or automatic work held) is
+ // confirmed by the person's approval of the import.
+ if(t.columnReview?.state==='ask'&&(m.name!==undefined||m.code!==undefined)){
+  const unclear=(t.columnReview.unclear||[]).filter(u=>u.field);
+  add('columns','Tell StockChief what '+(unclear.length===1?'one column holds':unclear.length+' columns hold'),
+   'StockChief is not sure about '+unclear.map(u=>'“'+u.name+'”').slice(0,3).join(', ')+(unclear.length>3?' and others':'')+'. It does not guess.',
+   '#import-columns-question','Answer the column question','Tell StockChief what each unclear column holds before importing.');
+ }
  if(m.name===undefined&&m.code===undefined)add('identity','Identify the products','Choose the column containing product names or codes.','#column-mapping','Review product columns','Map a product name or SKU and recalculate the preview before approving.');
  if(t.existingStockRows>0&&!t.importMode)add('stock-intent','Choose how quantities affect existing stock','Choose whether these counts replace on-hand quantities or record an additional delivery.','#import-stock-intent','Choose how to use quantities','This file matches existing stock. Choose set on-hand quantities or receive additional stock before approval.');
  if(plan.recordsInvalid>0){
@@ -40,7 +49,7 @@ function review(plan,evidence={}){
  const editable=plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL';
  return {blockers,canApprove:editable&&blockers.length===0,needsAnswer:blockers.length>0,
   needsTrackingAnswer:evidence.trackingQuestion?.state==='needs_input',needsImageAnswer:requirements.some(r=>r.code==='image'),
-  needsIdentity:requirements.some(r=>r.code==='identity'),needsStockIntent:requirements.some(r=>r.code==='stock-intent'),needsWorksheetScope:requirements.some(r=>r.code==='worksheets'),
+  needsIdentity:requirements.some(r=>r.code==='identity'),needsColumns:requirements.some(r=>r.code==='columns'),needsStockIntent:requirements.some(r=>r.code==='stock-intent'),needsWorksheetScope:requirements.some(r=>r.code==='worksheets'),
   needsNumberAnswer:Boolean(evidence.needsNumberAnswer),needsLocation:Boolean(evidence.missingLocationRows),needsAccounting:Boolean(evidence.missingAccountingSetup),
   needsPartialAnswer:plan.recordsInvalid>0&&!t.allowPartialImport};
 }

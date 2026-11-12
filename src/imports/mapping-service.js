@@ -267,6 +267,7 @@ async function proposeMappings(sheet, options = {}) {
     aiNote: '',
     aiUsed: false,
     columnProfiles: guess.profiles,
+    confident: guess.confident,
   };
 
   // A caller that has already worked the columns out — onboarding profiles a

@@ -572,6 +572,12 @@ async function analyseInner(database, ctx, input) {
   const validationContext=plannedLocations.withProposals(context,proposedLocations);
   const validated=validateRows(streaming?{...sheet,rows:[]}:sheet,proposal.mappings,proposal,validationContext,input);
   const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
+  // Job 133: a mapping StockChief proposed is checked column by column. Only
+  // agent plans get the review; an explicit caller mapping is already settled.
+  const columnReview=(!input.mappings||input.reviewColumns===true)&&!workbook&&!handwriting&&!input.imageSource
+    ?await columnMapping.review(database,ctx.workspaceId,{columns:sheet.columns,rows:sheet.rows,mappings:proposal.mappings,
+      profiles:proposal.columnProfiles||[],confident:proposal.confident||[],aiApplied:proposal.aiApplied||[],
+      saved:reuse?template.mappings:prior?json(prior.field_mappings,null):null}):null;
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
     sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?parsedWorkbook.format==='pdf'
@@ -580,6 +586,7 @@ async function analyseInner(database, ctx, input) {
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{...(analysisNotice?{analysisNotice}:{}),...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
       ...(template?{columnTemplate:{source:template.source,mappings:template.mappings,automatic:reuse}}:{}),
+      ...(columnReview?{columnReview}:{}),
       ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(handwriting?{handwriting:parsedWorkbook.handwriting}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
@@ -604,6 +611,12 @@ async function analyseInner(database, ctx, input) {
       const current=await columnMapping.match(client,ctx.workspaceId,layout);
       if(!await columnMapping.automatic(client,ctx.workspaceId)||current?.source!==template.source)
         throw new ValidationError('The approved mapping or the authority to apply it changed while reading this file. Read the original file again.');
+    }
+    if(columnReview?.state==='automatic'){
+      const now=await columnMapping.authority(client,ctx.workspaceId);
+      if(!now?.automatic)throw new ValidationError('The authority to map these columns changed while reading this file. Read the original file again.');
+      await require('../operations/postgres-security-audit').record(client,ctx,{action:'Import columns mapped by StockChief',reference:plan.id,
+        after:{mappings:plan.fieldMappings,columns:columnReview.columns.map(c=>({name:c.name,field:c.field,how:c.how}))}});
     }
     // Keep paged validation on bounded index plans even before fresh catalogue statistics settle.
     await bulkPlanning(client);
@@ -862,13 +875,14 @@ async function revise(database,ctx,id,input={},options={}){
       unmappedNumeric=candidates.filter(c=>c.filled>0&&c.numeric/c.filled>=0.8).map(c=>c.name);
     }
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&(input.confirmCatalogOnly===true||input.confirmCatalogOnly===undefined&&!mappingChanged&&plan.transformations.confirmCatalogOnly===true);
+    const columnReview=require('./agent-column-mapping').afterChange(plan.transformations.columnReview,fieldMappings,{confirmed:input.confirmColumns===true,actorId:ctx.actorId});
     const worksheetScope=confirmWorksheetScope(plan,ctx,input);
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,documentRowRoles,
         ...(worksheetScope?{worksheetScope}:{}),
         ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageCellOverrides,imageReviewedRows:[...imageReviewedRows],imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
-        unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,
+        unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,...(columnReview?{columnReview}:{}),
         allowPartialImport:input.allowPartialImport===undefined?Boolean(plan.transformations.allowPartialImport):input.allowPartialImport===true},
       planVersion:plan.planVersion+1};
     if(input.importMode!==undefined)revised.transformations.importMode=input.importMode;
@@ -923,6 +937,8 @@ async function revise(database,ctx,id,input={},options={}){
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
       revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
     await executionIdentities.mark(client,ctx,revised);
+    if(input.confirmColumns===true&&plan.transformations.columnReview)await require('../operations/postgres-security-audit').record(client,ctx,{action:'Import columns confirmed',reference:id,
+      before:{state:plan.transformations.columnReview.state,mappings:plan.fieldMappings},after:{state:'confirmed',mappings:fieldMappings}});
     await options.beforeCommit?.(client,revised);
     return revised;
     }finally{scratch?.close();}
@@ -988,6 +1004,14 @@ async function approve(database, ctx, id, expectedHash) {
     const at=nowIso();
     await client.query(`UPDATE import_plans SET approval_status='APPROVED',approved_by_user_id=$3,approved_at=$4
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,ctx.actorId,at]);
+    // Job 133: approving a preview whose columns StockChief only proposed is
+    // the person's confirmation of those columns.
+    if(plan.transformations.columnReview?.state==='confirm'){
+      const confirmed=require('./agent-column-mapping').afterChange(plan.transformations.columnReview,plan.fieldMappings,{confirmed:true,actorId:ctx.actorId});
+      await client.query("UPDATE import_plans SET transformations=(transformations::jsonb||jsonb_build_object('columnReview',$3::jsonb))::text WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,JSON.stringify(confirmed)]);
+      await require('../operations/postgres-security-audit').record(client,ctx,{action:'Import columns confirmed',reference:id,before:{state:'confirm'},after:{state:'confirmed',mappings:plan.fieldMappings,withApproval:true}});
+      plan.transformations.columnReview=confirmed;
+    }
     return {...plan,approvalStatus:'APPROVED',approvedByUserId:ctx.actorId,approvedAt:at};
   },{isolation:'READ COMMITTED'});
 }

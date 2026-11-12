@@ -226,6 +226,18 @@
     </div>
   </section>
 <% } %>
+<% const columnReview=sourceTransforms.columnReview; if(!needsIdentity && columnReview && ['ask','confirm'].includes(columnReview.state)){ const unclearColumns=columnReview.unclear||[],unclearIndexes=unclearColumns.map(function(u){return u.index;}); %>
+  <section class="card section ox-question" id="import-columns-question" aria-labelledby="import-columns-question-title"><div class="card-head"><h2 id="import-columns-question-title"><%= unclearColumns.length?'What do these columns hold?':'Are these columns read right?' %></h2></div>
+    <div class="card-body"><p><%= columnReview.state==='ask'?'StockChief does not guess. Pick what each column holds, or keep it as a product detail. Nothing is imported until you answer.':unclearColumns.length?'StockChief does not know these columns, so it did not map the file on its own. Pick what each holds. If you approve without answering, they are kept as product details.':'StockChief proposes these meanings. '+(columnReview.reason||'')+' Approving the import also confirms them.' %></p>
+      <form method="post" action="/imports/<%= plan.id %>/columns" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <% unclearColumns.forEach(function(column){ const shown=(mappingRows||[]).find(function(row){return row.index===column.index;})||{}; %><label class="field" data-column-question="<%= column.index %>"><span class="field-label" dir="auto">“<%= column.name %>”</span><span class="hint"><%= column.reason %><% if((shown.samples||[]).length){ %> Examples: <span dir="auto"><%= shown.samples.join(' · ') %></span><% } %></span>
+          <select class="select" name="column_<%= column.index %>"><option value="">Keep as a product detail</option><% fieldOptions.forEach(function(field){ %><option value="<%= field.id %>" <%= column.field===field.id?'selected':'' %>><%= field.label %></option><% }) %></select></label><% }) %>
+        <ul class="ox-cols__list"><% (columnReview.columns||[]).filter(function(c){return c.field&&!unclearIndexes.includes(c.index);}).forEach(function(c){ %><li><span class="ox-cols__from" dir="auto"><%= c.name %></span><span class="ox-cols__arrow" aria-hidden="true">→</span><b><%= (fieldOptions.find(function(f){return f.id===c.field;})||{}).label||c.field %></b></li><% }) %></ul>
+        <button class="btn btn--primary" type="submit"><%= unclearColumns.length?'Save these answers':'These columns are right' %></button>
+      </form>
+    </div>
+  </section>
+<% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && !needsIdentity && needsNumberAnswer){ %>
   <section class="card section" aria-labelledby="import-number-question"><div class="card-head"><h2 id="import-number-question">One quick question: what do these numbers mean?</h2></div>
     <div class="card-body"><p>I found your products, but the file does not label its numbers clearly enough to safely change stock. Choose what the numbers mean. No inventory has changed.</p>
@@ -354,7 +366,7 @@
     <div class="card-body"><p>This form changes column meanings, source locations and invalid quantities. It does not answer separate tracking or image-review questions. No stock changes.</p><% if(needsTrackingAnswer){ %><p><strong>Tracking is still unanswered.</strong> <a href="#import-tracking-question">Confirm tracking choices above</a> to resolve that step.</p><% } %>
       <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><% if(sourceTransforms.columnReview){ %><input type="hidden" name="confirmColumns" value="yes"><% } %>
         <% mappingRows.forEach(function(column){ %><label class="field"><span class="field-label">Source column “<%= column.column %>”</span>
           <select class="select" name="mapping_<%= column.index %>"><option value="">Keep as source detail</option>
             <% fieldOptions.forEach(function(field){ %><option value="<%= field.id %>" <%= column.field===field.id?'selected':'' %>><%= field.label %></option><% }) %>
