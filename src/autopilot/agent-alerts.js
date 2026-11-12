@@ -1,6 +1,6 @@
 'use strict';
 
-// Jobs 166, 167, 168, 170 and 171 deliver their alerts the same way. Job 172
+// Jobs 166, 167, 168, 169, 170 and 171 deliver their alerts the same way. Job 172
 // (escalations.js) uses the same mailbox choice and outbox for the emails it
 // sends to the person an unanswered item is passed to.
 //
@@ -39,6 +39,8 @@ const JOBS={
     subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
   168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
     subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'},
+  169:{action:'alert.channel',name:'Sales channel problems',module:'../connections/agent-channel-alerts',
+    subject:(n,first)=>n===1?'Channel problem: '+first.split(' (')[0]:n+' sales channel problems',intro:'StockChief found a sales channel that may oversell or stopped syncing.'},
   // Needs migration 473.
   170:{action:'alert.cost_margin',name:'Cost and margin alerts',module:'./cost-alerts',needs473:true,
     subject:(n,first)=>n===1?first.split(':')[0]:n+' cost and margin alerts',
@@ -58,7 +60,8 @@ const pathFor=id=>require(JOBS[id].module).path;
 async function tracked(db){
   const later=await installed.has(db,'stockchief_runtime.agent_alert_settings','cost_rise_pct');
   const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
-  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474));
+  const channelAlerts=await supportsChannelAlerts(db);
+  return Object.keys(JOBS).map(Number).filter(id=>(id!==169||channelAlerts)&&(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474));
 }
 // The alert job behind a review page, if any.
 const forKey=key=>Object.keys(JOBS).map(Number).find(id=>require(JOBS[id].module).key===key)||null;
@@ -82,6 +85,17 @@ async function mailboxes(db,workspaceId){
     WHERE workspace_id=$1 AND provider_type IN ('gmail','microsoft365') AND status='connected' AND paused_at IS NULL ORDER BY display_name,id`,[workspaceId])).rows
     .filter(b=>b.provider_account_id&&canSend(b.capabilities)&&b.setup_status!=='REAUTHORIZATION_REQUIRED')
     .map(b=>({id:b.id,name:b.display_name,address:b.provider_account_name}));
+}
+
+// The alert jobs this database can hold. Migration 480 added job 169; an
+// older database keeps tracking the previously installed alert jobs.
+const upgraded=new WeakSet();
+async function supportsChannelAlerts(db){
+  if(upgraded.has(db)||require('../db/migrate-postgres').hasVerifiedMigration(db,'480-agent-channel-alert-email.sql'))return true;
+  const ok=(await db.query(`SELECT coalesce(bool_or(position('169' IN pg_get_constraintdef(oid))>0),false) AS ok FROM pg_constraint
+    WHERE conname='agent_alert_deliveries_job_id_check' AND conrelid=to_regclass($1)`,[deliveries])).rows[0].ok;
+  if(ok)upgraded.add(db);
+  return ok;
 }
 
 // Records which alerts opened and cleared since the last check, audits that,

@@ -15,9 +15,11 @@ async function profile(c,ctx,p){
  const mapped=await c.query(`SELECT 1 FROM connection_mappings s JOIN connection_mappings l ON l.workspace_id=s.workspace_id AND l.connector_id=s.connector_id AND l.entity_type='location' WHERE s.workspace_id=$1 AND s.connector_id=$2 AND s.entity_type='sku' AND s.external_id=$3 AND s.foundry_record_id=$4 AND l.external_id=$5 AND l.foundry_record_id=$6`,[ctx.workspaceId,p.connector_id,p.external_id,p.sku_id,p.external_location_id,p.location_id]);if(!mapped.rowCount)throw new ValidationError('Review the exact channel product and warehouse mapping first.');
  return {connectorId:p.connector_id,provider:row.provider_type,providerAccount:row.provider_account_id,skuId:p.sku_id,sku:row.code,product:row.name,locationId:p.location_id,location:row.location_name,externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,positionRevision:p.revision};
 }
+// The units a saved buffer keeps back from the stock a channel could show.
+function held(r,available){return Number(r.buffer_units);}
 async function apply(c,p,base){
  if(p.field!=='quantity')return base;const r=(await c.query('SELECT id,revision,buffer_units FROM stockchief_runtime.agent_channel_buffers WHERE workspace_id=$1 AND position_id=$2 AND enabled',[p.workspace_id,p.id])).rows[0];
- return r?{...base,unbufferedValue:base.value,bufferId:r.id,bufferRevision:r.revision,bufferUnits:r.buffer_units,value:Math.max(0,base.value-Number(r.buffer_units))}:base;
+ return r?{...base,unbufferedValue:base.value,bufferId:r.id,bufferRevision:r.revision,bufferUnits:held(r,base.value),value:Math.max(0,base.value-held(r,base.value))}:base;
 }
 async function clearPending(c,ctx,p){
  if(!p.pending_effect_id)return;const e=(await c.query('SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,p.pending_effect_id])).rows[0];
@@ -101,4 +103,4 @@ async function configureBatch(db,ctx,input){
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 const definition={id:183,key:'channel-stock-buffers',label:'Keep a sellable-stock buffer per channel',readPage:async()=>({summary:'Maintain an explicit unit buffer for a known mapped Shopify or WooCommerce product and owned dispatch location. Publish costed available stock after existing commitments and holds, minus the buffer, floored at zero. Growth approves each exact provider quantity; Pro and Custom can authorize routine updates without training. Buffers reduce oversell risk; offline channels and simultaneous external sales still need reconciliation.',rows:[{Action:'Review channel stock buffers',link:'/autopilot/channel-buffers'}],more:false})};
-module.exports={owner,position,rule,profile,apply,configure,configureBatch,queueAuthority,deliveryAuthority,snapshot,action,clearPending,getReview,prepareReview,publish,page,definition};
+module.exports={owner,position,rule,profile,held,apply,configure,configureBatch,queueAuthority,deliveryAuthority,snapshot,action,clearPending,getReview,prepareReview,publish,page,definition};

@@ -87,6 +87,10 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   if(includeTransfers)args.push(timeZone);
   if(includeHistory)args.push((await history.access(db,workspaceId)).salesFrom);
   const cutoff=includeHistory?'$'+args.length:'NULL';
+  // Job 169: channel problems are read for many products at once in JS
+  // (agent-channel-alerts.js), then kept open or cleared like the others.
+  if(policy.permits(account.plan,169,'automatic'))args.push(JSON.stringify(await require('../connections/agent-channel-alerts').candidates(db,workspaceId)));
+  const channelAlerts=policy.permits(account.plan,169,'automatic')?' UNION ALL SELECT 169,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS channel(kind text,ref text,link text)':'';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   // Job 166 needs migration 459 (its notice job number and alert levels).
@@ -127,7 +131,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (monitors.has(88)?' UNION ALL '+customerHealth.notices(cutoff):'')+
     (supplierPriceChecks?' UNION ALL '+supplierPrices.notices:'')+
     (monitors.has(116)?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
-    (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries;
+    (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries+channelAlerts;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
     INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded,history_from)
     SELECT $1,job,kind,ref,link,due,$3::date,CASE WHEN job IN (${historyScopedJobs.join(',')}) THEN ${cutoff}::text::date END FROM current
@@ -140,7 +144,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
   args);
-  // Jobs 166 to 168, 170 and 171: record what opened and cleared, and email new alerts.
+  // Track new and cleared alerts and queue authorized deliveries.
   return require('./agent-alerts').track(db,workspaceId,account);
 }
 
@@ -155,20 +159,21 @@ async function inbox(db,workspaceId,actorId=null){
       AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
   if(!migrated&&installed.stock_checks&&installed.payment_checks)migratedInboxDatabases.add(db);
   const stockChecks=installed.stock_checks?`UNION ALL
-    SELECT 3,findings,checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_stock_discrepancy_checks
+    SELECT 3,findings,checked_on::text,NULL::text,0,0 FROM stockchief_runtime.agent_stock_discrepancy_checks
     WHERE workspace_id=$1 AND findings>0`:'';
   const paymentChecks=installed.payment_checks?`UNION ALL
-    SELECT 104,p.bill_count,p.checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_supplier_payment_checks p
+    SELECT 104,p.bill_count,p.checked_on::text,NULL::text,0,0 FROM stockchief_runtime.agent_supplier_payment_checks p
     WHERE p.workspace_id=$1 AND p.bill_count>0 AND NOT EXISTS (
       SELECT 1 FROM stockchief_runtime.agent_supplier_payment_approvals a WHERE a.workspace_id=p.workspace_id
         AND a.week_start=date_trunc('week',p.checked_on::timestamp)::date AND a.digest=p.run_digest)
     UNION ALL
-    SELECT 108,discount_count,checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_supplier_payment_checks
+    SELECT 108,discount_count,checked_on::text,NULL::text,0,0 FROM stockchief_runtime.agent_supplier_payment_checks
     WHERE workspace_id=$1 AND discount_count>0`:'';
-  const {rows}=await db.query(`SELECT job_id,n,due,history_from,out FROM (
+  const {rows}=await db.query(`SELECT job_id,n,due,history_from,out,oversell FROM (
     SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due,
       CASE WHEN n.job_id IN (${historyScopedJobs.join(',')}) THEN to_jsonb(n)->>'history_from' END AS history_from,
-      count(*) FILTER (WHERE n.kind='Out of stock')::int AS out
+      count(*) FILTER (WHERE n.kind='Out of stock')::int AS out,
+      count(*) FILTER (WHERE n.job_id=169 AND n.kind='Channel quantity exceeds available stock')::int AS oversell
     FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id,4
     ${stockChecks}
     ${paymentChecks}
@@ -237,6 +242,15 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
+    if(Number(r.job_id)===169){
+      const risk=Number(r.oversell||0),stopped=r.n-risk;
+      return {kind:'sales',grouped:true,importance:risk?'Urgent':'Important',priority:risk?86:78,title:risk?'A sales channel may oversell':'A sales channel stopped syncing',
+        happened:[risk?risk+' '+(risk===1?'listing shows':'listings show')+' more stock than you can sell.':null,
+          stopped?stopped+' channel sync '+(stopped===1?'problem.':'problems.'):null].filter(Boolean).join(' '),
+        why:'A channel that shows more than you have left can take orders you cannot ship, and a stopped sync keeps old stock on the channel.',
+        recommendation:'Fix the channel sync, or lower the stock on the channel.',href:require('../connections/agent-channel-alerts').path,
+        actionLabel:'Review channel problems',sourceId:'agent-notice-169'};
+    }
     if(Number(r.job_id)===170)return {kind:'inventory',grouped:true,importance:'Important',priority:78,title:'Costs went up or margins fell',
       happened:r.n+' cost or margin alert'+(r.n===1?'':'s')+'.',why:'StockChief compares each new cost with the one before it, and gross margins (before fees and shipping) with your minimum, through the day.',
       recommendation:'Review the costs and selling prices. StockChief has not changed any price.',href:require('./cost-alerts').path,actionLabel:'Review cost and margin alerts',sourceId:'agent-notice-170'};
