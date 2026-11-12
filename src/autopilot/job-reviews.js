@@ -104,7 +104,7 @@ const definitions=[
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
     summary:'Compare dispatch with physical receipts, recorded loss or damage and stock still in transit. Receiving teams see scheduled follow-ups for their assigned warehouses. Open each transfer for its product quantities.'},
   {id:162,key:'stock-health',label:'Review stock turns, margin return and days of supply',readPage:require('../forecasting/agent-stock-health').report},
-  {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
+  require('../catalog/agent-product-classification').definition,
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
   {id:200,key:'catalog-health',label:'Check your data health score',readPage:require('./catalog-health').health},
   require('../catalog/agent-catalog-fixes').definition,

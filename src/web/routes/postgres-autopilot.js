@@ -635,6 +635,35 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'This was already done.':catalogDone[step]);
     res.redirect(303,catalogFixes.path);
   }));
+  // Job 131: categories and tags for new products.
+  const productClasses=require('../../catalog/agent-product-classification');
+  router.get(productClasses.path,requireAuth,owner,starterAgentPage(131,'draft','Categories and tags',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/product-categories',{title:'Categories and tags',nav:'autopilot',screen:await productClasses.page(database,req.ctx,{page:req.query.page||1}),
+      backTo:{href:'/autopilot/reviews/product-categories',label:'Categories and tags for new products'}});
+  },'Growth'));
+  router.post(productClasses.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await productClasses.check(database,req.ctx);
+    req.flash('success','StockChief is checking your new products for categories and tags.');
+    res.redirect(303,productClasses.path);
+  }));
+  router.post(productClasses.path+'/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.approveMany(database,req.ctx,req.body);
+    req.flash(result.failed.length?'error':'success',(result.done?result.done+(result.done===1?' product was updated.':' products were updated.'):'Nothing was changed.')+
+      (result.failed.length?' '+result.failed.length+' stopped: '+result.failed[0].reason:''));
+    res.redirect(303,productClasses.path);
+  }));
+  const classDone={approve:'The product was updated.',dismiss:'The product stays as it is.',undo:'The change was undone.'};
+  for(const step of Object.keys(classDone))router.post(productClasses.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':classDone[step]);
+    res.redirect(303,req.body.back==='product'&&result.undone?'/inventory/'+encodeURIComponent((await productClasses.load(database,req.ctx,req.params.id)).item_id):productClasses.path);
+  }));
+  router.post(productClasses.path+'/limit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Every category and tag now waits for you.':'Limit saved.');
+    res.redirect(303,productClasses.path);
+  }));
   // Job 200: the data health score and its fix list.
   const dataHealth=require('../../autopilot/data-health');
   router.get(dataHealth.path,requireAuth,owner,starterAgentPage(200,'automatic','Data health',async(req,res)=>{
@@ -1704,6 +1733,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
+      if(req.params.job==='product-categories')result.productCategoriesPath=require('../../catalog/agent-product-classification').path;
       if(req.params.job==='catalog-health')result.dataHealthPath=require('../../autopilot/data-health').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;
