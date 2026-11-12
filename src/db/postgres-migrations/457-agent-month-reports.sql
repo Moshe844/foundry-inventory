@@ -43,8 +43,9 @@ CREATE TABLE stockchief_runtime.agent_report_flags (
   CHECK (status<>'CLEARED' OR (cleared_at IS NOT NULL AND cleared_reason IS NOT NULL)),
   CHECK (status<>'DISMISSED' OR (dismissed_at IS NOT NULL AND dismissed_by IS NOT NULL))
 );
--- A seen flag stays quiet until a later run of its month clears it.
-CREATE UNIQUE INDEX agent_report_flag_current ON stockchief_runtime.agent_report_flags(workspace_id,job_id,flag_key) WHERE status IN ('OPEN','DISMISSED');
+-- One live flag per month and key. A seen flag stays quiet until a later run
+-- of its month clears it.
+CREATE UNIQUE INDEX agent_report_flag_current ON stockchief_runtime.agent_report_flags(workspace_id,job_id,period,flag_key) WHERE status IN ('OPEN','DISMISSED');
 CREATE INDEX agent_report_flag_recent ON stockchief_runtime.agent_report_flags(workspace_id,status,updated_at);
 CREATE INDEX agent_report_flag_dismisser ON stockchief_runtime.agent_report_flags(dismissed_by);
 

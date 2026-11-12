@@ -120,9 +120,9 @@ async function dismiss(database,ctx,flagId){
   });
 }
 // Clear one flag because the owner did what it asked, such as downloading a pack.
-async function settle(c,ctx,job,key,reason){
-  const row=(await c.query(`UPDATE ${tables.flags} SET status='CLEARED',cleared_reason=$4,cleared_at=clock_timestamp(),updated_at=clock_timestamp()
-    WHERE workspace_id=$1 AND job_id=$2 AND flag_key=$3 AND status IN ('OPEN','DISMISSED') RETURNING id`,[ctx.workspaceId,job,key,reason])).rows[0];
+async function settle(c,ctx,job,period,key,reason){
+  const row=(await c.query(`UPDATE ${tables.flags} SET status='CLEARED',cleared_reason=$5,cleared_at=clock_timestamp(),updated_at=clock_timestamp()
+    WHERE workspace_id=$1 AND job_id=$2 AND period=$3 AND flag_key=$4 AND status IN ('OPEN','DISMISSED') RETURNING id`,[ctx.workspaceId,job,period,key,reason])).rows[0];
   return row?.id||null;
 }
 

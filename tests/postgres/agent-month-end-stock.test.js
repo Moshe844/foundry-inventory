@@ -175,9 +175,16 @@ test('Each location rolls forward from the stock records, the totals are checked
   assert.equal(Number((await monthEnd.compute(db,ws,{month})).currencies[0].difference.closing),0);
   assert.deepEqual(await monthEnd.schedule(db,ws),{queued:0},'Nothing left to check again');
 
+  // Each month keeps its own flag: an earlier hand posting leaves both months different from the books.
+  await f.ledger.post(db,ctx,{postingDate:f.prior+'-25',sourceKey:'hand-prior-'+randomUUID(),description:'Earlier stock bought with cash',
+    lines:[{accountKey:'INVENTORY_ASSET',debitMinor:500},{accountKey:'CASH',creditMinor:500}]});
+  await handler({workspaceId:ws,payload:{month:f.prior}},db);await handler({workspaceId:ws,payload:{month}},db);
+  assert.deepEqual((await f.flags("status='OPEN'")).map(x=>[x.period,x.flag_key,Number(x.amount_minor)]).sort(),[[f.prior,'difference:USD',usd(5)],[month,'difference:USD',usd(5)]].sort());
+  assert.equal((await f.needs()).length,2);
+
   // Nothing posted, moved or closed by any of this.
   const after=await f.books();
-  assert.deepEqual([after.journals,after.closed,after.stock],[before.journals+1,0,before.stock],'Only the owner\'s correcting entry was posted');
+  assert.deepEqual([after.journals,after.closed,after.stock],[before.journals+2,0,before.stock],'Only the owner\'s own entries were posted');
 });
 
 test('The month-end stock report fits a phone and a desktop',{timeout:600000},async t=>{
