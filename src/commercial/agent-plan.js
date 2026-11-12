@@ -216,6 +216,7 @@ const actionJobs=new Map([
   ['catalog.restore_margin',77],
   ['catalog.clearance_plan',86],
   ['inventory.slow_stock_step',9],
+  ['inventory.expiry_warning',191],
   ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['inventory.protect_stock',12],['sales_order.reserve_arrived',48],['sales_order.notify_stock_ready',50],['sales_order.repeat',53],['sales_order.allocation_priority',65],['sales_order.allocate_backorders',64],['sales_order.share_scarce_stock',65],

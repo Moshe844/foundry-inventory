@@ -452,6 +452,28 @@ function createPostgresAutopilotRouter(database,options={}){
       result.restored?'Plan ended. The original price is back.':'Plan ended. The current price stays.');
     res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(req.params.id));
   }));
+  // Job 191: warnings before stock expires, with where to sell it first.
+  const expiry=require('../../operations/agent-expiry-warnings');
+  router.get(expiry.path,requireAuth,owner,starterAgentPage(191,'suggest','Expiring stock',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/expiring-stock',{title:'Expiring stock',nav:'autopilot',screen:await expiry.page(database,req.ctx,{page:req.query.page||1}),
+      backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  }));
+  router.post(expiry.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await expiry.check(database,req.ctx);
+    req.flash('success','StockChief is checking your batches for expiry dates.');
+    res.redirect(303,expiry.path);
+  }));
+  router.post(expiry.path+'/windows',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await expiry.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Those warning days were removed.':'Warning days saved. StockChief is checking your batches again.');
+    res.redirect(303,expiry.path);
+  }));
+  router.post(expiry.path+'/warnings/:id/handled',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await expiry.handle(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already marked as dealt with.':'Marked as dealt with.');
+    res.redirect(303,expiry.path);
+  }));
   // Job 9: next steps for dead and slow stock.
   const slowStock=require('../../forecasting/agent-slow-stock-steps');
   router.get(slowStock.path,requireAuth,owner,starterAgentPage(9,'draft','Slow stock next steps',async(req,res)=>{

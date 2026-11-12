@@ -2,15 +2,7 @@
 
 module.exports=[
   {id:1,key:'stock-lookup',label:'Look up an item, lot or serial',readPage:require('./stock-reading').lookup,requiresFilter:true,prompt:'item name, SKU, size, lot or serial'},
-  {id:191,key:'expiring-lots',label:'Review expiring stock and waiting orders',summary:'Lots expiring within 30 days are paired with the earliest unfilled order for the SKU at that warehouse, due by expiry. Verify availability before assigning it.',usesDate:true,sql:`
-    SELECT s.code AS "SKU",lot.code AS "Lot",l.name AS "Location",b.quantity AS "Units",lot.expires_at::date::text AS "Expires",
-      CASE WHEN lot.recalled_at IS NOT NULL THEN 'Under recall' WHEN lot.expires_at::date<$3::date THEN 'Expired' ELSE coalesce(d.order_number,'No dated order found') END AS "Priority"
-    FROM lots lot JOIN lot_balances b ON b.lot_id=lot.id AND b.workspace_id=lot.workspace_id JOIN locations l ON l.id=b.location_id
-    JOIN skus s ON s.id=lot.sku_id LEFT JOIN LATERAL (SELECT o.order_number FROM sales_orders o JOIN sales_order_lines ol ON ol.sales_order_id=o.id
-      WHERE o.workspace_id=$1 AND ol.sku_id=lot.sku_id AND o.fulfillment_location_id=b.location_id AND ol.quantity_ordered>ol.quantity_fulfilled
-      AND o.status IN ('CONFIRMED','PARTIALLY_FULFILLED') AND o.needed_by::date<=lot.expires_at::date ORDER BY o.needed_by,o.id LIMIT 1)d ON true
-    WHERE lot.workspace_id=$1 AND b.quantity>0 AND lot.expires_at::date<=$3::date+30 AND ($2='' OR lower(lot.code)=lower($2) OR lower(s.code)=lower($2))
-    ORDER BY lot.expires_at,lot.id,l.id`},
+  require('../operations/agent-expiry-warnings').definition,
   {id:193,key:'recall-trace',label:'Trace customers who received a lot',requiresFilter:true,prompt:'lot number',summary:'Shows customers who received this lot through sales, rentals or consignment. The totals record original handoffs, including units that were later returned.',sql:`
     WITH matching_lots AS (
       SELECT id,code FROM lots WHERE workspace_id=$1 AND lower(code)=lower($2)
