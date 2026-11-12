@@ -22,6 +22,9 @@ async function assignments(db,workspaceId){
     WHERE u.workspace_id=$1 AND u.account_id IS NOT NULL AND a.disabled_at IS NULL
     ORDER BY (u.role='owner'),u.po_approval_limit_minor NULLS LAST,u.id`,[workspaceId])).rows;
   const rows=[];
+  // Passing to the next reviewer (job 172) waits in the first 14 days, pause,
+  // Watch only and Ask me first; the request then stays with the first reviewer.
+  const held=policy.permits(state.plan,172,'automatic')?await policy.stopped(db,workspaceId,state,'alert.escalation',true):'plan';
   for(const o of orders){
     const digest=dual.digestFor(rule,o),signed=o.signatures.filter(s=>s.digest===digest);
     const current=signed.filter(s=>people.some(p=>p.id===s.actor&&p.account_id===s.account&&dual.eligible(p,o.currency,Number(s.amount))));
@@ -32,7 +35,7 @@ async function assignments(db,workspaceId){
       const candidates=people.filter(p=>p.account_id!==first.account&&permissions.can(p,permissions.VIEW_PURCHASING)&&dual.eligible(p,o.currency,Number(first.amount)));
       if(candidates.length){
         const elapsed=Math.max(0,new Date(o.as_of)-new Date(first.at));
-        const turns=policy.permits(state.plan,172,'automatic')?Math.floor(elapsed/(rule.escalation_hours*3600000)):0;
+        const turns=held?0:Math.floor(elapsed/(rule.escalation_hours*3600000));
         const index=Math.min(turns,candidates.length-1);
         next=candidates[index];
         reason=(index?'The previous reviewer’s response window passed. ':'')+'The '+money.format(first.amount,o.currency)+' order needs a second signature.';

@@ -189,6 +189,11 @@ async function inbox(db,workspaceId,actorId=null){
     for(const {job_id:job} of visible)if(monitorJobs.includes(Number(job))&&!active.has(Number(job)))suppressed.add(job);
     if(historyScopedJobs.some(job=>active.has(job)))monitorHistoryFrom=(await history.access(db,workspaceId)).salesFrom;
   }
+  // Job 172: while alerts of a kind wait for an answer, the owner can answer them all here.
+  const answerable=actorId&&policy.permits(state.plan,172,'automatic')&&visible.some(r=>Number(r.job_id)>=166&&Number(r.job_id)<=171)
+    ?await require('./escalations').answerable(db,workspaceId):new Set();
+  const answer=item=>{const job=Number(String(item.sourceId||'').replace('agent-notice-',''));
+    if(answerable.has(job))item.dismiss={action:'/autopilot/escalations/answer',label:'I\'m on it',entryId:String(job)};return item;};
   // A prior run may have compared sales outside the plan's current window.
   return visible.filter(r=>!suppressed.has(r.job_id)&&(!historyScopedJobs.includes(Number(r.job_id))||r.history_from===monitorHistoryFrom)).map(r=>{
     if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
@@ -273,7 +278,7 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' outstanding orders, shipments or invoices. Earliest due date '+r.due+'.',why:'A scheduled check found work still open past the promised date.',
       recommendation:'Review the overdue records and follow up with the named contact.',
       href:'/autopilot/reviews/overdue-work',actionLabel:'Review overdue records',sourceId:'agent-notice-'+r.job_id,dueDate:r.due};
-  }).concat(transferNotices);
+  }).map(answer).concat(transferNotices);
 }
 
 module.exports={transfers,refresh,inbox};

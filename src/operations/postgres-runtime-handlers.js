@@ -444,6 +444,9 @@ async function autopilotEvaluate(job,client){
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
+    // Job 172: follow unanswered alerts and approvals, once this check has raised them.
+    if(await require('../autopilot/escalations').enabled(client,job.workspaceId,account))
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.escalations',idempotencyKey:'escalations:'+cycleId,payload:{cycleId},priority:66,maxAttempts:3});
     if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
     if(account.plan==='enterprise')await require('../purchasing/agent-open-to-buy').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     if(account.plan==='enterprise')await require('../forecasting/warehouse-slotting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -850,6 +853,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.sales-quote.acceptance.v1':external((job,database)=>require('../sales/agent-quote-buyers').run(database,job.workspaceId,job.payload)),
   'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
+  'agent.escalations':external((job,database)=>require('../autopilot/escalations').run(database,job.workspaceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     // After the last claim page, follow sent claims: replies, settlements and reminders.

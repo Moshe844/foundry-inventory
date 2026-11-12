@@ -1697,6 +1697,7 @@ function createPostgresAutopilotRouter(database,options={}){
       }
       const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
       if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
+      if(req.params.job===require('../../autopilot/escalations').key)result.escalations=await require('../../autopilot/escalations').actions(database,req.ctx);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
@@ -1727,6 +1728,23 @@ function createPostgresAutopilotRouter(database,options={}){
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
     req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  // Job 172: answer an item passed on, answer every alert of a kind, or pass one on now.
+  const back=(req,fallback)=>{const to=String(req.body.returnTo||'');return to.startsWith('/')&&!to.startsWith('//')?to:fallback;};
+  router.post('/autopilot/escalations/answer',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await require('../../autopilot/escalations').answerJob(database,req.ctx,req.body.entryId);
+    req.flash('success',done.answered===1?'Thanks. Nobody else will be asked about it.':'Thanks. Nobody else will be asked about these '+done.answered+' alerts.');
+    res.redirect(303,back(req,'/needs-you'));
+  }));
+  router.post('/autopilot/escalations/:id/answer',requireAuth,asyncRoute(async(req,res)=>{
+    const escalations=require('../../autopilot/escalations');await escalations.answer(database,req.ctx,req.params.id);
+    req.flash('success','Thanks. Nobody else will be asked about it.');
+    res.redirect(303,back(req,escalations.path));
+  }));
+  router.post('/autopilot/escalations/:id/pass',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const escalations=require('../../autopilot/escalations'),done=await escalations.passNow(database,req.ctx,req.params.id);
+    req.flash('success','Passed to '+done.to+'.');
+    res.redirect(303,escalations.path);
   }));
   router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);

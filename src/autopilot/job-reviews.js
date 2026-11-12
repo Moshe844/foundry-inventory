@@ -98,6 +98,7 @@ const definitions=[
   ...require('./activity-watches').definitions,
   ...require('./daily-briefs').definitions,
   require('./stock-alerts').definition,
+  require('./escalations').definition,
   {id:163,key:'service-levels',label:'Forecast accuracy, fill rate and on-time delivery',filterLabel:'Customer or supplier name',readPage:require('../forecasting/agent-service-levels').report},
   require('./watch-rules').definition,
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,
