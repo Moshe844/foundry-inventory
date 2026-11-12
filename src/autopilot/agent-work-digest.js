@@ -79,7 +79,7 @@ async function report(db,ctx,{filter='',page=1}={}){
    AND ($5::text IS NULL OR r.completed_at>=$5::timestamptz) ORDER BY r.completed_at,r.id LIMIT $7
  ), blanket_releases AS (
   SELECT 'blanket-release' AS origin,r.id,'purchasing.prepare_blanket_release' AS action_type,
-   'Unapproved supplier release prepared: '||p.reference||' / '||o.po_number AS summary,
+   CASE WHEN r.sent_at IS NOT NULL THEN 'Supplier release ordered and queued to the supplier: ' ELSE 'Unapproved supplier release prepared: ' END||p.reference||' / '||o.po_number AS summary,
    jsonb_build_object('purchaseOrderId',o.id) AS result,r.prepared_at AS executed_at,jsonb_build_object('contractId',p.id) AS payload,false AS undone
   FROM stockchief_runtime.agent_blanket_releases r JOIN stockchief_runtime.agent_blanket_contracts p ON p.workspace_id=r.workspace_id AND p.id=r.contract_id
   JOIN purchase_orders o ON o.workspace_id=r.workspace_id AND o.id=r.purchase_order_id

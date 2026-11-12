@@ -4,12 +4,13 @@ const {fixture}=require('../helpers/agent-blanket-release-fixture');
 test('Pro learns a real individually reviewed and approved release, then the typed worker prepares one due native draft without duplicate units, stock, journals or sending',{timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,service:s}=f,p=await f.contract(),before=await f.orders(),journals=(await db.query('SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
  assert.equal(p.slots.length,5);assert.equal(p.preview.goodsValueMinor,10000);
- await assert.rejects(s.configure(db,ctx,p.id,{revision:1,confirmed:'yes'}),/example|teach/);
+ // Pro may run the schedule before teaching; until then each release waits for approval.
+ await s.configure(db,ctx,p.id,{revision:1,confirmed:'yes'});
  const manual=await s.manual(db,ctx,p.slots[0].id,{confirmed:'yes'});
  assert.equal((await s.manual(db,ctx,p.slots[0].id,{confirmed:'yes'})).replayed,true);
- await assert.rejects(s.teach(db,ctx,p.slots[0].id,{confirmed:'yes'}),/unapproved or automatic draft/);
+ await assert.rejects(s.teach(db,ctx,p.slots[0].id,{confirmed:'yes'}),/approved yourself/);
  await f.workflows.approvePurchaseOrder(db,ctx,manual.purchaseOrderId,{idempotencyKey:randomUUID()});
- await s.teach(db,ctx,p.slots[0].id,{confirmed:'yes'});await f.workflows.placePurchaseOrder(db,ctx,manual.purchaseOrderId,{idempotencyKey:randomUUID()});assert.equal((await db.query('SELECT status FROM purchase_orders WHERE id=$1',[manual.purchaseOrderId])).rows[0].status,'ORDERED');await s.configure(db,ctx,p.id,{revision:2,confirmed:'yes'});
+ await s.teach(db,ctx,p.slots[0].id,{confirmed:'yes'});await f.workflows.placePurchaseOrder(db,ctx,manual.purchaseOrderId,{idempotencyKey:randomUUID()});assert.equal((await db.query('SELECT status FROM purchase_orders WHERE id=$1',[manual.purchaseOrderId])).rows[0].status,'ORDERED');await s.configure(db,ctx,p.id,{revision:3,confirmed:'yes'});
  assert.equal((await s.schedule(db,ctx.workspaceId)).queued,1);
  const q=require('../../src/operations/postgres-job-queue'),handlers=require('../../src/operations/postgres-runtime-handlers').create();
  assert.equal(await q.claim(db,{owner:'old-contract-worker',kinds:['purchasing.blanket-release']}),null);
