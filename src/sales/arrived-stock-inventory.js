@@ -18,7 +18,7 @@ const costedArrival = `(m.operation='receive' OR (m.operation='transfer' AND m.l
 const qualityClear = `NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_quality_holds h
  JOIN purchase_order_receipt_lines rl ON rl.workspace_id=h.workspace_id AND rl.id=h.receipt_line_id
  WHERE h.workspace_id=m.workspace_id AND h.sku_id=m.sku_id AND h.location_id=m.location_id
-  AND rl.movement_ids::jsonb ? m.id AND h.status<>'PASSED')`;
+  AND rl.movement_ids::jsonb ? m.id AND h.status IN ('HELD','FAILED'))`;
 
 function receiptLayer(m) {
   return {
@@ -107,9 +107,9 @@ async function read(c, ctx, skuIds, fixedLocation, { lock = false } = {}) {
     LEFT JOIN sales_order_allocations a ON a.workspace_id=sl.workspace_id AND a.sales_order_line_id=sl.sales_order_line_id AND a.location_id=w.location_id
     WHERE w.workspace_id=$1 AND w.sku_id=ANY($2::text[]) AND w.location_id=ANY($3::text[])
       AND s.status='ACCEPTED' AND h.status NOT IN('SHIPPED','DELIVERED','CANCELLED')
-    UNION ALL SELECT h.sku_id,h.location_id,rl.lot_id,NULL,h.quantity::text,NULL,NULL,NULL
+    UNION ALL SELECT h.sku_id,h.location_id,rl.lot_id,NULL,(h.quantity-h.returned_quantity-h.written_off_quantity)::text,NULL,NULL,NULL
     FROM stockchief_runtime.agent_quality_holds h JOIN purchase_order_receipt_lines rl ON rl.workspace_id=h.workspace_id AND rl.id=h.receipt_line_id
-    WHERE h.workspace_id=$1 AND h.sku_id=ANY($2::text[]) AND h.location_id=ANY($3::text[]) AND h.status<>'PASSED'
+    WHERE h.workspace_id=$1 AND h.sku_id=ANY($2::text[]) AND h.location_id=ANY($3::text[]) AND h.status IN ('HELD','FAILED')
       AND rl.lot_id IS NOT NULL`, [workspace, skuIds, locations])).rows;
   for (const p of positions) {
     const key = stock.key(p.sku_id, p.location_id);

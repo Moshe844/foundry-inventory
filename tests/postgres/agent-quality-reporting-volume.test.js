@@ -14,6 +14,8 @@ test('a native 100-line receipt checks the shared allowance once and reports onl
 test('splitting one product across receipt lines cannot exceed the owner unit limit', {timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,quality}=f,p=await quality.save(db,ctx,f.scope);await quality.configure(db,ctx,p.id,{revision:1,confirmed:'yes'});
  const po=await f.workflows.createPurchaseOrder(db,ctx,{supplierId:f.scope.supplierId,destinationLocationId:f.location.id,idempotencyKey:randomUUID(),lines:[{skuId:f.scope.skuId,quantityUnits:6,unitCost:1},{skuId:f.scope.skuId,quantityUnits:6,unitCost:1}]});await f.workflows.approvePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});await f.workflows.placePurchaseOrder(db,ctx,po.purchaseOrderId,{idempotencyKey:randomUUID()});
- const input={idempotencyKey:randomUUID(),lines:po.lineIds.map(lineId=>({lineId,quantity:6,locationId:f.location.id}))};await assert.rejects(f.workflows.receivePurchaseOrder(db,ctx,po.purchaseOrderId,input),/owner approval/);assert.equal(await f.balance(),8);
- const receipt=await f.workflows.receivePurchaseOrder(db,ctx,po.purchaseOrderId,{...input,qcConfirmed:'yes'});assert.equal(receipt.qualityHoldIds.length,2);assert.equal((await f.available()).available,8);for(const id of receipt.qualityHoldIds)assert.equal((await f.hold(id)).automatic,false);
+ const input={idempotencyKey:randomUUID(),lines:po.lineIds.map(lineId=>({lineId,quantity:6,locationId:f.location.id}))};const suggested=await f.workflows.receivePurchaseOrder(db,ctx,po.purchaseOrderId,input);
+ assert.equal(suggested.qualityHoldIds,undefined);assert.equal(suggested.qualitySuggestionIds.length,2);assert.equal((await f.available()).available,20);
+ for(const id of suggested.qualitySuggestionIds){assert.match((await f.hold(id)).proposal_reason,/10-unit limit/);await quality.decide(db,ctx,id,{revision:1,decision:'hold'});assert.equal((await f.hold(id)).automatic,false);}
+ assert.equal((await f.available()).available,8);
 });

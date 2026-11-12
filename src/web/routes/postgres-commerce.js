@@ -645,7 +645,7 @@ function createPostgresCommerceRouter(database,options={}){
       quantityReceivedUnits:Number(line.quantity_received_units),
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
-    const qualityConfigured=(await database.query('SELECT EXISTS(SELECT 1 FROM stockchief_runtime.agent_quality_policies WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=ANY($3::text[]) AND enabled) required',[req.ctx.workspaceId,detail.order.supplier_id,detail.lines.map(l=>l.sku_id)])).rows[0].required;
+    const qualityConfigured=(await database.query('SELECT EXISTS(SELECT 1 FROM stockchief_runtime.agent_quality_policies WHERE workspace_id=$1 AND enabled AND (supplier_id IS NULL OR supplier_id=$2) AND (sku_id IS NULL OR sku_id=ANY($3::text[]))) required',[req.ctx.workspaceId,detail.order.supplier_id,detail.lines.map(l=>l.sku_id)])).rows[0].required;
     return res.page('buy/receive',{qualityConfigured,title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
       permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
@@ -913,7 +913,7 @@ function createPostgresCommerceRouter(database,options={}){
     const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
     const places=[...new Set(lines.map((line)=>line.locationId))];
     const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
-    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
+    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${receipt.qualitySuggestionIds?.length?'QC holds suggested to the owner; those goods stay available until the owner decides. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 

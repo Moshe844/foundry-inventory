@@ -130,8 +130,10 @@ async function inbox(db,workspaceId,actorId){
 async function run(db,workspaceId,{afterId=''}={}){
  const shortageCursor=afterId.startsWith('shortage:');
  const candidates=shortageCursor?[]:(await db.query(`SELECT h.id,r.id rule_id,r.authorized_by,r.connector_id,r.include_photos,r.example_id FROM stockchief_runtime.agent_quality_holds h
-  JOIN stockchief_runtime.agent_quality_policies q ON q.workspace_id=h.workspace_id AND q.id=h.policy_id
-  JOIN stockchief_runtime.agent_supplier_claim_rules r ON r.workspace_id=h.workspace_id AND r.supplier_id=q.supplier_id AND r.sku_id=h.sku_id AND r.location_id=h.location_id AND r.enabled AND r.scope->>'claimKind' IS NULL
+  JOIN purchase_order_receipt_lines rl ON rl.workspace_id=h.workspace_id AND rl.id=h.receipt_line_id
+  JOIN purchase_order_receipts pr ON pr.workspace_id=rl.workspace_id AND pr.id=rl.receipt_id
+  JOIN purchase_orders o ON o.workspace_id=pr.workspace_id AND o.id=pr.purchase_order_id
+  JOIN stockchief_runtime.agent_supplier_claim_rules r ON r.workspace_id=h.workspace_id AND r.supplier_id=o.supplier_id AND r.sku_id=h.sku_id AND r.location_id=h.location_id AND r.enabled AND r.scope->>'claimKind' IS NULL
   WHERE h.workspace_id=$1 AND h.id>$2 AND h.status='FAILED' AND h.inspection->>'damagedQuantity' IS NOT NULL
    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_claims c WHERE c.workspace_id=h.workspace_id AND c.hold_id=h.id)
   ORDER BY h.id LIMIT 41`,[workspaceId,afterId])).rows;

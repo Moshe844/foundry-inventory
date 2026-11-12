@@ -4,7 +4,7 @@ const pass={revision:1,decision:'PASS',physicallyChecked:'yes',checks:['0','1']}
 test('a pre-upgrade receipt writer cannot bypass an enabled QC rule; transaction stock, money and receipt all roll back',async t=>{
  const f=await fixture(t),{db,ctx,quality}=f,p=await quality.save(db,ctx,f.scope);await quality.configure(db,ctx,p.id,{revision:1,confirmed:'yes'});const po=await f.order();
  const before=(await db.query('SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
- const apply=quality.applyReceipt;quality.applyReceipt=async()=>[];try{await assert.rejects(f.receive(po),/Quality inspection hold required/);}finally{quality.applyReceipt=apply;}
+ const apply=quality.applyReceipt;quality.applyReceipt=async()=>({held:[],suggested:[],notHeld:[]});try{await assert.rejects(f.receive(po),/Quality inspection hold required/);}finally{quality.applyReceipt=apply;}
  assert.equal(await f.balance(),8);assert.equal((await db.query('SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,before);
  assert.equal((await db.query('SELECT count(*)::int n FROM purchase_order_receipts WHERE purchase_order_id=$1',[po.purchaseOrderId])).rows[0].n,0);
  const r=await f.receive(po);assert.equal(r.qualityHoldIds.length,1);
@@ -16,17 +16,19 @@ test('simultaneous holds and releases preserve exact availability and repeat rec
  assert.equal((await db.query('SELECT sum(quality_held)::text n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0.000000');
  await Promise.all([quality.inspect(db,ctx,ids[0],pass),quality.inspect(db,ctx,ids[0],pass)]);assert.equal((await f.hold(ids[0])).revision,2);assert.equal(await f.balance(),28);
 });
-test('current job mode, shadow, rule allowance, missing training and person access fence physical QC release',async t=>{
+test('current plan, job mode, shadow and rule allowance fence release by rule; the inspecting person still releases',async t=>{
  const f=await fixture(t),{db,ctx,quality}=f,p=await quality.save(db,ctx,f.scope);await quality.configure(db,ctx,p.id,{revision:1,confirmed:'yes'});
- const id=(await f.receive(await f.order())).qualityHoldIds[0];
- await f.subscribe('growth');let r=await quality.inspect(db,ctx,id,pass);assert.equal(r.released,false);assert.match(r.reason,/teach|example|matching/i);
- await f.subscribe('pro');await require('../../src/autopilot/job-modes').save(db,ctx,51,{mode:'watch',revision:0});r=await quality.inspect(db,ctx,id,{...pass,revision:2});assert.equal(r.released,false);assert.match(r.reason,/Watch/);
- await require('../../src/autopilot/job-modes').save(db,ctx,51,{mode:'routine',revision:1});await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);r=await quality.inspect(db,ctx,id,{...pass,revision:3});assert.equal(r.released,false);assert.match(r.reason,/14 days/);
+ const ids=[];for(let i=0;i<4;i++)ids.push((await f.receive(await f.order(2))).qualityHoldIds[0]);
+ const check=async(id,pattern)=>{const r=await quality.inspect(db,ctx,id,pass);assert.deepEqual([r.released,r.byRule],[true,false]);assert.match(r.reason,pattern);assert.equal((await f.hold(id)).released_by,ctx.actorId);};
+ await f.subscribe('growth');await check(ids[0],/person who inspected/);
+ await f.subscribe('pro');await require('../../src/autopilot/job-modes').save(db,ctx,51,{mode:'watch',revision:0});await check(ids[1],/Watch/);
+ await require('../../src/autopilot/job-modes').save(db,ctx,51,{mode:'routine',revision:1});await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await check(ids[2],/14 days/);
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  await db.query(`INSERT INTO stockchief_runtime.agent_draft_rules(workspace_id,action_type,scope_key,scope_label,currency,maximum_minor,authorized_by) SELECT $1,'sales_order.repeat','quality-quota-'||n,'Preserved routine','USD',100,$2 FROM generate_series(1,500)n`,[ctx.workspaceId,ctx.actorId]);
- r=await quality.inspect(db,ctx,id,{...pass,revision:4});assert.equal(r.released,false);assert.match(r.reason,/500 active rules/);
- await assert.rejects(quality.hold(db,{workspaceId:'foreign-inventory',actorId:ctx.actorId},id),/not in this inventory/);
- await db.query("UPDATE users SET role='accountant',permissions=NULL WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(quality.release(db,ctx,id,{revision:6,confirmed:'yes'}),/Only the inventory owner/);assert.equal((await f.available()).available,8);
+ await check(ids[3],/500 active rules/);
+ await assert.rejects(quality.hold(db,{workspaceId:'foreign-inventory',actorId:ctx.actorId},ids[0]),/not in this inventory/);
+ const next=(await f.receive(await f.order(2),{qcConfirmed:'yes'})).qualityHoldIds[0];
+ await db.query("UPDATE users SET role='accountant',permissions=NULL WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(quality.inspect(db,ctx,next,pass),/receive|inspect|permission|access/i);assert.equal((await f.available()).available,16);assert.equal((await f.hold(next)).status,'HELD');
 });
 test('actual account deletion removes held goods and QC rules in FK order and preserves another business',async t=>{
  const previous=process.env.STOCKCHIEF_RUNTIME_ENV;process.env.STOCKCHIEF_RUNTIME_ENV='staging';t.after(()=>{if(previous===undefined)delete process.env.STOCKCHIEF_RUNTIME_ENV;else process.env.STOCKCHIEF_RUNTIME_ENV=previous;});
