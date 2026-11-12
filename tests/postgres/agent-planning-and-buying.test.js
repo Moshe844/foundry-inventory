@@ -71,7 +71,7 @@ test('fresh warehouse move lists rank picks and stay within the measured warehou
   const route='/autopilot/reviews/warehouse-slotting',review=()=>reviews.run(db,ctx,'warehouse-slotting');
   const create=(name,parent)=>loc.createLocation(db,ctx,{name,kind:parent?'bin':'warehouse',parentLocationId:parent});
   const west=await create('West site'),far=await create('Back bin',f.location.id),near=await create('Packing bin',f.location.id),other=await create('West packing bin',west.id);
-  const page=await browser.get(route).expect(200);const distance=(bin,metres)=>browser.post(route+'/distances').type('form').send({_csrf:f.csrf(page.text),bin,metres});
+  const page=await browser.get('/autopilot/warehouse-slotting').expect(200);const distance=(bin,metres)=>browser.post('/autopilot/warehouse-slotting/distance').type('form').send({_csrf:f.csrf(page.text),bin,metres});
   for(const [bin,metres] of [[far.name,40],[near.name,3],[other.name,1]])await distance(bin,metres).expect(303);
   const sku=f.item.skuIds[0];
   await inventory.receive(db,ctx,{skuId:sku,locationId:far.id,quantity:15,idempotencyKey:randomUUID()});

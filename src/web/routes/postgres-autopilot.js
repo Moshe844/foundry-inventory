@@ -882,6 +882,50 @@ function createPostgresAutopilotRouter(database,options={}){
     await monthlyBuying.prepareDrafts(database,req.ctx,req.params.id,req.body);
     res.redirect(303,monthlyBuying.path+'/'+req.params.id);
   }));
+  const slotting=require('../../forecasting/warehouse-slotting');
+  const slottingPage=async(req,res)=>agentPage(req,res,'autopilot/warehouse-slotting',{title:'Warehouse move lists',nav:'autopilot',
+    backTo:{href:'/autopilot/reviews/warehouse-slotting',label:'Warehouse bin moves'}},async()=>({
+    model:await slotting.page(database,req.ctx,{id:req.params.id,warehouseId:req.query.warehouse,after:req.query.after}),
+  }),402);
+  const slotWarehouse=(res,id)=>res.redirect(303,slotting.path+'?'+new URLSearchParams({warehouse:id}));
+  router.get(slotting.path,requireAuth,owner,asyncRoute(slottingPage));
+  router.post(slotting.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await slotting.prepare(database,req.ctx,req.body);
+    res.redirect(303,slotting.path+'/'+result.id);
+  }));
+  router.get(slotting.path+'/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const model=await slotting.schedulePage(database,req.ctx);
+    res.page('autopilot/warehouse-slotting',{title:'Routine re-slots',nav:'autopilot',model:{...model,scheduleOnly:true}});
+  }));
+  router.post(slotting.path+'/routine',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await slotting.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Routine re-slots stopped.':'Routine re-slots saved.');
+    if(result.stopped)return res.redirect(303,slotting.path+'/routine');
+    return slotWarehouse(res,req.body.warehouseId);
+  }));
+  router.post(slotting.path+'/distance',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const bin=await slotting.saveDistance(database,req.ctx,req.body);
+    req.flash('success','Walking distance saved.');
+    return slotWarehouse(res,bin.warehouse_id);
+  }));
+  router.post(slotting.path+'/capacity',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const bin=await slotting.saveCapacity(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Bin fit removed.':'Bin fit saved.');
+    return slotWarehouse(res,bin.warehouse_id);
+  }));
+  router.get(slotting.path+'/:id',requireAuth,owner,asyncRoute(slottingPage));
+  router.post(slotting.path+'/:id/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await slotting.approve(database,req.ctx,req.params.id,req.body);
+    req.flash(result.held?'error':'success',result.held
+      ?result.approved+' approved. '+result.held+' need a fresh look; the reason is shown on each move.'
+      :result.approved===1?'Move approved. Staff can pick it from Transfers.':result.approved+' moves approved. Staff can pick them from Transfers.');
+    res.redirect(303,slotting.path+'/'+req.params.id);
+  }));
+  router.post(slotting.path+'/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await slotting.undo(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Move undone. The stock is free again.');
+    res.redirect(303,slotting.path+'/'+req.params.id);
+  }));
   // A locked destination remains a useful page. The underlying services still
   // enforce the plan on every read and mutation; only the HTML presentation changes.
   async function agentPage(req,res,view,locals,load,lockedStatus=200){
@@ -1056,7 +1100,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='open-to-buy')result.openToBuyPath=monthlyBuying.path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
-      if(req.params.job==='warehouse-slotting')result.binDistanceForm=true;
+      if(req.params.job==='warehouse-slotting')result.slottingPath=slotting.path;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
@@ -1090,10 +1134,6 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/negotiation-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/negotiation-drafts').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/supplier-negotiation?'+new URLSearchParams({filter:req.body.supplier}));
-  }));
-  router.post('/autopilot/reviews/warehouse-slotting/distances',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../forecasting/warehouse-slotting').saveDistance(database,req.ctx,req.body);
-    req.flash('success','Walking distance saved.');res.redirect(303,'/autopilot/reviews/warehouse-slotting');
   }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
