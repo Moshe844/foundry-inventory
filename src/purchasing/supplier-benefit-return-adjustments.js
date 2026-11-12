@@ -31,7 +31,8 @@ async function adjustments(db,ctx,p,rows,today){
   WHERE r.workspace_id=$1 AND r.supplier_bill_id=ANY($2::text[]) AND r.status<>'CANCELLED' ORDER BY r.id,l.id`,[ctx.workspaceId,ids])).rows;
  const credits=(await db.query(`SELECT c.id,coalesce(a.evidence->>'originalBillId',c.supplier_bill_id) AS supplier_bill_id,c.supplier_bill_id AS target_bill_id,
   c.supplier_id,c.amount_minor::text,c.credit_date::text,c.journal_entry_id,c.source_key,
-  a.supplier_return_id,a.approval_fingerprint,a.tax_minor::text AS source_tax_minor,j.status AS journal_status,lines.currency,lines.currency_count,j.source_type,j.source_record_type,j.source_record_id,j.metadata::jsonb AS metadata,
+  a.supplier_return_id,a.approval_fingerprint,a.tax_minor::text AS source_tax_minor,j.status AS journal_status,
+  EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_benefit_claim_credits rebate WHERE rebate.credit_id=c.id) AS rebate_recovery,lines.currency,lines.currency_count,j.source_type,j.source_record_type,j.source_record_id,j.metadata::jsonb AS metadata,
   EXISTS(SELECT 1 FROM accounting_journal_entries reversed WHERE reversed.workspace_id=c.workspace_id AND reversed.reversal_of_entry_id=c.journal_entry_id AND reversed.status='POSTED') AS reversed
   FROM accounting_supplier_credits c LEFT JOIN accounting_journal_entries j ON j.workspace_id=c.workspace_id AND j.id=c.journal_entry_id
   LEFT JOIN stockchief_runtime.agent_supplier_credit_applications a ON a.workspace_id=c.workspace_id AND a.credit_id=c.id
@@ -53,6 +54,9 @@ async function adjustments(db,ctx,p,rows,today){
    if(eligible.length&&eligible.length!==lines.length){reasons.push('A mixed-product return needs the supplier credit allocated to this agreement’s exact products');continue;}
    if(eligible.length){net+=posted.amount-posted.tax;for(const line of eligible)units+=scaled(line.quantity);}
   }
+  // Job 97: a credit matched to a rebate claim is the rebate being paid, not a
+  // change to what was bought, so it neither reduces nor holds eligible spend.
+  for(const credit of billCredits)if(credit.rebate_recovery)seen.add(credit.id);
   if(billCredits.some(credit=>!seen.has(credit.id)))reasons.push('A supplier credit needs its purchase adjustment or rebate recovery classified');
   if(net>BigInt(bill.net_minor)||units>(scaled(bill.quantity)??-1n))reasons.push('Returned purchases exceed the original eligible invoice amount or stock quantity');
   result.set(bill.id,{netMinor:net.toString(),quantityScaled:units.toString(),reasons:[...new Set(reasons)],sourceFingerprint:hash({returns:billReturns,credits:billCredits})});

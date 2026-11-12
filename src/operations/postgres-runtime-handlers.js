@@ -752,6 +752,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const filing=await require('../documents/document-filing-scopes').queueMessage(database,job.workspaceId,job.payload.messageId);
     // Job 96: supplier details can be stated in an attached file.
     await require('../purchasing/agent-supplier-email-terms').queueMessage(database,job.workspaceId,job.payload.messageId);
+    // Job 97: rebate terms can be in an attached agreement or price list.
+    await require('../purchasing/agent-supplier-benefit-claims').noticeOffer(database,job.workspaceId,job.payload.messageId);
     return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
@@ -794,6 +796,11 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
+  'agent.mail.supplier_benefit_claim.v1':external(async(job,database)=>{
+    const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
+    const current=(await database.query("SELECT 1 FROM stockchief_runtime.agent_supplier_benefit_claims WHERE workspace_id=$1 AND communication_id=$2 AND status='SENDING'",[job.workspaceId,effect.aggregateId])).rowCount;
+    if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};return providerEffect(job,database,options,providers);
+  }),
   'agent.mail.supplier_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
     const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_claims WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;

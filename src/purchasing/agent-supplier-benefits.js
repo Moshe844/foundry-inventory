@@ -64,7 +64,12 @@ async function configure(db,ctx,input){
   if(prior&&(await c.query('SELECT 1 FROM stockchief_runtime.agent_supplier_benefit_claims WHERE workspace_id=$1 AND program_id=$2 LIMIT 1',[ctx.workspaceId,id])).rowCount)throw new ValidationError('This agreement already has claim history. Preserve it and record revised contract terms as a separate agreement.');
   await c.query(`INSERT INTO stockchief_runtime.agent_supplier_benefit_programs(id,workspace_id,supplier_id,title,source_reference,currency,starts_on,ends_on,claim_on,claim_by,scope,terms,authorized_by)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,source_reference=EXCLUDED.source_reference,currency=EXCLUDED.currency,starts_on=EXCLUDED.starts_on,ends_on=EXCLUDED.ends_on,claim_on=EXCLUDED.claim_on,claim_by=EXCLUDED.claim_by,scope=EXCLUDED.scope,terms=EXCLUDED.terms,authorized_by=EXCLUDED.authorized_by,revision=agent_supplier_benefit_programs.revision+1,updated_at=now()`,[id,ctx.workspaceId,d.supplier_id,title,reference,currency,start,end,claimOn,claimBy,JSON.stringify(scope),JSON.stringify(terms),ctx.actorId]);
-  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Agreed supplier benefit terms recorded',reference:id,after:{title,reference,currency,startsOn:start,endsOn:end,claimOn,claimBy,scope,terms}});return {id};
+  // Terms read from a supplier email are accepted only here, by the owner.
+  if(input.offerId&&!prior){const offer=(await c.query("SELECT id,message_id,supplier_id FROM stockchief_runtime.agent_supplier_benefit_offers WHERE workspace_id=$1 AND id=$2 AND status='OPEN' FOR UPDATE",[ctx.workspaceId,String(input.offerId)])).rows[0];
+   if(!offer||offer.supplier_id!==d.supplier_id)throw new ValidationError('These emailed terms were already handled or are for another supplier.');
+   await c.query("UPDATE stockchief_runtime.agent_supplier_benefit_offers SET status='SAVED',program_id=$3,decided_by=$4,decided_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,offer.id,id,ctx.actorId]);
+   await c.query('UPDATE stockchief_runtime.agent_supplier_benefit_programs SET source_message_id=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,offer.message_id]);}
+  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Agreed supplier benefit terms recorded',reference:id,after:{title,reference,currency,startsOn:start,endsOn:end,claimOn,claimBy,scope,terms,offerId:input.offerId||null}});return {id};
  },{isolation:'SERIALIZABLE',retrySafe:true}).catch(error=>{if(error.code==='23505'&&error.constraint==='agent_supplier_benefit_reference')throw new ValidationError('This exact supplier agreement and purchase period are already saved. Open the existing agreement.');throw error;});
 }
 async function facts(db,ctx,id){
@@ -130,7 +135,7 @@ async function factsForDefinition(db,ctx,p){
   net+=adjustedNet;units+=adjustedUnits;eligible.push(row);
  }
  const unitText=(units/1000000n).toString()+'.'+(units%1000000n).toString().padStart(6,'0'),result=calculator.calculate(p.terms,{netMinor:net.toString(),quantity:unitText});
- const claims=p.id?(await db.query('SELECT id,amount_minor::text,external_reference,submitted_on::text,status,acknowledgement_reference,acknowledgement_on::text,withdrawn_reference,withdrawn_on::text,revision FROM stockchief_runtime.agent_supplier_benefit_claims WHERE workspace_id=$1 AND program_id=$2 ORDER BY submitted_on,id',[ctx.workspaceId,p.id])).rows:[];
+ const claims=p.id?(await db.query('SELECT id,amount_minor::text,external_reference,submitted_on::text,status,acknowledgement_reference,acknowledgement_on::text,withdrawn_reference,withdrawn_on::text,revision,origin,automatic,credited_minor::text,communication_id,problem,source_fingerprint,source_snapshot FROM stockchief_runtime.agent_supplier_benefit_claims WHERE workspace_id=$1 AND program_id=$2 ORDER BY submitted_on NULLS LAST,created_at,id',[ctx.workspaceId,p.id])).rows:[];
  const submitted=claims.filter(claim=>claim.status!=='WITHDRAWN').reduce((sum,claim)=>sum+BigInt(claim.amount_minor),0n),potential=BigInt(result.potentialBenefitMinor),remaining=potential>submitted?potential-submitted:0n;
  const truncated=rows.length>10000,warnings=[];if(scopeChanged)warnings.push('A selected product code or stock unit changed, or the supplier identity changed. Review the agreement scope.');if(holds.length)warnings.push(holds.length+' invoices have unresolved source facts. The potential below uses checked invoices only.');
  if(truncated)warnings.push('This period has more than 10,000 supplier invoices. Narrow the purchase period and review the supplier agreement before making a claim.');
@@ -164,7 +169,7 @@ async function updateClaim(db,ctx,id,claimId,input){
   if(!['ACKNOWLEDGED','WITHDRAWN'].includes(status)||!reference||reference.length>200||input.confirmed!=='yes'||date<claim.submitted_on||date>today)throw new ValidationError('Confirm the actual external acknowledgement or withdrawal, its reference and its date. This does not record money received.');
   const field=status==='ACKNOWLEDGED'?'acknowledgement':'withdrawn';
   if(claim.status===status&&claim[field+'_reference']===reference&&claim[field+'_on']===date)return {id:claim.id,replayed:true};
-  if(claim.revision!==Number(input.revision)||claim.status==='WITHDRAWN'||status==='ACKNOWLEDGED'&&claim.status!=='SUBMITTED')throw new ValidationError('Reload this claim’s current history before recording another update.');
+  if(claim.revision!==Number(input.revision)||!['SUBMITTED','ACKNOWLEDGED'].includes(claim.status)||status==='ACKNOWLEDGED'&&claim.status!=='SUBMITTED')throw new ValidationError('Reload this claim’s current history before recording another update.');
   await c.query('UPDATE stockchief_runtime.agent_supplier_benefit_claims SET status=$4,'+field+'_reference=$5,'+field+'_on=$6,revision=revision+1 WHERE workspace_id=$1 AND program_id=$2 AND id=$3',[ctx.workspaceId,id,claimId,status,reference,date]);
   await c.query("UPDATE stockchief_runtime.agent_supplier_benefit_observations SET needs_review=false,observed_at='epoch' WHERE workspace_id=$1 AND program_id=$2",[ctx.workspaceId,id]);
   await require('../operations/postgres-security-audit').record(c,ctx,{action:'External supplier benefit claim update recorded',reference:claim.id,before:{status:claim.status},after:{status,reference,date}});
@@ -183,9 +188,20 @@ async function resolveCodes(db,ctx,input){
  if(rows.length!==codes.length)throw new ValidationError('Use exact SKU codes from this inventory.');return {...input,skuIds:rows.map(row=>row.id)};
 }
 function inputMoney(value,currency){const exponent=money.exponent(currency),factor=10n**BigInt(exponent),amount=BigInt(value);return (amount/factor).toString()+(exponent?'.'+(amount%factor).toString().padStart(exponent,'0'):'');}
-async function page(db,ctx,{id=null,q='',after='',input={},result=null,evidencePage=1,edit=false}={}){
+async function page(db,ctx,{id=null,q='',after='',input={},result=null,evidencePage=1,edit=false,offer=null}={}){
  await owner(db,ctx);const account=await policy.accountState(db,ctx.workspaceId),plan=policy.usesAgentTerms(account)?account.plan:null,locked=!policy.permits(plan,97,'suggest'),canTrack=policy.permits(plan,97,'draft');
- if(id&&!canTrack)policy.requireJob(plan,97,'draft');const selectedResult=id?await facts(db,ctx,id):result,editing=Boolean(id&&edit&&canTrack);
+ if(id&&!canTrack)policy.requireJob(plan,97,'draft');const selectedResult=id?await facts(db,ctx,id):result,editing=Boolean(id&&edit&&canTrack),claimsService=require('./agent-supplier-benefit-claims');
+ // Terms read from a supplier email fill the form; the owner checks and accepts them.
+ const emailed=!locked&&(offer||input.offerId)?await claimsService.offer(db,ctx,String(offer||input.offerId)):null;
+ if(emailed&&emailed.status==='OPEN'&&!Object.keys(input).filter(key=>key!=='offerId').length)input=claimsService.offerInput(emailed);
+ const offers=locked?[]:(await db.query("SELECT o.id,o.created_at,s.name FROM stockchief_runtime.agent_supplier_benefit_offers o JOIN suppliers s ON s.workspace_id=o.workspace_id AND s.id=o.supplier_id WHERE o.workspace_id=$1 AND o.status='OPEN' ORDER BY o.created_at,o.id LIMIT 20",[ctx.workspaceId])).rows;
+ let claimView=null;
+ if(id&&canTrack&&selectedResult){const p=selectedResult.program;
+  claimView={mailboxes:(await db.query("SELECT id,display_name FROM workspace_connectors WHERE workspace_id=$1 AND status='connected' AND paused_at IS NULL AND provider_type IN ('gmail','microsoft365') ORDER BY display_name,id LIMIT 50",[ctx.workspaceId])).rows,
+   nearTier:nearTier(p,selectedResult),periodClosed:selectedResult.today>p.ends_on,claimLimit:p.claim_limit_minor?inputMoney(p.claim_limit_minor,p.currency):'',
+   canPrepare:Boolean(p.enabled&&p.connector_id&&selectedResult.claimReady&&selectedResult.today>p.ends_on&&!selectedResult.claims.some(c=>['PREPARED','SENDING'].includes(c.status))),
+   credits:Object.fromEntries(await Promise.all(selectedResult.claims.filter(c=>c.origin==='prepared'||['SUBMITTED','ACKNOWLEDGED','CREDITED'].includes(c.status)).map(async c=>[c.id,await claimsService.credits(db,ctx,p,{...c,amount_minor:c.amount_minor})])))};
+ }
  if(editing){const p=selectedResult.program;if(selectedResult.claims.length)throw new ValidationError('Claim history preserves these original terms. Record revised agreed terms as a separate agreement.');
   input={supplierId:p.supplier_id,title:p.title,sourceReference:p.source_reference,currency:p.currency,startsOn:p.starts_on,endsOn:p.ends_on,claimOn:p.claim_on,claimBy:p.claim_by,allProducts:p.scope.allProducts?'yes':'no',codes:p.scope.products.map(product=>product.code).join('\n'),...p.terms,tiersText:p.terms.tiers.map(tier=>(p.terms.basis==='net_spend'?inputMoney(tier.threshold,p.currency):tier.threshold)+' | '+(p.terms.benefit==='percentage'?tier.rateBasisPoints/100:inputMoney(tier.unitPriceMinor,p.currency))).join('\n')};
  }
@@ -193,7 +209,7 @@ async function page(db,ctx,{id=null,q='',after='',input={},result=null,evidenceP
  const programmes=(await db.query(`SELECT p.id,p.title,p.enabled,p.revision,p.starts_on::text,p.ends_on::text,s.name AS supplier_name FROM stockchief_runtime.agent_supplier_benefit_programs p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id WHERE p.workspace_id=$1 AND p.id>$2 ORDER BY p.id LIMIT 51`,[ctx.workspaceId,String(after).slice(0,160)])).rows;
  const pageNumber=Number(evidencePage);if(!Number.isSafeInteger(pageNumber)||pageNumber<1||pageNumber>1000)throw new ValidationError('Choose a valid purchase evidence page.');
  const sources=selectedResult&&!selectedResult.estimateOnly?selectedResult.eligible.concat(selectedResult.holds,selectedResult.excluded):[];
- return {locked,canTrack,editing,shadow:account.shadow,selected:id,result:selectedResult,input,q:query,suppliers:suppliers.slice(0,50),moreSuppliers:suppliers.length>50,programmes:programmes.slice(0,50),moreProgrammes:programmes.length>50,requestKey:newId('benefit-claim'),displayMoney,sourceRows:sources.slice((pageNumber-1)*100,pageNumber*100),sourcePage:pageNumber,moreSources:sources.length>pageNumber*100,sourceTotal:sources.length};
+ return {locked,canTrack,editing,shadow:account.shadow,selected:id,result:selectedResult,input,q:query,emailed,offers,claimView,suppliers:suppliers.slice(0,50),moreSuppliers:suppliers.length>50,programmes:programmes.slice(0,50),moreProgrammes:programmes.length>50,requestKey:newId('benefit-claim'),displayMoney,sourceRows:sources.slice((pageNumber-1)*100,pageNumber*100),sourcePage:pageNumber,moreSources:sources.length>pageNumber*100,sourceTotal:sources.length};
 }
 async function refreshScope(db,ctx,id,input){
  return db.transaction(async c=>{
@@ -205,28 +221,50 @@ async function refreshScope(db,ctx,id,input){
   await require('../operations/postgres-security-audit').record(c,ctx,{action:'Supplier benefit factual scope reviewed',reference:id,before:review.previous,after:review.current});return {id};
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function observe(c,ctx,p){
- const f=await factsForDefinition(c,ctx,p),summary={title:p.title,supplier:p.scope.supplierName,currency:p.currency,potentialBenefitMinor:f.result.potentialBenefitMinor,remainingClaimMinor:f.remainingClaimMinor,claimReady:f.claimReady,claimOn:p.claim_on,claimBy:p.claim_by,warnings:f.warnings};
- await c.query(`INSERT INTO stockchief_runtime.agent_supplier_benefit_observations(program_id,workspace_id,source_fingerprint,program_revision,result,needs_review) VALUES($1,$2,$3,$4,$5,$6)
-  ON CONFLICT(program_id) DO UPDATE SET source_fingerprint=EXCLUDED.source_fingerprint,program_revision=EXCLUDED.program_revision,result=EXCLUDED.result,needs_review=EXCLUDED.needs_review,observed_at=now()`,[p.id,ctx.workspaceId,f.sourceFingerprint,p.revision,JSON.stringify(summary),f.claimReady||f.warnings.length>0]);return summary;
+// Close to the next tier while the purchase period is still open.
+function nearTier(p,f){
+ if(f.today>p.ends_on||f.result.nextThreshold===null||f.result.remainingToNext===null)return null;
+ const percent=BigInt(p.alert_percent||10),scaled=v=>{const [a,b='']=String(v).split('.');return BigInt(a)*1000000n+BigInt(b.padEnd(6,'0').slice(0,6));};
+ const next=scaled(f.result.nextThreshold),left=scaled(f.result.remainingToNext);
+ if(left<=0n||left*100n>next*percent)return null;
+ const tier=p.terms.tiers[(f.result.tierIndex??-1)+1],unit=p.scope.products[0]?.unit||'units';
+ const show=v=>p.terms.basis==='net_spend'?displayMoney(v,p.currency):v+' '+unit;
+ return {nextThreshold:f.result.nextThreshold,remainingToNext:f.result.remainingToNext,text:'Another '+show(f.result.remainingToNext)+' of purchases by '+p.ends_on+' reaches the next tier ('+(tier?.rateBasisPoints!==undefined?tier.rateBasisPoints/100+'%':'better price')+' from '+show(f.result.nextThreshold)+').'};
 }
+async function observe(c,ctx,p){
+ const f=await factsForDefinition(c,ctx,p),near=nearTier(p,f),earned=f.today>p.ends_on?f.result.potentialBenefitMinor:null;
+ const summary={title:p.title,supplier:p.scope.supplierName,currency:p.currency,potentialBenefitMinor:f.result.potentialBenefitMinor,remainingClaimMinor:f.remainingClaimMinor,claimReady:f.claimReady,claimOn:p.claim_on,claimBy:p.claim_by,warnings:f.warnings,nearTier:near,earnedMinor:earned};
+ await c.query(`INSERT INTO stockchief_runtime.agent_supplier_benefit_observations(program_id,workspace_id,source_fingerprint,program_revision,result,needs_review) VALUES($1,$2,$3,$4,$5,$6)
+  ON CONFLICT(program_id) DO UPDATE SET source_fingerprint=EXCLUDED.source_fingerprint,program_revision=EXCLUDED.program_revision,result=EXCLUDED.result,needs_review=EXCLUDED.needs_review,observed_at=now()`,[p.id,ctx.workspaceId,f.sourceFingerprint,p.revision,JSON.stringify(summary),f.claimReady||f.warnings.length>0||Boolean(near)]);return summary;
+}
+// Pro and Custom: tracks each agreement, follows claims to credit notes and
+// claims a finished period. Watch only, pause and the first 14 days stop it;
+// Ask me first prepares claims for approval without sending them.
 async function run(db,workspaceId){
  const account=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,97,'automatic')||account.shadow)return {skipped:'plan_or_watch_period'};
- const permission=await require('../autopilot/postgres-service').getState(db,workspaceId),reason=await require('../autopilot/job-modes').restriction(db,workspaceId,97,true);
- if(!permission.canAutomate||reason)return {skipped:'owner_authority'};
+ const modes=require('../autopilot/job-modes'),permission=await require('../autopilot/postgres-service').getState(db,workspaceId),watch=await modes.restriction(db,workspaceId,97,false);
+ if(!permission.canAutomate||watch)return {skipped:'owner_authority'};
  const rows=(await db.query(`SELECT p.id,p.authorized_by FROM stockchief_runtime.agent_supplier_benefit_programs p LEFT JOIN stockchief_runtime.agent_supplier_benefit_observations o ON o.workspace_id=p.workspace_id AND o.program_id=p.id
-  WHERE p.workspace_id=$1 AND p.enabled AND (o.program_id IS NULL OR o.observed_at<now()-interval '1 hour' OR o.program_revision<>p.revision) ORDER BY o.observed_at NULLS FIRST,p.id LIMIT 5`,[workspaceId])).rows;
- let checked=0,held=0;for(const row of rows){try{const changed=await db.transaction(async c=>{
-  const ctx={workspaceId,actorId:row.authorized_by};await lockPlan(c,ctx);const current=await policy.accountState(c,workspaceId),state=await require('../autopilot/postgres-service').getState(c,workspaceId),stop=await require('../autopilot/job-modes').restriction(c,workspaceId,97,true);
+  WHERE p.workspace_id=$1 AND p.enabled AND (o.program_id IS NULL OR o.observed_at<now()-interval '1 hour' OR o.program_revision<>p.revision
+   OR EXISTS(SELECT 1 FROM stockchief_runtime.agent_supplier_benefit_claims c WHERE c.workspace_id=p.workspace_id AND c.program_id=p.id AND c.status='SENDING')) ORDER BY o.observed_at NULLS FIRST,p.id LIMIT 5`,[workspaceId])).rows;
+ let checked=0,held=0,claimed=0;for(const row of rows){try{const changed=await db.transaction(async c=>{
+  const ctx={workspaceId,actorId:row.authorized_by};await lockPlan(c,ctx);const current=await policy.accountState(c,workspaceId),state=await require('../autopilot/postgres-service').getState(c,workspaceId),stop=await modes.restriction(c,workspaceId,97,false),ask=Boolean(await modes.restriction(c,workspaceId,97,true));
   if(current.shadow||!policy.permits(current.plan,97,'automatic')||!state.canAutomate||stop)return;
-  const p=await get(c,workspaceId,row.id,{lock:true});if(!p.enabled)return false;await observe(c,ctx,p);return true;
+  const p=await get(c,workspaceId,row.id,{lock:true});if(!p.enabled)return false;
+  await c.query('SAVEPOINT supplier_benefit_cycle');
+  try{const r=await require('./agent-supplier-benefit-claims').cycle(c,ctx,p,{ask});if(r.prepared)claimed++;await c.query('RELEASE SAVEPOINT supplier_benefit_cycle');}
+  catch(error){await c.query('ROLLBACK TO SAVEPOINT supplier_benefit_cycle');await c.query('RELEASE SAVEPOINT supplier_benefit_cycle');if(![400,402,403,404,422].includes(error.status))throw error;}
+  await observe(c,ctx,p);return true;
  },{isolation:'SERIALIZABLE',retrySafe:true});if(changed)checked++;}catch(error){if(!['validation_error','authorization_error','entitlement_required','agent_plan_required'].includes(error.code))throw error;held++;}}
- return {checked,held};
+ return {checked,held,claimed};
 }
 async function inbox(db,workspaceId,actorId){
+ const account=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,97,'suggest'))return [];
+ try{await owner(db,{workspaceId,actorId});}catch(error){if(error.status===403)return [];throw error;}
+ const canTrack=policy.permits(account.plan,97,'draft'),claims=await require('./agent-supplier-benefit-claims').inbox(db,workspaceId,{canTrack});if(!canTrack)return claims;
  const rows=(await db.query(`SELECT o.program_id,o.result,o.observed_at FROM stockchief_runtime.agent_supplier_benefit_observations o JOIN stockchief_runtime.agent_supplier_benefit_programs p ON p.workspace_id=o.workspace_id AND p.id=o.program_id WHERE o.workspace_id=$1 AND p.enabled AND o.needs_review ORDER BY o.observed_at,o.program_id LIMIT 51`,[workspaceId])).rows;
- if(!rows.length)return [];await owner(db,{workspaceId,actorId});const account=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,97,'draft'))return [];
- return rows.slice(0,50).map(row=>({kind:'accounting',importance:'Needs You',priority:72,title:'Review supplier benefit: '+row.result.title,happened:'StockChief checked the agreed purchasing terms and matched supplier invoices.',why:row.result.warnings.join(' ')||'A potential claim needs your review against the supplier agreement.',recommendation:'Review current purchases and claim dates. This observation does not submit a claim or record money received.',href:'/autopilot/supplier-benefits/'+row.program_id,actionLabel:'Review supplier benefit',sourceId:'supplier-benefit:'+row.program_id,createdAt:row.observed_at,at:row.observed_at}));
+ return rows.slice(0,50).map(row=>({kind:'accounting',importance:'Needs You',priority:72,title:(row.result.nearTier&&!row.result.claimReady&&!row.result.warnings.length?'Close to the next rebate tier: ':'Review supplier benefit: ')+row.result.title,happened:'StockChief checked the agreed purchasing terms and matched supplier invoices.',
+  why:[row.result.nearTier?.text,...row.result.warnings].filter(Boolean).join(' ')||'A potential claim needs your review against the supplier agreement.',recommendation:'Review current purchases and claim dates. This check does not post money.',href:'/autopilot/supplier-benefits/'+row.program_id,actionLabel:'Review supplier benefit',sourceId:'supplier-benefit:'+row.program_id,createdAt:row.observed_at,at:row.observed_at})).concat(claims);
 }
-module.exports={owner,access,get,configure,products,day,facts,recordClaim,updateClaim,estimate,formTerms,page,resolveCodes,displayMoney,run,inbox,refreshScope,
- reviewDefinition:{id:97,key:'supplier-benefits',label:'Track agreed supplier rebates and volume discounts',readPage:async()=>({summary:'Growth can estimate a benefit from owner-checked contract terms. Pro and Custom can track those agreements, checked purchases, claim windows and actual external claim history. No new terms, financial posting or claim sending is authorized.',rows:[{Suggestion:'Check the supplier agreement against matched purchase invoices',Action:'Open supplier benefits',link:'/autopilot/supplier-benefits'}],more:false})}};
+module.exports={owner,access,get,configure,products,day,facts,factsForDefinition,lockPlan,nearTier,recordClaim,updateClaim,estimate,formTerms,page,resolveCodes,displayMoney,run,inbox,refreshScope,
+ reviewDefinition:{id:97,key:'supplier-benefits',label:'Track agreed supplier rebates and volume discounts',readPage:async()=>({summary:'Growth gives a one-time estimate from rebate terms you enter or that a supplier emailed. Pro and Custom track agreements against matched purchases, warn when you are close to the next tier, work out the rebate earned when the period ends, send the claim to the supplier within your claim limit and follow it to the supplier credit note. Accepting supplier terms always needs you.',rows:[{Suggestion:'Check the supplier agreement against matched purchase invoices',Action:'Open supplier benefits',link:'/autopilot/supplier-benefits'}],more:false})}};

@@ -865,7 +865,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/po-delivery-date-settings/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.configure(database,req.ctx,null,{...req.body,settingId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/reviews/po-delivery-dates');}));
   router.post('/autopilot/po-delivery-date-rules/remove',requireAuth,owner,asyncRoute(async(req,res)=>{await poDates.teach(database,req.ctx,null,{...req.body,remove:'yes'});res.redirect(303,'/autopilot/reviews/po-delivery-dates');}));
   const supplierBenefits=require('../../purchasing/agent-supplier-benefits');
-  router.get('/autopilot/supplier-benefits',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-benefits',{title:'Supplier rebates and volume discounts',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierBenefits.page(database,req.ctx,{q:req.query.q,after:req.query.after}))));
+  router.get('/autopilot/supplier-benefits',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-benefits',{title:'Supplier rebates and volume discounts',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierBenefits.page(database,req.ctx,{q:req.query.q,after:req.query.after,offer:req.query.offer||null}))));
   router.post('/autopilot/supplier-benefits/estimate',requireAuth,owner,asyncRoute(async(req,res)=>{
     const input=await supplierBenefits.resolveCodes(database,req.ctx,req.body),result=await supplierBenefits.estimate(database,req.ctx,input);
     res.page('autopilot/supplier-benefits',{title:'Supplier benefit estimate',nav:'autopilot',backTo:{href:'/autopilot/supplier-benefits',label:'Supplier benefits'},...await supplierBenefits.page(database,req.ctx,{input: req.body,result})});
@@ -889,6 +889,13 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-benefits/:id/claims',requireAuth,owner,asyncRoute(async(req,res)=>{
     await supplierBenefits.recordClaim(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
   }));
+  const benefitClaims=require('../../purchasing/agent-supplier-benefit-claims');
+  router.post('/autopilot/supplier-benefits/offers/:offerId/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.dismissOffer(database,req.ctx,req.params.offerId,req.body);res.redirect(303,'/autopilot/supplier-benefits');}));
+  router.post('/autopilot/supplier-benefits/:id/claim-settings',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id+'#claims');}));
+  router.post('/autopilot/supplier-benefits/:id/prepare-claim',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.prepareClaim(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id+'#claims');}));
+  router.post('/autopilot/supplier-benefits/:id/claims/:claimId/send',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.send(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id+'#claims');}));
+  router.post('/autopilot/supplier-benefits/:id/claims/:claimId/discard',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.discard(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id+'#claims');}));
+  router.post('/autopilot/supplier-benefits/:id/claims/:claimId/credit',requireAuth,owner,asyncRoute(async(req,res)=>{await benefitClaims.linkCredit(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id+'#claims');}));
   router.post('/autopilot/supplier-benefits/:id/claims/:claimId',requireAuth,owner,asyncRoute(async(req,res)=>{
     await supplierBenefits.updateClaim(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
   }));

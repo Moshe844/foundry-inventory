@@ -193,6 +193,7 @@ const actionJobs=new Map([
   ['team.write_procedure',178],
   ['purchasing.plan_container',38],
   ['supplier.email_terms',96],
+  ['supplier.claim_benefit',97],
   ['purchase_order.update_delivery_date',31],
   ['purchase_order.close_stale_incoming',32],
   ['inventory.correct_bin',11],
