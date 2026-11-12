@@ -837,6 +837,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const result = { salesOrderId, status, allocations,kitAllocations:kitReservations.allocations, shortage: short };
     // An order still without a ship-from warehouse gets one chosen by the owner's routing rules (job 121).
     await require('../sales/agent-ship-from').queueAfterConfirmation(client,ctx,order,input.idempotencyKey);
+    // An order confirmed partly in stock may be split by the owner's rules (job 61).
+    if(short&&(allocations.length||kitReservations.allocations.length))await require('../sales/agent-order-splits').queue(client,ctx,[salesOrderId],'confirm:'+input.idempotencyKey);
     await completeOperation(client, operation, result);
     if(Object.hasOwn(lines.rows[0]||{},'direct_committed_quantity'))
       await require('../purchasing/direct-shipment-routines').queueForOrder(client,ctx.workspaceId,salesOrderId);

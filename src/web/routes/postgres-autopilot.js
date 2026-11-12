@@ -340,6 +340,46 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.watching?'StockChief is only watching, so nothing changed.':'Checked. '+result.applied+' chosen, '+result.drafted+' waiting for approval, '+result.asked+' need you.');
     return res.redirect(303,routing.href);
   }));
+  const orderSplits=require('../../sales/agent-order-splits');
+  router.get('/autopilot/reviews/order-splits',requireAuth,owner,(_req,res)=>res.redirect(303,orderSplits.href));
+  router.get(orderSplits.href,requireAuth,owner,starterAgentPage(61,'draft','Split orders',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/order-splits',{title:'Split orders',nav:'autopilot',backTo:{href:backorders.href,label:'Backorders'},
+      model:await orderSplits.page(database,req.ctx)});
+  },'Pro'));
+  router.post(orderSplits.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await orderSplits.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Your split rules are updated.':result.unchanged?'These rules are already saved.':'Your split rules are saved.');
+    return res.redirect(303,orderSplits.href);
+  }));
+  router.post(orderSplits.href+'/teach',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await orderSplits.teach(database,req.ctx,req.body);
+    req.flash('success','StockChief will split orders like this on its own, within your rules.');
+    return res.redirect(303,orderSplits.href);
+  }));
+  router.post(orderSplits.href+'/customers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await orderSplits.setConsent(database,req.ctx,req.body);
+    req.flash('success',result.accepts===null?result.name+' follows your rules again.':result.accepts?result.name+' accepts partial shipments.':result.name+' ships complete only.');
+    return res.redirect(303,orderSplits.href);
+  }));
+  router.post(orderSplits.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await orderSplits.prepare(database,req.ctx,{orderId:req.body.orderId});
+    req.flash('success',result.created?'The split is ready for your approval.':'This split is already waiting for your approval.');
+    return res.redirect(303,orderSplits.href+'#split-'+result.id);
+  }));
+  router.post(orderSplits.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await orderSplits.run(database,req.ctx.workspaceId);
+    req.flash('success',result.watching?'StockChief is only watching, so nothing changed.':'Checked. '+result.split+' split, '+result.drafted+' waiting for approval.');
+    return res.redirect(303,orderSplits.href);
+  }));
+  for(const [step,handler] of [['approve',orderSplits.approve],['discard',orderSplits.discard],['undo',orderSplits.undo]]){
+    router.post(orderSplits.href+'/splits/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const result=await handler(database,req.ctx,req.params.id,req.body);
+      if(result.stale)req.flash('error','The order, its stock or your rules changed since this split was made. Review the updated split.');
+      else req.flash('success',result.replayed?'This was already done.':step==='approve'?'The part in stock went to picking. The rest waits on the order.':step==='discard'?'Split dismissed.':'The split was undone.');
+      return res.redirect(303,orderSplits.href);
+    }));
+  }
   const staleIncoming=require('../../purchasing/agent-stale-incoming');
   router.get(staleIncoming.href,requireAuth,owner,starterAgentPage(32,'suggest','Goods that will not arrive',async(req,res)=>{
     res.set('Cache-Control','no-store');
