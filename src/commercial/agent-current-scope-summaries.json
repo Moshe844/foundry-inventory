@@ -100,7 +100,7 @@
   "131": "Suggests a category when enough existing products of the same recorded brand agree, with links to the affected items.",
   "133": "Reuses an owner-approved mapping for a matching file name, worksheet and headers. Unknown columns require review; mapping alone creates no stock or products.",
   "134": "Converts saved supplier purchase units to exact stock units, including supported case and weight conversions, without posting stock.",
-  "135": "Updates future purchase costs from a supported supplier CSV within the owner's exact limits. Changes over the review threshold need individual approval; other formats remain open.",
+  "135": "Reads a supplier's price list in any format the price-list page accepts (spreadsheets, PDFs, documents and confirmed scans) and updates that supplier's future cost when the supplier, product and unit match exactly. Changes over 5%, or over the owner's lower limit for a supplier, wait for a person. Pro learns a supplier after one approved change and a saved limit; Custom needs no teaching. Unclear rows stop and ask, and an update can be undone until the cost changes again.",
   "136": "Saves quoted, product-matched facts from readable safety text and PDF specifications. It does not certify compliance or change prices, terms or physical stock.",
   "137": "Files supported bills of lading and customs PDF/text documents against their exact purchase order. Further formats and live provider polling remain open.",
   "138": "Classifies captured Gmail or Outlook messages as orders, invoices, questions, bulk mail or unknown senders. Live mailbox polling still needs verification.",

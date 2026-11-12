@@ -1,0 +1,89 @@
+<% const base='/autopilot/supplier-price-updates', lists='/autopilot/supplier-price-lists', {list}=screen; %>
+<% const money=(minor,currency)=>helpers.money(minor,currency); %>
+<% if(!list){ %>
+<header class="rm-head">
+  <h1>Supplier cost updates</h1>
+  <p>When a supplier sends a new price list, StockChief updates that supplier’s cost for future orders. Changes over 5%, and anything that does not match exactly, wait for you.</p>
+</header>
+<% if(!screen.lists.length){ %><p>No supplier price lists yet.</p><% } %>
+<ul class="rm-list">
+  <% for(const l of screen.lists){ %><li class="list-row" data-cost-list="<%= l.id %>">
+    <span><a href="<%= base %>/<%= encodeURIComponent(l.id) %>"><strong><%= l.filename %></strong></a>
+      <small><%= l.supplier||'Archived supplier' %></small></span>
+    <span><%= l.status!=='READY'?{QUEUED:'Reading',HELD:'The list needs your check'}[l.status]:
+      l.waiting+l.held?(l.waiting+l.held)+' waiting for you':l.unchecked?'Checking':l.applied+' updated' %></span>
+  </li><% } %>
+</ul>
+<p><a class="rm-btn rm-btn--ghost" href="<%= lists %>">Upload a supplier price list</a></p>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Price list pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+<% }else{ const href=base+'/'+encodeURIComponent(list.id); %>
+<header class="rm-head">
+  <h1><%= list.filename %></h1>
+  <p><%= list.supplier||'Archived supplier' %> · <a href="<%= lists %>/<%= encodeURIComponent(list.id) %>">Open the original</a></p>
+</header>
+<section class="rm-panel"><div class="rm-panel__body">
+  <dl class="kv">
+    <dt>Updated</dt><dd><%= list.applied %></dd>
+    <dt>Waiting for you</dt><dd><%= list.waiting %></dd>
+    <dt>Need your check</dt><dd><%= list.held %></dd>
+  </dl>
+  <% if(list.status!=='READY'){ %><p class="notice notice--warn">Finish reading this list on the price list page first.</p>
+  <% }else if(list.unchecked){ %><p>StockChief is checking <%= list.unchecked %> <%= list.unchecked===1?'row':'rows' %> against the supplier’s saved costs.</p>
+    <form method="post" action="<%= href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button></form>
+  <% } %>
+</div></section>
+
+<% if(!screen.rows.length){ %><p>This list has no prices to check.</p><% } %>
+<ul class="rm-list">
+<% for(const r of screen.rows){ const row=href+'/rows/'+r.ordinal; %>
+  <li class="list-row" data-cost-row="<%= r.ordinal %>">
+    <span>
+      <strong><%= r.code %></strong>
+      <small><%= [r.name,r.where].filter(Boolean).join(' · ') %></small>
+      <% if(r.previous!=null&&r.amount!=null){ %><small><%= money(r.previous,r.currency) %> → <%= money(r.amount,r.currency) %><%= r.unit?' per '+r.unit:'' %><%= r.change?' ('+r.change+')':'' %></small><% } %>
+      <% if(r.reason){ %><small><%= r.reason %></small><% } %>
+      <% if(r.wouldApply&&r.status==='REVIEW'&&!r.stale){ %><small>StockChief would make this change on its own once it may.</small><% } %>
+      <% if(r.reviewHash){ %><form method="post" action="<%= row %>/approve">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= r.reviewHash %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn">Approve <%= money(r.amount,r.currency) %></button>
+        <button class="rm-btn rm-btn--ghost" formaction="<%= row %>/keep">Keep <%= money(r.previous,r.currency) %></button>
+      </form><% }else if(r.status==='REVIEW'||r.status==='HELD'){ %><form method="post" action="<%= row %>/keep">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Keep the current cost</button>
+      </form><% } %>
+      <% if(r.undoable){ %><form method="post" action="<%= row %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Undo, back to <%= money(r.previous,r.currency) %></button>
+      </form><% } %>
+    </span>
+    <span><%= r.label %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Price pages"><% if(screen.page>1){ %><a href="<%= href %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= href %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+<% if(list.waiting||list.held){ %><form method="post" action="<%= href %>/keep">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label><input type="checkbox" name="confirmed" value="yes" required> Keep the current cost for every price still waiting on this list.</label>
+  <button class="rm-btn rm-btn--ghost">Keep the rest</button>
+</form><% } %>
+
+<% if(screen.active){ const rule=screen.rule; %>
+<section class="rm-panel" data-cost-limit><div class="rm-panel__body">
+  <h2>Small changes from <%= list.supplier %></h2>
+  <% if(screen.limit){ %><p>Changes up to <%= screen.limit %> update on their own while StockChief handles routine work. Bigger changes wait for you.</p>
+  <% }else if(rule&&!rule.enabled){ %><p>Every cost change from this supplier waits for you.</p>
+  <% }else if(screen.trained&&!screen.canTeach){ %><p>Approve one change from this supplier yourself. Then you can let StockChief handle small changes up to a limit you choose, 5% at most.</p>
+  <% }else{ %><p>Every cost change from this supplier waits for you until you save a limit.</p><% } %>
+  <% if(screen.canTeach){ %><form method="post" action="<%= href %>/limit">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?rule.revision:0 %>">
+    <label>Update on its own up to (%) <input name="maximumPercent" type="number" inputmode="decimal" min="0.01" max="5" step="0.01" required value="<%= rule&&rule.enabled?rule.value:5 %>"></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief update this supplier’s costs on its own within this limit.</label>
+    <button class="rm-btn"><%= rule&&rule.enabled?'Change the limit':'Save the limit' %></button>
+  </form><% } %>
+  <% if((!rule&&!screen.trained)||(rule&&rule.enabled)){ %><form method="post" action="<%= href %>/limit">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?rule.revision:0 %>">
+    <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Ask me about every change from this supplier</button>
+  </form><% } %>
+</div></section>
+<% } %>
+<% } %>
