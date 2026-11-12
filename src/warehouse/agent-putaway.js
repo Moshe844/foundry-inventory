@@ -303,7 +303,10 @@ async function confirm(db,ctx,id,input){return db.transaction(async c=>{
  const place=binId===p.to.id?p.to.name:(await c.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,binId])).rows[0].name;
  await require('../operations/postgres-security-audit').record(c,ctx,{action:binId===p.to.id?'Put-away confirmed':'Put-away confirmed in a different bin',reference:p.order,
   after:{sku:p.sku,quantity,bin:place,planned:p.to.name,method,transfer:transfer.transfer_number,...(p.lot?{batch:p.lot.code}:{}),...(serialIds.length?{serials:p.serials.filter(s=>serialIds.includes(s.id)).map(s=>s.serial)}:{}),...(secondary!=null?{measured:secondary}:{})}});
- return {id:confirmationId,instructionId:id,replayed:false,finished,wrongBin:binId!==p.to.id,binId,transferId:transfer.id};
+ // Goods in another bin than planned are a wrong put-away for job 11 to move
+ // to the planned bin, where the plan allows it.
+ const correction=binId===p.to.id?null:await require('./agent-bin-corrections').fromPutaway(c,ctx,{source:p,binId,quantity,serialIds,confirmationId,instructionId:id});
+ return {id:confirmationId,instructionId:id,replayed:false,finished,wrongBin:binId!==p.to.id,binId,transferId:transfer.id,correctionId:correction?.id||null};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function review(db,ctx,{page=1,filter=''}){
  await access(db,ctx,{owner:true});

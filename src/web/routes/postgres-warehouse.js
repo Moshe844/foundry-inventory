@@ -16,6 +16,12 @@ function createPostgresWarehouseRouter(database){
   router.post('/warehouse/bin-corrections',requirePermission(permissions.REQUEST_TRANSFER,'correct stock bins'),asyncRoute(async(req,res)=>{
     const made=await corrections.open(database,req.ctx,req.body);res.redirect(303,'/warehouse/bin-corrections/'+made.id);
   }));
+  router.get('/warehouse/bin-corrections/found',requirePermission(permissions.REQUEST_TRANSFER,'correct stock bins'),asyncRoute(async(req,res)=>{
+    res.page('warehouse/bin-found',{title:'Stock in the wrong bin',nav:'warehouse',...await corrections.page(database,req.ctx)});
+  }));
+  router.post('/warehouse/bin-corrections/found',requirePermission(permissions.OPERATE,'report stock in the wrong bin'),asyncRoute(async(req,res)=>{
+    const made=await corrections.report(database,req.ctx,req.body);res.redirect(303,'/warehouse/bin-corrections/'+made.id);
+  }));
   router.post('/warehouse/bin-corrections/settings',requireOwner,asyncRoute(async(req,res)=>{
     await corrections.configure(database,req.ctx,req.body);res.redirect(303,'/warehouse/bin-corrections');
   }));
@@ -30,6 +36,9 @@ function createPostgresWarehouseRouter(database){
   }));
   router.post('/warehouse/bin-corrections/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{
     await corrections.cancel(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
+  }));
+  router.post('/warehouse/bin-corrections/:id/undo',requireOwner,asyncRoute(async(req,res)=>{
+    await corrections.undo(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
   }));
   router.post('/warehouse/bin-corrections/:id/rule',requireOwner,asyncRoute(async(req,res)=>{
     await corrections.teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/bin-corrections/'+req.params.id);
@@ -47,7 +56,7 @@ function createPostgresWarehouseRouter(database){
   }));
   router.post('/warehouse/putaway/:id/confirm',requirePermission(permissions.OPERATE,'confirm a put-away'),asyncRoute(async(req,res)=>{
     const done=await require('../../warehouse/agent-putaway').confirm(database,req.ctx,req.params.id,req.body);
-    req.flash('success',done.wrongBin?'Put away in a different bin than planned. The stock is recorded where you put it.':done.finished?'Put-away complete. The stock is in its bin.':'Put-away recorded. The rest is still waiting.');
+    req.flash('success',done.correctionId?'Put away in a different bin than planned. The stock is recorded where you put it, and a move to the planned bin is waiting.':done.wrongBin?'Put away in a different bin than planned. The stock is recorded where you put it.':done.finished?'Put-away complete. The stock is in its bin.':'Put-away recorded. The rest is still waiting.');
     res.redirect(303,'/warehouse/putaway/'+req.params.id);
   }));
   router.post('/warehouse/putaway/:id/plan',requireOwner,asyncRoute(async(req,res)=>{
