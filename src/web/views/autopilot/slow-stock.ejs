@@ -1,0 +1,93 @@
+<% const base='/autopilot/slow-stock', money=(minor,currency)=>helpers.money(minor,currency); %>
+<% const kindLabels={MOVE:'Move',RETURN:'Return',DISCOUNT:'Discount'}, plural={MOVE:'moves',RETURN:'returns',DISCOUNT:'discounts'}; %>
+<header class="rm-head">
+  <h1>Slow stock next steps</h1>
+  <p><%= {draft:'StockChief prepares a move, a return or a discount for each slow item. Nothing changes until you approve it.',
+    trained:'StockChief prepares each step for you. Once you approve one of a kind yourself and save a limit, it takes those steps on its own.',
+    alone:'StockChief takes steps on its own inside your limits and leaves the rest for you.'}[screen.mode] %>
+    Price changes always wait for you.</p>
+</header>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button>
+  <a href="/autopilot/reviews/slow-stock">See every finding</a></form>
+<% if(screen.stop){ %><p class="notice notice--warn"><%= screen.stop %></p><% } %>
+
+<h2>Waiting for you</h2>
+<% if(!screen.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<ul class="rm-list" data-slow-waiting>
+<% for(const s of screen.waiting){ const d=s.details, href=base+'/steps/'+encodeURIComponent(s.id); %>
+  <li class="list-row" data-slow-step="<%= s.id %>" data-slow-kind="<%= s.kind %>">
+    <span>
+      <strong><%= d.code %> at <%= d.location %></strong>
+      <small><%= d.finding %>. <%= d.daysSinceSale==null?d.daysWithStock+' days in stock with no sale.':d.daysSinceSale+' days since the last sale.' %></small>
+      <small><%= s.text %><%= s.kind==='RETURN'&&d.valueMinor!=null?' Recorded cost '+money(d.valueMinor,d.currency)+'.':'' %></small>
+      <% if(s.reason){ %><small><%= s.reason %></small><% } %>
+      <% if(s.would_apply){ %><small>StockChief would take this step on its own once it may.</small><% } %>
+      <% if(s.status==='DRAFT'&&!screen.stop&&s.kind==='DISCOUNT'){ const dd=screen.discountDefaults; %><details>
+        <summary>Build a clearance plan</summary>
+        <form method="post" action="<%= href %>/approve" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= s.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+          <label class="field"><span class="field-label">First markdown (%)</span><input class="input" name="markdown" type="number" inputmode="decimal" min="0.01" max="99" step="0.01" required value="<%= dd?dd.markdown:'' %>"></label>
+          <label class="field"><span class="field-label">Days per step</span><input class="input" name="stepDays" type="number" inputmode="numeric" min="1" max="365" step="1" required value="<%= dd?dd.stepDays:'' %>"></label>
+          <button class="rm-btn">Build the plan</button>
+        </form>
+      </details><% }else if(s.status==='DRAFT'&&!screen.stop){ %><form method="post" action="<%= href %>/approve">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= s.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn"><%= {MOVE:'Request the transfer',RETURN:'Prepare the return'}[s.kind] %></button>
+      </form><% } %>
+      <form method="post" action="<%= href %>/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Keep it as it is</button>
+      </form>
+    </span>
+    <span><%= kindLabels[s.kind] %> · <%= s.label %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Step pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+
+<% if(screen.done.length){ %>
+<h2>Recent steps</h2>
+<ul class="rm-list" data-slow-done>
+<% for(const s of screen.done){ %>
+  <li class="list-row" data-slow-done-step="<%= s.id %>">
+    <span><strong><%= s.details.code %> at <%= s.details.location %></strong>
+      <small><%= s.text %><% if(s.link){ %> <a href="<%= s.link %>"><%= s.linkLabel %></a><% } %></small>
+      <% if(s.undoable){ %><form method="post" action="<%= base %>/steps/<%= encodeURIComponent(s.id) %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Undo</button>
+      </form><% } %></span>
+    <span><%= s.label %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>
+
+<% if(screen.limits.length){ %>
+<h2>Steps it takes on its own</h2>
+<ul class="rm-list" data-slow-limits>
+<% for(const l of screen.limits){ const r=l.rule, on=r&&r.enabled, form=base+'/limits/'+l.kind.toLowerCase(); %>
+  <li class="list-row" data-slow-limit="<%= l.kind %>">
+    <span><strong><%= kindLabels[l.kind] %></strong>
+      <small><%= on?(l.taught?'After '+r.minimum_days+' days without a sale'+(l.kind==='MOVE'?', up to '+Number(r.maximum_quantity)+' units per move.':l.kind==='RETURN'?', up to '+money(Number(r.maximum_minor),r.currency)+' recorded cost per return.':', it prepares a '+screen.percent(r.markdown_points)+' clearance plan. You approve its prices.'):'Approve one of these yourself again to switch it back on.'):
+        l.canTeach?'Every step of this kind waits for you.':'Approve one of these yourself first. Then you can save a limit.' %></small>
+      <% if(l.canTeach){ %><details><summary><%= on?'Change the limit':'Set a limit' %></summary>
+        <form method="post" action="<%= form %>" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?r.revision:0 %>">
+          <label class="field"><span class="field-label">Days without a sale</span><input class="input" name="minimumDays" type="number" inputmode="numeric" min="1" max="3650" step="1" required value="<%= r?r.minimum_days:'' %>"></label>
+          <% if(l.kind==='MOVE'){ %><label class="field"><span class="field-label">Most units per move</span><input class="input" name="maximumQuantity" type="number" inputmode="decimal" min="0.000001" step="any" required value="<%= r&&r.maximum_quantity?Number(r.maximum_quantity):'' %>"></label><% } %>
+          <% if(l.kind==='RETURN'){ %><label class="field"><span class="field-label">Most recorded cost per return</span><input class="input" name="maximum" inputmode="decimal" required value="<%= l.maximum %>"></label><% } %>
+          <% if(l.kind==='DISCOUNT'){ %><label class="field"><span class="field-label">First markdown (%)</span><input class="input" name="markdown" type="number" inputmode="decimal" min="0.01" max="99" step="0.01" required value="<%= r&&r.markdown_points?r.markdown_points/100:'' %>"></label>
+            <label class="field"><span class="field-label">Days per step</span><input class="input" name="stepDays" type="number" inputmode="numeric" min="1" max="365" step="1" required value="<%= r&&r.step_days||'' %>"></label><% } %>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief take these <%= plural[l.kind] %> on its own within this limit.</label>
+          <button class="rm-btn">Save</button>
+        </form>
+      </details><% } %>
+      <% if(on){ %><form method="post" action="<%= form %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+        <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Ask me every time</button>
+      </form><% } %></span>
+    <span><%= on&&l.taught?'On':'Off' %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>

@@ -427,6 +427,7 @@ async function autopilotEvaluate(job,client){
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     await require('../pricing/agent-supplier-price-updates').schedule(client,job.workspaceId,cycleId);
+    await require('../forecasting/agent-slow-stock-steps').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-purchase-splitting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -634,6 +635,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.physical-count-source.v1':external((job,database)=>require('../imports/physical-count-sources').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-supplier-price-list.v1':external((job,database)=>require('../purchasing/agent-supplier-price-lists').run(job,database),'reading'),
   'agent.supplier-price-update.v1':external((job,database)=>require('../pricing/agent-supplier-price-updates').run(job,database)),
+  'agent.slow-stock.v1':external((job,database)=>require('../forecasting/agent-slow-stock-steps').run(job,database)),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),
