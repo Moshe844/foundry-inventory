@@ -1,5 +1,5 @@
 <h1>Time saved</h1>
-<nav aria-label="Report period"><a href="?period=week">Last 7 days</a> &middot; <a href="?period=month">Last 30 days</a></nav>
+<nav aria-label="Report period"><a href="?period=week">Last 7 days</a> &middot; <a href="?period=month">Last 30 days</a> &middot; <a href="/autopilot/reviews/roi-report">Monthly ROI report</a></nav>
 <section class="card"><h2>Last <%= days %> days in this inventory</h2>
 <% if(minutes===null){ %><p>Add a timed sample to estimate the hours saved.</p><% } else { %>
 <p><strong><%= (minutes/60).toLocaleString(undefined,{maximumFractionDigits:2}) %> hours</strong> estimated from completed tasks with a timing sample.</p><% } %>

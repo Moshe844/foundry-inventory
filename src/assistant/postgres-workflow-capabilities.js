@@ -729,6 +729,7 @@ const SPECS=Object.freeze([
   require('../accounting/agent-customer-invoices').spec,
   require('../accounting/agent-invoice-reminders').spec,
   require('../accounting/agent-customer-statements').spec,
+  require('../accounting/agent-customer-credits').spec,
   require('../sales/agent-quote-followups').spec,
   require('../sales/agent-arrived-stock').spec,
   require('../sales/agent-stock-ready').spec,

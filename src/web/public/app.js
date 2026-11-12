@@ -6,6 +6,23 @@
    everything else degrades to plain pages and form posts. */
 (function () {
   'use strict';
+  const needsLink=document.querySelector('[data-load-needs-count]');
+  if(needsLink) {
+    window.setTimeout(async()=>{
+      try {
+        const response=await fetch('/api/ui/needs-count',{headers:{Accept:'application/json'}});
+        if(!response.ok)return;
+        const {count}=await response.json();
+        if(!Number.isSafeInteger(count)||count<1)return;
+        const badge=document.createElement('span');
+        badge.className='nav-count';
+        badge.textContent=String(count);
+        needsLink.append(' ',badge);
+      } catch {
+        // The decision list link remains available if the count fails to load.
+      }
+    },0);
+  }
   document.querySelectorAll('[data-select-all-products]').forEach(all=>all.addEventListener('change',()=>document.querySelectorAll('[data-product-selection]').forEach(box=>{box.checked=all.checked;})));
   function updateLocalGreeting(){const zone=document.documentElement.dataset.timeZone;const hour=zone?Number(new Intl.DateTimeFormat('en',{timeZone:zone,hour:'numeric',hourCycle:'h23'}).format(new Date())):new Date().getHours();
     document.querySelectorAll('[data-local-greeting]').forEach(node=>{node.textContent=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';});}

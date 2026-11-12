@@ -138,6 +138,8 @@ const FIELDS=Object.freeze({
   companionWarehouse:{type:'string',description:'Exact warehouse ID for the available companion stock when the quotation has no saved warehouse.'},
   companionLines:{type:'string',description:'Exact owner-selected companion lines as JSON with sku, quantity, and actual secondaryQuantity when supplied.'},
   refundDestination:{type:'string',description:'Exact refund destination: AR to reduce an unpaid invoice, or CASH to return money already paid.'},
+  creditKind:{type:'string',enum:['price_adjustment','overpayment','cancellation'],description:'Customer credit or refund kind: price_adjustment for a lower or overcharged invoice price, overpayment for money paid beyond what a shipped order came to, cancellation for money held by an order cancelled after payment.'},
+  creditLines:{type:'string',description:'For a price adjustment only: each invoice line number or product code with its new unit price, as line=price separated by semicolons. Use only exact values the owner gave.'},
   refundPayments:{type:'string',description:'Optional owner-specified original receipt number and amount pairs in the invoice currency, one per line as receipt=amount. Use only exact values provided.'},
   disposition:{type:'string',description:'Physical return disposition: restock, scrap, or repair.'},
   handover:{type:'string',description:'Physical shipping handoff: CARRIER, COLLECTED, or DELIVERED_BY_US. Spaces and hyphens are accepted in place of underscores.'},

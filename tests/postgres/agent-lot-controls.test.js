@@ -81,7 +81,9 @@ test('trace fulfilled lots, recall remaining goods and audit certificates across
   assert.equal((await reviews.run(db,ctx,'bought-together',{filter:lot.sku})).rows[0].Suggestion.includes('Coffee grinder'),true);
   await plan('pro');
   assert.equal((await reviews.run(db,ctx,'customer-health')).rows[0].Health,'New activity');
-  assert.equal((await reviews.run(db,ctx,'rising-demand',{filter:lot.sku})).rows[0].Increase,'New sales');
+  // Job 148 compares a product with its own forecast; a product with only
+  // recent sales has no history to compare against, so it is not a trend.
+  assert.deepEqual((await reviews.run(db,ctx,'rising-demand',{filter:lot.sku})).rows,[]);
 });
 
 test('recall includes customer custody and serial history orders both legs of the physical transfer', {timeout:240000}, async t=>{

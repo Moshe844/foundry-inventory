@@ -1,0 +1,36 @@
+<% const a=alerts, sent=a.lastStatus==='SENT'?'sent':a.lastStatus==='FAILED'?'could not be sent':a.lastStatus?'on its way':null; %>
+<section class="card card-body stack" data-alert-delivery="<%= a.job %>">
+  <% if(a.job===172){ %><h2>When nobody answers</h2>
+  <p>The next person sees it in Needs you<% if(a.chosen&&!a.chosen.missing){ %> and gets an email from <%= a.chosen.name %><% } %>.</p>
+  <% }else{ %><h2>How you get these alerts</h2>
+  <p>Every alert shows here and in Needs you<% if(a.chosen&&!a.chosen.missing){ %>, and new alerts are emailed to <%= a.to||'you' %> from <%= a.chosen.name %><% } %>.</p><% } %>
+  <% if(a.chosen&&a.chosen.missing){ %><p class="notice notice--warn">The mailbox you chose is no longer connected. Choose another, or reconnect it in <a href="/settings/connections">Connections</a>.</p><% } %>
+  <% if(a.chosen&&a.stop){ %><p class="notice notice--warn" data-alert-stop>Emails wait: <%= a.stop %></p><% }else if(a.chosen&&a.note){ %><p class="notice notice--warn"><%= a.note %></p><% } %>
+  <% if(a.chosen&&a.waiting){ %><p><%= a.waiting===1?'1 open '+(a.job===172?'item is':'alert is'):a.waiting+' open '+(a.job===172?'items are':'alerts are') %> not emailed yet.</p><% } %>
+  <% if(sent){ %><p>Last email <%= sent %> · <%= helpers.dateTime(a.lastAt) %></p><% } %>
+  <% if(a.canSendNow){ %><form method="post" action="<%= a.action %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn--primary">Email the waiting alerts now</button></form><% } %>
+  <form method="post" action="<%= a.action %>" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= a.revision %>">
+    <label>Email
+      <select name="mailbox">
+        <option value="">No email, in the app only</option>
+        <% for(const box of a.mailboxes){ %><option value="<%= box.id %>"<%= a.chosen&&a.chosen.id===box.id?' selected':'' %>><%= a.job===172?'Email them from ':'Email me from ' %><%= box.name %></option><% } %>
+      </select>
+    </label>
+    <% if(!a.mailboxes.length){ %><p class="hint">Connect a mailbox in <a href="/settings/connections">Connections</a> to get these alerts by email too.</p><% } %>
+    <% if(a.job===172){ %>
+      <label>Hours to wait for an answer
+        <input name="escalationHours" type="number" min="1" max="720" step="1" value="<%= a.escalationHours %>" placeholder="Not passed on">
+      </label>
+      <p class="hint">Leave it empty to stop passing alerts and approvals on.</p>
+    <% } %>
+    <% if(a.job===166){ %>
+      <label>Alert level for products with no reorder point
+        <input name="lowStockUnits" inputmode="decimal" maxlength="24" value="<%= a.lowStockUnits %>" placeholder="Out of stock only">
+      </label>
+      <p class="hint">Leave it empty to be told only when those products run out. Products with a reorder point use it.</p>
+    <% } %>
+    <p><button class="btn">Save alert settings</button></p>
+  </form>
+</section>

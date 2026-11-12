@@ -288,23 +288,10 @@ async function supplierChoice(database,workspaceId,shortage,state,cached=null){c
   const resultQty=buying.quantities(selected,Math.max(shortage.default_order_quantity??0,shortage.needed),state.agentTerms);
   return {...selected,...resultQty,restriction:buying.restriction(state,resultQty),topUpSignature:buying.topUpSignature(selected,resultQty.topUp)};}
 
+// Job 199: how sure StockChief is about a planned order or transfer, from the
+// facts it checks (the shared confidence helper).
 function decisionEvidence(candidate){
-  if(!candidate||!['purchase','transfer'].includes(candidate.type))return null;
-  const measured=value=>(typeof value==='number'||(typeof value==='string'&&value.trim()!==''))&&Number.isFinite(Number(value));
-  if(!candidate.skuId||!measured(candidate.quantity)||Number(candidate.quantity)<=0)
-    return {level:'low',reason:'The item or quantity needs verification.'};
-  if(candidate.type==='purchase'){
-    if(!candidate.supplierId||!measured(candidate.unitCost)||Number(candidate.unitCost)<0||!measured(candidate.value)||Number(candidate.value)<0||!candidate.currency)
-      return {level:'low',reason:'Confirm the supplier, currency and unit cost before sending this order.'};
-    if(!candidate.destinationLocationId)return {level:'medium',reason:'The quantity and supplier price are recorded. Choose the receiving location.'};
-    if(![candidate.destinationAvailable,candidate.incoming,candidate.reorderPoint].every(measured))
-      return {level:'low',reason:'Refresh the available stock, incoming stock and reorder point before sending this order.'};
-    return {level:'high',reason:'The supplier price, receiving location, available stock and reorder quantity are recorded.'};
-  }
-  if(!candidate.sourceLocationId||!candidate.destinationLocationId||![candidate.sourceAvailable,candidate.sourceSafety].every(measured)
-    ||require('../transfers/agent-transfer-balance-source').cmp(require('../domain/exact-quantity').subtract(candidate.sourceAvailable,candidate.sourceSafety),candidate.quantity)<0)
-    return {level:'low',reason:'Verify the source, destination and stock the source needs to keep.'};
-  return {level:'high',reason:'The source and destination are known and the available stock covers the transfer and protected quantity.'};
+  return require('./confidence').forAction(candidate);
 }
 async function purchasingJobRestriction(db,workspaceId,candidate,automatic){
   const buying=require('../purchasing/agent-order-quantities'),jobs=require('./job-modes');
@@ -334,6 +321,9 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
   if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy};
+  // Below the owner's chosen level StockChief asks instead of acting.
+  const unsure=await require('./confidence').stop(database,workspaceId,evidence);
+  if(unsure)return {decision:'needs_approval',reason:unsure,policy};
   const account=await agentPlan.accountState(database,workspaceId);
   if(candidate.kitDemand&&!agentPlan.usesAgentTerms(account))return {decision:'needs_approval',reason:'Kit part orders need your approval on this plan.',policy};
   if(agentPlan.usesAgentTerms(account) || !account.plan && (account.subscribed || require('../config').commercial.requirePaidWorkspace)){
@@ -430,6 +420,8 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
+  // Job 199: earlier sent orders per item and supplier, for how sure StockChief is about each order.
+  const histories=await require('./confidence').purchaseHistory(database,workspaceId,selected.map(([id])=>id));
   const selectedPositions=selected.flatMap(([,locations])=>locations);
   // On plans with the kits job, parts with kit demand are bought by that job,
   // and a warehouse never gives away parts its own kits need.
@@ -468,6 +460,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,topUpSignature:supplier.topUpSignature,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
+        history:histories.get(shortage.sku_id+':'+supplier.supplier_id)||{orders:0,lastUnitCost:null,lastCurrency:null},
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
         reorderPoint:shortage.reorder,targetStock:shortage.target,priority:88,urgency:shortage.available<=0?'immediate':'soon',evidence:[
@@ -476,7 +469,10 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           ...(supplier.topUp?[{fact:'supplier_top_up',value:supplier.topUp}]:[])]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
-  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;if(!partial&&!onlySkuIds){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
+  }}const persisted=await persistPlannedWork(database,workspaceId,prepared),created=persisted.created;refreshRequested=refreshRequested||persisted.stale>0;
+  // Job 198: while StockChief only watches, each order or transfer it would have made is recorded for the report.
+  if(state.shadowEndsAt&&created.length)await require('./shadow-mode').fromPlannedWork(database,workspaceId,created);
+  if(!partial&&!onlySkuIds){await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=CASE WHEN replenishment_revision<>$4::bigint THEN $5 ELSE $3 END,updated_at=$2 WHERE workspace_id=$1`,
     [workspaceId,nowIso(),new Date(Date.now()+(refreshRequested?5:15)*60000).toISOString(),planningRevision,new Date(Date.now()+5*60000).toISOString()]);
     if(cycleId)await database.query('UPDATE stockchief_runtime.replenishment_planning_runs SET completed_at=CURRENT_TIMESTAMP WHERE workspace_id=$1 AND cycle_id=$2',[workspaceId,cycleId]);}
   return {state,created,considered,partial,refreshRequested,planningRevision,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
@@ -729,6 +725,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   const customerReceipts=options.afterSkuId?{skipped:'planning_continuation'}:await require('../accounting/agent-customer-payment-matches').run(database,ctx.workspaceId);
   const customerInvoices=options.afterSkuId?{skipped:'planning_continuation'}:await require('../accounting/agent-customer-invoices').schedule(database,ctx.workspaceId);
   const invoiceReminders=options.afterSkuId?{skipped:'planning_continuation'}:await require('../accounting/agent-invoice-reminders').run(database,ctx.workspaceId);
+  const customerCredits=options.afterSkuId?{skipped:'planning_continuation'}:await require('../accounting/agent-customer-credits').run(database,ctx.workspaceId);
   const customerCheckins=options.afterSkuId?{skipped:'planning_continuation'}:await require('../sales/agent-customer-checkins').schedule(database,ctx.workspaceId);
   const quoteFollowups=options.afterSkuId?{skipped:'planning_continuation'}:await require('../sales/agent-quote-followups').run(database,ctx.workspaceId);
   const supplierForecasts=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-supplier-forecasts').run(database,ctx.workspaceId);
@@ -737,6 +734,12 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   const staleIncoming=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-stale-incoming').schedule(database,ctx.workspaceId);
   const purchaseFx=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-purchase-fx').schedule(database,ctx.workspaceId);
   const netMargins=options.afterSkuId?{skipped:'planning_continuation'}:await require('../reports/agent-net-margin').schedule(database,ctx.workspaceId);
+  const monthEndStock=options.afterSkuId?{skipped:'planning_continuation'}:await require('../reports/agent-month-end-stock').schedule(database,ctx.workspaceId);
+  const changeDigest=options.afterSkuId?{skipped:'planning_continuation'}:await require('../reports/agent-change-explanations').schedule(database,ctx.workspaceId);
+  const boardPacks=options.afterSkuId?{skipped:'planning_continuation'}:await require('../reports/agent-board-pack').schedule(database,ctx.workspaceId);
+  const roiReports=options.afterSkuId?{skipped:'planning_continuation'}:await require('../reports/agent-roi-report').schedule(database,ctx.workspaceId);
+  const stockHealth=options.afterSkuId?{skipped:'planning_continuation'}:await require('../forecasting/agent-stock-health').schedule(database,ctx.workspaceId);
+  const serviceLevels=options.afterSkuId?{skipped:'planning_continuation'}:await require('../forecasting/agent-service-levels').schedule(database,ctx.workspaceId);
   const channelPrices=options.afterSkuId?{skipped:'planning_continuation'}:await require('../pricing/agent-channel-price-checks').schedule(database,ctx.workspaceId);
   const containerPlans=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-container-plans').schedule(database,ctx.workspaceId);
   const containerOrders=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-container-orders').schedule(database,ctx.workspaceId);
@@ -769,7 +772,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   // Released orders become zone pick waves, and prepared waves start when allowed.
   const pickWaves=options.afterSkuId?{skipped:'planning_continuation'}:await require('../warehouse/agent-pick-waves').run(database,ctx.workspaceId);
   const putawayInstructions=options.afterSkuId?{skipped:'planning_continuation'}:await require('../warehouse/agent-putaway').run(database,ctx.workspaceId);
-  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,kitParts,customerReceipts,customerInvoices,invoiceReminders,customerCheckins,quoteFollowups,supplierForecasts,supplierBenefits,supplierDates,staleIncoming,purchaseFx,netMargins,channelPrices,containerPlans,containerOrders,teamProcedures,channelCopy,blanketReleases,directShipments,supplierShutdowns,promotionStock,supplierInvoices,supplierInvoiceSources,supplierCreditNotes,supplierReturns,supplierDisputes,backupSupplierSwitches,channelRecovery,arrivedStock,arrivedPreorders,protectedStock,warehouseRouting,orderChecks,creditHolds,backorders,orderSplits,stockReadyUpdates,pickReleases,pickWaves,putawayInstructions,
+  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,kitParts,customerReceipts,customerInvoices,invoiceReminders,customerCredits,customerCheckins,quoteFollowups,supplierForecasts,supplierBenefits,supplierDates,staleIncoming,purchaseFx,netMargins,channelPrices,monthEndStock,changeDigest,boardPacks,roiReports,stockHealth,serviceLevels,containerPlans,containerOrders,teamProcedures,channelCopy,blanketReleases,directShipments,supplierShutdowns,promotionStock,supplierInvoices,supplierInvoiceSources,supplierCreditNotes,supplierReturns,supplierDisputes,backupSupplierSwitches,channelRecovery,arrivedStock,arrivedPreorders,protectedStock,warehouseRouting,orderChecks,creditHolds,backorders,orderSplits,stockReadyUpdates,pickReleases,pickWaves,putawayInstructions,
     considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
  if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
@@ -808,6 +811,7 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
   const trustedCodes=purchasePolicy?.itemScope.length ? (await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY code',[workspaceId,purchasePolicy.itemScope])).rows.map(row=>row.code) : [];
   return {state,policies,capabilities,trustedCodes,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
     maintenanceProgress:await require('../operations/postgres-maintenance-progress').read(database,workspaceId),
+    confidence:await require('./confidence').settings(database,workspaceId),
     transferPolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.TRANSFER))||null,
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}
 

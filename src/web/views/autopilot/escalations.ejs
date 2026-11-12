@@ -1,0 +1,15 @@
+<% const e=escalations; %>
+<section class="card card-body stack" data-escalations>
+  <h2>Waiting for an answer</h2>
+  <% if(e.window&&e.stop){ %><p class="notice notice--warn" data-escalation-stop>Passing on waits: <%= e.stop %></p><% } %>
+  <% if(!e.items.length){ %><p>Nothing is waiting for an answer.</p><% } %>
+  <% for(const item of e.items){ %>
+    <div class="stack">
+      <p><%= item.title %></p>
+      <div class="btn-row">
+        <form method="post" action="/autopilot/escalations/<%= encodeURIComponent(item.id) %>/answer"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">I'm on it</button></form>
+        <% if(item.canPass){ %><form method="post" action="/autopilot/escalations/<%= encodeURIComponent(item.id) %>/pass"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm btn--primary">Pass it on now</button></form><% } %>
+      </div>
+    </div>
+  <% } %>
+</section>

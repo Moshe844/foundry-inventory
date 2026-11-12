@@ -120,14 +120,22 @@ function present(proposal){
     {label:'To',value:message.recipient},{label:'Subject',value:message.subject},{label:'Draft',value:message.body,multiline:true}]};
  }
  if(proposal.action_type==='customer.statement'){
-  const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one requested customer account statement',fields:[{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'As of',value:p.asOf},{label:'Account balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',multiline:true,value:require('../accounting/agent-customer-statements').compose(p).body}]};
+  const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one requested customer account statement',fields:[{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'As of',value:p.asOf},{label:'Account balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Attachment',value:require('../accounting/agent-customer-statements').filename(p)+' · '+p.entries.length+' entries, '+p.outstanding.length+' outstanding invoices'},{label:'Message',multiline:true,value:require('../accounting/agent-customer-statements').compose(p).body}]};
  }
  if(proposal.action_type==='sales_quote.followup'){
   const p=proposal.payload;return {summary:proposal.summary,impact:'Queues one quotation follow-up',fields:[{label:'Quote',value:p.quoteNumber},{label:'Customer',value:p.customerName},{label:'To',value:p.recipient},{label:'Quoted total',value:require('../domain/currency').format(p.totalMinor,p.currency)},{label:'Valid through',value:p.validUntil},{label:p.presentationBasis==='mailbox_accepted'?'Quotation emailed':'Customer received it',value:p.presentedOn},{label:p.presentationBasis==='mailbox_accepted'?'Sending confirmation':'Your delivery reference',value:p.presentationEvidence},{label:'Message',multiline:true,value:require('../sales/agent-quote-followups').compose(p).body}]};
  }
+ if(proposal.action_type==='customer_credit.prepare'){
+  const p=proposal.payload,f=v=>require('../domain/currency').format(v,p.currency),kinds=require('../accounting/agent-customer-credits').KINDS;
+  return {summary:proposal.summary,impact:'Books a credit and prepares refunds; a person pays any money back',fields:[{label:'What happened',value:kinds[p.kind]},{label:'Customer',value:p.customerName},
+   {label:p.invoiceNumber?'Invoice':'Order',value:p.invoiceNumber||p.orderNumber},{label:'Why',value:p.reason},
+   ...(p.kind==='price_adjustment'?[{label:'Prices',value:p.lines.map(l=>'Line '+l.lineNumber+' ('+l.description+'): '+f(l.fromUnitMinor)+' to '+f(l.newUnitMinor)).join('\n'),multiline:true},
+    {label:'Goods after discount',value:f(p.revenueMinor)},{label:'Tax',value:f(p.taxMinor)},{label:'Lowers what is owed',value:f(p.arMinor)}]:[]),
+   {label:'Money back',value:p.refundMinor?p.parts.map(s=>f(s.amountMinor)+' · '+s.methodLabel+' ('+s.paymentNumber+') · '+(s.provider?'refunded through the provider after approval':'you pay it, then record it')).join('\n'):'None',multiline:true}]};
+ }
  if(proposal.action_type==='customer_invoice.remind'){
-  const p=proposal.payload,words='Hello '+p.customerName+',\n\nOur records show '+require('../domain/currency').format(p.balanceMinor,p.currency)+' outstanding on invoice '+p.invoiceNumber+', due '+p.dueDate+'. Please let us know if you have already paid or have a question about this invoice.\n\nThank you.';
-  return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Message',value:words}]};
+  const p=proposal.payload,words=require('../accounting/agent-invoice-reminders').compose(p);
+  return {summary:proposal.summary,impact:'Queues one invoice reminder',fields:[{label:'Invoice',value:p.invoiceNumber},{label:'To',value:p.recipient},{label:'Due',value:p.dueDate},{label:'Balance',value:require('../domain/currency').format(p.balanceMinor,p.currency)},{label:'Subject',value:words.subject},{label:'Message',multiline:true,value:words.body}]};
  }
  if(proposal.action_type==='customer_payment.match_bank_line'){
   const p=proposal.payload,money=require('../domain/currency');

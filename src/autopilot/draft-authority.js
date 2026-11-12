@@ -118,7 +118,10 @@ async function trained(db,workspaceId,name,payload,proposalId){
   if(!bound?.key||!Number.isSafeInteger(bound.amountMinor)||bound.amountMinor<0||(bound.amountMinor===0&&name!=='sales_order.reserve_arrived'))return false;
   const state=await require('./postgres-service').getState(db,workspaceId);
   if(!state.canAutomate)return false;
-  return Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.agent_draft_rules r JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner'
+  const ruled=Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.agent_draft_rules r JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner'
     WHERE r.workspace_id=$1 AND r.action_type=$2 AND r.scope_key=$3 AND r.currency=$4 AND r.maximum_minor>=$5`,[workspaceId,name,bound.key,bound.currency,bound.amountMinor])).rowCount);
+  // Job 81: a confirmed statement a person approved also teaches that scope.
+  if(ruled||name!=='customer.statement')return ruled;
+  return require('../accounting/agent-customer-statements').taughtByExample(db,workspaceId,bound);
 }
 module.exports={scope,settings,save,trained,jobs,eligible};

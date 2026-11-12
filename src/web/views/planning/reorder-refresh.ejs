@@ -2,6 +2,7 @@
    const qty=(value,unit)=>value==null?'not set':helpers.unitCount(Number(value),unit||'unit');
    const when=value=>value?helpers.dateTime(new Date(value).toISOString()):'';
    const counts=m.run?.counts||{};
+   const basis=e=>e.forecast?'Forecast ('+e.forecast.label.toLowerCase()+'): '+qty(e.forecast.lead,e.unit)+' over the lead time':qty(e.issued,e.unit)+' sold in 90 days';
    const lead={suggest:'It suggests new values. You change them yourself.',
      watch:'For the first 14 days it only watches and shows what it would change.',
      draft:m.automatic?'It applies changes inside your limits and asks you about the rest.':'It drafts each change for your approval.'}[m.level]; %>
@@ -22,7 +23,7 @@
 <ul class="rm-list"><% for(const c of m.drafts){ const e=c.evidence; %><li><div class="rm-told__t">
   <p><strong><%= e.code %></strong> · <%= e.location %></p>
   <p>Reorder point <%= qty(c.before_minimum,e.unit) %> → <%= qty(c.after_minimum,e.unit) %> · Target <%= qty(c.before_maximum,e.unit) %> → <%= qty(c.after_maximum,e.unit) %></p>
-  <p class="rm-muted"><%= qty(e.issued,e.unit) %> sold in 90 days · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
+  <p class="rm-muted"><%= basis(e) %> · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
   <div class="rm-actions">
     <form method="post" action="<%= base %>/<%= c.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" <%= m.watch?'disabled':'' %>>Approve</button></form>
     <form method="post" action="<%= base %>/<%= c.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Keep current</button></form>
@@ -35,7 +36,7 @@
 <ul class="rm-list"><% for(const c of m.suggestions){ const e=c.evidence; %><li><div class="rm-told__t">
   <p><strong><%= e.code %></strong> · <%= e.location %></p>
   <p>Reorder point <%= qty(c.before_minimum,e.unit) %> → <%= qty(c.after_minimum,e.unit) %> · Target <%= qty(c.before_maximum,e.unit) %> → <%= qty(c.after_maximum,e.unit) %></p>
-  <p class="rm-muted"><%= qty(e.issued,e.unit) %> sold in 90 days · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
+  <p class="rm-muted"><%= basis(e) %> · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
 </div></li><% } %></ul></div></section><% } %>
 
 <% if(m.history.length){ %><section class="rm-panel" id="changes"><div class="rm-panel__head"><h2>Recent decisions</h2></div><div class="rm-panel__body">

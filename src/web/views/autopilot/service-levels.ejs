@@ -1,0 +1,47 @@
+<% const r=report,o=r.forecasts.overall,stamp=v=>helpers.dateTime(v),show=v=>v==null?'—':v+'%'; %>
+<div class="page-head"><div class="titles"><h1>Forecast accuracy, fill rate and on-time in full</h1>
+<p>How close StockChief’s weekly forecasts came to what sold, and how fully and how on time orders were delivered: by you to customers, and by suppliers to you. StockChief changes nothing here.</p></div></div>
+<% if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It keeps these figures each day without acting on them.</p>
+<% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+
+<section class="card section"><form method="get" action="/autopilot/reviews/service-levels" class="form-stack">
+<label class="rm-field"><span>Month</span><select name="month" aria-label="Month"><% months.forEach((m,i)=>{ %><option value="<%= m %>" <%= m===month?'selected':'' %>><%= m %><%= i===0?' (so far)':'' %></option><% }) %></select></label>
+<button class="btn">Show month</button></form>
+<p><a class="btn" href="<%= downloads.xlsx %>">Download Excel</a> <a class="btn" href="<%= downloads.pdf %>">Download PDF</a></p></section>
+
+<section class="card section"><h2><%= r.name %><%= r.partial?' so far':'' %></h2>
+<p class="cell-sub"><%= r.start %> to <%= r.end %></p><p><%= sentence %></p>
+<ul class="rm-list">
+<li class="list-row"><span>Forecast error (MAPE)<small><%= o.weeks %> weekly forecast<%= o.weeks===1?'':'s' %> for <%= o.products %> product<%= o.products===1?'':'s' %><%= o.noSales?' · '+o.noSales+' with no sales counted apart':'' %></small></span><strong><%= show(o.mape) %></strong></li>
+<li class="list-row"><span>Forecast bias<small>Above zero: forecasts ran over what sold</small></span><strong><%= o.bias==null?'—':(o.bias>0?'+':'')+o.bias+'%' %></strong></li>
+<li class="list-row"><span>Customer fill rate<small><%= r.customers.filled %> of <%= r.customers.ordered %> units shipped</small></span><strong><%= show(r.customers.fill) %></strong></li>
+<li class="list-row"><span>Customer orders on time in full<small><%= r.customers.timely %> of <%= r.customers.orders %> orders</small></span><strong><%= show(r.customers.otif) %></strong></li>
+<li class="list-row"><span>Supplier fill rate<small><%= r.suppliers.filled %> of <%= r.suppliers.ordered %> units received</small></span><strong><%= show(r.suppliers.fill) %></strong></li>
+<li class="list-row"><span>Supplier orders on time in full<small><%= r.suppliers.timely %> of <%= r.suppliers.orders %> orders</small></span><strong><%= show(r.suppliers.otif) %></strong></li>
+</ul></section>
+
+<section class="card section"><h2>Forecast accuracy by product</h2>
+<% if(!r.forecasts.items.length){ %><p>No weekly forecast ended in this period. StockChief saves one forecast a week for each product it forecasts.</p><% }else{ %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Product</th><th>Weeks</th><th>Forecast</th><th>Sold</th><th>MAPE</th><th>Bias</th></tr></thead><tbody>
+<% r.forecasts.items.forEach(i=>{ %><tr><td class="cell-main"><span class="cell-title"><%= i.code %></span><small class="cell-sub"><%= i.name %><%= i.noSales?' · '+i.noSales+' week'+(i.noSales===1?'':'s')+' with no sales':'' %></small></td>
+<td data-label="Weeks"><%= i.weeks %></td><td data-label="Forecast"><%= i.forecast %></td><td data-label="Sold"><%= i.actual %></td><td data-label="MAPE"><%= show(i.mape) %></td><td data-label="Bias"><%= i.bias==null?'—':(i.bias>0?'+':'')+i.bias+'%' %></td></tr><% }) %>
+</tbody></table></div><% } %></section>
+
+<% [['Customer','Customers','Shipped'],['Supplier','Suppliers','Received']].forEach(([kind,title,done])=>{ const rows=r.parties.filter(p=>p.kind===kind),total=kind==='Customer'?r.customers:r.suppliers; %>
+<section class="card section"><h2><%= title %></h2>
+<% if(!rows.length){ %><p>No <%= title.toLowerCase() %> orders were due in this period.</p><% }else{ %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th><%= kind %></th><th>Orders due</th><th>Ordered</th><th><%= done %></th><th>Fill rate</th><th>On time in full</th></tr></thead><tbody>
+<% rows.forEach(p=>{ %><tr><td class="cell-main"><span class="cell-title"><%= p.name %></span></td><td data-label="Orders due"><%= p.orders %></td><td data-label="Ordered"><%= p.ordered %></td>
+<td data-label="<%= done %>"><%= p.filled %></td><td data-label="Fill rate"><%= show(p.fill) %></td><td data-label="On time in full"><%= p.timely %> · <%= show(p.otif) %></td></tr><% }) %>
+</tbody></table></div><% } %>
+<% if(total.undated){ %><p class="cell-sub"><%= total.undated %> <%= kind.toLowerCase() %> order<%= total.undated===1?' has':'s have' %> no promised date and <%= total.undated===1?'is':'are' %> left out.</p><% } %>
+</section><% }) %>
+
+<section class="card section" id="kept-months"><h2>Kept months</h2>
+<% if(history.length){ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>Month</th><th>MAPE</th><th>Customer OTIF</th><th>Supplier OTIF</th></tr></thead><tbody>
+<% history.forEach(run=>{ const k=run.result; %><tr><td class="cell-main"><span class="cell-title"><%= run.period %><%= k.partial?' (so far)':'' %></span><small class="cell-sub"><%= stamp(run.created_at) %><%= run.outcome==='WATCHED'?' · while watching':'' %><%= run.authorization_kind==='AUTOMATIC'?' · on its own':' · by you' %></small></td>
+<td data-label="MAPE"><%= show(k.forecasts?.overall?.mape) %></td><td data-label="Customer OTIF"><%= show(k.customers?.otif) %></td><td data-label="Supplier OTIF"><%= show(k.suppliers?.otif) %></td></tr><% }) %>
+</tbody></table></div><% }else{ %><p class="cell-sub">No month kept yet.</p><% } %>
+<form method="post" action="/autopilot/reviews/service-levels/keep"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>"><button class="btn btn--ghost">Keep <%= month %> now</button></form>
+<p class="cell-sub">StockChief keeps the month so far and the month that just ended current on its own each day. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+</section>

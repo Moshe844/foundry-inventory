@@ -458,16 +458,22 @@ function createPostgresCommerceRouter(database,options={}){
       manualShippingNotices,noticePolicy:{shippingNotice:manualShippingNotices&&policy.shipping_notice==='send'?'prepare':policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
         deliveredNotice:policy.delivered_notice||'prepare',exceptionNotice:policy.exception_notice||'prepare',
         connectorId:policy.connector_id||'',businessName:policy.business_name||'',signature:policy.signature||''},
-      mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN)});
+      mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN),
+      noticeChannels:agentPolicy.usesAgentTerms(account)?await require('../../shipping/agent-shipping-notices').channels(database,req.ctx.workspaceId):[],
+      delayNotices:agentPolicy.usesAgentTerms(account)?{available:agentPolicy.permits(account.plan,62,'automatic')}:null});
   }));
   router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
     const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
     const agentPolicy=require('../../commercial/agent-plan');
-    const account=await agentPolicy.accountState(database,req.ctx.workspaceId),automatic=req.body.shippingNotice==='send'&&agentPolicy.usesAgentTerms(account);
-    if(automatic)agentPolicy.requireJob(account.plan,60,'automatic');
+    const account=await agentPolicy.accountState(database,req.ctx.workspaceId),agentTerms=agentPolicy.usesAgentTerms(account);
+    // Sending tracking emails (job 60) or delay emails (job 62) on their own needs the owner.
+    const automatic=agentTerms&&(req.body.shippingNotice==='send'||req.body.exceptionNotice==='send');
+    if(agentTerms&&req.body.shippingNotice==='send')agentPolicy.requireJob(account.plan,60,'automatic');
+    if(agentTerms&&req.body.exceptionNotice==='send')agentPolicy.requireJob(account.plan,62,'automatic');
     if(automatic&&req.user.role!=='owner')throw new AuthorizationError('Only the inventory owner can authorize automatic customer shipping notices.');
     const mailbox=automatic?await require('../../shipping/agent-shipping-notices').mailbox(database,req.ctx.workspaceId,req.body.connectorId):null;
     if(automatic&&!mailbox)throw new ValidationError('Choose a connected mailbox with email sending permission to send shipping notices automatically.');
+    await require('../../shipping/agent-shipping-notices').saveChannels(database,req.ctx,req.body.channelSender,req.user);
     await database.query(`INSERT INTO customer_communication_policy(workspace_id,shipping_notice,out_for_delivery_notice,
       delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at,shipping_authorized_by,shipping_mailbox_account)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
@@ -1247,6 +1253,12 @@ function createPostgresCommerceRouter(database,options={}){
       return res.redirect(303,req.body.returnTo==='routing'?shipFrom().href:'/orders/'+req.params.id+(step==='undo'||result.stale?'/ship-from':''));
     }));
   }
+  // Job 62: a person marks a flagged parcel problem as handled.
+  router.post('/orders/:id/parcel-watch/handled',requirePermission(permissions.OPERATE,'handle parcel problems'),asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-parcel-watch').markHandled(database,req.ctx,req.params.id,{shipmentId:req.body.shipmentId,problem:req.body.problem});
+    req.flash('success',result.replayed?'This was already marked handled.':'Marked handled. It no longer shows in Needs you.');
+    return res.redirect(303,'/orders/'+req.params.id+'#parcel-watch');
+  }));
   // Job 55: a person releases a credit hold, or puts an order on hold.
   router.post('/orders/:id/credit-hold/release',requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const result=await require('../../sales/agent-credit-holds').releaseByPerson(database,req.ctx,req.params.id,{note:req.body.note});
@@ -1277,6 +1289,8 @@ function createPostgresCommerceRouter(database,options={}){
     const creditHold=await require('../../sales/agent-credit-holds').forOrderPage(database,req.ctx,
       {id:page.order.id,status:page.order.status,customer_id:page.order.customer.id},agentState,req.user);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
+    const noticeChannel=page.shipments.length&&plans.usesAgentTerms(agentState)?await require('../../shipping/agent-shipping-notices').channelFor(database,req.ctx.workspaceId,page.order.id):null;
+    const parcelWatch=page.shipments.some(s=>s.status==='SHIPPED')&&plans.usesAgentTerms(agentState)?await require('../../shipping/agent-parcel-watch').forOrder(database,req.ctx.workspaceId,page.order.id):[];
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
     // The parcel being shipped through a carrier right now: its rates and label are shown on the order itself.
@@ -1294,7 +1308,8 @@ function createPostgresCommerceRouter(database,options={}){
         agentRun:await require('../../shipping/agent-labels').view(database,req.ctx.workspaceId,openParcel.id)};}
     else if(shippingReady&&page.order.status!=='CANCELLED'&&page.pickable.length){let locationId=null;try{locationId=require('../../sales/parcel-lines').forParcel(page.detail).locationId;}catch(error){if(!(error instanceof ValidationError))throw error;}
       if(locationId)shipNeeds=await readiness.needs(database,req.ctx.workspaceId,{orderId:page.order.id,locationId});}
-    return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    const discontinuedLines=[...(await require('../../catalog/retirement-guidance').forSkus(database,req.ctx.workspaceId,(page.order.lines||[]).map(l=>l.sku_id))).values()];
+    return res.page('sales/order',{discontinuedLines,noticeChannel,parcelWatch,canHandleParcels:permissions.can(req.user,permissions.OPERATE),canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),orderScreening,creditHold,
@@ -1348,9 +1363,50 @@ function createPostgresCommerceRouter(database,options={}){
     const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
+      returnLabel:req.user?.role==='owner'?await require('../../shipping/agent-return-labels').view(database,req.ctx.workspaceId,customerReturn.id):null,
+      returnCheck:await require('../../operations/agent-return-disposition').check(database,req.ctx,customerReturn.id),
       locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
       managedRefund,refundAccess,isRefundOwner:req.user?.role==='owner',
       today:dateToday(req),formKey:newId('return-step')});
+  }));
+
+  // Job 112: the return label StockChief prepared, bought or is waiting to email.
+  router.post('/returns/:id/return-label/approve',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.changed?'The rate changed. Check the new label before approving it.':'Label approved. The customer is emailed once the carrier confirms it.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/send',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').send(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The label and instructions are on their way to the customer.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/dismiss',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').dismiss(database,req.ctx,req.params.id,req.body);
+    req.flash('success','StockChief will not buy a label for this return.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/rule',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').configure(database,req.ctx,req.body);
+    req.flash('success',result.removed!==undefined?'Return label rule removed. Labels now wait for your approval.':'Rule saved. StockChief sends return labels like this one on its own.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+
+  // Job 114: staff check the received goods on the phone; good goods go back into stock.
+  router.post('/returns/:id/check',requirePermission(permissions.INSPECT_CUSTOMER_RETURN,'check returned goods'),asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').observe(database,req.ctx,{...req.body,returnId:req.params.id});
+    req.flash('success','Check saved. Good goods go back into stock as your plan and limits allow.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
+  }));
+  router.post('/returns/:id/check/apply',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').apply(database,req.ctx,req.body.assessmentId,req.body);
+    req.flash('success','The checked goods are back in stock.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
+  }));
+  router.post('/returns/:id/check/limit',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').saveRestockLimit(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Good returns now wait for you to confirm.':'Good returns within this limit now go back into stock on their own.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
   }));
 
   router.post('/returns/:id/authorize',requirePermission(permissions.AUTHORIZE_CUSTOMER_RETURN,'authorize customer returns'),

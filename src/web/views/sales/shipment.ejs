@@ -796,7 +796,8 @@
 }());
 </script>
 
-<% if (notices && notices.length) { %>
+<% var shippedNotices = (notices || []).filter(function (n) { return !locals.postgresPlacement || n.message_kind === 'shipping_notice'; }); %>
+<% if (shippedNotices.length) { %>
   <%
     /*
      * What the customer was told, or is about to be.
@@ -806,10 +807,10 @@
      * from records; the person who has to answer the reply gets the last read
      * of it.
      */
-    var notice = notices[0];
+    var notice = shippedNotices[0];
     var gone = notice.status === 'SENT';
   %>
-  <section class="section">
+  <section class="section" id="notice">
     <div class="panel">
       <div class="panel-head">
         <div>
@@ -852,6 +853,7 @@
           <input type="hidden" name="messageId" value="<%= notice.id %>">
           <input type="hidden" name="version" value="<%= notice.updated_at %>">
           <div class="card-body">
+            <% if (notice.status === 'PREPARED' && locals.noticeConfidence) { %><%- include('../components/confidence', { confidence: noticeConfidence }) %><% } %>
             <label class="field">
               <span class="field-label">Subject</span>
               <input class="input" type="text" name="subject" value="<%= notice.subject %>">
@@ -892,6 +894,112 @@
             <% } %>
             <button class="btn" type="submit" name="action" value="save">Save for later</button>
             <button class="btn btn--ghost" type="submit" name="action" value="rewrite">Start again</button>
+            <button class="btn btn--ghost" type="submit" name="action" value="cancel">Do not send</button>
+          </div>
+        </form>
+      <% } %>
+    </div>
+  </section>
+<% } %>
+
+<%# Job 63: a lost or damaged parcel becomes a carrier claim. %>
+<% if (locals.claimReport) { var cr = locals.claimReport; %>
+  <section class="section" id="claim-report">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Report a lost or damaged parcel</h2></div></div>
+      <div class="card-body">
+        <% if (!cr.available) { %>
+          <p><strong>Carrier claims · Pro</strong> · Claiming lost or damaged parcels from the carrier needs Pro or Custom. <a href="/billing">Upgrade</a></p>
+        <% } else if (cr.claim) { %>
+          <p>Carrier claim: <strong><%= cr.status %></strong>.<% if (locals.canOpenClaims) { %> <a href="/autopilot/carrier-claims/<%= cr.claim.id %>">Open the claim</a><% } %></p>
+        <% } else if (cr.blocked) { %>
+          <p class="notice"><%= cr.blocked %></p>
+        <% } else if (cr.settingsMissing) { %>
+          <p>Before StockChief can claim, the owner adds who receives claim payments in <a href="/autopilot/carrier-claims#claim-details">Carrier claims</a>.</p>
+        <% } else { %>
+          <form method="post" action="/fulfilment/<%= s.id %>/claim-report" enctype="multipart/form-data" class="form-stack" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label class="field"><span class="field-label">What happened</span>
+              <select class="select" name="type" required><option value="damage">It arrived damaged</option><option value="loss">It never arrived</option></select></label>
+            <label class="field"><span class="field-label">Who reported it</span>
+              <select class="select" name="reportedBy" required><option value="customer">The customer</option><option value="staff">Our staff</option></select></label>
+            <label class="field"><span class="field-label">What they saw</span>
+              <textarea class="input textarea" name="description" rows="3" maxlength="1600" required></textarea></label>
+            <label class="field"><span class="field-label">Photo of the damage</span>
+              <input class="input" type="file" name="photo" accept=".jpg,.jpeg,.png,.pdf">
+              <span class="field-hint">Needed for damage. JPEG, PNG or PDF, up to 1.5 MB.</span></label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> This is what happened to this parcel.</label>
+            <button class="btn" type="submit">Prepare the claim</button>
+          </form>
+          <p class="t-xs t-muted">StockChief adds the order's value and the carrier's tracking record. Parcels insured through EasyPost are filed through it; for other carriers the owner gets the claim pack and the steps.</p>
+        <% } %>
+      </div>
+    </div>
+  </section>
+<% } %>
+
+<%# Job 62: the delay email StockChief wrote for a late parcel, when the owner turned it on. %>
+<% var delayNote = locals.postgresPlacement ? (notices || []).filter(function (n) { return n.message_kind === 'shipping_delay'; })[0] : null; %>
+<% if (delayNote) { %>
+  <section class="section" id="delay-notice">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><%= delayNote.status === 'SENT' ? 'What the customer was told about the delay' : 'Tell the customer it is running late' %></h2>
+          <span class="t-xs t-muted">
+            <% if (delayNote.status === 'SENT') { %>Sent <%= helpers.shortDate(delayNote.sentAt) %> to <%= delayNote.recipient %>
+            <% } else if (delayNote.status === 'CANCELLED') { %>Not sent
+            <% } else if (delayNote.recipient) { %>Ready to send to <%= delayNote.recipient %>
+            <% } else { %>No email address on this order<% } %>
+          </span>
+        </div>
+        <span class="spacer"></span>
+        <span class="badge badge--<%= delayNote.status === 'SENT' ? 'ok' : delayNote.status === 'FAILED' ? 'warn' : 'info' %>">
+          <%= { PREPARED: 'Written, not sent', QUEUED: 'Waiting', SENDING: 'Sending', SENT: 'Sent', FAILED: 'Did not send', CANCELLED: 'Cancelled' }[delayNote.status] %>
+        </span>
+      </div>
+      <% if (delayNote.errorMessage && delayNote.status === 'FAILED') { %>
+        <div class="card-body"><div class="notice notice--warn"><div><strong>This did not send.</strong><br><%= delayNote.errorMessage %></div></div></div>
+      <% } %>
+      <% if (delayNote.status !== 'PREPARED') { %>
+        <div class="card-body">
+          <p class="t-sm"><strong><%= delayNote.subject %></strong></p>
+          <pre class="message-body"><%= delayNote.body %></pre>
+        </div>
+      <% } else { %>
+        <form method="post" action="/fulfilment/<%= s.id %>/delay-notice" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="messageId" value="<%= delayNote.id %>">
+          <input type="hidden" name="version" value="<%= delayNote.updated_at %>">
+          <div class="card-body">
+            <label class="field">
+              <span class="field-label">Subject</span>
+              <input class="input" type="text" name="subject" value="<%= delayNote.subject %>">
+            </label>
+            <label class="field">
+              <span class="field-label">Message</span>
+              <textarea class="input textarea message-edit" name="body" rows="12"><%= delayNote.body %></textarea>
+              <span class="field-hint">Written from the carrier's scans and the order's dates. It promises no new date.</span>
+            </label>
+            <% if (mailboxes && mailboxes.length) { %>
+              <label class="field">
+                <span class="field-label">Send from</span>
+                <select class="input" name="connectorId">
+                  <option value="">Choose a mailbox</option>
+                  <% mailboxes.forEach(function (box) { %>
+                    <option value="<%= box.id %>" <%= delayNote.connectorId === box.id ? 'selected' : '' %>><%= box.display_name %></option>
+                  <% }) %>
+                </select>
+              </label>
+            <% } else { %>
+              <p class="hint">No mailbox is connected. Copy the words into your own email, or <a href="/settings/connections">connect a mailbox</a>.</p>
+            <% } %>
+          </div>
+          <div class="card-foot">
+            <% if (delayNote.recipient && mailboxes && mailboxes.length) { %>
+              <button class="btn btn--primary" type="submit" name="action" value="send">Send to <%= delayNote.recipient %></button>
+            <% } %>
+            <button class="btn" type="submit" name="action" value="save">Save for later</button>
             <button class="btn btn--ghost" type="submit" name="action" value="cancel">Do not send</button>
           </div>
         </form>

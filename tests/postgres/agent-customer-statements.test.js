@@ -118,8 +118,10 @@ test('statement time savings count confirmed delivery once and use only owner-re
  await assert.rejects(f.outbound.executeSendEffect(db,ctx.workspaceId,p.result.effectId,{provider:lost}),e=>e.code==='email_send_ambiguous');await f.outbound.executeSendEffect(db,ctx.workspaceId,p.result.effectId,{provider:lost}).catch(()=>{});assert.equal(calls,1);assert.equal((await read()).count,1);assert.equal((await read()).minutes,7);assert.equal((await require('../../src/autopilot/draft-authority').settings(db,ctx,p.id)).canTeach,false);
 });
 
-test('larger customer accounts are held instead of emailing a truncated statement',{timeout:240000},async t=>{
- const f=await fixture(t);for(let i=0;i<101;i++)await f.invoice('1.00');await assert.rejects(f.facts(),/more than 100/);await assert.rejects(f.prepare(),/more than 100/);assert.equal(f.sent.length,0);
+test('accounts over the statement limit are held instead of emailing a truncated statement',{timeout:240000},async t=>{
+ const f=await fixture(t),limit=f.statements.LIMITS.rows;for(let i=0;i<101;i++)await f.invoice('1.00');
+ assert.equal((await f.facts()).outstanding.length,101,'The PDF carries every row, so 101 invoices are within the statement limit.');
+ f.statements.LIMITS.rows=100;try{await assert.rejects(f.facts(),/more than 100/);await assert.rejects(f.prepare(),/more than 100/);}finally{f.statements.LIMITS.rows=limit;}assert.equal(f.sent.length,0);
 });
 
 test('altered preview facts and a changed queued body cannot become customer statement authority',{timeout:240000},async t=>{

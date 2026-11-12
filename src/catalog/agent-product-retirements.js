@@ -67,15 +67,21 @@ async function apply(db, ctx, id, input = {}, { automatic = false } = {}) {
       policy.requireJob(state.plan,132,'automatic',{trained:Boolean(setting.taught_notice_id)});
       if(!(await require('../autopilot/postgres-service').getState(c,ctx.workspaceId)).canAutomate)throw new ValidationError('Automatic product retirement is paused.');
     }else if(input.confirmed!=='yes'||input.sourceFingerprint!==p.sourceFingerprint)throw new ValidationError('Approve these exact product retirements and replacement links before applying.');
-    await require('../domain/postgres-catalog-service').archiveZeroStockItemsInTransaction(c,ctx,p.pairs.map(pair=>pair.old.item_id));
-    await c.query(`INSERT INTO stockchief_runtime.agent_product_replacements(old_sku_id,workspace_id,replacement_sku_id,notice_id)
-      SELECT x.old_sku_id,$1,x.replacement_sku_id,$2 FROM jsonb_to_recordset($3::jsonb)x(old_sku_id text,replacement_sku_id text)`,[ctx.workspaceId,id,JSON.stringify(p.pairs.map(pair=>({old_sku_id:pair.old.id,replacement_sku_id:pair.replacement.id})))]);
-    const result={changedCount:originals.length,items:p.pairs.map(pair=>({oldItemId:pair.old.item_id,oldCode:pair.old.code,replacementItemId:pair.replacement.item_id,replacementCode:pair.replacement.code}))};
+    // Job 132's retirement: no more reordering, the replacement recorded,
+    // zero-stock products archived and stock left sold down.
+    const work=require('./agent-retirement-work');
+    const started=await work.startMany(c,ctx,p.pairs.map(pair=>({skuId:pair.old.id,replacementSkuId:pair.replacement.id,evidence:{notice:n.reference}})),
+      {source:'SUPPLIER',noticeId:id,automatic,clearance:await clearance(c,ctx)});
+    const result={changedCount:originals.length,items:p.pairs.map((pair,i)=>({oldItemId:pair.old.item_id,oldCode:pair.old.code,replacementItemId:pair.replacement.item_id,
+      replacementCode:pair.replacement.code,status:started.rows[i].status,left:started.rows[i].left}))};
     await c.query('UPDATE stockchief_runtime.agent_product_retirement_notices SET applied_at=clock_timestamp(),applied_by=$3,automatic=$4,result=$5,last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,ctx.actorId,automatic,result]);
     await require('../operations/postgres-security-audit').record(c,ctx,{action:'Discontinued products retired with replacement guidance',reference:id,after:{...result,automatic,sourceFingerprint:p.sourceFingerprint}});
     return {replayed:false,...result};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
+
+// The clearance markdown the owner saved for stock left on discontinued products.
+async function clearance(c,ctx){const rule=await require('./agent-retirement-work').loadRule(c,ctx.workspaceId);return rule?.markdown_points?{points:rule.markdown_points,stepDays:rule.step_days}:null;}
 
 async function configure(db,ctx,supplierId,input){
  return db.transaction(async c=>{
@@ -117,8 +123,12 @@ async function list(db,ctx,options={}){
  const settings=(await db.query('SELECT x.*,s.name AS supplier_name FROM stockchief_runtime.agent_product_retirement_settings x JOIN suppliers s ON s.workspace_id=x.workspace_id AND s.id=x.supplier_id WHERE x.workspace_id=$1 ORDER BY s.name,x.supplier_id LIMIT 101 OFFSET $2',[ctx.workspaceId,(pages.settingsPage-1)*100])).rows;
  return {locked,plan:state.plan,shadow:state.shadow,...pages,rows:rows.slice(0,100),more:rows.length>100,suppliers:suppliers.slice(0,100),supplierMore:suppliers.length>100,settingsMore:settings.length>100,settings:settings.slice(0,100).map(s=>({...s,allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,132,'automatic',{trained:Boolean(s.taught_notice_id)})}))};
 }
-async function guidance(db,workspaceId,itemId){return (await db.query(`SELECT old.code AS old_code,target.code AS replacement_code,i.id AS replacement_item_id,i.name AS replacement_name FROM stockchief_runtime.agent_product_replacements r JOIN skus old ON old.workspace_id=r.workspace_id AND old.id=r.old_sku_id JOIN skus target ON target.workspace_id=r.workspace_id AND target.id=r.replacement_sku_id JOIN items i ON i.workspace_id=target.workspace_id AND i.id=target.item_id WHERE r.workspace_id=$1 AND old.item_id=$2 AND old.is_active=0 AND target.is_active=1 AND i.is_active=1 ORDER BY old.code`,[workspaceId,itemId])).rows;}
+async function guidance(db,workspaceId,itemId){const current=await require('./retirement-guidance').forItem(db,workspaceId,itemId);if(current)return current;return (await db.query(`SELECT old.code AS old_code,target.code AS replacement_code,i.id AS replacement_item_id,i.name AS replacement_name FROM stockchief_runtime.agent_product_replacements r JOIN skus old ON old.workspace_id=r.workspace_id AND old.id=r.old_sku_id JOIN skus target ON target.workspace_id=r.workspace_id AND target.id=r.replacement_sku_id JOIN items i ON i.workspace_id=target.workspace_id AND i.id=target.item_id WHERE r.workspace_id=$1 AND old.item_id=$2 AND old.is_active=0 AND target.is_active=1 AND i.is_active=1 ORDER BY old.code`,[workspaceId,itemId])).rows;}
 async function inbox(db,workspaceId,actorId){
+ const work=await require('./agent-retirement-work').inbox(db,workspaceId);
+ return work.concat(await noticeInbox(db,workspaceId,actorId));
+}
+async function noticeInbox(db,workspaceId,actorId){
  const rows=(await db.query('SELECT n.id,n.reference,n.last_issue,n.created_at,s.name FROM stockchief_runtime.agent_product_retirement_notices n JOIN suppliers s ON s.workspace_id=n.workspace_id AND s.id=n.supplier_id WHERE n.workspace_id=$1 AND n.applied_at IS NULL AND n.last_issue IS NOT NULL ORDER BY n.created_at,n.id LIMIT 50',[workspaceId])).rows;
  if(!rows.length)return [];await source.owner(db,{workspaceId,actorId});const state=await policy.accountState(db,workspaceId),eligible=policy.usesAgentTerms(state)&&policy.permits(state.plan,132,'draft');
  return rows.map(n=>({kind:'catalog',importance:'Needs You',priority:68,title:'Review discontinued products: '+n.name+' · '+n.reference,happened:'Product retirement stopped before changing the catalog.',why:n.last_issue,recommendation:'Review the current products, source notice and retirement authority.',href:eligible?'/autopilot/discontinued-products/'+n.id:'/autopilot/discontinued-products',actionLabel:'Review discontinued products',sourceId:'product-retirement:'+n.id,at:n.created_at,createdAt:n.created_at}));
@@ -126,4 +136,4 @@ async function inbox(db,workspaceId,actorId){
 async function onNotice(db,workspaceId,id){try{const n=(await db.query('SELECT authorized_by FROM stockchief_runtime.agent_product_retirement_settings x JOIN stockchief_runtime.agent_product_retirement_notices n ON n.workspace_id=x.workspace_id AND n.supplier_id=x.supplier_id WHERE n.workspace_id=$1 AND n.id=$2',[workspaceId,id])).rows[0];if(!n)throw new ValidationError('No enabled owner retirement scope.');return await apply(db,{workspaceId,actorId:n.authorized_by},id,{}, {automatic:true});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await db.query('UPDATE stockchief_runtime.agent_product_retirement_notices SET last_issue=$3 WHERE workspace_id=$1 AND id=$2 AND applied_at IS NULL',[workspaceId,id,String(error.message).slice(0,500)]);return {held:true,reason:error.message};}}
 async function enqueue(c,workspaceId,id){return require('../operations/postgres-job-queue').enqueue({query:(...a)=>c.query(...a),transaction:fn=>fn(c)},{workspaceId,kind:jobKind,idempotencyKey:'discontinue:'+id,payload:{noticeId:id},priority:30,maxAttempts:3});}
 
-module.exports={preview,record,apply,configure,page,list,guidance,inbox,onNotice,jobKind,action,definition:{id:132,key:'discontinued-products',label:'Retire discontinued products and show replacements',readPage:async()=>({summary:'Retire zero-stock single-SKU products from checked supplier notices. Pro needs a reviewed example for automatic work; Custom can authorize a supplier scope without training. No stock is written off and no order is substituted.',rows:[{Action:'Open discontinued products',link:'/autopilot/discontinued-products'}],more:false})}};
+module.exports={preview,record,apply,configure,page,list,guidance,inbox,onNotice,jobKind,action,definition:{id:132,key:'discontinued-products',label:'Retire discontinued products and show replacements',readPage:(db,ctx,options)=>require('./agent-retirement-work').review(db,ctx,options)}};

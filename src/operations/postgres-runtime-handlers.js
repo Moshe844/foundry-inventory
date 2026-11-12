@@ -431,10 +431,15 @@ async function autopilotEvaluate(job,client){
     await require('../forecasting/agent-slow-stock-steps').schedule(client,job.workspaceId,cycleId);
     await require('./agent-expiry-warnings').schedule(client,job.workspaceId,cycleId);
     await require('../catalog/agent-catalog-fixes').schedule(client,job.workspaceId,cycleId);
+    await require('../catalog/agent-product-classification').schedule(client,job.workspaceId,cycleId);
+    await require('../catalog/agent-retirement-work').schedule(client,job.workspaceId,cycleId);
     await require('../autopilot/data-health').schedule(client,job.workspaceId);
     await require('../reports/agent-compliance-reports').schedule(client,job.workspaceId,cycleId);
     await require('../accounting/agent-landed-cost-bills').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-labels').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-return-labels').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-parcel-watch').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-carrier-claims').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -442,6 +447,9 @@ async function autopilotEvaluate(job,client){
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
+    // Job 172: follow unanswered alerts and approvals, once this check has raised them.
+    if(await require('../autopilot/escalations').enabled(client,job.workspaceId,account))
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.escalations',idempotencyKey:'escalations:'+cycleId,payload:{cycleId},priority:66,maxAttempts:3});
     if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
     if(account.plan==='enterprise')await require('../purchasing/agent-open-to-buy').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     if(account.plan==='enterprise')await require('../forecasting/warehouse-slotting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -449,7 +457,9 @@ async function autopilotEvaluate(job,client){
       const month=(await require('../lib/business-time').today(client,job.workspaceId)).slice(0,7);
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.monthly-product-classes',idempotencyKey:'abc:'+month,payload:{},priority:65,maxAttempts:3});
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.automation-opportunities',idempotencyKey:'automation:'+month,payload:{},priority:65,maxAttempts:3});
+      await require('../forecasting/agent-demand-forecast').schedule(scopedDatabase(client),job.workspaceId);
       await require('../forecasting/agent-reorder-refresh').schedule(scopedDatabase(client),job.workspaceId);
+      await require('../forecasting/agent-runout').schedule(scopedDatabase(client),job.workspaceId);
     }
     await require('./agent-daily-cycle-counts').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('./agent-annual-stocktake-runs').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -560,6 +570,10 @@ async function systemEmail(job,database,options={}){
   if(job.payload.messageType==='purchase_approval'&&!await require('../autopilot/approval-email').stillWanted(database,job,message.to)){
     return {skipped:'This owner no longer needs this approval email.'};
   }
+  if(job.payload.messageType==='scheduled_report'&&job.idempotencyKey?.startsWith('scheduled-report-email:')&&
+    !await require('../reports/postgres-scheduling').emailStillWanted(database,job.workspaceId,job.id,message.to,job.payload.reportRevision)){
+    return {skipped:'This scheduled report delivery was cancelled.'};
+  }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
       VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)
@@ -647,11 +661,17 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier-price-update.v1':external((job,database)=>require('../pricing/agent-supplier-price-updates').run(job,database)),
   'agent.slow-stock.v1':external((job,database)=>require('../forecasting/agent-slow-stock-steps').run(job,database)),
   'agent.catalog-fixes.v1':external((job,database)=>require('../catalog/agent-catalog-fixes').run(job,database)),
+  'agent.supplier-catalog.v1':external((job,database)=>require('../catalog/agent-supplier-catalog').run(job,database)),
+  'agent.product-categories.v1':external((job,database)=>require('../catalog/agent-product-classification').run(job,database)),
+  'agent.product-retirements.v1':external((job,database)=>require('../catalog/agent-retirement-work').run(job,database)),
   'agent.data-health.v1':external((job,database)=>require('../autopilot/data-health').run(job,database)),
   'agent.expiry-warnings.v1':external((job,database)=>require('./agent-expiry-warnings').run(job,database)),
   'agent.compliance-reports.v1':external((job,database)=>require('../reports/agent-compliance-reports').run(job,database)),
   'agent.landed-cost-bill.v1':external((job,database)=>require('../accounting/agent-landed-cost-bills').run(job,database)),
   'agent.shipping-labels.v1':external((job,database)=>require('../shipping/agent-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.return-labels.v1':external((job,database)=>require('../shipping/agent-return-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.parcel-watch.v1':external((job,database)=>require('../shipping/agent-parcel-watch').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.carrier-claim-follow-up.v1':external((job,database)=>require('../shipping/agent-carrier-claims').followUp(database,job,options.carrierClaimProvider)),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),
@@ -722,6 +742,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-repeat-order.v1':external((job,database)=>require('../sales/agent-repeat-orders').fromEmail(database,job.workspaceId,job.payload.messageId)),
+  'mail.customer-statement.v1':external((job,database)=>require('../accounting/agent-statement-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
@@ -732,6 +753,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.warehouse-routing.v1':external((job,database)=>require('../sales/agent-ship-from').onQueued(database,job)),
   'agent.order-splits.v1':external((job,database)=>require('../sales/agent-order-splits').onQueued(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
+  'return.disposition-apply.v1':external((job,database)=>require('./agent-return-disposition').applyRoutine(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-rfq-reply.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').captureReply(database,job.workspaceId,job.payload)),
   'agent.rfq-competition.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').run(database,job.workspaceId,job.payload)),
@@ -739,6 +761,12 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'purchasing.stale-incoming.v1':external((job,database)=>require('../purchasing/agent-stale-incoming').run(database,job.workspaceId)),
   'purchasing.fx-rates.v1':external((job,database)=>require('../purchasing/agent-purchase-fx').run(database,job.workspaceId)),
   'reports.net-margin.v1':external((job,database)=>require('../reports/agent-net-margin').run(database,job.workspaceId)),
+  'reports.roi.v1':external((job,database)=>require('../reports/agent-roi-report').run(database,job.workspaceId,job.payload)),
+  'reports.stock-health.v1':external((job,database)=>require('../forecasting/agent-stock-health').run(database,job.workspaceId)),
+  'reports.service-levels.v1':external((job,database)=>require('../forecasting/agent-service-levels').run(database,job.workspaceId)),
+  'reports.month-end-stock.v1':external((job,database)=>require('../reports/agent-month-end-stock').run(database,job.workspaceId,job.payload)),
+  'reports.change-digest.v1':external((job,database)=>require('../reports/agent-change-explanations').run(database,job.workspaceId,job.payload)),
+  'reports.board-pack.v1':external((job,database)=>require('../reports/agent-board-pack').run(database,job.workspaceId,job.payload)),
   'channel.price-check.v1':external((job,database)=>require('../pricing/agent-channel-price-checks').run(database,job.workspaceId)),
   'purchase-order.supplier-document-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-document').onDocument(database,job.workspaceId,job.payload.documentId)),
   'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),
@@ -757,7 +785,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
-  'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  // Safety stock now runs in the daily forecast run (job 150); older queued work ends quietly.
+  'planning.class-safety-stock':Object.assign(async()=>({skipped:'Safety stock is now set in the daily forecast run.'}),{workerLane:'maintenance'}),
   'planning.open-to-buy.v1':Object.assign((job,c)=>require('../purchasing/agent-open-to-buy').run(job,c),{workerLane:'maintenance'}),
   'planning.warehouse-slotting.v1':Object.assign((job,c)=>require('../forecasting/warehouse-slotting').run(job,c),{workerLane:'maintenance'}),
   'agent.daily-cycle-count.v1':Object.assign((job,c)=>require('./agent-daily-cycle-counts').work(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
@@ -765,6 +794,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.split-purchase.v1':Object.assign((job,c)=>require('../purchasing/agent-purchase-splitting').worker(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.location-reorder.v1':Object.assign((job,c)=>require('../forecasting/location-reorder-rules').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.reorder-refresh.v1':Object.assign((job,c)=>require('../forecasting/agent-reorder-refresh').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'planning.demand-forecast.v1':Object.assign((job,c)=>require('../forecasting/agent-demand-forecast').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'planning.runout.v1':Object.assign((job,c)=>require('../forecasting/agent-runout').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'agent.inventory-rollup.v1':Object.assign((job,c)=>require('../reports/agent-inventory-rollup').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
@@ -841,6 +872,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.sales-quote.acceptance.v1':external((job,database)=>require('../sales/agent-quote-buyers').run(database,job.workspaceId,job.payload)),
   'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
+  'agent.escalations':external((job,database)=>require('../autopilot/escalations').run(database,job.workspaceId)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     // After the last claim page, follow sent claims: replies, settlements and reminders.

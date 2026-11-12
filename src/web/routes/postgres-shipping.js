@@ -83,7 +83,10 @@ async function shipmentPage(database,workspaceId,shipmentId){
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities,addressCheck:await require('../../shipping/agent-address-checks').view(database,workspaceId,shipmentId)},
     notices:noticeRows.rows.map((notice)=>({...notice,connectorId:notice.connector_id,errorMessage:notice.error_message,
-      sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows};
+      sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows,
+    // Job 199: how sure StockChief is about the tracking email waiting to be sent.
+    noticeConfidence:noticeRows.rows.some(n=>n.message_kind==='shipping_notice'&&n.status==='PREPARED')
+      ?(await require('../../shipping/agent-shipping-notices').waiting(database,workspaceId,{shipmentId,limit:1}))[0]?.confidence||null:null};
 }
 
 function createPostgresShippingRouter(database,options={}){
@@ -96,6 +99,18 @@ function createPostgresShippingRouter(database,options={}){
   }));
   router.post('/settings/shipping/shipstation-custom/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../shipping/shipstation-custom-store').disconnect(database,req.ctx,req.body.connectorId);req.flash('success','ShipStation Custom Store disconnected. Tracking history remains.');return res.redirect(303,'/settings/shipping');
+  }));
+  // Job 63: staff record a lost or damaged parcel, for themselves or the customer, with the photo.
+  router.post('/fulfilment/:id/claim-report',requireAuth,requirePermission(permissions.OPERATE,'report damaged or lost parcels'),
+    require('../multipart').multipart({limit:require('../../shipping/agent-carrier-claims').limit+32768,maxFiles:1}),asyncRoute(async(req,res)=>{
+    const opened=await require('../../shipping/agent-carrier-claims').report(database,req.ctx,req.params.id,req.body,req.files);
+    req.flash('success',opened.replayed?'This parcel already has a claim.':opened.automatic?'The claim is being filed with the carrier.':'The claim is prepared. The owner files it from Carrier claims.');
+    return res.redirect(303,'/fulfilment/'+req.params.id+'#claim-report');
+  }));
+  router.post('/fulfilment/:id/delay-notice',requireAuth,requirePermission(permissions.OPERATE,'review delay emails'),asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-parcel-watch').editNotice(database,req.ctx,req.params.id,req.body);
+    req.flash('success',req.body.action==='send'?'The delay email is queued for delivery.':req.body.action==='cancel'?'The delay email will not be sent.':'Delay email saved.');
+    return res.redirect(303,'/fulfilment/'+req.params.id+'#delay-notice');
   }));
   router.post('/fulfilment/:id/notice',requireAuth,requirePermission(permissions.OPERATE,'review shipment notices'),asyncRoute(async(req,res)=>{
     await require('../../shipping/agent-shipping-notices').edit(database,req.ctx,req.params.id,req.body);
@@ -244,7 +259,8 @@ function createPostgresShippingRouter(database,options={}){
       return res.page('shipping/return-parcel',{title:saved.shipment_number,nav:'fulfilment',room:true,shipment:saved,state,packagePresets,purchaseKey:newId('return-postage')});}
     const page=await shipmentPage(database,req.ctx.workspaceId,req.params.id);
     return res.page('sales/shipment',{title:page.shipment.shipment_number,nav:'fulfilment',room:true,
-      backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true,canCancelParcel:permissions.can(req.user,permissions.FULFILL_SALES)});
+      backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true,canCancelParcel:permissions.can(req.user,permissions.FULFILL_SALES),
+      claimReport:await require('../../shipping/agent-carrier-claims').forShipment(database,req.ctx,saved),canOpenClaims:req.user?.role==='owner'});
   }));
   router.get('/fulfilment/:id/label/status',asyncRoute(async(req,res)=>{
     await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);

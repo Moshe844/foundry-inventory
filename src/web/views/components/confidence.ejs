@@ -1,0 +1,12 @@
+<%# Job 199: how sure StockChief is about one action, with the reasons drawn
+    from the facts that action checks. High is green, medium the usual
+    colour, low orange: StockChief stops and asks. %>
+<% if (locals.confidence) { const c = confidence; %>
+<div class="notice <%= c.level === 'high' ? 'notice--success' : c.level === 'medium' ? 'notice--info' : 'notice--warn' %>" data-confidence="<%= c.level %>"><div>
+  <strong>Confidence: <%= c.level %>.</strong>
+  <ul>
+    <% for (const reason of c.reasons || [c.reason]) { %><li><%= reason %></li><% } %>
+  </ul>
+  <% if (locals.asked) { %><p><%= asked %></p><% } %>
+</div></div>
+<% } %>

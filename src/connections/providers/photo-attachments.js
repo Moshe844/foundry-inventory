@@ -4,7 +4,9 @@ function validate(value){
  if(value===undefined)return [];
  if(!Array.isArray(value)||value.length>3)throw new ValidationError('Choose up to three delivery photo copies.');
  return value.map(p=>{
-  if(!p||!Buffer.isBuffer(p.content)||!p.content.length||p.content.length>614400||!['image/jpeg','image/png'].includes(p.contentType)||!/^[-a-zA-Z0-9_.]{1,120}$/.test(p.filename))throw new ValidationError('This photo attachment needs review before sending.');
+  // Delivery photos (job 46) and one statement PDF (job 81).
+  const document=p?.contentType==='application/pdf';
+  if(!p||!Buffer.isBuffer(p.content)||!p.content.length||p.content.length>(document?2097152:614400)||!['image/jpeg','image/png','application/pdf'].includes(p.contentType)||!/^[-a-zA-Z0-9_.]{1,120}$/.test(p.filename)||document&&p.content.subarray(0,5).toString()!=='%PDF-')throw new ValidationError(document?'This PDF attachment needs review before sending.':'This photo attachment needs review before sending.');
   return p;
  });
 }

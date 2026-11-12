@@ -44,11 +44,19 @@ async function facts(db,ctx,id,connectorId){
   returnLocationId:s.ship_from_location_id,returnLocation:s.return_location,returnAddress:s.return_address,origin:s.return_origin,boxes,quantities,products,currency:s.currency,goodsValueMinor,
   connectorId:mailbox.id,mailboxProvider:mailbox.provider_type,mailboxAccount:mailbox.provider_account_id};
  const training=require('../autopilot/draft-authority').scope(s.customer_id,s.currency,goodsValueMinor,[action,evidence.recipient,evidence.returnLocationId,evidence.returnAddress,evidence.origin,evidence.connectorId,evidence.mailboxProvider,evidence.mailboxAccount,products.map(({quantity,...p})=>p)],s.customer_name+' · '+s.return_location+' · '+products.map(p=>p.sku).join(', ')+' · same return route and mailbox');
- const known=(await db.query(`SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND customer_id=$2 AND lower(recipient)=lower($3)
- AND status='SENT' AND external_message_id IS NOT NULL LIMIT 1`,[ctx.workspaceId,s.customer_id,s.contact_email])).rowCount>0;
+ const known=await knownRecipient(db,ctx.workspaceId,id,s.contact_email);
  return {...evidence,sourceFingerprint:hash(evidence),training,needsRecipientConfirmation:!known};
 }
 
+// A customer address is known once mail to it was confirmed sent, or when the
+// return itself was requested by email from that very address (job 111).
+async function knownRecipient(db,workspaceId,returnId,email){
+ return (await db.query(`SELECT 1 FROM customer_communications m JOIN sales_orders o ON o.workspace_id=m.workspace_id AND o.customer_id=m.customer_id
+ JOIN customer_returns r ON r.workspace_id=o.workspace_id AND r.sales_order_id=o.id
+ WHERE m.workspace_id=$1 AND r.id=$2 AND lower(m.recipient)=lower($3) AND m.status='SENT' AND m.external_message_id IS NOT NULL
+ UNION ALL SELECT 1 FROM stockchief_runtime.agent_return_email_sources s JOIN connection_email_messages e ON e.workspace_id=s.workspace_id AND e.id=s.message_id
+ WHERE s.workspace_id=$1 AND s.customer_return_id=$2 AND lower(e.sender)=lower($3) LIMIT 1`,[workspaceId,returnId,email])).rowCount>0;
+}
 function compose(p){return {subject:'Return label and instructions · '+p.returnNumber,body:[
  'Hello '+p.customerName+',','', 'Your authorized return '+p.returnNumber+' for order '+p.orderNumber+' covers:',
  ...p.products.map(l=>l.quantity+' × '+l.name+' ('+l.sku+')'),'',
@@ -69,7 +77,10 @@ async function authority(db,workspaceId,p){
  if(fresh.sourceFingerprint!==p.sourceFingerprint||hash(fresh.training)!==hash(p.training))throw new ValidationError('The return, goods, label, route, customer or sending mailbox changed. Review fresh instructions.');
  if(p.automatic){
   if(fresh.needsRecipientConfirmation)throw new ValidationError('Approve the first email to this customer’s current address individually.');
-  const trained=state.plan!=='growth'||await require('../autopilot/draft-authority').trained(db,workspaceId,action,fresh);
+  // Job 112's saved return-label rule teaches Growth and caps every plan.
+  const route=await require('./agent-return-labels').routeFor(db,workspaceId,fresh);
+  if(route.route&&!route.within)throw new ValidationError('These returned goods are worth more than your return-label rule allows. Review this message individually.');
+  const trained=state.plan!=='growth'||route.within&&route.route.authorized_by===p.actorId||await require('../autopilot/draft-authority').trained(db,workspaceId,action,fresh);
   policy.requireJob(state.plan,112,'automatic',{trained});
   const rule=(await db.query('SELECT maximum_minor,authorized_by FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4',[workspaceId,action,fresh.training.key,fresh.currency])).rows[0];
   if(rule&&(rule.authorized_by!==p.actorId||Number(rule.maximum_minor)<fresh.goodsValueMinor))throw new ValidationError('These returned goods exceed the current owner’s saved instructions authority. Review this message individually.');
@@ -126,4 +137,4 @@ async function review(db,ctx){const rows=(await db.query(`SELECT r.return_number
  WHERE r.workspace_id=$1 AND r.status IN('AUTHORIZED','PARTIALLY_RECEIVED') AND s.status='PACKED' AND s.label_status='PURCHASED'
  ORDER BY r.created_at,r.id LIMIT 101`,[ctx.workspaceId])).rows;const state=await policy.accountState(db,ctx.workspaceId);return {returnLabelForm:{mailboxes:await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId),blocked:await policy.stopped(db,ctx.workspaceId,state,action,false)},rows:rows.slice(0,100),more:rows.length>100,summary:'Ask StockChief to send an exact authorized return’s purchased label link and recorded goods through a connected mailbox. Quote and buy postage separately. Growth learns from a provider-confirmed individual send; Pro and Custom do not require teaching. Physical receipt, inspection and refunds remain separate.'};}
 
-module.exports={action,kind,facts,compose,authority,confirmedExample,definition:{id:112,key:'return-labels',label:'Send purchased return labels and instructions',readPage:review},spec:{name:action,agentJob:112,record:'customer_return',fields:['recordReference','mailbox'],permission:require('../actions/permissions').FULFILL_SALES,ownerOnly:true,capability:'connection.email',completionGate:'provider_effect_succeeded',resultReference:'customerReturnId',resultRecordKind:'customer_return',resultingRecords:['customer_communications','stockchief_runtime.provider_effects'],description:'Send one authorized customer return’s already-purchased carrier label link and exact return instructions. Use the current customer email, original return route and exact mailbox. No label purchase, receipt, stock, credit or refund change. Growth requires a confirmed taught email scope; Pro and Custom can use exact requested known-customer sends without training. A first email address requires individual approval.',build,execute,verify:async(db,ctx,r,p)=>Boolean((await db.query("SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND id=$2 AND customer_id=$3 AND status IN('QUEUED','SENDING','SENT')",[ctx.workspaceId,r.communicationId,p.customerId])).rowCount)}};
+module.exports={action,kind,facts,compose,authority,confirmedExample,knownRecipient,execute,definition:{id:112,key:'return-labels',label:'Send purchased return labels and instructions',readPage:review},spec:{name:action,agentJob:112,record:'customer_return',fields:['recordReference','mailbox'],permission:require('../actions/permissions').FULFILL_SALES,ownerOnly:true,capability:'connection.email',completionGate:'provider_effect_succeeded',resultReference:'customerReturnId',resultRecordKind:'customer_return',resultingRecords:['customer_communications','stockchief_runtime.provider_effects'],description:'Send one authorized customer return’s already-purchased carrier label link and exact return instructions. Use the current customer email, original return route and exact mailbox. No label purchase, receipt, stock, credit or refund change. Growth requires a confirmed taught email scope; Pro and Custom can use exact requested known-customer sends without training. A first email address requires individual approval.',build,execute,verify:async(db,ctx,r,p)=>Boolean((await db.query("SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND id=$2 AND customer_id=$3 AND status IN('QUEUED','SENDING','SENT')",[ctx.workspaceId,r.communicationId,p.customerId])).rowCount)}};

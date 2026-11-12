@@ -209,7 +209,9 @@ async function fail(database, id, token, error, options = {}) {
     const delay = options.retryAfterMs ?? Math.min(900000, 1000 * (2 ** Math.min(20, row.attempt_count - 1)));
     if (!Number.isSafeInteger(delay) || delay < 0) throw new TypeError('Invalid job retry delay.');
     const detail = { code: error?.code || 'job_failed', message: String(error?.message || 'Job failed.'), retryable,
-      details:commercialPause?error.details:undefined };
+      details:commercialPause?error.details:undefined,
+      // A provider's own status (for example 429 or 503) tells throttling from an outage.
+      httpStatus:Number.isInteger(error?.httpStatus)?error.httpStatus:undefined };
     const result = await client.query(`UPDATE stockchief_runtime.jobs SET status = $2, available_at = $3,
       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = $4::jsonb,
       completed_at = $5, updated_at = $6 WHERE id = $1 RETURNING *`,

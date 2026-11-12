@@ -215,18 +215,27 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
     return next();}catch(error){return next(error);}});
   app.use(requireOperationalSubscription);
   app.use(require('./commercial/enforcement').middleware(database));
+  app.get('/api/ui/needs-count',async(req,res,next)=>{
+    if(!req.ctx)return res.sendStatus(401);
+    res.set('Cache-Control','private, no-store');
+    try {
+      const {workspaceId,actorId}=req.ctx;
+      const count=await require('./lib/versioned-read-model').read(database,workspaceId,['needs-count',actorId],
+        ()=>postgresProjections.needsCount(database,workspaceId,actorId));
+      return res.json({count});
+    } catch(error) {return next(error);}
+  });
   app.use(async(req,res,next)=>{
     // JSON endpoints retain authentication, subscription access and canonical
     // enforcement above. They do not render navigation, onboarding or banners.
     if(!req.ctx||req.path.startsWith('/api/')||!req.accepts('html'))return next();
     try {
-      const [attentionCount,entry,importActivity,sourceUploads]=await Promise.all([
-        postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),
+      const [entry,importActivity,sourceUploads]=await Promise.all([
         postgresExploration.state(database,req.ctx.workspaceId,req.account.id),
         req.method==='GET'&&req.accepts('html')?require('./imports/postgres-progress').list(database,req.ctx.workspaceId,{activeOnly:true,limit:3}):Promise.resolve([]),
         req.method==='GET'&&req.accepts('html')?require('./imports/postgres-source-uploads').list(database,req.ctx.workspaceId,{activeOnly:true,limit:2}):Promise.resolve([]),
       ]);
-      res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;res.locals.globalImportActivity=importActivity;res.locals.globalSourceUploads=sourceUploads;return next();
+      res.locals.attentionCount=null;res.locals.globalOnboardingEntry=entry;res.locals.globalImportActivity=importActivity;res.locals.globalSourceUploads=sourceUploads;return next();
     }
     catch(error){return next(error);}
   });

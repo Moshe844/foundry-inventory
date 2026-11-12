@@ -33,7 +33,13 @@ async function local(db,p){
   LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=loc.id
   LEFT JOIN accounting_inventory_cost_balances cost ON cost.workspace_id=s.workspace_id AND cost.sku_id=s.id AND cost.location_id=loc.id
   WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1`,[p.workspace_id,p.sku_id,p.location_id])).rows[0];
- if(!row)throw new ValidationError('The mapped product or location is no longer active.');
+ if(!row){
+  // Job 132: a retired discontinued product offers nothing on any channel.
+  const retired=p.field==='quantity'&&await require('../db/schema-installed').has(db,'stockchief_runtime.agent_product_retirements')?(await db.query(
+   "SELECT id,retired_at FROM stockchief_runtime.agent_product_retirements WHERE workspace_id=$1 AND sku_id=$2 AND status='RETIRED'",[p.workspace_id,p.sku_id])).rows[0]:null;
+  if(retired)return {value:0,physical:0,blocked:0,costed:0,committed:0,reserved:0,tracking:null,version:'retired:'+retired.id+':'+new Date(retired.retired_at).toISOString(),retired:true};
+  throw new ValidationError('The mapped product or location is no longer active.');
+ }
  if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id,catalogueOnly:prices.catalogueOnlyPrice(v)};}
  // Job 194: a channel never offers recalled or expired batches.
  const blocked=['lot','serial'].includes(row.tracking_mode)?Number((await db.query(`SELECT CASE WHEN $4='lot' THEN coalesce((SELECT sum(b.quantity) FROM lot_balances b JOIN lots l ON l.workspace_id=b.workspace_id AND l.id=b.lot_id
@@ -176,6 +182,28 @@ async function publishPriceChangesInTransaction(db,ctx,changes){
   if(l.value===null||p.baseline_provider===null){reason='A verified local price and provider baseline are required before publishing.';await issue(db,p,reason);delivery.synchronizationHolds.push({positionId:p.id,reason});continue;}
   if(same(l.value,p.baseline_provider))continue;
   const queued=await queue(db,c,p,l,p.baseline_provider);delivery.effectIds.push(queued.effect.id);
+ }
+ return result;
+}
+// Job 132: publish the current stock of these products to every channel that
+// takes stock from StockChief, through the normal delivery. A retired product
+// publishes zero.
+async function publishStockInTransaction(db,ctx,skuIds){
+ const result={queued:[],held:[]};if(!skuIds.length)return result;
+ const positions=(await db.query(`SELECT * FROM connection_commerce_positions WHERE workspace_id=$1
+  AND sku_id=ANY($2::text[]) AND field='quantity' AND mode IN ('outbound','two_way') ORDER BY id FOR UPDATE`,[ctx.workspaceId,skuIds])).rows;
+ for(const p of positions){
+  const c=(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.connector_id])).rows[0];
+  const owner=(await db.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.authorized_by_user_id])).rows[0];
+  let reason=null;
+  if(!c||c.status!=='connected'||c.paused_at||parse(c.config,{}).syncDisabled===true)reason='The channel is disconnected or synchronization is paused.';
+  else if(owner?.role!=='owner'||p.provider_account_id!==c.provider_account_id||!await mapped(db,p))reason='The channel authorization, account or mapping changed. Review its synchronization policy.';
+  else if(p.pending_effect_id&&(await effects.get(db,p.workspace_id,p.pending_effect_id)).status!=='SUCCEEDED')reason='A previous channel update still needs to finish. The next check publishes the current stock.';
+  if(reason){await issue(db,p,reason);result.held.push({positionId:p.id,skuId:p.sku_id,reason});continue;}
+  const l=await local(db,p);
+  if(same(l.value,p.baseline_provider))continue;
+  const queued=await queue(db,c,p,l,p.baseline_provider);
+  if(queued.held)result.held.push({positionId:p.id,skuId:p.sku_id,reason:queued.reason});else result.queued.push({positionId:p.id,skuId:p.sku_id,effectId:queued.effect.id});
  }
  return result;
 }
@@ -328,4 +356,4 @@ async function acceptCountInTransaction(db,ctx,payload){
  return {...physical,positionId:p.id,journalEntryId:journal?.entry.id||null,verified:true};
 }
 async function readForReview(db,ctx,p,adapter){const c=await connection(db,ctx,p.connector_id);return providerRead(db,c,p,adapter,'buffer-review:'+newId('read'));}
-module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,queue,readForReview};
+module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,publishStockInTransaction,queue,readForReview};

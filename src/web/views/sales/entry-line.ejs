@@ -10,7 +10,7 @@
    <span class="ox-thumb" aria-hidden="true" data-line-thumb></span>
    <span class="ox-line__name"><strong data-line-name>No product yet</strong><small data-line-meta>Search above to choose one</small></span>
   </div>
-  <select class="ox-native" name="skuId" aria-label="Product or variant" tabindex="-1" required><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>" <%= selected===s.id?'selected':'' %>><%= s.display_name %> · <%= s.code %></option><% }) %></select>
+  <select class="ox-native" name="skuId" aria-label="Product or variant" tabindex="-1" required><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>" <%= selected===s.id?'selected':'' %>><%= s.display_name %> · <%= s.code %><%= s.discontinued?' · Discontinued'+(s.replacement_code?', use '+s.replacement_code:''):'' %><%= s.replaces?' · Replaces '+s.replaces:'' %></option><% }) %></select>
   <label class="ox-weight" data-secondary-field hidden><span data-secondary-label>Actual weight</span><input name="secondaryQuantity" inputmode="decimal" value="<%= locals.secondaryQuantity||'' %>"></label>
  </td>
  <td class="ox-line__qty"><span class="ox-step"><button type="button" data-ox-dec aria-label="One fewer">−</button><input type="number" name="quantity" aria-label="Quantity" min="0.000001" max="1000000000" step="any" value="<%= quantity %>" required><button type="button" data-ox-inc aria-label="One more">+</button></span></td>

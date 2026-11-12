@@ -6,7 +6,7 @@ const { hash } = require('../pricing/postgres-promotions');
 const { ValidationError } = require('../domain/errors');
 const time = require('../lib/business-time');
 const { addDays } = require('../accounting/customer-money');
-const { WINDOW_DAYS, COVER_DAYS, SAFETY_DAYS, MIN_ISSUE_EVENTS } = require('../purchasing/replenishment-decision');
+const { WINDOW_DAYS, COVER_DAYS, SAFETY_DAYS, MIN_ISSUE_EVENTS, forecastUnits } = require('../purchasing/replenishment-decision');
 
 const key = (skuId, locationId) => JSON.stringify([skuId, locationId]);
 const canonical = value => value == null ? null : exact.canonical(value);
@@ -33,30 +33,43 @@ function roundedDemand(issued, days, profile) {
   return exact.fromAtoms(Number(result), precision);
 }
 
+// Forecast units rounded up to whole stocking increments, like sales history.
+function roundedUnits(units, profile) {
+  const precision = Number(profile.quantity_precision);
+  const increment = BigInt(exact.atoms(profile.quantity_increment, precision, { positive: true }));
+  const needed = BigInt(Math.ceil(Math.round(units * 10 ** precision * 1e6) / 1e6));
+  return exact.fromAtoms(Number((needed + increment - 1n) / increment * increment), precision);
+}
+
+// A forecast the plan lets drive planning (job 144 or 146) replaces the flat
+// 90-day sales rate. Its daily values already carry this location's share.
 function estimate(row, recorded, clock) {
   const { sku_id: skuId, location_id: locationId } = row;
   const leadSource = row.local_lead ?? (row.lead_time_assumed ? null : row.lead_time_days);
   const lead = Math.ceil(Number(leadSource));
+  const forecast = Array.isArray(row.forecast?.daily) ? row.forecast : null;
   if (row.planning_suppressed || leadSource == null || !Number.isSafeInteger(lead) || Number(leadSource) < 0)
     throw new ValidationError('Record a lead time for this location or its supplier before setting local reorder points.');
-  if (!recorded || Number(recorded.events) < MIN_ISSUE_EVENTS)
+  if (!forecast && (!recorded || Number(recorded.events) < MIN_ISSUE_EVENTS))
     throw new ValidationError('Record at least two separate sales or stock issues for this location in the last 90 days.');
-  if (Number(recorded.incomplete) > 0)
+  if (Number(recorded?.incomplete || 0) > 0)
     throw new ValidationError('Verify the actual batch, serial or weight evidence for the recorded sales before setting this reorder point.');
   const cover = Number(row.cover_days ?? COVER_DAYS);
-  const issued = canonical(recorded.issued);
-  const safety = row.safety_stock == null ? roundedDemand(issued, SAFETY_DAYS, row) :
+  const issued = canonical(recorded?.issued ?? '0');
+  const demand = days => forecast ? roundedUnits(forecastUnits(forecast, days), row) : roundedDemand(issued, days, row);
+  const safety = row.safety_stock == null ? demand(SAFETY_DAYS) :
     String(stock.validate(row, row.safety_stock, { label: 'Recorded local safety stock', total: true, positive: false }));
-  const minimum = exact.add(roundedDemand(issued, lead, row), safety);
-  const byCover = roundedDemand(issued, cover, row);
+  const minimum = exact.add(demand(lead), safety);
+  const byCover = demand(cover);
   const protectedTarget = exact.add(minimum, safety);
   const maximum = Number(byCover) > Number(protectedTarget) ? byCover : protectedTarget;
   const current = { policyId: row.policy_location_id === locationId ? row.policy_id : null,
     updatedAt: row.local_policy_updated_at || null, minimum: canonical(row.reorder_point),
     maximum: canonical(row.target_stock), safety: canonical(row.safety_stock) };
   const evidence = { skuId, locationId, code: row.code, name: row.item_name, location: row.location_name, unit: row.unit_label,
-    secondaryUnit: row.secondary_unit_label, tracking: row.tracking_mode, soldWeight: canonical(recorded.sold_weight),
-    issued, events: Number(recorded.events), lastSequence: String(recorded.last_seq), firstSequence: String(recorded.first_seq),
+    secondaryUnit: row.secondary_unit_label, tracking: row.tracking_mode, soldWeight: canonical(recorded?.sold_weight),
+    issued, events: Number(recorded?.events || 0), lastSequence: String(recorded?.last_seq ?? ''), firstSequence: String(recorded?.first_seq ?? ''),
+    ...(forecast ? { forecast: { basis: forecast.basis, method: forecast.method, label: forecast.label, lead: demand(lead), cover: byCover } } : {}),
     lead, leadSource, cover, safety, minimum, maximum, current, day: clock.calendarDate, zone: clock.timeZone,
     profileKey: profileKey(row, locationId) };
   return { ...evidence, digest: hash(evidence), changed: current.minimum !== minimum || current.maximum !== maximum };
@@ -110,4 +123,4 @@ async function current(db, workspaceId, skuId, locationId) {
   return result;
 }
 
-module.exports = { profile, profileKey, key, read, current, sales, estimate };
+module.exports = { profile, profileKey, key, read, current, sales, estimate, roundedUnits };

@@ -227,6 +227,9 @@ test('purchase threshold binds two authorized people to the exact amount, items 
   const hasPurchase=async actor=>(await inbox.needs(db,ctx.workspaceId,actor)).some(entry=>entry.sourceId==='po-signature-'+id);
   assert.equal(await hasPurchase(staff.actorId),true);assert.equal(await hasPurchase(senior),false);assert.equal(await hasPurchase(ctx.actorId),false);
   await db.query("UPDATE stockchief_runtime.purchase_approval_signatures SET signed_at=now()-interval '25 hours' WHERE purchase_order_id=$1",[id]);
+  // Job 172 passes it on only after the first 14 days (shadow mode).
+  assert.equal(await hasPurchase(staff.actorId),true);assert.equal(await hasPurchase(senior),false);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   assert.equal(await hasPurchase(staff.actorId),false);assert.equal(await hasPurchase(senior),true);
   const escalation=await browser.get('/autopilot/reviews/purchase-review-escalation').expect(200);
   assert.match(escalation.text,/Senior buyer/);assert.match(escalation.text,/response window passed/);

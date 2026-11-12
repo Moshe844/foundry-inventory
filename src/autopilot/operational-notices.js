@@ -89,9 +89,14 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const cutoff=includeHistory?'$'+args.length:'NULL';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
-  const watched=require('./activity-watches').spec;
-  const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
-    .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  // Job 166 needs migration 459 (its notice job number and alert levels).
+  const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
+  const watchRules=await require('./watch-rules').candidates(db);
+  const watched=[];
+  // Jobs 170 and 171 need migration 473 (their settings and sources).
+  for(const [job,d] of Object.entries(require('./activity-watches').spec))
+    if(policy.permits(account.plan,Number(job),'automatic')&&(!d.ready||await d.ready(db)))watched.push([job,d]);
+  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
@@ -112,7 +117,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
         ON p.workspace_id=s.workspace_id AND '/actions/'||p.id=opportunity->>'link'
         WHERE NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=p.workspace_id
           AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
-    ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
+    watchRules+
+    (stockAlerts?' UNION ALL SELECT 166,kind,ref,link,$3::date FROM ('+require('./stock-alerts').sql+') low':'')+
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
     (monitors.has(80)?' UNION ALL '+orderCredit.notices:'')+
@@ -134,6 +140,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
   args);
+  // Jobs 166 to 168, 170 and 171: record what opened and cleared, and email new alerts.
+  return require('./agent-alerts').track(db,workspaceId,account);
 }
 
 async function inbox(db,workspaceId,actorId=null){
@@ -147,19 +155,20 @@ async function inbox(db,workspaceId,actorId=null){
       AND to_regclass('stockchief_runtime.agent_supplier_payment_approvals') IS NOT NULL AS payment_checks`)).rows[0];
   if(!migrated&&installed.stock_checks&&installed.payment_checks)migratedInboxDatabases.add(db);
   const stockChecks=installed.stock_checks?`UNION ALL
-    SELECT 3,findings,checked_on::text,NULL::text FROM stockchief_runtime.agent_stock_discrepancy_checks
+    SELECT 3,findings,checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_stock_discrepancy_checks
     WHERE workspace_id=$1 AND findings>0`:'';
   const paymentChecks=installed.payment_checks?`UNION ALL
-    SELECT 104,p.bill_count,p.checked_on::text,NULL::text FROM stockchief_runtime.agent_supplier_payment_checks p
+    SELECT 104,p.bill_count,p.checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_supplier_payment_checks p
     WHERE p.workspace_id=$1 AND p.bill_count>0 AND NOT EXISTS (
       SELECT 1 FROM stockchief_runtime.agent_supplier_payment_approvals a WHERE a.workspace_id=p.workspace_id
         AND a.week_start=date_trunc('week',p.checked_on::timestamp)::date AND a.digest=p.run_digest)
     UNION ALL
-    SELECT 108,discount_count,checked_on::text,NULL::text FROM stockchief_runtime.agent_supplier_payment_checks
+    SELECT 108,discount_count,checked_on::text,NULL::text,0 FROM stockchief_runtime.agent_supplier_payment_checks
     WHERE workspace_id=$1 AND discount_count>0`:'';
-  const {rows}=await db.query(`SELECT job_id,n,due,history_from FROM (
+  const {rows}=await db.query(`SELECT job_id,n,due,history_from,out FROM (
     SELECT n.job_id,count(*)::int AS n,min(n.due)::text AS due,
-      CASE WHEN n.job_id IN (${historyScopedJobs.join(',')}) THEN to_jsonb(n)->>'history_from' END AS history_from
+      CASE WHEN n.job_id IN (${historyScopedJobs.join(',')}) THEN to_jsonb(n)->>'history_from' END AS history_from,
+      count(*) FILTER (WHERE n.kind='Out of stock')::int AS out
     FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=$1 AND NOT n.resolved GROUP BY n.job_id,4
     ${stockChecks}
     ${paymentChecks}
@@ -180,6 +189,11 @@ async function inbox(db,workspaceId,actorId=null){
     for(const {job_id:job} of visible)if(monitorJobs.includes(Number(job))&&!active.has(Number(job)))suppressed.add(job);
     if(historyScopedJobs.some(job=>active.has(job)))monitorHistoryFrom=(await history.access(db,workspaceId)).salesFrom;
   }
+  // Job 172: while alerts of a kind wait for an answer, the owner can answer them all here.
+  const answerable=actorId&&policy.permits(state.plan,172,'automatic')&&visible.some(r=>Number(r.job_id)>=166&&Number(r.job_id)<=171)
+    ?await require('./escalations').answerable(db,workspaceId):new Set();
+  const answer=item=>{const job=Number(String(item.sourceId||'').replace('agent-notice-',''));
+    if(answerable.has(job))item.dismiss={action:'/autopilot/escalations/answer',label:'I\'m on it',entryId:String(job)};return item;};
   // A prior run may have compared sales outside the plan's current window.
   return visible.filter(r=>!suppressed.has(r.job_id)&&(!historyScopedJobs.includes(Number(r.job_id))||r.history_from===monitorHistoryFrom)).map(r=>{
     if(Number(r.job_id)===3)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock discrepancies need review',
@@ -223,12 +237,25 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
+    if(Number(r.job_id)===170)return {kind:'inventory',grouped:true,importance:'Important',priority:78,title:'Costs went up or margins fell',
+      happened:r.n+' cost or margin alert'+(r.n===1?'':'s')+'.',why:'StockChief compares each new cost with the one before it, and gross margins (before fees and shipping) with your minimum, through the day.',
+      recommendation:'Review the costs and selling prices. StockChief has not changed any price.',href:require('./cost-alerts').path,actionLabel:'Review cost and margin alerts',sourceId:'agent-notice-170'};
+    if(Number(r.job_id)===171)return {kind:'inventory',grouped:true,importance:'Important',priority:79,title:'Unusual activity',
+      happened:r.n+' unusual change'+(r.n===1?'':'s')+' in the last seven days.',why:'Big stock corrections or price changes, many changes by one person, or changes during the hours you watch.',
+      recommendation:'Check who made each change and why. Nothing was blocked.',href:require('./unusual-activity').path,actionLabel:'Review unusual activity',sourceId:'agent-notice-171'};
     const watch=require('./activity-watches').spec[r.job_id];
     if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
       why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};
-    if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
-      happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
-      recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};
+    if(Number(r.job_id)===166){
+      const out=Number(r.out||0),low=r.n-out,item=n=>n+' '+(n===1?'item is':'items are');
+      return {kind:'inventory',grouped:true,importance:out?'Urgent':'Important',priority:out?88:76,title:out?'Items are out of stock':'Items are running low',
+        happened:[out?item(out)+' out of stock.':null,low?item(low)+' at or below the level you reorder at.':null].filter(Boolean).join(' '),
+        why:'StockChief compares stock on hand with each reorder point, or your own alert level, through the day.',
+        recommendation:'Reorder or move stock, or change the reorder point.',href:require('./stock-alerts').path,actionLabel:'Review stock alerts',sourceId:'agent-notice-166'};
+    }
+    if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Your watch rules found something',
+      happened:r.n+' product'+(r.n===1?' matches':'s match')+' your watch rules.',why:'StockChief checks your watch rules against stock, sales, prices and expiry dates through the day.',
+      recommendation:'Review what matched and act on it.',href:require('./watch-rules').path,actionLabel:'Review watch rule alerts',sourceId:'agent-notice-167'};
     if(Number(r.job_id)===87)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Channel prices need review',
       happened:r.n+' recorded channel price'+(r.n===1?' needs':'s need')+' review.',why:'A comparison found a price difference, MAP issue or older provider observation.',
       recommendation:'Review the recorded prices and their check dates.',href:'/autopilot/reviews/channel-prices',actionLabel:'Review channel prices',sourceId:'agent-notice-87'};
@@ -251,7 +278,7 @@ async function inbox(db,workspaceId,actorId=null){
       happened:r.n+' outstanding orders, shipments or invoices. Earliest due date '+r.due+'.',why:'A scheduled check found work still open past the promised date.',
       recommendation:'Review the overdue records and follow up with the named contact.',
       href:'/autopilot/reviews/overdue-work',actionLabel:'Review overdue records',sourceId:'agent-notice-'+r.job_id,dueDate:r.due};
-  }).concat(transferNotices);
+  }).map(answer).concat(transferNotices);
 }
 
 module.exports={transfers,refresh,inbox};

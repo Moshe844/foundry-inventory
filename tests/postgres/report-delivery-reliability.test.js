@@ -1,6 +1,65 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+test('scheduled reports deliver once per due slot on every plan and hold changed reports or recipients',{timeout:150000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner}=f;
+ const reports=require('../../src/reports/postgres-service'),scheduling=require('../../src/reports/postgres-scheduling');
+ const jobs=require('../../src/operations/postgres-job-queue');
+ const actor={role:'owner',permissions:[],email:f.email},sent=[];
+ const handlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async(message,options)=>{
+   sent.push({message,key:options.idempotencyKey});return {provider:'resend',externalId:'report-acceptance-'+sent.length};
+ }});
+ const process=kind=>jobs.processOne(db,{[kind]:handlers[kind]},{owner:'scheduled-report-test'});
+ const schedule={frequency:'weekly',hour:9,minute:17,weekday:2,timeZone:'America/New_York'};
+ const selectPlan=plan=>db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source)
+   SELECT 'report-test-subscription',$1,$2,id,'COMP','CUSTOM','ISOLATED_TEST' FROM commercial_plan_versions
+   WHERE plan_id=$2 AND status='ACTIVE' ORDER BY created_at DESC,id LIMIT 1
+   ON CONFLICT(account_id) DO UPDATE SET plan_id=excluded.plan_id,plan_version_id=excluded.plan_version_id`,[owner.accountId,plan]);
+ const delivery=async report=>(await db.query(`SELECT * FROM stockchief_runtime.report_deliveries
+   WHERE workspace_id=$1 AND template_id=$2`,[ctx.workspaceId,report.id])).rows[0];
+ for(const plan of ['starter','growth','pro','enterprise']){
+   await selectPlan(plan);
+   const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Weekly stock '+plan,columns:['sku','on_hand']},{schedule});
+   const due=new Date(report.next_send_at);
+   assert.equal(require('../../src/lib/business-time').parts(due,schedule.timeZone).hour,9);
+   assert.equal((await scheduling.enqueueDue(db,new Date(due-1))).queued,0);
+   assert.equal((await scheduling.enqueueDue(db,due)).queued,1);
+   assert.equal((await scheduling.enqueueDue(db,due)).queued,0);
+   assert.equal((await process('report.generate-delivery')).status,'COMPLETED');
+   assert.equal((await delivery(report)).status,'PENDING');
+   assert.equal((await process('system.email-send')).status,'COMPLETED');
+   const completed=await delivery(report);
+   assert.equal(completed.status,'SENT');
+   assert.equal(completed.provider_message_id,'report-acceptance-'+sent.length);
+   assert.equal(sent.at(-1).message.to,f.email);
+   assert.match(sent.at(-1).message.subject,new RegExp('Weekly stock '+plan));
+   assert.equal(await process('system.email-send'),null);
+   await require('../../src/reports/postgres-delivery-controls').change(db,ctx,actor,report.id,{action:'pause',expectedRevision:report.revision});
+ }
+ assert.equal(sent.length,4);
+ assert.equal(new Set(sent.map(entry=>entry.key)).size,4);
+ for(const change of ['definition','recipient']){
+   const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Stale '+change,columns:['sku','on_hand']},{schedule});
+   const due=new Date(report.next_send_at);
+   assert.equal((await scheduling.enqueueDue(db,due)).queued,1);
+   assert.equal((await process('report.generate-delivery')).status,'COMPLETED');
+   if(change==='definition'){
+     await reports.save(db,ctx,actor,{...report.definition,title:'New stock report'},{id:report.id,expectedRevision:report.revision,schedule});
+   }else{
+     await db.query('UPDATE accounts SET email=$2 WHERE id=$1',[owner.accountId,'changed-report-owner@example.test']);
+   }
+   const result=await process('system.email-send');
+   assert.equal(sent.length,4,'A stale '+change+' never reaches the provider');
+   if(change==='definition'){
+     assert.equal(result.status,'COMPLETED');
+     assert.equal((await delivery(report)).status,'CANCELLED');
+   }else{
+     assert.equal(result.status,'DEAD');
+     assert.equal(result.lastError.code,'report_recipient_changed');
+   }
+   await require('../../src/reports/postgres-delivery-controls').change(db,ctx,actor,report.id,{action:'pause',expectedRevision:change==='definition'?Number(report.revision)+1:report.revision});
+ }
+});
 test('every current report delivery exposes its durable identity in the service and visible review',{timeout:90000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,reports=require('../../src/reports/postgres-service'),controls=require('../../src/reports/postgres-delivery-controls'),actor={role:'owner',permissions:[],email:f.email};
  const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Independent delivery identity',columns:['sku','on_hand'],sort:'sku'});

@@ -198,6 +198,12 @@ const actionJobs=new Map([
   ['purchase_order.close_stale_incoming',32],
   ['purchasing.fx_alert',40],
   ['report.net_margin_alert',85],
+  ['report.month_end_stock',158],
+  ['report.change_digest',157],
+  ['report.board_pack',159],
+  ['report.roi',161],
+  ['report.stock_health',162],
+  ['report.service_levels',163],
   ['channel.price_check',87],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],
@@ -211,26 +217,28 @@ const actionJobs=new Map([
   ['purchase_order.receive_from_document',43],
   ['catalog.supplier_price_list',135],
   ['sales_order.recurring',67],
-  ['import.supplier_catalog',127],['import.variants',130],
+  ['import.supplier_catalog',127],['import.variants',130],['import.map_columns',133],['onboarding.old_system_migration',190],
   ['kit.replenish_parts',13],
   ['sales_quote.create',73],['sales_quote.accept',75],['customer.check_in',78],['sales_quote.add_companions',79],
-  ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],
+  ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['planning.demand_forecast',144],['planning.launch_forecast',146],['planning.demand_trend',148],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['catalog.fix_data',126],
+  ['catalog.classify_products',131],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
   ['catalog.clearance_plan',86],
   ['inventory.slow_stock_step',9],
   ['inventory.expiry_warning',191],
+  ['alert.low_stock',166],['alert.watch_rule',167],['alert.overdue',168],['alert.cost_margin',170],['alert.unusual_activity',171],['alert.escalation',172],
   ['report.compliance',197],
   ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['inventory.protect_stock',12],['sales_order.reserve_arrived',48],['sales_order.notify_stock_ready',50],['sales_order.repeat',53],['sales_order.allocation_priority',65],['sales_order.allocate_backorders',64],['sales_order.share_scarce_stock',65],['sales_order.route_warehouse',121],['sales_order.split_partial',61],['sales_order.check',54],['sales_order.credit_hold',55],
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
-  ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
-  ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
-  ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],['shipping.address_check',69],['shipping.choose_rate',58],
+  ['customer_return.refund',107],['customer_return.credit_receipt',107],['customer_credit.prepare',107],['shipping.return_parcel',112],['customer_return.inspect',113],
+  ['customer_return.receive',114],['customer_return.restock',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
+  ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],['shipping.address_check',69],['shipping.choose_rate',58],['shipping.parcel_watch',62],
   ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],['supplier_credit.apply_note',105],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
@@ -271,15 +279,19 @@ const humanSteps=new Set([
   'inventory.write_down_aged',
   'inventory.receive','purchase_order.receive','transfer.receive','transfer.pick','transfer.dispatch','transfer.depart','transfer.in_transit','customer_return.receive',
   'shipping.receipt_accept','inventory.adjust','inventory.issue','connection.confirm_count',
-  'customer_return.refund','supplier_payment.record','sales_order.cancel','catalog.set_price',
+  'customer_return.refund','customer_credit.prepare','supplier_payment.record','sales_order.cancel','catalog.set_price',
   'catalog.set_purchase_cost','pricing.rule.configure','supplier.link_product','supplier.update',
   'customer_return.inspect','manufacturing.start','manufacturing.complete','warehouse.wave.scan','warehouse.wave.pack','warehouse.wave.shortage','contact.create','autopilot.resume','autopilot.mode','shipping.operation_mode',
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
 function needsPerson(capability,payload,state){if(capability==='sales_order.reserve_rotation'&&payload?.needsHistoricalFifoConfirmation)return true;if(['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(capability)&&payload?.needsPurchaseTermsConfirmation!==false)return true;if(['inventory.transfer','transfer.approve'].includes(capability)&&state&&usesAgentTerms(state))return true;return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='supplier_invoice.dispute'&&payload?.needsDisputeConfirmation!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||(capability==='warehouse.wave.create'&&state&&usesAgentTerms(state)&&payload?.needsWaveConfirmation!==false)||(capability==='warehouse.prepare_putaway'&&payload?.needsPutawayConfirmation!==false)||(capability==='customer.statement'&&payload?.needsStatementConfirmation!==false)||(capability==='landed_cost.apply'&&payload?.needsLandedCostConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
+// Every agent action is refused with these words during an account's first
+// 14 days (job 198). A job that only watched compares against them before it
+// records what it would have done.
+const SHADOW_REASON='StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account)||['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
-  if(account.shadow)return 'StockChief is watching during the first 14 days. Record this action manually or approve it after shadow mode.';
+  if(account.shadow)return SHADOW_REASON;
   const {rows:[config]}=await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId]);
   if(config?.mode==='OBSERVE')return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
   if(automatic&&(Number(config?.paused)||Number(config?.suspended)))return 'Automatic work is paused. Review the inventory’s automation settings.';
@@ -317,5 +329,5 @@ async function customerOrderNeedsPerson(db,workspaceId,capability,payload,propos
   return !known.rowCount;
 }
 
-module.exports = { actionJob,actionPlan,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob,
+module.exports = { SHADOW_REASON,actionJob,actionPlan,usesAgentTerms,needsPerson,stopped,customerOrderNeedsPerson,requireWorkspaceJob,
   purchaseReview,automaticPurchaseCommitments,allowance,permits,requireJob,accountState,purchaseLimits };

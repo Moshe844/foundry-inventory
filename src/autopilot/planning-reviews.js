@@ -37,7 +37,7 @@ async function reorder(db,ctx,options){
    const costKnown=r.onHand<=0||cost.filter(v=>v.sku_id===r.sku_id&&(!r.location_id||v.location_id===r.location_id)).reduce((n,v)=>n+Number(v.quantity_units),0)>=r.onHand;
    const target=r.targetStock??r.effectiveReorder,projected=exact.safeNumber(exact.add(String(available),String(r.incoming))),short=r.effectiveReorder!==null&&projected<=r.effectiveReorder;
    return {SKU:r.code,Warehouse:r.location_name,Available:available,Incoming:r.incoming,
-    'Issued in 90 days':r.issued,'Daily sales speed':r.dailyRate,'Lead days':r.lead_time_assumed?'Unknown':r.leadTimeDays,'Reorder point':r.effectiveReorder,'Target stock':target,
+    'Issued in 90 days':r.issued,'Daily sales speed':r.dailyRate,'Demand from':r.forecast?'Forecast · '+r.forecast.label:'Sales in the last 90 days','Lead days':r.lead_time_assumed?'Unknown':r.leadTimeDays,'Reorder point':r.effectiveReorder,'Target stock':target,
     'Open drafts':drafts.map(l=>l.po_number).join(', ')||null,'Incoming dates':pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)).map(l=>l.po_number+': '+(l.expected_date||'Unknown')+' ('+l.remaining+')').join('; ')||null,
     'Units to order':!costKnown||uncertain.length||drafts.length||r.lead_time_assumed&&r.reorderPoint===null?null:short?Math.max(0,exact.safeNumber(exact.subtract(String(target??0),String(projected)),{signed:true})):0,
     Reason:!costKnown?'Complete the recorded stock cost before reordering':uncertain.length?'Confirm overdue or undated incoming and supplier availability before ordering again':drafts.length?'Review existing unsent purchase drafts':r.lead_time_assumed&&r.reorderPoint===null?'Record supplier lead time before deriving a stock target':r.effectiveReorder===null?'Set a reorder point or record more demand':short?'Usable available stock plus incoming is at or below the reorder point':'Usable available stock plus incoming exceeds the reorder point',link:'/inventory/'+r.item_id};
@@ -72,36 +72,10 @@ async function demandScenario(db,ctx,options){
 }
 
 module.exports=[
-  {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/postgres-agent-forecast').demand},
-  {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/postgres-agent-forecast').similarProducts},
-  {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:stockout},
+  {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
+  {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/agent-launch-forecast').review},
+  {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:(db,ctx,options)=>require('../forecasting/agent-runout').review(db,ctx,options)},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},
   {id:18,key:'reorder-explanation',label:'Explain what to order and why',readPage:reorder},
   {id:149,key:'demand-scenario',label:'Compare a change in sales demand',readPage:demandScenario,requiresChange:true}
 ];
-
-async function stockout(db,ctx,options){
-  const {items,ids,more}=await positions(db,ctx,options);
-  const values=await db.query(`SELECT s.id,book.base_currency,price.amount_minor AS sale,price.currency AS sale_currency,
-    cost.amount_minor AS cost,cost.currency AS cost_currency FROM skus s
-    LEFT JOIN accounting_settings book ON book.workspace_id=s.workspace_id AND book.enabled=1
-    LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_prices p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id
-      ORDER BY created_at DESC,id DESC LIMIT 1) price ON true
-    LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_purchase_costs p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id
-      ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
-    WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])`,[ctx.workspaceId,ids]);
-  const terms=new Map(values.rows.map(row=>[row.id,row]));
-  const money=require('../domain/currency'),{addDays}=require('../accounting/customer-money');
-  const rows=items.filter(r=>r.location_id).map(row=>{
-    const days=row.dailyRate>0?Math.max(0,Math.floor(row.available/row.dailyRate)):null;
-    const t=terms.get(row.sku_id);
-    const known=t.sale!=null && t.cost!=null && t.sale_currency===t.base_currency && t.cost_currency===t.base_currency;
-    const margin=known?Math.max(0,Number(t.sale)-Number(t.cost)):null;
-    const dailyMargin=margin==null?null:Math.round(row.dailyRate*margin);
-    return {SKU:row.code,Warehouse:row.location_name,'Available now':row.available,'Expected incoming':row.incoming,
-      'Estimated runout':days==null||days>36525?null:addDays(options.today,days),
-      'Estimated daily gross margin at risk':days!=null && Number.isSafeInteger(dailyMargin)?money.format(dailyMargin,t.base_currency):null,
-      Evidence:days==null?'No recorded demand in 90 days':days>36525?'Beyond the 100-year projection window':!known?'Selling price or purchase cost unavailable in the inventory currency':'Current selling price less purchase cost',link:'/inventory/'+row.item_id};
-  });
-  return {rows,more,summary:'Runout uses available stock and the last 90 days of recorded issues. Incoming units are shown separately. Margin at risk estimates a full day of unmet demand at current prices before discounts and fees.'};
-}

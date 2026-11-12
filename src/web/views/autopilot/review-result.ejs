@@ -69,11 +69,14 @@
 <% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>
 <% if(result.returnLabelForm){ %><%- include('return-labels',{result,csrfToken}) %><% } %>
 <% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
+<% if(result.creditForm){ %><%- include('customer-credits',{result,csrfToken}) %><% } %>
 <% if(result.expiryPath){ %><p><a class="btn" href="<%= result.expiryPath %>">Set warning days and see where to sell first</a></p><% } %>
 <% if(result.compliancePath){ %><p><a class="btn" href="<%= result.compliancePath %>">Prepare a full compliance report</a></p><% } %>
 <% if(result.slowStockPath){ %><p><a class="btn" href="<%= result.slowStockPath %>">Review next steps for slow stock</a></p><% } %>
 <% if(result.dataHealthPath){ %><p><a class="btn" href="<%= result.dataHealthPath %>">See the score and what to fix first</a></p><% } %>
+<% if(result.productCategoriesPath){ %><p><a class="btn" href="<%= result.productCategoriesPath %>">Open categories and tags</a></p><% } %>
 <% if(result.catalogFixesPath){ %><p><a class="btn" href="<%= result.catalogFixesPath %>">Open the bulk fix list</a></p><% } %>
+<% if(result.supplierCatalogsPath){ %><p><a class="btn" href="<%= result.supplierCatalogsPath %>">Read a supplier catalog</a></p><% } %>
 <% if(result.clearancePlanPath){ %><p><a class="btn" href="<%= result.clearancePlanPath %>">Open clearance plans</a></p><% } %>
 <% if(result.slottingPath){ %><p><a class="btn" href="<%= result.slottingPath %>">Open warehouse move lists</a></p><% } %>
 <% if(result.negotiationForm){ const n=result.negotiationForm; %><form method="post" action="/autopilot/negotiation-draft">
@@ -113,17 +116,17 @@
 <p>Leave the amount empty to turn the rule off.</p><button class="btn">Save threshold</button></form><% } %>
 <% if(result.watchSettings){ const w=result.watchSettings; %><form method="post" action="/autopilot/alert-settings/<%= w.job %>">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= w.revision %>">
-<% if(w.job===170){ %><label>Alert below this gross margin (%) <input name="marginPct" type="number" min="0" max="100" step=".01" value="<%= w.margin_pct??'' %>"></label>
-<% }else{ %><label>Alert on adjustments of at least this many units <input type="number" min=".000001" step=".000001" name="adjustmentUnits" value="<%= w.adjustment_units??'' %>"></label>
-<label>Watch from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
-<label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label><% } %>
+<% if(w.job===170){ %><label>Alert when a cost goes up by at least (%) <input name="costRisePct" type="number" min=".01" max="1000" step=".01" value="<%= w.cost_rise_pct??'' %>" placeholder="Any rise"></label>
+<label>Alert below this gross margin (%) <input name="marginPct" type="number" min="0" max="100" step=".01" value="<%= w.margin_pct??'' %>"></label>
+<p class="hint">Gross margin is the selling price or sales minus the cost of the goods, before fees and shipping.</p>
+<% }else{ %><label>Alert on stock corrections of at least this many units <input type="number" min=".000001" step=".000001" name="adjustmentUnits" value="<%= w.adjustment_units??'' %>"></label>
+<label>Alert on a selling price change of at least (%) <input type="number" min=".01" max="1000" step=".01" name="priceChangePct" value="<%= w.price_change_pct??'' %>"></label>
+<label>Alert when one person makes this many changes or deletions in a day <input type="number" min="1" max="100000" step="1" name="editCount" value="<%= w.edit_count??'' %>"></label>
+<label>Watch changes from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
+<label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label>
+<p class="hint">Leave a box empty and StockChief alerts only when something is at least three times what is usual. Use the hours outside your business day.</p><% } %>
 <button class="btn">Save alert settings</button></form><% } %>
-<% if(result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label>Brand watch instruction <input name="instruction" required maxlength="320" placeholder="Tell me if any Nike item drops under 20"></label>
-<button class="btn">Save watch</button></form>
-<% for(const w of result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<span><%= w.brand_name %> · <%= w.inclusive?'At or below':'Below' %> <%= w.threshold %> units</span>
-<button name="remove" value="<%= w.brand_name %>" class="btn">Remove watch</button></form><% } } %>
+<% if(result.watchRules){ %><%- include('watch-rules',{watchRules:result.watchRules,csrfToken}) %><% } %>
 <% if(result.download){ %><p><a class="btn" href="<%= result.download %>"><%= result.downloadLabel %></a></p><% } %>
 <% if(result.specForm){ %><form method="post" action="/autopilot/reviews/supplier-specifications/prepare">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Approved supplier file <input required name="sourceImport" value="<%= filter %>"></label>
@@ -173,6 +176,8 @@
 </tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
+<% if(result.escalations){ %><%- include('escalations',{escalations:result.escalations,csrfToken}) %><% } %>
+<% if(result.alerts){ %><%- include('alert-delivery',{alerts:result.alerts,csrfToken}) %><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
 <% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
 <% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>

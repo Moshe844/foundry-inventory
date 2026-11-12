@@ -191,4 +191,4 @@ async function inbox(db,workspaceId,actorId){
  if(!rows.length)return [];await owner(db,{workspaceId,actorId});
  return rows.map(r=>({kind:'purchasing',importance:'Needs You',priority:55,title:'Send lead-time note to '+r.name,happened:'StockChief prepared the routine note from your supplier rule.',why:r.needs_person,recommendation:'Check the late deliveries listed and send the note, or change it first.',href:'/autopilot/supplier-negotiations/drafts/'+r.id,actionLabel:'Review note',sourceId:'supplier-negotiation:'+r.id,at:r.created_at,createdAt:r.created_at}));
 }
-module.exports={setting,configure,prepare,edit,send,queue,processJob,authority,deliveryAuthority,page,inbox,draft,bodyHash,mailKind};
+module.exports={JOB:94,setting,configure,prepare,edit,send,queue,processJob,authority,deliveryAuthority,page,inbox,draft,bodyHash,mailKind};

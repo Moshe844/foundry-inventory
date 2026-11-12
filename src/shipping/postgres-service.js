@@ -757,6 +757,10 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
       externalEventId:parcel.trackingNumber+':'+event.externalEventId,status:event.status||read.status,detail:event.detail||read.detail,
       location:event.location,occurredAt:event.occurredAt||nowIso()});
   }
+  // The carrier's own new delivery estimate, as a webhook would have brought it.
+  const estimate=String(read.estimatedDeliveryDate||'').slice(0,10);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(estimate))await database.query(`UPDATE sales_shipments SET expected_delivery_date=$3,updated_at=$4
+    WHERE workspace_id=$1 AND id=$2 AND expected_delivery_date IS DISTINCT FROM $3`,[ctx.workspaceId,shipmentId,estimate,nowIso()]);
   }
   return latest;
 }

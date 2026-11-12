@@ -48,7 +48,7 @@ const EXECUTORS=Object.freeze({
     verify:(client,ctx,result)=>exists(client,'inventory_transfers',ctx.workspaceId,result.transferId)},
   'inventory.adjust':{execute:(client,ctx,payload)=>require('../accounting/postgres-physical-count').applyInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'adjustments',ctx.workspaceId,result.adjustmentId)},
-  'catalog.create_item':{execute:(client,ctx,payload)=>catalog.createItemInTransaction(client,ctx,payload),
+  'catalog.create_item':{execute:async(client,ctx,payload)=>{const created=await catalog.createItemInTransaction(client,ctx,payload);await require('../catalog/agent-product-classification').afterCreate(client,ctx.workspaceId,created.itemId);return created;},
     verify:(client,ctx,result)=>exists(client,'items',ctx.workspaceId,result.itemId)},
   'location.create':{execute:(client,ctx,payload)=>locations.createLocationInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'locations',ctx.workspaceId,result.id)},

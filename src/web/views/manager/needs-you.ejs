@@ -106,6 +106,10 @@
       <% if (missing && !(entry.why && missing.trim().toLowerCase() === String(entry.why).trim().toLowerCase())) { %>
         <div class="rm-qa__row"><span class="rm-qa__k">What I need</span><span class="rm-qa__v"><%= missing %></span></div>
       <% } %>
+      <%# Job 199: how sure I am, from the facts this action checks. %>
+      <% if (entry.confidence) { %>
+        <div class="rm-qa__row" data-confidence="<%= entry.confidence.level %>"><span class="rm-qa__k">How sure I am</span><span class="rm-qa__v"><strong><%= entry.confidence.label %>.</strong> <%= (entry.confidence.reasons || []).join(' ') %></span></div>
+      <% } %>
     </div>
 
     <div class="rm-choices">

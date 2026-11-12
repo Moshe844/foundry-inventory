@@ -557,7 +557,11 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_pick_wave_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_split_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_shipping_rate_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
-      +(SELECT count(*) FROM stockchief_runtime.agent_catalog_fix_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled) AS n`,[state.accountId]);
+      +(SELECT count(*) FROM stockchief_runtime.agent_catalog_fix_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_board_pack_schedules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_watch_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_product_classification_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_product_retirement_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled) AS n`,[state.accountId]);
   if(keys.size+Number(configured.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 

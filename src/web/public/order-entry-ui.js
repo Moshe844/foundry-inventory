@@ -73,8 +73,10 @@
  const productSearch=$('[data-product-search]');
  const stockText=units=>units<=0?{cls:'ox-stock--out',text:'Out of stock'}:units<=3?{cls:'ox-stock--low',text:units+' left'}:{cls:'ox-stock--ok',text:units+' in stock'};
  const availableAt=s=>location.value?(s.positions||[]).find(p=>p.location_id===location.value)?.available||0:Number(s.available||0);
+ // Job 132: discontinued products name their replacement.
+ const retired=p=>(p.discontinued?' · Discontinued'+(p.replacement_code?', use '+p.replacement_code:''):'')+(p.replaces?' · Replaces '+p.replaces:'');
  function productItem(p){const stock=stockText(availableAt(p));
-  return {product:p,html:'<span class="ox-thumb" aria-hidden="true">'+esc(initials(p.item_name||p.display_name))+'</span><span class="ox-opt__main"><span class="ox-opt__t">'+esc(p.display_name)+'</span><span class="ox-opt__s">'+esc(p.code)+'</span></span>'
+  return {product:p,html:'<span class="ox-thumb" aria-hidden="true">'+esc(initials(p.item_name||p.display_name))+'</span><span class="ox-opt__main"><span class="ox-opt__t">'+esc(p.display_name)+'</span><span class="ox-opt__s">'+esc(p.code)+esc(retired(p))+'</span></span>'
    +'<span class="ox-opt__r"><span class="ox-num">'+(p.amount_minor==null?'No price':esc(format(p.amount_minor)))+'</span><span class="ox-opt__s '+stock.cls+'">'+esc(stock.text)+'</span></span>'};}
  function localProducts(q){const needle=q.toLowerCase();return [...catalogue.values()].filter(p=>!needle||[p.display_name,p.code,p.barcode].join(' ').toLowerCase().includes(needle)).slice(0,12).map(productItem);}
  let searchTimer,searchController,searchVersion=0;
@@ -115,7 +117,7 @@
   const meta=row.querySelector('[data-line-meta]');
   if(!product){meta.textContent='Search above to choose one';return;}
   const stock=stockText(availableAt(product));
-  meta.innerHTML=esc(product.code)+' · <span class="'+stock.cls+'">'+esc(stock.text)+'</span>'+(product.weight_grams?'':' <span class="ox-tag">No weight</span>');
+  meta.innerHTML=esc(product.code)+' · <span class="'+stock.cls+'">'+esc(stock.text)+'</span>'+(product.weight_grams?'':' <span class="ox-tag">No weight</span>')+(product.discontinued?' <span class="ox-tag" data-discontinued>'+esc('Discontinued'+(product.replacement_code?': use '+product.replacement_code+' when none are left':''))+'</span>':'');
   const label=product.display_name;row.querySelector('[data-ox-dec]').setAttribute('aria-label','One fewer '+label);row.querySelector('[data-ox-inc]').setAttribute('aria-label','One more '+label);
   row.querySelector('[data-remove-order-line]').setAttribute('aria-label','Remove '+label);}
 

@@ -1,0 +1,91 @@
+<% const base='/autopilot/product-categories'; %>
+<header class="rm-head">
+  <h1>Categories and tags</h1>
+  <p>StockChief gives new products a category and tags from their supplier file and from similar products: the same brand, supplier, material or name words.
+    <%= screen.automatic?'It sets clear ones on its own inside your daily limit and leaves the rest for you.':'Nothing changes until you approve it.' %>
+    Every change can be undone.</p>
+</header>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button>
+  <a href="/autopilot/reviews/product-categories">See what it suggests for each new product</a></form>
+<% if(screen.stop){ %><p class="notice notice--warn"><%= screen.stop %></p><% } %>
+
+<h2>Waiting for you</h2>
+<% if(!screen.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<% if(screen.waiting.length&&!screen.stop){ %><form method="post" action="<%= base %>/approve" id="bulk-classes" data-class-bulk>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+  <p><button class="rm-btn">Approve the ticked suggestions</button> <small>Each ticked product gets its first choice.</small></p>
+</form><% } %>
+<ul class="rm-list" data-class-waiting>
+<% for(const r of screen.waiting){ const d=r.details, href=base+'/'+encodeURIComponent(r.id); %>
+  <li class="list-row" data-class="<%= r.id %>" data-class-kind="<%= r.kind %>">
+    <span>
+      <strong><% if(!screen.stop){ %><input type="checkbox" form="bulk-classes" name="pick" value="<%= r.id %>:<%= r.fingerprint %>" <%= r.would_apply?'checked':'' %> aria-label="Approve this suggestion"> <% } %><a href="/inventory/<%= encodeURIComponent(d.itemId) %>"><%= d.code||d.name %></a> · <%= d.name %></strong>
+      <small><%= r.text %>. <%= d.evidence %></small>
+      <% if(d.examples&&d.examples.length){ %><small>Similar: <% d.examples.forEach((e,i)=>{ %><%= i?', ':'' %><a href="/inventory/<%= encodeURIComponent(e.itemId) %>"><%= e.code||e.name %></a> (<%= e.category %>)<% }) %></small><% } %>
+      <% if(r.reason){ %><small><%= r.reason %></small><% } %>
+      <% if(r.would_apply){ %><small>StockChief would set this on its own once it may.</small><% } %>
+      <% if(!screen.stop){ %><details>
+        <summary><%= r.kind==='CATEGORY'?'Choose the category':'Choose the tags' %></summary>
+        <form method="post" action="<%= href %>/approve" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= r.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+          <% if(r.kind==='CATEGORY'){ %>
+            <% if(d.category){ %><label><input type="radio" name="choice" value="" checked> <%= d.category %></label><% } %>
+            <% (d.options||[]).forEach((o,i)=>{ %><label><input type="radio" name="choice" value="<%= i %>" <%= i===0?'checked':'' %>> <%= o.category %><%= o.count?' ('+o.count+' similar)':'' %></label><% }) %>
+            <label class="field"><span class="field-label">Or type a category</span><input class="input" name="category" maxlength="240"></label>
+          <% }else{ %><input type="hidden" name="ticked" value="yes">
+            <% for(const t of d.tags){ %><label><input type="checkbox" name="tag" value="<%= t %>" checked> <%= t %></label><% } %>
+            <% for(const t of d.possible){ %><label><input type="checkbox" name="tag" value="<%= t %>"> <%= t %> <small>(most similar products)</small></label><% } %>
+          <% } %>
+          <button class="rm-btn">Save</button>
+        </form>
+      </details><% } %>
+      <form method="post" action="<%= href %>/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Keep it as it is</button>
+      </form>
+    </span>
+    <span class="badge <%= r.would_apply?'badge--info':'badge--warn' %>"><%= r.would_apply?'Ready':'Needs you' %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Suggestion pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+
+<% if(screen.done.length){ %>
+<h2>Recent changes</h2>
+<ul class="rm-list" data-class-done>
+<% for(const r of screen.done){ %>
+  <li class="list-row" data-class-done="<%= r.id %>">
+    <span><strong><a href="/inventory/<%= encodeURIComponent(r.details.itemId) %>"><%= r.details.code||r.details.name %></a></strong>
+      <small><%= r.text %></small>
+      <% if(r.undoable){ %><form method="post" action="<%= base %>/<%= encodeURIComponent(r.id) %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Undo</button>
+      </form><% } %></span>
+    <span class="badge <%= r.status==='UNDONE'?'badge--muted':'badge--ok' %>"><%= r.label %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>
+
+<% if(screen.automatic){ const rule=screen.rule; %>
+<h2>Changes it makes on its own</h2>
+<ul class="rm-list" data-class-limit>
+  <li class="list-row">
+    <span><strong>Clear categories and tags</strong>
+      <small><%= screen.on?'Up to '+screen.dailyLimit+' changes a day. Unclear ones wait for you.':'Every category and tag waits for you.' %></small>
+      <details><summary><%= screen.on?'Change the limit':'Set a limit' %></summary>
+        <form method="post" action="<%= base %>/limit" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?rule.revision:0 %>">
+          <label class="field"><span class="field-label">Most changes a day</span><input class="input" name="dailyLimit" type="number" inputmode="numeric" min="1" max="5000" step="1" required value="<%= screen.dailyLimit %>"></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief set clear categories and tags on its own within this limit.</label>
+          <button class="rm-btn">Save</button>
+        </form>
+      </details>
+      <% if(screen.on){ %><form method="post" action="<%= base %>/limit">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?rule.revision:0 %>">
+        <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Ask me every time</button>
+      </form><% } %></span>
+    <span class="badge <%= screen.on?'badge--ok':'badge--muted' %>"><%= screen.on?'On':'Off' %></span>
+  </li>
+</ul>
+<% } %>

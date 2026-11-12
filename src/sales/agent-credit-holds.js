@@ -149,12 +149,40 @@ async function reconcileOrder(c,workspaceId,orderId){
   }
 }
 
+// Job 198: in the first 14 days StockChief holds nothing. It records each open
+// order it would have held under the owner's rule, with the order's value as
+// the money it would have kept from going to a customer who is overdue.
+async function watched(database,workspaceId,state){
+  const shadow=require('../autopilot/shadow-mode');
+  if(!policy.permits(state.plan,JOB,'automatic')||!await ready(database)||!await shadow.watching(database,workspaceId,state))return 0;
+  const r=await rule(database,workspaceId);
+  if(!r)return 0;
+  const today=await require('../lib/business-time').today(database,workspaceId);
+  const {rows}=await database.query(`SELECT o.id,o.order_number,o.customer_id,o.currency,c.name customer_name,
+      (round(coalesce(sum(l.quantity_ordered*coalesce(l.unit_price_minor,0)),0))+o.tax_minor-o.discount_minor)::bigint AS total_minor
+    FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
+    LEFT JOIN sales_order_lines l ON l.workspace_id=o.workspace_id AND l.sales_order_id=o.id
+    WHERE o.workspace_id=$1 AND o.status=ANY($2::text[]) AND EXISTS(SELECT 1 FROM accounting_customer_invoices i WHERE i.workspace_id=o.workspace_id
+      AND i.customer_id=o.customer_id AND i.status IN ('OPEN','PARTIALLY_PAID') AND i.balance_minor>0 AND i.due_date<=$3)
+    GROUP BY o.id,c.name ORDER BY o.id LIMIT 200`,[workspaceId,OPEN,require('../accounting/customer-money').addDays(today,-Number(r.days_overdue))]);
+  let recorded=0;
+  for(const o of rows){
+    const choice=decide(r,await position(database,workspaceId,o.customer_id,r.days_overdue,r.currency,today));
+    if(!choice.hold)continue;
+    const value=Math.max(0,Number(o.total_minor));
+    if(await shadow.record(database,workspaceId,{job:JOB,kind:'hold',key:'credit-hold:'+o.id,
+      summary:'Hold order '+o.order_number+' for '+o.customer_name+': '+choice.reason,
+      amountMinor:value,caughtMinor:value,currency:o.currency,evidence:{rule:describeRule(r)},href:'/orders/'+o.id},state))recorded++;
+  }
+  return recorded;
+}
+
 // The routine: customers fall overdue as days pass, and holds end with payment.
 async function sweep(database,workspaceId){
   const result={placed:0,released:0,watching:false};
   const state=await policy.accountState(database,workspaceId);
   const r=await automatic(database,workspaceId,state);
-  if(!r){result.watching=true;return result;}
+  if(!r){if(state.shadow)result.watched=await watched(database,workspaceId,state);result.watching=true;return result;}
   const today=await require('../lib/business-time').today(database,workspaceId);
   const {rows}=await database.query(`SELECT o.id FROM sales_orders o WHERE o.workspace_id=$1 AND (
       EXISTS(SELECT 1 FROM ${holds} h WHERE h.workspace_id=o.workspace_id AND h.sales_order_id=o.id AND h.status='HELD')

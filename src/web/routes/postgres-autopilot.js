@@ -635,6 +635,35 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'This was already done.':catalogDone[step]);
     res.redirect(303,catalogFixes.path);
   }));
+  // Job 131: categories and tags for new products.
+  const productClasses=require('../../catalog/agent-product-classification');
+  router.get(productClasses.path,requireAuth,owner,starterAgentPage(131,'draft','Categories and tags',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/product-categories',{title:'Categories and tags',nav:'autopilot',screen:await productClasses.page(database,req.ctx,{page:req.query.page||1}),
+      backTo:{href:'/autopilot/reviews/product-categories',label:'Categories and tags for new products'}});
+  },'Growth'));
+  router.post(productClasses.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await productClasses.check(database,req.ctx);
+    req.flash('success','StockChief is checking your new products for categories and tags.');
+    res.redirect(303,productClasses.path);
+  }));
+  router.post(productClasses.path+'/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.approveMany(database,req.ctx,req.body);
+    req.flash(result.failed.length?'error':'success',(result.done?result.done+(result.done===1?' product was updated.':' products were updated.'):'Nothing was changed.')+
+      (result.failed.length?' '+result.failed.length+' stopped: '+result.failed[0].reason:''));
+    res.redirect(303,productClasses.path);
+  }));
+  const classDone={approve:'The product was updated.',dismiss:'The product stays as it is.',undo:'The change was undone.'};
+  for(const step of Object.keys(classDone))router.post(productClasses.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':classDone[step]);
+    res.redirect(303,req.body.back==='product'&&result.undone?'/inventory/'+encodeURIComponent((await productClasses.load(database,req.ctx,req.params.id)).item_id):productClasses.path);
+  }));
+  router.post(productClasses.path+'/limit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Every category and tag now waits for you.':'Limit saved.');
+    res.redirect(303,productClasses.path);
+  }));
   // Job 200: the data health score and its fix list.
   const dataHealth=require('../../autopilot/data-health');
   router.get(dataHealth.path,requireAuth,owner,starterAgentPage(200,'automatic','Data health',async(req,res)=>{
@@ -646,6 +675,49 @@ function createPostgresAutopilotRouter(database,options={}){
     await dataHealth.check(database,req.ctx);
     req.flash('success','StockChief is checking your product data. The new score appears here in a minute.');
     res.redirect(303,dataHealth.path);
+  }));
+  // Job 198: what StockChief would have done in its first 14 days, and the owner's choice afterwards.
+  const shadowMode=require('../../autopilot/shadow-mode');
+  router.get(shadowMode.path,requireAuth,owner,starterAgentPage(198,'automatic','Your first 14 days',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/shadow-report',{title:'Your first 14 days',nav:'autopilot',screen:await shadowMode.page(database,req.ctx),
+      backTo:{href:'/autopilot',label:'StockChief AI'}});
+  }));
+  router.post(shadowMode.path+'/decide',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await shadowMode.decide(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'You already chose. Change a single job in Authority by job.':result.areas.length?'Automatic work is on for the areas you chose. The rest keep watching.':'StockChief keeps watching. Nothing changes on its own.');
+    res.redirect(303,shadowMode.path);
+  }));
+  // Job 199: how sure StockChief must be to act on its own.
+  router.post('/autopilot/confidence',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await require('../../autopilot/confidence').configure(database,req.ctx,req.body);
+    req.flash('success',result.minimum==='high'?'StockChief now acts on its own only when it is very sure, and asks you otherwise.':'StockChief now acts on its own when it is fairly sure, and asks you when it is unsure.');
+    res.redirect(303,'/autopilot#confidence');
+  }));
+  // Job 127: products from a supplier catalog or price list.
+  const supplierCatalogs=require('../../catalog/agent-supplier-catalog'),catalogBack={href:supplierCatalogs.path,label:'Supplier catalogs'};
+  router.get(supplierCatalogs.path,requireAuth,owner,starterAgentPage(127,'draft','Products from a supplier catalog',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/supplier-catalogs',{title:'Products from a supplier catalog',nav:'autopilot',screen:await supplierCatalogs.list(database,req.ctx),
+      backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  },'Growth'));
+  router.post(supplierCatalogs.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const file=(req.files||[]).find(f=>f.field==='catalog');
+    const result=await supplierCatalogs.start(database,req.ctx,{buffer:file?.buffer,filename:file?.filename,supplierId:req.body.supplierId,importId:req.body.importId});
+    req.flash('success',result.replayed?'This catalog was already read for this supplier.':'StockChief read the catalog.');
+    res.redirect(303,supplierCatalogs.path+'/'+encodeURIComponent(result.id));
+  }));
+  router.get(supplierCatalogs.path+'/:id',requireAuth,owner,starterAgentPage(127,'draft','Products from a supplier catalog',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/supplier-catalog',{title:'Supplier catalog',nav:'autopilot',
+      screen:await supplierCatalogs.page(database,req.ctx,req.params.id,{page:req.query.page||1,show:String(req.query.show||'')}),backTo:catalogBack});
+  },'Growth'));
+  const catalogSteps={check:'StockChief read the catalog again.',approve:'Approved. StockChief is saving the products.',undo:'The catalog was undone.',cancel:'The catalog is closed.'};
+  for(const step of Object.keys(catalogSteps))router.post(supplierCatalogs.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const decisions=Object.fromEntries(Object.entries(req.body).filter(([key])=>/^line_\d+$/.test(key)).map(([key,value])=>[key.slice(5),String(value||'')]));
+    const result=step==='approve'?await supplierCatalogs.approve(database,req.ctx,req.params.id,{decisions,revision:req.body.revision}):await supplierCatalogs[step](database,req.ctx,req.params.id);
+    req.flash('success',step==='undo'&&result.kept?.length?'Undone where possible. '+result.kept[0]:step==='approve'&&!result.ready?'Your answers are saved.':catalogSteps[step]);
+    res.redirect(303,supplierCatalogs.path+'/'+encodeURIComponent(req.params.id));
   }));
   router.post(catalogFixes.path+'/limits/:kind',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await catalogFixes.configure(database,req.ctx,String(req.params.kind).toUpperCase(),req.body);
@@ -729,7 +801,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/return-disposition/observe',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await disposition.observe(database,req.ctx,req.body);res.redirect(303,'/autopilot/return-disposition?id='+p.id);}));
   router.post('/autopilot/return-disposition/repairs/:id/release',requireAuth,owner,asyncRoute(async(req,res)=>{await disposition.releaseRepair(database,req.ctx,req.params.id,req.body);req.flash('success','Physically repaired goods released after your reinspection.');res.redirect(303,'/autopilot/return-disposition');}));
   router.post('/autopilot/return-disposition/rules',requireAuth,owner,asyncRoute(async(req,res)=>{await disposition.saveRule(database,req.ctx,req.body);req.flash('success','Exact disposition rule saved for individual review.');res.redirect(303,'/autopilot/return-disposition');}));
-  router.post('/autopilot/return-disposition/rules/:id/configure',requireAuth,owner,asyncRoute(async(req,res)=>{await disposition.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Disposition rule stopped.':'Routine decision preparation enabled.');res.redirect(303,'/autopilot/return-disposition');}));
+  router.post('/autopilot/return-disposition/rules/:id/configure',requireAuth,owner,asyncRoute(async(req,res)=>{await disposition.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Disposition rule stopped.':'Routine decisions are on for this rule.');res.redirect(303,'/autopilot/return-disposition');}));
   for(const step of ['prepare','apply','stop'])router.post('/autopilot/return-disposition/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await disposition[step](database,req.ctx,req.params.id,req.body);req.flash('success',step==='apply'?'Approved physical disposition completed. Refunds remain separate.':step==='stop'?'Assessment stopped; stock stays in quarantine.':'Exact disposition prepared for separate physical approval.');res.redirect(303,'/autopilot/return-disposition?id='+req.params.id);}));
   const contribution=require('../../reports/agent-net-contribution');
   router.get('/autopilot/net-contribution',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/net-contribution',{title:'Net margin',nav:'autopilot',suppressBack:true},()=>contribution.page(database,req.ctx,req.query))));
@@ -738,6 +810,70 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/net-contribution/margin-rule',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await netMargin.configure(database,req.ctx,req.body);req.flash('success',r.stopped?'Net margin alerts are off.':r.unchanged?'Your margin rule is unchanged.':'Your margin rule is saved.');res.redirect(303,netMargin.href+'#margin-rule');}));
   router.post('/autopilot/net-contribution/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await netMargin.checkNow(database,req.ctx);req.flash('success',r.replayed?'Nothing changed since the last check.':r.outcome==='STOPPED'?r.reason:(r.opened?.length||0)+' new alert'+((r.opened?.length||0)===1?'':'s')+', '+(r.cleared?.length||0)+' cleared.');res.redirect(303,netMargin.href+'#margin-alerts');}));
   router.post('/autopilot/net-contribution/alerts/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await netMargin.dismiss(database,req.ctx,req.params.id);req.flash('success','Alert marked as seen.');res.redirect(303,netMargin.href+'#margin-alerts');}));
+  // An account still on its older terms sees the shared plan card on a report
+  // page, named from the plan data, as on the other Agent pages; a download
+  // link takes it to that card. An account on the Agent terms below the job’s
+  // plan keeps the lock and its 402.
+  const planNames=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
+  const olderTerms=async req=>req.accepts('html')&&!policy.usesAgentTerms(await policy.accountState(database,req.ctx.workspaceId));
+  async function planCard(req,res,job,locals){
+    const state=await policy.accountState(database,req.ctx.workspaceId),row=require('../../commercial/agent-plan-v3.json').find(r=>r.id===job);
+    const tier=planNames.find(([key])=>row?.[key]&&row[key]!=='excluded')?.[1];
+    return res.page('autopilot/agent-plan-locked',{...locals,tier,reviewTerms:policy.permits(state.plan,job,'suggest')});
+  }
+  async function reportPage(req,res,job,view,locals,load,lockedStatus){
+    if(job==null||!(await olderTerms(req)))return agentPage(req,res,view,locals,load,lockedStatus);
+    return planCard(req,res,job,locals);
+  }
+  // Job 158: the month-end stock value and cost of goods report.
+  const monthEndStock=require('../../reports/agent-month-end-stock'),reportRuns=require('../../reports/agent-report-runs');
+  router.get(monthEndStock.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,monthEndStock.JOB,'autopilot/month-end-stock',{title:'Month-end stock value',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>monthEndStock.page(database,req.ctx,req.query),402)));
+  router.get(monthEndStock.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>{if(await olderTerms(req))return res.redirect(303,monthEndStock.href);const file=await monthEndStock.download(database,req.ctx,req.query);
+    res.set('Cache-Control','private, no-store').type(file.format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment(file.filename).send(file.body);}));
+  router.post(monthEndStock.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await monthEndStock.checkNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':(r.opened.length?r.opened.length+' difference'+(r.opened.length===1?'':'s')+' found.':'Checked against your books.')+(r.cleared.length?' '+r.cleared.length+' cleared.':''));
+    res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#month-end-flags');}));
+  // Job 157: why a measure changed, and the monthly check for big changes.
+  const changes=require('../../reports/agent-change-explanations');
+  router.get(changes.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,changes.JOB,'autopilot/change-explanation',{title:'Why it changed',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>changes.page(database,req.ctx,req.query),402)));
+  router.post(changes.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await changes.checkNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':r.opened.length?r.opened.length+' big change'+(r.opened.length===1?'':'s')+' flagged.':'No new big changes.');
+    res.redirect(303,changes.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#monthly-digest');}));
+  router.post(changes.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,changes.href+'?'+new URLSearchParams({month:r.period})+'#monthly-digest');}));
+  // Job 159 (Custom): the board or investor pack, on demand or on the owner's monthly day.
+  const boardPack=require('../../reports/agent-board-pack');
+  router.get(boardPack.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,boardPack.JOB,'autopilot/board-pack',{title:'Board or investor pack',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>boardPack.page(database,req.ctx,req.query),402)));
+  router.post(boardPack.href+'/keep',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await boardPack.keep(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'This pack is already kept.':r.outcome==='STOPPED'?r.reason:'Pack kept.');res.redirect(303,boardPack.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-packs');}));
+  router.post(boardPack.href+'/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await boardPack.configure(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'The monthly pack is stopped.':r.unchanged?'Your schedule is unchanged.':'StockChief will build the pack each month.');res.redirect(303,boardPack.href+'#pack-schedule');}));
+  router.get(boardPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await boardPack.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
+  router.post(boardPack.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,boardPack.href+'#kept-packs');}));
+  router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
+  // Job 161: the monthly ROI report, made on its own after each month on every plan.
+  const roiReport=require('../../reports/agent-roi-report');
+  const reportFile=(res,file)=>res.set('Cache-Control','private, no-store').type(file.format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment(file.filename).send(file.body);
+  router.get(roiReport.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,roiReport.JOB,'autopilot/roi-report',{title:'Monthly ROI report',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>roiReport.page(database,req.ctx,req.query),402)));
+  router.get(roiReport.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>await olderTerms(req)?res.redirect(303,roiReport.href):reportFile(res,await roiReport.download(database,req.ctx,req.query))));
+  router.post(roiReport.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await roiReport.checkNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since this report was kept.':'Report made and kept.');
+    res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-reports');}));
+  // Job 162: stock health per item and location, checked each day on Growth and up.
+  const stockHealth=require('../../forecasting/agent-stock-health');
+  router.get(stockHealth.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,stockHealth.JOB,'autopilot/stock-health',{title:'Stock health',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>stockHealth.page(database,req.ctx,req.query),402)));
+  router.post(stockHealth.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await stockHealth.checkNow(database,req.ctx);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':(r.opened.length?r.opened.length+' item'+(r.opened.length===1?'':'s')+' flagged.':'Checked every item.')+(r.cleared.length?' '+r.cleared.length+' cleared.':''));
+    res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  router.post(stockHealth.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  // Job 163: forecast accuracy, fill rate and on-time in full, kept current on Growth and up.
+  const serviceLevels=require('../../forecasting/agent-service-levels');
+  router.get(serviceLevels.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,serviceLevels.JOB,'autopilot/service-levels',{title:'Forecast accuracy and delivery',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>serviceLevels.page(database,req.ctx,req.query),402)));
+  router.get(serviceLevels.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>await olderTerms(req)?res.redirect(303,serviceLevels.href):reportFile(res,await serviceLevels.download(database,req.ctx,req.query))));
+  router.post(serviceLevels.href+'/keep',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await serviceLevels.keep(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since this month was kept.':'Month kept.');
+    res.redirect(303,serviceLevels.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-months');}));
+  router.post(roiReport.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:r.period})+'#kept-reports');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));
   router.post('/autopilot/net-contribution/reviews/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await contribution.apply(database,req.ctx,req.params.id,req.body);req.flash('success','Actual cost facts confirmed for the contribution report.');res.redirect(303,'/autopilot/net-contribution/reviews/'+req.params.id);}));
@@ -806,7 +942,11 @@ function createPostgresAutopilotRouter(database,options={}){
     const result=await carrierClaims.prepare(database,req.ctx,{...req.body,shipmentId:selected[0],trackingNumber:selected[1]},req.files);
     res.redirect(303,claimPath+'/'+result.id);
   }));
-  for(const [step,method] of [['file','approve'],['rule','saveRule'],['check','verify']]){
+  router.post(claimPath+'/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await carrierClaims.saveSettings(database,req.ctx,req.body);
+    req.flash('success','Claim details saved.');res.redirect(303,claimPath);
+  }));
+  for(const [step,method] of [['file','approve'],['rule','saveRule'],['check','verify'],['filed','recordFiled'],['outcome','recordOutcome']]){
     router.post(claimPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
       if(method==='verify')await carrierClaims.verify(database,req.ctx,req.params.id);
       else await carrierClaims[method](database,req.ctx,req.params.id,req.body);
@@ -1014,8 +1154,33 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-shutdowns/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await shutdowns.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,req.body.stop==='yes'?'/autopilot/supplier-shutdowns':'/autopilot/supplier-shutdowns/'+req.params.id);}));
   router.post('/autopilot/shutdown-plans/:id/purchase',requireAuth,owner,asyncRoute(async(req,res)=>{const po=await shutdowns.purchase(database,req.ctx,req.params.id,req.body);res.redirect(303,'/purchasing/orders/'+po.purchaseOrderId);}));
   const retirements=require('../../catalog/agent-product-retirements');
-  router.get('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Discontinued products',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>({...await retirements.list(database,req.ctx,req.query),draft:null}))));
-  router.post('/autopilot/discontinued-products/preview',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},async()=>({...await retirements.list(database,req.ctx,req.body),draft:await retirements.preview(database,req.ctx,req.body)}))));
+  const retirementWork=require('../../catalog/agent-retirement-work');
+  const retirementScreen=async req=>{const listed=await retirements.list(database,req.ctx,req.query);return {...listed,markSku:String(req.query.sku||'').slice(0,160),work:listed.locked?null:await retirementWork.screen(database,req.ctx,{page:req.query.workPage||1})};};
+  router.get('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');return agentPage(req,res,'autopilot/product-retirement-start',{title:'Discontinued products',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>({...await retirementScreen(req),draft:null}));}));
+  // Job 132: the owner marks a product discontinued, decides drafted
+  // retirements, brings one back, and sets the dead-stock rule.
+  router.post('/autopilot/discontinued-products/mark',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork.mark(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'This product is already discontinued.':result.status==='RETIRED'?result.code+' is retired. Staff see its replacement.':result.code+' is no longer reordered. Its stock is sold down first.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  const retireDone={approve:'The product is retired.',dismiss:'The product keeps selling.',undo:'The product is back. It is reordered again.'};
+  for(const step of Object.keys(retireDone))router.post('/autopilot/discontinued-products/work/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':retireDone[step]);
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Dead stock is no longer retired.':'Dead stock rule saved.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await retirementWork.check(database,req.ctx);
+    req.flash('success','StockChief is checking discontinued products and dead stock.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/preview',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},async()=>({...await retirements.list(database,req.ctx,req.body),markSku:'',work:null,draft:await retirements.preview(database,req.ctx,req.body)}))));
   router.post('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>{const n=await retirements.record(database,req.ctx,req.body);res.redirect(303,'/autopilot/discontinued-products/'+n.id);}));
   router.get('/autopilot/discontinued-products/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},()=>retirements.page(database,req.ctx,req.params.id))));
   router.post('/autopilot/discontinued-products/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await retirements.apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/discontinued-products/'+req.params.id);}));
@@ -1112,6 +1277,9 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/customer-statements/requests/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-statement-requests').dismiss(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/customer-statements');
+  }));
   const disputeFlow=require('../../purchasing/invoice-dispute-follow-through');
   router.get('/autopilot/supplier-disputes/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/supplier-dispute-detail',{
     title:'Supplier invoice dispute',nav:'autopilot',backTo:{href:'/autopilot/reviews/supplier-invoice-disputes',label:'Supplier invoice disputes'},
@@ -1166,6 +1334,24 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare the selected customer invoice reminder',{action:'customer_invoice.remind',recordReference:req.body.invoiceNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact current invoice before preparing its reminder.');
     res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/customer-credits/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this customer credit or refund',{action:'customer_credit.prepare',recordReference:req.body.recordReference,
+      creditKind:req.body.creditKind,creditLines:req.body.creditKind==='price_adjustment'?req.body.creditLines:undefined,reason:req.body.reason,refundPayments:req.body.refundPayments||undefined});
+    if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact invoice or order and what happened.');res.redirect(303,'/actions/'+prepared.proposal.id);
+  }));
+  router.post('/autopilot/customer-credits/refunds/:id/paid',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-customer-credits').markPaid(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Refund recorded as paid.');res.redirect(303,'/autopilot/reviews/customer-credits');
+  }));
+  router.post('/autopilot/customer-credits/refunds/:id/verify',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-customer-credits').verifyProviderPart(database,req.ctx,req.params.id);
+    req.flash('success','Stripe confirmed the refund and it was recorded.');res.redirect(303,'/autopilot/reviews/customer-credits');
+  }));
+  router.post('/autopilot/invoice-reminders/disputes',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await require('../../accounting/agent-invoice-reminders').dispute(database,req.ctx,req.body);
+    req.flash('success',result.resolved?'Dispute settled. Reminders for this invoice resume.':'Reminders for this invoice stopped until you settle the dispute.');
+    res.redirect(303,'/autopilot/reviews/invoice-reminders');
   }));
   router.post('/autopilot/invoice-reminders/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-invoice-reminders').configure(database,req.ctx,req.body);
@@ -1320,7 +1506,7 @@ function createPostgresAutopilotRouter(database,options={}){
     res.redirect(303,monthlyBuying.path+'/'+req.params.id);
   }));
   const slotting=require('../../forecasting/warehouse-slotting');
-  const slottingPage=async(req,res)=>agentPage(req,res,'autopilot/warehouse-slotting',{title:'Warehouse move lists',nav:'autopilot',
+  const slottingPage=async(req,res)=>reportPage(req,res,slotting.definition.id,'autopilot/warehouse-slotting',{title:'Warehouse move lists',nav:'autopilot',
     backTo:{href:'/autopilot/reviews/warehouse-slotting',label:'Warehouse bin moves'}},async()=>({
     model:await slotting.page(database,req.ctx,{id:req.params.id,warehouseId:req.query.warehouse,after:req.query.after}),
   }),402);
@@ -1634,8 +1820,10 @@ function createPostgresAutopilotRouter(database,options={}){
       model:await require('../../forecasting/agent-safety-stock').classPlanning(database,req.ctx,req.params.itemId,req.query),
     });
   }));
+  // Brand watches became watch rules (job 167).
+  router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
-    return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
+    return reportPage(req,res,reviews.definitions.find(d=>d.key===req.params.job)?.id,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
       const packs=require('../../accounting/agent-report-packs');
       if(Object.hasOwn(packs.downloads,req.params.job)&&(req.params.job!=='quarterly-supplier-pack'||result.rows.length)){
@@ -1651,6 +1839,8 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
+      if(req.params.job==='supplier-catalogs'&&result.mode!=='suggest')result.supplierCatalogsPath=require('../../catalog/agent-supplier-catalog').path;
+      if(req.params.job==='product-categories')result.productCategoriesPath=require('../../catalog/agent-product-classification').path;
       if(req.params.job==='catalog-health')result.dataHealthPath=require('../../autopilot/data-health').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;
@@ -1659,7 +1849,13 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.slottingPath=slotting.path;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
-      if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
+      if(req.params.job==='watch-rules'){
+        result.watchRules={rules:await require('../../autopilot/watch-rules').list(database,req.ctx.workspaceId),draft:req.session?.watchRuleDraft||''};
+        if(req.session)delete req.session.watchRuleDraft;
+      }
+      const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
+      if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
+      if(req.params.job===require('../../autopilot/escalations').key)result.escalations=await require('../../autopilot/escalations').actions(database,req.ctx);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
@@ -1680,6 +1876,34 @@ function createPostgresAutopilotRouter(database,options={}){
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
   }));
+  // Jobs 166 to 168: how alerts are sent, and sending waiting alerts now.
+  router.post('/autopilot/alerts/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const alerts=require('../../autopilot/agent-alerts'),saved=await alerts.configure(database,req.ctx,req.params.job,req.body);
+    req.flash('success',saved.unchanged?'Nothing changed.':'Alert settings saved.');
+    res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  router.post('/autopilot/alerts/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
+    req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
+    res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  // Job 172: answer an item passed on, answer every alert of a kind, or pass one on now.
+  const back=(req,fallback)=>{const to=String(req.body.returnTo||'');return to.startsWith('/')&&!to.startsWith('//')?to:fallback;};
+  router.post('/autopilot/escalations/answer',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await require('../../autopilot/escalations').answerJob(database,req.ctx,req.body.entryId);
+    req.flash('success',done.answered===1?'Thanks. Nobody else will be asked about it.':'Thanks. Nobody else will be asked about these '+done.answered+' alerts.');
+    res.redirect(303,back(req,'/needs-you'));
+  }));
+  router.post('/autopilot/escalations/:id/answer',requireAuth,asyncRoute(async(req,res)=>{
+    const escalations=require('../../autopilot/escalations');await escalations.answer(database,req.ctx,req.params.id);
+    req.flash('success','Thanks. Nobody else will be asked about it.');
+    res.redirect(303,back(req,escalations.path));
+  }));
+  router.post('/autopilot/escalations/:id/pass',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const escalations=require('../../autopilot/escalations'),done=await escalations.passNow(database,req.ctx,req.params.id);
+    req.flash('success','Passed to '+done.to+'.');
+    res.redirect(303,escalations.path);
+  }));
   router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);
     await watch.save(database,req.ctx,id,req.body);
@@ -1691,8 +1915,12 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Job 94: negotiation emails built from recorded facts.
   const negotiations=require('../../purchasing/negotiation-drafts');
-  const negotiationPage=async(req,res,options)=>res.page('autopilot/supplier-negotiations',{title:'Supplier negotiation emails',nav:'autopilot',
-    backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'},...await negotiations.page(database,req.ctx,options)});
+  const negotiationPage=async(req,res,options)=>{
+    const locals={title:'Supplier negotiation emails',nav:'autopilot',
+      backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'}};
+    if(await olderTerms(req))return planCard(req,res,negotiations.JOB,locals);
+    return res.page('autopilot/supplier-negotiations',{...locals,...await negotiations.page(database,req.ctx,options)});
+  };
   router.get('/autopilot/supplier-negotiations',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{supplier:req.query.supplier})));
   router.get('/autopilot/supplier-negotiations/drafts/:id',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{draftId:req.params.id})));
   router.post('/autopilot/supplier-negotiations/drafts/:id/save',requireAuth,owner,asyncRoute(async(req,res)=>{
@@ -1713,10 +1941,21 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/purchase-approval-threshold');
   }));
-  router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../autopilot/brand-watches').save(database,req.ctx,req.body);
-    res.redirect(303,'/autopilot/reviews/brand-watches');
-  }));
+  // Job 167: an unclear rule is asked back and its words stay in the form.
+  const saveWatchRule=asyncRoute(async(req,res)=>{
+    const rules=require('../../autopilot/watch-rules');
+    try{
+      const saved=await rules.save(database,req.ctx,req.body);
+      req.flash('success',saved.removed!==undefined?(saved.removed?'Watch rule removed.':'That rule was already removed.'):'Rule saved. StockChief reads it as: '+saved.meaning);
+    }catch(error){
+      if(error?.code!=='validation_error'||req.body.remove)throw error;
+      if(req.session)req.session.watchRuleDraft=String(req.body.instruction||'').slice(0,320);
+      req.flash('error',error.message);
+    }
+    res.redirect(303,rules.path);
+  });
+  router.post('/autopilot/reviews/watch-rules/rules',requireAuth,owner,saveWatchRule);
+  router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,saveWatchRule);
   router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
     req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');

@@ -59,6 +59,32 @@ async function recordEmailAcceptance(client,workspaceId,emailJobId){
  for(const d of accepted.rows)await client.query(`UPDATE stockchief_runtime.report_templates SET last_delivered_at=$3,last_error=NULL WHERE workspace_id=$1 AND id=$2 AND (last_delivered_at IS NULL OR last_delivered_at<=$3)`,[workspaceId,d.template_id,d.completed_at]);
  return {sent:accepted.rowCount};
 }
+async function emailStillWanted(db,workspaceId,emailJobId,recipient,revision){
+  const {rows:[delivery]}=await db.query(`SELECT d.id,d.status,d.schedule_key,t.schedule_paused,t.deleted_at,t.definition,t.revision,
+    coalesce(t.delivery_email,a.email) AS recipient,a.email,x.disabled_at AS platform_access_disabled_at,
+    u.id AS actor_id,u.role,u.permissions,w.deletion_requested_at
+    FROM stockchief_runtime.report_deliveries d
+    JOIN stockchief_runtime.report_templates t ON t.workspace_id=d.workspace_id AND t.id=d.template_id
+    JOIN workspaces w ON w.id=t.workspace_id
+    LEFT JOIN users u ON u.workspace_id=t.workspace_id AND u.id=t.owner_user_id
+    LEFT JOIN accounts a ON a.id=u.account_id
+    LEFT JOIN platform_account_access x ON x.account_id=a.id
+    WHERE d.workspace_id=$1 AND d.email_job_id=$2`,[workspaceId,emailJobId]);
+  if(!delivery||delivery.status!=='PENDING')return false;
+  if(delivery.deleted_at||delivery.deletion_requested_at||revision!=null&&revision!==Number(delivery.revision)||
+    delivery.schedule_paused&&!delivery.schedule_key.startsWith('manual:')){
+    await db.query(`UPDATE stockchief_runtime.report_deliveries SET status='CANCELLED',completed_at=now()
+      WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[workspaceId,delivery.id]);
+    return false;
+  }
+  if(!delivery.actor_id||delivery.platform_access_disabled_at||!delivery.email||
+    delivery.email.toLowerCase()!==String(recipient).toLowerCase()||delivery.recipient?.toLowerCase()!==delivery.email.toLowerCase()){
+    throw Object.assign(new Error('The report recipient or their access changed. Review this report before sending.'),
+      {code:'report_recipient_changed',retryable:false});
+  }
+  reports.normalize(delivery.definition,{role:delivery.role,permissions:delivery.permissions,email:delivery.email});
+  return true;
+}
 async function generateDelivery(database,job){
   const {templateId,deliveryId}=job.payload||{};
   if(!job.workspaceId||!templateId||!deliveryId)throw new Error('A report delivery needs exact workspace and template identity.');
@@ -77,8 +103,13 @@ async function generateDelivery(database,job){
   // report builder/export, never raw money_minor database integers.
   const origin=String(config.connections.publicOrigin||'').replace(/\/$/,'');
   const {message,visibleCount,limited}=deliveryMessage(template,result,origin);
-  return database.transaction(async client=>{const current=(await client.query("SELECT t.id FROM stockchief_runtime.report_templates t JOIN stockchief_runtime.report_deliveries d ON d.workspace_id=t.workspace_id AND d.template_id=t.id WHERE t.workspace_id=$1 AND t.id=$2 AND d.id=$3 AND d.status='PENDING' AND t.deleted_at IS NULL AND (NOT t.schedule_paused OR d.schedule_key LIKE 'manual:%') FOR UPDATE OF t,d",[job.workspaceId,templateId,deliveryId])).rows[0];if(!current)return {skipped:'schedule_changed_before_delivery'};
-   const mail=await jobs.enqueue(scoped(client),{workspaceId:job.workspaceId,kind:'system.email-send',idempotencyKey:'scheduled-report-email:'+deliveryId,payload:{...message,accountId:template.account_id,messageType:'scheduled_report'},maxAttempts:3});await client.query("UPDATE stockchief_runtime.report_deliveries SET email_job_id=$4,row_count=$5 WHERE workspace_id=$1 AND template_id=$2 AND id=$3 AND status='PENDING'",[job.workspaceId,templateId,deliveryId,mail.job.id,visibleCount]);return {queued:true,rows:visibleCount,limited,emailJobId:mail.job.id};
+  return database.transaction(async client=>{const current=(await client.query("SELECT t.revision,d.email_job_id FROM stockchief_runtime.report_templates t JOIN stockchief_runtime.report_deliveries d ON d.workspace_id=t.workspace_id AND d.template_id=t.id WHERE t.workspace_id=$1 AND t.id=$2 AND d.id=$3 AND d.status='PENDING' AND t.deleted_at IS NULL AND (NOT t.schedule_paused OR d.schedule_key LIKE 'manual:%') FOR UPDATE OF t,d",[job.workspaceId,templateId,deliveryId])).rows[0];if(!current)return {skipped:'schedule_changed_before_delivery'};
+   if(current.email_job_id)return {queued:true,emailJobId:current.email_job_id,replayed:true};
+   if(Number(current.revision)!==Number(template.revision)){
+    await client.query("UPDATE stockchief_runtime.report_deliveries SET status='CANCELLED',completed_at=now() WHERE workspace_id=$1 AND id=$2",[job.workspaceId,deliveryId]);
+    return {skipped:'report_changed_before_delivery'};
+   }
+   const mail=await jobs.enqueue(scoped(client),{workspaceId:job.workspaceId,kind:'system.email-send',idempotencyKey:'scheduled-report-email:'+deliveryId,payload:{...message,accountId:template.account_id,messageType:'scheduled_report',reportRevision:Number(template.revision)},maxAttempts:3});await client.query("UPDATE stockchief_runtime.report_deliveries SET email_job_id=$4,row_count=$5 WHERE workspace_id=$1 AND template_id=$2 AND id=$3 AND status='PENDING'",[job.workspaceId,templateId,deliveryId,mail.job.id,visibleCount]);return {queued:true,rows:visibleCount,limited,emailJobId:mail.job.id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-module.exports={enqueueDue,generateDelivery,deliveryMessage,recordEmailAcceptance};
+module.exports={enqueueDue,generateDelivery,deliveryMessage,recordEmailAcceptance,emailStillWanted};

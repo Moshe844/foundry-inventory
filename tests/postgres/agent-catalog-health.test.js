@@ -6,7 +6,7 @@ const reviews=require('../../src/autopilot/job-reviews');
 
 test('plain-language brand watches follow new SKUs, fractional stock, recovery and the shared Starter rule cap',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
-  const module=require('../../src/autopilot/brand-watches'),notices=require('../../src/autopilot/operational-notices');
+  const module=require('../../src/autopilot/watch-rules'),notices=require('../../src/autopilot/operational-notices');
   const catalog=require('../../src/domain/postgres-catalog-service'),inventory=require('../../src/domain/postgres-inventory-engine');
   const uid=require('node:crypto').randomUUID,worker=require('../../src/operations/postgres-runtime-handlers').autopilotEvaluate;
   await subscribe('starter');
@@ -17,15 +17,17 @@ test('plain-language brand watches follow new SKUs, fractional stock, recovery a
   };
   const first=await add('WATCH-A','Nike'),receive=(skuId,quantity)=>inventory.receive(db,ctx,{skuId,quantity,locationId:f.location.id,idempotencyKey:uid()});
   await receive(first,'19.75');
-  const root='/autopilot/reviews/brand-watches',page=await browser.get(root).expect(200);
-  await browser.post(root+'/rules').type('form').send({_csrf:f.csrf(page.text),instruction:'Tell me if any Nike item drops under 20'}).expect(303);
-  const read=()=>reviews.run(db,ctx,'brand-watches',{scheduled:true});
+  // Saved brand watch links and forms lead to watch rules.
+  assert.equal((await browser.get('/autopilot/reviews/brand-watches').expect(301)).headers.location,'/autopilot/reviews/watch-rules');
+  const root='/autopilot/reviews/watch-rules',page=await browser.get(root).expect(200);
+  await browser.post('/autopilot/reviews/brand-watches/rules').type('form').send({_csrf:f.csrf(page.text),instruction:'Tell me if any Nike item drops under 20'}).expect(303);
+  const read=()=>reviews.run(db,ctx,'watch-rules',{scheduled:true});
   const seen=()=>db.query("SELECT reference,resolved,reminders FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=167 ORDER BY reference",[ctx.workspaceId]);
   const evaluate=()=>db.transaction(c=>worker({id:uid(),workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,requestedByUser:true}},c));
   for(const tier of ['starter','growth','pro','enterprise']){
     await subscribe(tier);const result=await read();
-    assert.deepEqual(result.rows.map(r=>[r.SKU,Number(r['On hand'])]),[['WATCH-A',19.75]]);
-    assert.match((await browser.get('/needs-you').expect(200)).text,/Stock below a brand watch level/);
+    assert.deepEqual(result.rows.map(r=>[r.SKU,r.Found]),[['WATCH-A','19.75 kg on hand']]);
+    assert.match((await browser.get('/needs-you').expect(200)).text,/Your watch rules found something/);
   }
   await receive(first,'0.25');
   await add('WATCH-B','NIKE');await add('WATCH-C','Other');

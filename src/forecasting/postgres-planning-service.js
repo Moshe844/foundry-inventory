@@ -79,8 +79,9 @@ async function position(database,workspaceId,{recommendationsOnly=false,afterSku
  if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Choose a planning page of at most 1,000 SKUs.');
  if(afterSkuId!==null&&(typeof afterSkuId!=='string'||afterSkuId.length>160))throw new ValidationError('Invalid planning page.');
  const source=await require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{eligibleOnly:recommendationsOnly,afterSkuId,limitSkus,onlySkuIds,cycleId});
+ await require('./agent-demand-forecast').attach(database,workspaceId,source);
  const ids=[...new Set(source.map(r=>r.sku_id))],selected=new Set(limitSkus===null?ids:ids.slice(0,limitSkus));
- const result=source.filter(r=>selected.has(r.sku_id)).map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
+ const result=source.filter(r=>selected.has(r.sku_id)).map(row=>{const p=require('../purchasing/replenishment-decision').derive(row);return {...row,...p,name:row.item_name,sold90:p.issued,dailyRate:p.rate,leadTimeDays:p.lead,reorderPoint:row.planning_suppressed||row.discontinued?null:number(row.reorder_point),targetStock:p.target,safetyStock:p.safety,costMinor:number(row.cost_minor),effectiveReorder:p.reorder,displayName:row.item_name+(row.code?' · '+row.code:'')};}).sort((a,b)=>a.item_name.localeCompare(b.item_name)||Number(a.sku_position)-Number(b.sku_position)||a.location_name.localeCompare(b.location_name));
  Object.defineProperty(result,'coverage',{value:{partial:limitSkus!==null&&ids.length>limitSkus,afterSkuId,nextAfterSkuId:[...selected].at(-1)||null,scanned:selected.size}});
  return result;
 }
@@ -106,7 +107,7 @@ async function ensureRecommendations(database, workspaceId, rows) {
 async function openRecommendations(database, workspaceId) {
   return (await database.query(`SELECT recommendation.*,item.name,sku.code FROM planning_recommendations recommendation
     LEFT JOIN skus sku ON sku.id=recommendation.sku_id LEFT JOIN items item ON item.id=sku.item_id
-    WHERE recommendation.workspace_id=$1 AND recommendation.status='OPEN'
+    WHERE recommendation.workspace_id=$1 AND recommendation.status='OPEN' AND recommendation.kind<>'demand_trend'
     ORDER BY recommendation.created_at DESC,recommendation.id DESC LIMIT 100`, [workspaceId])).rows.map(row => ({
       ...row,currentValue:number(row.current_value),recommendedValue:number(row.recommended_value),
       evidence:object(row.evidence),authorityDetail:object(row.authority_detail),
@@ -156,7 +157,6 @@ async function refreshRecommendations(database,workspaceId,options={}){
    await ensureRecommendations(database,workspaceId,agentTerms?rows.filter(row=>!row.location_id):rows);
    const selected=[...new Set(rows.map(r=>r.sku_id))];
    await require('./location-reorder-rules').queuePage(database,workspaceId,selected,{cycleId:options.cycleId});
-   await require('./agent-safety-stock').queuePage(database,workspaceId,selected);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;
   }
@@ -168,6 +168,7 @@ async function decide(database, ctx, id, decision) {
     const row = (await client.query(`SELECT * FROM planning_recommendations WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
       [ctx.workspaceId,id])).rows[0];
     if (!row) throw new NotFoundError('That planning recommendation is not in this inventory.');
+    if (row.kind === 'demand_trend') throw new ValidationError('Review this sales trend on the demand forecasts page.');
     const agent=require('../commercial/agent-plan'),account=await agent.accountState(client,ctx.workspaceId);
     if(agent.usesAgentTerms(account)&&decision==='accept'){
       const job=row.kind==='safety_stock'?150:object(row.evidence).locationId?120:21;

@@ -7,7 +7,7 @@
     <span class="screen-guide__need">
       <% if (attentionCount > 0) { %>
         <strong><%= attentionCount %> <%= attentionCount === 1 ? 'thing needs' : 'things need' %> you</strong>
-      <% } else { %>
+      <% } else if (attentionCount === 0) { %>
         <strong>Nothing needs you</strong>
       <% } %>
     </span>

@@ -5,7 +5,8 @@ async function queue(db,ctx,pkg){const queued=await jobs.enqueue(db,{workspaceId
 async function run(job,db){const ctx={workspaceId:job.workspaceId,actorId:job.payload?.actorId},id=job.payload?.packageId;if(!ctx.workspaceId||!ctx.actorId||!id||!job.payload.sealedHash)throw new ValidationError('The ERP continuation is missing its approved source identity.');
  return db.transaction(async c=>{const tx=scoped(c),pkg=await cutover.get(c,ctx,id,{lock:true});if(pkg.postgres_state.sealedHash!==job.payload.sealedHash)throw new ValidationError('The sealed ERP source changed. Review the current source.');
  let result;if(pkg.status==='VALIDATING')result=await cutover.validatePage(tx,ctx,id);else if(['APPROVED','APPLYING'].includes(pkg.status))result=await cutover.applyPage(tx,ctx,id,{limit:100});else if(pkg.status==='RECONCILING')result=await cutover.reconcilePage(tx,ctx,id,{limit:100});else return {packageId:id,status:pkg.status};
- const next=result.package;if(['VALIDATING','APPROVED','APPLYING','RECONCILING'].includes(next.status)&&!(pkg.status==='RECONCILING'&&next.status==='RECONCILING'&&result.done&&!result.matched))await queue(tx,ctx,next);
+ // Job 190: an old-system migration approves and opens on its own when the plan allows and every check matches.
+ const next=await require('./agent-old-system-migration').afterStep(c,ctx,result.package);if(['VALIDATING','APPROVED','APPLYING','RECONCILING'].includes(next.status)&&!(pkg.status==='RECONCILING'&&next.status==='RECONCILING'&&result.done&&!result.matched))await queue(tx,ctx,next);
  if(job.leaseToken&&!await jobs.heartbeat(tx,job.id,job.leaseToken,{leaseMs:60000}))throw Object.assign(new Error('The ERP worker lease expired before committing this page.'),{code:'lease_lost'});
  return {packageId:id,status:next.status,applied:Number(next.applied_count),problems:Number(next.problem_count)};
  },{isolation:'SERIALIZABLE',retrySafe:true});

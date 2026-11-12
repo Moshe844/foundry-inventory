@@ -402,4 +402,4 @@ async function inbox(db,workspaceId){
   return out;
 }
 
-module.exports={JOB,ACTION,KIND,href,DIRECT,recorded,shippingCost,feeCost,saveFeeRule,readRule,configure,evaluate,record,run,schedule,checkNow,dismiss,pageState,inbox,marginBps,percentText};
+module.exports={JOB,ACTION,KIND,href,DIRECT,recorded,connectedChannels,shippingCost,feeCost,saveFeeRule,readRule,configure,evaluate,record,run,schedule,checkNow,dismiss,pageState,inbox,marginBps,percentText};

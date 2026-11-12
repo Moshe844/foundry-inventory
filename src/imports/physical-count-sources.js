@@ -240,6 +240,7 @@ async function readJob(db,ctx,job,options){
         const money=minor=>require('../domain/currency').format(minor,decision.currency);
         const posting=decision.action==='post',note=posting
           ?`Posted on its own: the differences come to ${money(decision.exposureMinor)}, within your ${money(decision.limitMinor)} count limit.`
+          :decision.action==='review'?decision.reason+' Check the counts and approve them yourself.'
           :`The differences come to ${money(decision.exposureMinor)}, over your ${money(decision.limitMinor)} count limit. Check the counts and approve them yourself.`;
         const jobId=posting?await addJob(c,ctx,source.id,'post'):null;
         await c.query(`UPDATE ${sources} SET reading_note=$3${jobId?",status='APPROVED',job_id=$4,approved_at=now()":''} WHERE workspace_id=$1 AND id=$2`,
