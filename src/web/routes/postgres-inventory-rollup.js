@@ -16,15 +16,27 @@ function createPostgresInventoryRollupRouter(database){
   const router=express.Router(),rollup=()=>require('../../reports/agent-inventory-rollup'),base='/inventory/combined';
   const viewer=requirePermission(permissions.VIEW,'see stock');
   const view={title:'All inventories together',nav:'inventory',backTo:{href:'/inventory',label:'Stock'}};
+  // An account still on its older terms sees the shared plan card, as on the
+  // other Agent pages; an account on the Agent terms below Custom sees the lock.
+  const olderTerms=async(req,res)=>{
+    if(!req.accepts('html'))return false;
+    const agent=require('../../commercial/agent-plan'),state=await agent.accountState(database,req.ctx.workspaceId);
+    if(agent.usesAgentTerms(state))return false;
+    res.page('autopilot/agent-plan-locked',{...view,tier:'Custom',reviewTerms:agent.permits(state.plan,rollup().JOB,'suggest')});
+    return true;
+  };
   const locked=(req,res,error)=>{
     if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
     res.status(402);return res.page('autopilot/locked',{...view,message:error.message});
   };
   router.get(base,requireAuth,viewer,asyncRoute(async(req,res)=>{
+    if(await olderTerms(req,res))return;
     try{return res.page('inventory/combined',{...view,model:await rollup().model(database,req.ctx,choices(req.query))});}
     catch(error){return locked(req,res,error);}
   }));
   router.get(base+'/product',requireAuth,viewer,asyncRoute(async(req,res)=>{
+    if(await olderTerms(req,res))return;
+    if(typeof req.query.key!=='string'||!req.query.key)return res.redirect(303,base);
     try{const model=await rollup().product(database,req.ctx,req.query.key);
       return res.page('inventory/combined-product',{...view,title:model.product.product,backTo:{href:base,label:'All inventories together'},model});}
     catch(error){return locked(req,res,error);}
