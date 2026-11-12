@@ -212,9 +212,10 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     VALUES($1,$2,$3,$4,20,30,0,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
   await db.query("UPDATE sales_orders SET needed_by=$3 WHERE workspace_id=$1 AND id IN (SELECT sales_order_id FROM sales_shipments WHERE id=ANY($2))",[ctx.workspaceId,parcels,ago(today,-1)]);
   await f.shipping.applyTracking(db,ctx,parcels[0],{status:'DELIVERED',externalEventId:'service-level-first',occurredAt:ago(today,-1)+'T12:00:00Z'});
-  for(const [id,prediction,comparable] of [['closed',10,1],['stockout',90,0]]){
-    await db.query(`INSERT INTO demand_forecasts(id,workspace_id,sku_id,as_of,horizon_days,horizon_end,horizon_units,confidence,model_version,created_at)
-      VALUES($1,$2,$3,$4,7,$5,$6,'moderate','fixture',$4)`,[id,ctx.workspaceId,sku,ago(today,-9),ago(today,-2),prediction]);
+  // Job 144's saved weekly forecasts; the stock-out week is not comparable.
+  for(const [id,prediction,comparable,start] of [['closed',10,1,-8],['stockout',90,0,-9]]){
+    await db.query(`INSERT INTO demand_forecasts(id,workspace_id,sku_id,location_id,as_of,horizon_days,horizon_end,horizon_units,confidence,model_version,created_at)
+      VALUES($1,$2,$3,NULL,$4,7,$5,$6,'moderate','agent-144-v1',$4)`,[id,ctx.workspaceId,sku,ago(today,start),ago(today,-2),prediction]);
     await db.query(`INSERT INTO forecast_outcomes(id,workspace_id,forecast_id,sku_id,scored_at,predicted_units,actual_units,error_units,absolute_error,comparable,created_at)
       VALUES($1,$2,$1,$3,$4,$5,8,$6,$6,$7,$4)`,[id,ctx.workspaceId,sku,ago(today,-1)+'T12:00:00Z',prediction,prediction-8,comparable]);
   }
@@ -225,7 +226,7 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     if(tier==='starter')await browser.get('/autopilot/reviews/service-levels').expect(402);
     else{
       const service=await review('service-levels',{filter:'',scheduled:true}),customer=service.rows.find(r=>r['Party type']==='Customer'),vendor=service.rows.find(r=>r.Name==='Alternative');
-      assert.match(service.summary,/1 comparable SKU forecast,.*2\.00 units/);
+      assert.match(service.summary,/Across 1 scored weekly forecast for 1 product, MAPE was 25% and bias \+25%/);
       assert.equal(customer['Due orders'],2);assert.equal(Number(customer['Fill rate %']),100);assert.equal(Number(customer['OTIF %']),50);
       assert.equal(Number(vendor['Fill rate %']),25);assert.equal(Number(vendor['OTIF %']),0);
     }

@@ -1,0 +1,53 @@
+<% const r=report,stamp=v=>helpers.dateTime(v),open=flags.filter(f=>f.status==='OPEN'),kindName=new Map(kinds); %>
+<div class="page-head"><div class="titles"><h1>Monthly ROI report</h1>
+<p>What StockChief did for you in a month: the hours its finished work saved, and the money it caught, each amount with its record. Both are compared with your plan price. Each currency is kept separate.</p></div></div>
+<% if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It makes this report each month without telling you.</p>
+<% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+
+<section class="card section"><form method="get" action="<%= '/autopilot/reviews/roi-report' %>" class="form-stack">
+<label class="rm-field"><span>Month</span><select name="month" aria-label="Month"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===month?'selected':'' %>><%= m %></option><% }) %></select></label>
+<button class="btn">Show month</button></form>
+<p><a class="btn" href="<%= downloads.xlsx %>">Download Excel</a> <a class="btn" href="<%= downloads.pdf %>">Download PDF</a></p>
+<% if(stored){ %><p class="cell-sub">StockChief made this month’s report <%= stamp(stored.created_at) %><%= stored.outcome==='WATCHED'?' while watching only':'' %>. The figures below are current.</p><% } %>
+</section>
+
+<section class="card section"><h2><%= r.name %></h2>
+<p><%= headline %></p>
+<ul class="rm-list">
+<li class="list-row"><span>Hours saved<small><%= r.actions %> finished task<%= r.actions===1?'':'s' %></small></span><strong><%= r.hours %> h</strong></li>
+<li class="list-row"><span>From your own timings</span><strong><%= r.measuredHours %> h</strong></li>
+<li class="list-row"><span>From StockChief’s standard estimates <% if(r.estimatedHours){ %><span class="badge badge--warn">Estimate</span><% } %></span><strong><%= r.estimatedHours %> h</strong></li>
+<% if(r.plan){ %><li class="list-row"><span>Your <%= r.plan.plan %> plan price for the month<small><%= r.plan.annual?'Yearly price divided by 12':'Monthly price' %></small></span><strong><%= fmt(r.plan.monthly,r.plan.currency) %></strong></li>
+<% if(r.pricePerHour!=null){ %><li class="list-row"><span>Plan price per hour saved</span><strong><%= fmt(r.pricePerHour,r.plan.currency) %></strong></li><% } %>
+<% }else{ %><li class="list-row"><span>Plan price</span><strong>Not on record</strong></li><% } %>
+<% r.totals.forEach(t=>{ %><li class="list-row"><span>Money caught in <%= t.currency %><small><%= t.comparable?(t.timesPlan!=null?t.timesPlan+' times your plan price':'Plan currency'):'Another currency, not compared with the plan price' %></small></span><strong><%= fmt(t.amount,t.currency) %></strong></li><% }) %>
+<% if(!r.totals.length){ %><li class="list-row"><span>Money caught</span><strong><%= r.plan?fmt(0,r.plan.currency):'None' %></strong></li><% } %>
+</ul></section>
+
+<section class="card section"><h2>Hours saved</h2>
+<% if(!r.tasks.length){ %><p>No finished agent tasks were recorded in <%= r.name %>.</p><% }else{ %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Task</th><th>Finished</th><th>Minutes each</th><th>Hours</th></tr></thead><tbody>
+<% r.tasks.forEach(t=>{ %><tr><td class="cell-main"><span class="cell-title"><%= t.label %></span><small class="cell-sub"><%= t.basis==='timed'?'Your timing ('+t.samples+' sample'+(t.samples===1?'':'s')+')':'Standard estimate' %></small></td>
+<td data-label="Finished"><%= t.count %></td><td data-label="Minutes each"><%= t.minutesEach %></td><td data-label="Hours"><%= Math.round(t.minutes/6)/10 %></td></tr><% }) %>
+</tbody></table></div><% } %>
+<p class="cell-sub">Only finished work with its record counts: a sent email the provider accepted, a posted entry, a completed receipt. Drafts, failed sends and replays add nothing. <a href="/autopilot/time-saved">Time a task yourself</a> to replace a standard estimate.</p>
+<details><summary>Minutes used for each task</summary><ul class="rm-list">
+<% standards.forEach(s=>{ %><li class="list-row"><span><%= s.label %><small><%= s.timed!=null?'Your timing from '+s.samples+' sample'+(s.samples===1?'':'s'):'Standard estimate' %></small></span><strong><%= s.timed!=null?s.timed:s.standard %> min</strong></li><% }) %>
+</ul></details></section>
+
+<section class="card section"><h2>Money caught</h2>
+<% if(!r.items.length){ %><p>No money caught was recorded in <%= r.name %>.</p><% } %>
+<% r.totals.forEach(t=>{ %><h3><%= t.currency %> · <%= fmt(t.amount,t.currency) %></h3><ul class="rm-list">
+<% r.items.filter(i=>i.currency===t.currency).forEach(i=>{ %><li class="list-row"><span><%= kindName.get(i.kind) %><small><%= i.date %> · <a href="<%= i.href %>"><%= i.record %></a></small></span><strong><%= fmt(i.amount,i.currency) %></strong></li><% }) %>
+</ul><% }) %>
+<% const unvalued=r.stockouts.filter(s=>s.amount==null); if(unvalued.length){ %><p class="cell-sub">Also avoided, with no posted sales to value them: <%= unvalued.map(s=>s.units+' × '+s.code+' at '+s.location).join('; ') %>.</p><% } %>
+<p class="cell-sub">Counted: posted supplier credits from claims, disputes and returns, other credit notes StockChief applied, rebate credits, supplier refunds on claims, invoices the supplier corrected, duplicate invoices stopped, freight saved by combined orders, and stock-outs avoided where an order StockChief prepared arrived before the shelf ran empty. Amounts still in dispute are not counted.</p>
+</section>
+
+<section class="card section" id="kept-reports"><h2>Kept reports</h2>
+<% if(open.length){ %><ul class="rm-list"><% open.forEach(f=>{ %><li class="list-row"><span><strong><%= f.detail.title %></strong><small><%= f.detail.happened %></small></span>
+<form method="post" action="/autopilot/reviews/roi-report/flags/<%= f.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Mark as seen</button></form></li><% }) %></ul><% } %>
+<form method="post" action="/autopilot/reviews/roi-report/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>"><button class="btn btn--ghost">Make and keep the <%= month %> report now</button></form>
+<p class="cell-sub">StockChief makes this report on its own after each month ends, tells you in Needs you and, if email alerts are on, emails it. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+<% if(runs.length){ %><ul class="rm-list"><% runs.forEach(run=>{ %><li class="list-row"><span><%= run.period %> · <%= run.outcome==='PRODUCED'?'Made':run.outcome==='WATCHED'?'Made while watching':'Stopped' %><small><%= stamp(run.created_at) %><%= run.authorization_kind==='AUTOMATIC'?' · on its own':' · by you' %><%= run.reason?' · '+run.reason:'' %></small></span></li><% }) %></ul><% } %>
+</section>

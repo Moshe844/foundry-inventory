@@ -72,10 +72,37 @@ async function sample(db, ctx, input) {
     [input.requestKey,ctx.workspaceId,ctx.actorId,input.activity,...minutes]);
 }
 
+// Which optional event sources this database has (older databases lack some).
+async function features(db){
+  return (await db.query(`SELECT to_regclass('stockchief_runtime.agent_direct_orders') IS NOT NULL AS supplier_direct,
+    to_regclass('stockchief_runtime.agent_delivery_comparisons') IS NOT NULL AS delivery_comparisons`)).rows[0];
+}
+
 async function report(db,ctx,window='week') {
-  const features=await access(db,ctx);
+  const available=await access(db,ctx);
   if (!['week','month'].includes(window)) throw new ValidationError('Choose the last seven or thirty days.');
   const days = window==='week' ? 7 : 30;
+  const completed=await completedWork(db,ctx.workspaceId,available,{from:new Date(Date.now()-days*86400000).toISOString()});
+  const timings=await timingSamples(db,ctx.workspaceId);
+  const rows = [...activities].map(([key,label])=>{
+    const count=completed.find(r=>r.activity===key)?.n || 0, time=timings.find(r=>r.activity===key);
+    return {key,label,count,samples:time?.n || 0,minutes:time ? count*Number(time.net_minutes) : null};
+  });
+  const coverage=rows.reduce((sum,r)=>sum+(r.samples?0:r.count),0);
+  const monetary=await moneyReview(db,ctx,days);
+  return {days,rows,coverage,...monetary,minutes:rows.some(r=>r.samples>0)?rows.reduce((n,r)=>n+(r.minutes??0),0):null};
+}
+
+// The owner's timed samples: average manual minutes minus review minutes per task.
+async function timingSamples(db,workspaceId){
+  return (await db.query(`SELECT activity,count(*)::integer AS n,avg(manual_minutes-review_minutes) AS net_minutes
+    FROM stockchief_runtime.agent_time_samples WHERE workspace_id=$1 GROUP BY activity`,[workspaceId])).rows;
+}
+
+// Completed, evidenced agent work per task from `from` (inclusive) to `to`
+// (exclusive), or up to now when `to` is not given. Job 161's monthly ROI
+// report counts a calendar month with the same rules as the rolling report.
+async function completedWork(db,workspaceId,features,{from,to=null}) {
   const directEvents=features?.supplier_direct?`
     SELECT 'supplier-direct-purchase',min(m.sent_at::timestamptz)
       FROM stockchief_runtime.agent_direct_orders d JOIN supplier_communications m
@@ -107,7 +134,7 @@ async function report(db,ctx,window='week') {
     SELECT 'delivery-comparison',min(c.recorded_at) FROM stockchief_runtime.agent_delivery_comparisons c
       WHERE c.workspace_id=$1 AND c.result->>'version'='1' AND jsonb_array_length(c.result->'original')>0
       GROUP BY c.purchase_order_id,lower(trim(c.source_reference)) UNION ALL`:'';
-  const completed = (await db.query(`WITH first_send AS (
+  return (await db.query(`WITH first_send AS (
     SELECT m.purchase_order_id,min(m.sent_at::timestamptz) AS occurred FROM supplier_communications m
     WHERE m.workspace_id=$1 AND m.status='SENT' AND m.external_message_id IS NOT NULL AND EXISTS (
       SELECT 1 FROM work_items w WHERE w.workspace_id=m.workspace_id AND w.purchase_order_id=m.purchase_order_id
@@ -126,7 +153,7 @@ async function report(db,ctx,window='week') {
     SELECT 'supplier-delivery-followup',m.sent_at::timestamptz FROM supplier_communications m
       WHERE m.workspace_id=$1 AND m.status='SENT' AND nullif(m.external_message_id,'') IS NOT NULL
         AND m.idempotency_key LIKE 'supplier-follow-up:%:supplier_delivery_late:%'
-        AND m.sent_at::timestamptz>=CURRENT_TIMESTAMP-($2::int * interval '24 hours')
+        AND m.sent_at::timestamptz>=$2::timestamptz
         AND EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=m.workspace_id
           AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED'
           AND e.payload->'standingAuthority'->>'kind'='purchase_followup' AND e.payload->'standingAuthority'->>'ruleId' IS NOT NULL) UNION ALL
@@ -194,7 +221,7 @@ async function report(db,ctx,window='week') {
         AND o.idempotency_key=r.idempotency_key AND o.status='COMPLETED' AND o.result->>'receiptId'=r.id
         AND o.result->>'purchaseOrderId'=r.purchase_order_id AND o.result=r.result::jsonb
       WHERE r.workspace_id=$1 AND r.idempotency_key LIKE 'receiving-document:%'
-        AND r.created_at>=to_char((CURRENT_TIMESTAMP-($2::int * interval '24 hours')) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        AND r.created_at>=to_char($2::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         AND jsonb_array_length(o.result->'lines')>0 AND EXISTS(
           SELECT 1 FROM import_plans p WHERE p.workspace_id=r.workspace_id AND 'receiving-document:'||p.source_hash=r.idempotency_key
             AND p.transformations::jsonb->>'agentJob'='43' AND p.transformations::jsonb->>'receivingOrderId'=r.purchase_order_id)
@@ -238,7 +265,7 @@ async function report(db,ctx,window='week') {
     SELECT 'product-facts',min(f.saved_at) FROM stockchief_runtime.agent_sourced_product_facts f JOIN stockchief_runtime.agent_product_source_readings r ON r.workspace_id=f.workspace_id AND r.id=f.reading_id WHERE f.workspace_id=$1 GROUP BY r.item_id,r.source_hash UNION ALL
     SELECT 'channel-copy',v.exported_at FROM stockchief_runtime.agent_channel_copy_versions v WHERE v.workspace_id=$1 AND v.exported_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_channel_copy_versions older WHERE older.workspace_id=v.workspace_id AND older.document_hash=v.document_hash AND older.exported_at IS NOT NULL AND (older.exported_at,older.id)<(v.exported_at,v.id)) UNION ALL
     SELECT 'team-procedure',v.created_at FROM stockchief_runtime.agent_team_procedure_versions v
-      WHERE v.workspace_id=$1 AND v.created_at>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND NOT EXISTS(
+      WHERE v.workspace_id=$1 AND v.created_at>=$2::timestamptz AND NOT EXISTS(
        SELECT 1 FROM stockchief_runtime.agent_team_procedure_versions older WHERE older.workspace_id=v.workspace_id AND older.procedure_id=v.procedure_id
         AND older.document_hash=v.document_hash AND (older.created_at,older.id)<(v.created_at,v.id)) UNION ALL
     SELECT 'return-email',r.created_at::timestamptz FROM stockchief_runtime.agent_return_email_sources s
@@ -284,16 +311,8 @@ async function report(db,ctx,window='week') {
           WHERE NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.workspace_id=a.workspace_id AND p.id=d.id))
   )
   SELECT activity,count(*)::integer AS n FROM events
-  WHERE occurred>=CURRENT_TIMESTAMP-($2::int * interval '24 hours') AND occurred<=CURRENT_TIMESTAMP GROUP BY activity`,[ctx.workspaceId,days])).rows;
-  const timings = (await db.query(`SELECT activity,count(*)::integer AS n,avg(manual_minutes-review_minutes) AS net_minutes
-    FROM stockchief_runtime.agent_time_samples WHERE workspace_id=$1 GROUP BY activity`,[ctx.workspaceId])).rows;
-  const rows = [...activities].map(([key,label])=>{
-    const count=completed.find(r=>r.activity===key)?.n || 0, time=timings.find(r=>r.activity===key);
-    return {key,label,count,samples:time?.n || 0,minutes:time ? count*Number(time.net_minutes) : null};
-  });
-  const coverage=rows.reduce((sum,r)=>sum+(r.samples?0:r.count),0);
-  const monetary=await moneyReview(db,ctx,days);
-  return {days,rows,coverage,...monetary,minutes:rows.some(r=>r.samples>0)?rows.reduce((n,r)=>n+(r.minutes??0),0):null};
+  WHERE occurred>=$2::timestamptz AND CASE WHEN $3::timestamptz IS NULL THEN occurred<=CURRENT_TIMESTAMP ELSE occurred<$3::timestamptz END
+  GROUP BY activity`,[workspaceId,from,to])).rows;
 }
 async function moneyReview(db,ctx,days){
   const money=require('../domain/currency');
@@ -322,4 +341,4 @@ async function moneyReview(db,ctx,days){
   return {amounts:amounts.map(r=>({currency:r.currency,flagged:money.format(r.flagged,r.currency),applied:money.format(r.applied,r.currency)})),
     planPrice:price==null?null:money.format(price,terms.currency),planInterval:annual?'year':'month'};
 }
-module.exports = { report,sample };
+module.exports = { report,sample,activities,features,completedWork,timingSamples };

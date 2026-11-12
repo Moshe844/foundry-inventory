@@ -1,5 +1,5 @@
 'use strict';
-// Jobs 157, 158 and 159: the monthly reports StockChief makes on its own.
+// Jobs 157, 158, 159, 161, 162 and 163: the monthly reports StockChief makes on its own.
 //
 // Each report it makes for a month is one run. The run key is a hash of the
 // facts, so a replay of the same facts finds the same run and writes nothing.
@@ -68,7 +68,9 @@ async function accounting(db,workspaceId){
 // Keep one run for these facts and open, update or clear the month's flags.
 // `flags` is the full set the run raises: [{key,currency,amount,detail}]. A run
 // made only to keep a copy (syncFlags false) leaves the month's flags alone.
-async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=null,problem=null,action,syncFlags=true}){
+// A check that is kept current (supersede) also clears flags still open from
+// its earlier months, so only the latest month's findings wait in Needs you.
+async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=null,problem=null,action,syncFlags=true,supersede=false}){
   const outcome=problem?'STOPPED':watch?'WATCHED':'PRODUCED';
   const runKey=hash({job,period,outcome,watch,problem,automatic,facts});
   await storage.reserve(scoped(c),ctx.workspaceId,'agent-report-run:'+runKey.slice(0,48),4096+Buffer.byteLength(JSON.stringify(result||{})),{finished:true});
@@ -104,6 +106,9 @@ async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=nu
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,f.id,'A later check of '+monthName(period)+' no longer finds it.',runId]);
       cleared.push(f.id);
     }
+    if(supersede)for(const f of (await c.query(`UPDATE ${tables.flags} SET status='CLEARED',cleared_reason=$4,cleared_at=clock_timestamp(),last_run_id=$5,updated_at=clock_timestamp()
+      WHERE workspace_id=$1 AND job_id=$2 AND period<$3 AND status IN ('OPEN','DISMISSED') RETURNING id`,
+    [ctx.workspaceId,job,period,'Replaced by the check for '+monthName(period)+'.',runId])).rows)cleared.push(f.id);
   }
   await audit.record(c,ctx,{action,reference:monthName(period),before:{},after:{runId,outcome,reason:problem||watch||null,opened,cleared,
     flagged:flags.map(f=>f.detail.title)}});
@@ -142,7 +147,7 @@ async function inbox(db,workspaceId){
   const installed=require('../db/schema-installed');
   if(!(await installed.has(db,tables.flags))||!(await installed.has(db,tables.runs)))return [];
   const state=await policy.accountState(db,workspaceId);
-  const jobs=[157,158,159].filter(job=>alone(state,job));if(!jobs.length)return [];
+  const jobs=[157,158,159,161,162,163].filter(job=>alone(state,job));if(!jobs.length)return [];
   const [flags,stopped]=await Promise.all([
     db.query(`SELECT id,job_id,period,currency,amount_minor,detail,updated_at FROM ${tables.flags}
       WHERE workspace_id=$1 AND status='OPEN' AND job_id=ANY($2::int[]) ORDER BY period DESC,id LIMIT 50`,[workspaceId,jobs]),
@@ -152,8 +157,9 @@ async function inbox(db,workspaceId){
     happened:f.detail.happened,why:f.detail.why,recommendation:f.detail.recommendation,href:f.detail.href,actionLabel:f.detail.actionLabel||'Open the report',
     sourceId:'agent-report:'+f.id,createdAt:f.updated_at,at:f.updated_at,
     ...(f.currency&&f.amount_minor!=null?{moneyCurrency:f.currency,moneyValue:Math.abs(Number(f.amount_minor))}:{})}));
-  const labels={157:'The monthly change check',158:'The month-end stock report',159:'The board pack'};
-  const paths={157:'/autopilot/reviews/margin-change',158:'/autopilot/reviews/month-end-stock',159:'/autopilot/reviews/board-pack'};
+  const labels={157:'The monthly change check',158:'The month-end stock report',159:'The board pack',161:'The monthly ROI report',162:'The stock health check',163:'The forecast and delivery report'};
+  const paths={157:'/autopilot/reviews/margin-change',158:'/autopilot/reviews/month-end-stock',159:'/autopilot/reviews/board-pack',161:'/autopilot/reviews/roi-report',
+    162:'/autopilot/reviews/stock-health',163:'/autopilot/reviews/service-levels'};
   for(const run of stopped.rows.filter(r=>r.outcome==='STOPPED'))out.push({kind:'accounting',importance:'Needs You',priority:50,
     title:labels[run.job_id]+' for '+monthName(run.period)+' stopped',happened:String(run.reason||'It could not finish.'),
     why:'StockChief does not guess figures it cannot find in your records.',recommendation:'Review what is missing, then check again.',

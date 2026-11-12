@@ -1,0 +1,35 @@
+<% const r=review,stamp=v=>helpers.dateTime(v),open=flags.filter(f=>f.status==='OPEN'),seen=flags.filter(f=>f.status==='DISMISSED'),cleared=flags.filter(f=>f.status==='CLEARED'); %>
+<div class="page-head"><div class="titles"><h1>Stock health</h1>
+<p>For each item at each location: how often its stock turns over, the gross margin it earns back on the money tied up in it (GMROI), and how many days its stock lasts at the recorded rate of sales. It uses up to the last <%= window %> days. StockChief changes nothing here.</p></div></div>
+<% if(shadow&&alone){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It checks stock health each day and raises no flags.</p>
+<% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+
+<section class="card section"><form method="get" action="/autopilot/reviews/stock-health" class="form-stack">
+<label class="rm-field"><span>Item code or name</span><input name="filter" value="<%= filter %>" maxlength="150" aria-label="Item code or name"></label>
+<button class="btn">Show</button></form>
+<p class="cell-sub"><%= r.summary %></p></section>
+
+<section class="card section"><h2><%= r.mode==='suggest'?'Suggestion':'Items and locations' %></h2>
+<% if(r.mode==='suggest'){ %>
+<% if(r.rows.length){ %><p><%= r.rows[0].Suggestion %></p><% }else{ %><p>No stock or sales recorded yet.</p><% } %>
+<p class="cell-sub">Checking every item each day and flagging the worst in Needs you needs Growth.</p>
+<% }else if(!r.rows.length){ %><p>No stock or sales recorded<%= filter?' for '+filter:'' %>.</p><% }else{ %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Item</th><th>Location</th><th>Average stock value</th><th>Turns</th><th>GMROI</th><th>Days of supply</th></tr></thead><tbody>
+<% r.rows.forEach(x=>{ %><tr><td class="cell-main"><a class="cell-title" href="<%= x.link %>"><%= x.SKU %></a><small class="cell-sub"><%= x.Product %> · <%= x['Days measured']==null?'no value records':x['Days measured']+' day'+(x['Days measured']===1?'':'s') %><% if(x['Valuation check']!=='Matches the stock ledger'){ %> · <span class="badge badge--warn">Valuation needs review</span><% } %></small></td>
+<td data-label="Location"><%= x.Location %></td><td data-label="Average stock value"><%= x['Average stock value']??'Withheld' %></td>
+<td data-label="Turns"><%= x['Inventory turns']??'—' %></td><td data-label="GMROI"><%= x.GMROI??'—' %></td><td data-label="Days of supply"><%= x['Days of supply']??'No sales' %></td></tr><% }) %>
+</tbody></table></div>
+<% if(r.more){ %><p><a href="?<%= new URLSearchParams({filter,page:String(r.page+1)}) %>">Next items</a></p><% } %>
+<p class="cell-sub">Money ratios are withheld when goods carry no cost or the stock records and their values disagree.</p><% } %>
+</section>
+
+<% if(alone){ %><section class="card section" id="stock-health-flags"><h2>Worst items</h2>
+<% if(open.length){ %><ul class="rm-list"><% open.forEach(f=>{ %><li class="list-row"><span><strong><%= f.detail.title %></strong><small><%= f.detail.happened %></small></span>
+<form method="post" action="/autopilot/reviews/stock-health/flags/<%= f.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Mark as seen</button></form></li><% }) %></ul>
+<% }else{ %><p class="cell-sub">No item is flagged right now.</p><% } %>
+<% if(seen.length){ %><p class="cell-sub">Seen: <%= seen.map(f=>f.detail.title).join('; ') %>.</p><% } %>
+<% if(cleared.length){ %><p class="cell-sub">Recently cleared: <%= cleared.slice(0,10).map(f=>f.detail.title+' ('+f.cleared_reason+')').join('; ') %></p><% } %>
+<form method="post" action="/autopilot/reviews/stock-health/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check every item now</button></form>
+<p class="cell-sub">StockChief checks every item each day and flags up to five that earn back less in gross margin than their stock costs to hold, once at least <%= minimumDays %> days are measured. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+<% if(runs.length){ %><ul class="rm-list"><% runs.forEach(run=>{ %><li class="list-row"><span><%= run.result.asOf||run.period %> · <%= run.outcome==='PRODUCED'?'Checked':run.outcome==='WATCHED'?'Checked while watching':'Stopped' %><small><%= stamp(run.created_at) %><%= run.authorization_kind==='AUTOMATIC'?' · on its own':' · by you' %> · <%= run.result.checked||0 %> item locations<%= run.reason?' · '+run.reason:'' %></small></span></li><% }) %></ul><% } %>
+</section><% } %>

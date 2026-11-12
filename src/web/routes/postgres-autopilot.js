@@ -789,6 +789,29 @@ function createPostgresAutopilotRouter(database,options={}){
     res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
   router.post(boardPack.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,boardPack.href+'#kept-packs');}));
   router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
+  // Job 161: the monthly ROI report, made on its own after each month on every plan.
+  const roiReport=require('../../reports/agent-roi-report');
+  const reportFile=(res,file)=>res.set('Cache-Control','private, no-store').type(file.format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment(file.filename).send(file.body);
+  router.get(roiReport.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/roi-report',{title:'Monthly ROI report',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>roiReport.page(database,req.ctx,req.query),402)));
+  router.get(roiReport.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>reportFile(res,await roiReport.download(database,req.ctx,req.query))));
+  router.post(roiReport.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await roiReport.checkNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since this report was kept.':'Report made and kept.');
+    res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-reports');}));
+  // Job 162: stock health per item and location, checked each day on Growth and up.
+  const stockHealth=require('../../forecasting/agent-stock-health');
+  router.get(stockHealth.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/stock-health',{title:'Stock health',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>stockHealth.page(database,req.ctx,req.query),402)));
+  router.post(stockHealth.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await stockHealth.checkNow(database,req.ctx);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':(r.opened.length?r.opened.length+' item'+(r.opened.length===1?'':'s')+' flagged.':'Checked every item.')+(r.cleared.length?' '+r.cleared.length+' cleared.':''));
+    res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  router.post(stockHealth.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  // Job 163: forecast accuracy, fill rate and on-time in full, kept current on Growth and up.
+  const serviceLevels=require('../../forecasting/agent-service-levels');
+  router.get(serviceLevels.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/service-levels',{title:'Forecast accuracy and delivery',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>serviceLevels.page(database,req.ctx,req.query),402)));
+  router.get(serviceLevels.href+'/download',requireAuth,owner,asyncRoute(async(req,res)=>reportFile(res,await serviceLevels.download(database,req.ctx,req.query))));
+  router.post(serviceLevels.href+'/keep',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await serviceLevels.keep(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'Nothing changed since this month was kept.':'Month kept.');
+    res.redirect(303,serviceLevels.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-months');}));
+  router.post(roiReport.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:r.period})+'#kept-reports');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));
   router.post('/autopilot/net-contribution/reviews/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await contribution.apply(database,req.ctx,req.params.id,req.body);req.flash('success','Actual cost facts confirmed for the contribution report.');res.redirect(303,'/autopilot/net-contribution/reviews/'+req.params.id);}));
