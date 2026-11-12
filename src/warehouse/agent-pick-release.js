@@ -127,7 +127,7 @@ async function hold(c,workspaceId,o,creditRule){
 
 // The reserved stock and batches behind each order must still be there.
 async function stockFacts(c,workspaceId,orderIds,{lock=false}={}){
-  if(!orderIds.length)return {lines:[],problems:new Map()};
+  if(!orderIds.length)return {lines:[],problems:new Map(),positions:[]};
   const lines=(await c.query(`SELECT l.id line_id,l.sales_order_id,l.sku_id,s.code,i.name item,i.tracking_mode,i.secondary_unit_label,
     l.quantity_ordered::text quantity,coalesce(l.unit_price_minor,0)::text price,a.id allocation_id,a.location_id,loc.name location_name,
     a.quantity::text allocated,a.rotation_selection
