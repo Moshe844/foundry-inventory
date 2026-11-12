@@ -61,6 +61,8 @@ async function execute(client,ctx,p){
  if(status==='MATCHED'&&p.documentType==='order_acknowledgement')for(const line of p.facts.lines)await client.query(`INSERT INTO purchase_order_line_expectations(id,workspace_id,purchase_order_id,purchase_order_line_id,confirmed_units,expected_arrival_date,source_document_id,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(workspace_id,purchase_order_line_id) DO UPDATE SET confirmed_units=EXCLUDED.confirmed_units,expected_arrival_date=EXCLUDED.expected_arrival_date,source_document_id=EXCLUDED.source_document_id,updated_at=EXCLUDED.updated_at`,[newId('poexp'),ctx.workspaceId,order.id,line.lineId,line.quantity,p.facts.expectedArrivalDate,id,at]);
  await client.query(`INSERT INTO purchase_order_events(id,workspace_id,purchase_order_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'supplier_evidence_recorded',$4,$5,$6)`,[newId('poevt'),ctx.workspaceId,order.id,JSON.stringify({documentId:id,documentType:p.documentType,status}),ctx.actorId,at]);
  await require('../operations/postgres-workflow-ownership').capture(client,ctx,'purchase',order.id,{id:'supplier-evidence:'+id,kind:'supplier_evidence.record'});
+ // Job 31: changed quantities, prices or dates become a purchase-change review.
+ await require('./po-amendment-document').queue(client,ctx.workspaceId,{documentId:id,documentType:p.documentType,status,orderStatus:order.status,differences:p.differences});
  return {documentId:id,purchaseOrderId:order.id,status,replayed:false};
 }
 module.exports={assess,execute};

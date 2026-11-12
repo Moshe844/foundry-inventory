@@ -27,6 +27,7 @@
   "28": "Queues an approved purchase order and its supplier message. Delivery through a live connected mailbox still needs verification.",
   "29": "Prepares scoped supplier confirmation requests for reorders and stops queued requests when a reply arrives. Live mailbox delivery remains open.",
   "30": "Prepares a delivery chase for a late supplier order and rechecks authority before sending. Live mailbox acceptance remains open.",
+  "31": "Updates a placed purchase order when the supplier changes the quantity, price or delivery date. The change can come from the supplier's private order link, a reply on the order's email thread, or a saved supplier confirmation, backorder notice or price update. Each change makes a new order version with its history; goods already received keep their price. Changes over your price, quantity or date limits, and unclear evidence, wait for you. Pro drafts until you approve and teach an example; Custom works within your limits without teaching.",
   "32": "Shows overdue open purchase quantities after partial receipts. Cancelling an order remains a separate decision.",
   "33": "Refreshes a ready replenishment proposal when stock or reservations change. An approved supplier action creates one purchase order and queues one message.",
   "34": "Compares expected and actual supplier arrivals. Replenishment and its purchase drafts use the observed warehouse lead time once enough orders have arrived. Split receipts count as one order.",

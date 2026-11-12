@@ -16,7 +16,8 @@ function limits(input,p){
     priceBps:exact.atoms(String(input.maximumPricePercent??''),2,{label:'Maximum unit price change percentage'}),
     orderIncrease:money.userToMinor(input.maximumOrderIncrease,p.currency,{label:'Maximum increase from the original order'}),
     profiles:[...new Set(p.amendments.filter(line=>line.changed).map(profile))].sort(),
-    mailbox:p.mailSource?{connectorId:p.mailSource.connectorId,providerAccountId:p.mailSource.providerAccountId}:null,
+    mailbox:p.mailSource?{connectorId:p.mailSource.connectorId,providerAccountId:p.mailSource.providerAccountId,
+      ...(p.mailSource.source?{source:p.mailSource.source}:{})}:null,
   };
 }
 
@@ -27,9 +28,12 @@ function exceeds(before,after,basisPoints,precision=6){
   return (difference<0n?-difference:difference)*10000n>old*BigInt(basisPoints);
 }
 
+// Replies on the purchase thread and saved supplier documents from the same
+// mailbox are separate sources. Each needs its own authorization.
 function sameSource(p,authorization){
   return p.mailSource
-    ?authorization?.mailbox?.connectorId===p.mailSource.connectorId&&authorization.mailbox.providerAccountId===p.mailSource.providerAccountId
+    ?authorization?.mailbox?.connectorId===p.mailSource.connectorId&&authorization.mailbox.providerAccountId===p.mailSource.providerAccountId&&
+      (authorization.mailbox.source||'reply')===(p.mailSource.source||'reply')
     :!authorization?.mailbox;
 }
 
