@@ -144,13 +144,19 @@ function createPostgresMailRouter(database,options={}){
   router.post('/mail/:id/return-rule',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-customer-return-emails').teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/return');
   }));
+  // A "same as last month" email is a repeat order (job 53); other order emails are read line by line (job 52).
+  const repeatEmail=async req=>{
+    const m=(await database.query('SELECT subject,body_text FROM connection_email_messages WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];
+    if(!m||(await database.query('SELECT 1 FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 LIMIT 1',[req.ctx.workspaceId,req.params.id])).rowCount)return false;
+    return require('../../sales/agent-repeat-orders').isEmailRequest(m.subject,m.body_text);
+  };
   router.get('/mail/:id/order',requirePermission(permissions.OPERATE,'prepare a customer order'),asyncRoute(async(req,res)=>{
-    const review=await require('../../sales/postgres-email-order').review(database,req.ctx,req.params.id);
+    const review=await (await repeatEmail(req)?require('../../sales/agent-repeat-orders'):require('../../sales/postgres-email-order')).review(database,req.ctx,req.params.id);
     if(review.existing)return res.redirect(303,'/orders/'+encodeURIComponent(review.existing.id));
     return res.page('mail/order-review',{title:'Review customer order',nav:'mail',review,messageId:req.params.id,money:require('../../pricing/postgres-service').formatMinor});
   }));
   router.post('/mail/:id/order',requirePermission(permissions.OPERATE,'prepare a customer order'),asyncRoute(async(req,res)=>{
-    const order=await require('../../sales/postgres-email-order').create(database,req.ctx,req.params.id,req.body.digest);
+    const order=await (await repeatEmail(req)?require('../../sales/agent-repeat-orders'):require('../../sales/postgres-email-order')).create(database,req.ctx,req.params.id,req.body.digest);
     return res.redirect(303,'/orders/'+encodeURIComponent(order.salesOrderId));
   }));
   router.get('/mail/:id/attachments/status',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{

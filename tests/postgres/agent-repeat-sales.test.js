@@ -77,9 +77,12 @@ test('customer orders from email and PDF are priced, reviewed or run under curre
   const modes=require('../../src/autopilot/job-modes'),autopilot=require('../../src/autopilot/postgres-service');
   await assert.rejects(modes.save(db,ctx,52,{mode:'routine',revision:0}),/cannot run/);
   await subscribe('pro');await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');await modes.save(db,ctx,52,{mode:'routine',revision:0});
-  const pending=await capture('PO #HOLD-002\n'+code+' qty 2');assert.match((await run(pending)).reason,/first order/);
+  await require('../../src/sales/agent-customer-orders').configure(db,ctx,{revision:0,maximum:'500',maximumUnits:'100'});
+  // A customer's first order is prepared for a person instead of confirmed.
+  const pending=await capture('PO #HOLD-002\n'+code+' qty 2'),first=await run(pending);
+  assert.match(first.reason,/first order/);assert.equal(first.status,'DRAFT');
   await db.query("UPDATE connection_email_messages SET agent_category='message' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,pending]);
-  assert.match((await run(pending)).reason,/first order/);
+  assert.equal((await run(pending)).replayed,true);
   await f.parcel({quantity:1});
   const pdf=new (require('pdfkit'))(),chunks=[];pdf.on('data',b=>chunks.push(b));const finished=new Promise((resolve,reject)=>{pdf.on('end',resolve);pdf.on('error',reject);});
   pdf.text('Purchase order #PDF-8\n'+code+' qty 4');pdf.end();await finished;
@@ -90,8 +93,10 @@ test('customer orders from email and PDF are priced, reviewed or run under curre
   assert.equal((await run(document)).replayed,true);assert.equal(Number((await detail(document)).rows[0].pricing_total_minor),3200);
   const duplicate=await capture('PO #PDF-8\n'+code+' qty 4');assert.match((await run(duplicate)).reason,/already uses/);
   await subscribe('enterprise');
-  const custom=await capture('PO #CUSTOM-012\n2 units of '+code);assert.ok((await run(custom)).salesOrderId);
-  const late=await capture('PO #DOWN-1\n'+code+' qty 2');await subscribe('growth');assert.match((await run(late)).reason,/Pro/);assert.equal((await detail(late)).rowCount,0);
+  const custom=await capture('PO #CUSTOM-012\n2 units of '+code);assert.equal((await run(custom)).status,'CONFIRMED');
+  const late=await capture('PO #DOWN-1\n'+code+' qty 2');await subscribe('growth');
+  const drafted=await run(late);assert.equal(drafted.status,'DRAFT');assert.match(drafted.reason,/for your approval/);
+  assert.deepEqual((await detail(late)).rows.map(r=>r.status),['DRAFT']);
   assert.equal(await f.balance(),20);
 });
 

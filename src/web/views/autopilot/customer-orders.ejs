@@ -1,0 +1,77 @@
+<% const base='/autopilot/customer-orders'; %>
+<header class="rm-head">
+  <h1>Customer orders from email</h1>
+  <p><%= screen.modes[52]==='alone'?'When a known customer emails an order, or attaches a PDF or spreadsheet, StockChief creates and confirms it on its own when every product, quantity, address and price matches and the order is within your limits.':
+    'When a known customer emails an order, or attaches a PDF or spreadsheet, StockChief prepares the order for you to approve.' %>
+    <%= screen.modes[53]==='alone'?'A sentence like “same as last month”, in Ask or from the customer, repeats their order at today’s prices the same way.':
+      screen.modes[53]==='trained'?'A sentence like “same as last month”, in Ask or from the customer, prepares their repeat order. Once you approve one for a customer, or save a rule for them, StockChief repeats it on its own.':'' %>
+    Anything new or unclear waits for you.</p>
+</header>
+<% if(screen.stop){ %><p class="notice notice--warn" data-orders-stop><%= screen.stop %></p><% } %>
+
+<h2>Waiting for you</h2>
+<% if(!screen.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<ul class="rm-list" data-orders-waiting>
+<% for(const w of screen.waiting){ %>
+  <li class="list-row" data-order-work="<%= w.id %>">
+    <span><a href="<%= w.href %>"><strong><%= w.order?w.order+' · ':'' %><%= w.who %></strong></a>
+      <small><%= w.what==='repeat order'?'Repeat order':'Order' %><%= w.subject?' · '+w.subject:'' %><%= w.amount?' · '+w.amount:'' %><%= w.reading?' · '+w.reading:'' %></small>
+      <% if(w.reason){ %><small><%= w.reason %></small><% } %></span>
+    <span><%= w.label %></span>
+  </li>
+<% } %>
+</ul>
+
+<% if(screen.recent.length){ %>
+<h2>Recent orders</h2>
+<ul class="rm-list" data-orders-recent>
+<% for(const w of screen.recent){ %>
+  <li class="list-row" data-order-done="<%= w.id %>">
+    <span><a href="<%= w.href %>"><strong><%= w.order?w.order+' · ':'' %><%= w.who %></strong></a>
+      <small><%= w.what==='repeat order'?'Repeat order':'Order' %><%= w.amount?' · '+w.amount:'' %><%= w.reading?' · '+w.reading:'' %></small></span>
+    <span><%= w.label %>
+      <% if(w.canUndo){ %><form method="post" action="<%= base %>/<%= w.kind %>/<%= encodeURIComponent(w.id) %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Undo</button></form><% } %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Order pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+<% } %>
+
+<% if(screen.canSetLimits){ const l=screen.limit; %>
+<section class="rm-panel" data-orders-limits><div class="rm-panel__body">
+  <h2>Your limits</h2>
+  <p><%= l&&l.enabled?'StockChief confirms customer orders on its own up to '+helpers.money(l.maximumMinor,l.currency)+' and '+l.maximumUnits+' units an order. Bigger orders wait for you.':
+    l?'Every customer order waits for you.':'Every customer order waits for you until you save your limits.' %></p>
+  <form method="post" action="<%= base %>/limits" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= l?l.revision:0 %>">
+    <label class="field"><span class="field-label">Largest order (<%= screen.currency %>)</span><input class="input" name="maximum" inputmode="decimal" required value="<%= l?l.maximum:'' %>"></label>
+    <label class="field"><span class="field-label">Most units an order</span><input class="input" name="maximumUnits" inputmode="decimal" required value="<%= l?l.maximumUnits:'' %>"></label>
+    <button class="rm-btn" name="enabled" value="yes"><%= l&&l.enabled?'Change the limits':'Save the limits' %></button>
+    <% if(l&&l.enabled){ %><button class="rm-btn rm-btn--ghost" name="enabled" value="no">Ask me about every order</button><% } %>
+  </form>
+</div></section>
+<% } %>
+
+<section class="rm-panel" id="codes" data-orders-codes><div class="rm-panel__body">
+  <h2>Customers’ own product codes</h2>
+  <p>When a customer writes their own code for one of your products, StockChief reads it as that product.</p>
+  <% if(screen.codes.length){ %><ul class="rm-list">
+  <% for(const k of screen.codes){ %>
+    <li class="list-row"><span><strong><%= k.customer %> · <%= k.code %></strong><small><%= k.product %> (<%= k.sku %>)</small></span>
+      <form method="post" action="<%= base %>/codes"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="customerId" value="<%= k.customer_id %>"><input type="hidden" name="code" value="<%= k.code %>">
+        <button class="rm-btn rm-btn--ghost" name="remove" value="yes">Remove</button></form></li>
+  <% } %>
+  </ul><% } %>
+  <form method="post" action="<%= base %>/codes" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">Customer</span><select class="select" name="customerId" required>
+      <option value="">Choose a customer</option>
+      <% for(const c of screen.customers){ %><option value="<%= c.id %>"><%= c.name %></option><% } %>
+    </select></label>
+    <label class="field"><span class="field-label">Their code</span><input class="input" name="code" required maxlength="80"></label>
+    <label class="field"><span class="field-label">Your product code</span><input class="input" name="sku" required maxlength="80"></label>
+    <button class="rm-btn">Save the code</button>
+  </form>
+</div></section>
