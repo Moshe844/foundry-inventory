@@ -452,6 +452,34 @@ function createPostgresAutopilotRouter(database,options={}){
       result.restored?'Plan ended. The original price is back.':'Plan ended. The current price stays.');
     res.redirect(303,clearancePlans.path+'/'+encodeURIComponent(req.params.id));
   }));
+  // Job 197: audit and compliance reports from recorded data.
+  const compliance=require('../../reports/agent-compliance-reports');
+  const compliancePage=starterAgentPage(197,'draft','Compliance reports',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/compliance-reports',{title:'Compliance reports',nav:'autopilot',screen:await compliance.page(database,req.ctx,{id:req.params.id||null}),
+      backTo:req.params.id?{href:compliance.path,label:'Compliance reports'}:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  },'Growth');
+  router.get(compliance.path,requireAuth,owner,compliancePage);
+  router.post(compliance.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await compliance.prepare(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'This report was already prepared.':result.status==='FINAL'?'The report is finalized.':'The draft is ready. Check it, then finalize it.');
+    res.redirect(303,compliance.path+'/'+encodeURIComponent(result.id));
+  }));
+  router.post(compliance.path+'/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await compliance.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Reports are no longer prepared on a schedule.':'Schedule saved.');
+    res.redirect(303,compliance.path);
+  }));
+  router.get(compliance.path+'/:id',requireAuth,owner,compliancePage);
+  router.get(compliance.path+'/:id/download',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const file=await compliance.download(database,req.ctx,req.params.id,String(req.query.format||''));
+    res.set('Cache-Control','private, no-store').type(file.type).attachment(file.filename).send(file.body);
+  }));
+  for(const step of ['finalize','discard'])router.post(compliance.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await compliance[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':step==='finalize'?'The report is finalized.':'The draft was discarded.');
+    res.redirect(303,step==='finalize'?compliance.path+'/'+encodeURIComponent(req.params.id):compliance.path);
+  }));
   // Job 191: warnings before stock expires, with where to sell it first.
   const expiry=require('../../operations/agent-expiry-warnings');
   router.get(expiry.path,requireAuth,owner,starterAgentPage(191,'suggest','Expiring stock',async(req,res)=>{
@@ -1291,6 +1319,7 @@ function createPostgresAutopilotRouter(database,options={}){
       }
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
+      if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
       if(req.params.job==='open-to-buy')result.openToBuyPath=monthlyBuying.path;
       if(req.params.job==='supplier-specifications')result.specForm=true;
