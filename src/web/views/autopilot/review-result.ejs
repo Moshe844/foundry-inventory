@@ -74,10 +74,10 @@
 <% if(result.negotiationForm){ const n=result.negotiationForm; %><form method="post" action="/autopilot/negotiation-draft">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="supplier" value="<%= n.supplier %>">
   <input type="hidden" name="evidence" value="<%= n.evidence||'' %>"><input type="hidden" name="revision" value="<%= n.revision %>">
-  <% if(n.evidence){ %><button class="btn">Save email draft</button><% } %>
-  <% if(n.revision){ %><button class="btn" formaction="/autopilot/negotiation-rule" name="remove" value="1">Stop recurring drafts</button>
-  <% }else if(n.evidence&&result.mode==='trained'){ %><button class="btn" formaction="/autopilot/negotiation-rule">Prepare new drafts when delivery evidence changes</button>
-  <% }else if(result.mode==='draft'){ %><a href="/billing">Recurring negotiation drafts require Custom</a><% } %>
+  <% if(n.evidence){ %><button class="btn">Draft an email from these facts</button><% } %>
+  <a href="/autopilot/supplier-negotiations?supplier=<%= encodeURIComponent(n.supplier) %>">See each fact and its evidence</a>
+  <% if(n.revision){ %><button class="btn" formaction="/autopilot/negotiation-rule" name="remove" value="1">Stop the routine lead-time note</button>
+  <% }else if(result.mode==='draft'){ %><a href="/settings/billing">Routine lead-time notes that send on their own need Custom</a><% } %>
 </form><% } %>
 <% if(result.vacation){ const {rule,people,today}=result.vacation; %>
 <form method="post" action="/autopilot/vacation-deputy">

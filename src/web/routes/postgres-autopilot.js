@@ -852,6 +852,14 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-rfqs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.send(database,req.ctx,req.params.id,req.body);req.flash('success','The exact RFQ emails are queued separately. No purchase was placed.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
   router.post('/autopilot/supplier-rfqs/:id/authority',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.configure(database,req.ctx,req.params.id,req.body);req.flash('success','Saved this exact bounded RFQ authority.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
   router.post('/autopilot/supplier-rfqs/:id/routine',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.sendAutomatic(database,req.ctx,req.params.id,req.body.ruleId);req.flash('success','RFQs within the existing rule are queued. Each send rechecks current authority.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  // Job 93: replies, reminders, closing an RFQ and the owner's quote rules.
+  router.post('/autopilot/supplier-rfqs/:id/chase/:deliveryId',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.chase(database,req.ctx,req.params.id,req.params.deliveryId,req.body);req.flash('success','The reminder is queued. Nothing was ordered.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  router.post('/autopilot/supplier-rfqs/:id/quote/:supplierId',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.recordQuote(database,req.ctx,req.params.id,req.params.supplierId,req.body);req.flash('success','The quote is recorded. Nothing was accepted or ordered.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  router.post('/autopilot/supplier-rfqs/:id/close',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.close(database,req.ctx,req.params.id,req.body);req.flash('success','RFQ closed. No more reminders will go out.');res.redirect(303,'/autopilot/supplier-rfqs/'+req.params.id);}));
+  const quoteRules=require('../../purchasing/agent-rfq-competition');
+  router.post('/autopilot/supplier-rfq-competition',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteRules.save(database,req.ctx,quoteRules.fromForm(req.body));req.flash('success','Quote rule saved.');res.redirect(303,'/autopilot/supplier-rfqs');}));
+  router.post('/autopilot/supplier-rfq-competition/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteRules.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Quote rule stopped.');res.redirect(303,'/autopilot/supplier-rfqs');}));
+  router.post('/autopilot/supplier-rfq-competition/:id/teach',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteRules.teach(database,req.ctx,req.params.id,req.body);req.flash('success','Taught. Matching RFQs from this rule now go out on their own.');res.redirect(303,'/autopilot/supplier-rfqs/'+encodeURIComponent(req.body.requestId));}));
   router.post('/autopilot/supplier-rfq-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await rfqs.configure(database,req.ctx,null,{...req.body,stop:'yes',ruleId:req.params.id});res.redirect(303,'/autopilot/supplier-rfqs');}));
   const quality=require('../../operations/agent-quality-holds');
   const qualityPhotos=require('../../operations/quality-photos'),claims=require('../../purchasing/agent-supplier-claims');
@@ -1454,13 +1462,25 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/vacation-deputy');
   }));
+  // Job 94: negotiation emails built from recorded facts.
+  const negotiations=require('../../purchasing/negotiation-drafts');
+  const negotiationPage=async(req,res,options)=>res.page('autopilot/supplier-negotiations',{title:'Supplier negotiation emails',nav:'autopilot',
+    backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'},...await negotiations.page(database,req.ctx,options)});
+  router.get('/autopilot/supplier-negotiations',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{supplier:req.query.supplier})));
+  router.get('/autopilot/supplier-negotiations/drafts/:id',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{draftId:req.params.id})));
+  router.post('/autopilot/supplier-negotiations/drafts/:id/save',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await negotiations.edit(database,req.ctx,req.params.id,req.body);req.flash('success','Draft saved. Nothing was sent.');res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+req.params.id);
+  }));
+  router.post('/autopilot/supplier-negotiations/drafts/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await negotiations.send(database,req.ctx,req.params.id,req.body);req.flash('success','The email is queued to the supplier.');res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+req.params.id);
+  }));
   router.post('/autopilot/negotiation-draft',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const id=await require('../../purchasing/negotiation-drafts').prepare(database,req.ctx,req.body);
-    res.redirect(303,'/messages/supplier/'+id);
+    const id=await negotiations.prepare(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/supplier-negotiations/drafts/'+id);
   }));
   router.post('/autopilot/negotiation-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/negotiation-drafts').configure(database,req.ctx,req.body);
-    res.redirect(303,'/autopilot/reviews/supplier-negotiation?'+new URLSearchParams({filter:req.body.supplier}));
+    await negotiations.configure(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/supplier-negotiations?'+new URLSearchParams({supplier:req.body.supplier}));
   }));
   router.post('/autopilot/purchase-approval-threshold',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);

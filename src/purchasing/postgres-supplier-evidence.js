@@ -65,4 +65,54 @@ async function execute(client,ctx,p){
  await require('./po-amendment-document').queue(client,ctx.workspaceId,{documentId:id,documentType:p.documentType,status,orderStatus:order.status,differences:p.differences});
  return {documentId:id,purchaseOrderId:order.id,status,replayed:false};
 }
-module.exports={assess,execute};
+// Job 93: a supplier's reply to an RFQ is captured like any other quotation
+// (job 92), but against the RFQ instead of a purchase order. It is evidence
+// only: nothing is ordered, accepted or posted.
+const unix=text=>String(text||'').replace(/\r\n?/g,'\n');
+async function assessQuotation(db,ctx,request,supplierId,document){
+ if(!document||typeof document!=='object'||Array.isArray(document)||document.documentType!=='quotation'||!Array.isArray(document.lines)||!document.lines.length||document.lines.length>100)throw new ValidationError('Record the supplier’s quoted products, quantities and prices.');
+ const p=request.snapshot,supplier=p.suppliers.find(s=>s.id===supplierId);if(!supplier)throw new ValidationError('This supplier is not in the RFQ.');
+ const message=(await db.query("SELECT * FROM connection_email_messages WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3 AND trust_status='TRUSTED' AND classification='supplier'",[ctx.workspaceId,document.sourceMessageId,supplierId])).rows[0];
+ if(!message)throw new ValidationError('Use a trusted message from this supplier in this business.');
+ const attachments=(await db.query('SELECT id,content_hash,extraction_status,extracted_text FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY id',[ctx.workspaceId,message.id])).rows;
+ if(attachments.some(a=>a.extraction_status!=='READABLE'))throw new ValidationError('Every attached page must be readable before this quote can be recorded.');
+ if(document.sourceAttachmentHash&&!attachments.some(a=>a.content_hash===document.sourceAttachmentHash))throw new ValidationError('The quote does not match this message’s saved attachment.');
+ const source=unix([require('../connections/reply-triage').prose(message.body_text),...attachments.map(a=>a.extracted_text||'')].join('\n')),quote=unix(document.evidenceQuote).trim();
+ if(quote.length<5||quote.length>1000||!source.toLocaleLowerCase().includes(quote.toLocaleLowerCase()))throw new ValidationError('Copy an exact supporting quote from the supplier’s reply.');
+ const currency=require('../domain/currency').code(document.currency||supplier.currency),matched=[],differences=[],seen=new Set();
+ for(const input of document.lines){
+  const wanted=p.lines.find(l=>l.skuId===input.skuId),product=p.products.find(v=>v.id===input.skuId);
+  if(!wanted||!product)throw new ValidationError('Every quoted product must be one of the RFQ’s products.');
+  if(seen.has(input.skuId))throw new ValidationError('A product is quoted twice. Record split quantities separately.');seen.add(input.skuId);
+  if(!['stock','purchase'].includes(input.quantityBasis))throw new ValidationError('Confirm whether each quoted quantity uses stock units or purchase packs.');
+  const link=p.links.find(l=>l.supplier_id===supplierId&&l.sku_id===input.skuId),pack=input.quantityBasis==='purchase'?Number(link?.units_per_purchase_unit):1;
+  if(!Number.isSafeInteger(pack)||pack<1)throw new ValidationError('This supplier’s pack size is not recorded. Record the quote in stock units.');
+  const quantity=Number(input.quantity)*pack,unitCostMinor=Number(input.unitCostMinor)/pack;
+  if(!Number.isSafeInteger(quantity)||quantity<1||!Number.isSafeInteger(unitCostMinor)||unitCostMinor<0)throw new ValidationError('Quoted quantities and pack prices must come to exact stock units and money.');
+  if(quantity!==wanted.quantity)differences.push({kind:'quantity_changed',skuId:input.skuId,requested:wanted.quantity,quoted:quantity});
+  matched.push({skuId:input.skuId,quantity,unitCostMinor,receivingSiteId:p.locationId||null});
+ }
+ if(currency!==supplier.currency)differences.push({kind:'currency_changed',requested:supplier.currency,quoted:currency});
+ const expectedArrivalDate=date(document.expectedArrivalDate);if(expectedArrivalDate&&p.deliverBy&&expectedArrivalDate>p.deliverBy)differences.push({kind:'delivery_date_changed',requested:p.deliverBy,offered:expectedArrivalDate});
+ if(seen.size!==p.lines.length)differences.push({kind:'partial_quotation',requestedLines:p.lines.length,quotedLines:seen.size});
+ const quotedTerms=document.quotationTerms?quotationTerms(document.quotationTerms,source,currency,matched.length):null;
+ let freightMinor=null;
+ if(document.freightMinor!=null&&matched.length>1){
+  const money=require('../domain/currency');freightMinor=money.integer(document.freightMinor,'Quoted freight');
+  if(!source.split('\n').some(line=>/\b(?:freight|shipping|delivery)\b/i.test(line)&&(line.includes(currency+' '+money.fromMinor(freightMinor,currency))||line.includes(money.format(freightMinor,currency))||freightMinor===0&&/\bfree (?:shipping|freight|delivery)\b/i.test(line))))
+   throw new ValidationError('The exact freight amount and currency must appear in the supplier’s reply.');
+ }
+ const facts={rfqRequestId:request.id,reference:p.reference,sourceMessageId:message.id,sourceAttachmentHash:document.sourceAttachmentHash||null,evidenceQuote:quote,expectedArrivalDate,currency,lines:matched,
+  ...(quotedTerms?{quotationTerms:quotedTerms}:{}),...(freightMinor!==null?{wholeQuoteFreightMinor:freightMinor}:{})};
+ const contentHash=digest({messageId:message.id,contentHash:message.content_hash,attachments:attachments.map(a=>a.content_hash)});
+ return {payload:{requestId:request.id,supplierId,documentType:'quotation',documentReference:p.reference+' · '+supplier.name,messageId:message.id,connectorId:message.connector_id,attachmentId:attachments.find(a=>a.content_hash===document.sourceAttachmentHash)?.id||null,contentHash,facts,differences},
+  summary:`Record ${supplier.name}'s quote for RFQ ${p.reference}: ${matched.length} of ${p.lines.length} products${differences.length?'; check '+differences.map(d=>d.kind.replaceAll('_',' ')).join(', '):''}. Nothing is ordered or accepted.`};
+}
+async function recordQuotation(client,ctx,p){
+ const identity=(await client.query('SELECT id,status FROM supplier_documents WHERE workspace_id=$1 AND connector_id=$2 AND content_hash=$3 AND document_type=$4 AND document_reference=$5',[ctx.workspaceId,p.connectorId,p.contentHash,p.documentType,p.documentReference])).rows[0];
+ const id=identity?.id||newId('supdoc'),status=identity?.status||(p.differences.length?'NEEDS_REVIEW':'MATCHED'),at=new Date().toISOString();
+ if(!identity)await client.query(`INSERT INTO supplier_documents(id,workspace_id,connector_id,message_id,attachment_id,supplier_id,purchase_order_id,document_type,document_reference,content_hash,facts,discrepancies,confidence,status,created_at,processed_at) VALUES($1,$2,$3,$4,$5,$6,NULL,$7,$8,$9,$10,$11,1,$12,$13,$13)`,[id,ctx.workspaceId,p.connectorId,p.messageId,p.attachmentId,p.supplierId,p.documentType,p.documentReference,p.contentHash,JSON.stringify(p.facts),JSON.stringify(p.differences),status,at]);
+ await client.query('UPDATE stockchief_runtime.agent_rfq_deliveries SET quote_document_id=$4,reply_message_id=coalesce(reply_message_id,$5) WHERE workspace_id=$1 AND request_id=$2 AND supplier_id=$3',[ctx.workspaceId,p.requestId,p.supplierId,id,p.messageId]);
+ return {documentId:id,status,replayed:Boolean(identity)};
+}
+module.exports={assess,execute,assessQuotation,recordQuotation};

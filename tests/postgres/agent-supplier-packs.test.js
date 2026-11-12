@@ -289,11 +289,11 @@ test('partner patterns and supplier negotiation drafts use dated evidence and cu
   await subscribe('pro');const old=(await review()).negotiationForm;
   await delivery(8,5,4);await assert.rejects(service.prepare(db,ctx,old),/evidence changed/);
   const current=await review(),form=current.negotiationForm,page=await browser.get(address).query({filter:vendor}).expect(200);
-  assert.equal(current.rows[0]['Late deliveries'],3);assert.match(page.text,/Recurring negotiation drafts require Custom/);
+  assert.equal(current.rows[0]['Late deliveries'],3);assert.match(page.text,/Routine lead-time notes that send on their own need Custom/);
   await assert.rejects(service.configure(db,ctx,form),/Custom/);
   const saved=await browser.post('/autopilot/negotiation-draft').type('form').send({...form,_csrf:f.csrf(page.text)}).expect(303);
   const detail=await browser.get(saved.headers.location).expect(200);assert.match(detail.text,/Unsent draft/);assert.match(detail.text,/3 of 4 completed orders/);
-  assert.equal(saved.headers.location,'/messages/supplier/'+await service.prepare(db,ctx,form));
+  assert.equal(saved.headers.location,'/autopilot/supplier-negotiations/drafts/'+await service.prepare(db,ctx,form));
   await subscribe('enterprise');await autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   await service.configure(db,ctx,form);
   await db.transaction(c=>service.queue(c,ctx.workspaceId,today));

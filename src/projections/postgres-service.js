@@ -107,7 +107,7 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,negotiationDrafts,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
@@ -126,6 +126,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-annual-stocktakes').notices(actor.annual_stocktake_summary):[],
       actor?.role==='owner'?require('../operations/agent-quality-holds').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-rfqs').inbox(database,workspaceId,actorId):[],
+      actor?.role==='owner'?require('../purchasing/negotiation-drafts').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-claims').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../shipping/agent-export-papers').notices(actor.export_paper_summary).concat(require('../accounting/agent-customer-invoices').notices(actor.customer_invoice_summary),require('../purchasing/agent-supplier-invoice-intake').notices(actor.supplier_invoice_summary),require('../purchasing/agent-supplier-credit-notes').notices(actor.supplier_credit_summary)):[],
       actor?.role==='owner'?require('../reports/agent-net-contribution').notices(actor.order_cost_summary):[],
@@ -149,7 +150,7 @@ function needs(database,workspaceId,actorId=null){
     ].map(schemaTolerant));
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
-    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
+    return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills,negotiationDrafts).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }
 // Share only permission-independent source facts. Membership, private agent

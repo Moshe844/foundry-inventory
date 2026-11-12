@@ -160,6 +160,8 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
       }
     }
     if(match.kind==='supplier'&&!attachments.length)await require('../purchasing/agent-supplier-benefit-claims').noticeOffer({query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)},connection.workspace_id,id);
+    // Job 93: a reply to one of our RFQs is read as a quotation separately.
+    if(match.kind==='supplier'&&match.id)await require('../purchasing/agent-rfq-competition').queueReply(client,connection.workspace_id,{messageId:id,supplierId:match.id,threadId,subject:message.subject});
     let poAmendmentQueued=false;
     if(match.kind==='supplier'&&sentThread?.kind==='supplier'&&!attachments.length&&require('../purchasing/po-amendment-email-parser').subject(message.subject)){
       const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);

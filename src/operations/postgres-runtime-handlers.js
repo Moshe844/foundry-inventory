@@ -434,6 +434,7 @@ async function autopilotEvaluate(job,client){
     await require('../accounting/agent-landed-cost-bills').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
+    await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-purchase-splitting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
@@ -723,6 +724,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.warehouse-routing.v1':external((job,database)=>require('../sales/agent-ship-from').onQueued(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'mail.supplier-rfq-reply.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').captureReply(database,job.workspaceId,job.payload)),
+  'agent.rfq-competition.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').run(database,job.workspaceId,job.payload)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),
   'purchasing.stale-incoming.v1':external((job,database)=>require('../purchasing/agent-stale-incoming').run(database,job.workspaceId)),
   'purchasing.fx-rates.v1':external((job,database)=>require('../purchasing/agent-purchase-fx').run(database,job.workspaceId)),
@@ -795,7 +798,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'agent.mail.supplier_rfq.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
-    const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_rfq_deliveries WHERE workspace_id=$1 AND communication_id=$2',[job.workspaceId,effect.aggregateId])).rowCount;
+    const current=(await database.query('SELECT 1 FROM stockchief_runtime.agent_rfq_deliveries WHERE workspace_id=$1 AND (communication_id=$2 OR chase_communication_id=$2)',[job.workspaceId,effect.aggregateId])).rowCount;
     if(effect.status==='CANCELLED'||!current)return {replacedAfterIndividualReview:true};
     return providerEffect(job,database,options,providers);
   }),
