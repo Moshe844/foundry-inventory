@@ -5,6 +5,7 @@
 <% if(result.openToBuyPath){ %><p><a class="btn" href="<%= result.openToBuyPath+(filter?'?month='+encodeURIComponent(filter):'') %>">Open monthly buying plans</a></p><% } %>
 <% if(result.cyclePlan){ %><p><a class="btn" href="/autopilot/daily-cycle-counts">Open daily cycle-count plans</a></p><% } %>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
+<% if(result.backorderLink){ %><p><a class="btn" href="/autopilot/backorders">Open backorders</a></p><% } %>
 <% if(result.lossShifts?.length){ %>
   <details><summary>Set local warehouse shifts</summary>
     <% for(const warehouse of result.lossShifts){ %>

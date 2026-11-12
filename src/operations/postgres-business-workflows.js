@@ -1006,8 +1006,8 @@ async function cancelSalesOrderInTransaction(client,rawContext,salesOrderId,inpu
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['pricing:'+ctx.workspaceId]);
       await client.query('UPDATE stockchief_runtime.pricing_redemptions SET released_at=now() WHERE workspace_id=$1 AND sales_order_id=$2 AND released_at IS NULL',[ctx.workspaceId,salesOrderId]);
     }
-    await client.query(`DELETE FROM sales_order_allocations WHERE workspace_id=$1 AND sales_order_line_id IN
-      (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2)`,[ctx.workspaceId,salesOrderId]);
+    const freed=(await client.query(`DELETE FROM sales_order_allocations WHERE workspace_id=$1 AND sales_order_line_id IN
+      (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2) RETURNING location_id`,[ctx.workspaceId,salesOrderId])).rows.map(row=>row.location_id);
     await require('./postgres-kit-allocations').release(client,ctx,salesOrderId);
     const at=nowIso();
     // Nothing is going out for a cancelled order. A saved label stops the
@@ -1024,6 +1024,8 @@ async function cancelSalesOrderInTransaction(client,rawContext,salesOrderId,inpu
     await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,
       type:'cancelled',detail:{reason:trimOrNull(input.reason)||'Cancelled'},actorId:ctx.actorId,
       key:`${input.idempotencyKey}:event`,at});
+    // Stock this order no longer needs can go to the orders still waiting.
+    await require('../sales/agent-backorders').queue(client,ctx,freed,'cancel:'+salesOrderId);
   }
   const result={salesOrderId,status:'CANCELLED'};
   await completeOperation(client,operation,result);

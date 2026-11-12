@@ -251,6 +251,31 @@ function createPostgresAutopilotRouter(database,options={}){
       return res.redirect(303,returnPath+'/'+req.params.id);
     }));
   }
+  const backorders=require('../../sales/agent-backorders');
+  router.get(backorders.href,requireAuth,owner,starterAgentPage(64,'suggest','Backorders',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/backorders',{title:'Backorders',nav:'autopilot',backTo:{href:'/autopilot/reviews/waiting-orders',label:'Prioritize backorders'},
+      model:await backorders.page(database,req.ctx,{locationId:String(req.query.location||'')||null})});
+  }));
+  const backorderPlace=id=>backorders.href+(id?'?location='+encodeURIComponent(id):'');
+  router.post(backorders.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await backorders.prepare(database,req.ctx,{locationId:req.body.locationId});
+    req.flash('success',result.created?'The plan is ready for your approval.':'This plan is already waiting for your approval.');
+    return res.redirect(303,backorderPlace(req.body.locationId));
+  }));
+  router.post(backorders.href+'/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await backorders.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'StockChief will prepare backorder stock for your approval instead.':'StockChief will set stock aside on its own within your limit.');
+    return res.redirect(303,backorders.href);
+  }));
+  for(const [step,handler] of [['approve',backorders.approve],['discard',backorders.discard],['undo',backorders.undo]]){
+    router.post(backorders.href+'/runs/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const result=await handler(database,req.ctx,req.params.id,req.body);
+      if(result.stale)req.flash('error','Stock or orders changed since this plan was made. Review the updated plan.');
+      else req.flash('success',step==='approve'?'Stock is set aside for these orders.':step==='discard'?'Plan dismissed.':'The work was undone.');
+      return res.redirect(303,backorderPlace(req.body.locationId));
+    }));
+  }
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
   const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},

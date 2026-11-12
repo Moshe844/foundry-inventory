@@ -1,0 +1,56 @@
+<% const m=model,can=['draft','alone'].includes(m.mode),alone=m.mode==='alone',place=m.selected; %>
+<div class="page-head"><div class="titles"><h1>Backorders</h1>
+<p><%= m.mode==='suggest'?'Who is waiting for stock, and what ships first.':alone?'When stock arrives or frees up, StockChief sets it aside for waiting orders in your order priority and sends complete orders to picking.':'When stock arrives or frees up, StockChief works out who gets it, in your order priority. Nothing is set aside until you approve.' %></p></div></div>
+<% if(m.mode==='suggest'){ %><section class="notice"><span class="badge">Growth</span> On Growth, StockChief prepares this stock for your approval. <a href="/settings/billing">See plans</a></section><% } %>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows what it would do and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
+<% for(const d of m.drafts){ const p=d.plan; %><article class="section" id="plan-<%= d.id %>">
+<h3><%= p.units %> <%= p.units===1?'unit':'units' %> at <%= d.location_name %></h3>
+<% if(d.reason&&d.reason!=='Prepared on request.'){ %><p class="cell-sub"><%= d.reason %></p><% } %>
+<ul><% for(const g of p.gives){ %><li><a href="/orders/<%= g.orderId %>"><%= g.orderNumber %></a> · <%= g.customer %> gets <%= g.lines.map(l=>l.quantity+' × '+l.code).join(', ') %><%= g.complete?' · complete':'' %></li><% } %></ul>
+<% if(p.held.length){ %><p class="cell-sub">Skipped: <%= p.held.map(h=>h.orderNumber+' ('+h.reason+')').join('; ') %></p><% } %>
+<div class="btn-row"><form method="post" action="<%= m.href %>/runs/<%= d.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= d.fingerprint %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="locationId" value="<%= d.location_id %>">
+<button class="btn btn--primary" <%= m.blocked?'disabled':'' %>>Approve and set aside</button></form>
+<form method="post" action="<%= m.href %>/runs/<%= d.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= d.location_id %>">
+<button class="btn btn--ghost">Dismiss</button></form></div></article><% } %></section><% } %>
+
+<section class="card section"><h2><%= place?'Who is waiting at '+place.name:'Who is waiting' %></h2>
+<% if(m.locations.length>1){ %><form method="get" class="btn-row"><label class="rm-field"><span>Warehouse</span><select name="location"><% for(const l of m.locations){ %><option value="<%= l.id %>" <%= place&&l.id===place.id?'selected':'' %>><%= l.name %> · <%= l.orders %> waiting</option><% } %></select></label><button class="btn btn--ghost">Show</button></form><% } %>
+<% if(!place){ %><p>No confirmed order is waiting for stock.</p><% }else{ %>
+<p class="cell-sub">In order priority: lower priority numbers first, then the needed-by date, then the oldest order.<% if(m.preview&&m.preview.units){ %> <%= m.preview.units %> free <%= m.preview.units===1?'unit is':'units are' %> ready for the orders marked “Gets”.<% } %></p>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Order</th><th>Needed by</th><th>Waiting for</th><th>What happens next</th></tr></thead><tbody>
+<% for(const r of m.rows){ %><tr><td class="cell-main"><a class="cell-title" href="/orders/<%= r.id %>"><%= r.order %></a><span class="cell-sub"><%= r.customer %> · priority <%= r.priority %></span></td>
+<td data-label="Needed by"><%= r.neededBy||'Not set' %></td><td data-label="Waiting for"><%= r.waiting %></td>
+<td data-label="Next"><% if(r.held){ %><span class="badge badge--warn">Needs you</span> <% }else if(r.ships){ %><span class="badge badge--ok">Ships first</span> <% } %><%= r.next %></td></tr><% } %>
+</tbody></table></div>
+<% if(m.more){ %><p class="cell-sub">Showing the first 100 waiting orders.</p><% } %>
+<% if(can&&m.preview&&m.preview.gives.length&&!m.shadow){ %><form method="post" action="<%= m.href %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= place.id %>">
+<button class="btn" <%= m.blocked?'disabled':'' %>>Prepare this for approval</button></form><% } %>
+<% } %></section>
+
+<% if(m.unrouted.length){ %><section class="card section"><h2>Choose where these ship from</h2><p>These orders wait for stock but have no dispatch warehouse, so StockChief leaves them to you.</p>
+<ul><% for(const o of m.unrouted){ %><li><a href="/orders/<%= o.id %>"><%= o.order_number %></a> · <%= o.customer %></li><% } %></ul><% if(m.moreUnrouted){ %><p class="cell-sub">And more.</p><% } %></section><% } %>
+
+<% if(alone){ const r=m.rule; %><section class="card section"><h2>Set stock aside on its own</h2>
+<% if(r&&r.enabled){ %><p>On. Up to <strong><%= r.max_units %> <%= r.max_units===1?'unit':'units' %></strong> for one order at a time<%= r.release_ready?', and complete orders go to picking':'' %>. Anything bigger waits for your approval.</p><% if(m.automatic){ %><p class="notice notice--warn"><%= m.automatic %></p><% } %>
+<% }else{ %><p>Off. StockChief prepares each allocation for your approval.</p><% } %>
+<form method="post" action="<%= m.href %>/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<label class="rm-field"><span>Most units for one order</span><input type="number" name="maxUnits" min="1" max="1000000" step="1" required value="<%= r?.max_units||'' %>"></label>
+<label class="checkbox"><input type="checkbox" name="releaseReady" value="yes" <%= !r||r.release_ready?'checked':'' %>><span class="checkbox-text">Send orders that are now complete to picking</span></label>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Let StockChief set stock aside on its own within this limit. People still pick, pack and hand over the goods.</span></label>
+<button class="btn btn--primary">Save</button></form>
+<% if(r&&r.enabled){ %><form method="post" action="<%= m.href %>/settings"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="stop" value="yes">Turn off</button></form><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section><% } %>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent work</h2><ul class="rm-list">
+<% for(const r of m.recent){ const p=r.plan; %><li class="list-row"><span><strong><%= r.authorization_kind==='AUTOMATIC'?'StockChief':'You' %> set aside <%= p.units %> <%= p.units===1?'unit':'units' %> at <%= r.location_name %></strong>
+<small><%= helpers.dateTime(r.applied_at) %></small>
+<small><%= p.gives.map(g=>g.orderNumber+': '+g.lines.map(l=>l.quantity+' × '+l.code).join(', ')).join(' · ') %></small>
+<% if(r.released){ %><small>Sent to picking: <a href="/warehouse/waves/<%= r.released.waveId %>">pick <%= r.released.waveNumber %></a></small><% } %>
+<% if(r.release_note){ %><small><%= r.release_note %></small><% } %></span>
+<% if(r.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else{ %><form method="post" action="<%= m.href %>/runs/<%= r.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %></li><% } %></ul></section><% } %>
