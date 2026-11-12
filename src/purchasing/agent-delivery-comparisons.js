@@ -91,7 +91,9 @@ async function page(db,ctx,{orderId=null,id=null,page=1}={}){
   const claimMailboxes=canClaimShortages&&shortageLines.length
     ?await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId):[];
   return {allowed,record,snapshot,suggestion,sourceHash:snapshot?hash(snapshot):null,orders:orders.slice(0,100),history:history.slice(0,100),
-    more:orders.length>100||history.length>100,pageNumber:page,requestKey:newId('delivery-check'),canClaimShortages,claimMailboxes,shortageLines};
+    more:orders.length>100||history.length>100,pageNumber:page,requestKey:newId('delivery-check'),canClaimShortages,claimMailboxes,shortageLines,
+    canAddPhotos:Boolean(record)&&policy.usesAgentTerms(state)&&policy.permits(state.plan,46,'draft'),
+    checkPhotos:record?await require('../operations/quality-photos').list(db,ctx,{comparisonId:record.id}):[]};
 }
 
 function fromForm(body){

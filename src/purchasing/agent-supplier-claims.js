@@ -66,7 +66,6 @@ async function configure(db,ctx,id,input){return db.transaction(async c=>{
  if(existing&&(existing.supplier_id!==p.supplierId||existing.sku_id!==p.skuId||existing.location_id!==p.locationId||existing.connector_id!==p.connectorId||(existing.scope.claimKind==='shortage')!==(p.claimKind==='shortage')))throw new ValidationError('A claim rule keeps its exact supplier, product, location, claim type and mailbox. Stop it and authorize a new scope for different records.');
  if(!p.remedy)throw new ValidationError('Choose what this claim asks the supplier for, then authorize routine claims from it.');
  const shortage=p.claimKind==='shortage',includePhotos=input.includePhotos==='yes',chaseAfterDays=followUp.chaseDays(input.chaseAfterDays);
- if(shortage&&includePhotos)throw new ValidationError('Authorize shortage claims from their original delivery and receipt evidence.');
  await source.access(c,ctx,{automatic:true,trained:Boolean(done),withPhotos:includePhotos});
  const integer=(value,min,max,label)=>{const text=String(value||'');if(!/^\d+$/.test(text)||!Number.isSafeInteger(Number(text))||Number(text)<min||Number(text)>max)throw new ValidationError('Choose '+label+' from '+min+' to '+max+'.');return Number(text);};
  const exact=require('../domain/exact-quantity');
@@ -129,7 +128,7 @@ async function page(db,ctx,{id=null}={}){
  // A sent claim keeps the evidence it was sent with; later receipts are its follow-through.
  let problem=null;if(saved&&!position.sentAt)try{await current(db,ctx,saved,{readOnly:true});}catch(e){if(![400,402,403,404,422].includes(e.status))throw e;problem=e.message;}
  const editable=Boolean(saved&&!saved.communication_id);
- const photosToChoose=editable&&saved.snapshot.holdId?await photos.list(db,ctx,saved.snapshot.holdId):[];
+ const photosToChoose=editable?await photos.photoSet(db,ctx,source.photoSource(saved.snapshot)):[];
  const mailboxes=editable?await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId):[];
  return {goodsCost:saved?require('../domain/currency').format(saved.snapshot.totalMinor,saved.snapshot.currency):null,locked,plan:state.plan,shadow:state.shadow,rows,rules,saved,delivery:m,problem,
   words:saved?source.compose(saved.snapshot):null,matchingRule:saved?rules.find(r=>r.enabled&&r.profile_hash===hash(source.profile(saved.snapshot))):null,
@@ -140,7 +139,7 @@ async function page(db,ctx,{id=null}={}){
   editable,photosToChoose,mailboxes,formatMoney:require('../domain/currency').format};
 }
 const definition={id:45,key:'supplier-damage-claims',label:'Open supplier delivery claims',readPage:async()=>({summary:'Opens a claim with the supplier from a checked short delivery, a failed QC inspection or a staff damage report at receiving. Each claim lists the purchase order, receipt, product, quantity and value at the purchase order price, and asks for a credit note, replacement goods or a refund. StockChief follows each sent claim to the supplier’s reply, a credit note or replacement goods, and reminds the supplier when there is no answer. Pro drafts claims until you teach it with one you send; Custom works within your limits without training.',rows:[{Action:'Review supplier claims',link:'/autopilot/supplier-claims'}],more:false})};
-const photoDefinition={id:46,key:'delivery-damage-photos',label:'Prepare actual delivery damage photos',readPage:async()=>({summary:'Growth can preserve and prepare original JPEG/PNG delivery evidence for individual review. Pro and Custom can attach up to three resized copies within separately authorized claim rules without photo training. A person records the physical damage; photo preparation never infers a count or changes the original.',rows:[{Action:'Open physical delivery evidence',link:'/autopilot/delivery-quality'}],more:false})};
+const photoDefinition={id:46,key:'delivery-damage-photos',label:'Add photos of damaged boxes to the claim',readPage:async()=>({summary:'Staff take photos of damaged boxes on the phone when receiving, on a delivery check or at a failed QC inspection. StockChief keeps each original JPEG or PNG unchanged and prepares a smaller email copy. Growth prepares the photo set for you to attach yourself. Pro and Custom attach up to three photos to the supplier claim on their own and keep them with the claim. Photos never decide damage or counts.',rows:[{Action:'Open physical delivery evidence',link:'/autopilot/delivery-quality'}],more:false})};
 async function inbox(db,workspaceId,actorId){
  const ctx={workspaceId,actorId};await source.owner(db,ctx,{lock:false});
  const rows=(await db.query(`SELECT c.id,c.reference,c.created_at,c.snapshot->>'claimKind' AS claim_kind,m.status,e.status effect_status FROM stockchief_runtime.agent_supplier_claims c
@@ -154,6 +153,7 @@ async function inbox(db,workspaceId,actorId){
    r.claim_kind==='shortage'?'Check the original delivery, receipt, missing quantity, goods cost and recipient.':'Check the actual damage, damaged units, goods cost, what you ask for, recipient and selected photos.',
   recommendation:'Open the exact saved claim. Credits, write-offs, replacement receipt and settlement need separate approval.',href:'/autopilot/supplier-claims/'+r.id,actionLabel:'Review claim',sourceId:'supplier-claim:'+r.id,at:r.created_at,createdAt:r.created_at}));
  const state=await policy.accountState(db,workspaceId);
+ if(policy.usesAgentTerms(state)&&!policy.permits(state.plan,45,'draft')&&policy.permits(state.plan,46,'draft'))items.push(...await photoSets(db,workspaceId));
  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,45,'draft'))return items;
  // Sent claims that need a person: a reply to read, a reminder to approve,
  // no answer after the last reminder, or a part settlement.
@@ -182,6 +182,21 @@ async function inbox(db,workspaceId,actorId){
  return items;
 }
 
+// Growth: deliveries with damage evidence and photos, ready for the owner to
+// attach to a claim they send themselves.
+async function photoSets(db,workspaceId){
+ return (await db.query(`SELECT r.id,r.received_at,o.po_number,count(DISTINCT q.id)::int AS photos FROM purchase_order_receipts r
+  JOIN purchase_orders o ON o.workspace_id=r.workspace_id AND o.id=r.purchase_order_id
+  JOIN purchase_order_receipt_lines rl ON rl.workspace_id=r.workspace_id AND rl.receipt_id=r.id
+  LEFT JOIN stockchief_runtime.agent_quality_holds h ON h.workspace_id=rl.workspace_id AND h.receipt_line_id=rl.id AND h.status='FAILED'
+  LEFT JOIN stockchief_runtime.agent_receipt_damage_reports d ON d.workspace_id=rl.workspace_id AND d.receipt_line_id=rl.id
+  JOIN stockchief_runtime.agent_quality_photos q ON q.workspace_id=r.workspace_id AND (q.receipt_id=r.id OR q.hold_id=h.id)
+  WHERE r.workspace_id=$1 AND (h.id IS NOT NULL OR d.id IS NOT NULL) AND r.received_at::timestamptz>now()-interval '30 days'
+  GROUP BY r.id,r.received_at,o.po_number ORDER BY r.received_at,r.id LIMIT 25`,[workspaceId])).rows
+  .map(r=>({kind:'purchasing',importance:'Needs You',priority:55,title:'Photos ready for a supplier claim: '+r.po_number,happened:r.photos+' photo'+(r.photos===1?'':'s')+' of damaged goods from this delivery.',
+   why:'Supplier claims need Pro or Custom, so StockChief prepared the photo set for you to send.',recommendation:'Download the email copies and attach them to your claim email.',
+   href:'/autopilot/delivery-evidence/'+r.id,actionLabel:'Open photo set',sourceId:'delivery-photos:'+r.id,at:r.received_at,createdAt:r.received_at}));
+}
 // The workspace owner who receives prepared drafts.
 async function ownerOf(db,workspaceId){
  return (await db.query(`SELECT u.id FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
@@ -193,15 +208,18 @@ async function evidenceClaim(db,workspaceId,row,key,drafting){
  if(row.rule_id){
   const ctx={workspaceId,actorId:row.authorized_by};
   await source.access(db,ctx,{automatic:true,trained:Boolean(row.example_id),withPhotos:row.include_photos});
-  const ids=row.include_photos&&key==='holdId'?(await db.query('SELECT id FROM stockchief_runtime.agent_quality_photos WHERE workspace_id=$1 AND hold_id=$2 ORDER BY created_at,id LIMIT 4',[workspaceId,row.id])).rows.map(p=>p.id):[];
-  if(ids.length>3)throw new ValidationError('Choose the exact three photos to send; this delivery has more evidence than one routine email can attach.');
+  const ids=row.include_photos?(await photos.photoSet(db,ctx,{[key]:row.id})).map(p=>p.id):[];
+  if(ids.length>photos.MAX_PER_CLAIM)throw new ValidationError('Choose the exact three photos to send; this delivery has more evidence than one routine email can attach.');
   const r=await preview(db,ctx,{[key]:row.id,connectorId:row.connector_id,photoIds:ids,remedy:row.remedy||undefined},{legacyRemedy:!row.remedy});
   return {[key]:row.id,...await sendAutomatic(db,ctx,r.id,row.rule_id)};
  }
  if(!drafting.ownerId)return {[key]:row.id,needsReview:'No rule covers this evidence. Prepare the claim yourself.'};
  if(drafting.mailboxes.length!==1)return {[key]:row.id,needsReview:'Choose the sending mailbox and prepare this claim.'};
- // The draft asks for a credit note; the owner can change that before sending.
- const r=await preview(db,{workspaceId,actorId:drafting.ownerId},{[key]:row.id,connectorId:drafting.mailboxes[0].id,remedy:'credit'});
+ // The draft asks for a credit note and carries the delivery's photos when
+ // they fit one email; the owner can change both before sending.
+ // When photo work is set to Watch only, the draft goes without photos.
+ const ctx={workspaceId,actorId:drafting.ownerId},set=drafting.photosBlocked?[]:await photos.photoSet(db,ctx,{[key]:row.id});
+ const r=await preview(db,ctx,{[key]:row.id,connectorId:drafting.mailboxes[0].id,remedy:'credit',photoIds:set.length<=photos.MAX_PER_CLAIM?set.map(p=>p.id):[]});
  return {[key]:row.id,drafted:r.id};
 }
 const RULE=`LEFT JOIN LATERAL(SELECT r.id rule_id,r.authorized_by,r.connector_id,r.include_photos,r.example_id,r.scope->>'remedy' remedy
@@ -214,7 +232,8 @@ async function run(db,workspaceId,{afterId=''}={}){
  const after=afterId.replace(/^(shortage|report|hold):/,'');
  const state=await policy.accountState(db,workspaceId),autopilot=await require('../autopilot/postgres-service').getState(db,workspaceId);
  const canDraft=policy.usesAgentTerms(state)&&policy.permits(state.plan,45,'draft')&&!state.shadow&&autopilot.mode!=='OBSERVE'&&!Number(autopilot.paused)&&!Number(autopilot.suspended);
- const drafting={ownerId:canDraft?await ownerOf(db,workspaceId):null,mailboxes:canDraft?await require('../connections/postgres-outbound-mail').mailboxes(db,workspaceId):[]};
+ const drafting={ownerId:canDraft?await ownerOf(db,workspaceId):null,mailboxes:canDraft?await require('../connections/postgres-outbound-mail').mailboxes(db,workspaceId):[],
+  photosBlocked:canDraft&&Boolean(await policy.stopped(db,workspaceId,state,'supplier.attach_damage_photos',false))};
  const results=[];
  const work=async(rows,key)=>{
   for(const row of rows.slice(0,40-results.length)){

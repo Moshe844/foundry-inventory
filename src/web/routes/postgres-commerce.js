@@ -916,7 +916,7 @@ function createPostgresCommerceRouter(database,options={}){
     const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
     const places=[...new Set(lines.map((line)=>line.locationId))];
     const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
-    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${receipt.qualitySuggestionIds?.length?'QC holds suggested to the owner; those goods stay available until the owner decides. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
+    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${receipt.qualitySuggestionIds?.length?'QC holds suggested to the owner; those goods stay available until the owner decides. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off. Add photos of the damage under Deliveries on this order.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 

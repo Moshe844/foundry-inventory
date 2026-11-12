@@ -62,8 +62,14 @@ async function page(db,ctx,receiptId){
  const claims=(await db.query(`SELECT id,reference,damage_report_id,communication_id IS NOT NULL AS sent,outcome FROM stockchief_runtime.agent_supplier_claims
   WHERE workspace_id=$1 AND damage_report_id=ANY($2::text[])`,[ctx.workspaceId,reports.map(r=>r.id)])).rows;
  const policy=require('../commercial/agent-plan'),state=await policy.accountState(db,ctx.workspaceId),owner=user.role==='owner';
- const canClaim=owner&&policy.usesAgentTerms(state)&&policy.permits(state.plan,45,'draft');
- return {receipt,reports:reports.map(r=>({...r,quantity:exact.canonical(r.quantity),claim:claims.find(c=>c.damage_report_id===r.id)||null})),owner,canClaim,
+ const canClaim=owner&&policy.usesAgentTerms(state)&&policy.permits(state.plan,45,'draft'),canAddPhotos=policy.usesAgentTerms(state)&&policy.permits(state.plan,46,'draft');
+ const photos=require('../operations/quality-photos'),receiptPhotos=await photos.list(db,ctx,{receiptId});
+ // Photos taken at a failed QC inspection of this delivery belong to the same set.
+ const holdPhotos=(await db.query(`SELECT q.id,q.filename,q.caption,q.created_at,q.hold_id FROM stockchief_runtime.agent_quality_photos q
+  JOIN stockchief_runtime.agent_quality_holds h ON h.workspace_id=q.workspace_id AND h.id=q.hold_id
+  JOIN purchase_order_receipt_lines rl ON rl.workspace_id=h.workspace_id AND rl.id=h.receipt_line_id
+  WHERE q.workspace_id=$1 AND rl.receipt_id=$2 ORDER BY q.created_at,q.id LIMIT 30`,[ctx.workspaceId,receiptId])).rows;
+ return {receipt,reports:reports.map(r=>({...r,quantity:exact.canonical(r.quantity),claim:claims.find(c=>c.damage_report_id===r.id)||null})),owner,canClaim,canAddPhotos,receiptPhotos,holdPhotos,
   plan:state.plan,remedies:require('./supplier-claim-source').REMEDIES,claimMailboxes:canClaim?await require('../connections/postgres-outbound-mail').mailboxes(db,ctx.workspaceId):[]};
 }
 module.exports={record,get,forReceipt,page};

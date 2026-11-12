@@ -33,11 +33,12 @@ function remedyOf(value){
  return value;
 }
 
-async function shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference,remedy}){
- if(photoIds.length)throw new ValidationError('Use the exact delivery and receipt records for a shortage claim. Inspection photos belong to physical damage claims.');
+async function shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference,remedy},{automatic=false}={}){
  const {row,check,receipts,actual,missingUnits,missingWeight,currency,unitCostMinor,totalMinor,receivedAt}=
   await require('./supplier-shortage-source').facts(c,ctx,{comparisonId,lineId});
  const {box,clock,ageDays}=await deliveryContext(c,ctx,row,connectorId,receivedAt);
+ // Photos of the delivery check or of the receipts that booked these goods.
+ const evidence=photoIds.length?await photos.selectedFor(c,ctx,{comparisonId,receiptIds:receipts.map(r=>r.id)},photoIds,{automatic}):[];
  const p={claimKind:'shortage',comparisonId,lineId,reference,connectorId,mailboxAccount:box.provider_account_id,providerType:box.provider_type,
   supplierId:row.supplier_id,supplierName:row.supplier_name,recipient:row.email,currency,skuId:row.sku_id,sku:row.code,product:actual.name,unit:row.unit_label,
   locationId:row.location_id,location:row.location_name,purchaseOrderId:row.purchase_order_id,poNumber:row.po_number,
@@ -45,7 +46,7 @@ async function shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,ref
   missingUnits,missingWeight,weightUnit:row.secondary_unit_label,trackingMode:row.tracking_mode,quantityPrecision:Number(row.quantity_precision),
   weightPrecision:row.secondary_precision==null?null:Number(row.secondary_precision),
   expectedUnits:actual.expected,observedUnits:actual.observed,receiptLines:receipts,
-  unitCostMinor,totalMinor,photos:[],preparedAt:clock.instant,timeZone:clock.timeZone,...(remedy?{remedy}:{})};
+  unitCostMinor,totalMinor,photos:evidence,preparedAt:clock.instant,timeZone:clock.timeZone,...(remedy?{remedy}:{})};
  return {...p,ageDays,sourceFingerprint:hash(p)};
 }
 
@@ -74,8 +75,7 @@ async function reportFacts(c,ctx,{reportId,connectorId,photoIds,reference,remedy
  const {box,clock,ageDays}=await deliveryContext(c,ctx,row,connectorId,row.received_at);
  const currency=money.code(row.currency),unitCostMinor=money.userToMinor(String(row.unit_cost),currency,{label:'Recorded supplier unit cost'});
  const totalMinor=require('../domain/exact-quantity').costMinor(damaged,unitCostMinor);
- if(photoIds.length)throw new ValidationError('Attach delivery photos to a failed physical inspection. This staff report has no photo evidence.');
- const evidence=[];
+ const evidence=photoIds.length?await photos.selectedFor(c,ctx,{reportId},photoIds,{automatic}):[];
  const p={claimKind:'report',reportId,reference,connectorId,mailboxAccount:box.provider_account_id,providerType:box.provider_type,
   supplierId:row.supplier_id,supplierName:row.supplier_name,recipient:row.email,currency,skuId:row.sku_id,sku:row.code,product:row.name,unit:row.unit_label,
   locationId:row.location_id,location:row.location_name,purchaseOrderId:row.purchase_order_id,poNumber:row.po_number,receiptId:row.receipt_id,
@@ -87,7 +87,7 @@ async function reportFacts(c,ctx,{reportId,connectorId,photoIds,reference,remedy
 
 async function facts(c,ctx,{holdId,comparisonId,lineId,reportId,connectorId,photoIds=[],reference,remedy},{readOnly=false,automatic=false}={}){
  await owner(c,ctx,{lock:!readOnly});remedy=remedyOf(remedy);
- if(comparisonId)return shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference,remedy});
+ if(comparisonId)return shortageFacts(c,ctx,{comparisonId,lineId,connectorId,photoIds,reference,remedy},{automatic});
  if(reportId)return reportFacts(c,ctx,{reportId,connectorId,photoIds,reference,remedy},{automatic});
  const row=(await c.query(`SELECT h.*,s.code,i.name,i.unit_label,i.tracking_mode,i.quantity_precision,i.secondary_unit_label,
   l.name location_name,v.id supplier_id,v.name supplier_name,v.email,v.currency,o.id purchase_order_id,o.po_number,
@@ -118,6 +118,8 @@ async function facts(c,ctx,{holdId,comparisonId,lineId,reportId,connectorId,phot
 function profile(p){return {supplierId:p.supplierId,supplierName:p.supplierName,recipient:p.recipient,currency:p.currency,skuId:p.skuId,sku:p.sku,product:p.product,unit:p.unit,locationId:p.locationId,location:p.location,connectorId:p.connectorId,mailboxAccount:p.mailboxAccount,providerType:p.providerType,timeZone:p.timeZone,
  ...(p.claimKind==='shortage'?{claimKind:p.claimKind,trackingMode:p.trackingMode,weightUnit:p.weightUnit,quantityPrecision:p.quantityPrecision,weightPrecision:p.weightPrecision}:{}),
  ...(p.remedy?{remedy:p.remedy}:{})};}
+// The delivery evidence a claim's photos may come from.
+function photoSource(p){return p.claimKind==='shortage'?{comparisonId:p.comparisonId,receiptIds:p.receiptLines.map(r=>r.id)}:p.reportId?{reportId:p.reportId}:{holdId:p.holdId};}
 function units(p){return p.claimKind==='shortage'?p.missingUnits:p.damagedQuantity;}
 function stable(p){const {preparedAt,ageDays,sourceFingerprint,...rest}=p;return rest;}
 function when(p,value){return new Intl.DateTimeFormat('en-US',{timeZone:p.timeZone,dateStyle:'medium',timeStyle:'short'}).format(new Date(value))+' ('+p.timeZone+')';}
@@ -169,4 +171,4 @@ function composeChase(p,{number,sentAt}){
   ...(remedy||['Please confirm the claim and propose a replacement or credit note for review.']),'','Thank you.'
  ].join('\n')};
 }
-module.exports={owner,access,facts,profile,units,stable,compose,composeChase,quantityText,REMEDIES,remedyOf};
+module.exports={owner,access,facts,profile,units,stable,compose,composeChase,quantityText,photoSource,REMEDIES,remedyOf};
