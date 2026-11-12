@@ -1223,15 +1223,26 @@ function createPostgresCommerceRouter(database,options={}){
       businessName:workspace.rows[0]?.name||'StockChief'});
   }));
 
+  const shipFrom=()=>require('../../sales/agent-ship-from');
   router.get('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
-    const review=await require('../../sales/agent-ship-from').preview(database,req.ctx,req.params.id);
-    return res.page('sales/ship-from',{...review,nav:'sales',title:'Choose a shipping warehouse',backTo:{label:review.order.order_number,href:'/orders/'+req.params.id}});
+    res.set('Cache-Control','no-store');
+    const review=await shipFrom().preview(database,req.ctx,req.params.id);
+    return res.page('sales/ship-from',{...review,nav:'sales',title:'Shipping warehouse',backTo:{label:review.order.order_number,href:'/orders/'+req.params.id}});
   }));
   router.post('/orders/:id/ship-from',requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
-    await require('../../sales/agent-ship-from').approve(database,req.ctx,req.params.id,req.body);
-    req.flash('success','Shipping warehouse saved for this order.');
+    const result=await shipFrom().choose(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.location?'Shipping warehouse saved for this order.':'The order is split between these warehouses.');
     return res.redirect(303,'/orders/'+req.params.id);
   }));
+  // Approve, dismiss or undo a warehouse choice, from the order or the warehouse routing page.
+  for(const [step,done] of [['approve','Shipping warehouse saved for this order.'],['discard','Dismissed.'],['undo','The warehouse choice was undone.']]){
+    router.post('/orders/:id/ship-from/runs/:runId/'+step,requirePermission(permissions.OPERATE,'choose the shipping warehouse'),asyncRoute(async(req,res)=>{
+      const result=await shipFrom()[step](database,req.ctx,req.params.runId,req.body);
+      if(result.stale)req.flash('error','The order or stock changed since this choice was made. Review the new suggestion.');
+      else req.flash('success',result.replayed?'This was already done.':done);
+      return res.redirect(303,req.body.returnTo==='routing'?shipFrom().href:'/orders/'+req.params.id+(step==='undo'||result.stale?'/ship-from':''));
+    }));
+  }
   router.get(['/orders/:id','/sales/orders/:id'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const [page,returnRows,locationRows]=await Promise.all([
       salesOrderPage(database,req.ctx.workspaceId,req.params.id),
@@ -1242,8 +1253,10 @@ function createPostgresCommerceRouter(database,options={}){
     const orderCredit=page.order.status==='DRAFT'&&permissions.can(req.user,permissions.VIEW_ACCOUNTING)&&
       plans.usesAgentTerms(agentState)&&plans.permits(agentState.plan,80,'suggest')
       ?await require('../../sales/order-credit-exposure').forOrder(database,req.ctx,page.order.id):null;
-    const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&require('../../sales/agent-ship-from').eligible(page.order)
-      ?{available:plans.permits(agentState.plan,121,'draft')}:null;
+    const shipFromApplied=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)?await shipFrom().appliedFor(database,req.ctx.workspaceId,page.order.id):null;
+    const shipFromOpen=shipFrom().eligible(page.order)&&!page.order.totals.fulfilled&&!(page.shipments||[]).some(s=>s.status!=='CANCELLED');
+    const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&(shipFromOpen||shipFromApplied)
+      ?{available:plans.permits(agentState.plan,121,'draft'),applied:Boolean(shipFromApplied)}:null;
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;

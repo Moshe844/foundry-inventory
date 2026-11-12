@@ -324,6 +324,22 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.tier?result.customer+' is now tier '+result.tier+'.':result.customer+' has no tier.');
     return res.redirect(303,stockSharing.href);
   }));
+  const routing=require('../../sales/agent-ship-from');
+  router.get(routing.href,requireAuth,owner,starterAgentPage(121,'draft','Warehouse routing',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/warehouse-routing',{title:'Warehouse routing',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},
+      model:await routing.page(database,req.ctx)});
+  },'Growth'));
+  router.post(routing.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await routing.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Your warehouse routing rules are updated.':result.automatic?'Saved. StockChief chooses warehouses on its own within these rules.':'Saved. StockChief prepares each warehouse choice for your approval.');
+    return res.redirect(303,routing.href);
+  }));
+  router.post(routing.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await routing.run(database,req.ctx.workspaceId);
+    req.flash('success',result.watching?'StockChief is only watching, so nothing changed.':'Checked. '+result.applied+' chosen, '+result.drafted+' waiting for approval, '+result.asked+' need you.');
+    return res.redirect(303,routing.href);
+  }));
   const staleIncoming=require('../../purchasing/agent-stale-incoming');
   router.get(staleIncoming.href,requireAuth,owner,starterAgentPage(32,'suggest','Goods that will not arrive',async(req,res)=>{
     res.set('Cache-Control','no-store');

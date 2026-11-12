@@ -1,0 +1,55 @@
+<% const m=model,r=m.rules,on=r&&r.enabled,alone=m.mode==='alone',labels=m.labels;
+const runBy=x=>x.authorization_kind==='AUTOMATIC'?'StockChief':'You'; %>
+<div class="page-head"><div class="titles"><h1>Warehouse routing</h1>
+<p><%= alone?'StockChief picks the best warehouse to ship each new or unassigned order from, within your rules, and moves the order\'s reserved stock there. Every choice can be undone until picking starts.':'StockChief works out the best warehouse to ship each new or unassigned order from. You approve each choice; nothing moves before that.' %></p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows which warehouse it would choose and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.waiting.length){ %><section class="card section" id="approvals"><h2>Waiting for you</h2><ul class="rm-list">
+<% for(const w of m.waiting){ const p=w.plan; %><li class="list-row" id="choice-<%= w.id %>"><span><strong><a href="/orders/<%= w.sales_order_id %>/ship-from"><%= w.order_number %></a> · <%= w.status==='ASK'?'StockChief needs something first':p.summary %></strong>
+<small><%= w.reason %></small></span>
+<div class="btn-row"><% if(w.status==='DRAFT'){ %><form method="post" action="/orders/<%= w.sales_order_id %>/ship-from/runs/<%= w.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= w.fingerprint %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="returnTo" value="routing">
+<button class="btn btn--primary btn--sm" <%= m.blocked?'disabled':'' %>>Approve</button></form><% }else{ %><a class="btn btn--sm" href="/orders/<%= w.sales_order_id %>/ship-from">Review order</a><% } %>
+<form method="post" action="/orders/<%= w.sales_order_id %>/ship-from/runs/<%= w.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="routing">
+<button class="btn btn--ghost btn--sm">Dismiss</button></form></div></li><% } %></ul></section><% } %>
+
+<section class="card section"><h2>Orders without a warehouse</h2>
+<% if(m.unassigned.length){ %><ul><% for(const o of m.unassigned){ %><li><a href="/orders/<%= o.id %>/ship-from"><%= o.order_number %></a> · <%= o.customer %><%= o.status==='BACKORDERED'?' · waiting for stock':'' %></li><% } %></ul>
+<% if(m.moreUnassigned){ %><p class="cell-sub">And more.</p><% } %><% }else{ %><p>Every open shipping order has a warehouse or is waiting for you above.</p><% } %>
+<% if(on&&!m.shadow){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" <%= m.blocked?'disabled':'' %>>Check orders now</button></form>
+<p class="cell-sub">StockChief also checks every 15 minutes and right after each order is confirmed.</p><% } %></section>
+
+<section class="card section"><h2>Your rules</h2>
+<% if(on){ %><p>Best warehouse: <strong><%= r.criteria.map(c=>labels[c].toLowerCase()).join(', then ') %></strong>. <%= r.split_rule==='faster'?'Split an order between up to '+r.max_warehouses+' warehouses when no single one has it all, so it ships sooner.':'Never split an order: one warehouse ships all of it.' %> Orders up to <%= r.max_units %> units.</p>
+<% if(r.automatic){ %><p><span class="badge badge--ok">On its own</span> StockChief assigns orders within these rules.<% if(m.automatic){ %> <%= m.automatic %><% } %></p>
+<% }else{ %><p><span class="badge">Prepares</span> StockChief prepares each choice for your approval.</p><% } %>
+<% }else{ %><p><%= r?'Off.':'No rules yet.' %> Until you turn them on, you can still ask for a suggestion on any order.</p><% } %>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<% const chosen=r?.criteria||m.defaults; ['first','second','third'].forEach((name,i)=>{ %>
+<label class="rm-field"><span><%= i===0?'What matters most':'Then' %></span><select name="<%= name %>" <%= i===0?'required':'' %>><% if(i){ %><option value="">Nothing more</option><% } %>
+<% for(const [key,label] of Object.entries(labels)){ %><option value="<%= key %>" <%= chosen[i]===key?'selected':'' %>><%= label %></option><% } %></select></label><% }); %>
+<fieldset class="rm-field"><legend>When no single warehouse has the whole order</legend>
+<label class="checkbox"><input type="radio" name="split" value="never" <%= (r?.split_rule||'never')==='never'?'checked':'' %>><span class="checkbox-text">Never split. The order waits at the warehouse that has the most of it.</span></label>
+<label class="checkbox"><input type="radio" name="split" value="faster" <%= r?.split_rule==='faster'?'checked':'' %>><span class="checkbox-text">Split it if that ships it sooner</span></label></fieldset>
+<div class="field-row"><label class="rm-field"><span>Most warehouses for one split order</span><input type="number" name="maxWarehouses" min="2" max="5" step="1" value="<%= r?.max_warehouses||2 %>"></label>
+<label class="rm-field"><span>Most units in one order</span><input type="number" name="maxUnits" min="1" max="1000000" step="1" required value="<%= r?.max_units||'' %>"></label></div>
+<fieldset class="rm-field"><legend>Warehouses that ship orders</legend>
+<% if(!m.sites.length){ %><p class="cell-sub">Add a warehouse first.</p><% } %>
+<% for(const s of m.sites){ %><div class="section"><label class="checkbox"><input type="checkbox" name="ships_<%= s.id %>" value="yes" <%= s.ships?'checked':'' %>><span class="checkbox-text"><strong><%= s.name %></strong><%= s.frozen?' · frozen for a stock count':'' %><br><small><%= s.place?s.address:'No full address, so its distance is unknown' %></small></span></label>
+<div class="field-row"><label class="rm-field"><span>Priority (1 comes first)</span><input type="number" name="priority_<%= s.id %>" min="1" max="1000" step="1" value="<%= s.priority %>"></label>
+<label class="rm-field"><span>Cost to ship an order from here (<%= m.currency %>)</span><input type="text" inputmode="decimal" name="cost_<%= s.id %>" value="<%= s.costText %>" placeholder="Not set"></label></div></div><% } %></fieldset>
+<% if(alone){ %><label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= r?.automatic?'checked':'' %>><span class="checkbox-text">Choose warehouses on its own within these rules</span></label><% } %>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Use these rules for new and unassigned orders. StockChief never changes an order that has started picking or shipping.</span></label>
+<button class="btn btn--primary">Save rules</button></form>
+<% if(on){ %><div class="btn-row"><% if(r.automatic){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="manual" value="yes">Prepare each choice instead</button></form><% } %>
+<form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="stop" value="yes">Turn off rules</button></form></div><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent choices</h2><ul class="rm-list">
+<% for(const x of m.recent){ %><li class="list-row"><span><strong><a href="/orders/<%= x.sales_order_id %>/ship-from"><%= x.order_number %></a> · <%= runBy(x) %>: <%= x.plan.summary %></strong>
+<small><%= helpers.dateTime(x.applied_at) %></small></span>
+<% if(x.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else if(!x.can_undo){ %><span class="badge badge--muted">Picking started or closed</span><% }else{ %><form method="post" action="/orders/<%= x.sales_order_id %>/ship-from/runs/<%= x.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="returnTo" value="routing">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %></li><% } %></ul></section><% } %>

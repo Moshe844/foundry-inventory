@@ -1,14 +1,46 @@
-<h1>Choose a shipping warehouse</h1>
-<p>Order <%= order.order_number %></p>
-<% if(location){ %>
-  <h2><%= location.name %></h2>
-  <p>This location has enough available stock for every line. When several locations can fill the whole order, StockChief uses your warehouse pick sequence.</p>
-  <% if(block){ %><p><%= block %></p><% }else{ %>
-  <form method="post" action="/orders/<%= order.id %>/ship-from">
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <input type="hidden" name="version" value="<%= order.version %>">
-    <input type="hidden" name="locationId" value="<%= location.id %>">
-    <button class="btn btn--primary">Use this warehouse</button>
-  </form><% } %>
-<% }else{ %><p>No single available warehouse can fill this order. Review the order and its stock commitments.</p><% } %>
+<% const p=plan,cost=v=>v==null?'Not set':helpers.money(v,currency),far=d=>d?d.label+' · zone '+d.zone:'Distance unknown';
+const where=lines=>lines.map(l=>l.quantity+' × '+l.code).join(', ');
+const runBy=r=>r.authorization_kind==='AUTOMATIC'?'StockChief':'You'; %>
+<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1>Shipping warehouse for <%= order.order_number %></h1>
+<p><%= order.customer %><% if(p.destination){ %> · ships to <%= p.destination.line %><% } %></p></div></div>
+<% if(block){ %><p class="notice notice--warn"><%= block %></p><% } %>
+
+<% if(applied){ const a=applied.plan; %><section class="card section"><h2>Ships from <%= a.warehouses.map(w=>w.name).join(' and ') %></h2>
+<p><%= runBy(applied) %> chose this on <%= helpers.dateTime(applied.applied_at) %>. <%= a.summary %></p>
+<% if(a.takes&&a.takes.length){ %><p class="cell-sub">Reserved stock moved there from the other warehouses.</p><% } %>
+<% if(applied.can_undo){ %><form method="post" action="/orders/<%= order.id %>/ship-from/runs/<%= applied.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost">Undo this choice</button></form>
+<p class="cell-sub">Undo works until someone starts picking the order.<%= a.confirmed?' The reserved stock goes back where it was.':' The stock stays reserved where it is.' %></p><% }else{ %><p class="cell-sub">Picking or shipping has started, or the order is closed, so this choice stays.</p><% } %></section><% } %>
+
+<% if(p.untouchable){ if(!applied){ %><section class="card section"><h2>Nothing to choose</h2><p><%= p.untouchable %></p></section><% } %>
+<% }else if(p.ask){ %><section class="card section"><h2>StockChief needs something first</h2><p class="notice notice--warn"><%= p.ask %></p>
+<p>Nothing has changed. Fix the order, then StockChief chooses the warehouse. You can also <a href="/orders/<%= order.id %>">open the order</a> and choose the ship-from location yourself.</p>
+<% if(open&&open.status==='ASK'){ %><form method="post" action="/orders/<%= order.id %>/ship-from/runs/<%= open.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost">Dismiss this question</button></form><% } %></section>
+<% }else if(!applied){ %><section class="card section"><h2>Suggested</h2>
+<p><strong><%= p.summary %></strong></p>
+<% if(p.kind!=='none'){ %><ul><% for(const w of p.warehouses){ %><li><%= w.name %>: <%= where(w.lines) %> · <%= far(w.distance) %></li><% } %></ul><% } %>
+<% if(p.confirmed&&(p.takes.length||p.gives.length)){ %><p class="cell-sub">Reserved stock moves to <%= p.warehouses.map(w=>w.name).join(' and ') %><%= p.takes.length?' from the other warehouses':'' %>.<% if(p.shrink){ %> <%= p.shrink %> <%= p.shrink===1?'unit it holds now waits':'units it holds now wait' %> for stock.<% } %></p><% } %>
+<% if(open&&open.status==='DRAFT'&&open.reason){ %><p class="cell-sub"><%= open.reason %></p><% } %>
+<p class="cell-sub">Ranked by <%= p.criteria.map(c=>labels[c].toLowerCase()).join(', then ') %>. <%= p.splitRule==='faster'?'Split between up to '+p.maxWarehouses+' warehouses when no single one has it all.':'Never split: one warehouse ships the whole order.' %></p>
+<% if(p.changes){ %><div class="btn-row"><form method="post" action="/orders/<%= order.id %>/ship-from"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= p.fingerprint %>">
+<button class="btn btn--primary" <%= block?'disabled':'' %>><%= p.kind==='split'?'Use this split':'Use '+p.warehouses[0].name %></button></form>
+<% if(open&&open.status==='DRAFT'){ %><form method="post" action="/orders/<%= order.id %>/ship-from/runs/<%= open.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost">Dismiss</button></form><% } %></div>
+<% }else if(p.kind==='split'&&!p.confirmed){ %><p class="cell-sub">Confirm the order first. StockChief then reserves it from these warehouses.</p><% } %></section><% } %>
+
+<% if(!p.untouchable&&!p.ask&&p.options){ %><section class="card section"><h2>Every shipping warehouse</h2>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Warehouse</th><th>Can ship now</th><th>Distance</th><th>Priority</th><th>Cost to ship from</th><% if(!applied){ %><th></th><% } %></tr></thead><tbody>
+<% for(const o of p.options){ %><tr><td class="cell-main"><span class="cell-title"><%= o.name %></span><% if(o.complete){ %><span class="badge badge--ok">Has it all</span><% } %></td>
+<td data-label="Can ship now"><%= o.units %> of <%= p.units %></td><td data-label="Distance"><%= far(o.distance) %></td>
+<td data-label="Priority"><%= o.priority %></td><td data-label="Cost"><%= cost(o.costMinor) %></td>
+<% if(!applied){ %><td data-label="Choose"><form method="post" action="/orders/<%= order.id %>/ship-from"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="locationId" value="<%= o.locationId %>"><input type="hidden" name="version" value="<%= p.orderVersion %>">
+<button class="btn btn--ghost btn--sm" <%= block?'disabled':'' %>>Ship from here</button></form></td><% } %></tr><% } %>
+</tbody></table></div>
+<p class="cell-sub">Distance is estimated from the state of each address. Stock that is reserved, held for QC or protected for another customer does not count.</p></section><% } %>
+
+<% if(history.length>1||(history.length&&!applied)){ %><section class="card section"><h2>Earlier choices</h2><ul class="rm-list">
+<% for(const h of history){ if(applied&&h.id===applied.id)continue; %><li class="list-row"><span><strong><%= runBy(h) %>: <%= h.plan.summary %></strong>
+<small><%= helpers.dateTime(h.applied_at) %><%= h.status==='UNDONE'?' · undone '+helpers.dateTime(h.undone_at):'' %></small></span></li><% } %></ul></section><% } %>
 <p><a href="/orders/<%= order.id %>">Return to order</a></p>
